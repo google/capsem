@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 mod admission;
 mod broker;
 mod companion;
+mod registry;
 mod saved;
 mod security;
 pub use security::AuditFlow;
@@ -45,6 +46,7 @@ pub struct Publisher {
     cancellation: CancellationToken,
     drain: tokio::sync::Mutex<()>,
     router: tokio::sync::Mutex<Option<Arc<companion::Router>>>,
+    declared: registry::Registry<Publication>,
 }
 
 type GuestClose = (capsem_proto::router::FlowKey, capsem_proto::router::CloseReport);
@@ -129,6 +131,7 @@ impl Publisher {
             cancellation: CancellationToken::new(),
             drain: tokio::sync::Mutex::new(()),
             router: tokio::sync::Mutex::new(None),
+            declared: registry::Registry::default(),
             budgets,
         })
     }
@@ -408,6 +411,37 @@ impl Publisher {
 }
 
 impl Publisher {
+    /// The owner's live publications, in host port order.
+    pub fn publications(&self) -> Vec<capsem_proto::ipc::PublicationInfo> {
+        self.declared.list(|entry| capsem_proto::ipc::PublicationInfo {
+            host_port: entry.host_port,
+            guest_port: entry.guest_port,
+            target: entry.target,
+            router_pid: entry.handle.router_pid,
+        })
+    }
+
+    fn declare(
+        &self,
+        guest_port: u16,
+        target: capsem_proto::PublicationTarget,
+        publication: Publication,
+    ) -> capsem_proto::ipc::PublicationInfo {
+        let info = capsem_proto::ipc::PublicationInfo {
+            host_port: publication.host_port,
+            guest_port,
+            target,
+            router_pid: publication.router_pid,
+        };
+        self.declared.insert(registry::Declared {
+            host_port: info.host_port,
+            guest_port,
+            target,
+            handle: publication,
+        });
+        info
+    }
+
     pub fn generation(&self) -> NonZeroU64 {
         self.generation
     }

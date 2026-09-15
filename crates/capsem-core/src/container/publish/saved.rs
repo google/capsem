@@ -1,6 +1,6 @@
 //! Host-only listener intent; guest workspace and fork snapshots carry no ports.
 use super::*;
-use capsem_proto::PublicationTarget;
+use capsem_proto::{ipc::PublicationInfo, PublicationTarget};
 use std::path::{Path, PathBuf};
 
 /// One declared listener. Records written before targets existed are the
@@ -37,6 +37,19 @@ fn read(path: &Path) -> Result<Vec<SavedPublication>> {
     Ok(ports)
 }
 
+/// Drop `host` from the saved record so a revoked publication does not come
+/// back when the owner restores. Returns whether it was saved.
+fn forget(path: &Path, host: u16) -> Result<bool> {
+    let mut ports = read(path)?;
+    let before = ports.len();
+    ports.retain(|port| port.host != host);
+    if ports.len() == before {
+        return Ok(false);
+    }
+    capsem_foundation::unix::fs::atomic_write_private(path, &serde_json::to_vec(&ports)?)?;
+    Ok(true)
+}
+
 impl Publisher {
     pub fn for_session(session_dir: &Path, budgets: capsem_config::router::RouterConfig) -> Result<Self> {
         let mut publisher = Self::configured(budgets)?;
@@ -47,31 +60,34 @@ impl Publisher {
         Ok(publisher)
     }
 
-    pub async fn restore(self: &Arc<Self>, control: mpsc::Sender<ServiceToProcess>) -> Result<Vec<Publication>> {
+    /// Re-open every saved publication; returns how many were restored.
+    pub async fn restore(self: &Arc<Self>, control: mpsc::Sender<ServiceToProcess>) -> Result<usize> {
         let Some(saved) = &self.saved else {
-            return Ok(Vec::new());
+            return Ok(0);
         };
         let path = saved.path.clone();
         let ports = tokio::task::spawn_blocking(move || read(&path)).await??;
-        let mut publications = Vec::new();
+        let restored = ports.len();
         for port in ports {
-            publications.push(
-                self.publish(port.host, port.guest, port.target, control.clone())
-                    .await?,
-            );
+            let publication = self
+                .publish(port.host, port.guest, port.target, control.clone())
+                .await?;
+            self.declare(port.guest, port.target, publication);
         }
-        Ok(publications)
+        Ok(restored)
     }
 
+    /// Publish, declare and save a publication so the owner restores it.
     pub async fn publish_saved(
         self: &Arc<Self>,
         host: u16,
         guest: u16,
         target: PublicationTarget,
         control: mpsc::Sender<ServiceToProcess>,
-    ) -> Result<Publication> {
+    ) -> Result<PublicationInfo> {
         let Some(saved) = &self.saved else {
-            return self.publish(host, guest, target, control).await;
+            let publication = self.publish(host, guest, target, control).await?;
+            return Ok(self.declare(guest, target, publication));
         };
         let _lock = saved.lock.lock().await;
         let publication = self.publish(host, guest, target, control).await?;
@@ -90,7 +106,19 @@ impl Publisher {
             Ok::<_, anyhow::Error>(())
         })
         .await??;
-        Ok(publication)
+        Ok(self.declare(guest, target, publication))
+    }
+
+    /// Close a declared publication and forget its saved record.
+    pub async fn revoke(&self, host: u16) -> Result<bool> {
+        let declared = self.declared.remove(host).is_some();
+        let Some(saved) = &self.saved else {
+            return Ok(declared);
+        };
+        let _lock = saved.lock.lock().await;
+        let path = saved.path.clone();
+        let forgotten = tokio::task::spawn_blocking(move || forget(&path, host)).await??;
+        Ok(declared || forgotten)
     }
 }
 

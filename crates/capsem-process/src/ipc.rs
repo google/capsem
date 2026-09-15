@@ -295,18 +295,12 @@ pub(crate) async fn handle_ipc_connection(
                         .publish_saved(host_port, guest_port, target, control)
                         .await
                     {
-                        Ok(publication) => {
-                            let response = ProcessToService::PortPublished {
-                                id,
-                                host_port: publication.host_port,
-                                router_pid: publication.router_pid,
-                                error: None,
-                            };
-                            let mut publications = jobs.publications.lock().unwrap();
-                            publications.retain(|p| !p.is_finished());
-                            publications.push(publication);
-                            response
-                        }
+                        Ok(publication) => ProcessToService::PortPublished {
+                            id,
+                            host_port: publication.host_port,
+                            router_pid: publication.router_pid,
+                            error: None,
+                        },
                         Err(error) => ProcessToService::PortPublished {
                             id,
                             host_port: 0,
@@ -316,6 +310,33 @@ pub(crate) async fn handle_ipc_connection(
                     };
                     capsem_core::try_send!("publication_result", output.send(response).await);
                 });
+            }
+            ServiceToProcess::RevokePort { id, host_port } => {
+                let jobs = job_store.clone();
+                let output = ipc_tx_out.clone();
+                tokio::spawn(async move {
+                    let response = match jobs.publisher.revoke(host_port).await {
+                        Ok(revoked) => ProcessToService::PortRevoked {
+                            id,
+                            revoked,
+                            error: None,
+                        },
+                        Err(error) => ProcessToService::PortRevoked {
+                            id,
+                            revoked: false,
+                            error: Some(format!("{error:#}")),
+                        },
+                    };
+                    capsem_core::try_send!("publication_revoke_result", output.send(response).await);
+                });
+            }
+            ServiceToProcess::ListPublications { id } => {
+                let response = ProcessToService::PublicationList {
+                    id,
+                    generation: job_store.publisher.generation().get(),
+                    publications: job_store.publisher.publications(),
+                };
+                capsem_core::try_send!("publication_list_result", ipc_tx_out.send(response).await);
             }
             ServiceToProcess::ConnectPort { .. }
             | ServiceToProcess::AbortPorts { .. }
@@ -920,7 +941,9 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::TerminalInput { .. } => IpcAction::Forward,
         ServiceToProcess::TerminalResize { .. } => IpcAction::Forward,
         ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => IpcAction::Job,
-        ServiceToProcess::PublishPort { .. } => IpcAction::Job,
+        ServiceToProcess::PublishPort { .. }
+        | ServiceToProcess::RevokePort { .. }
+        | ServiceToProcess::ListPublications { .. } => IpcAction::Job,
         ServiceToProcess::ConnectPort { .. }
         | ServiceToProcess::AbortPorts { .. }
         | ServiceToProcess::PlugCable { .. }

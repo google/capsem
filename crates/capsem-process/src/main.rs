@@ -454,7 +454,7 @@ async fn run_async_main_loop(
         .restore(ctrl_tx.clone())
         .await
         .context("restore published ports")?;
-    *job_store.publications.lock().unwrap() = restored;
+    info!(restored, "restored published ports");
     let model_trace_state = Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new()));
 
     // Start host file monitor to record fs_events.

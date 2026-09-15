@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use super::*;
+
+mod publications;
 use capsem_proto::mcp_aggregator::{AggregatorClient, AggregatorResponse, AggregatorResult, AggregatorServerStatus};
 use capsem_proto::mcp_contracts::McpToolDef;
 use tokio::io::AsyncWriteExt;

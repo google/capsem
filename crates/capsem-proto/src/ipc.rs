@@ -83,6 +83,10 @@ pub enum ServiceToProcess {
         guest_port: u16,
         target: crate::PublicationTarget,
     },
+    /// Close a declared publication and forget it across owner restarts.
+    RevokePort { id: u64, host_port: u16 },
+    /// The owner's live publications and its generation.
+    ListPublications { id: u64 },
     /// Internal VM-owner request for one declared publication data stream.
     ConnectPort {
         flow: crate::router::FlowKey,
@@ -208,6 +212,18 @@ pub enum ProcessToService {
     },
     /// Response to LinkDetach.
     LinkDetachResult { id: u64, error: Option<String> },
+    /// Response to RevokePort: whether the port was declared.
+    PortRevoked {
+        id: u64,
+        revoked: bool,
+        error: Option<String>,
+    },
+    /// Response to ListPublications.
+    PublicationList {
+        id: u64,
+        generation: u64,
+        publications: Vec<PublicationInfo>,
+    },
 }
 
 impl ServiceToProcess {
@@ -228,6 +244,8 @@ impl ServiceToProcess {
             | Self::SnapshotStatus { id }
             | Self::McpCallTool { id, .. }
             | Self::PublishPort { id, .. }
+            | Self::RevokePort { id, .. }
+            | Self::ListPublications { id }
             | Self::LinkAttach { id, .. }
             | Self::LinkDetach { id, .. } => Some(*id),
             _ => None,
@@ -253,6 +271,8 @@ impl ProcessToService {
             | Self::SnapshotStatusResult { id, .. }
             | Self::McpCallToolResult { id, .. }
             | Self::PortPublished { id, .. }
+            | Self::PortRevoked { id, .. }
+            | Self::PublicationList { id, .. }
             | Self::LinkAttachResult { id, .. }
             | Self::LinkDetachResult { id, .. } => Some(*id),
             _ => None,
@@ -270,6 +290,15 @@ pub struct McpServerStatus {
     pub is_stdio: bool,
     pub connected: bool,
     pub tool_count: usize,
+}
+
+/// One live publication as its VM owner declares it.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublicationInfo {
+    pub host_port: u16,
+    pub guest_port: u16,
+    pub target: crate::PublicationTarget,
+    pub router_pid: u32,
 }
 
 /// Status of an MCP tool as reported through IPC.
