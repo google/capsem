@@ -313,11 +313,13 @@ pub(crate) async fn handle_ipc_connection(
                             host_port: publication.host_port,
                             router_pid: publication.router_pid,
                             error: None,
+                            policy_refused: false,
                         },
                         Err(error) => ProcessToService::PortPublished {
                             id,
                             host_port: 0,
                             router_pid: 0,
+                            policy_refused: error.is::<capsem_core::container::publish::ExposureRefused>(),
                             error: Some(format!("{error:#}")),
                         },
                     };

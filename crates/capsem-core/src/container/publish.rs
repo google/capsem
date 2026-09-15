@@ -25,7 +25,7 @@ mod companion;
 mod registry;
 mod saved;
 mod security;
-pub use security::AuditFlow;
+pub use security::{AuditFlow, ExposureRefused};
 
 pub struct Publisher {
     security: Option<Arc<security::Authority>>,
@@ -140,6 +140,8 @@ impl Publisher {
 pub struct Publication {
     pub host_port: u16,
     pub router_pid: u32,
+    /// The identity its admission, connections and revocation are audited under.
+    pub publication_id: uuid::Uuid,
     task: tokio::task::AbortHandle,
     cancellation: CancellationToken,
 }
@@ -242,6 +244,8 @@ impl Publisher {
         Ok(tasks.spawn(task))
     }
 
+    /// Open a loopback listener for `guest_port` once the VM's rules admit
+    /// the exposure. A refused exposure accepts no connection.
     pub async fn publish(
         self: &Arc<Self>,
         host_port: u16,
@@ -249,13 +253,31 @@ impl Publisher {
         target: capsem_proto::PublicationTarget,
         control: mpsc::Sender<ServiceToProcess>,
     ) -> Result<Publication> {
+        self.open(
+            host_port,
+            guest_port,
+            target,
+            control,
+            crate::security_engine::network::NetworkLifecycleAction::Published,
+        )
+        .await
+    }
+
+    async fn open(
+        self: &Arc<Self>,
+        host_port: u16,
+        guest_port: u16,
+        target: capsem_proto::PublicationTarget,
+        control: mpsc::Sender<ServiceToProcess>,
+        action: crate::security_engine::network::NetworkLifecycleAction,
+    ) -> Result<Publication> {
         let lifecycle = self.drain.lock().await;
         ensure!(!self.cancellation.is_cancelled(), "VM router is shutting down");
         ensure!(
             target.admits(guest_port),
             "guest port {guest_port} cannot be published into the {target:?} namespace"
         );
-        ensure!(self.security.is_some(), "publication security context missing");
+        let authority = self.security.clone().context("publication security context missing")?;
         let permit = self
             .mappings
             .clone()
@@ -263,7 +285,14 @@ impl Publisher {
             .context("VM publication limit reached")?;
         let listener =
             std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, host_port)).context("bind publication listener")?;
-        let host_port = listener.local_addr()?.port();
+        let host_address = listener.local_addr()?;
+        let host_port = host_address.port();
+        // Bound, so the audited listener is the real one, but not accepting:
+        // dropping it on refusal serves nothing.
+        let publication_id = uuid::Uuid::new_v4();
+        authority
+            .admit_exposure(publication_id, host_address, guest_port, target, action)
+            .await?;
         listener.set_nonblocking(true)?;
         let listener = tokio::net::TcpListener::from_std(listener)?;
         let mut current = self.router.lock().await;
@@ -276,7 +305,7 @@ impl Publisher {
         let owner = self.clone();
         let cancellation = self.cancellation.child_token();
         let stop = cancellation.clone();
-        let incoming = self.accept_publication(listener, guest_port, target, stop.clone())?;
+        let incoming = self.accept_publication(listener, publication_id, guest_port, target, stop.clone())?;
         let task = self.spawn(async move {
             let _permit = permit;
             if let Err(error) = broker::serve(owner, incoming, control, router, stop).await {
@@ -287,6 +316,7 @@ impl Publisher {
         Ok(Publication {
             host_port,
             router_pid,
+            publication_id,
             task,
             cancellation,
         })
@@ -463,13 +493,13 @@ impl Publisher {
     pub(super) fn accept_publication(
         self: &Arc<Self>,
         listener: tokio::net::TcpListener,
+        publication_id: uuid::Uuid,
         guest_port: u16,
         target: capsem_proto::PublicationTarget,
         stop: CancellationToken,
     ) -> Result<mpsc::Receiver<Incoming>> {
         let authority = self.security.clone().context("publication security context missing")?;
         let host_address = listener.local_addr()?;
-        let publication_id = uuid::Uuid::new_v4();
         let (feed, incoming) = mpsc::channel(capsem_router::MAX_CONNECTIONS);
         self.spawn(async move {
             loop {

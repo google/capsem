@@ -202,6 +202,8 @@ pub enum ProcessToService {
         host_port: u16,
         router_pid: u32,
         error: Option<String>,
+        /// The VM's rules refused the exposure, rather than it failing to open.
+        policy_refused: bool,
     },
     /// Response to LinkAttach: where the service asks for the stream, or
     /// why this owner will not link.

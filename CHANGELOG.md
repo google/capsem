@@ -237,6 +237,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Opening a port exposure is now a `network.lifecycle` event the VM owner
+  evaluates against the VM's current rules before its listener accepts
+  anything, with the audit row admitted first: a block, an ask, or an audit
+  that cannot be written refuses the exposure (HTTP 403 for a policy refusal).
+  Saved exposures the rules now refuse are forgotten on restore, and revoking
+  records the close. Rules read the new `network.action` and `network.target`
+  fields; `network.action != "revoked"` keeps an exposure from existing.
+
 - rustls moves to 0.23.45 for RUSTSEC-2026-0285: TLS 1.3 handshake messages
   were accepted across encryption level boundaries on the host's TLS paths.
 

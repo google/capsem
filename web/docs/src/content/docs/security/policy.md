@@ -293,7 +293,7 @@ at all -- `has(http.valid)`, not `has(http)`.
 |---|---|
 | `http` | `http.valid`, `http.host`, `http.method`, `http.path`, `http.query`, `http.status`, `http.body` |
 | `dns` | `dns.valid`, `dns.qname`, `dns.qtype` |
-| `network` | `network.valid`, `network.id`, `network.name`, `network.mode`, `network.side`, `network.protocol`, `network.publication.id`, `network.source.vm_id`, `network.source.vm_name`, `network.source.generation`, `network.source.ip`, `network.source.port`, `network.destination.vm_id`, `network.destination.vm_name`, `network.destination.generation`, `network.destination.ip`, `network.destination.port` |
+| `network` | `network.valid`, `network.id`, `network.name`, `network.mode`, `network.action`, `network.target`, `network.side`, `network.protocol`, `network.publication.id`, `network.source.vm_id`, `network.source.vm_name`, `network.source.generation`, `network.source.ip`, `network.source.port`, `network.destination.vm_id`, `network.destination.vm_name`, `network.destination.generation`, `network.destination.ip`, `network.destination.port` |
 | `mcp` | `mcp.valid`, `mcp.method`, `mcp.server.valid`, `mcp.server.name`, `mcp.tool_call.valid`, `mcp.tool_call.name`, `mcp.tool_list.valid`, `mcp.tool_list`, `mcp.request.valid`, `mcp.request.id`, `mcp.request.method`, `mcp.request.arguments`, `mcp.response.valid`, `mcp.response.content`, `mcp.event.valid` |
 | `model` | `model.valid`, `model.provider`, `model.name`, `model.request.valid`, `model.request.body`, `model.request.tool_calls`, `model.response.valid`, `model.response.body`, `model.tool_call.valid` |
 | `file` | `file.valid`, `file.content` |
@@ -324,6 +324,30 @@ VM identity. Connection and synthetic probe authorization require complete
 facts and an explicit allow rule. Missing facts are errors. Counters, close
 reasons, connection IDs, and decision state are audit data and cannot be read
 by rules. Expose records also include the actual loopback listener address.
+
+Opening an exposure is itself a `network.lifecycle` event, evaluated on the VM
+owner against the VM's current rules and plugins before its listener accepts
+anything, and recorded in the session ledger first: if that row cannot be
+written the exposure is refused. Its facts are `network.mode == "expose"`,
+`network.action` (`published` on request, `restored` when a saved exposure
+reopens after the owner starts again, `revoked` when it is closed),
+`network.target` (`container` or `vm`), `network.publication.id`, the loopback
+listener as `network.source.ip`/`network.source.port`, and the guest endpoint as
+`network.destination.*`. It carries no `network.side` or `network.protocol`, so
+connection rules never match it, and with no matching rule it is allowed. A
+block or ask refuses it, since an exposure change has no one to approve it; a
+saved exposure the rules now refuse is forgotten rather than reopened. Revoking
+always closes the listener and is recorded afterwards. To keep an exposure
+from existing, match `network.action != "revoked"`:
+
+```toml
+[profiles.rules.no_published_ssh]
+name = "no_published_ssh"
+action = "block"
+match = 'network.action != "revoked" && network.destination.port == "22"'
+```
+
+Lifecycle events for named networks also carry `network.action`.
 
 Published TCP ports evaluate the destination VM's current rules and plugins
 before requesting any guest connection. Both profiles have a visible default

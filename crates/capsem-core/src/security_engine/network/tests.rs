@@ -319,3 +319,122 @@ fn untrusted_or_missing_endpoint_facts_fail_validation() {
             .is_err());
     }
 }
+
+pub(crate) fn exposure(action: NetworkLifecycleAction, guest_port: u16) -> NetworkSecurityEvent {
+    NetworkSecurityEvent::Exposure(NetworkExposure {
+        publication_id: Uuid::from_u128(5),
+        target: capsem_proto::PublicationTarget::Container,
+        action,
+        listener: "127.0.0.1:41000".parse().unwrap(),
+        destination: NetworkEndpoint {
+            vm: Some(NetworkVm {
+                id: "vm-id".into(),
+                name: "redis".into(),
+                generation: NonZeroU64::new(3).unwrap(),
+            }),
+            address: (std::net::Ipv4Addr::LOCALHOST, guest_port).into(),
+        },
+    })
+}
+
+#[test]
+fn an_exposure_is_a_lifecycle_rules_can_refuse_without_matching_connection_rules() {
+    let lifecycle = |facts| SecurityEvent::new(RuntimeSecurityEventType::NetworkLifecycle).with_network(facts);
+    let policy = rules(concat!(
+        "[profiles.rules.expose]\nname = \"expose\"\naction = \"allow\"\n",
+        "match = 'network.mode == \"expose\" && network.side == \"destination\" && network.protocol == \"tcp\"'\n",
+        "[profiles.rules.no_ssh]\nname = \"no_ssh\"\naction = \"block\"\n",
+        "match = 'network.action == \"published\" && network.target == \"container\" && network.destination.port == \"22\" && network.source.port == \"41000\" && network.destination.vm_name == \"redis\"'\n",
+    ));
+    let allowed = evaluate_security_boundary(
+        &policy,
+        BTreeMap::new(),
+        lifecycle(exposure(NetworkLifecycleAction::Published, 6379)),
+    )
+    .unwrap();
+    assert_eq!(
+        allowed.enforcement.action,
+        SecurityEnforcementAction::Allow,
+        "an unmatched lifecycle is allowed: the default connection rule needs a side and protocol"
+    );
+    let blocked = evaluate_security_boundary(
+        &policy,
+        BTreeMap::new(),
+        lifecycle(exposure(NetworkLifecycleAction::Published, 22)),
+    )
+    .unwrap();
+    assert_eq!(blocked.enforcement.action, SecurityEnforcementAction::Block);
+    let revoked = evaluate_security_boundary(
+        &policy,
+        BTreeMap::new(),
+        lifecycle(exposure(NetworkLifecycleAction::Revoked, 22)),
+    )
+    .unwrap();
+    assert_eq!(revoked.enforcement.action, SecurityEnforcementAction::Allow);
+}
+
+#[test]
+fn exposure_facts_cannot_be_mislabeled_or_incomplete() {
+    let check = |kind, facts: NetworkSecurityEvent| SecurityEvent::new(kind).with_network(facts);
+    let policy = rules("");
+    let reject = |event| assert!(evaluate_security_boundary(&policy, BTreeMap::new(), event).is_err());
+    reject(check(
+        RuntimeSecurityEventType::NetworkConnect,
+        exposure(NetworkLifecycleAction::Published, 6379),
+    ));
+    reject(check(
+        RuntimeSecurityEventType::NetworkLifecycle,
+        exposure(NetworkLifecycleAction::Created, 6379),
+    ));
+    reject(check(
+        RuntimeSecurityEventType::NetworkLifecycle,
+        exposure(NetworkLifecycleAction::Published, 0),
+    ));
+    let NetworkSecurityEvent::Exposure(mut remote) = exposure(NetworkLifecycleAction::Published, 6379) else {
+        unreachable!()
+    };
+    remote.listener = "0.0.0.0:41000".parse().unwrap();
+    reject(check(
+        RuntimeSecurityEventType::NetworkLifecycle,
+        NetworkSecurityEvent::Exposure(remote),
+    ));
+    let NetworkSecurityEvent::Exposure(mut service_port) = exposure(NetworkLifecycleAction::Published, 10443) else {
+        unreachable!()
+    };
+    service_port.target = capsem_proto::PublicationTarget::Vm;
+    reject(check(
+        RuntimeSecurityEventType::NetworkLifecycle,
+        NetworkSecurityEvent::Exposure(service_port),
+    ));
+    reject(check(
+        RuntimeSecurityEventType::NetworkLifecycle,
+        NetworkSecurityEvent::Lifecycle {
+            network: NetworkIdentity {
+                id: Uuid::from_u128(2),
+                name: "eval".into(),
+            },
+            vm: None,
+            action: NetworkLifecycleAction::Published,
+        },
+    ));
+}
+
+#[tokio::test]
+async fn an_exposure_row_is_recorded_without_a_network_or_connection() {
+    let security = ledger::NetworkSecurity {
+        db: std::sync::Arc::new(capsem_logger::DbWriter::open_in_memory(8).unwrap()),
+        rules: std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(rules("")))),
+        plugins: std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(BTreeMap::new()))),
+    };
+    let event = SecurityEvent::new(RuntimeSecurityEventType::NetworkLifecycle)
+        .with_network(exposure(NetworkLifecycleAction::Restored, 6379));
+    let decision = security.evaluate_and_record(event).await.unwrap();
+    assert_eq!(decision.action, SecurityEnforcementAction::Allow);
+    security.db.shutdown_blocking();
+    let closed = SecurityEvent::new(RuntimeSecurityEventType::NetworkLifecycle)
+        .with_network(exposure(NetworkLifecycleAction::Published, 6379));
+    assert!(
+        security.evaluate_and_record(closed).await.is_err(),
+        "an exposure whose audit cannot be admitted is refused"
+    );
+}

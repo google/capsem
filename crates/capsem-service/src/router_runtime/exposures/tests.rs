@@ -35,6 +35,7 @@ async fn create_relays_the_target_to_the_owner_and_returns_the_bound_port() {
                 host_port: 49152,
                 router_pid: 7,
                 error: None,
+                policy_refused: false,
             }),
             other => panic!("unexpected owner request: {other:?}"),
         };
@@ -82,6 +83,7 @@ async fn owner_refusal_is_a_conflict_carrying_its_reason() {
             host_port: 0,
             router_pid: 0,
             error: Some("VM publication limit reached".into()),
+            policy_refused: false,
         };
         Box::pin(async move { Some(reply) })
     });
@@ -95,6 +97,34 @@ async fn owner_refusal_is_a_conflict_carrying_its_reason() {
     owner.await.unwrap();
     assert_eq!(status, StatusCode::CONFLICT);
     assert!(body.to_string().contains("VM publication limit reached"), "{body}");
+}
+
+#[tokio::test]
+async fn a_policy_refusal_is_forbidden_carrying_its_reason() {
+    let (state, uds_path, _dir) = fixture();
+    let owner = spawn_fake_process(&uds_path, 1, |message| {
+        let ServiceToProcess::PublishPort { id, .. } = message else {
+            panic!("unexpected {message:?}")
+        };
+        let reply = ProcessToService::PortPublished {
+            id: *id,
+            host_port: 0,
+            router_pid: 0,
+            error: Some("exposure of guest port 22 is blocked by policy".into()),
+            policy_refused: true,
+        };
+        Box::pin(async move { Some(reply) })
+    });
+    let (status, body) = call(
+        &state,
+        axum::http::Method::POST,
+        "/vms/box/exposures",
+        Some(json!({"guest_port": 22})),
+    )
+    .await;
+    owner.await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(body.to_string().contains("blocked by policy"), "{body}");
 }
 
 #[tokio::test]

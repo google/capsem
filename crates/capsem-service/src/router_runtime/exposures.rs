@@ -68,6 +68,11 @@ pub(crate) async fn handle_create_exposure(
         ProcessToService::PortPublished {
             host_port, error: None, ..
         } => Ok(Json(ExposureInfo::new(host_port, request.guest_port, request.target))),
+        ProcessToService::PortPublished {
+            error: Some(error),
+            policy_refused: true,
+            ..
+        } => Err(AppError(StatusCode::FORBIDDEN, error)),
         ProcessToService::PortPublished { error: Some(error), .. } => Err(AppError(StatusCode::CONFLICT, error)),
         other => Err(unexpected(&other)),
     }

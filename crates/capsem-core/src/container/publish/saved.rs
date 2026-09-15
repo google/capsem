@@ -67,12 +67,31 @@ impl Publisher {
         };
         let path = saved.path.clone();
         let ports = tokio::task::spawn_blocking(move || read(&path)).await??;
-        let restored = ports.len();
+        let mut restored = 0;
         for port in ports {
-            let publication = self
-                .publish(port.host, port.guest, port.target, control.clone())
-                .await?;
-            self.declare(port.guest, port.target, publication);
+            let reopened = self
+                .open(
+                    port.host,
+                    port.guest,
+                    port.target,
+                    control.clone(),
+                    crate::security_engine::network::NetworkLifecycleAction::Restored,
+                )
+                .await;
+            match reopened {
+                Ok(publication) => {
+                    self.declare(port.guest, port.target, publication);
+                    restored += 1;
+                }
+                // The rules changed since it was published: forget it rather
+                // than retry a refusal on every start.
+                Err(error) if error.is::<super::security::ExposureRefused>() => {
+                    tracing::warn!(%error, host_port = port.host, "saved exposure refused on restore");
+                    let path = saved.path.clone();
+                    tokio::task::spawn_blocking(move || forget(&path, port.host)).await??;
+                }
+                Err(error) => return Err(error),
+            }
         }
         Ok(restored)
     }
@@ -111,7 +130,18 @@ impl Publisher {
 
     /// Close a declared publication and forget its saved record.
     pub async fn revoke(&self, host: u16) -> Result<bool> {
-        let declared = self.declared.remove(host).is_some();
+        // Closed first: the listener does not wait on its audit row.
+        let declared = match self.declared.remove(host) {
+            Some(entry) => {
+                let (publication_id, guest, target) = (entry.handle.publication_id, entry.guest_port, entry.target);
+                drop(entry);
+                if let Err(error) = self.audit_revoked(publication_id, host, guest, target).await {
+                    tracing::warn!(%error, host_port = host, "exposure revocation audit was not admitted");
+                }
+                true
+            }
+            None => false,
+        };
         let Some(saved) = &self.saved else {
             return Ok(declared);
         };
