@@ -82,6 +82,26 @@ def test_sealed_linux_frontend_builds_the_current_sdk_first() -> None:
     assert "\n    capsem-mcp\n" not in runner, RATIONALE
 
 
+def test_release_package_builds_the_current_sdk_before_the_frontend() -> None:
+    script = (ROOT / CONFIG.package.build_script).read_text()
+    dockerfile = (ROOT / CONFIG.package.builder.dockerfile).read_text()
+
+    sdk_install = "pnpm --dir sdk/typescript install --offline --frozen-lockfile"
+    sdk_build = "pnpm --dir sdk/typescript run build"
+    frontend_install = "pnpm --dir web/app install --offline --frozen-lockfile"
+    frontend_build = "check-web-surface.sh frontend-build"
+
+    assert sdk_install in script and script.index(sdk_install) < script.index(sdk_build), RATIONALE
+    assert sdk_build in script and script.index(sdk_build) < script.index(frontend_build), RATIONALE
+    assert frontend_install in script and script.index(frontend_install) < script.index(frontend_build), RATIONALE
+    assert "COPY sdk/typescript/package.json sdk/typescript/pnpm-lock.yaml" in dockerfile, RATIONALE
+    assert "cd sdk/typescript && pnpm fetch --frozen-lockfile" in dockerfile, RATIONALE
+    for path in ("sdk/typescript/package.json", "sdk/typescript/pnpm-lock.yaml"):
+        assert path in CONFIG.package.builder.identity_inputs, RATIONALE
+    for path in ("sdk/typescript/node_modules", "sdk/typescript/dist"):
+        assert path in CONFIG.package.writable_paths, RATIONALE
+
+
 def test_npm_mcp_waits_for_the_linked_sdk_build() -> None:
     plan = gate_plan("test-fast")
     for consumer in ("fast.mcp.typescript.tests", "fast.mcp.typescript.build"):

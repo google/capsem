@@ -51,8 +51,11 @@ if ! rustup target list --toolchain "$RUST_TOOLCHAIN" --installed \
 fi
 
 echo "--- Build frontend ---"
-(cd web/app && CI=true pnpm install --offline --frozen-lockfile \
-    --store-dir "$CAPSEM_PNPM_STORE")
+CI=true pnpm --dir sdk/typescript install --offline --frozen-lockfile \
+    --store-dir "$CAPSEM_PNPM_STORE"
+CI=true pnpm --dir web/app install --offline --frozen-lockfile \
+    --store-dir "$CAPSEM_PNPM_STORE"
+pnpm --dir sdk/typescript run build
 bash build_system/scripts/web/check-web-surface.sh frontend-build
 
 echo "--- Build agent binaries ---"

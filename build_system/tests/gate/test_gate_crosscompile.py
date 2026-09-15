@@ -511,7 +511,12 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert 'grep -F "$RUST_TOOLCHAIN-"' in script
     assert "swap-dev-libs" not in script
     assert "apt-get" not in script
-    assert "pnpm install --offline --frozen-lockfile" in script
+    assert script.count("install --offline --frozen-lockfile") == 2
+    assert "pnpm --dir sdk/typescript install --offline --frozen-lockfile" in script
+    assert "pnpm --dir web/app install --offline --frozen-lockfile" in script
+    assert script.index("pnpm --dir sdk/typescript run build") < script.index(
+        "check-web-surface.sh frontend-build"
+    )
     assert script.count("cargo build --release --locked --offline") == 2
     assert "cargo tauri build" in script
     assert "--locked --offline" in script
