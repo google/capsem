@@ -14,17 +14,6 @@ pub const ETHERNET_HEADER_BYTES: usize = 14;
 /// which is also the largest MTU Linux gives a tap device.
 pub const LINK_MTU: usize = u16::MAX as usize - ETHERNET_HEADER_BYTES;
 
-/// The socket queues of a cable's stream, at both the guest pump and the
-/// switch: room for a burst of full frames (32 of them, a few milliseconds
-/// at 10 Gb/s), so a hop wakes per batch rather than per frame. Not the
-/// published-port size, whose small queues exist to push back on one TCP
-/// flow.
-pub const CABLE_SOCKET_BUFFER_BYTES: usize = 2 * 1024 * 1024;
-// At least a burst of full records, and a bounded amount of kernel memory
-// per port: checked where the value is, when it is compiled.
-const _: () =
-    assert!(CABLE_SOCKET_BUFFER_BYTES >= 16 * (u16::MAX as usize + 2) && CABLE_SOCKET_BUFFER_BYTES <= 8 * 1024 * 1024);
-
 /// The MAC of the member at `address`: locally administered, unicast, and
 /// nothing but the address, so it never has to be exchanged.
 pub const fn mac_of(address: Ipv4Addr) -> [u8; 6] {
