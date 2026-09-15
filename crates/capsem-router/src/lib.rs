@@ -239,7 +239,7 @@ impl Stream {
     fn new(socket: OwnedFd) -> io::Result<Self> {
         let tcp = fd::tcp_reset_on_close(socket.as_fd())?;
         Ok(Self {
-            socket: adopt(socket)?,
+            socket: adopt(socket, router_stream::SOCKET_BUFFER_SIZE)?,
             graceful: false,
             tcp,
         })
@@ -247,9 +247,10 @@ impl Stream {
 }
 
 /// A granted connected stream, checked and sized, as a tokio socket.
-fn adopt(socket: OwnedFd) -> io::Result<UnixStream> {
+/// Take a granted stream, with kernel queues of `buffer_bytes` each way.
+fn adopt(socket: OwnedFd, buffer_bytes: usize) -> io::Result<UnixStream> {
     fd::validate_connected_stream(socket.as_fd())?;
-    fd::set_stream_buffers(socket.as_fd(), router_stream::SOCKET_BUFFER_SIZE)?;
+    fd::set_stream_buffers(socket.as_fd(), buffer_bytes)?;
     fd::set_nonblocking(socket.as_fd(), true)?;
     UnixStream::from_std(std::os::unix::net::UnixStream::from(socket))
 }

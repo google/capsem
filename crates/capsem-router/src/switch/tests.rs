@@ -188,6 +188,31 @@ fn a_port_id_carries_its_generation_and_address() {
 }
 
 #[tokio::test]
+async fn a_plugged_cable_queues_a_burst_of_frames_not_one() {
+    // The publication size, 64 KiB, holds one full cable frame: every frame
+    // then costs a wake-up on the switch, which sat at 68% of a core.
+    let mut switch = Switch::start(64).await;
+    let (switch_end, _guest_end) = StdUnixStream::pair().unwrap();
+    let inspected = switch_end.try_clone().unwrap();
+    let port = port_id(1, A);
+    send_grant(
+        &switch.sender,
+        Grant::Plug {
+            port,
+            socket: switch_end.as_fd(),
+        },
+    )
+    .await
+    .unwrap();
+    switch.granted.insert(port, switch_end);
+    assert_eq!(switch.event().await, Event::Accepted(port));
+    let (send, receive) = capsem_foundation::unix::fd::stream_buffer_sizes(inspected.as_fd()).unwrap();
+    let cable = capsem_proto::privatelink::CABLE_SOCKET_BUFFER_BYTES;
+    assert!(send >= cable && receive >= cable, "send {send}, receive {receive}");
+    switch.stop().await;
+}
+
+#[tokio::test]
 async fn tcp_crosses_and_an_arp_broadcast_floods_to_every_other_port() {
     let mut switch = Switch::start(64).await;
     let (_, mut a) = switch.plugged(1, A).await;
