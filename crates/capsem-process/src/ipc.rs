@@ -50,7 +50,7 @@ const GUEST_FILE_WRITE_MODE: u32 = 0o644;
 /// Negotiate the synchronous Hello side-channel away from Tokio's worker
 /// threads, then hand the verified socket to the typed async IPC transport.
 /// A peer mismatch is a refused connection, not a process-fatal error.
-async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<ProcessIpcChannel>> {
+async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<(ProcessIpcChannel, bool)>> {
     let std_stream = stream.into_std()?;
     let traceparent = capsem_foundation::telemetry::current_parent_traceparent();
     let (std_stream, handshake) = tokio::task::spawn_blocking(move || {
@@ -62,15 +62,18 @@ async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<Proce
     .await
     .context("join IPC handshake task")?;
 
-    match handshake {
-        Ok(peer) => info!(target: "ipc", peer = %peer.peer, "IPC handshake ok"),
+    let stream_role = match handshake {
+        Ok(peer) => {
+            info!(target: "ipc", peer = %peer.peer, "IPC handshake ok");
+            peer.peer == capsem_proto::handshake::STREAM_PEER_ID
+        }
         Err(error) => {
             error!(target: "ipc", %error, "IPC handshake failed; refusing connection");
             return Ok(None);
         }
-    }
+    };
 
-    Ok(Some(channel_from_std(std_stream)?))
+    Ok(Some((channel_from_std(std_stream)?, stream_role)))
 }
 
 async fn await_exec_result(j_rx: oneshot::Receiver<JobResult>) -> Result<JobResult, String> {
@@ -129,7 +132,7 @@ pub(crate) async fn handle_ipc_connection(
     // First frame on every IPC connection is a Hello -- detect cross-version
     // mixes (capsem-service built before X, capsem-process built after) in
     // ~1s with a structured log line instead of a 30s silent timeout.
-    let Some((tx, rx)) = open_ipc_channel(stream).await? else {
+    let Some(((tx, rx), stream_role)) = open_ipc_channel(stream).await? else {
         return Ok(());
     };
 
@@ -152,7 +155,8 @@ pub(crate) async fn handle_ipc_connection(
     // is high-volume and still opt-in via StartTerminalStream. Without this,
     // a suspend-only connection never sees StateChanged { state: "Suspended" }
     // and the service times out waiting for confirmation.
-    {
+    // A stream-role connection carries one stream and nothing else.
+    if !stream_role {
         let out_tx = ipc_tx_out.clone();
         let mut rx_bcast = ipc_tx.subscribe();
         connection_tasks.spawn(async move {
@@ -229,12 +233,21 @@ pub(crate) async fn handle_ipc_connection(
                             return;
                         }
                     }
-                    while let Ok(data) = term_rx.recv().await {
-                        warn_if_ipc_shaped(&data);
-                        if out_tx.send(ProcessToService::TerminalOutput { data }).await.is_err() {
-                            break;
+                    let reason = loop {
+                        match term_rx.recv().await {
+                            Ok(data) => {
+                                warn_if_ipc_shaped(&data);
+                                if out_tx.send(ProcessToService::TerminalOutput { data }).await.is_err() {
+                                    return;
+                                }
+                            }
+                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                                break format!("terminal output fell behind by {skipped} chunks");
+                            }
+                            Err(broadcast::error::RecvError::Closed) => break "terminal closed".to_string(),
                         }
-                    }
+                    };
+                    let _ = out_tx.send(ProcessToService::TerminalStreamEnded { reason }).await;
                 });
                 stream_task = Some(h);
             }

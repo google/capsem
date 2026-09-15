@@ -224,6 +224,9 @@ pub enum ProcessToService {
         generation: u64,
         publications: Vec<PublicationInfo>,
     },
+    /// The terminal stream on this connection stopped; no more TerminalOutput
+    /// follows. Sent instead of going silent when the client fell behind.
+    TerminalStreamEnded { reason: String },
 }
 
 impl ServiceToProcess {

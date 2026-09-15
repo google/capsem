@@ -10,6 +10,10 @@
 /// ceiling to before the allocation instead of after it.
 pub(super) const MAX_EXEC_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
 
+/// Output kept for the exec ledger row's preview. A streamed exec delivers its
+/// output to the client, so this is all it retains.
+pub(super) const EXEC_LEDGER_PREVIEW_BYTES: usize = 1024;
+
 /// Drain one exec-output stream through EOF, retaining at most
 /// [`MAX_EXEC_OUTPUT_BYTES`].
 ///
@@ -22,13 +26,14 @@ pub(super) const MAX_EXEC_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
 /// treating it as completion publishes an empty/partial buffer before the
 /// guest's `ExecDone`, while still returning the child's successful exit code.
 pub(super) fn read_exec_output(reader: &mut impl std::io::Read) -> (Vec<u8>, u64) {
-    read_output(reader, |_: &[u8]| Ok(()), false).expect("capture has no fallible forwarding")
+    read_output(reader, |_: &[u8]| Ok(()), false, MAX_EXEC_OUTPUT_BYTES).expect("capture has no fallible forwarding")
 }
 
 fn read_output(
     reader: &mut impl std::io::Read,
     mut forward: impl FnMut(&[u8]) -> std::io::Result<()>,
     strict: bool,
+    retain: usize,
 ) -> std::io::Result<(Vec<u8>, u64)> {
     let mut output = Vec::new();
     let mut total_seen: u64 = 0;
@@ -39,7 +44,7 @@ fn read_output(
             Ok(n) => {
                 forward(&read_buf[..n])?;
                 total_seen = total_seen.saturating_add(n as u64);
-                let room = MAX_EXEC_OUTPUT_BYTES.saturating_sub(output.len());
+                let room = retain.saturating_sub(output.len());
                 if room > 0 {
                     output.extend_from_slice(&read_buf[..n.min(room)]);
                 }
@@ -69,11 +74,13 @@ pub(super) fn stream_exec_output(
                     })
                     .is_ok();
             }
-            // A detached client owns no guest lifetime. Keep draining with the
-            // same capture bound so logs cannot block or SIGPIPE the workload.
+            // A detached client owns no guest lifetime. Keep draining so logs
+            // cannot block or SIGPIPE the workload. Streamed output already
+            // went to the client; only the ledger preview is retained.
             Ok(())
         },
         true,
+        EXEC_LEDGER_PREVIEW_BYTES,
     )
 }
 

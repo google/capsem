@@ -15,6 +15,11 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Hello `peer` of a connection that carries exactly one stream (terminal or
+/// streaming exec). The VM owner sends such a connection no lifecycle
+/// broadcasts, so nothing interleaves with the stream's own messages.
+pub const STREAM_PEER_ID: &str = "capsem-stream";
+
 /// First message on every typed IPC connection and every vsock control
 /// connection. Sent by the *initiator* (service for IPC, guest for
 /// vsock); the responder replies with its own Hello and both sides

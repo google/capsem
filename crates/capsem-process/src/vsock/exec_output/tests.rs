@@ -13,6 +13,7 @@ fn forwards_binary_output_before_guest_closes_stream() {
             &mut host,
             |data| tx.send(data.to_vec()).map_err(std::io::Error::other),
             true,
+            MAX_EXEC_OUTPUT_BYTES,
         )
     });
     guest.write_all(b"ready\0\xff").unwrap();
@@ -26,7 +27,12 @@ fn forwards_binary_output_before_guest_closes_stream() {
 #[test]
 fn closed_consumer_stops_reading_instead_of_discarding_output() {
     let mut reader = std::io::Cursor::new(vec![42; 100_000]);
-    let result = read_output(&mut reader, |_| Err(std::io::ErrorKind::BrokenPipe.into()), true);
+    let result = read_output(
+        &mut reader,
+        |_| Err(std::io::ErrorKind::BrokenPipe.into()),
+        true,
+        MAX_EXEC_OUTPUT_BYTES,
+    );
     assert_eq!(result.err().unwrap().kind(), std::io::ErrorKind::BrokenPipe);
     assert_eq!(reader.position(), 8192);
 }
@@ -40,7 +46,9 @@ fn stream_read_failure_is_not_successful_eof() {
         }
     }
     assert_eq!(
-        read_output(&mut Broken, |_| Ok(()), true).unwrap_err().kind(),
+        read_output(&mut Broken, |_| Ok(()), true, MAX_EXEC_OUTPUT_BYTES)
+            .unwrap_err()
+            .kind(),
         std::io::ErrorKind::ConnectionReset
     );
 }
@@ -88,7 +96,11 @@ fn bounded_consumer_applies_backpressure_without_holding_job_store_locks() {
         }
     }
     let (captured, total) = worker.join().unwrap().unwrap();
-    assert_eq!(captured, bytes);
+    assert_eq!(
+        captured,
+        bytes[..EXEC_LEDGER_PREVIEW_BYTES],
+        "a stream retains only the ledger preview"
+    );
     assert_eq!(total, 4 * 8192);
 }
 
@@ -99,6 +111,26 @@ fn detached_stream_keeps_draining_without_unbounded_capture() {
     drop(receiver);
     let (captured, total) = stream_exec_output(&mut source, 91, &sender).unwrap();
     assert_eq!(total, MAX_EXEC_OUTPUT_BYTES as u64 + 100_000);
-    assert_eq!(captured.len(), MAX_EXEC_OUTPUT_BYTES);
+    assert_eq!(captured.len(), EXEC_LEDGER_PREVIEW_BYTES);
     assert_eq!(source.position(), total);
+}
+
+/// Streamed output already reached the client; a second 10 MiB copy that
+/// nothing reads only cost memory per streaming exec.
+#[test]
+fn streamed_output_is_forwarded_retaining_only_the_ledger_preview() {
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
+    let mut source = std::io::Cursor::new(vec![7; 64_000]);
+    let worker = std::thread::spawn(move || stream_exec_output(&mut source, 5, &sender));
+    let mut forwarded = 0;
+    while let Some(message) = receiver.blocking_recv() {
+        if let capsem_proto::ipc::ProcessToService::ExecOutput { data, .. } = message {
+            forwarded += data.len();
+        }
+    }
+    let (retained, total) = worker.join().unwrap().unwrap();
+    assert_eq!(
+        (retained.len(), total, forwarded),
+        (EXEC_LEDGER_PREVIEW_BYTES, 64_000, 64_000)
+    );
 }

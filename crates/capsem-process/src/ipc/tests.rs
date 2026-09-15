@@ -4,6 +4,7 @@ use std::time::Duration;
 use super::*;
 
 mod publications;
+mod streams;
 use capsem_proto::mcp_aggregator::{AggregatorClient, AggregatorResponse, AggregatorResult, AggregatorServerStatus};
 use capsem_proto::mcp_contracts::McpToolDef;
 use tokio::io::AsyncWriteExt;
@@ -57,7 +58,8 @@ async fn negotiated_channel_carries_typed_messages_in_both_directions() {
         channel
     });
 
-    let (process_tx, process_rx) = open_ipc_channel(process_stream).await.unwrap().unwrap();
+    let ((process_tx, process_rx), stream_role) = open_ipc_channel(process_stream).await.unwrap().unwrap();
+    assert!(!stream_role, "a service connection is a command connection");
     let (service_tx, service_rx) = service.await.unwrap();
 
     service_tx.send(ServiceToProcess::Ping).await.unwrap();
