@@ -155,7 +155,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust coverage ratchets account for macOS's compiled code inventory while
   preserving the shared minimums and Linux floors.
 - Temporary build outputs cannot publish into the shared component cache;
-  guest cache reuse rejects placeholder or non-executable binaries and rebuilds them.- Install smoke tests use their configured writable pytest cache, allowing
+  guest cache reuse rejects placeholder or non-executable binaries and rebuilds them.
+  Linked worktrees publish and reuse guest binaries staged in their own cache
+  tree instead of recompiling every guest agent on each gate run.- Install smoke tests use their configured writable pytest cache, allowing
   qualification to finish while the source directory remains protected.
 - Sealed install smoke checks retain tool stdout and stderr in gate evidence
   so failed qualification identifies the missing or broken input.

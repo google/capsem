@@ -284,6 +284,56 @@ def test_guest_binary_generation_is_compiled_once_across_repository_prefixes(
     assert all(path.stat().st_mode & 0o777 == 0o555 for path in second)
 
 
+def test_guest_binary_generation_is_shared_with_a_linked_worktree(tmp_path: Path, monkeypatch) -> None:
+    """A linked worktree builds into its own `cache/target` under the main
+    checkout's object authority. Its outputs belong to a checkout, not to a
+    fixture, so they publish, restore and read as current -- otherwise every
+    gate run in a worktree recompiled every guest agent in Docker."""
+    main, worktree = tmp_path / "main", tmp_path / "worktree"
+    for checkout in (main, worktree):
+        checkout.mkdir()
+        repository(checkout).joinpath("guest-input").write_text("source", encoding="utf-8")
+    monkeypatch.setenv("CAPSEM_TEST_CACHE_AUTHORITY", str(main))
+    build = cast(
+        BuildConfig,
+        SimpleNamespace(guest_rust_builder=SimpleNamespace(source_roots=("guest-input",))),
+    )
+    names = ("capsem-agent",)
+    staged = worktree / "cache/target/initrd"
+    calls = 0
+
+    def compile_binaries(_build, _arch, _repo, output):
+        nonlocal calls
+        calls += 1
+        output.mkdir(parents=True, exist_ok=True)
+        binary = output / names[0]
+        binary.write_bytes(ELF_HEADER)
+        binary.chmod(0o555)
+        return [binary]
+
+    with patch(
+        "capsem_builder.image.guestbinarycache.guestbuilder.image_tag",
+        return_value="sealed-builder:one",
+    ):
+        materialize(build, "x86_64", worktree, staged, names, compile_binaries)
+        assert guest_current(build, "x86_64", worktree, staged, names), "a worktree's own build is current"
+        materialize(build, "x86_64", main, main / "cache/target/rootfs", names, compile_binaries)
+        for binary in staged.iterdir():
+            binary.unlink()
+        materialize(build, "x86_64", worktree, staged, names, compile_binaries)
+        fixture = worktree / "fixture-output"
+        fixture.mkdir()
+        (fixture / names[0]).write_bytes(ELF_HEADER)
+        assert not guest_current(build, "x86_64", worktree, fixture, names)
+        generation = guest_identity(build, "x86_64", worktree, names)
+
+    assert calls == 1, "the worktree published, and both checkouts restored, one generation"
+    assert not (worktree / "cache/objects").exists()
+    assert store(worktree, "guest-binaries", generation, fixture, names) is None, (
+        "output outside a checkout's cache tree is still a fixture's, and must not publish"
+    )
+
+
 @pytest.mark.parametrize(
     "payload,mode",
     [
