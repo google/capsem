@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@capsem/mcp` exposes private-network lifecycle, membership, and cursor-based
   audit tools through the typed SDK network resource.
 
+- `@capsem/mcp` creates typed OCI workloads, reads or waits for container
+  status, and manages policy-checked VM/container port exposures through the
+  TypeScript SDK and authenticated gateway HTTP.
+
 - `@capsem/mcp` provides typed profile MCP discovery and invocation, canonical
   tool names and SDK-aligned parameters, plus redacted machine-readable errors.
 
