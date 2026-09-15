@@ -81,7 +81,7 @@ approved = [
 ]
 
 [http]
-count = 114
+count = 115
 approved = [
   "DELETE /profiles/{profile_id}/detection/rules/{rule_id}/delete",
   "DELETE /profiles/{profile_id}/enforcement/rules/{rule_id}/delete",
@@ -154,6 +154,7 @@ approved = [
   "GET /vms/{id}/stats/detail",
   "GET /vms/{id}/stats/summary",
   "GET /vms/{id}/status",
+  "GET /vms/{id}/container",
   "GET /vms/{id}/timeline",
   "PATCH /profiles/{profile_id}/mcp/default/edit",
   "PATCH /profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit",

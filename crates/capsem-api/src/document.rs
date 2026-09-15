@@ -22,6 +22,7 @@ pub fn openapi() -> OpenApi {
     doc.post::<PersistRequest, PersistResponse>("/vms/{id}/save", "persistVm");
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
     doc.get::<VmStatusResponse>("/vms/{id}/status", "getVmStatus");
+    doc.get::<ContainerStatusResponse>("/vms/{id}/container", "getVmContainer");
     doc.post::<ExecRequest, ExecResponse>("/vms/{id}/exec", "execVm");
     doc.post::<ForkRequest, ForkResponse>("/vms/{id}/fork", "forkVm");
     doc.empty_post::<ProvisionResponse>("/vms/{id}/start", "startVm");

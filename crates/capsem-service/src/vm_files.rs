@@ -581,7 +581,7 @@ pub(super) async fn handle_list_files(
 }
 
 const MAX_FILE_SIZE: u64 = capsem_api::MAX_REQUEST_BODY_BYTES as u64;
-const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
+pub(super) const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
 
 pub(super) fn file_security_preview_bytes(data: &[u8]) -> Vec<u8> {
     data[..data.len().min(FILE_SECURITY_CONTENT_PREVIEW_MAX)].to_vec()
@@ -1386,7 +1386,7 @@ pub(super) fn vm_ready_poll_opts(timeout_secs: u64) -> capsem_foundation::poll::
     }
 }
 
-fn running_uds_path(state: &ServiceState, id: &str) -> Result<std::path::PathBuf, AppError> {
+pub(super) fn running_uds_path(state: &ServiceState, id: &str) -> Result<std::path::PathBuf, AppError> {
     let instances = state.instances.lock().unwrap();
     let path = instances
         .get(id)

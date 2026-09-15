@@ -39,6 +39,8 @@ mod get_update_status;
 pub use get_update_status::get_update_status;
 mod get_vm_changes;
 pub use get_vm_changes::{get_vm_changes, GetVmChangesParams};
+mod get_vm_container;
+pub use get_vm_container::{get_vm_container, GetVmContainerParams};
 mod get_vm_history;
 pub use get_vm_history::{get_vm_history, GetVmHistoryParams};
 mod get_vm_info;

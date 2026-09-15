@@ -1128,10 +1128,10 @@ must_stay_below_lines = 3000
 "crates/capsem-process/src/vsock.rs" = 1454
 "crates/capsem-proto/src/tests.rs" = 1457
 "crates/capsem-service/src/ledger_routes.rs" = 2378
-"crates/capsem-service/src/main.rs" = 1530
+"crates/capsem-service/src/main.rs" = 1528
 "crates/capsem-service/src/profile_routes.rs" = 2169
 "crates/capsem-service/src/vm_files.rs" = 1549
-"crates/capsem-service/src/tests/assets_registry.rs" = 1522
+"crates/capsem-service/src/tests/assets_registry.rs" = 1489
 "crates/capsem-service/src/tests/lifecycle.rs" = 2065
 "crates/capsem-service/src/tests/profile_routes.rs" = 2600
 "crates/capsem-tui/src/tests.rs" = 1563
@@ -2910,6 +2910,7 @@ slowest_steps = 10
 internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route" }
 measured = [
     "/vms/{id}/changes",
+    "/vms/{id}/security/status",
     "/status",
     "/version",
     "/vms/list",
@@ -2989,6 +2990,7 @@ unmeasured = [
     "/update/apply",
     "/update/check",
     "/vms/create",
+    "/vms/{id}/container",
     "/vms/{id}/delete",
     "/vms/{id}/detection/latest",
     "/vms/{id}/detection/status",
@@ -3012,7 +3014,6 @@ unmeasured = [
     "/vms/{id}/save",
     "/vms/{id}/save/status",
     "/vms/{id}/security/latest",
-    "/vms/{id}/security/status",
     "/vms/{id}/snapshots/list",
     "/vms/{id}/snapshots/status",
     "/vms/{id}/start",

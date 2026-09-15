@@ -51,7 +51,7 @@ impl SessionResponseCacheSlot {
     pub(crate) fn store(self, state: &ServiceState, bytes: &[u8]) {
         state.stats_detail_response_cache.lock().unwrap().insert(
             self.cache_key,
-            CachedStatsDetailResponse {
+            CachedLedgerResponse {
                 db_epoch: self.db_epoch,
                 bytes: bytes.to_vec(),
             },

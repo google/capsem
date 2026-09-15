@@ -9,6 +9,8 @@ export {CapturedContentSchema} from "./CapturedContent.js";
 export {CapturedPayloadSchema} from "./CapturedPayload.js";
 export {ChangesResponseSchema} from "./ChangesResponse.js";
 export {ContainerSpecSchema} from "./ContainerSpec.js";
+export {ContainerStateSchema} from "./ContainerState.js";
+export {ContainerStatusResponseSchema} from "./ContainerStatusResponse.js";
 export {CreateNetworkRequestSchema} from "./CreateNetworkRequest.js";
 export {CredentialEventSchema} from "./CredentialEvent.js";
 export {CredentialEventTypeSchema} from "./CredentialEventType.js";

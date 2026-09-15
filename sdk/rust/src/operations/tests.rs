@@ -96,6 +96,7 @@ operation!(start_vm, "startVm", StartVmParams);
 operation!(get_vm_stats_detail, "getVmStatsDetail", GetVmStatsDetailParams);
 operation!(get_vm_stats_summary, "getVmStatsSummary", GetVmStatsSummaryParams);
 operation!(get_vm_status, "getVmStatus", GetVmStatusParams);
+operation!(get_vm_container, "getVmContainer", GetVmContainerParams);
 operation!(stop_vm, "stopVm", StopVmParams);
 operation!(get_vm_timeline, "getVmTimeline", GetVmTimelineParams);
 

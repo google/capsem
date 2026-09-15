@@ -1304,6 +1304,48 @@
         }
       }
     },
+    "/vms/{id}/container": {
+      "get": {
+        "operationId": "getVmContainer",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerStatusResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/delete": {
       "delete": {
         "operationId": "deleteVm",
@@ -2690,6 +2732,57 @@
                 "description": "Access to a private registry, used for this pull only and never stored."
               }
             ]
+          }
+        }
+      },
+      "ContainerState": {
+        "type": "string",
+        "description": "Where a VM's container workload is in its life.",
+        "enum": [
+          "pulling",
+          "staging",
+          "starting",
+          "running",
+          "exited",
+          "failed"
+        ]
+      },
+      "ContainerStatusResponse": {
+        "type": "object",
+        "description": "A VM's container workload status.",
+        "required": [
+          "state",
+          "image"
+        ],
+        "properties": {
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Content digest of the verified image, once pulled."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why setup or the workload failed, when `state` is `failed`."
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Workload exit status reported by the guest, when `state` is `exited`."
+          },
+          "image": {
+            "type": "string",
+            "description": "The image reference as requested."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ContainerState"
           }
         }
       },

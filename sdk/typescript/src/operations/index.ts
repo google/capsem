@@ -20,6 +20,7 @@ export {getProfileMcpInfo} from "./getProfileMcpInfo.js";
 export {getTriage} from "./getTriage.js";
 export {getUpdateStatus} from "./getUpdateStatus.js";
 export {getVmChanges} from "./getVmChanges.js";
+export {getVmContainer} from "./getVmContainer.js";
 export {getVmHistory} from "./getVmHistory.js";
 export {getVmInfo} from "./getVmInfo.js";
 export {getVmLogs} from "./getVmLogs.js";

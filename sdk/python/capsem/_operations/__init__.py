@@ -20,6 +20,7 @@ from .get_profile_mcp_info import get_profile_mcp_info as get_profile_mcp_info
 from .get_triage import get_triage as get_triage
 from .get_update_status import get_update_status as get_update_status
 from .get_vm_changes import get_vm_changes as get_vm_changes
+from .get_vm_container import get_vm_container as get_vm_container
 from .get_vm_history import get_vm_history as get_vm_history
 from .get_vm_info import get_vm_info as get_vm_info
 from .get_vm_logs import get_vm_logs as get_vm_logs

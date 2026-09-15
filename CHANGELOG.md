@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- VM creation accepts a `container` workload. The service pulls and verifies
+  the OCI image on the host with one-pull registry credentials that are never
+  stored, stages it into the VM through the file import ledger and starts the
+  guest launcher. `GET /vms/{id}/container` reports pulling, staging, starting,
+  running (guest-reported), or failed with the reason, and survives a service
+  restart. Deleting or stopping the VM cancels an in-flight setup.
+
 - `@capsem/mcp` provides a standalone stdio MCP executable backed by the typed
   TypeScript SDK and explicit authenticated gateway HTTP configuration, with VM
   lifecycle, execution, file transfer, host/guest logs, timeline, statistics,

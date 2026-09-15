@@ -84,12 +84,17 @@ fn test_profile_mutation_db(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
 }
 
 fn make_test_state() -> Arc<ServiceState> {
+    Arc::new(make_test_state_owned())
+}
+
+/// The test state before it is shared, for tests that replace an owner.
+pub(crate) fn make_test_state_owned() -> ServiceState {
     let test_tempdir = tempfile::tempdir().unwrap();
     let run_dir = test_tempdir.path().join("run");
     std::fs::create_dir_all(&run_dir).unwrap();
     let registry_path = run_dir.join("persistent_registry.json");
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
-    Arc::new(ServiceState {
+    ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(PersistentRegistry::load(registry_path).expect("registry loads")),
@@ -120,6 +125,7 @@ fn make_test_state() -> Arc<ServiceState> {
         last_defunct_reconcile_ms: AtomicU64::new(0),
         stats_response_cache: Mutex::new(None),
         stats_detail_response_cache: Mutex::new(HashMap::new()),
+        containers: Default::default(),
         storage_diagnostics_cache: Mutex::new(HashMap::new()),
         persistent_resume_state_cache: Mutex::new(HashMap::new()),
         evaluate_rule_cache: Mutex::new(HashMap::new()),
@@ -133,7 +139,7 @@ fn make_test_state() -> Arc<ServiceState> {
         update_lock: tokio::sync::Mutex::new(()),
         update_restart: tokio::sync::Notify::new(),
         _test_tempdir: Some(test_tempdir),
-    })
+    }
 }
 
 pub(crate) async fn route_request(
@@ -204,6 +210,7 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         last_defunct_reconcile_ms: AtomicU64::new(0),
         stats_response_cache: Mutex::new(None),
         stats_detail_response_cache: Mutex::new(HashMap::new()),
+        containers: Default::default(),
         storage_diagnostics_cache: Mutex::new(HashMap::new()),
         persistent_resume_state_cache: Mutex::new(HashMap::new()),
         evaluate_rule_cache: Mutex::new(HashMap::new()),
@@ -696,6 +703,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         last_defunct_reconcile_ms: AtomicU64::new(0),
         stats_response_cache: Mutex::new(None),
         stats_detail_response_cache: Mutex::new(HashMap::new()),
+        containers: Default::default(),
         storage_diagnostics_cache: Mutex::new(HashMap::new()),
         persistent_resume_state_cache: Mutex::new(HashMap::new()),
         evaluate_rule_cache: Mutex::new(HashMap::new()),

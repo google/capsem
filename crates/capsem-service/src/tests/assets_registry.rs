@@ -840,54 +840,21 @@ fn drain_dead_instances_releases_mutex_before_returning() {
 
 pub(crate) fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
     let run_dir = test_root.join("run");
-    let registry_path = run_dir.join("persistent_registry.json");
-    let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     std::fs::create_dir_all(run_dir.join("sessions")).unwrap();
-    Arc::new(ServiceState {
-        instances: Mutex::new(HashMap::new()),
-        session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: SharedRegistry::new(PersistentRegistry::load(registry_path).expect("registry loads")),
-        networks: tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(PathBuf::from(
-            "/nonexistent/networks",
-        ))),
-        process_binary: PathBuf::from("/nonexistent/capsem-process"),
-        assets_dir: PathBuf::from("/nonexistent/assets"),
-        run_dir: run_dir.clone(),
-        service_socket: PathBuf::from("/nonexistent/service.sock"),
-        switches: switches::Switches::in_process(),
-        job_counter: AtomicU64::new(1),
-        manifest: RwLock::new(None),
-        current_version: "0.0.0".into(),
-        asset_reconcile: Mutex::new(AssetReconcileState::default()),
-        asset_reconcile_inflight: AtomicBool::new(false),
-        asset_status_path,
-        magika: test_magika(),
-        plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        profile_summary_cache: Mutex::new(test_profile_summary_cache()),
-        profile_cache: Mutex::new(test_profile_cache()),
-        profile_status_cache: Mutex::new(None),
-        profile_rule_cache: test_profile_rule_cache(),
-        profile_mcp_default_cache: test_profile_mcp_default_cache(),
-        profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
-        mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_db: test_profile_mutation_db(&run_dir),
-        last_defunct_reconcile_ms: AtomicU64::new(0),
-        stats_response_cache: Mutex::new(None),
-        stats_detail_response_cache: Mutex::new(HashMap::new()),
-        storage_diagnostics_cache: Mutex::new(HashMap::new()),
-        persistent_resume_state_cache: Mutex::new(HashMap::new()),
-        evaluate_rule_cache: Mutex::new(HashMap::new()),
-        profile_rule_response_cache: Mutex::new(HashMap::new()),
-        profile_plugin_response_cache: Mutex::new(HashMap::new()),
-        evaluate_response_cache: Mutex::new(HashMap::new()),
-        list_response_cache: Mutex::new(None),
-        evaluate_last_response_cache: Mutex::new(None),
-        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
-        shutdown_lock: tokio::sync::Mutex::new(()),
-        update_lock: tokio::sync::Mutex::new(()),
-        update_restart: tokio::sync::Notify::new(),
-        _test_tempdir: None,
-    })
+    let mut state = make_test_state_owned();
+    state.persistent_registry = SharedRegistry::new(
+        PersistentRegistry::load(run_dir.join("persistent_registry.json")).expect("registry loads"),
+    );
+    state.networks = tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(PathBuf::from(
+        "/nonexistent/networks",
+    )));
+    state.service_socket = PathBuf::from("/nonexistent/service.sock");
+    state.asset_status_path = asset_status_path_for_run_dir(&run_dir);
+    state.profile_mutation_db = test_profile_mutation_db(&run_dir);
+    state.run_dir = run_dir;
+    // The caller owns `test_root`; the fixture's own temporary root goes.
+    state._test_tempdir = None;
+    Arc::new(state)
 }
 
 #[test]

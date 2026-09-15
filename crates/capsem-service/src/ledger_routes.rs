@@ -871,7 +871,7 @@ pub(super) async fn read_stats_response_from_main_db_handle(state: &ServiceState
     match payload {
         serde_json::Value::String(payload) => {
             let bytes = payload.as_bytes().to_vec();
-            *state.stats_response_cache.lock().unwrap() = Some(CachedStatsResponse {
+            *state.stats_response_cache.lock().unwrap() = Some(CachedLedgerResponse {
                 db_epoch,
                 bytes: bytes.clone(),
             });
@@ -880,7 +880,7 @@ pub(super) async fn read_stats_response_from_main_db_handle(state: &ServiceState
         serde_json::Value::Object(_) => {
             let bytes = serde_json::to_vec(payload)
                 .map_err(|error| main_ledger_route_error("stats", "serialize response payload", &db_path, error))?;
-            *state.stats_response_cache.lock().unwrap() = Some(CachedStatsResponse {
+            *state.stats_response_cache.lock().unwrap() = Some(CachedLedgerResponse {
                 db_epoch,
                 bytes: bytes.clone(),
             });

@@ -41,6 +41,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
 mod asset_background;
 mod blocking;
+mod container_setup;
 mod instance;
 mod instance_reaper;
 use instance::InstanceInfo;
@@ -288,11 +289,13 @@ struct ServiceState {
     /// Final `/stats` HTTP response bytes derived from the logger-owned
     /// `main.db` query. The typed session-summary epoch invalidates it for
     /// session/usage writes without coupling it to profile-mutation ledger rows.
-    stats_response_cache: Mutex<Option<CachedStatsResponse>>,
+    stats_response_cache: Mutex<Option<CachedLedgerResponse>>,
     /// Final stats/detail bytes for inactive sessions. Running sessions keep
     /// reading live DB state; stopped/seeded sessions can reuse bytes until
     /// their session.db metadata changes.
-    stats_detail_response_cache: Mutex<HashMap<String, CachedStatsDetailResponse>>,
+    stats_detail_response_cache: Mutex<HashMap<String, CachedLedgerResponse>>,
+    /// Container workloads being set up or running, by VM id.
+    containers: container_setup::ContainerSetups,
     /// Session storage diagnostics cached by session directory. These values
     /// describe the rootfs image path/size and host filesystem for status/info
     /// routes; repeated polling must not stat the filesystem on every sample.
@@ -356,14 +359,9 @@ struct ServiceState {
     _test_tempdir: Option<tempfile::TempDir>,
 }
 
+/// Serialized ledger route bytes and the logger generation they were read at.
 #[derive(Clone)]
-struct CachedStatsResponse {
-    db_epoch: u64,
-    bytes: Vec<u8>,
-}
-
-#[derive(Clone)]
-struct CachedStatsDetailResponse {
+struct CachedLedgerResponse {
     db_epoch: u64,
     bytes: Vec<u8>,
 }

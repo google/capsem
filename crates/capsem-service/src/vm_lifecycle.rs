@@ -272,6 +272,8 @@ pub(super) async fn shutdown_vm_process(
     id: &str,
     mode: ShutdownMode,
 ) -> Result<Option<(PathBuf, bool, u32)>, AppError> {
+    // A container setup must not keep pulling or staging into a VM going away.
+    state.containers.cancel(id);
     // Teardown must not overlap save/restore, but independent cold starts may.
     let _vz_guard = state.lifecycle.vz.read().await;
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
