@@ -284,12 +284,17 @@ pub(crate) async fn handle_ipc_connection(
                 id,
                 host_port,
                 guest_port,
+                target,
             } => {
                 let jobs = job_store.clone();
                 let control = ctrl_tx.clone();
                 let output = ipc_tx_out.clone();
                 tokio::spawn(async move {
-                    let response = match jobs.publisher.publish_saved(host_port, guest_port, control).await {
+                    let response = match jobs
+                        .publisher
+                        .publish_saved(host_port, guest_port, target, control)
+                        .await
+                    {
                         Ok(publication) => {
                             let response = ProcessToService::PortPublished {
                                 id,

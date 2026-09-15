@@ -270,7 +270,12 @@ async fn serve_fixture(
     let result = broker::serve(
         owner.clone(),
         owner
-            .accept_publication(listener, guest_port, cancellation.clone())
+            .accept_publication(
+                listener,
+                guest_port,
+                capsem_proto::PublicationTarget::Container,
+                cancellation.clone(),
+            )
             .unwrap(),
         control,
         router.clone(),
@@ -352,7 +357,12 @@ async fn shared_admission_budget(budgets: capsem_config::router::RouterConfig, e
             owner.clone(),
             owner
                 .clone()
-                .accept_publication(listener, guest_port, cancellation.clone())
+                .accept_publication(
+                    listener,
+                    guest_port,
+                    capsem_proto::PublicationTarget::Container,
+                    cancellation.clone(),
+                )
                 .unwrap(),
             control.clone(),
             router.clone(),
@@ -637,7 +647,7 @@ async fn child_control_eof_cancels_guest_setup_and_closes_accepted_tcp() {
         CancellationToken::new(),
     ));
     let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
-    let ServiceToProcess::ConnectPort { flow, port: 6379 } = requests.recv().await.unwrap() else {
+    let ServiceToProcess::ConnectPort { flow, port: 6379, .. } = requests.recv().await.unwrap() else {
         panic!("expected guest setup");
     };
     drop(child);

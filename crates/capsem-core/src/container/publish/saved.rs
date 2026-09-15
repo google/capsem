@@ -1,26 +1,36 @@
 //! Host-only listener intent; guest workspace and fork snapshots carry no ports.
 use super::*;
-use crate::container::PortMapping;
+use capsem_proto::PublicationTarget;
 use std::path::{Path, PathBuf};
+
+/// One declared listener. Records written before targets existed are the
+/// container's, which is all a publication could reach then.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct SavedPublication {
+    pub(super) host: u16,
+    pub(super) guest: u16,
+    #[serde(default)]
+    pub(super) target: PublicationTarget,
+}
 
 pub(super) struct Mappings {
     path: PathBuf,
     lock: tokio::sync::Mutex<()>,
 }
 
-fn read(path: &Path) -> Result<Vec<PortMapping>> {
+fn read(path: &Path) -> Result<Vec<SavedPublication>> {
     let bytes = match capsem_foundation::unix::fs::read_regular_file_no_follow(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.into()),
     };
     ensure!(bytes.len() <= 4096, "saved publication record is too large");
-    let ports: Vec<PortMapping> = serde_json::from_slice(&bytes)?;
+    let ports: Vec<SavedPublication> = serde_json::from_slice(&bytes)?;
     ensure!(ports.len() <= 8, "too many saved publications");
     let mut seen = std::collections::HashSet::new();
     for port in &ports {
         ensure!(
-            port.host != 0 && port.guest != 0 && seen.insert(port.host),
+            port.host != 0 && port.target.admits(port.guest) && seen.insert(port.host),
             "invalid saved publication"
         );
     }
@@ -45,7 +55,10 @@ impl Publisher {
         let ports = tokio::task::spawn_blocking(move || read(&path)).await??;
         let mut publications = Vec::new();
         for port in ports {
-            publications.push(self.publish(port.host, port.guest, control.clone()).await?);
+            publications.push(
+                self.publish(port.host, port.guest, port.target, control.clone())
+                    .await?,
+            );
         }
         Ok(publications)
     }
@@ -54,16 +67,18 @@ impl Publisher {
         self: &Arc<Self>,
         host: u16,
         guest: u16,
+        target: PublicationTarget,
         control: mpsc::Sender<ServiceToProcess>,
     ) -> Result<Publication> {
         let Some(saved) = &self.saved else {
-            return self.publish(host, guest, control).await;
+            return self.publish(host, guest, target, control).await;
         };
         let _lock = saved.lock.lock().await;
-        let publication = self.publish(host, guest, control).await?;
-        let port = PortMapping {
+        let publication = self.publish(host, guest, target, control).await?;
+        let port = SavedPublication {
             host: publication.host_port,
             guest,
+            target,
         };
         let path = saved.path.clone();
         tokio::task::spawn_blocking(move || {

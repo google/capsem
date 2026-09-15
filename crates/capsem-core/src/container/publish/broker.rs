@@ -61,7 +61,7 @@ pub(super) async fn serve(
                 _ = cancellation.cancelled() => return Ok(()),
                 _ = router.closed.cancelled() => anyhow::bail!("VM router closed"),
                 arrival = incoming.recv(), if active.len() + connecting.len() < MAX_CONNECTIONS => {
-                    let Some(Incoming { source, audit, port: guest_port }) = arrival else {
+                    let Some(Incoming { source, audit, port: guest_port, target }) = arrival else {
                         return Ok(());
                     };
                     let Ok(permit) = ingress.clone().try_acquire_owned() else {
@@ -100,7 +100,7 @@ pub(super) async fn serve(
                                 biased;
                                 _ = lease.cancelled() => anyhow::bail!("guest control lease expired"),
                                 result = async {
-                                    control.send(ServiceToProcess::ConnectPort { flow, port: guest_port }).await
+                                    control.send(ServiceToProcess::ConnectPort { flow, port: guest_port, target }).await
                                         .context("guest control closed")?;
                                     receiver.await.context("guest connection cancelled")?
                                 } => {

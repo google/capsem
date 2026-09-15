@@ -51,7 +51,41 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// Version 2 adds router flow keys tied to the owner generation.
 /// Version 4 links VMs to a network switch and admits only TCP by handoff.
 /// Version 5 plugs one cable per network and removes the private TCP handoff.
-pub const PROTOCOL_VERSION: u16 = 5;
+/// Version 6 names the namespace a publication connects to.
+pub const PROTOCOL_VERSION: u16 = 6;
+
+/// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
+pub const GUEST_DNS_PROXY_PORT: u16 = 1053;
+/// Guest loopback port of the agent's plain HTTP interception listener.
+pub const GUEST_HTTP_PROXY_PORT: u16 = 10080;
+/// Guest loopback port of the agent's TLS interception listener.
+pub const GUEST_HTTPS_PROXY_PORT: u16 = 10443;
+
+/// Guest loopback ports Capsem's own services own. A VM-namespace publication
+/// to one of them would hand the host a path into the guest's DNS or
+/// interception proxy, so the host refuses to publish it and the guest refuses
+/// to connect it.
+pub const CAPSEM_GUEST_LOOPBACK_PORTS: [u16; 4] =
+    [53, GUEST_DNS_PROXY_PORT, GUEST_HTTP_PROXY_PORT, GUEST_HTTPS_PROXY_PORT];
+
+/// The guest network namespace a publication's connections reach. There is
+/// no fallback between the two: a missing container never becomes the VM.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicationTarget {
+    /// Loopback inside the running container workload's namespace.
+    #[default]
+    Container,
+    /// Loopback in the VM's own namespace, minus Capsem's service ports.
+    Vm,
+}
+
+impl PublicationTarget {
+    /// Whether a connection to guest `port` in this namespace is allowed.
+    pub fn admits(self, port: u16) -> bool {
+        port != 0 && (self == Self::Container || !CAPSEM_GUEST_LOOPBACK_PORTS.contains(&port))
+    }
+}
 
 /// FNV-1a 64 hash of the protocol enum source bytes (lib.rs + ipc.rs +
 /// handshake.rs + router.rs). Computed by `build.rs`. Detects "I added a variant in
@@ -447,8 +481,14 @@ pub enum HostToGuest {
     PrepareSnapshot,
     /// Resume filesystem I/O after snapshot.
     Unfreeze,
-    /// Connect to loopback in the active container's network namespace.
-    ConnectPort { flow: router::FlowKey, port: u16 },
+    /// Connect to loopback `port` in the `target` namespace. Absent on older
+    /// hosts, where every publication was the container's.
+    ConnectPort {
+        flow: router::FlowKey,
+        port: u16,
+        #[serde(default)]
+        target: PublicationTarget,
+    },
     /// Cancel a bounded set of flows from this control connection's VM boot.
     AbortPorts { flows: Vec<router::FlowKey> },
     /// Receipt of a terminal flow report; distinct from exec/file job IDs.

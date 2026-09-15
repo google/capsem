@@ -76,10 +76,19 @@ pub enum ServiceToProcess {
     },
     /// Execute with bounded live merged stdout/stderr, followed by ExecResult.
     ExecStream { id: u64, command: String },
-    /// Publish one loopback host TCP port into this VM's container namespace.
-    PublishPort { id: u64, host_port: u16, guest_port: u16 },
+    /// Publish one loopback host TCP port into the `target` guest namespace.
+    PublishPort {
+        id: u64,
+        host_port: u16,
+        guest_port: u16,
+        target: crate::PublicationTarget,
+    },
     /// Internal VM-owner request for one declared publication data stream.
-    ConnectPort { flow: crate::router::FlowKey, port: u16 },
+    ConnectPort {
+        flow: crate::router::FlowKey,
+        port: u16,
+        target: crate::PublicationTarget,
+    },
     /// Internal VM-owner cancellation for bounded generation-bound flows.
     AbortPorts { flows: Vec<crate::router::FlowKey> },
     /// The service is plugging this VM into a network's switch and wants the

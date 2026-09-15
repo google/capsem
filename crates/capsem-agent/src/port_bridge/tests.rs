@@ -195,7 +195,10 @@ fn cancellation_joins_disposable_setup_workers_and_refuses_new_work() {
     assert_eq!(bridge.setups.available_permits(), 8);
     let flow = capsem_proto::router::FlowKey { generation: 1, id: 2 };
     assert_eq!(
-        bridge.connect(flow, 6379).unwrap_err().kind(),
+        bridge
+            .connect(flow, 6379, capsem_proto::PublicationTarget::Container)
+            .unwrap_err()
+            .kind(),
         io::ErrorKind::BrokenPipe
     );
     drop(bridge);
@@ -227,7 +230,11 @@ fn setup_saturation_keeps_queued_work_bounded_and_cancellation_reclaims_every_pe
         Err(std::sync::mpsc::RecvTimeoutError::Timeout)
     ));
     assert!(bridge
-        .connect(capsem_proto::router::FlowKey { generation: 1, id: 65 }, 6379)
+        .connect(
+            capsem_proto::router::FlowKey { generation: 1, id: 65 },
+            6379,
+            capsem_proto::PublicationTarget::Container
+        )
         .is_err());
     bridge.stop.send_replace(true);
     for release in releases {
@@ -240,4 +247,21 @@ fn setup_saturation_keeps_queued_work_bounded_and_cancellation_reclaims_every_pe
     assert_eq!(bridge.connections.available_permits(), 64);
     assert_eq!(bridge.setups.available_permits(), 8);
     drop(bridge);
+}
+
+/// A VM-namespace publication must never reach Capsem's own guest listeners,
+/// even if a compromised or confused host asks for one.
+#[test]
+fn vm_target_refuses_capsem_service_ports_before_any_setup() {
+    let (control, _reports) = crate::control_writer::CtrlSender::new(Default::default());
+    let mut bridge = Bridge::new(control).unwrap();
+    for port in capsem_proto::CAPSEM_GUEST_LOOPBACK_PORTS {
+        let refused = bridge.connect(key(u64::from(port)), port, capsem_proto::PublicationTarget::Vm);
+        assert_eq!(refused.unwrap_err().kind(), io::ErrorKind::InvalidInput, "port {port}");
+    }
+    assert!(
+        bridge.tasks.is_empty(),
+        "a refused target must not start a setup worker"
+    );
+    bridge.shutdown();
 }

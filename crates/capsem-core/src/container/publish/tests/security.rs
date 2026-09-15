@@ -75,7 +75,10 @@ async fn deny_ask_plugin_and_closed_audit_never_open_a_guest_destination() {
         let stop = CancellationToken::new();
         let broker = tokio::spawn(broker::serve(
             owner.clone(),
-            owner.clone().accept_publication(listener, 6379, stop.clone()).unwrap(),
+            owner
+                .clone()
+                .accept_publication(listener, 6379, capsem_proto::PublicationTarget::Container, stop.clone())
+                .unwrap(),
             control,
             router,
             stop.clone(),
@@ -145,7 +148,10 @@ async fn missing_security_context_never_requests_a_guest_connection() {
     let _client = tokio::net::TcpStream::connect(address).await.unwrap();
     // Without a security context there is no feeder at all: the listener is
     // never served, so no broker exists to request a guest destination.
-    let feeder = owner.clone().accept_publication(listener, 6379, stop.clone());
+    let feeder =
+        owner
+            .clone()
+            .accept_publication(listener, 6379, capsem_proto::PublicationTarget::Container, stop.clone());
     assert!(feeder.is_err(), "a publisher without security fed a broker");
     let (feed, incoming) = mpsc::channel(1);
     drop(feed);
@@ -228,7 +234,10 @@ async fn a_control_lease_that_never_came_up_is_audited_as_unreachable() {
     let stop = CancellationToken::new();
     let broker = tokio::spawn(broker::serve(
         owner.clone(),
-        owner.clone().accept_publication(listener, 6379, stop.clone()).unwrap(),
+        owner
+            .clone()
+            .accept_publication(listener, 6379, capsem_proto::PublicationTarget::Container, stop.clone())
+            .unwrap(),
         control,
         fake_router(),
         stop.clone(),
@@ -258,7 +267,10 @@ async fn a_control_lease_lost_while_setup_waits_is_audited_as_cancelled() {
     let stop = CancellationToken::new();
     let broker = tokio::spawn(broker::serve(
         owner.clone(),
-        owner.clone().accept_publication(listener, 6379, stop.clone()).unwrap(),
+        owner
+            .clone()
+            .accept_publication(listener, 6379, capsem_proto::PublicationTarget::Container, stop.clone())
+            .unwrap(),
         control,
         fake_router(),
         stop.clone(),

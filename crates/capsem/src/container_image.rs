@@ -200,6 +200,7 @@ impl Channel {
                 id: 0,
                 host_port: mapping.host,
                 guest_port: mapping.guest,
+                target: capsem_proto::PublicationTarget::Container,
             })
             .await?;
         loop {

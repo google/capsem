@@ -6,7 +6,11 @@ use std::os::fd::{AsFd, FromRawFd};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
-pub(super) fn connect(flow: capsem_proto::router::FlowKey, port: u16) -> io::Result<(TcpStream, UnixStream)> {
+pub(super) fn connect(
+    flow: capsem_proto::router::FlowKey,
+    port: u16,
+    target: capsem_proto::PublicationTarget,
+) -> io::Result<(TcpStream, UnixStream)> {
     let deadline = Instant::now() + Duration::from_secs(3);
     let fd = vsock_io::vsock_connect_with_timeout(
         VSOCK_HOST_CID,
@@ -19,7 +23,11 @@ pub(super) fn connect(flow: capsem_proto::router::FlowKey, port: u16) -> io::Res
         vsock.as_fd(),
         capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE,
     )?;
-    let tcp = container_tcp(port, remaining(deadline)?).and_then(|tcp| {
+    let tcp = match target {
+        capsem_proto::PublicationTarget::Container => container_tcp(port, remaining(deadline)?),
+        capsem_proto::PublicationTarget::Vm => vm_tcp(port, remaining(deadline)?),
+    }
+    .and_then(|tcp| {
         capsem_foundation::unix::fd::set_stream_buffers(
             tcp.as_fd(),
             capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE,
@@ -38,6 +46,12 @@ fn remaining(deadline: Instant) -> io::Result<Duration> {
         .checked_duration_since(Instant::now())
         .filter(|duration| !duration.is_zero())
         .ok_or_else(|| io::Error::from(io::ErrorKind::TimedOut))
+}
+
+/// Loopback in the VM's own namespace: this worker never entered another one.
+fn vm_tcp(port: u16, timeout: Duration) -> io::Result<TcpStream> {
+    use std::net::{Ipv4Addr, SocketAddr};
+    TcpStream::connect_timeout(&SocketAddr::from((Ipv4Addr::LOCALHOST, port)), timeout)
 }
 
 #[cfg(target_os = "linux")]

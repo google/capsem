@@ -88,6 +88,7 @@ pub struct Incoming {
     pub source: Source,
     pub audit: security::AuditFlow,
     pub port: u16,
+    pub target: capsem_proto::PublicationTarget,
 }
 
 struct GuestFlow {
@@ -242,11 +243,15 @@ impl Publisher {
         self: &Arc<Self>,
         host_port: u16,
         guest_port: u16,
+        target: capsem_proto::PublicationTarget,
         control: mpsc::Sender<ServiceToProcess>,
     ) -> Result<Publication> {
         let lifecycle = self.drain.lock().await;
         ensure!(!self.cancellation.is_cancelled(), "VM router is shutting down");
-        ensure!(guest_port != 0, "guest port must be nonzero");
+        ensure!(
+            target.admits(guest_port),
+            "guest port {guest_port} cannot be published into the {target:?} namespace"
+        );
         ensure!(self.security.is_some(), "publication security context missing");
         let permit = self
             .mappings
@@ -268,7 +273,7 @@ impl Publisher {
         let owner = self.clone();
         let cancellation = self.cancellation.child_token();
         let stop = cancellation.clone();
-        let incoming = self.accept_publication(listener, guest_port, stop.clone())?;
+        let incoming = self.accept_publication(listener, guest_port, target, stop.clone())?;
         let task = self.spawn(async move {
             let _permit = permit;
             if let Err(error) = broker::serve(owner, incoming, control, router, stop).await {
@@ -425,6 +430,7 @@ impl Publisher {
         self: &Arc<Self>,
         listener: tokio::net::TcpListener,
         guest_port: u16,
+        target: capsem_proto::PublicationTarget,
         stop: CancellationToken,
     ) -> Result<mpsc::Receiver<Incoming>> {
         let authority = self.security.clone().context("publication security context missing")?;
@@ -450,6 +456,7 @@ impl Publisher {
                     source: Source(source),
                     audit,
                     port: guest_port,
+                    target,
                 };
                 if feed.send(arrival).await.is_err() {
                     return;

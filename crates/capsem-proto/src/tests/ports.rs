@@ -66,3 +66,56 @@ fn host_vsock_registry_is_the_only_boot_listener_contract() {
         "guest TCP ports must be redirected through the MITM rail, not exposed as raw VSOCK"
     );
 }
+
+/// Publications name the namespace they reach; a missing field from an older
+/// host is the container, never the VM.
+#[test]
+fn publication_target_defaults_to_the_container_on_the_guest_wire() {
+    #[derive(serde::Serialize)]
+    struct OldConnectPort {
+        flow: router::FlowKey,
+        port: u16,
+    }
+    #[derive(serde::Serialize)]
+    #[serde(tag = "t", content = "d", rename_all = "lowercase")]
+    enum OldHostToGuest {
+        ConnectPort(OldConnectPort),
+    }
+    let flow = router::FlowKey { id: 1, generation: 7 };
+    let old = rmp_serde::to_vec_named(&OldHostToGuest::ConnectPort(OldConnectPort { flow, port: 8080 })).unwrap();
+    match rmp_serde::from_slice::<HostToGuest>(&old).unwrap() {
+        HostToGuest::ConnectPort { target, port, .. } => {
+            assert_eq!((target, port), (PublicationTarget::Container, 8080));
+        }
+        other => panic!("decoded {other:?}"),
+    }
+    let vm = HostToGuest::ConnectPort {
+        flow,
+        port: 8080,
+        target: PublicationTarget::Vm,
+    };
+    let bytes = rmp_serde::to_vec_named(&vm).unwrap();
+    assert!(matches!(
+        rmp_serde::from_slice::<HostToGuest>(&bytes).unwrap(),
+        HostToGuest::ConnectPort {
+            target: PublicationTarget::Vm,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn publication_target_vm_refuses_capsem_service_ports() {
+    for port in CAPSEM_GUEST_LOOPBACK_PORTS {
+        assert!(
+            !PublicationTarget::Vm.admits(port),
+            "VM target admitted Capsem port {port}"
+        );
+        assert!(
+            PublicationTarget::Container.admits(port),
+            "a container namespace has no Capsem listener on {port}"
+        );
+    }
+    assert!(PublicationTarget::Vm.admits(8080));
+    assert!(!PublicationTarget::Vm.admits(0) && !PublicationTarget::Container.admits(0));
+}
