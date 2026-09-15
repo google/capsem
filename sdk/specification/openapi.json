@@ -5071,14 +5071,6 @@
           "persistent": {
             "type": "boolean"
           },
-          "private_address": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "ipv4",
-            "description": "The VM's lifetime address on the private link."
-          },
           "profile_id": {
             "type": "string"
           },
@@ -5405,14 +5397,6 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
-          },
-          "private_address": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "ipv4",
-            "description": "The VM's lifetime address on the private link."
           },
           "profile_id": {
             "type": "string"

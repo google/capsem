@@ -599,7 +599,6 @@ pub(super) fn provision_response_for_running(
         can_resume: false,
         available_actions: status.available_actions(false),
         uds_path: Some(uds_path),
-        private_address: None,
     };
     drop(instances);
     Ok(response)

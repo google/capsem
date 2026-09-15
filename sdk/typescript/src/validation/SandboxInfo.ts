@@ -28,7 +28,6 @@ export const SandboxInfoSchema: z.ZodType<SandboxInfo> = z.object({
   "network": z.union([z.null(), z.lazy(() => VmNetworkInfoSchema)]).exactOptional(),
   "persistent": z.boolean().exactOptional(),
   "pid": z.int().min(0),
-  "private_address": z.ipv4().nullable().exactOptional(),
   "profile_id": z.string(),
   "ram_mb": z.int().min(0).nullable().exactOptional(),
   "resume_blocked_reason": z.string().nullable().exactOptional(),

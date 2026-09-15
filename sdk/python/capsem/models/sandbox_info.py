@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from ipaddress import IPv4Address
 from typing import Annotated
 
 from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
@@ -36,7 +35,6 @@ class SandboxInfo(Model):
     network: VmNetworkInfo | None = None
     persistent: StrictBool | None = None
     pid: Annotated[StrictInt, Field(ge=0)]
-    private_address: IPv4Address | None = None
     profile_id: StrictStr
     ram_mb: Annotated[StrictInt, Field(ge=0)] | None = None
     resume_blocked_reason: StrictStr | None = None
