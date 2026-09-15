@@ -2,7 +2,7 @@ import {Client} from './client.js';
 import * as api from './operations/index.js';
 import type * as models from './models/index.js';
 import type {HistoryOptions, LogOptions, PageOptions, TimelineOptions, VmSelector} from './options.js';
-import {Copy, Snapshots, Stats, type VmContext} from './resources.js';
+import {Container, Copy, Exposures, Snapshots, Stats, type VmContext} from './resources.js';
 import {Transport, type CallOptions, type TransportOptions} from './transport.js';
 
 export class VM extends Client {
@@ -11,6 +11,8 @@ export class VM extends Client {
   readonly copy: Copy;
   readonly snapshots: Snapshots;
   readonly stats: Stats;
+  readonly container: Container;
+  readonly exposures: Exposures;
 
   constructor(url: string, token: string, selector: VmSelector, options?: TransportOptions);
   /** @internal */
@@ -30,6 +32,8 @@ export class VM extends Client {
     this.copy = new Copy(context);
     this.snapshots = new Snapshots(context);
     this.stats = new Stats(context);
+    this.container = new Container(context);
+    this.exposures = new Exposures(context);
   }
   /** @internal */
   static bind(transport: Transport, id: string, name: string): VM {

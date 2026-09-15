@@ -4,6 +4,7 @@ import type {Request} from './gateway.js';
 
 export class FacadeGateway {
   names = ['chosen'];
+  containerStates = ['running'];
   readonly files = new Map<string, Buffer>();
 
   handle(request: Request, response: ServerResponse): void {
@@ -22,6 +23,10 @@ export class FacadeGateway {
     if (operation.operationId === 'createVm' || operation.operationId === 'forkVm') {
       const body = JSON.parse(request.body.toString()) as {name: string};
       value = {...value as object, id: operation.operationId === 'createVm' ? 'vm-0' : 'fork-0', name: body.name ?? 'generated'};
+    }
+    if (operation.operationId === 'getVmContainer') {
+      const state = this.containerStates.length > 1 ? this.containerStates.shift() : this.containerStates[0];
+      value = {...value as object, image: 'docker://busybox:latest', state: state ?? 'running'};
     }
     if (operation.operationId === 'uploadVmFile') this.files.set(url.searchParams.get('path') ?? '', request.body);
     if (operation.operationId === 'downloadVmFile') {

@@ -65,7 +65,7 @@ impl Hypervisor {
             env: options.env,
             from: None,
             networks: options.networks,
-            container: None,
+            container: options.container,
         };
         let result = api::create_vm(
             &self.client.transport,

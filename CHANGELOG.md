@@ -52,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inspect, delete, member attach/detach and cursor-based audit operations over
   authenticated gateway HTTP. VM creation accepts existing network names.
 
+- Python, TypeScript and Rust VM resources expose typed container status and
+  cancellable read-only waits, plus scoped exposure creation, listing and
+  revocation through authenticated gateway HTTP.
+
 - SDK detailed statistics expose shared model/MCP interaction objects with typed
   messages, content blocks, calls and results, structured tool JSON, stable ledger
   references, and explicit complete, truncated or unknown capture status.

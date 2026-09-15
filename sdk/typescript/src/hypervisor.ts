@@ -43,6 +43,7 @@ export class Hypervisor extends Client {
       profile_id: profile, name: options.name || null, persistent: Boolean(options.name),
       cpus: options.vcpu ?? null, ram_mb: memoryMb(options.memory), env: options.env ?? null,
       networks: options.networks ?? [],
+      ...(options.container === undefined ? {} : {container: options.container}),
     }}, options);
     return VM.bind(this.transport, response.id, response.name);
   }

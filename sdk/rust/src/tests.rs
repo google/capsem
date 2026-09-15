@@ -48,6 +48,7 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
                 memory: Some("8G".parse().unwrap()),
                 env: Some([("EDITOR".into(), "vim".into())].into()),
                 networks: vec!["team".into()],
+                container: None,
             },
         )
         .await
@@ -112,6 +113,52 @@ async fn cloned_vm_handles_resolve_names_once_even_concurrently() {
     vm.stop().await.unwrap();
     request(&mut server, "/vms/vm-1/stop").await;
     assert!(server.received.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn container_and_exposure_resources_use_typed_vm_routes() {
+    let mut server = gateway().await;
+    let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    let vm = hv
+        .create(
+            "code",
+            CreateOptions {
+                container: Some(models::ContainerSpec {
+                    image: "docker://busybox:latest".into(),
+                    args: Vec::new(),
+                    env: Default::default(),
+                    registry: None,
+                    attach: false,
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        request(&mut server, "/vms/create").await["container"]["image"],
+        "docker://busybox:latest"
+    );
+    vm.container().status().await.unwrap();
+    request(&mut server, "/vms/vm-1/container").await;
+    assert!(matches!(
+        vm.container().wait(Duration::ZERO).await,
+        Err(Error::InvalidInput(_))
+    ));
+    let exposure = vm
+        .exposures()
+        .create(models::ExposureRequest {
+            guest_port: 8080,
+            host_port: 0,
+            target: models::ExposureTarget::Container,
+        })
+        .await
+        .unwrap();
+    request(&mut server, "/vms/vm-1/exposures").await;
+    vm.exposures().list().await.unwrap();
+    request(&mut server, "/vms/vm-1/exposures").await;
+    vm.exposures().delete(&exposure.id).await.unwrap();
+    request(&mut server, "/vms/vm-1/exposures/vm-1").await;
 }
 
 #[tokio::test]
