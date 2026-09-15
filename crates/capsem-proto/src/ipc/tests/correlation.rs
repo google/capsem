@@ -1,0 +1,105 @@
+use super::*;
+
+/// A reply is matched to its request by id, not by arrival order: every IPC
+/// connection also receives lifecycle broadcasts, and the service once took a
+/// `ShutdownRequested` as the answer to an exec.
+#[test]
+fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
+    let requests = [
+        (
+            ServiceToProcess::Exec {
+                id: 7,
+                command: "true".into(),
+            },
+            Some(7),
+        ),
+        (
+            ServiceToProcess::ReadFile {
+                id: 8,
+                path: "/x".into(),
+            },
+            Some(8),
+        ),
+        (ServiceToProcess::SnapshotStatus { id: 9 }, Some(9)),
+        (ServiceToProcess::McpRefreshTools { id: 10 }, Some(10)),
+        (
+            ServiceToProcess::LinkDetach {
+                id: 11,
+                network: "n".into(),
+                generation: 1,
+            },
+            Some(11),
+        ),
+        (ServiceToProcess::Ping, None),
+        (ServiceToProcess::ReloadConfig, None),
+    ];
+    for (request, id) in requests {
+        assert_eq!(request.request_id(), id, "{request:?}");
+    }
+    let replies = [
+        (
+            ProcessToService::ExecResult {
+                id: 7,
+                stdout: vec![],
+                stderr: vec![],
+                exit_code: 0,
+                truncated: false,
+            },
+            Some(7),
+        ),
+        (ProcessToService::LinkDetachResult { id: 11, error: None }, Some(11)),
+        (ProcessToService::ShutdownRequested { id: "vm".into() }, None),
+        (ProcessToService::SuspendRequested { id: "vm".into() }, None),
+        (
+            ProcessToService::SuspendFailed {
+                id: "vm".into(),
+                error: "e".into(),
+            },
+            None,
+        ),
+        (
+            ProcessToService::StateChanged {
+                id: "vm".into(),
+                state: "s".into(),
+                trigger: "t".into(),
+            },
+            None,
+        ),
+        (ProcessToService::ExecOutput { id: 7, data: vec![1] }, None),
+        (ProcessToService::Pong, None),
+    ];
+    for (reply, id) in replies {
+        assert_eq!(reply.reply_id(), id, "{reply:?}");
+    }
+}
+
+/// Service to VM-owner IPC is bincode, which cannot decode a
+/// `serde_json::Value` (no `deserialize_any`). The owner fills tool
+/// annotations, so the typed field must survive the real codec, not only JSON.
+#[test]
+fn mcp_tool_status_annotations_roundtrip_bincode() {
+    let msg = ProcessToService::McpToolsResult {
+        id: 21,
+        tools: vec![McpToolStatus {
+            namespaced_name: "github__search".into(),
+            original_name: "search".into(),
+            description: None,
+            server_name: "github".into(),
+            annotations: Some(crate::mcp_contracts::ToolAnnotations {
+                title: Some("Search".into()),
+                read_only_hint: true,
+                destructive_hint: false,
+                idempotent_hint: true,
+                open_world_hint: true,
+            }),
+        }],
+    };
+    let bytes = bincode::serialize(&msg).unwrap();
+    let decoded: ProcessToService = bincode::deserialize(&bytes).expect("annotations decode over bincode");
+    let ProcessToService::McpToolsResult { tools, .. } = decoded else {
+        panic!("wrong variant");
+    };
+    let annotations = tools[0].annotations.as_ref().expect("annotations survive");
+    assert!(annotations.read_only_hint && !annotations.destructive_hint);
+    assert_eq!(annotations.title.as_deref(), Some("Search"));
+}
