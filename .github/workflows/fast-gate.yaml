@@ -71,7 +71,7 @@ jobs:
       - name: Materialize locked qualification dependencies
         run: |
           uv sync --project build_system --frozen
-          python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project sdk/python --frozen
+          python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project sdk/python --frozen --no-install-project
           cargo fetch --locked
           for workspace in web/app web/docs web/marketing build_system/release_site sdk/typescript; do
             pnpm --dir "$workspace" install --frozen-lockfile

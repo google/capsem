@@ -13,10 +13,26 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tupl
     settings = config.sdk_python
     phase = plan.phase("fast.sdk.python")
     prefix = ["uv", "run", "--project", settings.project, "--frozen", "--no-sync"]
-    synced = phase.add(step(
-        "sync", Run(["uv", "sync", "--project", settings.project, "--frozen"]),
-        kind=Kind.COMPILE, needs=frozenset({Needs.DISK}), speed=Speed.FAST,
+    prewarmed = phase.add(step(
+        "prewarm",
+        Run(
+            [
+                "uv", "sync", "--project", settings.project, "--frozen",
+                "--no-install-project",
+            ],
+            outside_sandbox=True,
+        ),
+        kind=Kind.COMPILE,
+        needs=frozenset({Needs.DISK, Needs.NETWORK}),
+        speed=Speed.FAST,
     ), after=after)
+    synced = phase.add(step(
+        "sync", Run([
+            "uv", "sync", "--project", settings.project, "--frozen",
+            "--no-build-isolation",
+        ]),
+        kind=Kind.COMPILE, needs=frozenset({Needs.DISK}), speed=Speed.FAST,
+    ), after=(prewarmed,))
     commands = {
         "generate": uv_run(config, "python", "-m", "capsem_builder.sdkgen", "--check",
                            "--specification", settings.specification, "--python-package", settings.source),
@@ -24,8 +40,8 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tupl
                  settings.source, settings.tests],
         "types": [*prefix, "ty", "check", "--project", settings.project, "--error-on-warning",
                   "--python-platform", "all", settings.source, settings.tests],
-        "build": ["uv", "build", "--project", settings.project, "--no-sources",
-                  "--out-dir", settings.build_output],
+        "build": [*prefix, "python", "-m", "build", "--no-isolation",
+                  "--outdir", settings.build_output, settings.project],
     }
     checks = tuple(phase.add(step(
         label, Run(argv), kind=Kind.PACKAGE if label == "build" else Kind.LINT, speed=Speed.FAST,

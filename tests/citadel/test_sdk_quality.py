@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import sdkchecks
+from capsem_builder.gate.execution import Needs
 from capsem_builder.gate.plan import Plan
 from helpers.gate import gate_plan
 
@@ -87,10 +88,27 @@ def test_sdk_checks_are_in_the_real_fast_plan() -> None:
         assert check.label in actual.labels, SDK_RATIONALE
         assert actual.step_named(check.label).render() == check.render(), SDK_RATIONALE
     rendered = "\n".join(line for check in leaves for line in check.render())
-    for command in ("ruff check", "ty check", "--error-on-warning", "pytest", "uv build", "capsem_builder.sdkgen", "--check"):
+    for command in ("ruff check", "ty check", "--error-on-warning", "pytest", "python -m build", "capsem_builder.sdkgen", "--check"):
         assert command in rendered, SDK_RATIONALE
     assert "--ignore" not in rendered and "--exit-zero" not in rendered, SDK_RATIONALE
     assert "sdk/python/uv.lock" in CONFIG.audits.dependency_policy.lockfiles, SDK_RATIONALE
+
+
+def test_python_sdk_build_backend_is_warmed_before_sealed_sync() -> None:
+    plan = gate_plan("test-fast")
+    prewarm = plan.step_named("fast.sdk.python.prewarm")
+    synced = plan.step_named("fast.sdk.python.sync")
+    built = plan.step_named("fast.sdk.python.build")
+
+    assert plan.after_of("fast.sdk.python.sync") >= {prewarm.label}, SDK_RATIONALE
+    assert prewarm.needs == frozenset({Needs.DISK, Needs.NETWORK}), SDK_RATIONALE
+    assert prewarm.render() == [
+        "uv sync --project sdk/python --frozen --no-install-project [outside kernel sandbox]"
+    ], SDK_RATIONALE
+    assert synced.render() == [
+        "uv sync --project sdk/python --frozen --no-build-isolation"
+    ], SDK_RATIONALE
+    assert "--no-isolation" in " ".join(built.render()), SDK_RATIONALE
 
 
 @pytest.mark.parametrize("missing", ["lint", "types", "tests", "build", "generate"])

@@ -72,6 +72,7 @@ ONLINE_FAST = {
     "fast.audit.cargo",
     # Exact lockfile dependency materialization. The paired install is
     # explicitly offline and stays inside the kernel boundary.
+    "fast.sdk.python.prewarm",
     "fast.toolchain.node",
     "fast.toolchain.ort",
     "fast.toolchain.rust",
@@ -204,7 +205,7 @@ def test_fast_gate_warms_sdk_python_in_the_policy_owned_cache() -> None:
     )
     assert (
         "python3 build_system/scripts/ci/run-bounded-command.py "
-        "--timeout-seconds 300 -- uv sync --project sdk/python --frozen"
+        "--timeout-seconds 300 -- uv sync --project sdk/python --frozen --no-install-project"
     ) in step["run"]
 
 
