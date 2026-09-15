@@ -53,7 +53,7 @@ const report: InteractionReport = {
       event_id: 'cccccccccccc', timestamp: '2026-09-15T00:00:02Z',
       content: {
         kind: InteractionToolCallKind.TOOL_CALL,
-        call_id: 'call-1', tool_name: 'search', server_name: 'docs',
+        call_id: 'call-1', tool_name: 'search', server_name: 'catalog',
         origin: ToolOrigin.MCP, decision: ToolDecision.ALLOWED,
         arguments: {
           status: CaptureStatus.COMPLETE,
