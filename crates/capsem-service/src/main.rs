@@ -364,7 +364,7 @@ struct CachedStatsResponse {
 
 #[derive(Clone)]
 struct CachedStatsDetailResponse {
-    db_fingerprint: String,
+    db_epoch: u64,
     bytes: Vec<u8>,
 }
 

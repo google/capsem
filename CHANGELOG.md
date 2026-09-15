@@ -465,6 +465,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - VM creation no longer treats the legacy `image` request field as a clone source;
   callers must use the typed `from` field explicitly.
 
+- VM security, detection and history routes show rows committed since the last
+  read. Their response cache keyed on `session.db` size and modification time,
+  which a commit that only reaches the write-ahead log leaves unchanged, so new
+  denials stayed invisible until the next checkpoint. The cache now follows the
+  logger's own change generation.
+
 - Service shutdown drains pending replies before gracefully stopping its gateway,
   with bounded cleanup for stalled requests and unresponsive companion processes.
 

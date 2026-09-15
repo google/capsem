@@ -270,6 +270,65 @@ async fn external_reader_query_many_does_not_cache_across_external_writes() {
     );
 }
 
+// Service routes cache response bytes on `read_cache_epoch`. For an external
+// reader the epoch is only honest if every disk sync that observed another
+// connection's commit advances it -- `ready()` and plain queries alike.
+// Otherwise a query that happened to absorb the commit leaves the epoch where
+// it was, and the next `ready()` finds `data_version` already synced.
+#[tokio::test]
+async fn external_reader_epoch_advances_when_ready_observes_an_external_commit() {
+    let p = temp_db_path("external-epoch-ready");
+    let writer = DbWriter::open(&p, 16).expect("open owning writer");
+    writer.flush().await;
+    let db = DbHandle::open_external_reader(&p).expect("open service external reader");
+    db.ready().await.expect("external reader ready");
+    let unchanged = db.read_cache_epoch(ReadCacheDomain::All);
+    db.ready().await.expect("ready without a commit");
+    assert_eq!(
+        db.read_cache_epoch(ReadCacheDomain::All),
+        unchanged,
+        "no external commit means the epoch must not move, or route caches never hit"
+    );
+
+    writer.write_blocking(WriteOp::NetEvent(make_net_event(
+        "external-epoch-ready.example",
+        Decision::Allowed,
+    )));
+    writer.flush().await;
+    db.ready().await.expect("ready after external commit");
+    assert!(
+        db.read_cache_epoch(ReadCacheDomain::All) > unchanged,
+        "ready() observing an external commit must advance the read epoch. {DB_BOUNDARY_RATIONALE}"
+    );
+    assert!(db.read_cache_epoch(ReadCacheDomain::SessionSummary) > 0);
+}
+
+#[tokio::test]
+async fn external_reader_epoch_advances_when_a_query_absorbs_an_external_commit() {
+    let p = temp_db_path("external-epoch-query");
+    let writer = DbWriter::open(&p, 16).expect("open owning writer");
+    writer.flush().await;
+    let db = DbHandle::open_external_reader(&p).expect("open service external reader");
+    db.ready().await.expect("external reader ready");
+    let before = db.read_cache_epoch(ReadCacheDomain::All);
+
+    writer.write_blocking(WriteOp::NetEvent(make_net_event(
+        "external-epoch-query.example",
+        Decision::Allowed,
+    )));
+    writer.flush().await;
+    db.query("SELECT COUNT(*) AS count FROM net_events", &[])
+        .await
+        .expect("query absorbs the commit");
+    let after_query = db.read_cache_epoch(ReadCacheDomain::All);
+    assert!(
+        after_query > before,
+        "a query that synced an external commit must advance the read epoch. {DB_BOUNDARY_RATIONALE}"
+    );
+    db.ready().await.expect("ready after the query already synced");
+    assert_eq!(db.read_cache_epoch(ReadCacheDomain::All), after_query);
+}
+
 #[tokio::test]
 async fn db_handle_query_rejects_mutations() {
     let p = temp_db_path("query-rejects-mutations");

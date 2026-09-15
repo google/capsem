@@ -27,9 +27,10 @@ pub(super) async fn handle_security_latest(
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
     let route_key = format!("security_latest:limit={limit}");
-    if let Some(body) = session_response_cache_get(&state, &id, &route_key, &db_path) {
-        return Ok(json_bytes_response(body));
-    }
+    let slot = match session_response_cache_lookup(&state, &id, &route_key, "security", &db_path).await? {
+        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
+        SessionResponseCache::Miss(slot) => slot,
+    };
     let rows = security_latest_for_vm(&state, &id, limit, false).await?;
     info!(
         route = "/vms/{id}/security/latest",
@@ -44,7 +45,7 @@ pub(super) async fn handle_security_latest(
             format!("failed to serialize security latest response: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, &route_key, &db_path, &body);
+    slot.store(&state, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -58,9 +59,10 @@ pub(super) async fn handle_detection_latest(
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
     let route_key = format!("detection_latest:limit={limit}");
-    if let Some(body) = session_response_cache_get(&state, &id, &route_key, &db_path) {
-        return Ok(json_bytes_response(body));
-    }
+    let slot = match session_response_cache_lookup(&state, &id, &route_key, "security", &db_path).await? {
+        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
+        SessionResponseCache::Miss(slot) => slot,
+    };
     let rows = security_latest_for_vm(&state, &id, limit, true).await?;
     let body = serde_json::to_vec(&rows).map_err(|error| {
         AppError(
@@ -68,7 +70,7 @@ pub(super) async fn handle_detection_latest(
             format!("failed to serialize detection latest response: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, &route_key, &db_path, &body);
+    slot.store(&state, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -79,9 +81,10 @@ pub(super) async fn handle_security_info(
 ) -> Result<axum::response::Response, AppError> {
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
-    if let Some(body) = session_response_cache_get(&state, &id, "security_status", &db_path) {
-        return Ok(json_bytes_response(body));
-    }
+    let slot = match session_response_cache_lookup(&state, &id, "security_status", "security", &db_path).await? {
+        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
+        SessionResponseCache::Miss(slot) => slot,
+    };
     let stats = security_stats_for_vm(&state, &id).await?;
     let body = serde_json::to_vec(&stats).map_err(|error| {
         AppError(
@@ -89,7 +92,7 @@ pub(super) async fn handle_security_info(
             format!("failed to serialize security status response: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, "security_status", &db_path, &body);
+    slot.store(&state, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -713,56 +716,62 @@ pub(super) fn query_history_ledger(session: &HistorySessionLedger, params: &api:
     }
 }
 
-pub(super) fn stats_detail_db_fingerprint(db_path: &StdPath) -> Option<String> {
-    let metadata = std::fs::metadata(db_path).ok()?;
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    Some(format!("{}:{modified}", metadata.len()))
-}
-
 pub(super) fn session_response_cache_key(vm_id: &str, route_key: &str) -> String {
     format!("{vm_id}:{route_key}")
 }
 
-pub(super) fn session_response_cache_get(
+/// Outcome of looking up a cached session-ledger route response.
+pub(super) enum SessionResponseCache {
+    Hit(Bytes),
+    Miss(SessionResponseCacheSlot),
+}
+
+/// Where a freshly built response is stored, pinned to the ledger generation
+/// observed before the route queried.
+///
+/// Freshness is the logger handle's answer: `ready()` syncs the external
+/// reader from disk and advances `read_cache_epoch` when another connection
+/// committed. Taking the epoch after that sync and before the query means a
+/// commit landing mid-query leaves the bytes under an older epoch -- a miss on
+/// the next read, never a stale hit.
+pub(super) struct SessionResponseCacheSlot {
+    cache_key: String,
+    db_epoch: u64,
+}
+
+pub(super) async fn session_response_cache_lookup(
     state: &ServiceState,
     vm_id: &str,
     route_key: &str,
+    ledger: &str,
     db_path: &StdPath,
-) -> Option<Bytes> {
-    let db_fingerprint = stats_detail_db_fingerprint(db_path)?;
+) -> Result<SessionResponseCache, AppError> {
+    let db = open_ready_session_db(state, vm_id, ledger, db_path).await?;
+    let db_epoch = db.read_cache_epoch(capsem_logger::ReadCacheDomain::All);
     let cache_key = session_response_cache_key(vm_id, route_key);
     let cached = state
         .stats_detail_response_cache
         .lock()
         .unwrap()
         .get(&cache_key)
-        .cloned()?;
-    (cached.db_fingerprint == db_fingerprint).then(|| Bytes::from(cached.bytes))
+        .filter(|cached| cached.db_epoch == db_epoch)
+        .map(|cached| Bytes::from(cached.bytes.clone()));
+    Ok(match cached {
+        Some(bytes) => SessionResponseCache::Hit(bytes),
+        None => SessionResponseCache::Miss(SessionResponseCacheSlot { cache_key, db_epoch }),
+    })
 }
 
-pub(super) fn session_response_cache_store(
-    state: &ServiceState,
-    vm_id: &str,
-    route_key: &str,
-    db_path: &StdPath,
-    bytes: &[u8],
-) {
-    let Some(db_fingerprint) = stats_detail_db_fingerprint(db_path) else {
-        return;
-    };
-    let cache_key = session_response_cache_key(vm_id, route_key);
-    state.stats_detail_response_cache.lock().unwrap().insert(
-        cache_key,
-        CachedStatsDetailResponse {
-            db_fingerprint,
-            bytes: bytes.to_vec(),
-        },
-    );
+impl SessionResponseCacheSlot {
+    pub(super) fn store(self, state: &ServiceState, bytes: &[u8]) {
+        state.stats_detail_response_cache.lock().unwrap().insert(
+            self.cache_key,
+            CachedStatsDetailResponse {
+                db_epoch: self.db_epoch,
+                bytes: bytes.to_vec(),
+            },
+        );
+    }
 }
 
 const STATS_RESPONSE_SQL: &str = r#"

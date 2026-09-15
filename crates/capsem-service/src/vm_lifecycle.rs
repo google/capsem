@@ -124,9 +124,10 @@ pub(super) async fn handle_history_processes(
 ) -> Result<axum::response::Response, AppError> {
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
-    if let Some(body) = session_response_cache_get(&state, &id, "history_processes", &db_path) {
-        return Ok(json_bytes_response(body));
-    }
+    let slot = match session_response_cache_lookup(&state, &id, "history_processes", "history", &db_path).await? {
+        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
+        SessionResponseCache::Miss(slot) => slot,
+    };
     let session = history_ledger_for_vm(&state, &id).await?;
     let processes = session.processes.into_iter().take(100).collect();
     let response = api::HistoryProcessesResponse { processes };
@@ -136,7 +137,7 @@ pub(super) async fn handle_history_processes(
             format!("failed to serialize history processes response: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, "history_processes", &db_path, &body);
+    slot.store(&state, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -147,9 +148,10 @@ pub(super) async fn handle_history_counts(
 ) -> Result<axum::response::Response, AppError> {
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
-    if let Some(body) = session_response_cache_get(&state, &id, "history_counts", &db_path) {
-        return Ok(json_bytes_response(body));
-    }
+    let slot = match session_response_cache_lookup(&state, &id, "history_counts", "history", &db_path).await? {
+        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
+        SessionResponseCache::Miss(slot) => slot,
+    };
     let session = history_ledger_for_vm(&state, &id).await?;
     let response = api::HistoryCountsResponse {
         exec_count: session.counts.exec_count,
@@ -161,7 +163,7 @@ pub(super) async fn handle_history_counts(
             format!("failed to serialize history counts response: {error}"),
         )
     })?;
-    session_response_cache_store(&state, &id, "history_counts", &db_path, &body);
+    slot.store(&state, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
