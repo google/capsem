@@ -82,6 +82,12 @@ def test_sealed_linux_frontend_builds_the_current_sdk_first() -> None:
     assert "\n    capsem-mcp\n" not in runner, RATIONALE
 
 
+def test_npm_mcp_waits_for_the_linked_sdk_build() -> None:
+    plan = gate_plan("test-fast")
+    for consumer in ("fast.mcp.typescript.tests", "fast.mcp.typescript.build"):
+        assert "fast.sdk.typescript.build" in _ancestors(plan, consumer), RATIONALE
+
+
 @pytest.mark.parametrize("removed", ["install", "build", "verify"])
 def test_missing_sdk_predecessors_are_rejected(removed: str) -> None:
     plan = gate_plan("test-fast")

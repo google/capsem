@@ -64,7 +64,7 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
             kind=Kind.UNIT_TEST,
             speed=Speed.FAST,
         ),
-        after=after,
+        after=(built,),
     )
     mcp_built = mcp_phase.add(
         step(
@@ -73,7 +73,7 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
             kind=Kind.PACKAGE,
             speed=Speed.FAST,
         ),
-        after=after,
+        after=(built,),
     )
     return (*checks, built, generated, mcp_tested, mcp_built)
 
