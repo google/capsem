@@ -12,6 +12,8 @@ pub use profile_status::*;
 
 mod containers;
 pub use containers::*;
+mod exposures;
+pub use exposures::*;
 mod lifecycle;
 pub use lifecycle::*;
 mod execution;

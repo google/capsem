@@ -25,6 +25,10 @@ from .exec_history_details import ExecHistoryDetails as ExecHistoryDetails
 from .exec_request import ExecRequest as ExecRequest
 from .exec_response import ExecResponse as ExecResponse
 from .exec_source import ExecSource as ExecSource
+from .exposure_info import ExposureInfo as ExposureInfo
+from .exposure_list_response import ExposureListResponse as ExposureListResponse
+from .exposure_request import ExposureRequest as ExposureRequest
+from .exposure_target import ExposureTarget as ExposureTarget
 from .file_action_count import FileActionCount as FileActionCount
 from .file_change import FileChange as FileChange
 from .file_change_kind import FileChangeKind as FileChangeKind

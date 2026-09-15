@@ -4,8 +4,10 @@ from .attach_network_member import attach_network_member as attach_network_membe
 from .call_profile_mcp_tool import call_profile_mcp_tool as call_profile_mcp_tool
 from .create_network import create_network as create_network
 from .create_vm import create_vm as create_vm
+from .create_vm_exposure import create_vm_exposure as create_vm_exposure
 from .delete_network import delete_network as delete_network
 from .delete_vm import delete_vm as delete_vm
+from .delete_vm_exposure import delete_vm_exposure as delete_vm_exposure
 from .detach_network_member import detach_network_member as detach_network_member
 from .download_vm_file import download_vm_file as download_vm_file
 from .exec_vm import exec_vm as exec_vm
@@ -35,6 +37,7 @@ from .list_profile_mcp_servers import (
 )
 from .list_profile_mcp_tools import list_profile_mcp_tools as list_profile_mcp_tools
 from .list_profiles import list_profiles as list_profiles
+from .list_vm_exposures import list_vm_exposures as list_vm_exposures
 from .list_vm_files import list_vm_files as list_vm_files
 from .list_vm_snapshots import list_vm_snapshots as list_vm_snapshots
 from .list_vms import list_vms as list_vms

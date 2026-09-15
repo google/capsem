@@ -1440,6 +1440,148 @@
         }
       }
     },
+    "/vms/{id}/exposures": {
+      "get": {
+        "operationId": "listVmExposures",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExposureListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createVmExposure",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExposureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExposureInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/exposures/{exposure_id}": {
+      "delete": {
+        "operationId": "deleteVmExposure",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exposure_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmActionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/files/content": {
       "get": {
         "operationId": "downloadVmFile",
@@ -3146,6 +3288,87 @@
           "cli",
           "mcp",
           "frontend"
+        ]
+      },
+      "ExposureInfo": {
+        "type": "object",
+        "description": "One live exposure as the VM owner declares it.",
+        "required": [
+          "id",
+          "host_port",
+          "guest_port",
+          "target"
+        ],
+        "properties": {
+          "guest_port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "host_port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Loopback host port that forwards to the guest.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identity used to revoke it: the host port, as a string."
+          },
+          "target": {
+            "$ref": "#/components/schemas/ExposureTarget"
+          }
+        }
+      },
+      "ExposureListResponse": {
+        "type": "object",
+        "description": "A VM's live exposures.",
+        "required": [
+          "owner_generation",
+          "exposures"
+        ],
+        "properties": {
+          "exposures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExposureInfo"
+            }
+          },
+          "owner_generation": {
+            "type": "string",
+            "description": "Identity of the VM owner process that holds the listeners. It changes\nwhen the owner restarts and restores them; a string so JavaScript\nclients keep every bit."
+          }
+        }
+      },
+      "ExposureRequest": {
+        "type": "object",
+        "description": "Expose a guest port on a host loopback port.",
+        "required": [
+          "guest_port"
+        ],
+        "properties": {
+          "guest_port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "host_port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Loopback host port to listen on; 0 or absent picks a free one.",
+            "minimum": 0
+          },
+          "target": {
+            "$ref": "#/components/schemas/ExposureTarget"
+          }
+        }
+      },
+      "ExposureTarget": {
+        "type": "string",
+        "description": "The guest network namespace an exposure reaches. There is no fallback\nbetween them.",
+        "enum": [
+          "container",
+          "vm"
         ]
       },
       "FileActionCount": {

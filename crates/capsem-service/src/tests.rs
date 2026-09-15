@@ -83,7 +83,7 @@ fn test_profile_mutation_db(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
     ServiceState::open_profile_mutation_db_handle(run_dir).unwrap()
 }
 
-fn make_test_state() -> Arc<ServiceState> {
+pub(crate) fn make_test_state() -> Arc<ServiceState> {
     Arc::new(make_test_state_owned())
 }
 

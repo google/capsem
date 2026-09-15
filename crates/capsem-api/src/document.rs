@@ -23,6 +23,7 @@ pub fn openapi() -> OpenApi {
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
     doc.get::<VmStatusResponse>("/vms/{id}/status", "getVmStatus");
     doc.get::<ContainerStatusResponse>("/vms/{id}/container", "getVmContainer");
+    doc.exposures();
     doc.post::<ExecRequest, ExecResponse>("/vms/{id}/exec", "execVm");
     doc.post::<ForkRequest, ForkResponse>("/vms/{id}/fork", "forkVm");
     doc.empty_post::<ProvisionResponse>("/vms/{id}/start", "startVm");
@@ -141,6 +142,14 @@ impl Document {
     fn empty_post<T: ToSchema>(&mut self, path: &str, id: &str) {
         let operation = self.operation::<T>(path, id);
         self.add(path, HttpMethod::Post, operation);
+    }
+
+    fn exposures(&mut self) {
+        self.get::<ExposureListResponse>("/vms/{id}/exposures", "listVmExposures");
+        self.post::<ExposureRequest, ExposureInfo>("/vms/{id}/exposures", "createVmExposure");
+        let path = "/vms/{id}/exposures/{exposure_id}";
+        let revoke = self.operation::<VmActionResponse>(path, "deleteVmExposure");
+        self.add(path, HttpMethod::Delete, revoke);
     }
 
     fn networks(&mut self) {

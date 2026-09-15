@@ -220,6 +220,11 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/{id}/info", get(proxy::handle_proxy))
         .route("/vms/{id}/status", get(proxy::handle_proxy))
         .route("/vms/{id}/container", get(proxy::handle_proxy))
+        .route(
+            "/vms/{id}/exposures",
+            get(proxy::handle_proxy).post(proxy::handle_proxy),
+        )
+        .route("/vms/{id}/exposures/{exposure_id}", delete(proxy::handle_proxy))
         .route("/vms/{id}/snapshots/status", get(proxy::handle_proxy))
         .route("/vms/{id}/snapshots/list", get(proxy::handle_proxy))
         .route("/vms/{id}/changes", get(proxy::handle_proxy))

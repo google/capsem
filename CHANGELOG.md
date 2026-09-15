@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Port exposure is an authenticated HTTP API: `POST /vms/{id}/exposures` listens
+  on a host loopback port for a guest port in the container (default) or the
+  VM's own namespace, `GET /vms/{id}/exposures` lists what the VM owner holds,
+  and `DELETE /vms/{id}/exposures/{exposure_id}` closes one for good. Capsem's
+  guest DNS and interception ports cannot be exposed from the VM namespace.
+
 - VM creation accepts a `container` workload. The service pulls and verifies
   the OCI image on the host with one-pull registry credentials that are never
   stored, stages it into the VM through the file import ledger and starts the

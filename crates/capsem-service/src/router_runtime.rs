@@ -1,5 +1,6 @@
 use super::*;
 
+mod exposures;
 pub(crate) mod restart;
 
 pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
@@ -36,6 +37,14 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/status", get(handle_vm_status))
         .route("/vms/{id}/container", get(container_setup::handle_container_status))
+        .route(
+            "/vms/{id}/exposures",
+            get(exposures::handle_list_exposures).post(exposures::handle_create_exposure),
+        )
+        .route(
+            "/vms/{id}/exposures/{exposure_id}",
+            delete(exposures::handle_delete_exposure),
+        )
         .route("/vms/{id}/snapshots/status", get(handle_vm_snapshots_status))
         .route("/vms/{id}/snapshots/list", get(handle_vm_snapshots_list))
         .route("/vms/{id}/changes", get(handle_vm_changes))
