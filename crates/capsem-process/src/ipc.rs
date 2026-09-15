@@ -740,7 +740,7 @@ pub(crate) async fn handle_ipc_connection(
                                     original_name: t.original_name,
                                     description: t.description,
                                     server_name: t.server_name,
-                                    annotations: t.annotations.as_ref().map(|a| a.to_mcp_json()),
+                                    annotations: t.annotations,
                                 })
                                 .collect();
                             capsem_core::try_send!(

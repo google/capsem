@@ -270,7 +270,9 @@ pub struct McpToolStatus {
     pub original_name: String,
     pub description: Option<String>,
     pub server_name: String,
-    pub annotations: Option<serde_json::Value>,
+    /// Typed rather than `serde_json::Value`: this crosses bincode IPC, which
+    /// cannot decode a self-describing value.
+    pub annotations: Option<crate::mcp_contracts::ToolAnnotations>,
 }
 
 /// Host-side VM recovery snapshot status. This is not session.db/security

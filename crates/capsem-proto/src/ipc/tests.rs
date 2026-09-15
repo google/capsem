@@ -977,3 +977,34 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
         assert_eq!(reply.reply_id(), id, "{reply:?}");
     }
 }
+
+/// Service to VM-owner IPC is bincode, which cannot decode a
+/// `serde_json::Value` (no `deserialize_any`). The owner fills tool
+/// annotations, so the typed field must survive the real codec, not only JSON.
+#[test]
+fn mcp_tool_status_annotations_roundtrip_bincode() {
+    let msg = ProcessToService::McpToolsResult {
+        id: 21,
+        tools: vec![McpToolStatus {
+            namespaced_name: "github__search".into(),
+            original_name: "search".into(),
+            description: None,
+            server_name: "github".into(),
+            annotations: Some(crate::mcp_contracts::ToolAnnotations {
+                title: Some("Search".into()),
+                read_only_hint: true,
+                destructive_hint: false,
+                idempotent_hint: true,
+                open_world_hint: true,
+            }),
+        }],
+    };
+    let bytes = bincode::serialize(&msg).unwrap();
+    let decoded: ProcessToService = bincode::deserialize(&bytes).expect("annotations decode over bincode");
+    let ProcessToService::McpToolsResult { tools, .. } = decoded else {
+        panic!("wrong variant");
+    };
+    let annotations = tools[0].annotations.as_ref().expect("annotations survive");
+    assert!(annotations.read_only_hint && !annotations.destructive_hint);
+    assert_eq!(annotations.title.as_deref(), Some("Search"));
+}
