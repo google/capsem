@@ -33,6 +33,9 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
     const hv = new Hypervisor(url, 'secret');
     const vm = new VM(url, 'secret', {name: 'chosen'});
     try {
+      const bound = hv.vm({id: 'vm-0'});
+      expect(bound.id).toBe('vm-0');
+      bound.close();
       expect(vm.id).toBeUndefined();
       await vm.info();
       expect(vm.id).toBe('vm-0');

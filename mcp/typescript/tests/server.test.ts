@@ -41,7 +41,9 @@ describe('host MCP foundation', () => {
     const client = new Client({name: 'capsem-mcp-test', version: '1'});
     try {
       await client.connect(transport);
-      expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(['capsem_status']);
+      const names = (await client.listTools()).tools.map(tool => tool.name);
+      expect(names).toContain('capsem_status');
+      expect(names).toContain('capsem_exec');
     } finally {
       await client.close();
     }

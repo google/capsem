@@ -10,7 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `@capsem/mcp` provides a standalone stdio MCP executable backed by the typed
-  TypeScript SDK and explicit authenticated gateway HTTP configuration.
+  TypeScript SDK and explicit authenticated gateway HTTP configuration, with VM
+  lifecycle, execution, file transfer, host/guest logs, timeline, statistics,
+  snapshots, panic and triage tools.
 
 - Python, TypeScript and Rust SDK facades expose typed one-shot execution,
   persistence, purge, panic/triage diagnostics, and profile MCP discovery and

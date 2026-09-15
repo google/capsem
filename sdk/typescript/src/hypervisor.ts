@@ -1,7 +1,7 @@
 import {Client} from './client.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
-import type {CreateOptions, DiagnosticOptions, HostLogOptions, RunOptions, TriageOptions} from './options.js';
+import type {CreateOptions, DiagnosticOptions, HostLogOptions, RunOptions, TriageOptions, VmSelector} from './options.js';
 import {Transport, type CallOptions, type TransportOptions} from './transport.js';
 import {Networks, Profiles} from './resources.js';
 import {VM} from './vm.js';
@@ -31,6 +31,9 @@ export class Hypervisor extends Client {
   }
   async list(options: CallOptions = {}): Promise<models.ListResponse> {
     return api.listVms(this.transport, options);
+  }
+  vm(selector: VmSelector): VM {
+    return new VM(this.transport, selector);
   }
   async create(profile: string, options: CreateOptions = {}): Promise<VM> {
     if (options.vcpu !== undefined && (!Number.isSafeInteger(options.vcpu) || options.vcpu < 1)) {

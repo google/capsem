@@ -10,3 +10,13 @@ capsem-mcp --gateway-url http://127.0.0.1:19222 --token "$CAPSEM_TOKEN" --timeou
 
 stdout is reserved for MCP protocol messages. Startup diagnostics are sanitized
 and written to stderr.
+
+The server exposes typed tools for VM listing and creation, lifecycle actions,
+command execution, file listing and byte-preserving transfers, logs, history,
+timeline, statistics, snapshots, panics, and triage. VM tools take the immutable
+`vm_id` returned by `capsem_list` or `capsem_create`. File content can be passed
+as UTF-8 or base64.
+
+`capsem_pause` and `capsem_status` are the canonical names. Host logs use one
+`capsem_host_logs` tool with an allowlisted `source`; the package does not expose
+the legacy `suspend`, `version`, or duplicate service-log tools.

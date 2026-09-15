@@ -1,6 +1,8 @@
 import {Hypervisor} from '@capsem/sdk';
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import type {Config} from './config.js';
+import {registerHostTools} from './host-tools.js';
+import {toolCall} from './results.js';
 
 export function createServer(config: Config): McpServer {
   // The SDK validates HTTP(S), bearer credentials and the transport deadline.
@@ -9,14 +11,7 @@ export function createServer(config: Config): McpServer {
   const server = new McpServer({name: 'capsem-mcp', version: '0.6.3'});
   server.registerTool('capsem_status', {
     description: 'Read gateway, profile, update, and service status.',
-  }, async () => {
-    try {
-      const status = await hypervisor.info();
-      return {content: [{type: 'text', text: JSON.stringify(status)}], structuredContent: {...status}};
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'gateway request failed';
-      return {content: [{type: 'text', text: message}], isError: true};
-    }
-  });
+  }, () => toolCall(() => hypervisor.info()));
+  registerHostTools(server, hypervisor);
   return server;
 }
