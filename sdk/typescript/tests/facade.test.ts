@@ -158,7 +158,9 @@ it('creates containers and exposes read-only status with cancellable wait', asyn
     const hv = new Hypervisor(url, 'secret');
     const vm = await hv.create('code', {container: {image: 'docker://busybox:latest', args: [], env: {}, attach: false}});
     try {
-      expect(JSON.parse(received[0]?.body.toString() ?? '').container.image).toBe('docker://busybox:latest');
+      expect(JSON.parse(received[0]?.body.toString() ?? '') as unknown).toMatchObject({
+        container: {image: 'docker://busybox:latest'},
+      });
       expect((await vm.container.status()).image).toBe('docker://busybox:latest');
       await expect(vm.container.wait({intervalMs: 0})).rejects.toThrow('intervalMs');
       state.containerStates = ['pulling', 'running'];

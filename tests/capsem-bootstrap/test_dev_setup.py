@@ -54,5 +54,5 @@ class TestDevSetup:
         assert 'node_env = { CI = "true" }' in gate
         assert (
             'node_workspaces = ["web/app", "web/docs", "web/marketing", '
-            '"build_system/release_site"]' in gate
+            '"build_system/release_site", "sdk/typescript", "mcp/typescript"]' in gate
         )

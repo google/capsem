@@ -175,7 +175,7 @@ def test_hosted_release_failure_cleans_only_its_unpublished_version_claim() -> N
     assert "release_version_tag.py cleanup-exact" in cleanup
     assert '--tag "$RELEASE_TAG"' in cleanup
     assert '--source-commit "$SOURCE_COMMIT"' in cleanup
-    assert '--repository "${{ github.repository }}"' in cleanup
+    assert '--repository "$GITHUB_REPOSITORY"' in cleanup
 
 
 @pytest.mark.parametrize(
@@ -853,7 +853,8 @@ def test_binary_bootstrap_uses_donor_only_as_public_before() -> None:
     assert "steps.public-before.outputs.manifest-url" in resolver
     assert "steps.public-before.outputs.bootstrap" in resolver
     assert "steps.public-before.outputs.retired" in resolver
-    assert '--source-commit "${{ inputs.source_commit }}"' in resolver
+    assert 'SOURCE_COMMIT: ${{ inputs.source_commit }}' in binary
+    assert '--source-commit "$SOURCE_COMMIT"' in resolver
     assert "build_system/scripts/release/project-first-channel-before.py" in resolver
     assert "Fetch latest selected channel source manifest" in resolver
     source_fetch = resolver.split(
