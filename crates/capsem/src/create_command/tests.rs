@@ -56,7 +56,7 @@ fn image_only_flags_and_clone_sources_do_not_mix_with_plain_create() {
 mod against_the_service {
     use super::super::*;
     use crate::client::tests::fake_service::FakeService;
-    use crate::container_image::{Blobs, ImageArgs, Workload};
+    use crate::container_image::{ImageArgs, Workload};
     use crate::{Cli, Commands, SessionCommands};
     use clap::Parser;
     use serde_json::json;
@@ -112,12 +112,11 @@ mod against_the_service {
     async fn an_image_that_cannot_start_does_not_leave_its_vm_behind() {
         let service = FakeService::start();
         service
-            .route("POST", "/vms/create", 200, created("vm-9"))
             .route(
-                "POST",
-                "/vms/vm-9/exec",
+                "GET",
+                "/vms/vm-9/container",
                 200,
-                json!({"stdout": "", "stderr": "no guest", "exit_code": 1}),
+                json!({"state": "failed", "image": "docker://redis:7", "error": "pull docker://redis:7: no route"}),
             )
             .once("DELETE", "/vms/vm-9/delete", 200, json!({"success": true}))
             .route("DELETE", "/vms/vm-9/delete", 500, json!({"error": "delete stuck"}));
@@ -126,35 +125,72 @@ mod against_the_service {
             ..ImageArgs::default()
         };
         let workload = Workload::of(&image, &[]).unwrap().unwrap();
-        let root = tempfile::tempdir().unwrap();
-        let blobs = Blobs {
-            root: root.path(),
-            files: &[],
-        };
-        let request = ProvisionRequest {
-            name: None,
-            profile_id: "code".into(),
-            ram_mb: None,
-            cpus: None,
-            persistent: false,
-            env: None,
-            from: None,
-            networks: vec![],
-        };
+        let vm: ProvisionResponse = serde_json::from_value(created("vm-9")).unwrap();
 
-        let error = start_image(&service.client, &request, blobs, &workload)
-            .await
-            .unwrap_err();
-        assert!(format!("{error:#}").contains("no guest"), "{error:#}");
+        let error = start_image(&service.client, &vm, &workload).await.unwrap_err();
+        assert!(format!("{error:#}").contains("no route"), "{error:#}");
         assert_eq!(service.find("DELETE", "/vms/vm-9/delete").len(), 1);
 
-        let error = start_image(&service.client, &request, blobs, &workload)
-            .await
-            .unwrap_err();
+        let error = start_image(&service.client, &vm, &workload).await.unwrap_err();
         let reported = format!("{error:#}");
         assert!(
-            reported.contains("no guest") && reported.contains("delete stuck"),
+            reported.contains("no route") && reported.contains("delete stuck"),
             "{reported}"
         );
+    }
+
+    #[tokio::test]
+    async fn create_image_sends_the_container_and_publishes_once_launched() {
+        let service = FakeService::start();
+        service
+            .route("POST", "/vms/create", 200, created("vm-3"))
+            .once(
+                "GET",
+                "/vms/vm-3/container",
+                200,
+                json!({"state": "pulling", "image": "docker://redis:7"}),
+            )
+            .route(
+                "GET",
+                "/vms/vm-3/container",
+                200,
+                json!({"state": "starting", "image": "docker://redis:7", "digest": "sha256:ab"}),
+            )
+            .route(
+                "POST",
+                "/vms/vm-3/exposures",
+                200,
+                json!({"id": "4100", "host_port": 4100, "guest_port": 6379, "target": "container"}),
+            );
+        create(
+            &service.client,
+            &args(&[
+                "-e",
+                "A=1",
+                "-p",
+                "0:6379",
+                "--image",
+                "docker://redis:7",
+                "redis-server",
+            ]),
+        )
+        .await
+        .unwrap();
+
+        let body = service.find("POST", "/vms/create")[0].json();
+        assert_eq!(
+            body["container"],
+            json!({"image": "docker://redis:7", "args": ["redis-server"], "env": {"A": "1"}, "attach": false})
+        );
+        assert!(
+            body.get("env").is_none(),
+            "with an image the environment is the container's"
+        );
+        assert_eq!(service.find("GET", "/vms/vm-3/container").len(), 2);
+        assert_eq!(
+            service.find("POST", "/vms/vm-3/exposures")[0].json(),
+            json!({"guest_port": 6379, "host_port": 0, "target": "container"})
+        );
+        assert!(service.find("DELETE", "/vms/vm-3/delete").is_empty());
     }
 }

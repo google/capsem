@@ -8,6 +8,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::client::{self, ApiResponse, ExecResponse, ProvisionRequest, RunRequest, UdsClient};
 use crate::container_image::{self, ImageArgs, Workload};
+use capsem_api::ContainerState;
 
 #[derive(clap::Args)]
 pub(super) struct RunArgs {
@@ -85,10 +86,6 @@ async fn run_image(client: &UdsClient, args: &RunArgs, workload: &Workload<'_>) 
         tokio::select! { _ = interrupt.recv() => 130, _ = terminate.recv() => 143 }
     };
     tokio::pin!(cancel);
-    let pulled = tokio::select! {
-        pulled = container_image::pull(workload) => pulled?,
-        code = &mut cancel => return Ok(code),
-    };
     let request = ProvisionRequest {
         name: None,
         profile_id: args.profile.clone(),
@@ -98,15 +95,18 @@ async fn run_image(client: &UdsClient, args: &RunArgs, workload: &Workload<'_>) 
         env: None,
         from: None,
         networks: args.network.clone(),
+        container: Some(workload.spec(true).await?),
     };
     // Signals stay queued while the create request returns the VM to destroy.
     let vm = container_image::provision(client, &request).await?;
     eprintln!("Running {} ({})", vm.name, vm.id);
     let work = async {
-        container_image::stage(client, &vm, pulled.blobs(), workload)
-            .await?
-            .attach()
-            .await
+        container_image::follow(client, &vm.id, workload.reference, |state| {
+            state == ContainerState::Staged
+        })
+        .await?;
+        container_image::expose(client, &vm.id, &workload.image.publish).await?;
+        container_image::attach(client, &vm.id).await
     };
     let deadline = async {
         match args.timeout {

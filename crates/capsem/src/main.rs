@@ -1971,8 +1971,7 @@ async fn main() -> Result<()> {
                 cpus: Some(2),
                 persistent: false,
                 env: Some(doctor_env),
-                from: None,
-                networks: Vec::new(),
+                ..ProvisionRequest::default()
             };
             let resp: ApiResponse<ProvisionResponse> = client.post("/vms/create", req).await?;
             let provisioned = resp.into_result()?;

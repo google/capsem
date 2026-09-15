@@ -25,6 +25,19 @@ __all__ = ["service"]
 pytestmark = pytest.mark.integration
 
 
+def router_pids(vm_pid):
+    """The publication routers of one VM: its owner's `capsem-router`
+    children. The exposure API names no host process, and a parallel worker's
+    routers belong to other owners."""
+    listed = subprocess.run(
+        ["pgrep", "-P", str(vm_pid), "-f", r"capsem-router .*--expose-limit"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    return sorted(int(pid) for pid in listed.split())
+
+
 @pytest.fixture
 def redis(service, tmp_path):
     with (
@@ -52,7 +65,7 @@ def redis(service, tmp_path):
 
             wait_for(ready, "Redis container startup")
             mappings = re.findall(
-                r"Published 127.0.0.1:(\d+) -> (\d+)/tcp \(router (\d+)\)",
+                r"Published 127.0.0.1:(\d+) -> (\d+)/tcp",
                 (tmp_path / "stderr").read_text(),
             )
             assert len(mappings) == 2
@@ -65,7 +78,7 @@ def redis(service, tmp_path):
                 "process": process,
                 "vm": rows[0],
                 "reference": reference,
-                "router_pids": [int(row[2]) for row in mappings],
+                "router_pids": router_pids(rows[0]["pid"]),
             }
         finally:
             for log in service.tmp_dir.glob("persistent/*/process.log"):

@@ -151,6 +151,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `capsem create --image` and `capsem run --image` are clients of the service
+  HTTP API: the service pulls and stages the image, `-p` publishes through
+  `/vms/{id}/exposures`, and `run` attaches through `/vms/{id}/stream`. The CLI
+  no longer pulls on the host or connects to the VM owner, and the
+  `Published` line no longer names the router process.
+
 - The VM Stats model and tool views render the shared typed SDK interaction
   report, including request previews, assistant blocks, tool calls/results,
   capture status, and event-owned request/response bodies.

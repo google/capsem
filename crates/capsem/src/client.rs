@@ -22,7 +22,7 @@ use crate::{paths, service_install};
 // Request / Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ProvisionRequest {
     pub name: Option<String>,
     pub profile_id: String,
@@ -41,6 +41,8 @@ pub struct ProvisionRequest {
     /// Named networks to join at create.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub networks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<capsem_api::ContainerSpec>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
