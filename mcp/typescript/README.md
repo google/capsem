@@ -17,6 +17,10 @@ timeline, statistics, snapshots, panics, and triage. VM tools take the immutable
 `vm_id` returned by `capsem_list` or `capsem_create`. File content can be passed
 as UTF-8 or base64.
 
+Network tools create, list, inspect and retire private networks, attach or detach
+VMs by immutable ID, and read cursor-based audit events with VM, connection,
+event, decision, and time filters.
+
 `capsem_pause` and `capsem_status` are the canonical names. Host logs use one
 `capsem_host_logs` tool with an allowlisted `source`; the package does not expose
 the legacy `suspend`, `version`, or duplicate service-log tools.

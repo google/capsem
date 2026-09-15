@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lifecycle, execution, file transfer, host/guest logs, timeline, statistics,
   snapshots, panic and triage tools.
 
+- `@capsem/mcp` exposes private-network lifecycle, membership, and cursor-based
+  audit tools through the typed SDK network resource.
+
 - Python, TypeScript and Rust SDK facades expose typed one-shot execution,
   persistence, purge, panic/triage diagnostics, and profile MCP discovery and
   invocation over authenticated gateway HTTP.
