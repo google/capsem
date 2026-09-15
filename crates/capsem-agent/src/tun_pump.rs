@@ -27,7 +27,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use capsem_proto::privatelink::{cable_device, cable_header, mac_of, ETHERNET_HEADER_BYTES, LINK_MTU};
+use capsem_proto::privatelink::{
+    cable_device, cable_header, mac_of, CABLE_SOCKET_BUFFER_BYTES, ETHERNET_HEADER_BYTES, LINK_MTU,
+};
 use capsem_proto::VSOCK_PORT_NETWORK;
 use nix::libc;
 use vsock_io::VSOCK_HOST_CID;
@@ -394,10 +396,7 @@ fn run(options: Options) -> io::Result<()> {
     // SAFETY: vsock_connect returns a new owned descriptor.
     let mut stream = unsafe { UnixStream::from_raw_fd(fd) };
     announce(&mut stream, options.cable)?;
-    capsem_foundation::unix::fd::set_stream_buffers(
-        stream.as_fd(),
-        capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE,
-    )?;
+    capsem_foundation::unix::fd::set_stream_buffers(stream.as_fd(), CABLE_SOCKET_BUFFER_BYTES)?;
     let mac = options.mac().map(|byte| format!("{byte:02x}")).join(":");
     eprintln!(
         "[capsem-tun] {name} {}/{} {mac} mtu {} {LINK_SPEED_MBPS} Mb/s attached to host port {VSOCK_PORT_NETWORK}",
