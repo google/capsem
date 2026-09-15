@@ -356,67 +356,6 @@ async fn unplugging_a_stalled_member_closes_its_cable_before_reporting_and_frees
 }
 
 #[tokio::test]
-async fn a_port_queue_takes_256_small_frames_and_refuses_the_next() {
-    // 64 frames could not absorb one 256 KiB read of small frames: at 1500
-    // bytes a frame that is 170 frames for a single port.
-    let (queue, _frames) = Queue::new();
-    let small = Bytes::from(vec![0u8; 1502]);
-    for index in 0..256 {
-        assert!(queue.offer(small.clone()), "frame {index} fits");
-    }
-    assert!(!queue.offer(small), "the 257th frame is refused");
-}
-
-#[tokio::test]
-async fn a_port_queue_holds_no_more_bytes_than_64_full_frames() {
-    let (queue, _frames) = Queue::new();
-    let full = Bytes::from(vec![0u8; HEADER_BYTES + u16::MAX as usize]);
-    for index in 0..64 {
-        assert!(queue.offer(full.clone()), "full frame {index} fits");
-    }
-    assert!(!queue.offer(full), "a 65th full frame would outgrow the byte cap");
-}
-
-#[tokio::test]
-async fn a_batch_in_flight_counts_against_the_queue_until_its_bytes_are_released() {
-    let (queue, mut frames) = Queue::new();
-    let full = Bytes::from(vec![0u8; HEADER_BYTES + u16::MAX as usize]);
-    for _ in 0..64 {
-        assert!(queue.offer(full.clone()));
-    }
-    let mut batch = Vec::new();
-    assert_eq!(frames.recv_many(&mut batch, QUEUE_FRAMES).await, 64);
-    assert!(
-        !queue.offer(full.clone()),
-        "the writer holds every byte until it has written them"
-    );
-    queue.release(batch.iter().map(Bytes::len).sum());
-    assert!(queue.offer(full), "written bytes make room again");
-}
-
-#[tokio::test]
-async fn a_writer_releases_what_it_wrote_so_a_long_transfer_never_fills_the_queue() {
-    // Over three times the byte cap of full frames, one at a time: each is
-    // read before the next is sent, so the queue never holds more than one.
-    // A writer that kept the bytes of what it wrote would refuse every frame
-    // after the 64th. (Sent all at once, a sender faster than the receiver
-    // loses frames by design: the switch drops, it does not push back.)
-    let mut switch = Switch::start(64).await;
-    let (port_a, mut a) = switch.plugged(1, A).await;
-    let (_, mut b) = switch.plugged(1, B).await;
-    let frame = tcp(A, B, &vec![0x5a; u16::MAX as usize - 14 - 40]);
-    for _ in 0..200 {
-        a.write_all(&framed(&frame)).await.unwrap();
-        assert_eq!(read_framed(&mut b).await.len(), frame.len());
-    }
-    drop(a);
-    let (closed, report) = switch.closed().await;
-    assert_eq!(closed, port_a);
-    assert_eq!(report.dropped[DropReason::QueueFull as usize], 0, "{report:?}");
-    switch.stop().await;
-}
-
-#[tokio::test]
 async fn a_burst_of_small_frames_arrives_complete_and_in_order() {
     let mut switch = Switch::start(64).await;
     let (_, mut a) = switch.plugged(1, A).await;

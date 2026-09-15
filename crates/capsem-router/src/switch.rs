@@ -22,62 +22,21 @@ use capsem_network::frames::HEADER_BYTES;
 use capsem_network::switch::{Mac, Route, Station, Table};
 use capsem_proto::privatelink::mac_of;
 use std::io::IoSlice;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
-/// Frames a port's queue holds before senders start losing frames to it:
-/// enough that one full read of small frames (256 KiB at 1500 bytes is 170)
-/// fits a single destination.
-pub const QUEUE_FRAMES: usize = 256;
-/// Bytes a port's queue holds, the writer's batch in flight included: what
-/// 64 full frames took before the queue grew, so small frames gained depth
-/// and full ones no memory.
-pub const QUEUE_BYTES: usize = 64 * (HEADER_BYTES + u16::MAX as usize);
+/// Frames a port's writer holds before senders start losing frames to it;
+/// each is at most a full frame, so this bounds one port's memory.
+pub const QUEUE_FRAMES: usize = 64;
 /// Floods one port may send per second. Ordinary ARP is far below it; a
 /// storm above it is dropped and counted.
 pub const BROADCASTS_PER_SECOND: u32 = 1024;
 /// One read takes this many bytes of records at most.
 const READ_BUFFER_BYTES: usize = 256 * 1024;
 
-/// One port's queue: frames for its writer, bounded in count by the channel
-/// and in bytes by a counter the writer only releases once a batch is
-/// written, so a batch in flight still counts.
-#[derive(Clone)]
-struct Queue {
-    frames: mpsc::Sender<Bytes>,
-    bytes: Arc<AtomicUsize>,
-}
-
-impl Queue {
-    fn new() -> (Self, mpsc::Receiver<Bytes>) {
-        let (frames, receiver) = mpsc::channel(QUEUE_FRAMES);
-        let bytes = Arc::default();
-        (Self { frames, bytes }, receiver)
-    }
-
-    /// Hand `record` to the writer, or refuse it if either bound is reached.
-    fn offer(&self, record: Bytes) -> bool {
-        let length = record.len();
-        let reserved = self.bytes.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |held| {
-            (held + length <= QUEUE_BYTES).then_some(held + length)
-        });
-        if reserved.is_err() {
-            return false;
-        }
-        if self.frames.try_send(record).is_err() {
-            self.release(length);
-            return false;
-        }
-        true
-    }
-
-    /// The writer wrote `bytes` of what it took.
-    fn release(&self, bytes: usize) {
-        self.bytes.fetch_sub(bytes, Ordering::Relaxed);
-    }
-}
+type Queue = mpsc::Sender<Bytes>;
 
 /// The table every port routes with, republished on plug and unplug.
 #[derive(Default)]
@@ -175,13 +134,13 @@ async fn read_port(
             counters.bytes += record.len() as u64;
             match table.route(&own, &record[HEADER_BYTES..]) {
                 Route::Unicast(queue) => {
-                    if !queue.offer(record) {
+                    if queue.try_send(record).is_err() {
                         counters.dropped[DropReason::QueueFull as usize] += 1;
                     }
                 }
                 Route::Flood if storm.allow() => {
                     for queue in table.others(&own.mac) {
-                        if !queue.offer(record.clone()) {
+                        if queue.try_send(record.clone()).is_err() {
                             counters.dropped[DropReason::QueueFull as usize] += 1;
                         }
                     }
@@ -193,21 +152,18 @@ async fn read_port(
     }
 }
 
-/// Write queued records to one cable, as many per write as are waiting; a
-/// batch's bytes leave the queue's count only once they are written.
+/// Write queued records to one cable, as many per write as are waiting.
 async fn write_port(
     mut writer: impl AsyncWrite + Unpin,
-    queue: &Queue,
-    mut frames: mpsc::Receiver<Bytes>,
+    mut queue: mpsc::Receiver<Bytes>,
     counters: &mut Outbound,
 ) -> io::Result<()> {
     let mut batch = Vec::with_capacity(QUEUE_FRAMES);
-    while frames.recv_many(&mut batch, QUEUE_FRAMES).await > 0 {
-        let count = batch.len() as u64;
+    while queue.recv_many(&mut batch, QUEUE_FRAMES).await > 0 {
+        let frames = batch.len() as u64;
         let bytes: usize = batch.iter().map(Bytes::len).sum();
         write_all_vectored(&mut writer, &mut batch).await?;
-        queue.release(bytes);
-        counters.frames += count;
+        counters.frames += frames;
         counters.bytes += bytes as u64;
     }
     Ok(())
@@ -331,12 +287,12 @@ pub async fn run(grants: Receiver, mut events: UnixStream, port_limit: usize) ->
                         if let Some(replaced) = replaced {
                             state.unplug(replaced);
                         }
-                        let (queue, receiver) = Queue::new();
+                        let (sender, receiver) = mpsc::channel(QUEUE_FRAMES);
                         let (stop, stopped) = oneshot::channel();
                         state.generations.insert(mac, generation);
                         state.ports.insert(port, Port { mac, stop: Some(stop) });
                         state.plugged.insert(mac, port);
-                        state.table.plug(mac, queue.clone());
+                        state.table.plug(mac, sender);
                         state.published.publish(&state.table);
                         let published = Arc::clone(&state.published);
                         jobs.spawn(async move {
@@ -347,7 +303,7 @@ pub async fn run(grants: Receiver, mut events: UnixStream, port_limit: usize) ->
                                 biased;
                                 _ = stopped => Ok(false),
                                 result = read_port(Station { mac, address: address.octets() }, reader, &published, &mut inbound) => result.map(|()| true),
-                                result = write_port(writer, &queue, receiver, &mut outbound) => result.map(|()| true),
+                                result = write_port(writer, receiver, &mut outbound) => result.map(|()| true),
                             };
                             // Both halves are gone with the select; closing the
                             // cable is the last thing before the report.
