@@ -99,6 +99,18 @@ def host_hops(service):
     return hops
 
 
+def history(client, network):
+    """Every row of the network's history, page by page: a cable that flaps
+    under load writes rows enough to push the leaves off the first page."""
+    events, cursor = [], ""
+    while True:
+        page = client.get(f"/networks/{network}/logs" + (f"?cursor={cursor}" if cursor else ""))
+        events += page.get("events", [])
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return events
+
+
 def member(client, network, vm_id):
     for row in client.get(f"/networks/{network}")["members"]:
         if row["vm_id"] == vm_id:
@@ -185,12 +197,19 @@ def main() -> int:
                 )
                 if profiled:
                     elapsed = time.monotonic() - started
-                    for hop, found in hops.items():
-                        spent = sum(map(host_cpu_seconds, found)) - host_before[hop]
-                        add(f"cpu.{hop}_percent", "ratio", spent / elapsed * 100)
+                    busy = {
+                        hop: (sum(map(host_cpu_seconds, found)) - host_before[hop]) / elapsed * 100
+                        for hop, found in hops.items()
+                    }
                     pumps_after = (pump_ticks(client, sender), pump_ticks(client, receiver))
                     for side, before, after in zip(("sender", "receiver"), pumps_before, pumps_after, strict=True):
-                        add(f"cpu.{side}_pump_percent", "ratio", (after - before) / GUEST_HZ / elapsed * 100)
+                        busy[f"{side}_pump"] = (after - before) / GUEST_HZ / elapsed * 100
+                    # Share of a core per Gb/s moved in the same trial: work
+                    # per bit, which a change that only moves fewer bits
+                    # cannot improve.
+                    for hop, percent in busy.items():
+                        add(f"cpu.{hop}_percent", "ratio", percent)
+                        add(f"cpu.{hop}_percent_per_gbps", "ratio", percent / (megabits / 1000))
             _, latency = throughput(client, sender, address, "latency", 1, 1)
             for value in latency["round_trip_ms"]["samples"]:
                 add("tcp.round_trip_ms", "milliseconds", value)
@@ -207,17 +226,26 @@ def main() -> int:
             add("udp.lost", "count", udp["lost"]["samples"][0])
 
         # The switch counted every frame it could not deliver; its counters
-        # arrive in each cable's close row once the members leave.
+        # arrive in each port's close row: one per leave, and one per cable
+        # that ended on its own mid-run (a flap, replugged by the service).
         for name in (sender, receiver):
             client.delete(f"/networks/{network}/members/{ids[name]}")
-        closes = []
+        closes, left = [], []
         deadline = time.monotonic() + 20
-        while len(closes) < 2 and time.monotonic() < deadline:
-            events = client.get(f"/networks/{network}/logs").get("events", [])
+        while len(left) < 2 and time.monotonic() < deadline:
+            events = history(client, network)
             closes = [e for e in events if e["event_type"] == "network.close" and "frames" in e["event"]]
+            left = [e for e in closes if e["event"]["decision"]["reason"] == "unlinked"]
             time.sleep(0.2)
-        if len(closes) < 2:
-            raise RuntimeError(f"the switch reported {len(closes)} of 2 cable closes")
+        add("switch.cable_flaps", "count", len(closes) - len(left))
+        if len(left) < 2:
+            for event in events:
+                print(json.dumps(event), file=sys.stderr)
+            log = service.tmp_dir / "service.log"
+            for line in log.read_text(errors="replace").splitlines() if log.exists() else []:
+                if "cable" in line or "switch" in line:
+                    print(line, file=sys.stderr)
+            raise RuntimeError(f"the switch reported {len(left)} of 2 leaves ({len(closes)} closes)")
         for reason in DROPS:
             add(f"switch.dropped.{reason}", "count", sum(e["event"]["frames"]["dropped"][reason] for e in closes))
     finally:
