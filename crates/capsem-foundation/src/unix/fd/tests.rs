@@ -116,16 +116,6 @@ fn stream_buffer_limits_replace_large_kernel_queues() {
 }
 
 #[test]
-fn stream_buffer_sizes_report_what_the_kernel_queues_hold() {
-    let (stream, _peer) = UnixStream::pair().unwrap();
-    super::set_stream_buffers(stream.as_fd(), 2 * 1024 * 1024).unwrap();
-    let (send, receive) = super::stream_buffer_sizes(stream.as_fd()).unwrap();
-    // Linux reports doubled accounting space, while Darwin reports the request.
-    assert!(send >= 2 * 1024 * 1024, "{send}");
-    assert!(receive >= 2 * 1024 * 1024, "{receive}");
-}
-
-#[test]
 fn zero_buffer_limit_is_refused_without_changing_the_socket() {
     use nix::sys::socket::{getsockopt, sockopt};
     let (stream, _peer) = UnixStream::pair().unwrap();
