@@ -255,3 +255,70 @@ async fn recv_status(rx: std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiv
         event => panic!("expected status event, got {event:?}"),
     }
 }
+
+mod stream_protocol {
+    use super::super::*;
+    use capsem_sdk::models::stream::{
+        decode_client_frame, encode_data, encode_status, ClientFrame, StreamChannel, StreamControl, StreamKind,
+        StreamStatus,
+    };
+
+    #[test]
+    fn a_terminal_stream_opens_with_start_then_its_window_size() {
+        let frames = stream_start_frames(120, 40);
+        assert_eq!(
+            decode_client_frame(&frames[0]).unwrap(),
+            ClientFrame::Control(StreamControl::Start {
+                kind: StreamKind::Terminal,
+                command: None
+            })
+        );
+        assert_eq!(
+            decode_client_frame(&frames[1]).unwrap(),
+            ClientFrame::Control(StreamControl::Resize { cols: 120, rows: 40 })
+        );
+    }
+
+    #[test]
+    fn input_becomes_stdin_and_resize_frames_and_zero_sizes_are_not_sent() {
+        let stdin = stream_input_frame(TerminalInput::Bytes(b"ls\n".to_vec())).unwrap();
+        assert_eq!(decode_client_frame(&stdin).unwrap(), ClientFrame::Stdin(b"ls\n"));
+        let resize = stream_input_frame(TerminalInput::Resize { cols: 90, rows: 20 }).unwrap();
+        assert_eq!(
+            decode_client_frame(&resize).unwrap(),
+            ClientFrame::Control(StreamControl::Resize { cols: 90, rows: 20 })
+        );
+        assert!(stream_input_frame(TerminalInput::Resize { cols: 0, rows: 20 }).is_none());
+    }
+
+    #[test]
+    fn server_frames_become_output_or_status() {
+        assert_eq!(
+            stream_server_event(&encode_data(StreamChannel::Stdout, b"$ \xff")),
+            Some(StreamEvent::Output(b"$ \xff".to_vec()))
+        );
+        assert_eq!(
+            stream_server_event(&encode_status(&StreamStatus::Error {
+                message: "terminal closed".into()
+            })),
+            Some(StreamEvent::Status("terminal closed".into()))
+        );
+        assert_eq!(
+            stream_server_event(&encode_status(&StreamStatus::Started)),
+            Some(StreamEvent::Status("connected".into()))
+        );
+        assert_eq!(
+            stream_server_event(&[9, 1]),
+            Some(StreamEvent::Status("protocol error: unknown stream channel 9".into()))
+        );
+    }
+
+    #[test]
+    fn stream_url_names_the_vm_route_and_carries_the_token_for_the_upgrade() {
+        assert_eq!(
+            stream_ws_url("http://127.0.0.1:19222/", "vm 1", "t/k"),
+            "ws://127.0.0.1:19222/vms/vm%201/stream?token=t%2Fk"
+        );
+        assert!(stream_ws_url("https://host", "vm", "t").starts_with("wss://host/vms/vm/stream"));
+    }
+}
