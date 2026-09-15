@@ -188,7 +188,7 @@ End-to-end latency for snapshot operations via the guest MCP endpoint. Tests at 
 | `revert` | Revert a single modified file from the snapshot |
 | `delete` | Delete the snapshot |
 
-Each operation is measured as the full round-trip: guest CLI -> MCP server (NDJSON over vsock) -> host gateway -> APFS filesystem operation -> response back to guest.
+Each operation is measured as the full round-trip: guest CLI -> MCP server (binary MCP frames over vsock) -> host gateway -> APFS filesystem operation -> response back to guest.
 
 ## JSON output
 

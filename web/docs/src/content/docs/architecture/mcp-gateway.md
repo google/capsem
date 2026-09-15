@@ -207,7 +207,7 @@ time. Credentials are broker-owned references, not raw tokens in MCP config.
 | `capsem-core/src/mcp/server_manager.rs` | External MCP server lifecycle and tool catalog |
 | `capsem-core/src/net/policy_config/security_rule_profile.rs` | Security-event rule schema, validation, Sigma import, and compiled rule set |
 | `capsem-core/src/security_engine/` | SecurityEvent construction, rule evaluation, plugin actions, and rule-ledger emission |
-| `capsem-mcp-aggregator/src/main.rs` | Isolated subprocess: NDJSON loop, server connections |
+| `capsem-mcp-aggregator/src/main.rs` | Isolated subprocess: MessagePack frame loop, server connections |
 | `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch and driver tasks |
 | `config/profiles/<id>/mcp.json` | Profile MCP server definitions |
 

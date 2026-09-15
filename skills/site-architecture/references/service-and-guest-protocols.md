@@ -40,7 +40,7 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 | Gateway -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
 | CLI -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
 | SDK/npm MCP -> gateway | HTTP/1.1 over TCP | explicit gateway URL (Bearer token auth) |
-| Service -> process | MessagePack over UDS | `~/.capsem/run/instances/{id}.sock` |
+| Service -> process | bincode over UDS (after a MessagePack Hello) | `~/.capsem/run/instances/{id}.sock` |
 | Process -> guest agent | Binary frames over vsock | ports 5000 (control), 5001 (terminal), 5004 (lifecycle), 5005 (exec) |
 
 ### Service HTTP API
