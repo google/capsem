@@ -94,6 +94,8 @@ fn network_event_types_and_authorization_fields_are_canonical() {
         "network.destination.ip",
         "network.destination.port",
         "network.publication.id",
+        "network.action",
+        "network.target",
     ] {
         crate::net::policy_config::validate_security_event_match(&format!("has({field})"))
             .unwrap_or_else(|error| panic!("{field}: {error}"));

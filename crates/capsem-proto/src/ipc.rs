@@ -76,10 +76,23 @@ pub enum ServiceToProcess {
     },
     /// Execute with bounded live merged stdout/stderr, followed by ExecResult.
     ExecStream { id: u64, command: String },
-    /// Publish one loopback host TCP port into this VM's container namespace.
-    PublishPort { id: u64, host_port: u16, guest_port: u16 },
+    /// Publish one loopback host TCP port into the `target` guest namespace.
+    PublishPort {
+        id: u64,
+        host_port: u16,
+        guest_port: u16,
+        target: crate::PublicationTarget,
+    },
+    /// Close a declared publication and forget it across owner restarts.
+    RevokePort { id: u64, host_port: u16 },
+    /// The owner's live publications and its generation.
+    ListPublications { id: u64 },
     /// Internal VM-owner request for one declared publication data stream.
-    ConnectPort { flow: crate::router::FlowKey, port: u16 },
+    ConnectPort {
+        flow: crate::router::FlowKey,
+        port: u16,
+        target: crate::PublicationTarget,
+    },
     /// Internal VM-owner cancellation for bounded generation-bound flows.
     AbortPorts { flows: Vec<crate::router::FlowKey> },
     /// The service is plugging this VM into a network's switch and wants the
@@ -189,6 +202,8 @@ pub enum ProcessToService {
         host_port: u16,
         router_pid: u32,
         error: Option<String>,
+        /// The VM's rules refused the exposure, rather than it failing to open.
+        policy_refused: bool,
     },
     /// Response to LinkAttach: where the service asks for the stream, or
     /// why this owner will not link.
@@ -199,6 +214,75 @@ pub enum ProcessToService {
     },
     /// Response to LinkDetach.
     LinkDetachResult { id: u64, error: Option<String> },
+    /// Response to RevokePort: whether the port was declared.
+    PortRevoked {
+        id: u64,
+        revoked: bool,
+        error: Option<String>,
+    },
+    /// Response to ListPublications.
+    PublicationList {
+        id: u64,
+        generation: u64,
+        publications: Vec<PublicationInfo>,
+    },
+    /// The terminal stream on this connection stopped; no more TerminalOutput
+    /// follows. Sent instead of going silent when the client fell behind.
+    TerminalStreamEnded { reason: String },
+}
+
+impl ServiceToProcess {
+    /// The id a reply to this request carries, when the request has one.
+    ///
+    /// Requests without an id are either answered with `Pong` (`Ping`,
+    /// `ReloadConfig`) or not answered on the connection at all.
+    pub fn request_id(&self) -> Option<u64> {
+        match self {
+            Self::Exec { id, .. }
+            | Self::ExecStream { id, .. }
+            | Self::WriteFile { id, .. }
+            | Self::ReadFile { id, .. }
+            | Self::LogFileBoundary { id, .. }
+            | Self::McpListServers { id }
+            | Self::McpListTools { id }
+            | Self::McpRefreshTools { id }
+            | Self::SnapshotStatus { id }
+            | Self::McpCallTool { id, .. }
+            | Self::PublishPort { id, .. }
+            | Self::RevokePort { id, .. }
+            | Self::ListPublications { id }
+            | Self::LinkAttach { id, .. }
+            | Self::LinkDetach { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
+}
+
+impl ProcessToService {
+    /// The request id this message finally answers.
+    ///
+    /// Lifecycle broadcasts (`StateChanged`, `ShutdownRequested`, ...) reach
+    /// every IPC connection and answer nothing; `ExecOutput` is a chunk of a
+    /// streaming exec, not its reply. Correlate on this, never on arrival order.
+    pub fn reply_id(&self) -> Option<u64> {
+        match self {
+            Self::ExecResult { id, .. }
+            | Self::WriteFileResult { id, .. }
+            | Self::ReadFileResult { id, .. }
+            | Self::LogFileBoundaryResult { id, .. }
+            | Self::McpServersResult { id, .. }
+            | Self::McpToolsResult { id, .. }
+            | Self::McpRefreshResult { id, .. }
+            | Self::SnapshotStatusResult { id, .. }
+            | Self::McpCallToolResult { id, .. }
+            | Self::PortPublished { id, .. }
+            | Self::PortRevoked { id, .. }
+            | Self::PublicationList { id, .. }
+            | Self::LinkAttachResult { id, .. }
+            | Self::LinkDetachResult { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
 }
 
 /// Status of an MCP server as reported through IPC.
@@ -213,6 +297,15 @@ pub struct McpServerStatus {
     pub tool_count: usize,
 }
 
+/// One live publication as its VM owner declares it.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublicationInfo {
+    pub host_port: u16,
+    pub guest_port: u16,
+    pub target: crate::PublicationTarget,
+    pub router_pid: u32,
+}
+
 /// Status of an MCP tool as reported through IPC.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct McpToolStatus {
@@ -220,7 +313,9 @@ pub struct McpToolStatus {
     pub original_name: String,
     pub description: Option<String>,
     pub server_name: String,
-    pub annotations: Option<serde_json::Value>,
+    /// Typed rather than `serde_json::Value`: this crosses bincode IPC, which
+    /// cannot decode a self-describing value.
+    pub annotations: Option<crate::mcp_contracts::ToolAnnotations>,
 }
 
 /// Host-side VM recovery snapshot status. This is not session.db/security

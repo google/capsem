@@ -446,7 +446,7 @@ def test_modules_retain_complete_named_quality_gates() -> None:
         "bash build_system/scripts/web/check-web-surface.sh frontend",
         "cargo llvm-cov nextest --workspace --bins --lib --tests",
         "cargo test --workspace --doc",
-        "tests/capsem-mcp/test_state_transitions.py",
+        "fast.mcp.typescript.tests",
         "tests/ironbank/test_route_health.py",
         "build_system/scripts/test/injection_test.py",
         "build_system/scripts/test/integration_test.py",
@@ -780,7 +780,7 @@ def test_functional_module_runs_every_selected_profile_without_rebuilding() -> N
         assert f"--profile {profile}" in functional
 
     assert "(integration or mcp or e2e) and not serial" in functional
-    assert "tests/capsem-mcp/test_state_transitions.py" in functional
+    assert "tests/capsem-mcp/" not in functional
     assert "tests/ironbank/test_route_health.py" in functional
     assert "tests/capsem-serial/test_capsem_bench_baseline.py" in functional
     assert "build-assets" not in functional

@@ -3,6 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use capsem_sdk::models::{HypervisorInfo, ServiceAvailability, UpdateStatusResponse, VmLifecycleState, VmSummary};
+use capsem_sdk::transport::{CallOptions, Transport};
 use serde::Deserialize;
 
 use crate::app::ControlAction;
@@ -90,23 +92,16 @@ impl GatewayProvider {
     pub async fn load_async(&self) -> Result<AppState> {
         let mut token = self.token().await?;
         let started = Instant::now();
-        let status = match fetch_status(&self.client, &self.base_url, &token).await {
+        let status = match fetch_status(&self.base_url, &token).await {
             Ok(status) => status,
             Err(first_error) => {
                 self.clear_auth_token()?;
                 token = self.token().await.context(first_error)?;
-                fetch_status(&self.client, &self.base_url, &token).await?
+                fetch_status(&self.base_url, &token).await?
             }
         };
         let mut state = status_response_to_state(status, started.elapsed());
-        state.profiles = self.profile_options(&token, &state).await;
-        state.update_notice = match fetch_update_status(&self.client, &self.base_url, &token).await {
-            Ok(updates) => update_response_to_notice(updates),
-            Err(_) => Some(UpdateNotice {
-                kind: UpdateNoticeKind::Unavailable,
-                channel_url: None,
-            }),
-        };
+        state.profiles = fetch_profiles(&self.base_url, &token).await.unwrap_or_default();
         Ok(state)
     }
 
@@ -127,12 +122,6 @@ impl GatewayProvider {
         }
         let token = self.token().await?;
         invoke_action(&self.client, &self.base_url, &token, action).await
-    }
-
-    async fn profile_options(&self, token: &str, _state: &AppState) -> Vec<ProfileOption> {
-        fetch_profiles(&self.client, &self.base_url, token)
-            .await
-            .unwrap_or_default()
     }
 }
 
@@ -158,47 +147,26 @@ async fn fetch_token(client: &reqwest::Client, base_url: &str) -> Result<String>
     Ok(token.token)
 }
 
-async fn fetch_status(client: &reqwest::Client, base_url: &str, token: &str) -> Result<StatusResponse> {
-    client
-        .get(format!("{base_url}/status"))
-        .bearer_auth(token)
-        .send()
+async fn fetch_status(base_url: &str, token: &str) -> Result<HypervisorInfo> {
+    capsem_sdk::Hypervisor::new(base_url, token)?
+        .info()
         .await
-        .context("fetch capsem gateway status")?
-        .error_for_status()
-        .context("capsem gateway status request failed")?
-        .json()
-        .await
-        .context("parse capsem gateway status response")
+        .map_err(crate::sdk_actions::display_error)
 }
 
-async fn fetch_profiles(client: &reqwest::Client, base_url: &str, token: &str) -> Result<Vec<ProfileOption>> {
-    let response: ProfilesResponse = client
-        .get(format!("{base_url}/profiles/list"))
-        .bearer_auth(token)
-        .send()
-        .await
-        .context("fetch capsem gateway profiles")?
-        .error_for_status()
-        .context("capsem gateway profiles request failed")?
-        .json()
-        .await
-        .context("parse capsem gateway profiles response")?;
-    Ok(response.into_options())
-}
-
-async fn fetch_update_status(client: &reqwest::Client, base_url: &str, token: &str) -> Result<UpdateStatusResponse> {
-    client
-        .get(format!("{base_url}/update/status"))
-        .bearer_auth(token)
-        .send()
-        .await
-        .context("fetch capsem update status")?
-        .error_for_status()
-        .context("capsem update status request failed")?
-        .json()
-        .await
-        .context("parse capsem update status response")
+async fn fetch_profiles(base_url: &str, token: &str) -> Result<Vec<ProfileOption>> {
+    let transport = Transport::new(base_url, token, Duration::from_secs(30))?;
+    let response = capsem_sdk::operations::list_profiles(&transport, CallOptions::default()).await?;
+    Ok(response
+        .profiles
+        .into_iter()
+        .filter(|record| record.availability.shell)
+        .map(|record| ProfileOption {
+            id: record.id,
+            name: record.name,
+            description: Some(record.description),
+        })
+        .collect())
 }
 
 fn gateway_port() -> Option<u16> {
@@ -219,8 +187,11 @@ fn run_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(".capsem/run"))
 }
 
-fn status_response_to_state(status: StatusResponse, latency: Duration) -> AppState {
-    let service_status = service_status_from_gateway(&status.service);
+fn status_response_to_state(status: HypervisorInfo, latency: Duration) -> AppState {
+    let service_status = match status.service {
+        ServiceAvailability::Running => ServiceStatus::Online,
+        ServiceAvailability::Unavailable => ServiceStatus::Degraded,
+    };
     let sessions = status.vms.into_iter().map(vm_response_to_summary).collect::<Vec<_>>();
     let active_session_id = sessions.first().map(|session| session.id.clone()).unwrap_or_default();
     AppState {
@@ -234,11 +205,14 @@ fn status_response_to_state(status: StatusResponse, latency: Duration) -> AppSta
         active_session_id,
         sessions,
         profiles: Vec::new(),
-        update_notice: None,
+        update_notice: Some(status.updates.map(update_response_to_notice).unwrap_or(UpdateNotice {
+            kind: UpdateNoticeKind::Unavailable,
+            channel_url: None,
+        })),
     }
 }
 
-fn update_response_to_notice(status: UpdateStatusResponse) -> Option<UpdateNotice> {
+fn update_response_to_notice(status: UpdateStatusResponse) -> UpdateNotice {
     let mut tracks = Vec::new();
     if status.binary.update_available {
         tracks.push(UpdateTrack::Binary);
@@ -283,14 +257,14 @@ fn update_response_to_notice(status: UpdateStatusResponse) -> Option<UpdateNotic
         UpdateNoticeKind::Current
     };
 
-    Some(UpdateNotice {
+    UpdateNotice {
         kind,
         channel_url: status.channel_url,
-    })
+    }
 }
 
 fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
-    let lifecycle = lifecycle_from_status(&vm.status);
+    let lifecycle = lifecycle_from_status(vm.status);
     let mut attention = attention_from_vm(&vm, lifecycle);
     attention.dedup();
     let id = vm.id;
@@ -303,15 +277,12 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
         id,
         title,
         repo_path: None,
-        profile: vm
-            .profile_id
-            .clone()
-            .or_else(|| vm.profile_status.clone())
-            .unwrap_or_else(|| "default".to_string()),
-        profile_status: vm.profile_status,
+        profile: vm.profile_id,
+        // The overview does not report a VM's pinned profile revision or readiness.
+        profile_status: None,
         can_resume: vm.can_resume,
         resume_blocked_reason: vm.resume_blocked_reason,
-        branch: vm.profile_revision,
+        branch: None,
         persistent: vm.persistent,
         lifecycle,
         attention,
@@ -329,22 +300,12 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
     }
 }
 
-fn service_status_from_gateway(service: &str) -> ServiceStatus {
-    match service.to_ascii_lowercase().as_str() {
-        "running" => ServiceStatus::Online,
-        "unavailable" => ServiceStatus::Degraded,
-        "failed" => ServiceStatus::Failed,
-        _ => ServiceStatus::Stale,
-    }
-}
-
-fn lifecycle_from_status(status: &str) -> SessionLifecycle {
-    match status.to_ascii_lowercase().as_str() {
-        "running" => SessionLifecycle::Working,
-        "suspended" => SessionLifecycle::Suspended,
-        "defunct" | "failed" => SessionLifecycle::Failed,
-        "stopped" => SessionLifecycle::Idle,
-        _ => SessionLifecycle::Idle,
+fn lifecycle_from_status(status: VmLifecycleState) -> SessionLifecycle {
+    match status {
+        VmLifecycleState::Running => SessionLifecycle::Working,
+        VmLifecycleState::Suspended => SessionLifecycle::Suspended,
+        VmLifecycleState::Defunct | VmLifecycleState::Incompatible => SessionLifecycle::Failed,
+        VmLifecycleState::Stopped => SessionLifecycle::Idle,
     }
 }
 
@@ -355,14 +316,6 @@ fn attention_from_vm(vm: &VmSummary, lifecycle: SessionLifecycle) -> Vec<Attenti
     }
     if vm.denied_requests.unwrap_or_default() > 0 {
         attention.push(Attention::PolicyDeny);
-    }
-    if vm.profile_status.as_deref().is_some_and(|status| {
-        !matches!(
-            status.to_ascii_lowercase().as_str(),
-            "ready" | "ok" | "installed" | "active" | "current"
-        )
-    }) {
-        attention.push(Attention::CredentialIssue);
     }
     attention
 }
@@ -392,86 +345,6 @@ async fn invoke_action(
     match action {
         ControlAction::StartService => start_service().await,
         ControlAction::Update => update_with_binary(&capsem_binary()).await,
-        ControlAction::CreateSession { name, profile_id } => {
-            let mut body = serde_json::json!({
-                "persistent": true,
-                "profile_id": profile_id,
-            });
-            if let Some(name) = name {
-                body["name"] = serde_json::Value::String(name.clone());
-            }
-            let response = client
-                .post(join_url(base_url, &["vms", "create"])?)
-                .bearer_auth(token)
-                .json(&body)
-                .send()
-                .await
-                .context("create capsem session")?;
-            let body = response_json(response).await?;
-            let id = body.get("id").and_then(|value| value.as_str()).unwrap_or("session");
-            Ok(ActionOutcome {
-                message: name
-                    .as_deref()
-                    .map_or_else(|| "created session".to_string(), |name| format!("created {name}")),
-                focus_session: Some(id.to_string()),
-            })
-        }
-        ControlAction::Fork { id, name } => {
-            let response = client
-                .post(join_url(base_url, &["vms", id, "fork"])?)
-                .bearer_auth(token)
-                .json(&serde_json::json!({ "name": name }))
-                .send()
-                .await
-                .with_context(|| format!("fork capsem session {id}"))?;
-            let body = response_json(response).await?;
-            let fork_name = body.get("name").and_then(|value| value.as_str()).unwrap_or(name);
-            Ok(ActionOutcome {
-                message: format!("forked {fork_name}"),
-                focus_session: Some(fork_name.to_string()),
-            })
-        }
-        ControlAction::Resume { id, label } => {
-            post_empty(client, base_url, token, &["vms", id, "resume"]).await?;
-            Ok(ActionOutcome {
-                message: format!("resumed {label}"),
-                focus_session: Some(id.clone()),
-            })
-        }
-        ControlAction::Checkpoint { id, label } => {
-            post_empty(client, base_url, token, &["vms", id, "pause"]).await?;
-            Ok(ActionOutcome {
-                message: format!("checkpointed {label}"),
-                focus_session: Some(id.clone()),
-            })
-        }
-        ControlAction::Suspend { id, label } => {
-            post_empty(client, base_url, token, &["vms", id, "pause"]).await?;
-            Ok(ActionOutcome {
-                message: format!("suspended {label}"),
-                focus_session: Some(id.clone()),
-            })
-        }
-        ControlAction::Stop { id, label } => {
-            post_empty(client, base_url, token, &["vms", id, "stop"]).await?;
-            Ok(ActionOutcome {
-                message: format!("stopped {label}"),
-                focus_session: Some(id.clone()),
-            })
-        }
-        ControlAction::Delete { id, label } => {
-            let response = client
-                .delete(join_url(base_url, &["vms", id, "delete"])?)
-                .bearer_auth(token)
-                .send()
-                .await
-                .with_context(|| format!("delete capsem session {id}"))?;
-            response_json(response).await?;
-            Ok(ActionOutcome {
-                message: format!("deleted {label}"),
-                focus_session: None,
-            })
-        }
         ControlAction::Purge { all } => {
             let response = client
                 .post(join_url(base_url, &["purge"])?)
@@ -496,6 +369,9 @@ async fn invoke_action(
                 focus_session: None,
             })
         }
+        action => crate::sdk_actions::invoke(base_url, token, action)
+            .await
+            .map_err(crate::sdk_actions::display_error),
     }
 }
 
@@ -578,21 +454,6 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
-async fn post_empty(
-    client: &reqwest::Client,
-    base_url: &str,
-    token: &str,
-    path_segments: &[&str],
-) -> Result<serde_json::Value> {
-    let response = client
-        .post(join_url(base_url, path_segments)?)
-        .bearer_auth(token)
-        .send()
-        .await
-        .with_context(|| format!("post gateway action /{}", path_segments.join("/")))?;
-    response_json(response).await
-}
-
 async fn response_json(response: reqwest::Response) -> Result<serde_json::Value> {
     let status = response.status();
     let text = response.text().await.context("read gateway action response body")?;
@@ -623,113 +484,9 @@ struct TokenResponse {
     token: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct StatusResponse {
-    service: String,
-    vms: Vec<VmSummary>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateStatusResponse {
-    #[serde(default)]
-    channel_url: Option<String>,
-    stale: bool,
-    #[serde(default)]
-    last_error: Option<String>,
-    binary: UpdateTrackStatusResponse,
-    assets: UpdateTrackStatusResponse,
-    profiles: UpdateTrackStatusResponse,
-    images: UpdateTrackStatusResponse,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateTrackStatusResponse {
-    update_available: bool,
-    #[serde(default)]
-    blocked_reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct VmSummary {
-    id: String,
-    #[serde(default)]
-    name: Option<String>,
-    status: String,
-    #[serde(default)]
-    persistent: bool,
-    #[serde(default)]
-    profile_id: Option<String>,
-    #[serde(default)]
-    profile_revision: Option<String>,
-    #[serde(default)]
-    profile_status: Option<String>,
-    #[serde(default)]
-    can_resume: bool,
-    #[serde(default)]
-    resume_blocked_reason: Option<String>,
-    #[serde(default)]
-    uptime_secs: Option<u64>,
-    #[serde(default)]
-    total_input_tokens: Option<u64>,
-    #[serde(default)]
-    total_output_tokens: Option<u64>,
-    #[serde(default)]
-    total_estimated_cost: Option<f64>,
-    #[serde(default)]
-    total_tool_calls: Option<u64>,
-    #[serde(default)]
-    total_requests: Option<u64>,
-    #[serde(default)]
-    denied_requests: Option<u64>,
-    #[serde(default)]
-    total_file_events: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProfilesResponse {
-    #[serde(default)]
-    profiles: Vec<ProfileRecordResponse>,
-}
-
-impl ProfilesResponse {
-    fn into_options(self) -> Vec<ProfileOption> {
-        self.profiles
-            .into_iter()
-            .filter(ProfileRecordResponse::is_tui_launchable)
-            .map(|record| {
-                let id = record.id;
-                ProfileOption {
-                    id,
-                    name: record.name,
-                    description: Some(record.description),
-                }
-            })
-            .collect()
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct ProfileRecordResponse {
-    id: String,
-    name: String,
-    description: String,
-    availability: ProfileAvailabilityResponse,
-}
-
-impl ProfileRecordResponse {
-    fn is_tui_launchable(&self) -> bool {
-        self.availability.shell
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct ProfileAvailabilityResponse {
-    shell: bool,
-}
-
 #[cfg(test)]
 pub(crate) fn state_from_status_json_for_test(raw: &str, latency: Duration) -> Result<AppState> {
-    let response: StatusResponse = serde_json::from_str(raw)?;
+    let response: HypervisorInfo = serde_json::from_str(raw)?;
     Ok(status_response_to_state(response, latency))
 }
 
@@ -739,9 +496,12 @@ pub(crate) fn state_from_status_and_update_json_for_test(
     update_raw: &str,
     latency: Duration,
 ) -> Result<AppState> {
-    let response: StatusResponse = serde_json::from_str(status_raw)?;
+    let response: HypervisorInfo = serde_json::from_str(status_raw)?;
     let updates: UpdateStatusResponse = serde_json::from_str(update_raw)?;
     let mut state = status_response_to_state(response, latency);
-    state.update_notice = update_response_to_notice(updates);
+    state.update_notice = Some(update_response_to_notice(updates));
     Ok(state)
 }
+
+#[cfg(test)]
+mod tests;

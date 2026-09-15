@@ -6,6 +6,7 @@ version = 1
 obsolete_root_paths = []
 distributions = [
   "build_system/pyproject.toml=capsem-builder",
+  "sdk/python/pyproject.toml=capsem",
 ]
 entrypoints = [
   "build_system/pyproject.toml:capsem-builder=capsem_builder.gatelaunch:builder_main",
@@ -14,4 +15,4 @@ entrypoints = [
 ]
 old_import_count = 0
 old_import_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-python_source_roots = ["benchmarks", "build_system", "guest", "tests"]
+python_source_roots = ["benchmarks", "build_system", "guest", "sdk", "tests"]

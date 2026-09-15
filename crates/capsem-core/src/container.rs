@@ -3,6 +3,7 @@
 use anyhow::Result;
 
 pub mod publish;
+pub mod stage;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PortMapping {

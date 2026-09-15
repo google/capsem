@@ -62,7 +62,10 @@ capsem create -n cache -p 0:6379 --image docker://redis:7-alpine
 
 With `--image`, the VM's workload is the image's command, or everything given
 after the image (so options go before `--image`), started detached; its output is in `capsem logs`. Like any
-session, the VM is kept only when it is named.
+session, the VM is kept only when it is named. The service pulls, verifies and
+stages the image; the CLI follows its progress, publishes each `-p` through the
+exposure API (a VM whose rules refuse the exposure is deleted), and a failed
+setup deletes the VM.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -422,4 +425,6 @@ stateDiagram-v2
 
 ## MCP tools
 
-The same session operations are available to AI agents via the `capsem-mcp` server. See [Guest MCP Endpoint](/architecture/mcp-gateway/) for the full tool registry.
+The same session operations are available to AI agents through the separately
+installed `@capsem/mcp` package and authenticated gateway HTTP. See
+[MCP Tools](/usage/mcp-tools/) for installation and the tool registry.

@@ -193,7 +193,7 @@ def test_vm_suites_do_not_bypass_the_manifest_content_selector() -> None:
     roots = (
         "capsem-bootstrap",
         "capsem-e2e",
-        "capsem-mcp",
+
         "capsem-security",
         "capsem-service",
         "ironbank",

@@ -123,6 +123,10 @@ async fn oversized_ancillary_record_closes_every_delivered_descriptor() {
 async fn closed_peer_fails_send_without_consuming_source_descriptors() {
     let (parent, child) = UnixStream::pair().unwrap();
     let sender = Sender::new(parent).unwrap();
+    // Shut the peer down rather than only dropping it: std sets CLOEXEC after
+    // socketpair on macOS, so a test forking concurrently can inherit `child`
+    // and keep it open, and the send then succeeds.
+    child.shutdown(std::net::Shutdown::Both).unwrap();
     drop(child);
     let (data, peer) = UnixStream::pair().unwrap();
     assert_eq!(

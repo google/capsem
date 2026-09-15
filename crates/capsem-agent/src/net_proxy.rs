@@ -41,13 +41,13 @@ use vsock_io::{vsock_connect, AsyncVsock, VSOCK_HOST_CID};
 
 /// TCP port to listen on for HTTPS traffic (iptables REDIRECT target
 /// for outbound :443).
-const LISTEN_PORT_HTTPS: u16 = 10443;
+const LISTEN_PORT_HTTPS: u16 = capsem_proto::GUEST_HTTPS_PROXY_PORT;
 /// TCP port to listen on for plain-HTTP traffic (iptables REDIRECT
 /// target for outbound :80 + the configurable allowlist, e.g.
 /// :3128/:3713/:8080/:11434). Added in T2.2; the host proxy's first-byte
 /// sniff distinguishes TLS from plain HTTP, so a dedicated guest
 /// listener is just an iptables-target convenience.
-const LISTEN_PORT_HTTP: u16 = 10080;
+const LISTEN_PORT_HTTP: u16 = capsem_proto::GUEST_HTTP_PROXY_PORT;
 const RECENT_PID_CAPACITY: usize = 16;
 
 #[derive(Default)]

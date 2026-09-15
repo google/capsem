@@ -145,13 +145,7 @@ def _run_fork_benchmark(client):
         install_fork_probe_with_service_client(client, src)
 
         # Write workspace file
-        client.post(
-            f"/vms/{src}/files/write",
-            {
-                "path": "/root/bench.txt",
-                "content": "fork-benchmark-marker",
-            },
-        )
+        client.upload_file(src, "/root/bench.txt", "fork-benchmark-marker")
 
         # Fork -- time it
         t0 = time.monotonic()

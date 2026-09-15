@@ -133,7 +133,7 @@ def test_workspace_crates_and_bins_enumerated() -> None:
         "capsem-bench-rs",
         "capsem-dns-proxy",
         "capsem-gateway",
-        "capsem-mcp",
+
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
         "capsem-mcp-server",
@@ -218,7 +218,7 @@ def test_low_coverage_components_visible() -> None:
     required = {
         "mcp-aggregator": "crates/capsem-mcp-aggregator/src/**",
         "mcp-builtin": "crates/capsem-mcp-builtin/src/**",
-        "mcp-server": "crates/capsem-mcp/src/**",
+        "mcp-server": "mcp/typescript/src/**",
         "mock-server": "crates/capsem-mock-server/src/**",
         "process": "crates/capsem-process/src/**",
     }
@@ -370,7 +370,7 @@ def test_release_critical_crates_are_reported() -> None:
         "crates/capsem-app/src/**",
         "crates/capsem/src/**",
         "crates/capsem-gateway/src/**",
-        "crates/capsem-mcp/src/**",
+        "mcp/typescript/src/**",
         "crates/capsem-mcp-aggregator/src/**",
         "crates/capsem-mcp-builtin/src/**",
         "crates/capsem-mock-server/src/**",
@@ -424,7 +424,7 @@ def test_release_binaries_and_package_rails_covered() -> None:
         "capsem-app",
         "capsem-bench",
         "capsem-gateway",
-        "capsem-mcp",
+
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
         "capsem-mock-server",

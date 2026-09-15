@@ -1445,13 +1445,9 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert "fixture_lookup" in list_event["mcp"]["tool_list"]
 
             timeline = client.get(f"/vms/{vm_id}/timeline?layers=tool&limit=50", timeout=30)
-            assert set(timeline) == {"columns", "rows"}
-            assert {"timestamp", "layer", "ref", "summary", "status", "duration_ms"} <= set(
-                timeline["columns"]
-            )
-            timeline_rows = [
-                dict(zip(timeline["columns"], row, strict=True)) for row in timeline["rows"]
-            ]
+            assert set(timeline) == {"events"}
+            assert all({"timestamp", "layer", "ref", "summary", "status", "duration_ms"} <= set(event) for event in timeline["events"])
+            timeline_rows = timeline["events"]
             timeline_summaries = {row["summary"] for row in timeline_rows}
             assert (
                 f"{observed_mcp_server}/fixture_lookup "

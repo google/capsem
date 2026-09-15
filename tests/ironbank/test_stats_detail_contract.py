@@ -994,7 +994,7 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         assert route_http_response["body"].endswith("-tail\"}")
         assert route_http_response["original_bytes"] > 65_536
         assert route_http_response["stored_bytes"] == route_http_response["original_bytes"]
-        assert route_http_response["truncated"] == 0
+        assert route_http_response["truncated"] is False
 
         route_model_blobs = detail["body_blobs"][MODEL_EVENT_ID]
         assert {row["direction"] for row in route_model_blobs} == {"request", "response"}
@@ -1006,9 +1006,9 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         )
         assert json.loads(route_model_request["body"]) == EXPECTED_REQUEST_BODY
         assert route_model_request["content_type"] == "application/json"
-        assert route_model_request["truncated"] == 0
+        assert route_model_request["truncated"] is False
         assert route_model_response["body"] == EXPECTED_MODEL_RESPONSE
         assert route_model_response["content_type"] == "text/plain"
-        assert route_model_response["truncated"] == 0
+        assert route_model_response["truncated"] is False
     finally:
         service.stop()

@@ -44,7 +44,9 @@ pub(super) async fn complete(
         exec_id: id,
         exit_code,
         duration_ms,
-        stdout_preview: Some(String::from_utf8_lossy(&stdout[..stdout.len().min(1024)]).into()),
+        stdout_preview: Some(
+            String::from_utf8_lossy(&stdout[..stdout.len().min(super::exec_output::EXEC_LEDGER_PREVIEW_BYTES)]).into(),
+        ),
         stderr_preview: None,
         stdout_bytes: total_bytes,
         stderr_bytes: 0,

@@ -1,0 +1,24 @@
+[package]
+name = "capsem-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Typed async clients for the Capsem HTTP gateway"
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+capsem-api = { path = "../../crates/capsem-api", version = "0.6.3" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+
+[lints]
+workspace = true

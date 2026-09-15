@@ -182,6 +182,14 @@ pub fn request_names_loopback_host<B>(req: &Request<B>) -> bool {
         .is_ok_and(|authority| crate::cors::is_loopback_host(authority.host()))
 }
 
+/// `/vms/{id}/stream`, the one WebSocket control route a browser opens.
+fn is_stream_path(path: &str) -> bool {
+    matches!(
+        path.trim_start_matches('/').split('/').collect::<Vec<_>>().as_slice(),
+        ["vms", id, "stream"] if !id.is_empty()
+    )
+}
+
 /// Axum middleware: refuse foreign hosts, then require a Bearer token on all
 /// routes except `GET /health` and `GET /token`.
 pub async fn auth_middleware(
@@ -215,7 +223,7 @@ pub async fn auth_middleware(
     // (browser WebSocket API cannot set custom headers).
     // Only the "token" param is recognized; all others are dropped.
     let query_valid = !header_valid
-        && (path.starts_with("/terminal/") || path == "/events")
+        && (path == "/events" || is_stream_path(path))
         && req
             .uri()
             .query()

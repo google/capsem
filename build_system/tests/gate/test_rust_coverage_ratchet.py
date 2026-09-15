@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import platform
 from pathlib import Path
 
@@ -13,6 +14,36 @@ SPEC = importlib.util.spec_from_file_location("rust_coverage_ratchet", SCRIPT)
 assert SPEC and SPEC.loader
 RATCHET = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RATCHET)
+
+
+@pytest.mark.parametrize("failure", ["omitted_report", "missing_floor", "regression"])
+def test_sdk_member_cannot_hide_behind_core_coverage(tmp_path, failure):
+    members = {"native/rust": "product-core", "sdk/rust": "capsem-sdk"}
+    (tmp_path / "Cargo.toml").write_text(
+        "[workspace]\nmembers=" + json.dumps(list(members)) + "\n"
+    )
+    for directory, name in members.items():
+        crate = tmp_path / directory
+        crate.mkdir(parents=True)
+        (crate / "Cargo.toml").write_text(f'[package]\nname="{name}"\nversion="0.1.0"\n')
+    crates = RATCHET.workspace_crates(tmp_path, Path("Cargo.toml"))
+    assert crates == members, "SDK and core may share a basename; both must be inventoried"
+    report = tmp_path / "coverage.lcov"
+    source = "SF:native/rust/src/lib.rs\nDA:1,1\nDA:2,1\n"
+    if failure != "omitted_report":
+        source += "SF:sdk/rust/src/generated/api.rs\nDA:1,1\nDA:2,0\n"
+    report.write_text(source)
+    measured = RATCHET.lcov_by_crate(report, tmp_path, crates)
+    floors = {"product-core": 97.0, "capsem-sdk": 80.0}
+    if failure == "missing_floor":
+        floors.pop("capsem-sdk")
+    problems = RATCHET.violations(measured, set(members.values()), floors, 3.0, 40.0)
+    expected = {
+        "omitted_report": "LCOV report omitted workspace crates: ['capsem-sdk']",
+        "missing_floor": "coverage floors missing workspace crates: ['capsem-sdk']",
+        "regression": "capsem-sdk: 50.00% is below its 80.00% floor",
+    }[failure]
+    assert any(expected in problem for problem in problems)
 
 
 @pytest.mark.parametrize("system,hits", [("Linux", 77), ("Darwin", 82)])
@@ -37,8 +68,8 @@ def test_each_host_ratchets_its_own_compiled_coverage(tmp_path, monkeypatch, sys
             [
                 "--report",
                 str(report),
-                "--crate-root",
-                "native",
+                "--workspace-manifest",
+                "Cargo.toml",
                 "--config",
                 "gate.toml",
             ]
@@ -51,18 +82,44 @@ def _manifest(root: Path, directory: str, package: str) -> None:
     crate = root / "native" / directory
     crate.mkdir(parents=True)
     (crate / "Cargo.toml").write_text(f'[package]\nname = "{package}"\nversion = "0.1.0"\n')
+    members = sorted(path.parent.relative_to(root).as_posix()
+                     for path in (root / "native").glob("*/Cargo.toml"))
+    (root / "Cargo.toml").write_text("[workspace]\nmembers=" + json.dumps(members) + "\n")
 
 
-def test_workspace_inventory_uses_package_names_and_configured_root(
+def test_workspace_inventory_uses_package_names_and_declared_members(
     tmp_path: Path,
 ) -> None:
     _manifest(tmp_path, "shell", "product-cli")
     _manifest(tmp_path, "engine", "product-core")
 
-    assert RATCHET.workspace_crates(tmp_path, Path("native")) == {
-        "engine": "product-core",
-        "shell": "product-cli",
+    assert RATCHET.workspace_crates(tmp_path, Path("Cargo.toml")) == {
+        "native/engine": "product-core",
+        "native/shell": "product-cli",
     }
+
+
+def test_workspace_globs_exclusions_and_root_package(tmp_path):
+    _manifest(tmp_path, "engine", "product-core")
+    _manifest(tmp_path, "excluded", "outside-workspace")
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname="root-package"\nversion="0.1.0"\n'
+        '[workspace]\nmembers=["native/*"]\nexclude=["native/excluded"]\n'
+    )
+    crates = RATCHET.workspace_crates(tmp_path, Path("Cargo.toml"))
+    assert crates == {".": "root-package", "native/engine": "product-core"}
+    report = tmp_path / "coverage.lcov"
+    report.write_text("SF:src/lib.rs\nDA:1,1\nSF:native/engine/src/lib.rs\nDA:1,0\n")
+    assert RATCHET.lcov_by_crate(report, tmp_path, crates) == {
+        "root-package": RATCHET.Coverage(hit=1, found=1),
+        "product-core": RATCHET.Coverage(hit=0, found=1),
+    }
+
+
+def test_missing_workspace_members_fail_loudly(tmp_path):
+    (tmp_path / "Cargo.toml").write_text('[workspace]\nmembers=["sdk/missing"]\n')
+    with pytest.raises(ValueError, match="matches nothing"):
+        RATCHET.workspace_crates(tmp_path, Path("Cargo.toml"))
 
 
 @pytest.mark.parametrize(
@@ -92,8 +149,7 @@ def test_lcov_groups_unique_lines_by_owning_crate(tmp_path: Path) -> None:
     measured = RATCHET.lcov_by_crate(
         report,
         tmp_path,
-        Path("native"),
-        {"engine": "product-core"},
+        {"native/engine": "product-core"},
     )
 
     assert measured == {"product-core": RATCHET.Coverage(hit=2, found=2)}

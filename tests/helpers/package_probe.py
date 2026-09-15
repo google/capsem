@@ -32,11 +32,7 @@ dpkg -i /tmp/capsem-fork-probe.deb >/tmp/capsem-fork-probe.install.log
 def install_fork_probe_with_service_client(client, vm_name: str) -> None:
     """Install the fork probe through public service file+exec routes."""
     script_path = "/root/install-capsem-fork-probe.sh"
-    write = client.post(
-        f"/vms/{vm_name}/files/write",
-        {"path": script_path, "content": FORK_PROBE_INSTALL_SCRIPT},
-        timeout=15,
-    )
+    write = client.upload_file(vm_name, script_path, FORK_PROBE_INSTALL_SCRIPT, timeout=15)
     assert write and write.get("success") is True, f"probe install script write failed: {write}"
 
     resp = client.post(

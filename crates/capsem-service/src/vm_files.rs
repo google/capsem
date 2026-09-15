@@ -1,14 +1,22 @@
+mod provision;
+pub(crate) use provision::handle_provision;
+mod snapshots;
 use super::*;
+#[cfg(test)]
+pub(super) use snapshots::snapshot_status_from_session_dir;
+pub(super) use snapshots::{handle_vm_changes, handle_vm_snapshots_list, handle_vm_snapshots_status};
 
 mod diagnostics;
 mod launch;
 mod storage;
 pub(crate) use storage::storage_diagnostics;
 mod fork;
+mod ipc_command;
 #[cfg(test)]
 pub(crate) use diagnostics::session_db_triage;
 pub(crate) use diagnostics::{handle_host_logs, handle_logs, handle_panics, handle_service_logs, handle_triage};
 pub(crate) use fork::handle_fork;
+pub(super) use ipc_command::send_ipc_command;
 
 pub(super) fn main_db_path_for_run_dir(run_dir: &StdPath) -> PathBuf {
     run_dir.parent().unwrap_or(run_dir).join("sessions").join("main.db")
@@ -397,25 +405,9 @@ use capsem_service::fs_utils::{identify_bytes_sync, identify_file_sync, sanitize
 // answered at all: an upload to `notes.txt -> ~/.ssh/authorized_keys` landed
 // on the host.
 
-fn session_dir_for(state: &ServiceState, id: &str) -> Result<PathBuf, AppError> {
-    let instances = state.instances.lock().unwrap();
-    if let Some(info) = instances.get(id) {
-        return Ok(info.session_dir.clone());
-    }
-    drop(instances);
-    // Check persistent registry for stopped VMs
-    let reg = state.persistent_registry.lock().unwrap();
-    reg.data
-        .vms
-        .get(id)
-        .or_else(|| reg.data.vms.values().find(|e| e.name == id))
-        .map(|e| e.session_dir.clone())
-        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
-}
-
 /// Open the workspace root of sandbox `id` as a containment handle.
 pub(super) fn workspace_root(state: &ServiceState, id: &str) -> Result<ContainedDir, AppError> {
-    let session_dir = session_dir_for(state, id)?;
+    let session_dir = resolve_session_dir(state, id)?;
     let root = capsem_core::guest_share_dir(&session_dir).join("workspace");
     ContainedDir::open_root(&root).map_err(|e| {
         AppError(
@@ -537,7 +529,7 @@ pub(super) fn list_dir_recursive(
             entries.push(FileListEntry {
                 name,
                 path: rel_path,
-                entry_type: "directory".into(),
+                entry_type: api::FileEntryType::Directory,
                 size: 0,
                 mtime: item.mtime_secs,
                 mime: None,
@@ -553,7 +545,7 @@ pub(super) fn list_dir_recursive(
             entries.push(FileListEntry {
                 name,
                 path: rel_path,
-                entry_type: "file".into(),
+                entry_type: api::FileEntryType::File,
                 size: item.size,
                 mtime: item.mtime_secs,
                 mime: Some(mime),
@@ -588,8 +580,8 @@ pub(super) async fn handle_list_files(
     Ok(Json(FileListResponse { entries }))
 }
 
-const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
-const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
+const MAX_FILE_SIZE: u64 = capsem_api::MAX_REQUEST_BODY_BYTES as u64;
+pub(super) const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
 
 pub(super) fn file_security_preview_bytes(data: &[u8]) -> Vec<u8> {
     data[..data.len().min(FILE_SECURITY_CONTENT_PREVIEW_MAX)].to_vec()
@@ -865,153 +857,6 @@ pub(super) fn existing_session_names(state: &ServiceState) -> Vec<String> {
     existing
 }
 
-pub(super) async fn handle_provision(
-    State(state): State<Arc<ServiceState>>,
-    Json(payload): Json<ProvisionRequest>,
-) -> Result<Json<ProvisionResponse>, AppError> {
-    let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
-    if let Some(reason) = vm_asset_block_reason(&state, &profile_id) {
-        return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
-    }
-
-    let existing = state.off_worker(|state| existing_session_names(&state)).await?;
-    let name = payload
-        .name
-        .clone()
-        .unwrap_or_else(|| generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str())));
-    let persistent = payload.persistent || payload.name.is_some() || payload.from.is_some();
-    if existing.iter().any(|existing| existing == &name) {
-        return Err(AppError(
-            StatusCode::CONFLICT,
-            format!("persistent VM \"{}\" already exists", name),
-        ));
-    }
-    let id = new_persistent_vm_id();
-    // Every named network must exist before the VM does: a VM is never
-    // created half-connected.
-    let networks = network_routes::resolve_network_names(&*state.networks.lock().await, &payload.networks)?;
-
-    let profile = state
-        .cached_profile_config(&profile_id)
-        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
-    let resources = resolve_profile_vm_resources(&profile, payload.ram_mb, payload.cpus);
-    let ram_mb = resources.ram_mb;
-    let cpus = resources.cpus;
-    let scratch_disk_size_gb = resources.scratch_disk_size_gb;
-
-    // Retry budget for the launchd-cleanup transient. Failed attempts
-    // fast-fail in ~500ms (capsem-process spawn -> validateWithError
-    // crash -> child-exit handler -> instances-map removal observable
-    // here), so 8s covers ~5-8 attempts including backoff. Successful
-    // attempts return on the first poll iteration regardless of timeout.
-    // Backoff lets launchd tick at least one PETRIFIED-cleanup entry
-    // (9s wall-clock per entry) between retries; under a real cascade
-    // the second attempt usually lands once one entry has drained.
-    let opts = capsem_foundation::poll::PollOpts {
-        label: "provision-launchd-drain",
-        timeout: std::time::Duration::from_secs(8),
-        initial_delay: std::time::Duration::from_millis(200),
-        max_delay: std::time::Duration::from_millis(500),
-    };
-
-    let id_for_loop = id.clone();
-    let attempt_num = std::sync::atomic::AtomicU32::new(0);
-    let result = capsem_foundation::poll::poll_until(opts, || {
-        let state = Arc::clone(&state);
-        let id = id_for_loop.clone();
-        let name = name.clone();
-        let payload_env = payload.env.clone();
-        let payload_from = payload.from.clone();
-        let payload_profile_id = profile_id.clone();
-        let payload_persistent = persistent;
-        let attempt = attempt_num.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        async move {
-            // Before retry attempts (>1), clear any state the prior
-            // failed attempt left behind so provision_sandbox does not
-            // reject with "already exists". The child-exit handler has
-            // already done its own cleanup (instances.remove +
-            // preserve_failed_session_dir) by the time we observe
-            // crash-before-ready; we only need to undo registration of
-            // the persistent entry.
-            if attempt > 1 {
-                let stale_name = name.clone();
-                let _ = state
-                    .off_worker(move |state| {
-                        let _ = state.forget_persistent_entry(&stale_name);
-                    })
-                    .await;
-                state.evict_instance(&id);
-                warn!(id, attempt, "retrying provision after launchd-cleanup transient");
-            }
-
-            let outcome = provision_attempt(
-                &state,
-                &id,
-                &name,
-                ram_mb,
-                cpus,
-                scratch_disk_size_gb,
-                payload_profile_id,
-                payload_persistent,
-                payload_env,
-                payload_from,
-            )
-            .await;
-            // Log structured context BEFORE losing the outcome to classify_*.
-            // BootCrash/ProvisionError still produce a user-facing error
-            // body via classify_attempt_decision; these logs are for
-            // operators reading service.log.
-            if let ProvisionAttemptOutcome::BootCrash { ref tail } = outcome {
-                // The tail goes to the caller in the 500 body; without it here
-                // service.log records that a boot died but never why, and the
-                // reason survives only inside the session's process.log.
-                error!(
-                    id,
-                    cause = capsem_core::session::boot_failure_summary(tail),
-                    "capsem-process exited before reaching ready"
-                );
-            } else if let ProvisionAttemptOutcome::ProvisionError(ref e) = outcome {
-                error!(id, error = %e, "provision failed");
-            }
-            match classify_attempt_decision(outcome, &id) {
-                AttemptDecision::Succeed(uds_path) => Some(Ok(uds_path)),
-                AttemptDecision::RetryAfterCleanup => None, // poll_until retries
-                AttemptDecision::BailWithError(err) => Some(Err(err)),
-            }
-        }
-    })
-    .await;
-
-    match result {
-        Ok(Ok(uds_path)) => {
-            let response = provision_response_for_running(&state, id.clone(), uds_path)?;
-            network_routes::attach_provisioned(&state, &id, &networks).await?;
-            Ok(Json(response))
-        }
-        Ok(Err(app_err)) => Err(app_err),
-        Err(timed_out) => {
-            // Exhausted retries on launchd transient. Surface the most
-            // recent failed-attempt tail so the user sees what VZ said,
-            // even though the actual cause is launchd-side saturation.
-            let tail = failed_process_log_tail(&state, &id).await;
-            error!(
-                id,
-                attempts = timed_out.attempts,
-                "provision: launchd-cleanup retries exhausted"
-            );
-            Err(AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!(
-                    "sandbox {id} could not be provisioned after {} attempts ({}). \
-                     This typically clears within 10s; please retry. process.log tail:\n\n{tail}\n\n\
-                     (full logs: `capsem logs {id}`)",
-                    timed_out.attempts, timed_out
-                ),
-            ))
-        }
-    }
-}
-
 /// Run one provision attempt: spawn capsem-process, then poll briefly
 /// for either the `.ready` sentinel or a crash-before-ready signal.
 /// Pure bookkeeping; no retry logic here -- caller drives the retry
@@ -1032,7 +877,7 @@ pub(super) async fn provision_attempt(
     // Creating/starting a VM is an Apple VZ lifecycle operation too. Cold
     // starts take the shared rail so independent boots can overlap, but they
     // still wait behind any in-flight save/restore checkpoint edge.
-    let _vz_guard = state.save_restore_lock.read().await;
+    let _vz_guard = state.lifecycle.vz.read().await;
     let _vz_host_guard = match acquire_vz_host_lock(startup::VzHostLockMode::Shared).await {
         Ok(guard) => guard,
         Err(e) => {
@@ -1267,7 +1112,7 @@ pub(super) async fn handle_info(
             }
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
-            apply_session_db_status(&state, &mut info, &dir).await;
+            populate_vm_info(&state, &mut info, &dir).await?;
             info.storage = state
                 .off_worker(move |state| state.storage_diagnostics_cached(&dir))
                 .await?;
@@ -1302,7 +1147,7 @@ pub(super) async fn handle_info(
                     None
                 }
             };
-        apply_session_db_status(&state, &mut info, &entry.session_dir).await;
+        populate_vm_info(&state, &mut info, &entry.session_dir).await?;
         let session_dir = entry.session_dir.clone();
         info.storage = state
             .off_worker(move |state| state.storage_diagnostics_cached(&session_dir))
@@ -1389,82 +1234,6 @@ pub(super) async fn handle_vm_status(
     Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
 }
 
-pub(super) async fn handle_vm_snapshots_status(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Result<Json<capsem_proto::ipc::SnapshotStatus>, AppError> {
-    if let Some(uds_path) = {
-        let instances = state.instances.lock().unwrap();
-        instances.get(&id).map(|instance| instance.uds_path.clone())
-    } {
-        let request_id = state.job_counter.fetch_add(1, Ordering::SeqCst);
-        let response = send_ipc_command(&uds_path, ServiceToProcess::SnapshotStatus { id: request_id }, Some(5))
-            .await
-            .map_err(|error| AppError(StatusCode::BAD_GATEWAY, error))?;
-        return match response {
-            ProcessToService::SnapshotStatusResult {
-                id: response_id,
-                status,
-            } if response_id == request_id => Ok(Json(status)),
-            other => Err(AppError(
-                StatusCode::BAD_GATEWAY,
-                format!("unexpected snapshot status IPC response: {other:?}"),
-            )),
-        };
-    }
-
-    let session_dir = resolve_session_dir(&state, &id)?;
-    Ok(Json(snapshot_status_from_session_dir(&session_dir)))
-}
-
-pub(super) async fn handle_vm_snapshots_list(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let Json(status) = handle_vm_snapshots_status(State(state), Path(id)).await?;
-    Ok(Json(serde_json::json!({
-        "total": status.total,
-        "snapshots": status.snapshots,
-    })))
-}
-
-pub(super) fn snapshot_status_from_session_dir(session_dir: &std::path::Path) -> capsem_proto::ipc::SnapshotStatus {
-    let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
-        session_dir.to_path_buf(),
-        10,
-        12,
-        std::time::Duration::from_secs(300),
-    );
-    let snapshots = scheduler.list_snapshots();
-    let auto_count = snapshots
-        .iter()
-        .filter(|slot| slot.origin == capsem_core::auto_snapshot::SnapshotOrigin::Auto)
-        .count();
-    let manual_count = snapshots.len().saturating_sub(auto_count);
-    let snapshots = snapshots
-        .into_iter()
-        .map(|slot| capsem_proto::ipc::SnapshotSlotStatus {
-            checkpoint: format!("cp-{}", slot.slot),
-            slot: slot.slot,
-            origin: match slot.origin {
-                capsem_core::auto_snapshot::SnapshotOrigin::Auto => "auto",
-                capsem_core::auto_snapshot::SnapshotOrigin::Manual => "manual",
-            }
-            .to_string(),
-            name: slot.name,
-            timestamp: humantime::format_rfc3339(slot.timestamp).to_string(),
-            hash: slot.hash,
-        })
-        .collect();
-    capsem_proto::ipc::SnapshotStatus {
-        total: auto_count + manual_count,
-        auto_count,
-        manual_count,
-        manual_available: scheduler.available_manual_slots(),
-        snapshots,
-    }
-}
-
 pub(super) async fn vm_operation_status(
     state: Arc<ServiceState>,
     id: String,
@@ -1511,14 +1280,9 @@ pub(super) async fn handle_stats_detail(
 ) -> Result<impl IntoResponse, AppError> {
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
-    let payload = read_stats_detail_payload_from_session_db(&state, &id, &db_path).await?;
-    let body = serde_json::to_vec(&payload).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize stats detail response: {error}"),
-        )
-    })?;
-    Ok(json_bytes_response(Bytes::from(body)))
+    Ok(Json(
+        read_stats_detail_payload_from_session_db(&state, &id, &db_path).await?,
+    ))
 }
 
 /// GET /vms/{id}/stats/summary -- return compact live toolbar counters.
@@ -1543,69 +1307,6 @@ pub(super) async fn handle_stats_summary(
         total_tool_calls: stats.total_tool_calls,
         total_estimated_cost: stats.total_estimated_cost_usd,
     }))
-}
-
-#[tracing::instrument(skip_all, fields(cmd = ?std::mem::discriminant(&cmd), timeout_secs = ?timeout_secs))]
-pub(super) async fn send_ipc_command(
-    uds_path: &std::path::Path,
-    cmd: ServiceToProcess,
-    timeout_secs: Option<u64>,
-) -> Result<ProcessToService, String> {
-    let stream = tokio::net::UnixStream::connect(uds_path)
-        .await
-        .map_err(|e| format!("failed to connect to sandbox: {e}"))?;
-    let std_stream = stream
-        .into_std()
-        .map_err(|e| format!("failed to convert stream: {e}"))?;
-    let (std_stream, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
-        std_stream,
-        "capsem-service",
-        capsem_foundation::telemetry::current_parent_traceparent(),
-    )
-    .await
-    .map_err(|e| format!("IPC handshake failed: {e}"))?;
-    let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) =
-        channel_from_std(std_stream).map_err(|e| format!("failed to create IPC channel: {e}"))?;
-
-    tx.send(cmd.clone())
-        .await
-        .map_err(|e| format!("failed to send IPC command: {e}"))?;
-
-    let deadline = timeout_secs.map(|secs| tokio::time::Instant::now() + std::time::Duration::from_secs(secs));
-    loop {
-        let msg = match deadline {
-            Some(deadline) => match tokio::time::timeout_at(deadline, rx.recv()).await {
-                Ok(Ok(msg)) => msg,
-                Ok(Err(e)) => {
-                    error!(?e, "IPC receive error");
-                    return Err(format!("IPC connection closed: {e}"));
-                }
-                Err(_) => {
-                    let secs = timeout_secs.unwrap_or_default();
-                    return Err(format!("IPC command timed out after {secs}s"));
-                }
-            },
-            None => match rx.recv().await {
-                Ok(msg) => msg,
-                Err(e) => {
-                    error!(?e, "IPC receive error");
-                    return Err(format!("IPC connection closed: {e}"));
-                }
-            },
-        };
-
-        match msg {
-            ProcessToService::Pong => {
-                if matches!(cmd, ServiceToProcess::Ping | ServiceToProcess::ReloadConfig) {
-                    return Ok(ProcessToService::Pong);
-                }
-                continue;
-            }
-            ProcessToService::TerminalOutput { .. } => continue,
-            ProcessToService::StateChanged { .. } => continue,
-            res => return Ok(res),
-        }
-    }
 }
 
 /// Wait until a VM signals readiness via a `.ready` sentinel file.
@@ -1685,7 +1386,7 @@ pub(super) fn vm_ready_poll_opts(timeout_secs: u64) -> capsem_foundation::poll::
     }
 }
 
-fn running_uds_path(state: &ServiceState, id: &str) -> Result<std::path::PathBuf, AppError> {
+pub(super) fn running_uds_path(state: &ServiceState, id: &str) -> Result<std::path::PathBuf, AppError> {
     let instances = state.instances.lock().unwrap();
     let path = instances
         .get(id)
@@ -1701,6 +1402,8 @@ pub(super) async fn handle_exec(
     Path(id): Path<String>,
     Json(payload): Json<ExecRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
+    let timeout_secs =
+        capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
     let uds_path = running_uds_path(&state, &id)?;
 
     wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
@@ -1715,7 +1418,7 @@ pub(super) async fn handle_exec(
             id: id_val,
             command: command.clone(),
         },
-        payload.timeout_secs,
+        Some(timeout_secs),
     )
     .await
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -1728,119 +1431,14 @@ pub(super) async fn handle_exec(
             truncated,
             ..
         } => Ok(Json(ExecResponse {
-            stdout: String::from_utf8(stdout).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-            stderr: String::from_utf8(stderr).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+            stdout: ExecOutput::from_bytes(stdout),
+            stderr: ExecOutput::from_bytes(stderr),
             exit_code,
             truncated,
         })),
         _ => Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             "unexpected IPC response for exec".to_string(),
-        )),
-    }
-}
-
-pub(super) async fn handle_write_file(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    Json(payload): Json<WriteFileRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let uds_path = running_uds_path(&state, &id)?;
-
-    let mut data = payload.content.into_bytes();
-    let path = payload.path;
-    let size = data.len() as u64;
-    if let Some(rewritten) = log_file_boundary(
-        &state,
-        &id,
-        FileBoundaryAction::Import,
-        path.clone(),
-        file_security_preview_bytes(&data),
-        size,
-        None,
-    )
-    .await?
-    {
-        data = rewritten;
-    }
-
-    let id_val = state.next_job_id();
-    let res = send_ipc_command(
-        &uds_path,
-        ServiceToProcess::WriteFile {
-            id: id_val,
-            path: path.clone(),
-            data,
-        },
-        Some(30),
-    )
-    .await
-    .map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("VM {id} write_file failed while awaiting the guest completion response: {error}"),
-        )
-    })?;
-
-    match res {
-        ProcessToService::WriteFileResult { success, error, .. } => {
-            if success {
-                Ok(Json(json!({ "success": true })))
-            } else {
-                Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    error.unwrap_or_else(|| "unknown write error".into()),
-                ))
-            }
-        }
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "unexpected IPC response for write_file".to_string(),
-        )),
-    }
-}
-
-pub(super) async fn handle_read_file(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    Json(payload): Json<ReadFileRequest>,
-) -> Result<Json<ReadFileResponse>, AppError> {
-    let path = &payload.path;
-    let uds_path = running_uds_path(&state, &id)?;
-
-    wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
-        .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let id_val = state.next_job_id();
-    let res = send_ipc_command(
-        &uds_path,
-        ServiceToProcess::ReadFile {
-            id: id_val,
-            path: path.clone(),
-        },
-        Some(30),
-    )
-    .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    match res {
-        ProcessToService::ReadFileResult { data, error, .. } => {
-            if let Some(d) = data {
-                Ok(Json(ReadFileResponse {
-                    content: String::from_utf8(d)
-                        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-                }))
-            } else {
-                Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    error.unwrap_or_else(|| "unknown read error".into()),
-                ))
-            }
-        }
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "unexpected IPC response for read_file".to_string(),
         )),
     }
 }

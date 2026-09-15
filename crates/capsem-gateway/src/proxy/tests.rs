@@ -678,3 +678,18 @@ fn request_timeout_covers_suspend_operation() {
         "proxy timeout must exceed worst-case suspend duration"
     );
 }
+
+/// The gateway waited at most 120s for response headers on every route, but
+/// exec and run only answer once the command finishes, so any command longer
+/// than that answered 502 while it kept running. Their deadline follows the
+/// service's exec timeout ceiling instead.
+#[test]
+fn exec_deadline_covers_the_exec_timeout_ceiling() {
+    let exec_budget = Duration::from_secs(capsem_api::MAX_EXEC_TIMEOUT_SECS);
+    for path in ["/vms/vm-1/exec", "/run"] {
+        assert!(upstream_deadline(path) >= exec_budget + REQUEST_TIMEOUT, "{path}");
+    }
+    for path in ["/vms/vm-1/info", "/vms/vm-1/files/content", "/vms/exec/info", "/runs"] {
+        assert_eq!(upstream_deadline(path), REQUEST_TIMEOUT, "{path}");
+    }
+}

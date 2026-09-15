@@ -34,14 +34,9 @@ MATCH_GUARDS = (
         ("web/app/src/lib/components",),
     ),
     (
-        "MCP request bypasses its explicit profile parameter",
-        r"['\"]profile_id['\"]\s*:\s*DEFAULT_PROFILE_ID",
-        ("crates/capsem-mcp/src/main.rs",),
-    ),
-    (
         "profile-scoped MCP route silently uses the default profile",
         r"['\"]/profiles/\{\}/mcp[^;]{0,240}DEFAULT_PROFILE_ID",
-        ("crates/capsem/src/main.rs", "crates/capsem-mcp/src/main.rs"),
+        ("crates/capsem/src/main.rs",),
     ),
     (
         "workflow input silently defaults a profile or public release channel",

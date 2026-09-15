@@ -8,13 +8,14 @@
 //! The AI can diff and revert files against any populated slot via MCP tools.
 
 use std::collections::BTreeMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
+pub mod changes;
+pub(crate) use changes::snapshot_entry_digest;
 
 #[cfg(target_os = "linux")]
 mod sparse_copy;
@@ -533,25 +534,6 @@ impl AutoSnapshotScheduler {
             files_count: 0,
         })
     }
-}
-
-pub(crate) fn snapshot_entry_digest(path: &Path, is_symlink: bool) -> Option<blake3::Hash> {
-    let mut hasher = blake3::Hasher::new();
-    if is_symlink {
-        let target = std::fs::read_link(path).ok()?;
-        hasher.update(target.as_os_str().as_encoded_bytes());
-    } else {
-        let mut file = std::fs::File::open(path).ok()?;
-        let mut buffer = vec![0u8; 64 * 1024].into_boxed_slice();
-        loop {
-            let read = file.read(&mut buffer).ok()?;
-            if read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..read]);
-        }
-    }
-    Some(hasher.finalize())
 }
 
 /// Compute a blake3 hash of sorted workspace paths, metadata, and content.

@@ -1,102 +1,135 @@
 ---
 title: MCP Tools
-description: Reference for the capsem MCP tools exposed to AI agents (Claude Code, Gemini CLI, Cursor, etc.).
+description: Configure the SDK-backed Capsem MCP server and use its typed tools.
 sidebar:
   order: 2
 ---
 
-When the `capsem-mcp` stdio server is registered with your AI CLI, the agent gains 26 tools for creating and driving VM sessions, running commands, reading and writing files inside the guest, querying telemetry, reading host logs, and calling into the guest MCP path.
+`@capsem/mcp` is a standalone Node.js stdio server for AI clients. It uses
+`@capsem/sdk` for every operation and communicates only with the authenticated
+Capsem HTTP gateway. It does not open the service UDS, inspect VM state, or
+start Capsem services.
 
-All tools use **camelCase** parameter names on the wire (e.g. `ramMb`, `cpuCount`). The source of truth is `crates/capsem-mcp/src/main.rs`.
+## Install and configure
 
-## Configuration
+Install the npm package separately from the native Capsem package:
 
-Register the server in your AI CLI settings. For Claude Code:
+```sh
+npm install --global @capsem/mcp
+```
+
+The native installer does not install Node.js or download npm packages. Pass an
+explicit gateway URL, bearer token, and transport timeout when registering the
+server. For example:
 
 ```json
 {
   "mcpServers": {
-    "capsem": { "command": "capsem-mcp" }
+    "capsem": {
+      "command": "capsem-mcp",
+      "args": [
+        "--gateway-url", "http://127.0.0.1:19222",
+        "--token", "${CAPSEM_GATEWAY_TOKEN}",
+        "--timeout-ms", "30000"
+      ]
+    }
   }
 }
 ```
 
-The binary is installed to `~/.capsem/bin/capsem-mcp` by the platform package
-or source install flow.
+Use your MCP client's secret or environment-variable support rather than
+committing the gateway token. The token belongs to the host MCP process. Do not
+copy it into a VM, container, tool argument, or webpage.
 
-## Session lifecycle
+stdout carries MCP protocol messages only. Sanitized diagnostics use stderr.
+Successful tools return structured content. Failures set `isError` and return a
+machine-readable category and, for HTTP failures, a status code. Gateway bodies,
+tokens, registry credentials, and low-level causes are omitted from MCP errors.
 
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `capsem_create` | `name?`, `ramMb?`, `cpuCount?`, `env?`, `image?` | Create and boot a new session from a profile. RAM/CPU fall back to profile VM defaults. Returns session ID. |
-| `capsem_run` | `command`, `timeout?` | Run a command in a fresh one-shot VM and destroy it after completion. Returns stdout, stderr, exit_code. |
-| `capsem_list` | -- | List sessions with ID, name, profile, status, RAM, CPUs, uptime, and telemetry. |
-| `capsem_info` | `id` | Session details: ID, name, profile, status, RAM, CPUs, version, plugin/profile metadata, telemetry. |
-| `capsem_resume` | `name` | Resume a stopped named session or get ID of a running one. Returns session ID. |
-| `capsem_suspend` | `id` | Suspend a retained session to disk (saves RAM + CPU state). |
-| `capsem_stop` | `id` | Stop a session. |
-| `capsem_delete` | `id` | Delete a session permanently. Destroys all retained state for that VM. |
-| `capsem_fork` | `id`, `name`, `description?` | Fork a running or stopped session into a retained VM/template. |
-| `capsem_purge` | `all?` | Clean up disposable sessions. Set `all=true` to include retained sessions. |
+`--timeout-ms` is the HTTP transport deadline. `timeout_secs` on `capsem_exec`
+and `capsem_run` is the guest command deadline. Set the HTTP timeout high enough
+for the guest deadline. Cancelling a tool call cancels its local HTTP request;
+it does not delete the VM and cannot undo a mutation the gateway already
+accepted. Mutations are not retried automatically.
 
-## Exec and file access
+## VM lifecycle and files
 
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `capsem_exec` | `id`, `command`, `timeout?` | Run a shell command inside a running session. Returns stdout, stderr, exit_code. Default 30s timeout. |
-| `capsem_read_file` | `id`, `path` | Read a file from the guest filesystem. Returns text content. |
-| `capsem_write_file` | `id`, `path`, `content` | Write a file into the guest filesystem. |
+All VM-scoped tools take the immutable `vm_id` returned by `capsem_create` or
+`capsem_list`.
 
-## Telemetry and logs
+| Tool | Main parameters | Purpose |
+| --- | --- | --- |
+| `capsem_status` | — | Read gateway and service status. |
+| `capsem_list` | — | List VMs and their typed lifecycle state. |
+| `capsem_create` | `profile`, `name?`, `vcpu?`, `memory?`, `env?`, `networks?`, `container?` | Create a detached VM, optionally with a typed OCI workload. A name makes it persistent. |
+| `capsem_info` | `vm_id` | Read VM identity, resources, network, files, and telemetry. |
+| `capsem_exec` | `vm_id`, `command`, `timeout_secs?` | Execute in an existing VM. |
+| `capsem_run` | `command`, `profile?`, `vcpu?`, `memory?`, `env?`, `timeout_secs?` | Execute once in a temporary VM. |
+| `capsem_start` / `capsem_stop` | `vm_id` | Start or stop a VM. |
+| `capsem_pause` / `capsem_resume` | `vm_id` | Pause or resume a VM. |
+| `capsem_delete` | `vm_id` | Delete the VM and its owned state. |
+| `capsem_fork` | `vm_id`, `name`, `description?` | Create a stopped fork. |
+| `capsem_persist` | `vm_id`, `name` | Retain an ephemeral VM under a stable name. |
+| `capsem_purge` | `all?` | Purge service-reported disposable state. |
+| `capsem_list_files` | `vm_id`, `path?`, `depth?` | List workspace files. |
+| `capsem_read_file` | `vm_id`, `path`, `encoding?` | Read UTF-8 or base64 file content. |
+| `capsem_write_file` | `vm_id`, `path`, `content`, `encoding?` | Write UTF-8 or base64 bytes. |
+| `capsem_container_status` / `capsem_container_wait` | `vm_id`, `interval_ms?` | Read or wait for service-owned workload state. |
+| `capsem_exposure_create` | `vm_id`, `guest_port`, `target?`, `host_port?` | Open a policy-checked host-loopback listener. |
+| `capsem_exposure_list` / `capsem_exposure_delete` | `vm_id`, `exposure_id?` | Inspect or revoke the VM owner's listeners. |
 
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `capsem_vm_logs` | `id`, `grep?`, `tail?` | Serial + process logs for a session. `grep` filters lines, `tail` limits to last N lines. |
-| `capsem_service_logs` | `grep?`, `tail?` | Latest `capsem-service` logs (last ~100 KB). `grep` + `tail` filters. |
-| `capsem_host_logs` | `name`, `grep?`, `tail?`, `maxBytes?` | Read an allowlisted host log by symbolic name: `service`, `mcp`, `gateway`, `tray`, or `app`. |
-| `capsem_panics` | `since?`, `limit?`, `id?` | Extract structured Rust panics and backtraces from recent host logs. |
-| `capsem_triage` | `since?`, `limit?`, `id?` | Summarize recent panics, dropped IPC frames, server errors, and slow operations. |
-| `capsem_timeline` | `id`, `traceId?`, `since?`, `limit?`, `layers?` | Render a time-ordered session timeline across exec, tool, network, filesystem, and model events. |
+File transfers use the gateway's existing file API and require a running VM's
+security ledger. Cancelling a local wait or request never deletes a VM.
 
-## MCP aggregator
+## Diagnostics and audit
 
-These tools let the agent exercise the full guest MCP path through
-`/run/capsem-mcp-server` and framed MITM MCP on `vsock:5002` (policy +
-telemetry) without having to drive `capsem_exec` by hand.
+| Tool | Main parameters | Purpose |
+| --- | --- | --- |
+| `capsem_vm_logs` | `vm_id`, `grep?`, `tail?`, `max_bytes?` | Read VM serial and process logs. |
+| `capsem_host_logs` | `source?`, `grep?`, `tail?`, `max_bytes?` | Read an allowlisted host log. |
+| `capsem_panics` | `since?`, `limit?` | Read structured host panics. |
+| `capsem_triage` | `vm_id?`, `since?`, `limit?` | Correlate host and optional VM failures. |
+| `capsem_timeline` | `vm_id`, `trace_id?`, `since?`, `limit?`, `layers?` | Read correlated session events. |
+| `capsem_history` | `vm_id`, `search?`, `limit?`, `offset?` | Read command and audit history. |
+| `capsem_stats` / `capsem_stats_detail` | `vm_id` | Read aggregate or typed detailed telemetry. |
+| `capsem_snapshots` / `capsem_snapshot_status` | `vm_id` | Inspect filesystem snapshots. |
+| `capsem_changes` | `vm_id`, `checkpoint`, `limit?`, `offset?` | Compare workspace changes. |
 
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `capsem_mcp_servers` | -- | List configured MCP servers with connection status and tool counts. |
-| `capsem_mcp_tools` | `server?` | List discovered MCP tools across all connected servers. Filter by `server` name to scope to one. |
-| `capsem_mcp_call` | `name`, `arguments?` | Call an MCP tool by namespaced name (e.g. `github__search_repos`) with JSON arguments. |
+These tools query the same logger-owned data used by the SDK and UI. They do not
+open SQLite directly or maintain a second projection cache.
 
-## Diagnostics
+## Private networks
 
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `capsem_version` | -- | MCP server version and service connectivity status. |
+`capsem_network_create`, `capsem_network_list`, `capsem_network_inspect`, and
+`capsem_network_delete` manage networks by immutable `network_id`.
+`capsem_network_attach` and `capsem_network_detach` change membership with an
+immutable `vm_id`. `capsem_network_logs` reads cursor-based audit events and
+accepts VM, connection, event type, decision, and time filters.
 
-## Example workflows
+## Profiles and guest MCP tools
 
-**One-shot command in a disposable VM:**
+| Tool | Purpose |
+| --- | --- |
+| `capsem_profiles` | List the typed profile catalog. |
+| `capsem_mcp_info` | Read MCP configuration and readiness for a profile. |
+| `capsem_mcp_servers` | List configured servers for a profile. |
+| `capsem_mcp_default` | Read the profile's default MCP permission. |
+| `capsem_mcp_tools` | List tools for one `server_id`. |
+| `capsem_mcp_refresh` | Refresh discovery for one `server_id`. |
+| `capsem_mcp_call` | Invoke one `tool_id` with native JSON arguments. |
 
-```json
-{ "tool": "capsem_run", "arguments": { "command": "curl -s https://api.github.com/zen" } }
-```
+Profile MCP calls still travel through the running VM's guest relay, policy
+engine, aggregator, and logger. Listing tools does not create phantom call rows.
+Allowed and denied calls retain trusted VM, trace, server, tool, decision, byte,
+and security-rule correlation in the existing ledgers.
 
-**Iterative debugging in a long-lived VM:**
+A guest agent also discovers `capsem__expose_port` from its VM-owned endpoint.
+It must select the `container` or `vm` namespace explicitly and may request host
+port zero for allocation. Trusted VM identity comes from the existing relay;
+the schema accepts no VM ID, gateway token, or control socket. MCP admission and
+tool-call logging wrap the request, then the VM owner's existing exposure policy
+and network audit run before any listener can forward traffic.
 
-```json
-{ "tool": "capsem_create", "arguments": { "name": "dev" } }
-{ "tool": "capsem_exec",   "arguments": { "id": "<id>", "command": "capsem-doctor -k net" } }
-{ "tool": "capsem_timeline", "arguments": { "id": "<id>", "layers": "net,model,tool,fs", "limit": 50 } }
-```
-
-**Fork a template and boot from it:**
-
-```json
-{ "tool": "capsem_fork",   "arguments": { "id": "<id>", "name": "python-ready" } }
-{ "tool": "capsem_create", "arguments": { "image": "python-ready" } }
-```
-
-For CLI equivalents of these commands see the [CLI reference](/usage/cli/).
+`capsem_pause` and `capsem_status` are the canonical tool names. The npm server
+does not expose the retired `capsem_suspend`, `capsem_version`, or duplicate
+`capsem_service_logs` tools.

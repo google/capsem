@@ -155,7 +155,12 @@ mod against_the_service {
             "POST",
             "/run",
             200,
-            json!({"stdout": "out\n", "stderr": "err\n", "exit_code": 7, "truncated": true}),
+            json!({
+                "stdout": {"encoding": "utf8", "data": "out\n"},
+                "stderr": {"encoding": "utf8", "data": "err\n"},
+                "exit_code": 7,
+                "truncated": true
+            }),
         );
         let code = run(
             &service.client,

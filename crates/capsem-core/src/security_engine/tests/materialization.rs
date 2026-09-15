@@ -229,11 +229,14 @@ fn security_event_cel_fields_all_resolve() {
     expose.side = network::NetworkSide::Destination;
     let expose =
         SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect).with_network(NetworkSecurityEvent::Flow(expose));
+    let exposure = SecurityEvent::new(RuntimeSecurityEventType::NetworkLifecycle).with_network(
+        network::tests::exposure(network::NetworkLifecycleAction::Published, 6379),
+    );
     let unresolved = SECURITY_EVENT_CEL_FIELDS
         .iter()
         .copied()
         .filter(|field| {
-            [&event, &private, &expose]
+            [&event, &private, &expose, &exposure]
                 .iter()
                 .all(|event| event.get_policy_field(field).is_none())
         })

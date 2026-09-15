@@ -2,10 +2,56 @@
 
 use super::*;
 
+#[tokio::test]
+async fn overview_never_treats_an_error_response_as_authoritative_data() {
+    let mock = axum::Router::new().route(
+        "/vms/list",
+        axum::routing::get(|| async {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                axum::Json(serde_json::json!({"sandboxes": []})),
+            )
+        }),
+    );
+    let (path, handle, _dir) = mock_uds(mock).await;
+    let response = fetch_status(&test_app_state(&path)).await;
+    assert_eq!(response.service, ServiceAvailability::Unavailable);
+    assert!(response.resource_summary.is_none());
+    handle.abort();
+}
+
+#[tokio::test]
+async fn overview_includes_update_availability_and_running_binary_version() {
+    let mock = axum::Router::new()
+        .route(
+            "/vms/list",
+            axum::routing::get(|| async { axum::Json(serde_json::json!({"sandboxes": []})) }),
+        )
+        .route(
+            "/update/status",
+            axum::routing::get(|| async {
+                let track = serde_json::json!({"current":"0.6.3", "latest":"0.6.4", "update_available":true,
+                "state":"update_available", "compatibility":"compatible"});
+                axum::Json(
+                    serde_json::json!({"stale":false, "binary":track, "assets":track, "profiles":track,
+                "images":track, "supply_chain":{"manifest":{"path":"manifest.json"}, "channel_index":{},
+                    "host_sbom":{"name":"host"}, "vm_obom":{"name":"vm"}, "attestations":[]}}),
+                )
+            }),
+        );
+    let (path, handle, _dir) = mock_uds(mock).await;
+    let info = fetch_status(&test_app_state(&path)).await;
+    let updates = info.updates.expect("the overview must include the update response");
+    assert_eq!(updates.binary.current.as_deref(), Some("0.6.3"));
+    assert!(updates.binary.update_available);
+    assert_eq!(updates.binary.state, capsem_api::UpdateTrackState::UpdateAvailable);
+    handle.abort();
+}
+
 #[test]
 fn status_response_serializes() {
     let resp = StatusResponse {
-        service: "running".into(),
+        service: ServiceAvailability::Running,
         gateway_version: "0.1.0".into(),
         vm_count: 1,
         vms: vec![test_vm("abc123", Some("dev"), VmLifecycleState::Running, true)],
@@ -17,6 +63,7 @@ fn status_response_serializes() {
             suspended_count: 0,
         }),
         profiles: None,
+        updates: None,
     };
 
     let json = serde_json::to_value(&resp).unwrap();
@@ -30,12 +77,13 @@ fn status_response_serializes() {
 #[test]
 fn unavailable_response_shape() {
     let resp = StatusResponse {
-        service: "unavailable".into(),
+        service: ServiceAvailability::Unavailable,
         gateway_version: "0.1.0".into(),
         vm_count: 0,
         vms: vec![],
         resource_summary: None,
         profiles: None,
+        updates: None,
     };
 
     let json = serde_json::to_value(&resp).unwrap();
@@ -47,7 +95,7 @@ fn unavailable_response_shape() {
 #[test]
 fn status_response_multiple_vms_resource_aggregation() {
     let resp = StatusResponse {
-        service: "running".into(),
+        service: ServiceAvailability::Running,
         gateway_version: "0.1.0".into(),
         vm_count: 3,
         vms: vec![
@@ -63,6 +111,7 @@ fn status_response_multiple_vms_resource_aggregation() {
             suspended_count: 0,
         }),
         profiles: None,
+        updates: None,
     };
 
     let json = serde_json::to_value(&resp).unwrap();
@@ -325,7 +374,7 @@ async fn fetch_status_empty_vm_list() {
 
     let state = test_app_state(&path);
     let resp = fetch_status(&state).await;
-    assert_eq!(resp.service, "running");
+    assert_eq!(resp.service, ServiceAvailability::Running);
     assert_eq!(resp.vm_count, 0);
     assert!(resp.vms.is_empty());
     let rs = resp.resource_summary.unwrap();
@@ -347,7 +396,7 @@ async fn fetch_status_preserves_profile_catalog_and_manifest_provenance() {
             "/profiles/status",
             axum::routing::get(|| async {
                 axum::Json(serde_json::json!({
-                    "source": "directory",
+                    "source": "profile",
                     "profile_count": 2,
                     "ready_count": 1,
                     "asset_manifest": {
@@ -396,9 +445,9 @@ async fn fetch_status_preserves_profile_catalog_and_manifest_provenance() {
     let state = test_app_state(&path);
     let resp = fetch_status(&state).await;
 
-    assert_eq!(resp.service, "running");
-    let profiles = resp.profiles.expect("gateway status must include profile status");
-    assert_eq!(profiles["source"], "directory");
+    assert_eq!(resp.service, ServiceAvailability::Running);
+    let profiles = serde_json::to_value(resp.profiles.expect("gateway status must include profile status")).unwrap();
+    assert_eq!(profiles["source"], "profile");
     assert_eq!(profiles["profile_count"], 2);
     assert_eq!(profiles["ready_count"], 1);
     assert_eq!(profiles["asset_manifest"]["origin"], "package");
@@ -439,7 +488,7 @@ async fn fetch_status_reads_its_authoritative_inputs_concurrently() {
                 async move {
                     request.wait().await;
                     axum::Json(serde_json::json!({
-                        "source": "directory",
+                        "source": "profile",
                         "profile_count": 2,
                         "ready_count": 2,
                         "profiles": []
@@ -453,9 +502,9 @@ async fn fetch_status_reads_its_authoritative_inputs_concurrently() {
         .await
         .expect("independent authoritative status reads must be in flight together");
 
-    assert_eq!(response.service, "running");
+    assert_eq!(response.service, ServiceAvailability::Running);
     assert_eq!(response.vm_count, 0);
-    assert_eq!(response.profiles.unwrap()["profile_count"], 2);
+    assert_eq!(response.profiles.unwrap().profile_count, 2);
     h.abort();
 }
 
@@ -479,7 +528,7 @@ async fn fetch_status_ignores_retired_global_asset_health() {
             "/profiles/status",
             axum::routing::get(|| async {
                 axum::Json(serde_json::json!({
-                    "source": "directory",
+                    "source": "profile",
                     "profile_count": 1,
                     "ready_count": 1,
                     "profiles": [
@@ -526,7 +575,7 @@ async fn fetch_status_multiple_vms() {
 
     let state = test_app_state(&path);
     let resp = fetch_status(&state).await;
-    assert_eq!(resp.service, "running");
+    assert_eq!(resp.service, ServiceAvailability::Running);
     assert_eq!(resp.vm_count, 3);
     assert_eq!(resp.vms[0].name, Some("dev".into()));
     assert_eq!(resp.vms[1].name, None); // no name in /vms/list response
@@ -543,7 +592,7 @@ async fn fetch_status_multiple_vms() {
 async fn fetch_status_service_unavailable() {
     let state = test_app_state("/tmp/capsem-gw-test-no-such-socket.sock");
     let resp = fetch_status(&state).await;
-    assert_eq!(resp.service, "unavailable");
+    assert_eq!(resp.service, ServiceAvailability::Unavailable);
     assert_eq!(resp.vm_count, 0);
     assert!(resp.resource_summary.is_none());
 }
@@ -555,7 +604,7 @@ async fn fetch_status_malformed_list_json() {
 
     let state = test_app_state(&path);
     let resp = fetch_status(&state).await;
-    assert_eq!(resp.service, "unavailable");
+    assert_eq!(resp.service, ServiceAvailability::Unavailable);
     h.abort();
 }
 

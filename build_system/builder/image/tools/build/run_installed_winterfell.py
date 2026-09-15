@@ -21,8 +21,7 @@ WINTERFELL_ROOT_ENV = {
     "profiles_dir": "CAPSEM_WINTERFELL_PROFILES_DIR",
 }
 WINTERFELL_TESTS = (
-    "tests/capsem-mcp/test_winterfell_rw.py",
-    "tests/capsem-mcp/test_winterfell_exec.py",
+    "tests/capsem-installed/test_winterfell_gateway.py",
 )
 
 
@@ -51,6 +50,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
     roots = _resolve_winterfell_artifact_roots(overrides)
     environment = os.environ.copy()
     environment.update(overrides)
+    environment.update(
+        {
+            "CAPSEM_RELEASE_BIN_DIR": str(args.bin_dir),
+            "CAPSEM_ASSETS_DIR": str(args.assets_dir),
+            "CAPSEM_PROFILES_DIR": str(args.profiles_dir),
+        }
+    )
     command = [
         os.fspath(Path(sys.executable)),
         "-m",

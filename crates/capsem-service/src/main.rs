@@ -41,6 +41,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
 mod asset_background;
 mod blocking;
+mod container_setup;
 mod instance;
 mod instance_reaper;
 use instance::InstanceInfo;
@@ -53,7 +54,6 @@ mod sandbox_info;
 mod session_cleanup;
 mod session_db_handles;
 mod switches;
-mod vm_spawn;
 use session_db_handles::session_db_path_for_session_dir;
 mod session_housekeeping;
 use session_cleanup::{finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result};
@@ -289,7 +289,13 @@ struct ServiceState {
     /// Final `/stats` HTTP response bytes derived from the logger-owned
     /// `main.db` query. The typed session-summary epoch invalidates it for
     /// session/usage writes without coupling it to profile-mutation ledger rows.
-    stats_response_cache: Mutex<Option<CachedStatsResponse>>,
+    stats_response_cache: Mutex<Option<CachedLedgerResponse>>,
+    /// Final stats/detail bytes for inactive sessions. Running sessions keep
+    /// reading live DB state; stopped/seeded sessions can reuse bytes until
+    /// their session.db metadata changes.
+    stats_detail_response_cache: Mutex<HashMap<String, CachedLedgerResponse>>,
+    /// Container workloads being set up or running, by VM id.
+    containers: container_setup::ContainerSetups,
     /// Session storage diagnostics cached by session directory. These values
     /// describe the rootfs image path/size and host filesystem for status/info
     /// routes; repeated polling must not stat the filesystem on every sample.
@@ -318,12 +324,12 @@ struct ServiceState {
     /// One-entry hot evaluate cache for repeated probes with the same exact
     /// body. Checked before allocating the multi-entry cache key.
     evaluate_last_response_cache: Mutex<Option<CachedEvaluateResponse>>,
-    /// Guards Apple VZ lifecycle edges across all VMs managed by this
-    /// service. Cold starts and teardown take a read guard; save/restore take
-    /// a write guard. That keeps checkpoint edges exclusive without
-    /// serializing independent cold boots and breaking the boot latency gate.
+    /// Coordinates launch admission and Apple VZ lifecycle edges. Cold starts
+    /// and teardown take a VZ read guard; save/restore take a write guard.
+    /// Blocking launch workers also retain admission through registration,
+    /// excluding restart without serializing independent cold boots.
     /// See web/docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
-    save_restore_lock: tokio::sync::RwLock<()>,
+    lifecycle: capsem_service::lifecycle::VmLifecycle,
     /// Serializes VM teardown (delete / stop / purge per-VM / handle_run)
     /// across all VMs managed by this service. N concurrent shutdowns starve
     /// each other of the resources each capsem-process needs to (a) let VZ
@@ -332,7 +338,7 @@ struct ServiceState {
     /// single teardown can exceed `wait_for_process_exit`'s 1s fast-path
     /// budget -- at which point the service SIGKILLs capsem-process mid-
     /// checkpoint, leaving a non-empty WAL and (in the worst case) orphaned
-    /// sockets. Same serialization pattern as `save_restore_lock`: one
+    /// sockets. Same serialization pattern as `lifecycle.vz`: one
     /// critical-section operation in flight at a time, in-process only,
     /// sufficient because production runs exactly one capsem-service per
     /// user-host.
@@ -353,8 +359,9 @@ struct ServiceState {
     _test_tempdir: Option<tempfile::TempDir>,
 }
 
+/// Serialized ledger route bytes and the logger generation they were read at.
 #[derive(Clone)]
-struct CachedStatsResponse {
+struct CachedLedgerResponse {
     db_epoch: u64,
     bytes: Vec<u8>,
 }

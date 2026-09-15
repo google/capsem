@@ -96,7 +96,7 @@ fn every_dimension_is_listed_once() {
     names.sort_unstable();
     names.dedup();
     assert_eq!(names.len(), listed, "a dimension is listed twice");
-    assert_eq!(listed, 19, "ALL must carry every dimension");
+    assert_eq!(listed, 20, "ALL must carry every dimension");
 }
 
 #[test]
@@ -105,6 +105,14 @@ fn the_network_dimension_measures_members_over_a_switch_on_booted_vms() {
     assert_eq!(network, Dimension::Network);
     assert!(network.needs_vm(), "two members boot and plug into a switch");
     assert!(!network.in_quick_lane(), "it boots two VMs and runs transfers");
+}
+
+#[test]
+fn the_stream_dimension_boots_a_vm_and_stays_out_of_the_quick_lane() {
+    let stream: Dimension = serde_json::from_str("\"stream\"").expect("parses");
+    assert_eq!(stream, Dimension::Stream);
+    assert!(stream.needs_vm(), "it measures a guest terminal and command");
+    assert!(!stream.in_quick_lane(), "it moves hundreds of megabytes");
 }
 
 #[test]

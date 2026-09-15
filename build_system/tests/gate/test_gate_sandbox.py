@@ -72,6 +72,7 @@ ONLINE_FAST = {
     "fast.audit.cargo",
     # Exact lockfile dependency materialization. The paired install is
     # explicitly offline and stays inside the kernel boundary.
+    "fast.sdk.python.prewarm",
     "fast.toolchain.node",
     "fast.toolchain.ort",
     "fast.toolchain.rust",
@@ -191,6 +192,21 @@ def test_fast_gate_proves_hosted_linux_sandbox_before_dependency_work() -> None:
         "Run the complete fast gate"
     )
     assert_unmasked_step("fast-gate.yaml", workflow, "static", "Prove Linux sandbox boundary")
+
+
+def test_fast_gate_warms_sdk_python_in_the_policy_owned_cache() -> None:
+    workflow = yaml.safe_load(
+        (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text()
+    )
+    step = next(
+        step
+        for step in workflow["jobs"]["static"]["steps"]
+        if step.get("name") == "Materialize locked qualification dependencies"
+    )
+    assert (
+        "python3 build_system/scripts/ci/run-bounded-command.py "
+        "--timeout-seconds 300 -- uv sync --project sdk/python --frozen --no-install-project"
+    ) in step["run"]
 
 
 def test_every_hosted_linux_job_entering_a_gate_module_proves_the_boundary_first() -> None:

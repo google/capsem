@@ -62,35 +62,12 @@ fn private_fallback_dir_under(base: &Path) -> io::Result<PathBuf> {
     Ok(dir)
 }
 
-/// Compute the terminal WebSocket UDS path for a VM instance.
-///
-/// Unlike [`instance_socket_path`], both the gateway and `capsem-process`
-/// derive this *independently* and never exchange it -- so the short form has
-/// to be deterministic across processes. That rules out `DefaultHasher`, whose
-/// seed is randomised per process: a fallback computed with it would leave one
-/// side binding a path the other never dials.
-///
-/// Neither side used this module at all. Each built
-/// `{run_dir}/instances/{id}-ws.sock` by hand, which is 54 bytes of fixed
-/// suffix for a 36-character session id, leaving roughly fifty for the run
-/// directory. Past that every connection failed with `path must be shorter
-/// than SUN_LEN`, logged at ERROR on each retry and surfaced to the user as a
-/// session whose shell never appeared.
-pub fn terminal_socket_path(run_dir: &Path, id: &str) -> io::Result<PathBuf> {
-    let preferred = run_dir.join("instances").join(format!("{id}-ws.sock"));
-    if preferred.as_os_str().len() < SUN_PATH_MAX {
-        return Ok(ensured(preferred));
-    }
-    let mut digest = blake3::Hasher::new();
-    digest.update(run_dir.as_os_str().as_encoded_bytes());
-    digest.update(id.as_bytes());
-    let short = &digest.finalize().to_hex()[..16];
-    Ok(private_fallback_dir()?.join(format!("{short}-ws.sock")))
-}
-
 /// Where the service asks a VM owner for the guest's end of a cable it is
-/// plugging: the same shortening rules as the terminal socket, one path per
-/// VM.
+/// plugging, one path per VM.
+///
+/// Short forms come from blake3 over the run dir, id and role, so the
+/// fallback is the same in every process that derives it; `DefaultHasher` is
+/// seeded per process.
 pub fn private_handoff_socket_path(run_dir: &Path, id: &str) -> io::Result<PathBuf> {
     owner_socket_path(run_dir, id, "handoff")
 }

@@ -51,11 +51,17 @@ impl Bridge {
         })
     }
 
-    pub fn connect(&mut self, flow: capsem_proto::router::FlowKey, port: u16) -> io::Result<()> {
-        if !flow.is_valid() || port == 0 {
+    pub fn connect(
+        &mut self,
+        flow: capsem_proto::router::FlowKey,
+        port: u16,
+        target: capsem_proto::PublicationTarget,
+    ) -> io::Result<()> {
+        // The host already refused these; the guest does not rely on it.
+        if !flow.is_valid() || !target.admits(port) {
             return Err(io::Error::from(io::ErrorKind::InvalidInput));
         }
-        self.connect_with(flow, move || setup::connect(flow, port))
+        self.connect_with(flow, move || setup::connect(flow, port, target))
     }
 
     fn connect_with(

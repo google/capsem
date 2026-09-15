@@ -1,8 +1,8 @@
 """AF_UNIX paths the asset lane creates must fit in `sun_path`.
 
-macOS allows 104 bytes. The gateway takes the lane's `CAPSEM_RUN_DIR` and
-appends `instances/<uuid>-ws.sock` -- 36 characters of session id plus 18 of
-fixed text -- so the run dir has at most ~50 to spend. `config/gate.toml`
+macOS allows 104 bytes. A VM owner binds `instances/<uuid>-handoff.sock` under
+the lane's `CAPSEM_RUN_DIR` -- 36 characters of session id plus 23 of fixed
+text -- so the run dir has at most ~45 to spend. `config/gate.toml`
 answers that with `/tmp/capsem-a.XXXXXX`, and the comment beside it says why.
 
 The code took the template's *name* as an `mkdtemp` prefix and dropped its
@@ -22,8 +22,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 #: macOS `sun_path`. Linux allows 108; the smaller bound is the binding one.
 SUN_LEN = 104
 
-#: What the gateway appends to a run dir: `instances/<uuid>-ws.sock`.
-GATEWAY_SUFFIX = len("instances/") + 36 + len("-ws.sock")
+#: The longest per-VM socket appended to a run dir: `instances/<uuid>-handoff.sock`.
+OWNER_SOCKET_SUFFIX = len("instances/") + 36 + len("-handoff.sock")
 
 
 def test_the_asset_lane_creates_its_run_dir_where_it_was_configured_to() -> None:
@@ -41,7 +41,7 @@ def test_the_asset_lane_creates_its_run_dir_where_it_was_configured_to() -> None
     )
 
 
-def test_the_longest_terminal_socket_path_fits_in_sun_path() -> None:
+def test_the_longest_owner_socket_path_fits_in_sun_path() -> None:
     """The claim the template exists to satisfy, checked as arithmetic."""
     import tempfile
 
@@ -52,11 +52,10 @@ def test_the_longest_terminal_socket_path_fits_in_sun_path() -> None:
     run_dir = Path(tempfile.mkdtemp(prefix=prefix, dir=template.parent))
     try:
         # `/tmp` is a symlink on macOS and the kernel sees the resolved path.
-        longest = len(str(run_dir.resolve())) + 1 + GATEWAY_SUFFIX
+        longest = len(str(run_dir.resolve())) + 1 + OWNER_SOCKET_SUFFIX
         assert longest < SUN_LEN, (
-            f"a terminal socket under {run_dir} would be {longest} bytes, over "
-            f"the {SUN_LEN}-byte limit; the gateway cannot connect and the TUI "
-            "shows a session whose shell never appears"
+            f"an owner socket under {run_dir} would be {longest} bytes, over "
+            f"the {SUN_LEN}-byte limit the kernel binds"
         )
     finally:
         run_dir.rmdir()

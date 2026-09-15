@@ -4,8 +4,8 @@ These endpoints read MCP server configuration from the selected profile and
 tool cache from CAPSEM_HOME. Tool calls route through a running capsem-process
 over IPC. Without a running VM, tool calls hit the "no running sessions" path
 -- the fixture tests that error branch; full happy-path coverage would need a
-downstream MCP aggregator in the guest (tracked as a follow-up, same as
-test_mcp_call.py in tests/capsem-mcp/).
+downstream MCP aggregator in the guest; the packed npm-to-ledger proof lives in
+tests/ironbank/test_mcp_profile_ledger.py.
 """
 
 import contextlib

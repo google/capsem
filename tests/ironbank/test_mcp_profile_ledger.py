@@ -6,11 +6,8 @@ import json
 import os
 import re
 import sqlite3
-import subprocess
-import sys
 import time
 from contextlib import contextmanager, suppress
-from pathlib import Path
 
 import pytest
 from helpers.constants import (
@@ -21,12 +18,14 @@ from helpers.constants import (
     EXEC_READY_TIMEOUT,
     PROFILES_DIR,
 )
-from helpers.mcp import content_text, kill_mcp_proc
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-MCP_BINARY = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug" / "capsem-mcp"
+from helpers.npm_mcp import packed_npm_mcp, structured
+from helpers.service import (
+    ServiceInstance,
+    vm_name,
+    vm_session_db_path,
+    wait_exec_ready,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -53,77 +52,6 @@ EXPECTED_MCP_TOOL_FIELDS = {
     "permission_action",
     "permission_source",
 }
-
-
-class McpSession:
-    """Tiny JSON-RPC stdio client for the public capsem-mcp server."""
-
-    def __init__(self, proc: subprocess.Popen[str]):
-        self.proc = proc
-        self._next_id = 1
-
-    def request(self, method: str, params: dict | None = None) -> dict:
-        req = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params or {},
-            "id": self._next_id,
-        }
-        self._next_id += 1
-        assert self.proc.stdin is not None
-        assert self.proc.stdout is not None
-        self.proc.stdin.write(json.dumps(req) + "\n")
-        self.proc.stdin.flush()
-        line = self.proc.stdout.readline()
-        assert line, "capsem-mcp closed stdout"
-        return json.loads(line)
-
-    def notify(self, method: str, params: dict | None = None) -> None:
-        req = {"jsonrpc": "2.0", "method": method, "params": params or {}}
-        assert self.proc.stdin is not None
-        self.proc.stdin.write(json.dumps(req) + "\n")
-        self.proc.stdin.flush()
-
-    def call_tool(self, name: str, args: dict | None = None) -> dict:
-        resp = self.request("tools/call", {"name": name, "arguments": args or {}})
-        assert "error" not in resp, resp
-        result = resp["result"]
-        assert result.get("isError") is not True, result
-        return result
-
-
-@contextmanager
-def _mcp_session(uds_path: Path):
-    env = os.environ.copy()
-    env["CAPSEM_UDS_PATH"] = str(uds_path)
-    env["CAPSEM_RUN_DIR"] = str(uds_path.parent)
-    proc = subprocess.Popen(
-        [str(MCP_BINARY)],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=sys.stderr,
-        text=True,
-        bufsize=1,
-        env=env,
-    )
-    session = McpSession(proc)
-    session.request(
-        "initialize",
-        {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "ironbank-mcp", "version": "1.0"},
-        },
-    )
-    session.notify("notifications/initialized")
-    try:
-        yield session
-    finally:
-        kill_mcp_proc(proc)
-
-
-def _json_tool_result(result: dict) -> object:
-    return json.loads(content_text(result))
 
 
 @contextmanager
@@ -159,8 +87,9 @@ def _assert_event_id(value: object) -> None:
 
 
 def test_profile_mcp_call_pays_full_ledger_blackbox():
-    assert MCP_BINARY.exists(), f"{MCP_BINARY} missing; build capsem-mcp"
-    assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; restore mock server"
+    assert MOCK_SERVER_BINARY.exists(), (
+        f"{MOCK_SERVER_BINARY} missing; restore mock server"
+    )
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
     assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
@@ -205,15 +134,37 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
         assert created.get("name") == session_id
         assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
 
-        with _mcp_session(service.uds_path) as mcp:
+        with packed_npm_mcp(service.tmp_dir) as mcp:
+            listed = mcp.request("tools/list")
+            tool_names = {tool["name"] for tool in listed["result"]["tools"]}
+            assert {
+                "capsem_status",
+                "capsem_mcp_servers",
+                "capsem_mcp_tools",
+                "capsem_mcp_call",
+            } <= tool_names
+            assert {
+                "capsem_version",
+                "capsem_suspend",
+                "capsem_service_logs",
+            }.isdisjoint(tool_names)
+            assert all(
+                tool["description"] and tool["inputSchema"]["type"] == "object"
+                for tool in listed["result"]["tools"]
+            )
+
             route_servers = client.get(
                 f"/profiles/{CODE_PROFILE_ID}/mcp/servers/list",
                 timeout=30,
             )
             assert isinstance(route_servers, list)
             assert route_servers
-            assert all(set(server) == EXPECTED_MCP_SERVER_FIELDS for server in route_servers)
-            local_route_server = next(server for server in route_servers if server["name"] == "local")
+            assert all(
+                set(server) == EXPECTED_MCP_SERVER_FIELDS for server in route_servers
+            )
+            local_route_server = next(
+                server for server in route_servers if server["name"] == "local"
+            )
             assert local_route_server["enabled"] is True
             assert local_route_server["is_stdio"] is True
             assert local_route_server["source"] == "builtin"
@@ -227,7 +178,9 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert route_tools
             assert all(set(tool) == EXPECTED_MCP_TOOL_FIELDS for tool in route_tools)
             route_http_tool = next(
-                tool for tool in route_tools if tool["namespaced_name"] == "local__http_headers"
+                tool
+                for tool in route_tools
+                if tool["namespaced_name"] == "local__http_headers"
             )
             assert route_http_tool["original_name"] == "http_headers"
             assert route_http_tool["server_name"] == "local"
@@ -235,14 +188,26 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert route_http_tool["permission_source"]
             assert route_http_tool["pin_changed"] is False
 
-            mcp_servers = _json_tool_result(mcp.call_tool("capsem_mcp_servers"))
-            assert isinstance(mcp_servers, list)
-            assert any(server["name"] == "local" for server in mcp_servers)
+            mcp_servers = structured(
+                mcp.call_tool("capsem_mcp_servers", {"profile": CODE_PROFILE_ID})
+            )
+            assert isinstance(mcp_servers, dict)
+            assert any(server["name"] == "local" for server in mcp_servers["servers"])
 
-            mcp_tools = _json_tool_result(mcp.call_tool("capsem_mcp_tools", {"server": "local"}))
-            assert isinstance(mcp_tools, list)
+            mcp_tools = structured(
+                mcp.call_tool(
+                    "capsem_mcp_tools",
+                    {
+                        "profile": CODE_PROFILE_ID,
+                        "server_id": "local",
+                    },
+                )
+            )
+            assert isinstance(mcp_tools, dict)
             mcp_http_tool = next(
-                tool for tool in mcp_tools if tool["namespaced_name"] == "local__http_headers"
+                tool
+                for tool in mcp_tools["tools"]
+                if tool["namespaced_name"] == "local__http_headers"
             )
             assert mcp_http_tool == route_http_tool
 
@@ -257,15 +222,19 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                     "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'"
                 ).fetchone()[0]
 
-            call_envelope = _json_tool_result(
+            call_result = structured(
                 mcp.call_tool(
                     "capsem_mcp_call",
                     {
-                        "name": "local__http_headers",
+                        "profile": CODE_PROFILE_ID,
+                        "server_id": "local",
+                        "tool_id": "local__http_headers",
                         "arguments": {"url": url, "method": "GET"},
                     },
                 )
             )
+            assert isinstance(call_result, dict)
+            call_envelope = call_result["result"]
             assert call_envelope["jsonrpc"] == "2.0"
             assert "error" not in call_envelope
             assert call_envelope["result"]["content"][0]["type"] == "text"
@@ -293,7 +262,9 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             )
             tool_row = tool_rows[0]
             assert (
-                conn.execute("SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'").fetchone()[0]
+                conn.execute(
+                    "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'"
+                ).fetchone()[0]
                 == before_tool_count + 1
             )
             _assert_event_id(tool_row["event_id"])
@@ -341,10 +312,13 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             )
             assert security_rows
             assert any(row["event_type"] == "mcp.tool_call" for row in security_rows)
-            assert any(row["rule_id"] == "profiles.rules.default_mcp" for row in security_rows)
+            assert any(
+                row["rule_id"] == "profiles.rules.default_mcp" for row in security_rows
+            )
             assert {row["rule_action"] for row in security_rows} <= {"allow", "ask"}
             assert all(
-                row["detection_level"] in {"none", "informational"} for row in security_rows
+                row["detection_level"] in {"none", "informational"}
+                for row in security_rows
             )
             assert all(row["trace_id"] == tool_row["trace_id"] for row in security_rows)
             for row in security_rows:
@@ -352,7 +326,10 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 rule = json.loads(row["rule_json"])
                 assert event["event_type"] == "mcp.tool_call"
                 assert event["mcp"]["server_name"] == "local"
-                assert event["mcp"]["tool_call_name"] in {"http_headers", "local__http_headers"}
+                assert event["mcp"]["tool_call_name"] in {
+                    "http_headers",
+                    "local__http_headers",
+                }
                 assert rule["name"]
     finally:
         if old_corp_config is None:

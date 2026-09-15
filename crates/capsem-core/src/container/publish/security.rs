@@ -32,6 +32,29 @@ impl Publisher {
         Ok(())
     }
 
+    /// Record that an exposure was closed. The close has already happened
+    /// whatever the rules say: refusing to stop exposing a port protects
+    /// nothing. An audit that cannot be admitted is reported to the caller.
+    pub(super) async fn audit_revoked(
+        &self,
+        publication_id: uuid::Uuid,
+        host_port: u16,
+        guest_port: u16,
+        target: capsem_proto::PublicationTarget,
+    ) -> Result<()> {
+        let authority = self.security.clone().context("publication security context missing")?;
+        authority
+            .evaluate_exposure(
+                publication_id,
+                (Ipv4Addr::LOCALHOST, host_port).into(),
+                guest_port,
+                target,
+                NetworkLifecycleAction::Revoked,
+            )
+            .await
+            .map(drop)
+    }
+
     /// Recheck immediately before writing ConnectPort on the current control
     /// stream. A reconnect must never replay an old queued setup request.
     pub fn pending_connection(&self, flow: capsem_proto::router::FlowKey) -> bool {
@@ -41,6 +64,75 @@ impl Publisher {
             })
     }
 }
+
+impl Authority {
+    async fn evaluate_exposure(
+        &self,
+        publication_id: uuid::Uuid,
+        listener: SocketAddr,
+        guest_port: u16,
+        target: capsem_proto::PublicationTarget,
+        action: NetworkLifecycleAction,
+    ) -> Result<crate::security_engine::SecurityEnforcementDecision> {
+        let event = SecurityEvent::new(RuntimeSecurityEventType::NetworkLifecycle).with_network(
+            NetworkSecurityEvent::Exposure(NetworkExposure {
+                publication_id,
+                target,
+                action,
+                listener,
+                destination: NetworkEndpoint {
+                    vm: Some(self.vm.clone()),
+                    address: (Ipv4Addr::LOCALHOST, guest_port).into(),
+                },
+            }),
+        );
+        Ok(
+            tokio::time::timeout(Duration::from_secs(2), self.engine.evaluate_and_record(event))
+                .await
+                .context("exposure audit deadline exceeded")??,
+        )
+    }
+
+    /// Evaluate an exposure opening against the VM's current rules and
+    /// plugins, with its audit row admitted first. Anything but allow refuses
+    /// it: an exposure change has no one to ask.
+    pub(super) async fn admit_exposure(
+        &self,
+        publication_id: uuid::Uuid,
+        listener: SocketAddr,
+        guest_port: u16,
+        target: capsem_proto::PublicationTarget,
+        action: NetworkLifecycleAction,
+    ) -> Result<()> {
+        let decision = self
+            .evaluate_exposure(publication_id, listener, guest_port, target, action)
+            .await?;
+        match decision.action {
+            SecurityEnforcementAction::Allow => Ok(()),
+            SecurityEnforcementAction::Ask => Err(ExposureRefused(format!(
+                "exposure of guest port {guest_port} needs approval, which exposure changes cannot ask for"
+            ))
+            .into()),
+            SecurityEnforcementAction::Block => Err(ExposureRefused(format!(
+                "exposure of guest port {guest_port} is blocked by policy{}",
+                decision.reason.map(|reason| format!(": {reason}")).unwrap_or_default()
+            ))
+            .into()),
+        }
+    }
+}
+
+/// The VM's rules refused an exposure, as opposed to it failing to open.
+#[derive(Debug)]
+pub struct ExposureRefused(pub String);
+
+impl std::fmt::Display for ExposureRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ExposureRefused {}
 
 #[derive(Clone)]
 pub struct AuditFlow {

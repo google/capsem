@@ -30,6 +30,7 @@ fn test_app(token: &str) -> Router {
         .route("/status", get(|| async { "status" }))
         .route("/events", get(|| async { "events" }))
         .route("/terminal/{id}", get(|| async { "terminal" }))
+        .route("/vms/{id}/stream", get(|| async { "stream" }))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth_middleware))
         .with_state(state)
 }
@@ -448,12 +449,12 @@ async fn events_rejects_a_missing_token() {
 }
 
 #[tokio::test]
-async fn terminal_accepts_query_param_token() {
+async fn stream_accepts_query_param_token() {
     let app = test_app("my-secret");
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/terminal/vm1?token=my-secret")
+                .uri("/vms/vm1/stream?token=my-secret")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -463,12 +464,12 @@ async fn terminal_accepts_query_param_token() {
 }
 
 #[tokio::test]
-async fn terminal_rejects_wrong_query_param_token() {
+async fn stream_rejects_wrong_query_param_token() {
     let app = test_app("correct");
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/terminal/vm1?token=wrong")
+                .uri("/vms/vm1/stream?token=wrong")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -478,7 +479,7 @@ async fn terminal_rejects_wrong_query_param_token() {
 }
 
 #[tokio::test]
-async fn non_terminal_path_ignores_query_param_token() {
+async fn non_websocket_path_ignores_query_param_token() {
     let app = test_app("tok");
     // /vms/list with ?token= should still require header auth
     let resp = app
@@ -494,13 +495,13 @@ async fn non_terminal_path_ignores_query_param_token() {
 }
 
 #[tokio::test]
-async fn terminal_extra_query_params_ignored() {
+async fn stream_extra_query_params_ignored() {
     let app = test_app("tok");
     // Extra params present but only token is checked
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/terminal/vm1?evil=payload&token=tok&other=stuff")
+                .uri("/vms/vm1/stream?evil=payload&token=tok&other=stuff")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -510,13 +511,13 @@ async fn terminal_extra_query_params_ignored() {
 }
 
 #[tokio::test]
-async fn terminal_header_auth_still_works() {
+async fn stream_header_auth_still_works() {
     let app = test_app("tok");
-    // Header auth should still work on terminal paths (no query needed)
+    // Header auth should still work on stream paths (no query needed)
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/terminal/vm1")
+                .uri("/vms/vm1/stream")
                 .header("authorization", "Bearer tok")
                 .body(Body::empty())
                 .unwrap(),
@@ -524,6 +525,23 @@ async fn terminal_header_auth_still_works() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+/// The retired `/terminal/{id}` relay no longer takes a query token: a
+/// leftover route there must not become a header-less way in.
+#[tokio::test]
+async fn retired_terminal_path_ignores_query_param_token() {
+    let app = test_app("tok");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/terminal/vm1?token=tok")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

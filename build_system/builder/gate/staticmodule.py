@@ -18,6 +18,7 @@ from . import (
     pytestsuite,
     rustchecks,
     sandbox,
+    sdkchecks,
     toolchain,
     webaudits,
 )
@@ -91,7 +92,10 @@ def static(
     # takes seventy-five seconds and the source it reads has not moved.
     generated = generated or phase.add(audits.generated_settings(config), after=(node,))
     # Shared for the same reason and on the same terms as the settings above.
-    frontend = bundled or phase.add(webaudits.frontend_bundle(config), after=(generated,))
+    if bundled is None:
+        sdk = phase.add(sdkchecks.typescript_bundle(config), after=(node,))
+        bundled = phase.add(webaudits.frontend_bundle(config), after=(generated, sdk))
+    frontend = bundled
 
     # Start the install-harness preflight early, but do not make unrelated
     # asset and functional work depend on it.  A retained-prefix refresh can

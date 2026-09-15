@@ -1019,30 +1019,6 @@
    "uuid"
   ]
  },
- "capsem-mcp": {
-  "build_script": false,
-  "dependencies": [
-   "anyhow",
-   "async-trait",
-   "bytes",
-   "capsem-foundation",
-   "capsem-logger",
-   "capsem-proto",
-   "futures",
-   "http",
-   "http-body-util",
-   "hyper",
-   "hyper-util",
-   "percent-encoding",
-   "reqwest",
-   "rmcp",
-   "serde",
-   "serde_json",
-   "tokio",
-   "tracing",
-   "tracing-subscriber"
-  ]
- },
  "capsem-mcp-aggregator": {
   "build_script": false,
   "dependencies": [

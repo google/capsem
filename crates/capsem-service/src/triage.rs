@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use serde::Serialize;
+pub use capsem_api::{ErrorEvent, PanicEvent, SlowOpEvent};
 
 /// Parse a "since" string into an absolute SystemTime.
 ///
@@ -69,37 +69,6 @@ fn civil_to_secs(y: i64, m: u32, d: u32, h: u32, mi: u32, s: u32) -> u64 {
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     let days = (era * 146097) as u64 + doe - 719_468;
     days * 86400 + u64::from(h) * 3600 + u64::from(mi) * 60 + u64::from(s)
-}
-
-/// One panic event extracted from a log file.
-#[derive(Debug, Clone, Serialize)]
-pub struct PanicEvent {
-    pub ts: String,
-    pub binary: String,
-    pub thread: Option<String>,
-    pub location: Option<String>,
-    pub message: String,
-    pub frames: Vec<String>,
-}
-
-/// One generic error/warning event with structured fields.
-#[derive(Debug, Clone, Serialize)]
-pub struct ErrorEvent {
-    pub ts: String,
-    pub binary: String,
-    pub level: String,
-    pub target: Option<String>,
-    pub message: String,
-}
-
-/// One slow-operation event surfaced by `target=fs op=fsync` or similar
-/// timing markers added by W4.
-#[derive(Debug, Clone, Serialize)]
-pub struct SlowOpEvent {
-    pub ts: String,
-    pub binary: String,
-    pub op: String,
-    pub duration_ms: u64,
 }
 
 /// Scan one file's tail for panics. Returns a list of `PanicEvent`s.

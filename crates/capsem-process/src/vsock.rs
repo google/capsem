@@ -493,10 +493,10 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 ServiceToProcess::TerminalResize { cols, rows } => {
                     capsem_core::try_send!("hub_resize", hub_tx.send(HostToGuest::Resize { cols, rows }).await);
                 }
-                ServiceToProcess::ConnectPort { flow, port } => {
+                ServiceToProcess::ConnectPort { flow, port, target } => {
                     capsem_core::try_send!(
                         "hub_publication",
-                        hub_tx.send(HostToGuest::ConnectPort { flow, port }).await
+                        hub_tx.send(HostToGuest::ConnectPort { flow, port, target }).await
                     );
                 }
                 ServiceToProcess::AbortPorts { flows } => {

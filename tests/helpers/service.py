@@ -42,7 +42,6 @@ WINTERFELL_REQUIRED_BINARIES = (
     "capsem-service",
     "capsem-process",
     "capsem-gateway",
-    "capsem-mcp",
 )
 
 
@@ -478,7 +477,7 @@ def _rotate_artifacts(root, keep, minimum, maximum_age_s, maximum_total_bytes):
 class ServiceInstance:
     """A running capsem-service instance on an isolated socket."""
 
-    def __init__(self, *, assets_dir: Path | None = None):
+    def __init__(self, *, assets_dir: Path | None = None, sign_binaries: bool = True):
         # Match the installed layout exactly: CAPSEM_HOME owns a run/
         # directory and sessions/main.db is its sibling.  Using the temporary
         # home itself as CAPSEM_RUN_DIR makes main_db_path_for_run_dir() resolve
@@ -487,6 +486,7 @@ class ServiceInstance:
         self.home_dir, self.tmp_dir = make_service_home_run_dirs()
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.assets_dir = assets_dir
+        self.sign_binaries = sign_binaries
         self.profiles_dir = None
         self.gateway_port = 0
         self.proc = None
@@ -495,10 +495,11 @@ class ServiceInstance:
 
     def start(self):
         # Sign binaries before spawning (macOS needs virtualization entitlement)
-        sign_binary(PROCESS_BINARY)
-        sign_binary(SERVICE_BINARY)
-        sign_binary(GATEWAY_BINARY)
-        sign_binary(TRAY_BINARY)
+        if self.sign_binaries:
+            sign_binary(PROCESS_BINARY)
+            sign_binary(SERVICE_BINARY)
+            sign_binary(GATEWAY_BINARY)
+            sign_binary(TRAY_BINARY)
 
         assets_dir = self.assets_dir or ASSETS_DIR
         if self.profiles_dir is None:

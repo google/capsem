@@ -1,8 +1,8 @@
 //! Protocol types for the MCP aggregator subprocess.
 //!
 //! The aggregator is a low-privilege subprocess that manages connections to
-//! external MCP servers. It communicates with capsem-process via NDJSON over
-//! stdin/stdout (one JSON message per line).
+//! external MCP servers. It communicates with capsem-process over stdin/stdout
+//! using length-prefixed MessagePack frames (see `write_frame`/`read_frame`).
 //!
 //! Separation boundary: the aggregator handles external server connections
 //! (rmcp HTTP, bearer tokens). It does NOT have access to the VM, session DB,

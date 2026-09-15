@@ -469,6 +469,8 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert 'cargo fetch --locked --target "${HOST_RUST_TARGET}"' in dockerfile
     assert "ARG HOST_RUST_TARGET" in dockerfile
     assert "ARG HOST_PACKAGES" in dockerfile
+    assert "COPY sdk/rust/Cargo.toml /prefetch/sdk/rust/Cargo.toml" in dockerfile
+    assert ": > /prefetch/sdk/rust/src/lib.rs" in dockerfile
     assert "pnpm fetch --frozen-lockfile" in dockerfile
     assert "web/app/pnpm-workspace.yaml" in builder.identity_inputs
     assert "web/app/pnpm-workspace.yaml" in dockerfile
@@ -526,7 +528,9 @@ def test_package_helper_final_stage_contains_only_materialized_dependency_stores
     fetch, final = stages[1:]
     assert " AS dependency-fetch" in fetch.splitlines()[0]
     assert "COPY crates /prefetch/crates" in fetch
+    assert "COPY sdk/rust/Cargo.toml /prefetch/sdk/rust/Cargo.toml" in fetch
     assert "COPY crates" not in final
+    assert "COPY sdk/rust" not in final
     assert "COPY ." not in final
     assert "COPY --from=dependency-fetch /capsem-deps/cargo/registry" in final
     assert "COPY --from=dependency-fetch /capsem-deps/cargo/git" in final

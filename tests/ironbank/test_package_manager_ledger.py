@@ -115,11 +115,6 @@ def _assert_ledger_id(value: object) -> None:
     assert re.fullmatch(r"[0-9a-f]{12}", value), value
 
 
-def _columnar_rows(payload: dict) -> list[dict]:
-    assert set(payload) == {"columns", "rows"}
-    columns = payload["columns"]
-    assert columns == ["timestamp", "layer", "ref", "summary", "status", "duration_ms", "trace_id"]
-    return [dict(zip(columns, row, strict=True)) for row in payload["rows"]]
 
 
 def _package_probe_script() -> str:
@@ -538,7 +533,7 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
         assert counts["audit_count"] >= 4
 
         timeline = client.get(f"/vms/{session_id}/timeline?layers=exec,fs&limit=250", timeout=30)
-        timeline_rows = _columnar_rows(timeline)
+        timeline_rows = timeline["events"]
         assert {"exec", "fs"} <= {row["layer"] for row in timeline_rows}
         summaries = "\n".join(row["summary"] for row in timeline_rows)
         assert script_name in summaries

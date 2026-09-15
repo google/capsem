@@ -59,6 +59,8 @@ def test_node_cache_is_hydrated_before_the_hermetic_offline_install() -> None:
 
     assert prepared.needs == frozenset({Needs.DISK, Needs.NETWORK})
     assert prepared.render() == [
+        "(in typescript) CI=true pnpm fetch --frozen-lockfile [outside kernel sandbox]",
+        "(in typescript) CI=true pnpm install --offline --frozen-lockfile",
         "(in app) CI=true pnpm fetch --frozen-lockfile [outside kernel sandbox]",
         "(in app) CI=true pnpm install --offline --frozen-lockfile",
     ]

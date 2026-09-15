@@ -9,6 +9,7 @@
   import { getTheme, DEFAULT_THEME } from '../../terminal/themes';
   import { TerminalInputCoalescer, TerminalOutputCoalescer } from '../../terminal/io-coalescer';
   import { parseParentMessage } from '../../terminal/postmessage';
+  import { STREAM_SUBPROTOCOL, decodeServerFrame, encodeControl, encodeStdin, streamUrl } from '../../terminal/stream-protocol';
 
   initTauriLog();
 
@@ -64,7 +65,7 @@
 
   function sendTerminalBytes(bytes: Uint8Array): void {
     if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(bytes);
+      ws.send(encodeStdin(bytes));
     }
   }
 
@@ -124,12 +125,12 @@
       scheduleReconnect('token fetch failed');
       return;
     }
-    const url = `${GATEWAY_WS}/terminal/${encodeURIComponent(vmId)}?token=${encodeURIComponent(token)}`;
+    const url = streamUrl(GATEWAY_WS, vmId, token);
     console.log('[terminal] connecting vmId=%s', vmId);
 
     let socket: WebSocket;
     try {
-      socket = new WebSocket(url);
+      socket = new WebSocket(url, [STREAM_SUBPROTOCOL]);
     } catch (e) {
       console.error('[terminal] WebSocket construction failed', e);
       scheduleReconnect('ws construction failed');
@@ -141,14 +142,14 @@
       console.log('[terminal] ws-open vmId=%s', vmId);
       reconnectAttempt = 0;
       postToParent({ type: 'connected' });
-      if (terminal && fitAddon) {
-        const dims = fitAddon.proposeDimensions();
-        if (dims) {
-          socket.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
-        }
-        // Nudge the shell to redraw its prompt.
-        socket.send(new TextEncoder().encode('\n'));
+      socket.send(encodeControl({ type: 'start', kind: 'terminal' }));
+      const dims = fitAddon?.proposeDimensions();
+      if (dims && dims.cols > 0 && dims.rows > 0) {
+        socket.send(encodeControl({ type: 'resize', cols: dims.cols, rows: dims.rows }));
       }
+      // No keystroke is injected to "redraw the prompt": a newline typed into
+      // whatever the user left running (an editor, a half-typed command) is
+      // input they never gave. The stream replays recent output instead.
       // NOTE: do not flip `everConnected` here. The gateway sometimes
       // completes the WS handshake and closes moments later when the
       // per-VM UDS isn't ready yet. Using that as "first connect" makes
@@ -158,17 +159,24 @@
     };
 
     socket.onmessage = (event: MessageEvent) => {
-      if (!terminal) return;
+      if (!terminal || !(event.data instanceof ArrayBuffer)) return;
+      const frame = decodeServerFrame(event.data);
+      if (frame.kind === 'status') {
+        if (frame.status.type === 'error') {
+          console.warn('[terminal] stream ended vmId=%s reason=%s', vmId, frame.status.message);
+        }
+        return;
+      }
+      if (frame.kind === 'invalid') {
+        console.error('[terminal] %s', frame.reason);
+        return;
+      }
       if (!everConnected) {
         everConnected = true;
         hideOverlay();
         console.log('[terminal] first-data vmId=%s', vmId);
       }
-      if (event.data instanceof ArrayBuffer) {
-        outputCoalescer?.push(new Uint8Array(event.data));
-      } else {
-        outputCoalescer?.push(new TextEncoder().encode(String(event.data)));
-      }
+      outputCoalescer?.push(frame.bytes);
     };
 
     socket.onclose = (ev) => {
@@ -255,8 +263,8 @@
     resizeObserver.observe(containerEl);
 
     terminal.onResize(({ cols, rows }) => {
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+      if (ws?.readyState === WebSocket.OPEN && cols > 0 && rows > 0) {
+        ws.send(encodeControl({ type: 'resize', cols, rows }));
       }
     });
 

@@ -57,7 +57,7 @@ const LISTEN_BIND: &str = "127.0.0.1";
 /// Loopback port for the DNS forwarder. Picked > 1024 so the agent
 /// doesn't need CAP_NET_BIND_SERVICE; the guest's iptables NAT rule
 /// rewrites the destination port from 53 -> this on the way out.
-const LISTEN_PORT: u16 = 1053;
+const LISTEN_PORT: u16 = capsem_proto::GUEST_DNS_PROXY_PORT;
 
 /// Maximum bytes for one DNS UDP datagram. RFC 6891 caps practical
 /// EDNS responses at ~4096; standard queries fit in 512. 4096 is what

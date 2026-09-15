@@ -17,7 +17,6 @@ SIGNED_BINARIES = {
     "capsem-process": TARGET_DIR / "capsem-process",
     "capsem-service": TARGET_DIR / "capsem-service",
     "capsem": TARGET_DIR / "capsem",
-    "capsem-mcp": TARGET_DIR / "capsem-mcp",
 }
 
 pytestmark = pytest.mark.codesign

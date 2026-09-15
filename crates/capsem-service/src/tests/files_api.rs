@@ -3,6 +3,66 @@ use capsem_foundation::unix::contained::ContainedOpenOptions;
 use capsem_service::fs_utils::sanitize_file_path;
 use std::io::{Read as _, Write as _};
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stopped_workspace_uses_canonical_id_without_bypassing_file_security() {
+    let (state, dir) = make_test_state_with_tempdir();
+    let session = dir.path().join("stopped-session");
+    let workspace = session.join("guest/workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join("existing.txt"), b"retained").unwrap();
+    let entry = test_persistent_entry("display-name", session);
+    let id = entry.id.clone();
+    state.persistent_registry.lock().unwrap().register(entry).unwrap();
+    let app = build_service_router(state);
+    let request = |method, path: String, body| {
+        axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .body(body)
+            .unwrap()
+    };
+    let listed = app
+        .clone()
+        .oneshot(request(
+            axum::http::Method::GET,
+            format!("/vms/{id}/files/list"),
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(listed.status(), StatusCode::OK);
+    let body = to_bytes(listed.into_body(), usize::MAX).await.unwrap();
+    let files: api::FileListResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(files.entries[0].name, "existing.txt");
+    for (method, path) in [
+        (axum::http::Method::POST, "new.txt"),
+        (axum::http::Method::GET, "existing.txt"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(request(
+                method,
+                format!("/vms/{id}/files/content?path={path}"),
+                Body::from("new bytes"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("running sandbox security ledger"));
+    }
+    assert!(!workspace.join("new.txt").exists());
+    let missing = app
+        .oneshot(request(
+            axum::http::Method::GET,
+            "/vms/unknown-id/files/list".into(),
+            Body::empty(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}
+
 // -----------------------------------------------------------------------
 // Download / Upload via resolve_workspace_path
 // -----------------------------------------------------------------------
@@ -39,15 +99,48 @@ fn setup_vm_with_workspace_and_uds(state: &ServiceState, dir: &std::path::Path, 
     );
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum WriteFileIpcReply {
-    Success,
-    Disconnect,
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_response_preserves_non_utf8_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let uds_path = dir.path().join("exec.sock");
+    let owner = spawn_fake_process(&uds_path, 1, |message| {
+        let ServiceToProcess::Exec { id, .. } = message else {
+            panic!("expected exec request, got {message:?}");
+        };
+        let id = *id;
+        Box::pin(async move {
+            Some(ProcessToService::ExecResult {
+                id,
+                stdout: vec![0, 0xff, b'\n'],
+                stderr: vec![0xfe],
+                exit_code: 0,
+                truncated: false,
+            })
+        })
+    });
+    setup_vm_with_workspace_and_uds(&state, dir.path(), "binary-exec-vm", uds_path);
+
+    let response = handle_exec(
+        State(state),
+        Path("binary-exec-vm".to_string()),
+        Json(ExecRequest {
+            command: "binary-output".to_string(),
+            timeout_secs: Some(5),
+        }),
+    )
+    .await
+    .expect("exec response should encode arbitrary bytes")
+    .0;
+
+    assert_eq!(response.stdout.encoding, ExecOutputEncoding::Base64);
+    assert_eq!(response.stdout.decode().unwrap(), vec![0, 0xff, b'\n']);
+    assert_eq!(response.stderr.decode().unwrap(), vec![0xfe]);
+    owner.await.unwrap();
 }
 
 async fn spawn_file_boundary_ipc(
     expected_messages: usize,
-    write_reply: WriteFileIpcReply,
 ) -> (
     tempfile::TempDir,
     PathBuf,
@@ -63,19 +156,6 @@ async fn spawn_file_boundary_ipc(
                 data: None,
                 error: None,
             }),
-            // No reply is a disconnect: the fixture closes the connection.
-            ServiceToProcess::WriteFile { id, .. } => {
-                (write_reply == WriteFileIpcReply::Success).then_some(ProcessToService::WriteFileResult {
-                    id: *id,
-                    success: true,
-                    error: None,
-                })
-            }
-            ServiceToProcess::ReadFile { id, .. } => Some(ProcessToService::ReadFileResult {
-                id: *id,
-                data: Some(b"guest export".to_vec()),
-                error: None,
-            }),
             other => panic!("unexpected IPC message in file boundary test: {other:?}"),
         };
         Box::pin(async move { reply })
@@ -87,7 +167,7 @@ async fn spawn_file_boundary_ipc(
 async fn upload_logs_file_import_before_writing_workspace_file() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1, WriteFileIpcReply::Success).await;
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "up-ledger-vm", uds_path);
 
     let result = handle_upload_file(
@@ -129,7 +209,7 @@ async fn upload_logs_file_import_before_writing_workspace_file() {
 async fn download_logs_file_export_before_returning_response() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1, WriteFileIpcReply::Success).await;
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "dl-ledger-vm", uds_path);
     let workspace_file = dir.path().join("session/guest/workspace/report.txt");
     std::fs::write(&workspace_file, b"export through ledger").unwrap();
@@ -168,7 +248,7 @@ async fn download_logs_file_export_before_returning_response() {
 async fn download_file_content_does_not_wait_on_stats_rebuild() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1, WriteFileIpcReply::Success).await;
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "fast-file-vm", uds_path);
     std::fs::write(
         dir.path().join("session/guest/workspace/latency.txt"),
@@ -210,7 +290,7 @@ async fn download_file_content_does_not_wait_on_stats_rebuild() {
 async fn mounted_file_import_export_routes_log_boundary_events() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(2, WriteFileIpcReply::Success).await;
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(2).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "file-route-vm", uds_path);
     let app = build_service_router(state);
 
@@ -341,96 +421,6 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
     assert!(
         !dir.path().join("session/guest/workspace/blocked.txt").exists(),
         "upload must not write bytes when import ledger fails"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn write_file_logs_import_before_guest_write() {
-    let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(2, WriteFileIpcReply::Success).await;
-    state.instances.lock().unwrap().insert(
-        "write-ledger-vm".into(),
-        InstanceInfo {
-            id: "write-ledger-vm".into(),
-            name: "write-ledger-vm".into(),
-            profile_id: "code".into(),
-            profile_revision: test_profile_revision(),
-            profile_payload_hash: test_profile_payload_hash(),
-            asset_pins: test_asset_pins(),
-            pid: 1,
-            uds_path,
-            session_dir: state.run_dir.join("sessions/write-ledger-vm"),
-            ram_mb: 2048,
-            cpus: 2,
-            start_time: std::time::Instant::now(),
-            base_version: "0.0.0".into(),
-            persistent: false,
-            env: None,
-            forked_from: None,
-            owner_secret: String::new(),
-        },
-    );
-
-    let _ = handle_write_file(
-        State(state),
-        Path("write-ledger-vm".to_string()),
-        Json(WriteFileRequest {
-            path: "/workspace/from-api.txt".to_string(),
-            content: "guest write".to_string(),
-        }),
-    )
-    .await
-    .expect("write_file should succeed after import ledger");
-
-    let messages = ipc.await.unwrap();
-    assert_eq!(messages.len(), 2);
-    match &messages[0] {
-        ServiceToProcess::LogFileBoundary {
-            action,
-            path,
-            data,
-            size,
-            ..
-        } => {
-            assert_eq!(*action, FileBoundaryAction::Import);
-            assert_eq!(path, "/workspace/from-api.txt");
-            assert_eq!(data, b"guest write");
-            assert_eq!(*size, b"guest write".len() as u64);
-        }
-        other => panic!("write_file first IPC must be import ledger, got {other:?}"),
-    }
-    assert!(matches!(
-        messages[1],
-        ServiceToProcess::WriteFile { ref path, .. } if path == "/workspace/from-api.txt"
-    ));
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn write_file_ipc_failure_names_vm_and_completion_stage() {
-    let dir = tempfile::tempdir().unwrap();
-    let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(2, WriteFileIpcReply::Disconnect).await;
-    setup_vm_with_workspace_and_uds(&state, dir.path(), "diagnostic-vm", uds_path);
-
-    let error = handle_write_file(
-        State(state),
-        Path("diagnostic-vm".to_string()),
-        Json(WriteFileRequest {
-            path: "/workspace/failure.txt".to_string(),
-            content: "diagnose me".to_string(),
-        }),
-    )
-    .await
-    .expect_err("a disconnected process must fail the write");
-
-    let messages = ipc.await.unwrap();
-    assert_eq!(messages.len(), 2);
-    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(error.1.contains("VM diagnostic-vm write_file"), "{}", error.1);
-    assert!(
-        error.1.contains("awaiting the guest completion response"),
-        "{}",
-        error.1
     );
 }
 
@@ -572,7 +562,7 @@ fn escape_tree(state: &ServiceState, vm_id: &str, uds_path: PathBuf) -> EscapeTr
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upload_refuses_a_dangling_symlink_target() {
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, _ipc) = spawn_file_boundary_ipc(0, WriteFileIpcReply::Success).await;
+    let (_ipc_dir, uds_path, _ipc) = spawn_file_boundary_ipc(0).await;
     let tree = escape_tree(&state, "up-dangling-vm", uds_path);
     let planted = tree.outside.join("authorized_keys");
     std::os::unix::fs::symlink(&planted, tree.workspace().join("notes.txt")).unwrap();
@@ -595,7 +585,7 @@ async fn upload_refuses_a_dangling_symlink_target() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upload_refuses_a_symlinked_parent_even_when_the_leaf_directory_is_missing() {
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, _ipc) = spawn_file_boundary_ipc(0, WriteFileIpcReply::Success).await;
+    let (_ipc_dir, uds_path, _ipc) = spawn_file_boundary_ipc(0).await;
     let tree = escape_tree(&state, "up-parent-vm", uds_path);
     std::os::unix::fs::symlink(&tree.outside, tree.workspace().join("link")).unwrap();
 
@@ -620,7 +610,7 @@ async fn upload_refuses_a_symlinked_parent_even_when_the_leaf_directory_is_missi
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn download_refuses_a_symlink_to_a_host_file() {
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, _ipc) = spawn_file_boundary_ipc(0, WriteFileIpcReply::Success).await;
+    let (_ipc_dir, uds_path, _ipc) = spawn_file_boundary_ipc(0).await;
     let tree = escape_tree(&state, "dl-symlink-vm", uds_path);
     std::os::unix::fs::symlink(tree.outside.join("secret.txt"), tree.workspace().join("leak.txt")).unwrap();
 
@@ -665,4 +655,70 @@ async fn listing_neither_follows_nor_shows_a_symlinked_directory() {
     .expect("listing the workspace root");
     let names: Vec<&str> = root.entries.iter().map(|e| e.name.as_str()).collect();
     assert_eq!(names, vec!["mine.txt"], "a symlink is neither followed nor advertised");
+}
+
+/// The gateway forwards bodies up to 10 MiB and the service accepts files of
+/// the same size, but the mounted router never set a body limit, so axum's
+/// 2 MiB default refused anything larger with 413 before the handler ran.
+#[tokio::test]
+async fn upload_above_axum_default_body_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1).await;
+    setup_vm_with_workspace_and_uds(&state, dir.path(), "large-upload-vm", uds_path);
+    let app = build_service_router(state);
+    let payload = vec![b'z'; 3 * 1024 * 1024];
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/vms/large-upload-vm/files/content?path=large.bin")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .expect("upload route should respond");
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "a 3 MiB file is within the 10 MiB file limit"
+    );
+    ipc.await.unwrap();
+    assert_eq!(
+        std::fs::metadata(dir.path().join("session/guest/workspace/large.bin"))
+            .unwrap()
+            .len(),
+        payload.len() as u64
+    );
+}
+
+#[tokio::test]
+async fn upload_above_the_api_body_limit_is_refused() {
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let app = build_service_router(state);
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/vms/any-vm/files/content?path=huge.bin")
+                .body(Body::from(vec![0u8; capsem_api::MAX_REQUEST_BODY_BYTES + 1]))
+                .unwrap(),
+        )
+        .await
+        .expect("upload route should respond");
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn exec_timeout_above_the_ceiling_is_refused_before_touching_the_vm() {
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let (status, body) = route_request(
+        build_service_router(state),
+        axum::http::Method::POST,
+        "/vms/missing-vm/exec",
+        Some(json!({"command": "true", "timeout_secs": capsem_api::MAX_EXEC_TIMEOUT_SECS + 1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }

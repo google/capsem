@@ -1,0 +1,394 @@
+use super::*;
+
+#[test]
+fn restart_contract_acknowledges_202_and_requires_fresh_authentication() {
+    let doc = serde_json::to_value(openapi()).unwrap();
+    let operation = &doc["paths"]["/restart"]["post"];
+    assert_eq!(operation["operationId"], "restartHypervisor");
+    assert!(operation["responses"]["200"].is_null());
+    assert_eq!(
+        operation["responses"]["202"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/RestartResponse"
+    );
+    let response = RestartResponse {
+        status: RestartStatus::Accepted,
+        manager: ServiceManager::Systemd,
+        authentication: RestartAuthentication::NewTokenRequired,
+    };
+    let wire = serde_json::to_value(&response).unwrap();
+    assert_eq!(wire["authentication"], "new_token_required");
+    assert_eq!(serde_json::from_value::<RestartResponse>(wire).unwrap(), response);
+}
+
+#[test]
+fn stats_detail_schema_names_every_event_and_uses_booleans() {
+    let doc = serde_json::to_value(openapi()).unwrap();
+    assert_eq!(
+        doc["paths"]["/vms/{id}/stats/detail"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+            ["$ref"],
+        "#/components/schemas/VmStatsDetailResponse"
+    );
+    let schemas = &doc["components"]["schemas"];
+    for (field, model) in [
+        ("model_stats", "ModelUsage"),
+        ("model_events", "ModelEvent"),
+        ("tool_events", "ToolEvent"),
+        ("http_events", "HttpEvent"),
+        ("dns_events", "DnsEvent"),
+        ("file_events", "FileEvent"),
+        ("process_events", "ProcessEvent"),
+        ("audit_events", "AuditEvent"),
+        ("credential_events", "CredentialEvent"),
+    ] {
+        assert_eq!(
+            schemas["VmStatsDetailResponse"]["properties"][field]["items"]["$ref"],
+            format!("#/components/schemas/{model}")
+        );
+    }
+    assert_eq!(
+        schemas["ToolEvent"]["properties"]["model_parent_missing"]["type"],
+        "boolean"
+    );
+    assert_eq!(schemas["EventBody"]["properties"]["truncated"]["type"], "boolean");
+    assert_eq!(
+        schemas["VmStatsDetailResponse"]["properties"]["body_blobs"]["additionalProperties"]["items"]["$ref"],
+        "#/components/schemas/EventBody"
+    );
+    for invalid in ["invented", ""] {
+        let value = serde_json::json!(invalid);
+        assert!(serde_json::from_value::<NetworkDecision>(value.clone()).is_err());
+        assert!(serde_json::from_value::<NetworkProtocol>(value.clone()).is_err());
+        assert!(serde_json::from_value::<ToolOrigin>(value.clone()).is_err());
+        assert!(serde_json::from_value::<CredentialOutcome>(value.clone()).is_err());
+        assert!(serde_json::from_value::<CredentialEventType>(value.clone()).is_err());
+        assert!(serde_json::from_value::<BodyDirection>(value).is_err());
+    }
+}
+
+#[test]
+fn inspection_types_reject_unknown_categories_and_preserve_union_values() {
+    assert!(serde_json::from_str::<HistoryLayerFilter>("\"net\"").is_err());
+    assert!(serde_json::from_str::<TimelineLayer>("\"tools\"").is_err());
+    assert!(serde_json::from_str::<ToolDecision>("\"magic\"").is_err());
+    assert_eq!(
+        serde_json::from_str::<TimelineStatus>("200").unwrap(),
+        TimelineStatus::Code(200)
+    );
+    assert_eq!(
+        serde_json::from_str::<TimelineStatus>("\"allowed\"").unwrap(),
+        TimelineStatus::Decision(ToolDecision::Allowed)
+    );
+    let query: TimelineQuery = serde_json::from_value(serde_json::json!({"layers":"exec,tool"})).unwrap();
+    assert_eq!(query.layers.unwrap(), vec![TimelineLayer::Exec, TimelineLayer::Tool]);
+    assert!(serde_json::from_value::<TimelineQuery>(serde_json::json!({"layers":"exec,invented"})).is_err());
+    let schema = serde_json::to_value(openapi()).unwrap();
+    let parameters = schema["paths"]["/vms/{id}/timeline"]["get"]["parameters"]
+        .as_array()
+        .unwrap();
+    let layers = parameters
+        .iter()
+        .find(|parameter| parameter["name"] == "layers")
+        .unwrap();
+    assert_eq!(layers["explode"], false);
+    assert_eq!(layers["schema"]["type"], "array");
+}
+use serde_json::json;
+use utoipa::PartialSchema;
+
+#[test]
+fn management_categories_are_closed_enums() {
+    assert!(serde_json::from_value::<ServiceAvailability>(json!("maybe")).is_err());
+    assert!(serde_json::from_value::<UpdateActionStatus>(json!("maybe")).is_err());
+    assert!(serde_json::from_value::<ValidationStatus>(json!("maybe")).is_err());
+    assert!(serde_json::from_value::<ProfileCatalogSource>(json!("directory")).is_err());
+    assert_eq!(
+        serde_json::to_value(UpdateActionStatus::Succeeded).unwrap(),
+        "succeeded"
+    );
+    assert_eq!(
+        serde_json::to_value(ValidationStatus::FetchError).unwrap(),
+        "fetch_error"
+    );
+}
+
+#[test]
+fn checked_in_openapi_matches_the_rust_contract() {
+    let exported: serde_json::Value =
+        serde_json::from_str(include_str!("../../../sdk/specification/openapi.json")).unwrap();
+    assert_eq!(
+        exported,
+        serde_json::to_value(crate::openapi()).unwrap(),
+        "Regenerate sdk/specification/openapi.json using the capsem-api export_openapi example"
+    );
+}
+
+#[test]
+fn every_schema_reference_resolves_including_recursive_file_entries() {
+    fn check(value: &serde_json::Value, document: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                if let Some(reference) = fields.get("$ref").and_then(serde_json::Value::as_str) {
+                    let pointer = reference
+                        .strip_prefix('#')
+                        .expect("contract uses local schema references");
+                    assert!(
+                        document.pointer(pointer).is_some(),
+                        "unresolved schema reference: {reference}"
+                    );
+                }
+                for child in fields.values() {
+                    check(child, document);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for child in values {
+                    check(child, document);
+                }
+            }
+            _ => {}
+        }
+    }
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    check(&document, &document);
+}
+
+#[test]
+fn openapi_uses_named_schemas_and_bearer_authentication() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    let create = &document["paths"]["/vms/create"]["post"];
+    assert_eq!(create["operationId"], "createVm");
+    assert_eq!(
+        create["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ProvisionRequest"
+    );
+    assert_eq!(
+        create["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ProvisionResponse"
+    );
+    assert_eq!(
+        document["components"]["securitySchemes"]["bearerAuth"]["scheme"],
+        "bearer"
+    );
+    assert_eq!(document["security"], json!([{"bearerAuth": []}]));
+    for (action, method, schema) in [
+        ("stop", "post", "StopResponse"),
+        ("pause", "post", "VmActionResponse"),
+        ("delete", "delete", "VmActionResponse"),
+    ] {
+        let operation = &document["paths"][format!("/vms/{{id}}/{action}")][method];
+        assert_eq!(
+            operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            format!("#/components/schemas/{schema}")
+        );
+        assert!(operation.get("requestBody").is_none());
+    }
+}
+
+#[test]
+fn openapi_describes_binary_copy_and_required_vm_identity() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    let copy = &document["paths"]["/vms/{id}/files/content"];
+    assert_eq!(
+        copy["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"]["format"],
+        "binary"
+    );
+    assert_eq!(
+        copy["post"]["requestBody"]["content"]["application/octet-stream"]["schema"]["format"],
+        "binary"
+    );
+    assert!(copy["get"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == "id" && p["required"] == true));
+    assert!(copy["get"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == "path" && p["required"] == true));
+}
+
+#[test]
+fn openapi_exec_output_is_byte_safe_and_retires_ambiguous_file_json() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    let paths = &document["paths"];
+    assert!(paths.get("/vms/{id}/files/read").is_none());
+    assert!(paths.get("/vms/{id}/files/write").is_none());
+
+    let schemas = &document["components"]["schemas"];
+    for stream in ["stdout", "stderr"] {
+        assert_eq!(
+            schemas["ExecResponse"]["properties"][stream]["$ref"],
+            "#/components/schemas/ExecOutput"
+        );
+    }
+    assert_eq!(schemas["ExecOutput"]["properties"]["data"]["type"], "string");
+    assert_eq!(
+        schemas["ExecOutput"]["properties"]["encoding"]["$ref"],
+        "#/components/schemas/ExecOutputEncoding"
+    );
+    assert_eq!(
+        schemas["ExecOutputEncoding"]["enum"],
+        serde_json::json!(["utf8", "base64"])
+    );
+}
+
+#[test]
+fn exec_output_roundtrips_utf8_and_arbitrary_bytes() {
+    let utf8 = ExecOutput::from_bytes(b"hello\n".to_vec());
+    assert_eq!(utf8.encoding, ExecOutputEncoding::Utf8);
+    assert_eq!(utf8.data, "hello\n");
+    assert_eq!(utf8.decode().unwrap(), b"hello\n");
+
+    let binary = ExecOutput::from_bytes(vec![0, 0xff, b'\n']);
+    assert_eq!(binary.encoding, ExecOutputEncoding::Base64);
+    assert_eq!(binary.data, "AP8K");
+    let wire = serde_json::to_value(&binary).unwrap();
+    assert_eq!(wire, serde_json::json!({"encoding":"base64", "data":"AP8K"}));
+    assert_eq!(
+        serde_json::from_value::<ExecOutput>(wire).unwrap().decode().unwrap(),
+        vec![0, 0xff, b'\n']
+    );
+}
+
+#[test]
+fn openapi_describes_network_mutations_and_both_member_path_parameters() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    let paths = &document["paths"];
+    assert_eq!(paths["/networks"]["post"]["operationId"], "createNetwork");
+    assert_eq!(paths["/networks"]["get"]["operationId"], "listNetworks");
+    assert_eq!(paths["/networks/{id}"]["delete"]["operationId"], "deleteNetwork");
+
+    let member = &paths["/networks/{id}/members/{vm_id}"];
+    assert_eq!(member["put"]["operationId"], "attachNetworkMember");
+    assert_eq!(member["delete"]["operationId"], "detachNetworkMember");
+    for method in ["put", "delete"] {
+        let parameters = member[method]["parameters"].as_array().unwrap();
+        assert_eq!(
+            parameters
+                .iter()
+                .map(|parameter| parameter["name"].as_str().unwrap())
+                .collect::<std::collections::BTreeSet<_>>(),
+            std::collections::BTreeSet::from(["id", "vm_id"])
+        );
+        assert!(parameters.iter().all(|parameter| parameter["required"] == true));
+    }
+
+    let logs = &paths["/networks/{id}/logs"]["get"];
+    assert!(logs["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|parameter| parameter["name"] == "cursor"));
+}
+
+#[test]
+fn openapi_exposes_existing_diagnostics_persistence_and_profile_mcp_routes() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    let paths = &document["paths"];
+    for (path, method, operation_id) in [
+        ("/run", "post", "runVm"),
+        ("/purge", "post", "purgeVms"),
+        ("/panics", "get", "getPanics"),
+        ("/triage", "get", "getTriage"),
+        ("/vms/{id}/save", "post", "persistVm"),
+        ("/profiles/{profile_id}/mcp/info", "get", "getProfileMcpInfo"),
+        (
+            "/profiles/{profile_id}/mcp/servers/list",
+            "get",
+            "listProfileMcpServers",
+        ),
+        ("/profiles/{profile_id}/mcp/default/info", "get", "getProfileMcpDefault"),
+        (
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
+            "get",
+            "listProfileMcpTools",
+        ),
+        (
+            "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
+            "post",
+            "refreshProfileMcpServer",
+        ),
+        (
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
+            "post",
+            "callProfileMcpTool",
+        ),
+    ] {
+        assert_eq!(paths[path][method]["operationId"], operation_id, "{method} {path}");
+    }
+    let call = &paths["/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call"]["post"];
+    let parameters = call["parameters"].as_array().unwrap();
+    assert_eq!(
+        parameters
+            .iter()
+            .map(|parameter| parameter["name"].as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from(["profile_id", "server_id", "tool_id"])
+    );
+}
+
+#[test]
+fn lifecycle_values_preserve_the_existing_wire_contract() {
+    assert_eq!(
+        serde_json::to_value(VmLifecycleState::Running).unwrap(),
+        json!("Running")
+    );
+    assert_eq!(serde_json::to_value(VmAction::Pause).unwrap(), json!("pause"));
+    assert!(serde_json::from_value::<VmLifecycleState>(json!("running")).is_err());
+    assert!(serde_json::from_value::<VmAction>(json!("invented")).is_err());
+}
+
+#[test]
+fn action_availability_distinguishes_resume_from_start() {
+    assert_eq!(VmLifecycleState::Suspended.available_actions(true)[0], VmAction::Resume);
+    assert_eq!(VmLifecycleState::Stopped.available_actions(true)[0], VmAction::Start);
+    assert_eq!(
+        VmLifecycleState::Defunct.available_actions(true),
+        vec![VmAction::Delete]
+    );
+}
+
+#[test]
+fn omitted_resources_remain_profile_owned() {
+    let request: ProvisionRequest = serde_json::from_value(json!({"profile_id": "code"})).unwrap();
+    let wire = serde_json::to_value(request).unwrap();
+    assert!(wire.get("ram_mb").is_none());
+    assert!(wire.get("cpus").is_none());
+    assert_eq!(wire["persistent"], false);
+}
+
+#[test]
+fn image_is_not_a_clone_source_alias() {
+    let request: ProvisionRequest = serde_json::from_value(json!({"profile_id": "code", "image": "old-img"})).unwrap();
+    assert_eq!(request.from, None);
+}
+
+#[test]
+fn schema_exposes_closed_lifecycle_and_action_values() {
+    let state = serde_json::to_value(VmLifecycleState::schema()).unwrap();
+    let action = serde_json::to_value(VmAction::schema()).unwrap();
+    assert_eq!(
+        state["enum"],
+        json!(["Running", "Stopped", "Suspended", "Defunct", "Incompatible"])
+    );
+    assert_eq!(
+        action["enum"],
+        json!(["pause", "stop", "start", "resume", "fork", "delete"])
+    );
+}
+
+/// Exec used to wait forever when `timeout_secs` was absent, while the gateway
+/// cut every request at 120s: long commands answered 502 through HTTP and
+/// never ended through the local socket. The contract now bounds both.
+#[test]
+fn exec_timeout_is_bounded_and_validated() {
+    assert_eq!(exec_timeout_secs(None), Ok(DEFAULT_EXEC_TIMEOUT_SECS));
+    assert_eq!(exec_timeout_secs(Some(30)), Ok(30));
+    assert_eq!(
+        exec_timeout_secs(Some(MAX_EXEC_TIMEOUT_SECS)),
+        Ok(MAX_EXEC_TIMEOUT_SECS)
+    );
+    assert!(exec_timeout_secs(Some(0)).is_err());
+    assert!(exec_timeout_secs(Some(MAX_EXEC_TIMEOUT_SECS + 1)).is_err());
+}

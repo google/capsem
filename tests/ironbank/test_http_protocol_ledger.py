@@ -407,14 +407,11 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
             ),
             lambda payload: any(
                 row["layer"] == "net" and row["ref"] == net["id"]
-                for row in [
-                    dict(zip(payload["columns"], row, strict=True))
-                    for row in payload["rows"]
-                ]
+                for row in payload["events"]
             ),
         )
-        assert set(timeline) == {"columns", "rows"}
-        timeline_rows = [dict(zip(timeline["columns"], row, strict=True)) for row in timeline["rows"]]
+        assert set(timeline) == {"events"}
+        timeline_rows = timeline["events"]
         assert any(row["layer"] == "net" and row["ref"] == net["id"] for row in timeline_rows)
         assert any(row["summary"] == "POST 127.0.0.1/echo" for row in timeline_rows)
 

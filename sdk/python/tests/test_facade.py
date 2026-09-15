@@ -1,0 +1,239 @@
+"""Public clients must preserve identity, resources and connection lifetimes."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+
+import pytest
+from capsem import VM, HttpError, Hypervisor, decode_exec_output, models
+
+from .facade_gateway import gateway
+
+
+def test_exec_output_decodes_utf8_and_base64_to_exact_bytes() -> None:
+    assert decode_exec_output(models.ExecOutput(
+        encoding=models.ExecOutputEncoding.UTF8, data="café",
+    )) == "café".encode()
+    assert decode_exec_output(models.ExecOutput(
+        encoding=models.ExecOutputEncoding.BASE64, data="AP8K",
+    )) == bytes([0, 0xFF, 10])
+
+
+def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), Hypervisor(url, "token") as hv:
+            assert isinstance(await hv.info(), models.HypervisorInfo)
+            assert isinstance(await hv.list(), models.ListResponse)
+            vm = await hv.create(
+                "code", name="new", vcpu=4, memory="8G", env={"LANG": "C"}, networks=["team"],
+            )
+            assert vm.id == "created-id" and vm.name == "new"
+            body = json.loads(state.requests[-1][2])
+            assert body == {"profile_id": "code", "name": "new", "persistent": True,
+                            "cpus": 4, "ram_mb": 8192, "env": {"LANG": "C"}, "networks": ["team"]}
+            async with vm:
+                assert isinstance(await vm.info(), models.SandboxInfo)
+            with pytest.raises(RuntimeError, match="closed"):
+                await vm.info()
+            with pytest.raises(RuntimeError, match="closed"):
+                async with vm:
+                    pass
+            temporary = await hv.create("code")
+            body = json.loads(state.requests[-1][2])
+            assert body["persistent"] is False and body["name"] is None
+            assert body["cpus"] is None and body["ram_mb"] is None
+            assert isinstance(await hv.log(models.HostLogSource.SERVICE, grep="boot", tail=3, max_bytes=1024), models.HostLogsResponse)
+            assert isinstance(await hv.run("printf ok", profile="code", timeout_secs=4), models.ExecResponse)
+            assert isinstance(await hv.panics(since="5m", limit=3), models.PanicsResponse)
+            assert isinstance(await hv.triage(vm_id="vm-0", since="1h", limit=2), models.TriageResponse)
+            assert isinstance(await hv.purge(all=True), models.PurgeResponse)
+            assert isinstance(await hv.profiles.list(), models.ProfilesListResponse)
+            mcp = hv.profiles.mcp("code")
+            assert isinstance(await mcp.info(), models.ProfileMcpInfoResponse)
+            assert isinstance(await mcp.servers(), list)
+            assert isinstance(await mcp.default_permission(), models.McpDefaultPermissionResponse)
+            assert isinstance(await mcp.tools("local"), list)
+            assert isinstance(await mcp.refresh("local"), models.McpRefreshResponse)
+            assert await mcp.call("local", "read_file", {"path": "/tmp/x"}) is not None
+            assert isinstance(await hv.update(), models.UpdateActionResponse)
+            assert json.loads(state.requests[-1][2]) == {"confirmed": True}
+            restarted = await hv.restart()
+            assert restarted.status is models.RestartStatus.ACCEPTED
+            assert restarted.authentication is models.RestartAuthentication.NEW_TOKEN_REQUIRED
+            assert state.requests[-1] == ("POST", "/restart", b"")
+        await hv.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            await temporary.info()
+    asyncio.run(run())
+
+
+def test_name_is_resolved_once_and_each_vm_interface_returns_typed_results() -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), VM(url, "token", name="named") as vm:
+            assert vm.id is None and vm.name == "named"
+            assert isinstance(await vm.info(), models.SandboxInfo)
+            assert vm.id == "vm-0"
+            state.names = ["renamed"]
+            assert isinstance(await vm.exec("echo hello", timeout_secs=12), models.ExecResponse)
+            assert json.loads(state.requests[-1][2]) == {"command": "echo hello", "timeout_secs": 12}
+            assert isinstance(await vm.start(), models.ProvisionResponse)
+            assert isinstance(await vm.persist("saved"), models.PersistResponse)
+            assert isinstance(await vm.pause(), models.VmActionResponse)
+            assert isinstance(await vm.resume(), models.ProvisionResponse)
+            assert isinstance(await vm.log(grep="ready", tail=5, max_bytes=2048), models.LogsResponse)
+            assert isinstance(await vm.history(layer=models.HistoryLayerFilter.EXEC, search="hello", limit=2, offset=1), models.HistoryResponse)
+            assert isinstance(await vm.timeline(layers=[models.TimelineLayer.EXEC, models.TimelineLayer.MODEL], since="now", limit=3), models.TimelineResponse)
+            assert "layers=exec%2Cmodel" in state.requests[-1][1]
+            await vm.timeline()
+            assert isinstance(await vm.list("/work", depth=2), models.FileListResponse)
+            await vm.list()
+            assert state.requests[-1][1] == "/vms/vm-0/files/list"
+            assert isinstance(await vm.changes("cp-10", limit=3, offset=1), models.ChangesResponse)
+            assert isinstance(await vm.stats.summary(), models.VmStatsSummaryResponse)
+            assert isinstance(await vm.stats.details(), models.VmStatsDetailResponse)
+            assert isinstance(await vm.snapshots.list(), models.SnapshotsList)
+            assert isinstance(await vm.snapshots.status(), models.SnapshotsStatus)
+            assert isinstance(await vm.copy.to_vm("/work/bytes", b"\x00\xff"), models.UploadResponse)
+            assert await vm.copy.from_vm("/work/bytes") == b"\x00\xff"
+            with pytest.raises(HttpError) as error:
+                await vm.copy.from_vm("/missing")
+            assert error.value.status == 404
+            child = await vm.fork("child", description="copy")
+            assert child.id == "forked-id" and child.name == "child"
+            await child.close()
+            assert isinstance(await vm.stop(), models.StopResponse)
+            assert isinstance(await vm.delete(), models.VmActionResponse)
+            assert sum(path == "/vms/list" for _, path, _ in state.requests) == 1
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("names", [[], ["named", "named"]])
+def test_missing_and_ambiguous_names_never_mutate_a_vm(names: list[str]) -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), VM(url, "token", name="named") as vm:
+            state.names = names
+            with pytest.raises(LookupError, match="expected one VM"):
+                await vm.delete()
+            assert [(method, path) for method, path, _ in state.requests] == [("GET", "/vms/list")]
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(("name", "id"), [(None, None), ("", ""), ("name", "id")])
+def test_vm_requires_one_selector(name: str | None, id: str | None) -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        VM("http://127.0.0.1:1", "token", name=name, id=id)
+
+
+def test_cancelling_execution_does_not_retry_or_break_the_connection() -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), VM(url, "token", id="vm-0") as vm:
+            state.wait_for_exec = True
+            task = asyncio.create_task(vm.exec("waiting"))
+            await asyncio.wait_for(state.exec_entered.wait(), timeout=1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            state.exec_release.set()
+            assert isinstance(await vm.info(), models.SandboxInfo)
+            assert sum(path.endswith("/exec") for _, path, _ in state.requests) == 1
+    asyncio.run(run())
+
+
+def test_container_create_status_and_cancellable_wait_are_read_only() -> None:
+    async def run() -> None:
+        spec = models.ContainerSpec(image="docker://busybox:latest", args=[], env={}, attach=False)
+        async with gateway() as (url, state), Hypervisor(url, "token") as hv:
+            vm = await hv.create("code", container=spec)
+            assert json.loads(state.requests[-1][2])["container"]["image"] == spec.image
+            assert (await vm.container.status()).image == spec.image
+            state.container_states = ["pulling", "running"]
+            assert (await vm.container.wait(interval=0.001)).state is models.ContainerState.RUNNING
+            state.container_states = ["pulling"]
+            task = asyncio.create_task(vm.container.wait(interval=0.01))
+            await asyncio.sleep(0.02)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert {method for method, path, _ in state.requests if path.endswith("/container")} == {"GET"}
+            with pytest.raises(ValueError, match="interval"):
+                await vm.container.wait(interval=0)
+    asyncio.run(run())
+
+
+def test_exposure_resource_uses_typed_vm_scoped_routes() -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), VM(url, "token", id="vm-0") as vm:
+            created = await vm.exposures.create(models.ExposureRequest(
+                target=models.ExposureTarget.CONTAINER, guest_port=8080, host_port=0,
+            ))
+            assert isinstance(created, models.ExposureInfo)
+            assert isinstance(await vm.exposures.list(), models.ExposureListResponse)
+            assert isinstance(await vm.exposures.delete(created.id), models.VmActionResponse)
+            assert [(method, path.split("?")[0]) for method, path, _ in state.requests] == [
+                ("POST", "/vms/vm-0/exposures"),
+                ("GET", "/vms/vm-0/exposures"),
+                ("DELETE", f"/vms/vm-0/exposures/{created.id}"),
+            ]
+    asyncio.run(run())
+
+
+def test_http_deadline_bounds_execution_without_replaying_it() -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), VM(url, "token", id="vm-0", timeout=0.05) as vm:
+            state.wait_for_exec = True
+            with pytest.raises(TimeoutError):
+                await vm.exec("waiting")
+            assert state.exec_entered.is_set()
+            assert len(state.requests) == 1
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("memory", [0, -1, True, "0G", "8GB", "junk"])
+def test_invalid_memory_is_rejected_before_network(memory: str | int) -> None:
+    async def run() -> None:
+        async with Hypervisor("http://127.0.0.1:1", "token") as hv:
+            with pytest.raises(ValueError, match="memory"):
+                await hv.create("code", memory=memory)
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(("memory", "expected"), [(512, 512), ("256M", 256), ("2g", 2048)])
+def test_memory_units_are_converted(memory: str | int, expected: int) -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), Hypervisor(url, "token") as hv:
+            await hv.create("code", memory=memory)
+            assert json.loads(state.requests[-1][2])["ram_mb"] == expected
+    asyncio.run(run())
+
+
+def test_zero_vcpu_is_rejected_before_network() -> None:
+    async def run() -> None:
+        async with Hypervisor("http://127.0.0.1:1", "token") as hv:
+            with pytest.raises(ValueError, match="vcpu"):
+                await hv.create("code", vcpu=0)
+    asyncio.run(run())
+
+
+def test_network_resource_maps_typed_lifecycle_and_cursor_logs() -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), Hypervisor(url, "token") as hv:
+            created = await hv.networks.create("team")
+            await hv.networks.list()
+            await hv.networks.inspect(created.id)
+            await hv.networks.attach(created.id, "vm-0")
+            await hv.networks.detach(created.id, "vm-0")
+            await hv.networks.logs(created.id, cursor="next", limit=4, event_type="network.connect")
+            await hv.networks.delete(created.id)
+            assert [(method, path.split("?")[0]) for method, path, _ in state.requests] == [
+                ("POST", "/networks"),
+                ("GET", "/networks"),
+                ("GET", f"/networks/{created.id}"),
+                ("PUT", f"/networks/{created.id}/members/vm-0"),
+                ("DELETE", f"/networks/{created.id}/members/vm-0"),
+                ("GET", f"/networks/{created.id}/logs"),
+                ("DELETE", f"/networks/{created.id}"),
+            ]
+            assert "cursor=next" in state.requests[-2][1]
+            assert "type=network.connect" in state.requests[-2][1]
+    asyncio.run(run())

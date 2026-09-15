@@ -23,12 +23,12 @@ pub(crate) fn control_loop(
     let mut publications: Option<port_bridge::Bridge> = None;
     loop {
         match recv_host_msg(control_fd) {
-            Ok(HostToGuest::ConnectPort { flow, port }) => {
+            Ok(HostToGuest::ConnectPort { flow, port, target }) => {
                 let result = (|| {
                     if publications.is_none() {
                         publications = Some(port_bridge::Bridge::new(ctrl_tx.clone())?);
                     }
-                    publications.as_mut().unwrap().connect(flow, port)
+                    publications.as_mut().unwrap().connect(flow, port, target)
                 })();
                 if let Err(error) = result {
                     tracing::debug!(connection_id = flow.id, generation = flow.generation, %error, "guest publication refused");

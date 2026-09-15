@@ -166,18 +166,13 @@ class TestGatewayFileIO:
 
         try:
             # Write file
-            write_resp = e2e_client.post(f"/vms/{vm_id}/files/write", {
-                "path": "/root/gw-test.txt",
-                "content": "gateway file io test",
-            })
+            write_resp = e2e_client.upload_file(vm_id, "/root/gw-test.txt", "gateway file io test")
             assert write_resp is not None
 
             # Read file back
-            read_resp = e2e_client.post(f"/vms/{vm_id}/files/read", {
-                "path": "/root/gw-test.txt",
-            })
+            read_resp = e2e_client.download_file(vm_id, "/root/gw-test.txt")
             assert read_resp is not None
-            assert "gateway file io test" in str(read_resp)
+            assert read_resp == b"gateway file io test"
         finally:
             e2e_client.delete(f"/vms/{vm_id}/delete")
 
@@ -194,10 +189,7 @@ class TestGatewayFileIO:
         assert wait_exec_ready_tcp(e2e_client, vm_id, timeout=60)
 
         try:
-            write_resp = e2e_client.post(f"/vms/{vm_id}/files/write", {
-                "path": "/root/special.txt",
-                "content": "line1\nline2\ttab\n",
-            })
+            write_resp = e2e_client.upload_file(vm_id, "/root/special.txt", "line1\nline2\ttab\n")
             assert write_resp is not None
 
             exec_resp = e2e_client.post(f"/vms/{vm_id}/exec", {
@@ -229,10 +221,7 @@ class TestGatewayPersistence:
 
         try:
             # Write a marker file
-            e2e_client.post(f"/vms/{vm_id}/files/write", {
-                "path": "/root/persist-marker.txt",
-                "content": "survived-restart",
-            })
+            e2e_client.upload_file(vm_id, "/root/persist-marker.txt", "survived-restart")
 
             # Stop
             e2e_client.post(f"/vms/{vm_id}/stop", {})

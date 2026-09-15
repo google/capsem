@@ -50,7 +50,7 @@ const GUEST_FILE_WRITE_MODE: u32 = 0o644;
 /// Negotiate the synchronous Hello side-channel away from Tokio's worker
 /// threads, then hand the verified socket to the typed async IPC transport.
 /// A peer mismatch is a refused connection, not a process-fatal error.
-async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<ProcessIpcChannel>> {
+async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<(ProcessIpcChannel, bool)>> {
     let std_stream = stream.into_std()?;
     let traceparent = capsem_foundation::telemetry::current_parent_traceparent();
     let (std_stream, handshake) = tokio::task::spawn_blocking(move || {
@@ -62,15 +62,18 @@ async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<Proce
     .await
     .context("join IPC handshake task")?;
 
-    match handshake {
-        Ok(peer) => info!(target: "ipc", peer = %peer.peer, "IPC handshake ok"),
+    let stream_role = match handshake {
+        Ok(peer) => {
+            info!(target: "ipc", peer = %peer.peer, "IPC handshake ok");
+            peer.peer == capsem_proto::handshake::STREAM_PEER_ID
+        }
         Err(error) => {
             error!(target: "ipc", %error, "IPC handshake failed; refusing connection");
             return Ok(None);
         }
-    }
+    };
 
-    Ok(Some(channel_from_std(std_stream)?))
+    Ok(Some((channel_from_std(std_stream)?, stream_role)))
 }
 
 async fn await_exec_result(j_rx: oneshot::Receiver<JobResult>) -> Result<JobResult, String> {
@@ -129,7 +132,7 @@ pub(crate) async fn handle_ipc_connection(
     // First frame on every IPC connection is a Hello -- detect cross-version
     // mixes (capsem-service built before X, capsem-process built after) in
     // ~1s with a structured log line instead of a 30s silent timeout.
-    let Some((tx, rx)) = open_ipc_channel(stream).await? else {
+    let Some(((tx, rx), stream_role)) = open_ipc_channel(stream).await? else {
         return Ok(());
     };
 
@@ -152,7 +155,8 @@ pub(crate) async fn handle_ipc_connection(
     // is high-volume and still opt-in via StartTerminalStream. Without this,
     // a suspend-only connection never sees StateChanged { state: "Suspended" }
     // and the service times out waiting for confirmation.
-    {
+    // A stream-role connection carries one stream and nothing else.
+    if !stream_role {
         let out_tx = ipc_tx_out.clone();
         let mut rx_bcast = ipc_tx.subscribe();
         connection_tasks.spawn(async move {
@@ -229,12 +233,21 @@ pub(crate) async fn handle_ipc_connection(
                             return;
                         }
                     }
-                    while let Ok(data) = term_rx.recv().await {
-                        warn_if_ipc_shaped(&data);
-                        if out_tx.send(ProcessToService::TerminalOutput { data }).await.is_err() {
-                            break;
+                    let reason = loop {
+                        match term_rx.recv().await {
+                            Ok(data) => {
+                                warn_if_ipc_shaped(&data);
+                                if out_tx.send(ProcessToService::TerminalOutput { data }).await.is_err() {
+                                    return;
+                                }
+                            }
+                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                                break format!("terminal output fell behind by {skipped} chunks");
+                            }
+                            Err(broadcast::error::RecvError::Closed) => break "terminal closed".to_string(),
                         }
-                    }
+                    };
+                    let _ = out_tx.send(ProcessToService::TerminalStreamEnded { reason }).await;
                 });
                 stream_task = Some(h);
             }
@@ -284,33 +297,61 @@ pub(crate) async fn handle_ipc_connection(
                 id,
                 host_port,
                 guest_port,
+                target,
             } => {
                 let jobs = job_store.clone();
                 let control = ctrl_tx.clone();
                 let output = ipc_tx_out.clone();
                 tokio::spawn(async move {
-                    let response = match jobs.publisher.publish_saved(host_port, guest_port, control).await {
-                        Ok(publication) => {
-                            let response = ProcessToService::PortPublished {
-                                id,
-                                host_port: publication.host_port,
-                                router_pid: publication.router_pid,
-                                error: None,
-                            };
-                            let mut publications = jobs.publications.lock().unwrap();
-                            publications.retain(|p| !p.is_finished());
-                            publications.push(publication);
-                            response
-                        }
+                    let response = match jobs
+                        .publisher
+                        .publish_saved(host_port, guest_port, target, control)
+                        .await
+                    {
+                        Ok(publication) => ProcessToService::PortPublished {
+                            id,
+                            host_port: publication.host_port,
+                            router_pid: publication.router_pid,
+                            error: None,
+                            policy_refused: false,
+                        },
                         Err(error) => ProcessToService::PortPublished {
                             id,
                             host_port: 0,
                             router_pid: 0,
+                            policy_refused: error.is::<capsem_core::container::publish::ExposureRefused>(),
                             error: Some(format!("{error:#}")),
                         },
                     };
                     capsem_core::try_send!("publication_result", output.send(response).await);
                 });
+            }
+            ServiceToProcess::RevokePort { id, host_port } => {
+                let jobs = job_store.clone();
+                let output = ipc_tx_out.clone();
+                tokio::spawn(async move {
+                    let response = match jobs.publisher.revoke(host_port).await {
+                        Ok(revoked) => ProcessToService::PortRevoked {
+                            id,
+                            revoked,
+                            error: None,
+                        },
+                        Err(error) => ProcessToService::PortRevoked {
+                            id,
+                            revoked: false,
+                            error: Some(format!("{error:#}")),
+                        },
+                    };
+                    capsem_core::try_send!("publication_revoke_result", output.send(response).await);
+                });
+            }
+            ServiceToProcess::ListPublications { id } => {
+                let response = ProcessToService::PublicationList {
+                    id,
+                    generation: job_store.publisher.generation().get(),
+                    publications: job_store.publisher.publications(),
+                };
+                capsem_core::try_send!("publication_list_result", ipc_tx_out.send(response).await);
             }
             ServiceToProcess::ConnectPort { .. }
             | ServiceToProcess::AbortPorts { .. }
@@ -740,7 +781,7 @@ pub(crate) async fn handle_ipc_connection(
                                     original_name: t.original_name,
                                     description: t.description,
                                     server_name: t.server_name,
-                                    annotations: t.annotations.as_ref().map(|a| a.to_mcp_json()),
+                                    annotations: t.annotations,
                                 })
                                 .collect();
                             capsem_core::try_send!(
@@ -915,7 +956,9 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::TerminalInput { .. } => IpcAction::Forward,
         ServiceToProcess::TerminalResize { .. } => IpcAction::Forward,
         ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => IpcAction::Job,
-        ServiceToProcess::PublishPort { .. } => IpcAction::Job,
+        ServiceToProcess::PublishPort { .. }
+        | ServiceToProcess::RevokePort { .. }
+        | ServiceToProcess::ListPublications { .. } => IpcAction::Job,
         ServiceToProcess::ConnectPort { .. }
         | ServiceToProcess::AbortPorts { .. }
         | ServiceToProcess::PlugCable { .. }
