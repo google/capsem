@@ -11,6 +11,10 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 RATIONALE = "SDK tests need cached dependencies before the sandbox and measured CI/Codecov ownership."
+PYTHON_PREWARM = (
+    "python3 build_system/scripts/ci/run-bounded-command.py "
+    "--timeout-seconds 300 -- uv sync --project sdk/python --frozen"
+)
 
 
 def _documents() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -21,8 +25,11 @@ def _documents() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
 
 def _assert_owners(fast: dict[str, Any], ci: dict[str, Any], coverage: dict[str, Any]) -> None:
     steps = fast["jobs"]["static"]["steps"]
-    prewarm = next(index for index, step in enumerate(steps)
-                   if "uv sync --project sdk/python --frozen" in step.get("run", "").splitlines())
+    prewarm = next(
+        index
+        for index, step in enumerate(steps)
+        if PYTHON_PREWARM in step.get("run", "").splitlines()
+    )
     sealed = next(index for index, step in enumerate(steps) if step.get("run") == "just fast-test")
     assert prewarm < sealed, RATIONALE
     steps = ci["jobs"]["test"]["steps"]
@@ -49,7 +56,7 @@ def test_removing_ci_ownership_is_rejected(mutation: str) -> None:
     match mutation:
         case "prewarm":
             for step in fast["jobs"]["static"]["steps"]:
-                step["run"] = step.get("run", "").replace("uv sync --project sdk/python --frozen", "")
+                step["run"] = step.get("run", "").replace(PYTHON_PREWARM, "")
         case "late_prewarm":
             fast["jobs"]["static"]["steps"].reverse()
         case "tests":
