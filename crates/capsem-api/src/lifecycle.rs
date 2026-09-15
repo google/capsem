@@ -40,6 +40,9 @@ pub struct ProvisionRequest {
     /// Existing named networks joined atomically during provisioning.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub networks: Vec<String>,
+    /// OCI image the service pulls, stages and starts as this VM's workload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<crate::ContainerSpec>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]

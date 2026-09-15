@@ -2652,6 +2652,47 @@
           }
         }
       },
+      "ContainerSpec": {
+        "type": "object",
+        "description": "An OCI image run as a VM's workload.\n\n`Debug` shows the image and environment names only: arguments and\nenvironment values can carry secrets, and registry access always does.",
+        "required": [
+          "image"
+        ],
+        "properties": {
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Command replacing the image's default command, as `docker run IMAGE CMD...`."
+          },
+          "env": {
+            "type": "object",
+            "description": "Container environment, applied over the image's.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "image": {
+            "type": "string",
+            "description": "`docker://IMAGE` or a registry-qualified `registry/repository:tag`."
+          },
+          "registry": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RegistryAccess",
+                "description": "Access to a private registry, used for this pull only and never stored."
+              }
+            ]
+          }
+        }
+      },
       "CreateNetworkRequest": {
         "type": "object",
         "required": [
@@ -4983,6 +5024,17 @@
           "profile_id"
         ],
         "properties": {
+          "container": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContainerSpec",
+                "description": "OCI image the service pulls, stages and starts as this VM's workload."
+              }
+            ]
+          },
           "cpus": {
             "type": [
               "integer",
@@ -5152,6 +5204,32 @@
           "invalid_json",
           "unparsed"
         ]
+      },
+      "RegistryAccess": {
+        "type": "object",
+        "description": "Credentials and trust for one registry pull.",
+        "properties": {
+          "ca_pem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Additional PEM certificate trusted only for this registry."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Password or token for `username`."
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       },
       "ResourceSummary": {
         "type": "object",

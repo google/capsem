@@ -1,8 +1,9 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
-
+import type { ContainerSpec } from "./ContainerSpec.js";
 
 export interface ProvisionRequest {
+  "container"?: null | ContainerSpec;
   "cpus"?: number | null;
   "env"?: Record<string, string> | null;
   "from"?: string | null;

@@ -10,6 +10,8 @@ pub use vm_info::*;
 mod profile_status;
 pub use profile_status::*;
 
+mod containers;
+pub use containers::*;
 mod lifecycle;
 pub use lifecycle::*;
 mod execution;

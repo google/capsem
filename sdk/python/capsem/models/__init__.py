@@ -8,6 +8,7 @@ from .capture_status import CaptureStatus as CaptureStatus
 from .captured_content import CapturedContent as CapturedContent
 from .captured_payload import CapturedPayload as CapturedPayload
 from .changes_response import ChangesResponse as ChangesResponse
+from .container_spec import ContainerSpec as ContainerSpec
 from .create_network_request import CreateNetworkRequest as CreateNetworkRequest
 from .credential_event import CredentialEvent as CredentialEvent
 from .credential_event_type import CredentialEventType as CredentialEventType
@@ -114,6 +115,7 @@ from .purge_response import PurgeResponse as PurgeResponse
 from .raw_content import RawContent as RawContent
 from .raw_content_kind import RawContentKind as RawContentKind
 from .raw_content_reason import RawContentReason as RawContentReason
+from .registry_access import RegistryAccess as RegistryAccess
 from .resource_summary import ResourceSummary as ResourceSummary
 from .restart_authentication import RestartAuthentication as RestartAuthentication
 from .restart_response import RestartResponse as RestartResponse

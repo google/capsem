@@ -54,6 +54,7 @@ fn provision_request_env_omitted() {
         env: None,
         from: None,
         networks: Vec::new(),
+        container: None,
     };
     let json = serde_json::to_string(&r).unwrap();
     assert!(!json.contains("env"));
