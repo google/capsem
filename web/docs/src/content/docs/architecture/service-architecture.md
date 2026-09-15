@@ -160,11 +160,23 @@ configuration and identity. Profile-owned behavior lives under
 `/profiles/{profile_id}/...`; only service-wide runtime aggregation lives at
 the root.
 
+Every client -- CLI, TUI, web terminal, SDKs, MCP -- reaches a VM through these
+routes. Only the service talks to a VM owner, over typed IPC; no client dials a
+per-VM socket, and `tests/citadel/test_vm_owner_socket_boundary.py` holds it.
+The service pulls and stages container images itself, relays exposure changes
+to the owner (which admits them against the VM's rules before listening), and
+translates each stream WebSocket into a dedicated stream-role owner
+connection.
+
 ### VM Runtime
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/vms/create` | Create a VM from a profile, optionally with a name and resource overrides |
+| POST | `/vms/create` | Create a VM from a profile, optionally with a name, resource overrides, and a `container` workload |
+| GET | `/vms/{id}/container` | Container workload setup and runtime state (pulling, staging, staged, starting, running, failed) |
+| GET/POST | `/vms/{id}/exposures` | List or open loopback port exposures held by the VM owner |
+| DELETE | `/vms/{id}/exposures/{exposure_id}` | Close an exposure for good |
+| GET | `/vms/{id}/stream` | `capsem.stream.v1` WebSocket: terminal, streaming exec, or attached container |
 | GET | `/vms/list` | List VMs and their profile/status metadata |
 | GET | `/vms/{id}/info` | VM identity, profile, config, plugin descriptors, and non-hot metadata |
 | GET | `/vms/{id}/status` | Runtime state for one VM |
