@@ -178,6 +178,7 @@ def test_rename_classifies_both_old_and_new_owners() -> None:
         ("benchmarks/collectors/routes", "benchmarks"),
         ("benchmarks/baselines/routes/data.json", "benchmarks"),
         ("sdk/client.py", "sdk"),
+        ("mcp/typescript/src/index.ts", "sdk"),
     ],
 )
 def test_each_approved_target_has_one_independent_scope(path: str, scope: str) -> None:
