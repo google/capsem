@@ -4,7 +4,7 @@ Typed async clients for the HTTP gateway. Supply its URL and bearer token
 explicitly; the SDK does not discover local services or run host commands.
 
 ```rust,no_run
-use capsem_sdk::{CreateOptions, Hypervisor, LogOptions, Result, VmSelector};
+use capsem_sdk::{CreateOptions, Hypervisor, LogOptions, Result, TriageOptions, VmSelector};
 use capsem_sdk::models::HostLogSource;
 use std::time::Duration;
 
@@ -26,6 +26,9 @@ async fn example(url: &str, token: &str) -> Result<()> {
     vm.list("/", None).await?;
     vm.snapshots().list().await?;
     vm.stats().details().await?;
+    vm.persist("saved-workspace").await?;
+    hv.triage(TriageOptions { vm_id: vm.id().map(str::to_owned), since: Some("1h".into()), ..Default::default() }).await?;
+    hv.profiles().mcp("code").tools("filesystem").await?;
     hv.log(HostLogSource::Service, LogOptions { tail: Some(100), ..Default::default() }).await?;
     vm.stop().await?;
 
@@ -73,3 +76,8 @@ the restart call. Acceptance does not claim reconnection has completed.
 `hv.networks()` provides typed create/list/inspect/delete, member attach/detach
 and cursor-based audit logs. Explicit snapshot creation/restoration, mounts and
 port exposure remain outside the implemented facade.
+
+`hv.run(command, options)` executes once in a temporary VM. `hv.panics()`,
+`hv.triage()` and `hv.purge()` expose diagnostics and cleanup. `hv.profiles()`
+provides typed profile and MCP discovery, refresh, permissions and tool calls;
+tool arguments and results retain their native JSON shape.

@@ -28,6 +28,8 @@ ROUTES = read_operations(SPEC)
 def sample(schema: Schema) -> object:
     if schema.ref:
         return sample(SCHEMAS[schema.ref.rsplit("/", 1)[1]])
+    if schema.type is None and not schema.one_of:
+        return {"nested": [True, None, {"number": 3}]}
     if schema.one_of:
         return sample(schema.one_of[0])
     if schema.enum:
@@ -96,8 +98,9 @@ def test_operation_matches_the_wire_contract(route: Route, outcome: str, package
         else:
             payload = sample(operation.request_body.schema)
             model = getattr(package.models, type_name(operation.request_body.schema))
-            arguments["body"] = model.model_validate_json(json.dumps(payload))
-            expected_body = arguments["body"].model_dump_json(by_alias=True, exclude_unset=True).encode()
+            adapter = TypeAdapter(model)
+            arguments["body"] = adapter.validate_json(json.dumps(payload))
+            expected_body = adapter.dump_json(arguments["body"], by_alias=True, exclude_unset=True)
 
     async def run() -> None:
         received = []

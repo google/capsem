@@ -63,6 +63,10 @@ export class VM extends Client {
     const {transport, id} = await this.context(options);
     return api.startVm(transport, {id}, options);
   }
+  async persist(name: string, options: CallOptions = {}): Promise<models.PersistResponse> {
+    const {transport, id} = await this.context(options);
+    return api.persistVm(transport, {id, body: {name}}, options);
+  }
   async stop(options: CallOptions = {}): Promise<models.StopResponse> {
     const {transport, id} = await this.context(options);
     return api.stopVm(transport, {id}, options);

@@ -89,7 +89,7 @@ def test_each_packaged_operation_uses_http_and_returns_typed_data(operation: dic
         else:
             schema = content["application/json"]["schema"]
             model = getattr(models, schema["$ref"].rsplit("/", 1)[1])
-            arguments["body"] = model.model_validate_json(json.dumps(sample(schema)))
+            arguments["body"] = TypeAdapter(model).validate_json(json.dumps(sample(schema)))
 
     async def run() -> None:
         async with gateway(response) as (url, received), Transport(url, "token") as transport:

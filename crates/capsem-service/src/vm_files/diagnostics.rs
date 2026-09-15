@@ -64,7 +64,7 @@ pub(crate) async fn handle_logs(
 pub(crate) async fn handle_panics(
     State(state): State<Arc<ServiceState>>,
     axum::extract::Query(params): axum::extract::Query<TriageQuery>,
-) -> Result<axum::Json<serde_json::Value>, AppError> {
+) -> Result<axum::Json<PanicsResponse>, AppError> {
     let since_unix = params
         .since
         .as_deref()
@@ -96,7 +96,7 @@ pub(crate) async fn handle_panics(
         .await?;
 
     all_panics.truncate(limit);
-    Ok(axum::Json(serde_json::json!({ "panics": all_panics })))
+    Ok(axum::Json(PanicsResponse { panics: all_panics }))
 }
 
 /// `GET /triage?id=<vm>&since=30m&limit=20` -- ranked summary of recent
@@ -106,7 +106,7 @@ pub(crate) async fn handle_panics(
 pub(crate) async fn handle_triage(
     State(state): State<Arc<ServiceState>>,
     axum::extract::Query(params): axum::extract::Query<TriageQuery>,
-) -> Result<axum::Json<serde_json::Value>, AppError> {
+) -> Result<axum::Json<TriageResponse>, AppError> {
     let since_str = params.since.clone().unwrap_or_else(|| "30m".to_string());
     let since_unix = triage::parse_since(&since_str)
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -180,17 +180,17 @@ pub(crate) async fn handle_triage(
         ));
     }
 
-    let out = serde_json::json!({
-        "since": since_str,
-        "session_id": params.id,
-        "host": {
-            "panics": panics,
-            "errors": errors,
-            "slow_ops": slow_ops,
+    let out = TriageResponse {
+        since: since_str,
+        session_id: params.id,
+        host: HostTriageResponse {
+            panics,
+            errors,
+            slow_ops,
         },
-        "session": session_block,
-        "rank": rank,
-    });
+        session: session_block,
+        rank,
+    };
     Ok(axum::Json(out))
 }
 
@@ -306,17 +306,6 @@ pub(crate) async fn triage_for_vm(
         )
     })?;
     Ok(limit_triage_session_block(&session, limit))
-}
-
-#[derive(Deserialize, Debug, Default)]
-pub(crate) struct TriageQuery {
-    /// Lookback window. Default "30m". Accepts "5m", "1h", "24h", or
-    /// RFC3339 ("2026-05-02T17:30:00Z").
-    since: Option<String>,
-    /// Max items per category. Default 20, capped at 200.
-    limit: Option<usize>,
-    /// Optional session id (reserved for the future session.db query).
-    id: Option<String>,
 }
 
 /// `GET /host-logs/{name}?grep=&tail=&max_bytes=` -- read a host-side log

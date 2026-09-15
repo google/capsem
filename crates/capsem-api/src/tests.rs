@@ -240,6 +240,52 @@ fn openapi_describes_network_mutations_and_both_member_path_parameters() {
 }
 
 #[test]
+fn openapi_exposes_existing_diagnostics_persistence_and_profile_mcp_routes() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    let paths = &document["paths"];
+    for (path, method, operation_id) in [
+        ("/run", "post", "runVm"),
+        ("/purge", "post", "purgeVms"),
+        ("/panics", "get", "getPanics"),
+        ("/triage", "get", "getTriage"),
+        ("/vms/{id}/save", "post", "persistVm"),
+        ("/profiles/{profile_id}/mcp/info", "get", "getProfileMcpInfo"),
+        (
+            "/profiles/{profile_id}/mcp/servers/list",
+            "get",
+            "listProfileMcpServers",
+        ),
+        ("/profiles/{profile_id}/mcp/default/info", "get", "getProfileMcpDefault"),
+        (
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
+            "get",
+            "listProfileMcpTools",
+        ),
+        (
+            "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
+            "post",
+            "refreshProfileMcpServer",
+        ),
+        (
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
+            "post",
+            "callProfileMcpTool",
+        ),
+    ] {
+        assert_eq!(paths[path][method]["operationId"], operation_id, "{method} {path}");
+    }
+    let call = &paths["/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call"]["post"];
+    let parameters = call["parameters"].as_array().unwrap();
+    assert_eq!(
+        parameters
+            .iter()
+            .map(|parameter| parameter["name"].as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from(["profile_id", "server_id", "tool_id"])
+    );
+}
+
+#[test]
 fn lifecycle_values_preserve_the_existing_wire_contract() {
     assert_eq!(
         serde_json::to_value(VmLifecycleState::Running).unwrap(),

@@ -168,42 +168,15 @@ pub type DetectionRuleInfo = EnforcementRuleInfo;
 pub type DetectionRuleListResponse = EnforcementRuleListResponse;
 pub type DetectionInfoResponse = EnforcementInfoResponse;
 
-// ── MCP API types ──────────────────────────────────────────────────
-
-/// Response for GET /profiles/{profile_id}/mcp/servers/list.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct McpServerInfoResponse {
-    pub name: String,
-    pub url: String,
-    pub has_auth_credential: bool,
-    pub custom_header_count: usize,
-    pub source: String,
-    pub enabled: bool,
-    pub running: bool,
-    pub tool_count: usize,
-    pub is_stdio: bool,
-}
-
-/// Response for GET /profiles/{profile_id}/mcp/default/info.
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct McpDefaultPermissionResponse {
-    pub action: capsem_core::net::policy_config::SecurityRuleAction,
-    pub source: String,
-    pub rule_id: Option<String>,
-}
-
-/// Response for GET /profiles/{profile_id}/mcp/servers/{server_id}/tools/list.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct McpToolInfoResponse {
-    pub namespaced_name: String,
-    pub original_name: String,
-    pub description: Option<String>,
-    pub server_name: String,
-    pub annotations: Option<serde_json::Value>,
-    pub pin_hash: Option<String>,
-    pub pin_changed: bool,
-    pub permission_action: capsem_core::net::policy_config::SecurityRuleAction,
-    pub permission_source: String,
+pub fn mcp_permission_action(action: SecurityRuleAction) -> McpPermissionAction {
+    match action {
+        SecurityRuleAction::Allow => McpPermissionAction::Allow,
+        SecurityRuleAction::Ask => McpPermissionAction::Ask,
+        SecurityRuleAction::Block => McpPermissionAction::Block,
+        SecurityRuleAction::Preprocess => McpPermissionAction::Preprocess,
+        SecurityRuleAction::Rewrite => McpPermissionAction::Rewrite,
+        SecurityRuleAction::Postprocess => McpPermissionAction::Postprocess,
+    }
 }
 
 /// Response for GET /vms/{id}/history/processes.

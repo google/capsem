@@ -16,6 +16,9 @@ def test_all_routes_are_generated_in_small_modules() -> None:
     assert len(sources) == len(routes) + 1
     assert max(len(source.splitlines()) for source in sources.values()) < 150
     assert sources == render_operations(list(reversed(routes)))
+    call = sources["call_profile_mcp_tool.rs"]
+    assert "parameters: &[\n            (\"profile_id\"" in call
+    assert ".request(\n            reqwest::Method::POST," in call
 
 
 @pytest.mark.parametrize(("schema", "expected"), [

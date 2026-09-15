@@ -164,7 +164,7 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
             raise ValueError(f"colliding schema module: {filename}")
         files[filename] = source
         exported = f"from .{module_name(name)} import {name} as {name}"
-        if len(exported) > 100:
+        if len(exported) > 88:
             exported = f"from .{module_name(name)} import (\n    {name} as {name},\n)"
         exports.append(exported)
     files["__init__.py"] = HEADER + "\n".join(exports) + "\n"

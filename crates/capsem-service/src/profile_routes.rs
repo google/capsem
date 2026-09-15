@@ -1247,7 +1247,7 @@ pub(super) fn build_profile_mcp_default_cache(
         output.insert(
             manifest.id.clone(),
             Ok(api::McpDefaultPermissionResponse {
-                action: permission.action,
+                action: api::mcp_permission_action(permission.action),
                 source: permission.source,
                 rule_id: permission.rule_id,
             }),
@@ -1532,7 +1532,7 @@ pub(super) fn resolve_mcp_tool_id(server_id: &str, tool_id: &str) -> Result<Stri
 pub(super) async fn handle_profile_mcp_info(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<api::ProfileMcpInfoResponse>, AppError> {
     let profile = cached_profile_for_route(&state, profile_id)?;
     let profile = profile.config();
     let mcp = profile.mcp.as_ref();
@@ -1540,12 +1540,12 @@ pub(super) async fn handle_profile_mcp_info(
         .and_then(|mcp| mcp.server_enabled.get("local").copied())
         .unwrap_or(false);
     let manual_server_count = mcp.map_or(0, |mcp| mcp.servers.len());
-    Ok(Json(json!({
-        "profile_id": profile.id,
-        "server_count": manual_server_count + usize::from(builtin_local_enabled),
-        "manual_server_count": manual_server_count,
-        "builtin_local_enabled": builtin_local_enabled,
-    })))
+    Ok(Json(api::ProfileMcpInfoResponse {
+        profile_id: profile.id.clone(),
+        server_count: manual_server_count + usize::from(builtin_local_enabled),
+        manual_server_count,
+        builtin_local_enabled,
+    }))
 }
 
 pub(super) fn profile_mcp_server_configured(profile: &ProfileConfigFile, server_id: &str) -> bool {
@@ -1867,7 +1867,7 @@ pub(super) async fn handle_profile_mcp_server_delete(
 pub(super) async fn handle_profile_mcp_servers(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<api::McpServersListResponse>, AppError> {
     let profile = cached_profile_for_route(&state, profile_id)?;
     use capsem_core::mcp::build_profile_server_list;
 
@@ -1897,7 +1897,7 @@ pub(super) async fn handle_profile_mcp_servers(
             }
         })
         .collect();
-    Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
+    Ok(Json(api::McpServersListResponse(resp)))
 }
 
 /// GET /profiles/:profile_id/mcp/default/info -- read the profile MCP default permission.
@@ -1942,7 +1942,7 @@ pub(super) fn latest_mcp_tool_cache(state: &ServiceState) -> Vec<ToolCacheEntry>
 pub(super) async fn handle_profile_mcp_server_tools(
     State(state): State<Arc<ServiceState>>,
     Path((profile_id, server_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<api::McpToolsListResponse>, AppError> {
     if server_id.is_empty() {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
@@ -1981,19 +1981,19 @@ pub(super) async fn handle_profile_mcp_server_tools(
                 annotations: entry.annotations.as_ref().map(|a| a.to_mcp_json()),
                 pin_hash: Some(entry.pin_hash.clone()),
                 pin_changed: false, // Would need live catalog comparison.
-                permission_action: permission.action,
+                permission_action: api::mcp_permission_action(permission.action),
                 permission_source: permission.source,
             })
         })
         .collect();
-    Ok(Json(serde_json::to_value(resp?).unwrap_or_default()))
+    Ok(Json(api::McpToolsListResponse(resp?)))
 }
 
 /// POST /profiles/:profile_id/mcp/servers/:server_id/refresh -- refresh one server's tool discovery.
 pub(super) async fn handle_profile_mcp_server_refresh(
     State(state): State<Arc<ServiceState>>,
     Path((profile_id, server_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<api::McpRefreshResponse>, AppError> {
     if server_id.is_empty() {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
@@ -2013,9 +2013,11 @@ pub(super) async fn handle_profile_mcp_server_refresh(
     if let Ok(mut cache) = state.mcp_tool_cache.lock() {
         *cache = capsem_core::mcp::load_tool_cache();
     }
-    Ok(Json(
-        serde_json::json!({"success": true, "server_id": server_id, "instances": uds_paths.len()}),
-    ))
+    Ok(Json(api::McpRefreshResponse {
+        success: true,
+        server_id,
+        instances: uds_paths.len(),
+    }))
 }
 
 /// PATCH /profiles/:profile_id/mcp/default/edit -- edit the default MCP permission rule.

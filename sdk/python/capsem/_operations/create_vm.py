@@ -17,5 +17,6 @@ async def create_vm(
     payload = await transport.request(
         Method.POST, '/vms/create',
         body=body,
+        json_body=True,
     )
     return TypeAdapter(ProvisionResponse).validate_json(payload)

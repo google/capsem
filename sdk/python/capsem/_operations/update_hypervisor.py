@@ -17,5 +17,6 @@ async def update_hypervisor(
     payload = await transport.request(
         Method.POST, '/update/apply',
         body=body,
+        json_body=True,
     )
     return TypeAdapter(UpdateActionResponse).validate_json(payload)

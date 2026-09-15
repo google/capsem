@@ -36,6 +36,10 @@ mod profiles;
 pub use profiles::*;
 mod networks;
 pub use networks::*;
+mod diagnostics;
+pub use diagnostics::*;
+mod mcp;
+pub use mcp::*;
 
 #[cfg(test)]
 mod tests;

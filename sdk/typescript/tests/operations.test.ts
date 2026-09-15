@@ -2,11 +2,16 @@ import {expect, it} from 'vitest';
 import {ZodError} from 'zod';
 import * as generated from '../src/operations/index.js';
 import {MediaType, Transport} from '../src/transport.js';
-import {routes, sample} from './contract.js';
+import {routes, sample, schemas, type Schema} from './contract.js';
 import {gateway} from './gateway.js';
 
 // Contract fixtures intentionally pass raw wire data through the real validators.
 const operations: Record<string, (transport: Transport, ...parameters: never[]) => Promise<unknown>> = generated;
+
+function isOpenJson(schema: Schema): boolean {
+  if (schema.$ref) return isOpenJson(schemas[schema.$ref.split('/').at(-1) ?? ''] ?? {});
+  return Object.keys(schema).every(key => key === 'description');
+}
 
 for (const {path, method, operation} of routes) {
   const status = operation.responses['200'] ? '200' : '202';
@@ -56,6 +61,7 @@ for (const {path, method, operation} of routes) {
             ? call(transport, parameters as never) : call(transport);
           if (outcome === 'error') await expect(promise).rejects.toMatchObject({status: 403, body: 'denied'});
           else if (outcome === 'invalid-json') await expect(promise).rejects.toBeInstanceOf(SyntaxError);
+          else if (outcome === 'invalid-shape' && isOpenJson(schema ?? {})) expect(await promise).toBeNull();
           else if (outcome === 'invalid-shape') await expect(promise).rejects.toBeInstanceOf(ZodError);
           else expect(await promise).toEqual(expected);
           if (outcome === 'complete') {

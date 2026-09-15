@@ -47,6 +47,7 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
                 vcpu: Some(4),
                 memory: Some("8G".parse().unwrap()),
                 env: Some([("EDITOR".into(), "vim".into())].into()),
+                networks: vec!["team".into()],
             },
         )
         .await
@@ -57,6 +58,7 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
     assert_eq!(body["name"], "work");
     assert_eq!(body["persistent"], true);
     assert_eq!(body["env"]["EDITOR"], "vim");
+    assert_eq!(body["networks"], json!(["team"]));
     hv.update().await.unwrap();
     assert_eq!(
         request(&mut server, "/update/apply").await,
@@ -282,6 +284,70 @@ async fn network_resource_uses_typed_routes_put_and_cursor_logs() {
     hv.networks().delete(&created.id).await.unwrap();
     let (parts, _) = server.received.recv().await.unwrap();
     assert_eq!(parts.method, "DELETE");
+}
+
+#[tokio::test]
+async fn diagnostics_persistence_and_profile_mcp_use_typed_routes() {
+    let mut server = gateway().await;
+    let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    hv.run(
+        "printf hello",
+        RunOptions {
+            profile: Some("co-work".into()),
+            timeout_secs: Some(4),
+            vcpu: Some(2),
+            memory: Some("1G".parse().unwrap()),
+            env: Some([("EDITOR".into(), "vim".into())].into()),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        request(&mut server, "/run").await,
+        json!({"command":"printf hello","profile_id":"co-work","timeout_secs":4,"ram_mb":1024,"cpus":2,"env":{"EDITOR":"vim"}})
+    );
+    hv.panics(DiagnosticOptions {
+        since: Some("1h".into()),
+        limit: Some(4),
+    })
+    .await
+    .unwrap();
+    let (parts, _) = server.received.recv().await.unwrap();
+    assert_eq!(parts.uri.to_string(), "/panics?since=1h&limit=4");
+    hv.triage(TriageOptions {
+        since: Some("30m".into()),
+        limit: Some(2),
+        vm_id: Some("vm-1".into()),
+    })
+    .await
+    .unwrap();
+    let (parts, _) = server.received.recv().await.unwrap();
+    assert_eq!(parts.uri.to_string(), "/triage?since=30m&limit=2&id=vm-1");
+    hv.purge(true).await.unwrap();
+    assert_eq!(request(&mut server, "/purge").await, json!({"all":true}));
+
+    let vm = hv.vm(VmSelector::Id("vm-1".into())).unwrap();
+    vm.persist("saved").await.unwrap();
+    assert_eq!(request(&mut server, "/vms/vm-1/save").await, json!({"name":"saved"}));
+
+    hv.profiles().list().await.unwrap();
+    request(&mut server, "/profiles/list").await;
+    let mcp = hv.profiles().mcp("code");
+    mcp.info().await.unwrap();
+    request(&mut server, "/profiles/code/mcp/info").await;
+    mcp.servers().await.unwrap();
+    request(&mut server, "/profiles/code/mcp/servers/list").await;
+    mcp.default_permission().await.unwrap();
+    request(&mut server, "/profiles/code/mcp/default/info").await;
+    mcp.tools("filesystem").await.unwrap();
+    request(&mut server, "/profiles/code/mcp/servers/filesystem/tools/list").await;
+    mcp.refresh("filesystem").await.unwrap();
+    request(&mut server, "/profiles/code/mcp/servers/filesystem/refresh").await;
+    mcp.call("filesystem", "read", json!({"path":"/tmp/a"})).await.unwrap();
+    assert_eq!(
+        request(&mut server, "/profiles/code/mcp/servers/filesystem/tools/read/call").await,
+        json!({"path":"/tmp/a"})
+    );
 }
 
 #[tokio::test]

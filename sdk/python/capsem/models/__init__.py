@@ -13,6 +13,7 @@ from .credential_event import CredentialEvent as CredentialEvent
 from .credential_event_type import CredentialEventType as CredentialEventType
 from .credential_outcome import CredentialOutcome as CredentialOutcome
 from .dns_event import DnsEvent as DnsEvent
+from .error_event import ErrorEvent as ErrorEvent
 from .error_response import ErrorResponse as ErrorResponse
 from .event_body import EventBody as EventBody
 from .exec_history_details import ExecHistoryDetails as ExecHistoryDetails
@@ -36,6 +37,7 @@ from .history_layer_filter import HistoryLayerFilter as HistoryLayerFilter
 from .history_response import HistoryResponse as HistoryResponse
 from .host_log_source import HostLogSource as HostLogSource
 from .host_logs_response import HostLogsResponse as HostLogsResponse
+from .host_triage_response import HostTriageResponse as HostTriageResponse
 from .http_event import HttpEvent as HttpEvent
 from .hypervisor_info import HypervisorInfo as HypervisorInfo
 from .interaction import Interaction as Interaction
@@ -50,14 +52,27 @@ from .interaction_request import InteractionRequest as InteractionRequest
 from .interaction_request_kind import InteractionRequestKind as InteractionRequestKind
 from .interaction_role import InteractionRole as InteractionRole
 from .interaction_tool_call import InteractionToolCall as InteractionToolCall
-from .interaction_tool_call_kind import InteractionToolCallKind as InteractionToolCallKind
+from .interaction_tool_call_kind import (
+    InteractionToolCallKind as InteractionToolCallKind,
+)
 from .interaction_tool_result import InteractionToolResult as InteractionToolResult
-from .interaction_tool_result_kind import InteractionToolResultKind as InteractionToolResultKind
+from .interaction_tool_result_kind import (
+    InteractionToolResultKind as InteractionToolResultKind,
+)
 from .json_content import JsonContent as JsonContent
 from .json_content_kind import JsonContentKind as JsonContentKind
 from .list_response import ListResponse as ListResponse
 from .logs_response import LogsResponse as LogsResponse
 from .material_class import MaterialClass as MaterialClass
+from .mcp_default_permission_response import (
+    McpDefaultPermissionResponse as McpDefaultPermissionResponse,
+)
+from .mcp_permission_action import McpPermissionAction as McpPermissionAction
+from .mcp_refresh_response import McpRefreshResponse as McpRefreshResponse
+from .mcp_server_info_response import McpServerInfoResponse as McpServerInfoResponse
+from .mcp_servers_list_response import McpServersListResponse as McpServersListResponse
+from .mcp_tool_info_response import McpToolInfoResponse as McpToolInfoResponse
+from .mcp_tools_list_response import McpToolsListResponse as McpToolsListResponse
 from .mcp_usage import McpUsage as McpUsage
 from .model_event import ModelEvent as ModelEvent
 from .model_usage import ModelUsage as ModelUsage
@@ -69,14 +84,21 @@ from .network_logs_response import NetworkLogsResponse as NetworkLogsResponse
 from .network_member_info import NetworkMemberInfo as NetworkMemberInfo
 from .network_member_state import NetworkMemberState as NetworkMemberState
 from .network_protocol import NetworkProtocol as NetworkProtocol
+from .panic_event import PanicEvent as PanicEvent
+from .panics_response import PanicsResponse as PanicsResponse
+from .persist_request import PersistRequest as PersistRequest
+from .persist_response import PersistResponse as PersistResponse
 from .process_event import ProcessEvent as ProcessEvent
 from .profile_artifact_issue import ProfileArtifactIssue as ProfileArtifactIssue
-from .profile_availability_summary import ProfileAvailabilitySummary as ProfileAvailabilitySummary
+from .profile_availability_summary import (
+    ProfileAvailabilitySummary as ProfileAvailabilitySummary,
+)
 from .profile_catalog_source import ProfileCatalogSource as ProfileCatalogSource
 from .profile_catalog_status import ProfileCatalogStatus as ProfileCatalogStatus
 from .profile_existing_vm_update_semantics import (
     ProfileExistingVmUpdateSemantics as ProfileExistingVmUpdateSemantics,
 )
+from .profile_mcp_info_response import ProfileMcpInfoResponse as ProfileMcpInfoResponse
 from .profile_new_session_update_semantics import (
     ProfileNewSessionUpdateSemantics as ProfileNewSessionUpdateSemantics,
 )
@@ -87,6 +109,8 @@ from .profile_upgrade_action import ProfileUpgradeAction as ProfileUpgradeAction
 from .profiles_list_response import ProfilesListResponse as ProfilesListResponse
 from .provision_request import ProvisionRequest as ProvisionRequest
 from .provision_response import ProvisionResponse as ProvisionResponse
+from .purge_request import PurgeRequest as PurgeRequest
+from .purge_response import PurgeResponse as PurgeResponse
 from .raw_content import RawContent as RawContent
 from .raw_content_kind import RawContentKind as RawContentKind
 from .raw_content_reason import RawContentReason as RawContentReason
@@ -94,17 +118,21 @@ from .resource_summary import ResourceSummary as ResourceSummary
 from .restart_authentication import RestartAuthentication as RestartAuthentication
 from .restart_response import RestartResponse as RestartResponse
 from .restart_status import RestartStatus as RestartStatus
+from .run_request import RunRequest as RunRequest
 from .sandbox_info import SandboxInfo as SandboxInfo
 from .service_availability import ServiceAvailability as ServiceAvailability
 from .service_manager import ServiceManager as ServiceManager
 from .session_db_status import SessionDbStatus as SessionDbStatus
+from .slow_op_event import SlowOpEvent as SlowOpEvent
 from .snapshot_info import SnapshotInfo as SnapshotInfo
 from .snapshot_origin import SnapshotOrigin as SnapshotOrigin
 from .snapshots_list import SnapshotsList as SnapshotsList
 from .snapshots_status import SnapshotsStatus as SnapshotsStatus
 from .stop_response import StopResponse as StopResponse
 from .storage_diagnostics import StorageDiagnostics as StorageDiagnostics
-from .supply_chain_channel_evidence import SupplyChainChannelEvidence as SupplyChainChannelEvidence
+from .supply_chain_channel_evidence import (
+    SupplyChainChannelEvidence as SupplyChainChannelEvidence,
+)
 from .supply_chain_evidence import SupplyChainEvidence as SupplyChainEvidence
 from .supply_chain_manifest_evidence import (
     SupplyChainManifestEvidence as SupplyChainManifestEvidence,
@@ -120,16 +148,20 @@ from .timeline_status import TimelineStatus as TimelineStatus
 from .tool_decision import ToolDecision as ToolDecision
 from .tool_event import ToolEvent as ToolEvent
 from .tool_origin import ToolOrigin as ToolOrigin
+from .triage_response import TriageResponse as TriageResponse
 from .update_action_response import UpdateActionResponse as UpdateActionResponse
 from .update_action_status import UpdateActionStatus as UpdateActionStatus
 from .update_apply_request import UpdateApplyRequest as UpdateApplyRequest
 from .update_command_plan import UpdateCommandPlan as UpdateCommandPlan
-from .update_compatibility_state import UpdateCompatibilityState as UpdateCompatibilityState
+from .update_compatibility_state import (
+    UpdateCompatibilityState as UpdateCompatibilityState,
+)
 from .update_status_response import UpdateStatusResponse as UpdateStatusResponse
 from .update_track_state import UpdateTrackState as UpdateTrackState
 from .update_track_status import UpdateTrackStatus as UpdateTrackStatus
 from .upload_response import UploadResponse as UploadResponse
 from .validation_status import ValidationStatus as ValidationStatus
+from .value import Value as Value
 from .vm_action import VmAction as VmAction
 from .vm_action_response import VmActionResponse as VmActionResponse
 from .vm_ai_info import VmAiInfo as VmAiInfo

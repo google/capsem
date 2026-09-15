@@ -8,9 +8,10 @@ the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
 
 | Interface | Methods |
 | --- | --- |
-| Hypervisor | `info`, `list`, `create`, `log`, `update`, `restart` |
+| Hypervisor | `info`, `list`, `create`, `run`, `purge`, `panics`, `triage`, `log`, `update`, `restart` |
 | Private networks | `networks.create/list/inspect/delete/attach/detach/logs` |
-| VM | `info`, `exec`, `start`, `stop`, `pause`, `resume`, `delete`, `fork` |
+| Profiles and MCP | `profiles.list`, `profiles.mcp(...).info/servers/default_permission/tools/refresh/call` |
+| VM | `info`, `exec`, `persist`, `start`, `stop`, `pause`, `resume`, `delete`, `fork` |
 | VM inspection | `list`, `log`, `history`, `timeline`, `changes` |
 | VM snapshots | `snapshots.list`, `snapshots.status` |
 | VM stats | `stats.summary`, `stats.details` |
@@ -53,6 +54,12 @@ stdout and stderr into `stdout`; `stderr` is empty. A successful create/start
 acknowledges launch, and an exec request waits for the guest to become ready.
 File copy requires a running VM's security ledger. A restart acknowledgement
 requires explicit reconnection with new credentials. No mutation is retried.
+
+`run` executes a command in a temporary VM and accepts its own profile, CPU,
+memory, environment and guest deadline. `panics` and `triage` provide typed host
+diagnostics, while `triage` can include one VM's session ledger. Profile MCP
+calls preserve arbitrary JSON arguments and results while discovery and
+permissions remain typed.
 
 Snapshot creation/restoration, mounts and port exposure remain deferred. Private
 network operations use authenticated gateway HTTP and immutable network IDs;

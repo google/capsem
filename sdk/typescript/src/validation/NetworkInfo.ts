@@ -9,4 +9,5 @@ export const NetworkInfoSchema: z.ZodType<NetworkInfo> = z.object({
   "id": z.string(),
   "members": z.array(z.lazy(() => NetworkMemberInfoSchema)),
   "name": z.string(),
+  "subnet": z.string(),
 });

@@ -1,7 +1,11 @@
 use std::time::Duration;
 
 use crate::client::Client;
-use crate::{models, operations as api, resources::Networks, CreateOptions, Error, LogOptions, Result, VmSelector, VM};
+use crate::{
+    models, operations as api,
+    resources::{Networks, Profiles},
+    CreateOptions, DiagnosticOptions, Error, LogOptions, Result, RunOptions, TriageOptions, VmSelector, VM,
+};
 
 /// A gateway connection. Clones and VM handles share the HTTP connection pool.
 #[derive(Debug, Clone)]
@@ -43,6 +47,10 @@ impl Hypervisor {
         Networks(&self.client)
     }
 
+    pub fn profiles(&self) -> Profiles<'_> {
+        Profiles(&self.client)
+    }
+
     pub async fn create(&self, profile: &str, options: CreateOptions) -> Result<VM> {
         if options.vcpu == Some(0) {
             return Err(Error::InvalidInput("vcpu must be positive"));
@@ -56,7 +64,7 @@ impl Hypervisor {
             ram_mb: options.memory.map(crate::Memory::megabytes).transpose()?,
             env: options.env,
             from: None,
-            networks: Vec::new(),
+            networks: options.networks,
         };
         let result = api::create_vm(
             &self.client.transport,
@@ -75,6 +83,64 @@ impl Hypervisor {
             max_bytes: options.max_bytes,
         };
         api::get_hypervisor_logs(&self.client.transport, &params, self.client.options).await
+    }
+
+    pub async fn run(&self, command: &str, options: RunOptions) -> Result<models::ExecResponse> {
+        if options.vcpu == Some(0) {
+            return Err(Error::InvalidInput("vcpu must be positive"));
+        }
+        api::run_vm(
+            &self.client.transport,
+            &api::RunVmParams {
+                body: models::RunRequest {
+                    command: command.into(),
+                    profile_id: options.profile.unwrap_or_else(|| "code".into()),
+                    timeout_secs: options.timeout_secs,
+                    ram_mb: options.memory.map(crate::Memory::megabytes).transpose()?,
+                    cpus: options.vcpu,
+                    env: options.env,
+                },
+            },
+            self.client.options,
+        )
+        .await
+    }
+
+    pub async fn purge(&self, all: bool) -> Result<models::PurgeResponse> {
+        api::purge_vms(
+            &self.client.transport,
+            &api::PurgeVmsParams {
+                body: models::PurgeRequest { all },
+            },
+            self.client.options,
+        )
+        .await
+    }
+
+    pub async fn panics(&self, options: DiagnosticOptions) -> Result<models::PanicsResponse> {
+        api::get_panics(
+            &self.client.transport,
+            &api::GetPanicsParams {
+                since: options.since,
+                limit: options.limit,
+                id: None,
+            },
+            self.client.options,
+        )
+        .await
+    }
+
+    pub async fn triage(&self, options: TriageOptions) -> Result<models::TriageResponse> {
+        api::get_triage(
+            &self.client.transport,
+            &api::GetTriageParams {
+                since: options.since,
+                limit: options.limit,
+                id: options.vm_id,
+            },
+            self.client.options,
+        )
+        .await
     }
 
     pub async fn update(&self) -> Result<models::UpdateActionResponse> {

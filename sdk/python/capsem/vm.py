@@ -64,6 +64,11 @@ class VM(Client):
     async def start(self) -> models.ProvisionResponse:
         return await api.start_vm(self._transport, id=await self._resolve())
 
+    async def persist(self, name: str) -> models.PersistResponse:
+        return await api.persist_vm(
+            self._transport, id=await self._resolve(), body=models.PersistRequest(name=name),
+        )
+
     async def stop(self) -> models.StopResponse:
         return await api.stop_vm(self._transport, id=await self._resolve())
 

@@ -7,4 +7,5 @@ export interface NetworkInfo {
   "id": string;
   "members": Array<NetworkMemberInfo>;
   "name": string;
+  "subnet": string;
 }

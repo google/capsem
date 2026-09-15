@@ -17,5 +17,6 @@ async def create_network(
     payload = await transport.request(
         Method.POST, '/networks',
         body=body,
+        json_body=True,
     )
     return TypeAdapter(NetworkInfo).validate_json(payload)

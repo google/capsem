@@ -17,6 +17,9 @@ try {
   const bytes = await vm.copy.fromVm('/hello.txt');
   const info = await vm.info(); // includes AI, network and files
   const stats = await vm.stats.details();
+  await vm.persist('saved-workspace');
+  const triage = await hv.triage({vm_id: vm.id, since: '1h'});
+  const tools = await hv.profiles.mcp('code').tools('filesystem');
   const logs = await hv.log({source: HostLogSource.GATEWAY, tail: 100});
 } finally {
   hv.close();
@@ -64,6 +67,11 @@ the restart call. Acceptance does not claim reconnection has completed.
 
 `hv.networks` provides typed create/list/inspect/delete, member attach/detach and
 cursor-based audit logs. Snapshot create/restore, mounts and port exposure are pending.
+
+`hv.run(command)` executes once in a temporary VM. `hv.panics()`, `hv.triage()`
+and `hv.purge()` expose diagnostics and cleanup. `hv.profiles` provides typed
+profile and MCP discovery, refresh, permissions and tool calls; tool arguments
+and results retain their native JSON shape.
 
 Run `pnpm install --frozen-lockfile`, then `pnpm lint`, `pnpm check`,
 `pnpm test`, and `pnpm build` in this directory. The fast gate also builds the

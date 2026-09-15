@@ -3,8 +3,13 @@ import type {CallOptions} from './transport.js';
 
 export type VmSelector = {id: string; name?: never} | {name: string; id?: never};
 export interface CreateOptions extends CallOptions {
-  name?: string; vcpu?: number; memory?: string | number; env?: Record<string, string>;
+  name?: string; vcpu?: number; memory?: string | number; env?: Record<string, string>; networks?: string[];
 }
+export interface RunOptions extends CallOptions {
+  profile?: string; timeout_secs?: number; vcpu?: number; memory?: string | number; env?: Record<string, string>;
+}
+export interface DiagnosticOptions extends CallOptions {since?: string; limit?: number}
+export interface TriageOptions extends DiagnosticOptions {vm_id?: string}
 export interface LogOptions extends CallOptions {grep?: string; tail?: number; max_bytes?: number}
 export interface HostLogOptions extends LogOptions {source?: HostLogSource}
 export interface HistoryOptions extends CallOptions {

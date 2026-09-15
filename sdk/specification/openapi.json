@@ -468,6 +468,77 @@
         }
       }
     },
+    "/panics": {
+      "get": {
+        "operationId": "getPanics",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Lookback window such as `30m`, `2h`, or an RFC3339 timestamp.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum events per category; the service caps this at 200.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "description": "Optional VM identity used to include session-ledger diagnostics.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PanicsResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/profiles/list": {
       "get": {
         "operationId": "listProfiles",
@@ -478,6 +549,342 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProfilesListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/profiles/{profile_id}/mcp/default/info": {
+      "get": {
+        "operationId": "getProfileMcpDefault",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpDefaultPermissionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/profiles/{profile_id}/mcp/info": {
+      "get": {
+        "operationId": "getProfileMcpInfo",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileMcpInfoResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/profiles/{profile_id}/mcp/servers/list": {
+      "get": {
+        "operationId": "listProfileMcpServers",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServersListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/profiles/{profile_id}/mcp/servers/{server_id}/refresh": {
+      "post": {
+        "operationId": "refreshProfileMcpServer",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpRefreshResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list": {
+      "get": {
+        "operationId": "listProfileMcpTools",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpToolsListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call": {
+      "post": {
+        "operationId": "callProfileMcpTool",
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Value"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Value"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/purge": {
+      "post": {
+        "operationId": "purgeVms",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgeResponse"
                 }
               }
             }
@@ -533,6 +940,48 @@
         }
       }
     },
+    "/run": {
+      "post": {
+        "operationId": "runVm",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/status": {
       "get": {
         "operationId": "getHypervisorInfo",
@@ -543,6 +992,77 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HypervisorInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/triage": {
+      "get": {
+        "operationId": "getTriage",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Lookback window such as `30m`, `2h`, or an RFC3339 timestamp.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum events per category; the service caps this at 200.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "description": "Optional VM identity used to include session-ledger diagnostics.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriageResponse"
                 }
               }
             }
@@ -1352,6 +1872,58 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProvisionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/save": {
+      "post": {
+        "operationId": "persistVm",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersistRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersistResponse"
                 }
               }
             }
@@ -2276,6 +2848,35 @@
           }
         }
       },
+      "ErrorEvent": {
+        "type": "object",
+        "required": [
+          "ts",
+          "binary",
+          "level",
+          "message"
+        ],
+        "properties": {
+          "binary": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ts": {
+            "type": "string"
+          }
+        }
+      },
       "ErrorResponse": {
         "type": "object",
         "required": [
@@ -2761,6 +3362,34 @@
           },
           "text": {
             "type": "string"
+          }
+        }
+      },
+      "HostTriageResponse": {
+        "type": "object",
+        "required": [
+          "panics",
+          "errors",
+          "slow_ops"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ErrorEvent"
+            }
+          },
+          "panics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PanicEvent"
+            }
+          },
+          "slow_ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SlowOpEvent"
+            }
           }
         }
       },
@@ -3357,6 +3986,161 @@
           "credential"
         ]
       },
+      "McpDefaultPermissionResponse": {
+        "type": "object",
+        "required": [
+          "action",
+          "source"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/McpPermissionAction"
+          },
+          "rule_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "McpPermissionAction": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "ask",
+          "block",
+          "preprocess",
+          "rewrite",
+          "postprocess"
+        ]
+      },
+      "McpRefreshResponse": {
+        "type": "object",
+        "required": [
+          "success",
+          "server_id",
+          "instances"
+        ],
+        "properties": {
+          "instances": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "server_id": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "McpServerInfoResponse": {
+        "type": "object",
+        "required": [
+          "name",
+          "url",
+          "has_auth_credential",
+          "custom_header_count",
+          "source",
+          "enabled",
+          "running",
+          "tool_count",
+          "is_stdio"
+        ],
+        "properties": {
+          "custom_header_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "has_auth_credential": {
+            "type": "boolean"
+          },
+          "is_stdio": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string"
+          },
+          "tool_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "McpServersListResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/McpServerInfoResponse"
+        }
+      },
+      "McpToolInfoResponse": {
+        "type": "object",
+        "required": [
+          "namespaced_name",
+          "original_name",
+          "server_name",
+          "pin_changed",
+          "permission_action",
+          "permission_source"
+        ],
+        "properties": {
+          "annotations": {
+            "description": "MCP annotations are protocol-extensible JSON."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "namespaced_name": {
+            "type": "string"
+          },
+          "original_name": {
+            "type": "string"
+          },
+          "permission_action": {
+            "$ref": "#/components/schemas/McpPermissionAction"
+          },
+          "permission_source": {
+            "type": "string"
+          },
+          "pin_changed": {
+            "type": "boolean"
+          },
+          "pin_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "server_name": {
+            "type": "string"
+          }
+        }
+      },
+      "McpToolsListResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/McpToolInfoResponse"
+        }
+      },
       "McpUsage": {
         "type": "object",
         "required": [
@@ -3548,6 +4332,7 @@
         "required": [
           "id",
           "name",
+          "subnet",
           "created_unix_ms",
           "members"
         ],
@@ -3567,6 +4352,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "subnet": {
+            "type": "string",
+            "description": "CIDR allocated to this network."
           }
         }
       },
@@ -3681,6 +4470,84 @@
           "tcp",
           "udp"
         ]
+      },
+      "PanicEvent": {
+        "type": "object",
+        "required": [
+          "ts",
+          "binary",
+          "message",
+          "frames"
+        ],
+        "properties": {
+          "binary": {
+            "type": "string"
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "location": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "thread": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ts": {
+            "type": "string"
+          }
+        }
+      },
+      "PanicsResponse": {
+        "type": "object",
+        "required": [
+          "panics"
+        ],
+        "properties": {
+          "panics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PanicEvent"
+            }
+          }
+        }
+      },
+      "PersistRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "PersistResponse": {
+        "type": "object",
+        "required": [
+          "success",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
       },
       "ProcessEvent": {
         "type": "object",
@@ -3900,6 +4767,31 @@
         "enum": [
           "pinned_until_recreate"
         ]
+      },
+      "ProfileMcpInfoResponse": {
+        "type": "object",
+        "required": [
+          "profile_id",
+          "server_count",
+          "manual_server_count",
+          "builtin_local_enabled"
+        ],
+        "properties": {
+          "builtin_local_enabled": {
+            "type": "boolean"
+          },
+          "manual_server_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "server_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       },
       "ProfileNewSessionUpdateSemantics": {
         "type": "string",
@@ -4202,6 +5094,39 @@
           }
         }
       },
+      "PurgeRequest": {
+        "type": "object",
+        "properties": {
+          "all": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PurgeResponse": {
+        "type": "object",
+        "required": [
+          "purged",
+          "persistent_purged",
+          "ephemeral_purged"
+        ],
+        "properties": {
+          "ephemeral_purged": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "persistent_purged": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "purged": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "RawContent": {
         "type": "object",
         "required": [
@@ -4301,6 +5226,60 @@
         "enum": [
           "accepted"
         ]
+      },
+      "RunRequest": {
+        "type": "object",
+        "required": [
+          "command",
+          "profile_id"
+        ],
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "cpus": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Guest CPU count. Falls back to the selected profile's VM resources.",
+            "minimum": 0
+          },
+          "env": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Environment variables to inject into the guest at boot.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "ram_mb": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Guest RAM in MiB. Falls back to the selected profile's VM resources.",
+            "minimum": 0
+          },
+          "timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
       },
       "SandboxInfo": {
         "type": "object",
@@ -4584,6 +5563,31 @@
           },
           "ready": {
             "type": "boolean"
+          }
+        }
+      },
+      "SlowOpEvent": {
+        "type": "object",
+        "required": [
+          "ts",
+          "binary",
+          "op",
+          "duration_ms"
+        ],
+        "properties": {
+          "binary": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "op": {
+            "type": "string"
+          },
+          "ts": {
+            "type": "string"
           }
         }
       },
@@ -5103,6 +6107,38 @@
           "mcp_proxy"
         ]
       },
+      "TriageResponse": {
+        "type": "object",
+        "required": [
+          "since",
+          "host",
+          "session",
+          "rank"
+        ],
+        "properties": {
+          "host": {
+            "$ref": "#/components/schemas/HostTriageResponse"
+          },
+          "rank": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "session": {
+            "description": "Session-ledger categories are extensible and retain their native JSON shape."
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "since": {
+            "type": "string"
+          }
+        }
+      },
       "UpdateActionResponse": {
         "type": "object",
         "required": [
@@ -5329,6 +6365,7 @@
           "fetch_error"
         ]
       },
+      "Value": {},
       "VmAction": {
         "type": "string",
         "enum": [

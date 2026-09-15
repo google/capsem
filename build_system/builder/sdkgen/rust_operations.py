@@ -96,7 +96,13 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         lines += ["    let request = Request {"]
         if path:
             pairs = ", ".join(f'({json.dumps(p.name)}, path_{p.name}.as_str())' for p in path)
-            lines.append(f"        parameters: &[{pairs}],")
+            parameter_line = f"        parameters: &[{pairs}],"
+            if len(parameter_line) <= 100:
+                lines.append(parameter_line)
+            else:
+                lines += ["        parameters: &[",
+                          *(f"            ({json.dumps(p.name)}, path_{p.name}.as_str())," for p in path),
+                          "        ],"]
         if query:
             lines.append("        query: &query,")
         if op.request_body:
@@ -112,7 +118,14 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         suffix = ".await" if binary else ".await?"
         call = "transport" + method + suffix
         if len(call) > 72:
-            call = f"transport\n        {method}\n        {suffix}"
+            if len("        " + method) <= 100:
+                call = f"transport\n        {method}\n        {suffix}"
+            else:
+                call = ("transport\n        .request(\n"
+                        f"            reqwest::Method::{route.method.name},\n"
+                        f"            {json.dumps(route.path)},\n"
+                        "            request,\n        )\n"
+                        f"        {suffix}")
         lines.append(f"    {call}" if binary else f"    let bytes = {call};")
         if not binary:
             lines.append("    Ok(serde_json::from_slice(&bytes)?)")

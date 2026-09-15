@@ -9,12 +9,12 @@ it('creates bound VM handles with profile defaults and shared lifetime', async (
     ...sample(schemas.ProvisionResponse ?? {}) as object, id: 'vm-0', name: 'chosen',
   })), async (url, received) => {
     const hv = new Hypervisor(url, 'secret');
-    const vm = await hv.create('code', {name: 'chosen', memory: '8G', vcpu: 4});
+    const vm = await hv.create('code', {name: 'chosen', memory: '8G', vcpu: 4, networks: ['team']});
     expect(vm).toBeInstanceOf(VM);
     expect(vm.id).toBe('vm-0');
     expect(vm.name).toBe('chosen');
     expect(JSON.parse(received[0]?.body.toString() ?? '')).toMatchObject({
-      profile_id: 'code', persistent: true, ram_mb: 8192, cpus: 4,
+      profile_id: 'code', persistent: true, ram_mb: 8192, cpus: 4, networks: ['team'],
     });
     vm.close();
     await expect(vm.info()).rejects.toThrow('closed');
@@ -39,7 +39,7 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       expect(vm.name).toBe('chosen');
       await vm.exec('uname -a', {timeout_secs: 60});
       await vm.exec('true');
-      await vm.start(); await vm.pause(); await vm.resume(); await vm.stop();
+      await vm.start(); await vm.persist('saved'); await vm.pause(); await vm.resume(); await vm.stop();
       await vm.snapshots.list(); await vm.snapshots.status();
       await vm.stats.summary(); await vm.stats.details();
       await vm.history({layer: HistoryLayerFilter.EXEC, limit: 5});
@@ -61,7 +61,7 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       await vm.delete();
       const expected = [
         '/vms/list', '/vms/vm-0/info', '/vms/vm-0/exec', '/vms/vm-0/exec', '/vms/vm-0/start',
-        '/vms/vm-0/pause', '/vms/vm-0/resume', '/vms/vm-0/stop', '/vms/vm-0/snapshots/list',
+        '/vms/vm-0/save', '/vms/vm-0/pause', '/vms/vm-0/resume', '/vms/vm-0/stop', '/vms/vm-0/snapshots/list',
         '/vms/vm-0/snapshots/status', '/vms/vm-0/stats/summary', '/vms/vm-0/stats/detail',
         '/vms/vm-0/history', '/vms/vm-0/history',
       ];
@@ -71,6 +71,15 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       expect(received.some(request => request.url.includes('layers=fs%2Cexec'))).toBe(true);
       await hv.info(); await hv.list(); await hv.log();
       await hv.log({source: HostLogSource.GATEWAY, tail: 2});
+      await hv.run('printf ok', {profile: 'code', timeout_secs: 4});
+      await hv.panics({since: '5m', limit: 3});
+      await hv.triage({vm_id: 'vm-0', since: '1h', limit: 2});
+      await hv.purge({all: true});
+      await hv.profiles.list();
+      const mcp = hv.profiles.mcp('code');
+      await mcp.info(); await mcp.servers(); await mcp.defaultPermission();
+      await mcp.tools('local'); await mcp.refresh('local');
+      await mcp.call('local', 'read_file', {path: '/tmp/x'});
       await hv.update();
       expect(received.at(-1)?.url).toBe('/update/apply');
       expect(JSON.parse(received.at(-1)?.body.toString() ?? '')).toEqual({confirmed: true});

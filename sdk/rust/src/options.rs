@@ -17,6 +17,29 @@ pub struct CreateOptions {
     pub vcpu: Option<u32>,
     pub memory: Option<Memory>,
     pub env: Option<HashMap<String, String>>,
+    pub networks: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RunOptions {
+    pub profile: Option<String>,
+    pub timeout_secs: Option<u64>,
+    pub vcpu: Option<u32>,
+    pub memory: Option<Memory>,
+    pub env: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DiagnosticOptions {
+    pub since: Option<String>,
+    pub limit: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TriageOptions {
+    pub since: Option<String>,
+    pub limit: Option<u64>,
+    pub vm_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

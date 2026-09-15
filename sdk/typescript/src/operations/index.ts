@@ -1,6 +1,7 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
 export {attachNetworkMember} from "./attachNetworkMember.js";
+export {callProfileMcpTool} from "./callProfileMcpTool.js";
 export {createNetwork} from "./createNetwork.js";
 export {createVm} from "./createVm.js";
 export {deleteNetwork} from "./deleteNetwork.js";
@@ -13,6 +14,10 @@ export {getHypervisorInfo} from "./getHypervisorInfo.js";
 export {getHypervisorLogs} from "./getHypervisorLogs.js";
 export {getNetwork} from "./getNetwork.js";
 export {getNetworkLogs} from "./getNetworkLogs.js";
+export {getPanics} from "./getPanics.js";
+export {getProfileMcpDefault} from "./getProfileMcpDefault.js";
+export {getProfileMcpInfo} from "./getProfileMcpInfo.js";
+export {getTriage} from "./getTriage.js";
 export {getUpdateStatus} from "./getUpdateStatus.js";
 export {getVmChanges} from "./getVmChanges.js";
 export {getVmHistory} from "./getVmHistory.js";
@@ -24,13 +29,19 @@ export {getVmStatsSummary} from "./getVmStatsSummary.js";
 export {getVmStatus} from "./getVmStatus.js";
 export {getVmTimeline} from "./getVmTimeline.js";
 export {listNetworks} from "./listNetworks.js";
+export {listProfileMcpServers} from "./listProfileMcpServers.js";
+export {listProfileMcpTools} from "./listProfileMcpTools.js";
 export {listProfiles} from "./listProfiles.js";
 export {listVmFiles} from "./listVmFiles.js";
 export {listVmSnapshots} from "./listVmSnapshots.js";
 export {listVms} from "./listVms.js";
 export {pauseVm} from "./pauseVm.js";
+export {persistVm} from "./persistVm.js";
+export {purgeVms} from "./purgeVms.js";
+export {refreshProfileMcpServer} from "./refreshProfileMcpServer.js";
 export {restartHypervisor} from "./restartHypervisor.js";
 export {resumeVm} from "./resumeVm.js";
+export {runVm} from "./runVm.js";
 export {startVm} from "./startVm.js";
 export {stopVm} from "./stopVm.js";
 export {updateHypervisor} from "./updateHypervisor.js";

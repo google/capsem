@@ -58,11 +58,21 @@ fn sample(schema: &Value, full: bool) -> Value {
     }
 }
 
+fn is_open_json(schema: &Value) -> bool {
+    if let Some(reference) = schema["$ref"].as_str() {
+        return is_open_json(CONTRACT.pointer(&reference[1..]).unwrap());
+    }
+    schema
+        .as_object()
+        .is_some_and(|object| object.keys().all(|key| key == "description"))
+}
+
 pub struct Case {
     pub input: Value,
     pub response: Value,
     pub binary: bool,
     pub success_status: u16,
+    pub open_json: bool,
     path: String,
     method: String,
     query: Vec<(String, String)>,
@@ -147,16 +157,18 @@ impl Case {
         };
         let content = &operation["responses"][success_status.to_string()]["content"];
         let binary = content.get("application/octet-stream").is_some();
+        let response_schema = &content["application/json"]["schema"];
         let response = if binary {
             Value::Null
         } else {
-            sample(&content["application/json"]["schema"], full)
+            sample(response_schema, full)
         };
         Self {
             input: Value::Object(input),
             response,
             binary,
             success_status,
+            open_json: !binary && is_open_json(response_schema),
             path: url.path().into(),
             method: method.to_uppercase(),
             query,

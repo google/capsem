@@ -20,5 +20,6 @@ async def exec_vm(
         Method.POST, '/vms/{id}/exec',
         path_parameters={'id': id},
         body=body,
+        json_body=True,
     )
     return TypeAdapter(ExecResponse).validate_json(payload)

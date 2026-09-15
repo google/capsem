@@ -49,6 +49,8 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
                 lines.append(f"        {keyword_arg}={{{', '.join(parameters[location])}}},")
         if operation.request_body is not None:
             lines.append("        body=body,")
+            if operation.request_body.media_type == "application/json":
+                lines.append("        json_body=True,")
         if binary:
             lines.append("        accept=MediaType.BINARY,")
         lines.append("    )")
@@ -68,6 +70,9 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         if name + ".py" in files:
             raise ValueError(f"colliding operation module: {name}")
         files[name + ".py"] = HEADER + "from __future__ import annotations\n\n" + "\n".join(imports) + "\n\n\n" + body
-        exports.append(f"from .{name} import {name} as {name}")
+        exported = f"from .{name} import {name} as {name}"
+        if len(exported) > 88:
+            exported = f"from .{name} import (\n    {name} as {name},\n)"
+        exports.append(exported)
     files["__init__.py"] = HEADER + "\n".join(sorted(exports)) + "\n"
     return files

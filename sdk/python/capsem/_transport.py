@@ -5,11 +5,14 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
+from typing import Self
 from urllib.parse import quote, urlencode, urlsplit
 
 import aiohttp
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from yarl import URL
+
+from .models.model_base import JsonValue
 
 QueryValue = str | int | bool | Sequence[str | int | bool] | None
 
@@ -56,7 +59,7 @@ class Transport:
         self._session: aiohttp.ClientSession | None = None
         self._closed = False
 
-    async def __aenter__(self) -> Transport:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *_args: object) -> None:
@@ -71,7 +74,8 @@ class Transport:
         self, method: Method, path: str, *,
         path_parameters: Mapping[str, str] | None = None,
         query: Mapping[str, QueryValue] | None = None,
-        body: BaseModel | bytes | None = None,
+        body: BaseModel | JsonValue | bytes | None = None,
+        json_body: bool = False,
         accept: MediaType = MediaType.JSON,
     ) -> bytes:
         if self._closed:
@@ -94,12 +98,16 @@ class Transport:
                 pairs.append((key, _query_value(value)))
         target = self._url + path + ("?" + urlencode(pairs) if pairs else "")
         headers = {"Authorization": f"Bearer {self._token}", "Accept": accept.value}
-        data: str | bytes | None = body if isinstance(body, bytes) else None
-        if isinstance(body, BaseModel):
-            data = body.model_dump_json(by_alias=True, exclude_unset=True)
+        data: str | bytes | None = None
+        if json_body or isinstance(body, BaseModel):
+            data = (body.model_dump_json(by_alias=True, exclude_unset=True)
+                    if isinstance(body, BaseModel) else TypeAdapter(JsonValue).dump_json(body))
             headers["Content-Type"] = MediaType.JSON.value
-        elif body is not None:
+        elif isinstance(body, bytes):
+            data = body
             headers["Content-Type"] = MediaType.BINARY.value
+        elif body is not None:
+            raise TypeError("non-model JSON bodies require json_body=True")
         if self._session is None:
             self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._timeout))
         async with self._session.request(

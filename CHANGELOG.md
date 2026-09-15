@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python, TypeScript and Rust SDK facades expose typed one-shot execution,
+  persistence, purge, panic/triage diagnostics, and profile MCP discovery and
+  invocation over authenticated gateway HTTP.
+
 - Python, TypeScript and Rust SDK network resources provide typed create, list,
   inspect, delete, member attach/detach and cursor-based audit operations over
   authenticated gateway HTTP. VM creation accepts existing network names.

@@ -17,6 +17,9 @@ pub fn openapi() -> OpenApi {
     doc.add("/restart", HttpMethod::Post, restart);
     doc.get::<ListResponse>("/vms/list", "listVms");
     doc.post::<ProvisionRequest, ProvisionResponse>("/vms/create", "createVm");
+    doc.post::<RunRequest, ExecResponse>("/run", "runVm");
+    doc.post::<PurgeRequest, PurgeResponse>("/purge", "purgeVms");
+    doc.post::<PersistRequest, PersistResponse>("/vms/{id}/save", "persistVm");
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
     doc.get::<VmStatusResponse>("/vms/{id}/status", "getVmStatus");
     doc.post::<ExecRequest, ExecResponse>("/vms/{id}/exec", "execVm");
@@ -46,6 +49,8 @@ pub fn openapi() -> OpenApi {
         .parameters(Some(ChangesQuery::into_params(|| Some(ParameterIn::Query))));
     doc.add("/vms/{id}/changes", HttpMethod::Get, changes);
     doc.get::<ProfilesListResponse>("/profiles/list", "listProfiles");
+    doc.diagnostics();
+    doc.profile_mcp();
     doc.get::<UpdateStatusResponse>("/update/status", "getUpdateStatus");
     doc.post::<UpdateApplyRequest, UpdateActionResponse>("/update/apply", "updateHypervisor");
     doc.networks();
@@ -94,10 +99,16 @@ impl Document {
                         Content::new(Some(ObjectBuilder::new().schema_type(Type::String))),
                     ),
             );
-        if path.contains("{id}") {
+        for name in path
+            .split('/')
+            .filter_map(|segment| segment.strip_prefix('{').and_then(|value| value.strip_suffix('}')))
+        {
+            if path == "/host-logs/{name}" && name == "name" {
+                continue;
+            }
             operation = operation.parameter(
                 ParameterBuilder::new()
-                    .name("id")
+                    .name(name)
                     .parameter_in(ParameterIn::Path)
                     .required(Required::True)
                     .schema(Some(ObjectBuilder::new().schema_type(Type::String))),
@@ -140,19 +151,9 @@ impl Document {
         self.add("/networks/{id}", HttpMethod::Delete, delete);
 
         let member_path = "/networks/{id}/members/{vm_id}";
-        let vm_id = ParameterBuilder::new()
-            .name("vm_id")
-            .parameter_in(ParameterIn::Path)
-            .required(Required::True)
-            .schema(Some(ObjectBuilder::new().schema_type(Type::String)))
-            .build();
-        let attach = self
-            .operation::<NetworkInfo>(member_path, "attachNetworkMember")
-            .parameter(vm_id.clone());
+        let attach = self.operation::<NetworkInfo>(member_path, "attachNetworkMember");
         self.add(member_path, HttpMethod::Put, attach);
-        let detach = self
-            .operation::<NetworkInfo>(member_path, "detachNetworkMember")
-            .parameter(vm_id);
+        let detach = self.operation::<NetworkInfo>(member_path, "detachNetworkMember");
         self.add(member_path, HttpMethod::Delete, detach);
 
         let logs_path = "/networks/{id}/logs";
@@ -160,6 +161,35 @@ impl Document {
             .operation::<NetworkLogsResponse>(logs_path, "getNetworkLogs")
             .parameters(Some(NetworkLogsQuery::into_params(|| Some(ParameterIn::Query))));
         self.add(logs_path, HttpMethod::Get, logs);
+    }
+
+    fn diagnostics(&mut self) {
+        let panics = self
+            .operation::<PanicsResponse>("/panics", "getPanics")
+            .parameters(Some(TriageQuery::into_params(|| Some(ParameterIn::Query))));
+        self.add("/panics", HttpMethod::Get, panics);
+        let triage = self
+            .operation::<TriageResponse>("/triage", "getTriage")
+            .parameters(Some(TriageQuery::into_params(|| Some(ParameterIn::Query))));
+        self.add("/triage", HttpMethod::Get, triage);
+    }
+
+    fn profile_mcp(&mut self) {
+        self.get::<ProfileMcpInfoResponse>("/profiles/{profile_id}/mcp/info", "getProfileMcpInfo");
+        self.get::<McpServersListResponse>("/profiles/{profile_id}/mcp/servers/list", "listProfileMcpServers");
+        self.get::<McpDefaultPermissionResponse>("/profiles/{profile_id}/mcp/default/info", "getProfileMcpDefault");
+        self.get::<McpToolsListResponse>(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
+            "listProfileMcpTools",
+        );
+        self.empty_post::<McpRefreshResponse>(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
+            "refreshProfileMcpServer",
+        );
+        self.post::<serde_json::Value, serde_json::Value>(
+            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
+            "callProfileMcpTool",
+        );
     }
 
     fn logs(&mut self) {

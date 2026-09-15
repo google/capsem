@@ -22,6 +22,9 @@ async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     details = await vm.stats.details()
     history = await vm.history()
     timeline = await vm.timeline(layers=[TimelineLayer.EXEC, TimelineLayer.MODEL])
+    await vm.persist("saved-workspace")
+    triage = await hv.triage(vm_id=vm.id, since="1h")
+    tools = await hv.profiles.mcp("code").tools("filesystem")
     logs = await hv.log(HostLogSource.SERVICE, tail=100)
     await vm.stop()
 
@@ -65,3 +68,8 @@ restart call. The acknowledgement does not claim reconnection has completed.
 Private networks are available through `hv.networks`; resource mutations use
 immutable IDs, while VM creation accepts existing network names. Snapshot
 creation/restoration, mounts and port exposure remain pending.
+
+`hv.run(command)` executes once in a temporary VM. `hv.panics()` and
+`hv.triage()` expose host and optional VM-ledger diagnostics, and `hv.purge()`
+cleans stopped VMs. `hv.profiles` lists profiles and provides typed MCP server,
+permission and tool discovery; MCP calls retain native JSON arguments/results.

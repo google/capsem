@@ -57,11 +57,16 @@ def test_wire_encoding_auth_json_and_binary() -> None:
             assert headers["Authorization"] == "Bearer test-token"
             assert headers["Accept"] == headers["Content-Type"] == "application/json"
             assert b"optional" not in body
+            native = {"nested": [True, None, {"number": 3}]}
+            await client.request(Method.POST, "/native", body=native, json_body=True)
+            assert received[1][2] == b'{"nested":[true,null,{"number":3}]}'
+            await client.request(Method.POST, "/null", body=None, json_body=True)
+            assert received[2][2] == b"null"
             binary = b"\x00\xff\n"
             assert await client.request(Method.POST, "/file", body=binary, accept=MediaType.BINARY) == binary
-            assert received[1][3]["Accept"] == received[1][3]["Content-Type"] == "application/octet-stream"
+            assert received[3][3]["Accept"] == received[3][3]["Content-Type"] == "application/octet-stream"
             assert await client.request(Method.GET, "/status") == b'{"success":true}'
-            assert len(received) == 3
+            assert len(received) == 5
         await client.close()
         with pytest.raises(RuntimeError, match="closed"):
             await client.request(Method.GET, "/status")

@@ -13,3 +13,4 @@ class NetworkInfo(Model):
     id: StrictStr
     members: list[NetworkMemberInfo]
     name: StrictStr
+    subnet: StrictStr

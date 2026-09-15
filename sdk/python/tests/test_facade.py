@@ -16,11 +16,13 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
             assert isinstance(await hv.info(), models.HypervisorInfo)
             assert isinstance(await hv.list(), models.ListResponse)
-            vm = await hv.create("code", name="new", vcpu=4, memory="8G", env={"LANG": "C"})
+            vm = await hv.create(
+                "code", name="new", vcpu=4, memory="8G", env={"LANG": "C"}, networks=["team"],
+            )
             assert vm.id == "created-id" and vm.name == "new"
             body = json.loads(state.requests[-1][2])
             assert body == {"profile_id": "code", "name": "new", "persistent": True,
-                            "cpus": 4, "ram_mb": 8192, "env": {"LANG": "C"}}
+                            "cpus": 4, "ram_mb": 8192, "env": {"LANG": "C"}, "networks": ["team"]}
             async with vm:
                 assert isinstance(await vm.info(), models.SandboxInfo)
             with pytest.raises(RuntimeError, match="closed"):
@@ -33,6 +35,18 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             assert body["persistent"] is False and body["name"] is None
             assert body["cpus"] is None and body["ram_mb"] is None
             assert isinstance(await hv.log(models.HostLogSource.SERVICE, grep="boot", tail=3, max_bytes=1024), models.HostLogsResponse)
+            assert isinstance(await hv.run("printf ok", profile="code", timeout_secs=4), models.ExecResponse)
+            assert isinstance(await hv.panics(since="5m", limit=3), models.PanicsResponse)
+            assert isinstance(await hv.triage(vm_id="vm-0", since="1h", limit=2), models.TriageResponse)
+            assert isinstance(await hv.purge(all=True), models.PurgeResponse)
+            assert isinstance(await hv.profiles.list(), models.ProfilesListResponse)
+            mcp = hv.profiles.mcp("code")
+            assert isinstance(await mcp.info(), models.ProfileMcpInfoResponse)
+            assert isinstance(await mcp.servers(), list)
+            assert isinstance(await mcp.default_permission(), models.McpDefaultPermissionResponse)
+            assert isinstance(await mcp.tools("local"), list)
+            assert isinstance(await mcp.refresh("local"), models.McpRefreshResponse)
+            assert await mcp.call("local", "read_file", {"path": "/tmp/x"}) is not None
             assert isinstance(await hv.update(), models.UpdateActionResponse)
             assert json.loads(state.requests[-1][2]) == {"confirmed": True}
             restarted = await hv.restart()
@@ -55,6 +69,7 @@ def test_name_is_resolved_once_and_each_vm_interface_returns_typed_results() -> 
             assert isinstance(await vm.exec("echo hello", timeout_secs=12), models.ExecResponse)
             assert json.loads(state.requests[-1][2]) == {"command": "echo hello", "timeout_secs": 12}
             assert isinstance(await vm.start(), models.ProvisionResponse)
+            assert isinstance(await vm.persist("saved"), models.PersistResponse)
             assert isinstance(await vm.pause(), models.VmActionResponse)
             assert isinstance(await vm.resume(), models.ProvisionResponse)
             assert isinstance(await vm.log(grep="ready", tail=5, max_bytes=2048), models.LogsResponse)

@@ -177,6 +177,18 @@ impl VM {
         Self::created(self.client.clone(), result.id, result.name)
     }
 
+    pub async fn persist(&self, name: &str) -> Result<models::PersistResponse> {
+        api::persist_vm(
+            &self.client.transport,
+            &api::PersistVmParams {
+                id: self.resolve().await?,
+                body: models::PersistRequest { name: name.into() },
+            },
+            self.client.options,
+        )
+        .await
+    }
+
     pub fn copy(&self) -> Copy<'_> {
         Copy(self)
     }

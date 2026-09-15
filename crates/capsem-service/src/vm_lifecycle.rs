@@ -609,7 +609,7 @@ pub(super) async fn handle_persist(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Json(payload): Json<PersistRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<PersistResponse>, AppError> {
     let name = &payload.name;
     validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
@@ -706,7 +706,10 @@ pub(super) async fn handle_persist(
         }
     }
 
-    Ok(Json(json!({ "success": true, "name": name })))
+    Ok(Json(PersistResponse {
+        success: true,
+        name: name.clone(),
+    }))
 }
 
 pub(super) async fn handle_purge(
