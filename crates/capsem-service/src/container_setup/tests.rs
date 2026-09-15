@@ -217,6 +217,58 @@ async fn registry_access_reaches_only_the_image_source_and_never_the_status() {
     );
 }
 
+/// Every byte the service sends toward the session ledger during a
+/// successful setup -- the import rows for each staged file and the launch --
+/// is free of the registry credentials the pull used.
+#[tokio::test]
+async fn registry_credentials_never_reach_the_owner_or_the_staged_workload() {
+    let access = Arc::new(Mutex::new(None));
+    let fx = fixture(FixtureImages {
+        access: Arc::clone(&access),
+        ..images()
+    });
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 5);
+    let secret = RegistryAccess {
+        username: Some("robot-user".into()),
+        password: Some("registry-password".into()),
+        ca_pem: Some("-----BEGIN CERTIFICATE-----private-ca".into()),
+    };
+    start(&fx.state, "box".into(), spec(Some(secret.clone())));
+    wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
+    let messages = owner.await.unwrap();
+    assert_eq!(
+        access.lock().unwrap().as_ref(),
+        Some(&secret),
+        "the pull still had them"
+    );
+    let sent = format!("{messages:?}");
+    let mut staged = String::new();
+    for entry in walk(&fx.workspace) {
+        staged.push_str(&String::from_utf8_lossy(&std::fs::read(entry).unwrap()));
+    }
+    assert!(
+        staged.contains("serve") && sent.contains("LogFileBoundary"),
+        "the setup staged and logged its files"
+    );
+    for leak in ["registry-password", "robot-user", "private-ca"] {
+        assert!(!sent.contains(leak), "{leak} reached the owner: {sent}");
+        assert!(!staged.contains(leak), "{leak} was staged into the VM");
+    }
+}
+
+fn walk(dir: &StdPath) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.extend(walk(&path));
+        } else {
+            files.push(path);
+        }
+    }
+    files
+}
+
 #[tokio::test]
 async fn cancel_during_staging_never_launches_the_workload() {
     let fx = fixture(images());
