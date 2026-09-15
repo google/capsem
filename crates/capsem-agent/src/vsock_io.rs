@@ -139,7 +139,11 @@ fn wait_connected(socket: &std::os::unix::net::UnixStream, timeout: Duration) ->
                         &mut length,
                     )
                 };
-                return if named == 0 { Ok(()) } else { Err(io::Error::last_os_error()) };
+                return if named == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::last_os_error())
+                };
             }
         }
     }
