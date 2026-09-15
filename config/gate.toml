@@ -2910,6 +2910,7 @@ slowest_steps = 10
 internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route" }
 measured = [
     "/vms/{id}/changes",
+    "/vms/{id}/status",
     "/vms/{id}/exposures",
     "/vms/{id}/security/status",
     "/vms/{id}/snapshots/status",
@@ -3021,8 +3022,8 @@ unmeasured = [
     "/vms/{id}/start",
     "/vms/{id}/stats/detail",
     "/vms/{id}/stats/summary",
-    "/vms/{id}/status",
     "/vms/{id}/stop",
+    "/vms/{id}/stream",
     "/vms/{id}/timeline",
 ]
 

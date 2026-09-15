@@ -114,6 +114,7 @@ fn spec(registry: Option<RegistryAccess>) -> ContainerSpec {
         args: vec!["serve".into()],
         env: [("MODE".to_string(), "test".to_string())].into(),
         registry,
+        attach: false,
     }
 }
 

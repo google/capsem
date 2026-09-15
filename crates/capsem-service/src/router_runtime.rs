@@ -2,6 +2,7 @@ use super::*;
 
 mod exposures;
 pub(crate) mod restart;
+mod streams;
 
 pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
     Router::new()
@@ -37,6 +38,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/status", get(handle_vm_status))
         .route("/vms/{id}/container", get(container_setup::handle_container_status))
+        .route("/vms/{id}/stream", get(streams::handle_stream))
         .route(
             "/vms/{id}/exposures",
             get(exposures::handle_list_exposures).post(exposures::handle_create_exposure),

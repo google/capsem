@@ -129,6 +129,48 @@ impl ContainerSetups {
         }
     }
 
+    /// Claim a staged workload for an attached start. Exactly one stream wins;
+    /// the claim is the move from `staged` to `starting`.
+    pub(crate) fn claim_attach(&self, id: &str) -> Result<u64, String> {
+        let mut records = self.records.lock().unwrap();
+        match records.get_mut(id) {
+            Some(record) if record.status.state == ContainerState::Staged => {
+                record.status.state = ContainerState::Starting;
+                Ok(record.generation)
+            }
+            Some(record) => Err(format!(
+                "container workload is {}, not staged for attach",
+                serde_json::to_value(record.status.state)
+                    .ok()
+                    .and_then(|state| state.as_str().map(str::to_owned))
+                    .unwrap_or_default()
+            )),
+            None => Err("VM has no container workload".into()),
+        }
+    }
+
+    /// A workload already staged for attach, for stream tests.
+    #[cfg(test)]
+    pub(crate) fn stage_for_tests(&self, id: &str, image: &str) -> u64 {
+        let generation = self.begin(id, image);
+        self.advance(id, generation, |status| status.state = ContainerState::Staged);
+        generation
+    }
+
+    /// Record how an attached workload ended.
+    pub(crate) fn finish_attach(&self, id: &str, generation: u64, outcome: Result<i32, String>) {
+        self.advance(id, generation, |status| match outcome {
+            Ok(code) => {
+                status.state = ContainerState::Exited;
+                status.exit_code = Some(code);
+            }
+            Err(error) => {
+                status.state = ContainerState::Failed;
+                status.error = Some(error);
+            }
+        });
+    }
+
     fn attach_task(&self, id: &str, generation: u64, task: tokio::task::AbortHandle) {
         let mut records = self.records.lock().unwrap();
         match records.get_mut(id) {
@@ -180,6 +222,7 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         return Ok(());
     }
 
+    let attach = spec.attach;
     let plan = tokio::task::spawn_blocking({
         let (root, files) = (image.root.clone(), image.files.clone());
         move || stage::stage_plan(&root, &files, &spec.args, &spec.env)
@@ -194,6 +237,13 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         stage_file(state, id, file).await?;
     }
 
+    if attach {
+        // A `container` stream starts it; the launch record is written then.
+        state
+            .containers
+            .advance(id, generation, |status| status.state = ContainerState::Staged);
+        return Ok(());
+    }
     if !state
         .containers
         .advance(id, generation, |status| status.state = ContainerState::Starting)
@@ -211,7 +261,7 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
     )
     .await?;
     match reply {
-        ProcessToService::ExecResult { exit_code: 0, .. } => record_launched(state, id, &image),
+        ProcessToService::ExecResult { exit_code: 0, .. } => record_launched(state, id),
         ProcessToService::ExecResult { exit_code, .. } => Err(format!("container launcher exited {exit_code}")),
         other => Err(format!("unexpected launch reply: {other:?}")),
     }
@@ -227,14 +277,14 @@ struct LaunchRecord {
     digest: String,
 }
 
-fn record_launched(state: &ServiceState, id: &str, image: &PulledImage) -> Result<(), String> {
+pub(crate) fn record_launched(state: &ServiceState, id: &str) -> Result<(), String> {
     let session_dir = resolve_session_dir(state, id).map_err(|e| e.1)?;
     let Some(status) = state.containers.status(id) else {
         return Ok(());
     };
     let record = serde_json::to_vec(&LaunchRecord {
         image: status.image,
-        digest: image.digest.clone(),
+        digest: status.digest.unwrap_or_default(),
     })
     .map_err(|e| format!("encode launch record: {e}"))?;
     capsem_foundation::unix::fs::atomic_write_private(&session_dir.join(LAUNCH_RECORD), &record)

@@ -93,7 +93,7 @@ where
 
 /// Validate VM ID: alphanumeric, hyphens, underscores. Must start with
 /// alphanumeric, length 1-64. Matches capsem-service's `validate_vm_name`.
-fn validate_vm_id(id: &str) -> Result<(), &'static str> {
+pub(crate) fn validate_vm_id(id: &str) -> Result<(), &'static str> {
     if id.is_empty() {
         return Err("VM id cannot be empty");
     }

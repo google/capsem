@@ -12,6 +12,7 @@ fn private_spec() -> ContainerSpec {
             password: Some("registry-secret".into()),
             ca_pem: Some("-----BEGIN CERTIFICATE-----pem-secret".into()),
         }),
+        attach: true,
     }
 }
 
@@ -51,7 +52,7 @@ fn container_spec_wire_shape_omits_empty_fields() {
     let minimal: ContainerSpec = serde_json::from_value(json!({"image": "docker://redis"})).unwrap();
     assert_eq!(
         serde_json::to_value(&minimal).unwrap(),
-        json!({"image": "docker://redis", "env": {}})
+        json!({"image": "docker://redis", "env": {}, "attach": false})
     );
     let full = serde_json::to_value(private_spec()).unwrap();
     assert_eq!(full["registry"]["username"], "robot-user");
@@ -75,6 +76,7 @@ fn container_states_are_snake_case_on_the_wire() {
     for (state, wire) in [
         (ContainerState::Pulling, "pulling"),
         (ContainerState::Staging, "staging"),
+        (ContainerState::Staged, "staged"),
         (ContainerState::Starting, "starting"),
         (ContainerState::Running, "running"),
         (ContainerState::Exited, "exited"),

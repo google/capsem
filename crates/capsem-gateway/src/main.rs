@@ -5,6 +5,7 @@ mod proxy;
 mod schema;
 mod service_client;
 mod status;
+mod stream;
 mod terminal;
 
 use std::net::SocketAddr;
@@ -220,6 +221,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/{id}/info", get(proxy::handle_proxy))
         .route("/vms/{id}/status", get(proxy::handle_proxy))
         .route("/vms/{id}/container", get(proxy::handle_proxy))
+        .route("/vms/{id}/stream", get(stream::handle_stream_tunnel))
         .route(
             "/vms/{id}/exposures",
             get(proxy::handle_proxy).post(proxy::handle_proxy),
@@ -428,7 +430,7 @@ async fn handle_events_ws(
 ///
 /// tower-http's default span records the full URI at debug, and the gateway
 /// log runs `tower_http=debug`. The browser WebSocket API cannot set headers,
-/// so `/events` and `/terminal/{id}` authenticate with `?token=`; with the
+/// so `/events`, `/terminal/{id}` and `/vms/{id}/stream` authenticate with `?token=`; with the
 /// default span every such request wrote the bearer token into gateway.log.
 fn request_trace_layer() -> TraceLayer<
     tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,

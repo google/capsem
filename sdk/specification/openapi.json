@@ -2850,6 +2850,10 @@
             },
             "description": "Command replacing the image's default command, as `docker run IMAGE CMD...`."
           },
+          "attach": {
+            "type": "boolean",
+            "description": "Stage the image and wait for a `container` stream to start the workload\nattached, instead of starting it detached."
+          },
           "env": {
             "type": "object",
             "description": "Container environment, applied over the image's.",
@@ -2883,6 +2887,7 @@
         "enum": [
           "pulling",
           "staging",
+          "staged",
           "starting",
           "running",
           "exited",

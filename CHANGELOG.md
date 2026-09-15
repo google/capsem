@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `GET /vms/{id}/stream` is one authenticated WebSocket (subprotocol
+  `capsem.stream.v1`) for the VM terminal, streaming command execution and
+  attached container workloads. Frames carry raw bytes on a channel byte and
+  typed JSON control/status, so output is never lossy text. The gateway
+  authenticates and tunnels it to the service unparsed. A container created
+  with `attach` stages its image and starts only when a container stream claims
+  it, which returns the workload's exit code.
+
 - Port exposure is an authenticated HTTP API: `POST /vms/{id}/exposures` listens
   on a host loopback port for a guest port in the container (default) or the
   VM's own namespace, `GET /vms/{id}/exposures` lists what the VM owner holds,

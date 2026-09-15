@@ -5,6 +5,7 @@
 export enum ContainerState {
   PULLING = "pulling",
   STAGING = "staging",
+  STAGED = "staged",
   STARTING = "starting",
   RUNNING = "running",
   EXITED = "exited",

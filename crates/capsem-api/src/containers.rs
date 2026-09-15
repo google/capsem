@@ -22,6 +22,10 @@ pub struct ContainerSpec {
     /// Access to a private registry, used for this pull only and never stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry: Option<RegistryAccess>,
+    /// Stage the image and wait for a `container` stream to start the workload
+    /// attached, instead of starting it detached.
+    #[serde(default)]
+    pub attach: bool,
 }
 
 impl fmt::Debug for ContainerSpec {
@@ -31,6 +35,7 @@ impl fmt::Debug for ContainerSpec {
             .field("args", &format_args!("<{} redacted>", self.args.len()))
             .field("env", &self.env.keys().collect::<Vec<_>>())
             .field("registry", &self.registry)
+            .field("attach", &self.attach)
             .finish()
     }
 }
@@ -67,6 +72,8 @@ pub enum ContainerState {
     Pulling,
     /// Verified blobs are being written into the VM's workspace.
     Staging,
+    /// Staged for an attached start; waiting for a `container` stream.
+    Staged,
     /// The guest launcher has been started and the workload is not yet up.
     Starting,
     /// The guest reports the workload running.

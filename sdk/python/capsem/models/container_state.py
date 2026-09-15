@@ -8,6 +8,7 @@ from enum import StrEnum
 class ContainerState(StrEnum):
     PULLING = 'pulling'
     STAGING = 'staging'
+    STAGED = 'staged'
     STARTING = 'starting'
     RUNNING = 'running'
     EXITED = 'exited'
