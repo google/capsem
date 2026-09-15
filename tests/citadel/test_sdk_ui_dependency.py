@@ -68,8 +68,12 @@ def test_sealed_linux_frontend_builds_the_current_sdk_first() -> None:
     runner = (ROOT / "build_system/scripts/test/test-linux-rust.sh").read_text()
     base = (ROOT / "build_system/docker/Dockerfile.linux-rust-base").read_text()
 
+    sdk_install = "pnpm --dir sdk/typescript install --frozen-lockfile"
     sdk_build = "pnpm --dir sdk/typescript run build"
+    frontend_install = "pnpm --dir web/app install --frozen-lockfile"
     frontend_build = "check-web-surface.sh frontend-build"
+    assert runner.index(sdk_install) < runner.index(sdk_build), RATIONALE
+    assert runner.index(frontend_install) < runner.index(frontend_build), RATIONALE
     assert sdk_build in runner and runner.index(sdk_build) < runner.index(frontend_build), RATIONALE
     assert "COPY sdk/typescript /src/sdk/typescript" in base, RATIONALE
     assert base.index("COPY sdk/typescript") < base.index("COPY web/app"), RATIONALE

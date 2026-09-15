@@ -38,8 +38,15 @@ done
 
 cd "$ROOT"
 
-# The networked base owns dependency installation. Rebuild the current SDK and
-# frontend source inside this sealed lane before capsem-app embeds the bundle.
+# The macOS-hosted sealed lane inherits these dependency trees from its
+# networked base. Native Linux CI starts from a clean checkout and installs
+# them here before rebuilding the current source.
+if [[ ! -d "$ROOT/sdk/typescript/node_modules" ]]; then
+    pnpm --dir sdk/typescript install --frozen-lockfile
+fi
+if [[ ! -d "$ROOT/web/app/node_modules" ]]; then
+    pnpm --dir web/app install --frozen-lockfile
+fi
 pnpm --dir sdk/typescript run build
 bash build_system/scripts/web/check-web-surface.sh frontend-build
 test -s "$ROOT/web/app/dist/index.html"
