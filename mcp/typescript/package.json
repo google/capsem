@@ -8,8 +8,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.test.json",
-    "test": "pnpm run build && pnpm run test:unit",
-    "test:unit": "vitest run --coverage",
+    "test": "pnpm run build && pnpm run test:mcp",
+    "test:mcp": "vitest run --coverage",
     "prepack": "pnpm run build"
   },
   "dependencies": {

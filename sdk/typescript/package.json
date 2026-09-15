@@ -17,7 +17,7 @@
     "prepack": "pnpm run build",
     "pretest": "pnpm run build",
     "test": "vitest run --coverage",
-    "test:unit": "vitest run --coverage"
+    "test:sdk": "vitest run --coverage"
   },
   "dependencies": {"zod": "4.6.1"},
   "devDependencies": {

@@ -50,7 +50,7 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
         kind=Kind.PACKAGE, speed=Speed.FAST,
     ), after=after)
     tested = phase.add(step(
-        "tests", Run(["pnpm", "run", "test:unit"], cwd=root),
+        "tests", Run(["pnpm", "run", "test:sdk"], cwd=root),
         kind=Kind.UNIT_TEST, speed=Speed.FAST,
     ), after=(built,))
     generated = phase.add(step(
@@ -73,7 +73,7 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
     mcp_tested = mcp_phase.add(
         step(
             "tests",
-            Run(["pnpm", "run", "test:unit"], cwd=mcp_root),
+            Run(["pnpm", "run", "test:mcp"], cwd=mcp_root),
             kind=Kind.UNIT_TEST,
             speed=Speed.FAST,
         ),
