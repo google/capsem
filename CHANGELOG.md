@@ -125,6 +125,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The VM Stats model and tool views render the shared typed SDK interaction
+  report, including request previews, assistant blocks, tool calls/results,
+  capture status, and event-owned request/response bodies.
+
 - Native installation and installed-package acceptance no longer require the
   retired Rust host MCP binary or install Node.js; `@capsem/mcp` is configured
   separately with explicit authenticated gateway HTTP credentials.
