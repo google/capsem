@@ -334,3 +334,15 @@ fn schema_exposes_closed_lifecycle_and_action_values() {
         json!(["pause", "stop", "start", "resume", "fork", "delete"])
     );
 }
+
+/// Exec used to wait forever when `timeout_secs` was absent, while the gateway
+/// cut every request at 120s: long commands answered 502 through HTTP and
+/// never ended through the local socket. The contract now bounds both.
+#[test]
+fn exec_timeout_is_bounded_and_validated() {
+    assert_eq!(exec_timeout_secs(None), Ok(DEFAULT_EXEC_TIMEOUT_SECS));
+    assert_eq!(exec_timeout_secs(Some(30)), Ok(30));
+    assert_eq!(exec_timeout_secs(Some(MAX_EXEC_TIMEOUT_SECS)), Ok(MAX_EXEC_TIMEOUT_SECS));
+    assert!(exec_timeout_secs(Some(0)).is_err());
+    assert!(exec_timeout_secs(Some(MAX_EXEC_TIMEOUT_SECS + 1)).is_err());
+}

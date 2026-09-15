@@ -17,8 +17,23 @@ use crate::AppState;
 const MAX_BODY_SIZE: usize = capsem_api::MAX_REQUEST_BODY_BYTES;
 
 /// Default request timeout. Long enough for suspend (quiescence up to 10s +
-/// pause/save up to 15s) and exec operations.
+/// pause/save up to 15s).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How long to wait for the service's response headers on `path`.
+///
+/// Exec and run answer only when the command finishes, which the service
+/// bounds by `capsem_api::MAX_EXEC_TIMEOUT_SECS`; they get that ceiling plus
+/// the ordinary request budget for readiness, boot and teardown.
+fn upstream_deadline(path: &str) -> Duration {
+    let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    let waits_for_a_command = matches!(segments.as_slice(), ["run"] | ["vms", _, "exec"]);
+    if waits_for_a_command {
+        REQUEST_TIMEOUT + Duration::from_secs(capsem_api::MAX_EXEC_TIMEOUT_SECS)
+    } else {
+        REQUEST_TIMEOUT
+    }
+}
 
 const HOP_BY_HOP_REQUEST_HEADERS: [&str; 10] = [
     "connection",
@@ -124,6 +139,7 @@ fn gateway_request_id() -> GatewayRequestId {
 }
 
 async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response> {
+    let deadline = upstream_deadline(req.uri().path());
     let should_buffer_json = req.method() == Method::GET && {
         let path = req.uri().path();
         !path.contains("/logs") && !path.starts_with("/host-logs/") && path != "/service-logs"
@@ -171,7 +187,7 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
     let upstream_req = hyper::Request::from_parts(parts, body);
 
     // Send with timeout
-    let res = tokio::time::timeout(REQUEST_TIMEOUT, state.service_client.request(upstream_req))
+    let res = tokio::time::timeout(deadline, state.service_client.request(upstream_req))
         .await
         .map_err(|_| anyhow::anyhow!("request timed out"))??;
 

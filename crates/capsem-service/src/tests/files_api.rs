@@ -773,3 +773,16 @@ async fn upload_above_the_api_body_limit_is_refused() {
         .expect("upload route should respond");
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
+
+#[tokio::test]
+async fn exec_timeout_above_the_ceiling_is_refused_before_touching_the_vm() {
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let (status, body) = route_request(
+        build_service_router(state),
+        axum::http::Method::POST,
+        "/vms/missing-vm/exec",
+        Some(json!({"command": "true", "timeout_secs": capsem_api::MAX_EXEC_TIMEOUT_SECS + 1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}

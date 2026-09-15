@@ -20,6 +20,26 @@ pub struct ListResponse {
     pub sandboxes: Vec<SandboxInfo>,
 }
 
+/// Longest a single exec or run command may wait for its result, in seconds.
+pub const MAX_EXEC_TIMEOUT_SECS: u64 = 60 * 60;
+
+/// Exec timeout applied when a request does not name one. Absent used to mean
+/// "wait forever"; it now means the ceiling.
+pub const DEFAULT_EXEC_TIMEOUT_SECS: u64 = MAX_EXEC_TIMEOUT_SECS;
+const _: () = assert!(DEFAULT_EXEC_TIMEOUT_SECS <= MAX_EXEC_TIMEOUT_SECS);
+
+/// Resolve a request's exec timeout, refusing zero and values above the ceiling.
+pub fn exec_timeout_secs(requested: Option<u64>) -> Result<u64, String> {
+    match requested {
+        None => Ok(DEFAULT_EXEC_TIMEOUT_SECS),
+        Some(0) => Err("timeout_secs must be at least 1".to_string()),
+        Some(secs) if secs > MAX_EXEC_TIMEOUT_SECS => {
+            Err(format!("timeout_secs must be at most {MAX_EXEC_TIMEOUT_SECS}"))
+        }
+        Some(secs) => Ok(secs),
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct ExecRequest {
     pub command: String,

@@ -815,6 +815,8 @@ pub(super) async fn handle_run(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<RunRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
+    let timeout_secs =
+        capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
     let _launch = state
         .lifecycle
         .admit()
@@ -904,7 +906,7 @@ pub(super) async fn handle_run(
             id: job_id,
             command: payload.command,
         },
-        payload.timeout_secs,
+        Some(timeout_secs),
     )
     .await;
 

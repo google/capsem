@@ -465,6 +465,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - VM creation no longer treats the legacy `image` request field as a clone source;
   callers must use the typed `from` field explicitly.
 
+- `exec` and `run` commands longer than two minutes now return their result
+  through the gateway instead of 502 while the command kept running. The
+  service bounds every exec at one hour (the default when `timeout_secs` is
+  omitted, which previously waited forever) and refuses `timeout_secs` of 0 or
+  above 3600 with 400; the gateway waits for that ceiling on exec and run.
+
 - Workspace file uploads between 2 MiB and 10 MiB succeed. The service router
   kept axum's implicit 2 MiB body limit while the gateway and file routes
   allowed 10 MiB; all three now share one limit.

@@ -1465,6 +1465,8 @@ pub(super) async fn handle_exec(
     Path(id): Path<String>,
     Json(payload): Json<ExecRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
+    let timeout_secs =
+        capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
     let uds_path = running_uds_path(&state, &id)?;
 
     wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
@@ -1479,7 +1481,7 @@ pub(super) async fn handle_exec(
             id: id_val,
             command: command.clone(),
         },
-        payload.timeout_secs,
+        Some(timeout_secs),
     )
     .await
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
