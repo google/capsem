@@ -887,7 +887,6 @@ error_on_warning = true
 call-top-callable = 1
 invalid-argument-type = 68
 invalid-assignment = 6
-invalid-method-override = 1
 invalid-return-type = 4
 no-matching-overload = 6
 not-subscriptable = 122

@@ -1,19 +1,17 @@
-use capsem_proto::ipc::ServiceToProcess;
-use futures::{sink::SinkExt, stream::StreamExt};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 
 /// Maximum bytes kept in the replay ring buffer. 64 KiB covers typical
 /// login banners, MOTD, and a few screenfuls of output -- enough for a
-/// freshly connecting WS client to see what the shell printed before it
+/// freshly attached terminal stream to see what the shell printed before it
 /// arrived without unbounded memory growth.
 pub const REPLAY_BUFFER_SIZE: usize = 64 * 1024;
 
 /// Fan-out relay for PTY output. Live subscribers receive new bytes via the
 /// broadcast channel; newly-subscribing clients additionally get the last
 /// `REPLAY_BUFFER_SIZE` bytes of output so they see the shell's startup
-/// banner even if the shell printed it before the WS connected.
+/// banner even if the shell printed it before the stream attached.
 ///
 /// Thread safety: `publish` and `subscribe` both take the same Mutex, which
 /// serializes buffer append + broadcast send with buffer snapshot + broadcast
@@ -64,82 +62,6 @@ impl TerminalRelay {
         drop(inner);
         (snapshot, rx)
     }
-}
-
-pub(crate) async fn handle_terminal_socket(
-    ws: axum::extract::ws::WebSocket,
-    ctrl_tx: mpsc::Sender<ServiceToProcess>,
-    replay: Vec<u8>,
-    mut term_rx: broadcast::Receiver<Vec<u8>>,
-) {
-    let (mut client_write, mut client_read) = ws.split();
-
-    let mut rx_task = tokio::spawn(async move {
-        // Replay buffered PTY output first so the client sees the shell's
-        // startup banner even if the shell printed it before the WS
-        // connected. Skip if there's nothing buffered.
-        if !replay.is_empty()
-            && client_write
-                .send(axum::extract::ws::Message::Binary(replay.into()))
-                .await
-                .is_err()
-        {
-            return;
-        }
-        while let Ok(data) = term_rx.recv().await {
-            if client_write
-                .send(axum::extract::ws::Message::Binary(data.into()))
-                .await
-                .is_err()
-            {
-                break;
-            }
-        }
-    });
-
-    let ctrl_tx_c = ctrl_tx.clone();
-    let mut tx_task = tokio::spawn(async move {
-        while let Some(Ok(msg)) = client_read.next().await {
-            match msg {
-                axum::extract::ws::Message::Binary(b) => {
-                    capsem_core::try_send!(
-                        "ws_terminal_input",
-                        ctrl_tx_c
-                            .send(ServiceToProcess::TerminalInput { data: b.to_vec() })
-                            .await
-                    );
-                }
-                axum::extract::ws::Message::Text(t) => {
-                    if let Some((cols, rows)) = parse_resize_message(t.as_str()) {
-                        capsem_core::try_send!(
-                            "ws_terminal_resize",
-                            ctrl_tx_c.send(ServiceToProcess::TerminalResize { cols, rows }).await
-                        );
-                    }
-                }
-                _ => {}
-            }
-        }
-    });
-
-    tokio::select! {
-        _ = &mut rx_task => { tx_task.abort(); },
-        _ = &mut tx_task => { rx_task.abort(); },
-    }
-}
-
-/// Parse a terminal resize JSON message, returning (cols, rows) if valid.
-///
-/// Both dimensions must fit a window size: `u16` deserialization refuses
-/// values above 65535 instead of wrapping them, and zero is refused.
-pub(crate) fn parse_resize_message(text: &str) -> Option<(u16, u16)> {
-    #[derive(serde::Deserialize)]
-    struct Resize {
-        cols: std::num::NonZeroU16,
-        rows: std::num::NonZeroU16,
-    }
-    let resize: Resize = serde_json::from_str(text).ok()?;
-    Some((resize.cols.get(), resize.rows.get()))
 }
 
 #[cfg(test)]

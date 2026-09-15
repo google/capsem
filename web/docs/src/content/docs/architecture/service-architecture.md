@@ -313,7 +313,7 @@ from VM asset releases.
 | `capsem` | bin | CLI. HTTP over UDS to service, direct UDS to process for shell |
 | `capsem-mcp-aggregator` | bin | Isolated subprocess. Manages external MCP server connections over length-prefixed MessagePack frames |
 | `capsem-mcp-builtin` | bin | Isolated built-in HTTP and file/snapshot MCP tools |
-| `capsem-gateway` | bin | HTTP gateway. Axum on TCP:19222, Bearer auth, WebSocket terminal relay |
+| `capsem-gateway` | bin | HTTP gateway. Axum on TCP:19222, Bearer auth, `/vms/{id}/stream` WebSocket tunnel to the service |
 | `capsem-app` | bin | Thin Tauri webview. Points at gateway, bundles web/app/dist for the service-unavailable screen |
 | `capsem-tray` | bin | System tray. Polls gateway, shows VM status |
 | `capsem-agent` | bin(5) | Guest binaries (pty-agent, net-proxy, dns-proxy, mcp-server, sysutil) |

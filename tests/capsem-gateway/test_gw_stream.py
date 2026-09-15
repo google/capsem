@@ -1,26 +1,35 @@
-"""Gateway terminal WebSocket tests.
+"""Gateway stream tunnel tests.
 
-Tests the /terminal/{id} WebSocket endpoint through the real gateway binary.
-Uses mock UDS with a WebSocket echo server to verify relay behavior.
+Drives `/vms/{id}/stream` through the real gateway binary against a mock
+service socket that speaks WebSocket, so the tunnel is proved end to end:
+authentication, subprotocol negotiation, byte-exact relay, and refusal.
 """
 
 import asyncio
-import contextlib
 import os
 import tempfile
 import threading
 import time
+from http import HTTPStatus
 from pathlib import Path
 
 import pytest
 import websockets
 from helpers.gateway import GatewayInstance
+from websockets.typing import Subprotocol
 
 pytestmark = pytest.mark.gateway
 
 
+STREAM_SUBPROTOCOL = Subprotocol("capsem.stream.v1")
+
+
 class MockWsProcess:
-    """A mock WebSocket server on UDS that echoes messages back."""
+    """A mock service on UDS: `/vms/ws-vm/stream` echoes frames back.
+
+    Plain HTTP requests (the gateway's status probe) get an empty VM list, and
+    a stream for any other VM gets the service's 404.
+    """
 
     def __init__(self, sock_path: str):
         self.sock_path = sock_path
@@ -41,7 +50,9 @@ class MockWsProcess:
         if self._ready.wait(timeout=5) and os.path.exists(self.sock_path):
             return
         if self._startup_error is not None:
-            raise RuntimeError("Mock WS server failed to start") from self._startup_error
+            raise RuntimeError(
+                "Mock WS server failed to start"
+            ) from self._startup_error
         raise RuntimeError("Mock WS server didn't start")
 
     def _run(self):
@@ -57,7 +68,10 @@ class MockWsProcess:
 
     async def _serve(self):
         self._server = await websockets.unix_serve(
-            self._handler, self.sock_path,
+            self._handler,
+            self.sock_path,
+            subprotocols=[STREAM_SUBPROTOCOL],
+            process_request=self._route,
         )
         # Park on an Event instead of serve_forever(): serve_forever() only
         # returns on task cancellation, which complicates cross-thread shutdown.
@@ -68,6 +82,16 @@ class MockWsProcess:
         finally:
             self._server.close()
             await self._server.wait_closed()
+
+    @staticmethod
+    def _route(connection, request):
+        if request.headers.get("Upgrade", "").lower() != "websocket":
+            response = connection.respond(HTTPStatus.OK, '{"sandboxes":[]}')
+            response.headers["Content-Type"] = "application/json"
+            return response
+        if request.path != "/vms/ws-vm/stream":
+            return connection.respond(HTTPStatus.NOT_FOUND, "VM not found")
+        return None
 
     async def _handler(self, ws):
         try:
@@ -90,45 +114,19 @@ class MockWsProcess:
 
 @pytest.fixture(scope="module")
 def ws_env():
-    """Start a gateway with a mock WS process on a known VM ID.
+    """Start a gateway in front of a mock service that knows VM `ws-vm`.
 
-    Uses a short /tmp path to avoid AF_UNIX path length limits (108 bytes).
-    The gateway reads HOME to find ~/.capsem/run/, and the mock WS
-    server's socket path must be under that same run/instances/ dir.
+    Uses a short /tmp path to avoid AF_UNIX path length limits (104 bytes).
     """
     # Use a short path to stay under the 108-byte AF_UNIX limit
     tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-gw-ws-", dir="/tmp"))
     run_dir = tmp_dir / ".capsem" / "run"
-    instances_dir = run_dir / "instances"
-    instances_dir.mkdir(parents=True)
+    run_dir.mkdir(parents=True)
 
-    # Start mock WS process for "ws-vm"
-    ws_sock = str(instances_dir / "ws-vm-ws.sock")
-    mock_ws = MockWsProcess(ws_sock)
-    mock_ws.start()
-
-    # Mock service socket (gateway uses this for proxied requests)
+    # The mock service answers both proxied requests and stream upgrades.
     service_sock = str(run_dir / "service.sock")
-    import socketserver
-    from http.server import BaseHTTPRequestHandler
-
-    class DummyHandler(BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
-        def do_GET(self):
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            body = b'{"sandboxes":[]}'
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-    class UnixServer(socketserver.UnixStreamServer):
-        allow_reuse_address = True
-
-    svc_server = UnixServer(service_sock, DummyHandler)
-    svc_thread = threading.Thread(target=svc_server.serve_forever, daemon=True)
-    svc_thread.start()
+    mock_ws = MockWsProcess(service_sock)
+    mock_ws.start()
 
     # Start gateway -- override HOME so it uses our short tmp path
     gw = GatewayInstance(uds_path=service_sock)
@@ -140,27 +138,23 @@ def ws_env():
 
     gw.stop()
     mock_ws.stop()
-    # shutdown() only asks serve_forever() to return; server_close()
-    # releases the listening UDS socket. Skipping it leaks the fd and
-    # pytest surfaces it as PytestUnraisableExceptionWarning.
-    svc_server.shutdown()
-    svc_server.server_close()
-    svc_thread.join(timeout=5)
 
 
-class TestTerminalWebSocket:
-
+class TestStreamTunnel:
     def test_ws_connect_and_echo_text(self, ws_env):
-        """Connect to /terminal/{id} via WebSocket and echo text."""
+        """Connect to /vms/{id}/stream and negotiate the stream subprotocol."""
         gw, _, _ = ws_env
 
         async def run():
-            url = f"ws://127.0.0.1:{gw.port}/terminal/ws-vm"
+            url = f"ws://127.0.0.1:{gw.port}/vms/ws-vm/stream"
             headers = {"Authorization": f"Bearer {gw.token}"}
-            async with websockets.connect(url, additional_headers=headers) as ws:
-                await ws.send("hello from test")
+            async with websockets.connect(
+                url, additional_headers=headers, subprotocols=[STREAM_SUBPROTOCOL]
+            ) as ws:
+                assert ws.subprotocol == STREAM_SUBPROTOCOL
+                await ws.send(b"\x00hello from test")
                 reply = await asyncio.wait_for(ws.recv(), timeout=5)
-                assert reply == "hello from test"
+                assert reply == b"\x00hello from test"
 
         asyncio.run(run())
 
@@ -169,9 +163,11 @@ class TestTerminalWebSocket:
         gw, _, _ = ws_env
 
         async def run():
-            url = f"ws://127.0.0.1:{gw.port}/terminal/ws-vm"
+            url = f"ws://127.0.0.1:{gw.port}/vms/ws-vm/stream"
             headers = {"Authorization": f"Bearer {gw.token}"}
-            async with websockets.connect(url, additional_headers=headers) as ws:
+            async with websockets.connect(
+                url, additional_headers=headers, subprotocols=[STREAM_SUBPROTOCOL]
+            ) as ws:
                 data = bytes(range(256))
                 await ws.send(data)
                 reply = await asyncio.wait_for(ws.recv(), timeout=5)
@@ -184,9 +180,11 @@ class TestTerminalWebSocket:
         gw, _, _ = ws_env
 
         async def run():
-            url = f"ws://127.0.0.1:{gw.port}/terminal/ws-vm"
+            url = f"ws://127.0.0.1:{gw.port}/vms/ws-vm/stream"
             headers = {"Authorization": f"Bearer {gw.token}"}
-            async with websockets.connect(url, additional_headers=headers) as ws:
+            async with websockets.connect(
+                url, additional_headers=headers, subprotocols=[STREAM_SUBPROTOCOL]
+            ) as ws:
                 for i in range(10):
                     msg = f"message-{i}"
                     await ws.send(msg)
@@ -200,9 +198,11 @@ class TestTerminalWebSocket:
         gw, _, _ = ws_env
 
         async def run():
-            url = f"ws://127.0.0.1:{gw.port}/terminal/ws-vm"
+            url = f"ws://127.0.0.1:{gw.port}/vms/ws-vm/stream"
             headers = {"Authorization": f"Bearer {gw.token}"}
-            ws = await websockets.connect(url, additional_headers=headers)
+            ws = await websockets.connect(
+                url, additional_headers=headers, subprotocols=[STREAM_SUBPROTOCOL]
+            )
             await ws.send("before close")
             reply = await asyncio.wait_for(ws.recv(), timeout=5)
             assert reply == "before close"
@@ -215,10 +215,12 @@ class TestTerminalWebSocket:
         gw, _, _ = ws_env
 
         async def run():
-            url = f"ws://127.0.0.1:{gw.port}/terminal/vm..bad"
+            url = f"ws://127.0.0.1:{gw.port}/vms/vm..bad/stream"
             headers = {"Authorization": f"Bearer {gw.token}"}
             with pytest.raises(websockets.exceptions.InvalidStatus):
-                await websockets.connect(url, additional_headers=headers)
+                await websockets.connect(
+                    url, additional_headers=headers, subprotocols=[STREAM_SUBPROTOCOL]
+                )
 
         asyncio.run(run())
 
@@ -227,32 +229,39 @@ class TestTerminalWebSocket:
         gw, _, _ = ws_env
 
         async def run():
-            url = f"ws://127.0.0.1:{gw.port}/terminal/ws-vm"
+            url = f"ws://127.0.0.1:{gw.port}/vms/ws-vm/stream"
             with pytest.raises(websockets.exceptions.InvalidStatus):
                 await websockets.connect(url)
 
         asyncio.run(run())
 
-    def test_ws_nonexistent_vm_closes(self, ws_env):
-        """WebSocket to non-existent VM ID connects but drops (no UDS)."""
+    def test_ws_unknown_vm_relays_the_service_refusal(self, ws_env):
+        """The service's 404 for an unknown VM reaches the client unchanged."""
         gw, _, _ = ws_env
 
         async def run():
-            url = f"ws://127.0.0.1:{gw.port}/terminal/no-such-vm"
+            url = f"ws://127.0.0.1:{gw.port}/vms/no-such-vm/stream"
             headers = {"Authorization": f"Bearer {gw.token}"}
-            # Connection may upgrade but then immediately close
-            # because there's no UDS socket for this VM
-            try:
-                async with websockets.connect(url, additional_headers=headers) as ws:
-                    # Try to receive -- should get close or error
-                    # Either shape means the gateway refused: a close frame,
-                    # or no data at all before the timeout.
-                    with contextlib.suppress(
-                        TimeoutError, websockets.exceptions.ConnectionClosed
-                    ):
-                        await asyncio.wait_for(ws.recv(), timeout=3)
-            except (websockets.exceptions.ConnectionClosed, ConnectionRefusedError):
-                pass  # Also expected
+            with pytest.raises(websockets.exceptions.InvalidStatus) as refused:
+                await websockets.connect(
+                    url, additional_headers=headers, subprotocols=[STREAM_SUBPROTOCOL]
+                )
+            assert refused.value.response.status_code == HTTPStatus.NOT_FOUND
+
+        asyncio.run(run())
+
+    def test_retired_terminal_route_is_gone(self, ws_env):
+        """`/terminal/{id}` no longer exists, even with a valid token."""
+        gw, _, _ = ws_env
+
+        async def run():
+            url = f"ws://127.0.0.1:{gw.port}/terminal/ws-vm?token={gw.token}"
+            with pytest.raises(websockets.exceptions.InvalidStatus) as refused:
+                await websockets.connect(url)
+            assert refused.value.response.status_code in (
+                HTTPStatus.UNAUTHORIZED,
+                HTTPStatus.NOT_FOUND,
+            )
 
         asyncio.run(run())
 
@@ -290,4 +299,5 @@ def test_mock_ws_process_stop_does_not_leak_thread_exception():
     finally:
         threading.excepthook = original_hook
         import shutil
+
         shutil.rmtree(tmp_dir, ignore_errors=True)

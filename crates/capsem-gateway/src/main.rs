@@ -6,7 +6,6 @@ mod schema;
 mod service_client;
 mod status;
 mod stream;
-mod terminal;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -150,7 +149,6 @@ async fn main() -> Result<()> {
         .route("/health", get(handle_health))
         .route("/token", get(handle_token))
         .route("/status", get(status::handle_status))
-        .route("/terminal/{id}", get(terminal::handle_terminal_ws))
         .route("/events", get(handle_events_ws))
         .merge(schema::routes())
         .merge(service_proxy_routes())
@@ -430,7 +428,7 @@ async fn handle_events_ws(
 ///
 /// tower-http's default span records the full URI at debug, and the gateway
 /// log runs `tower_http=debug`. The browser WebSocket API cannot set headers,
-/// so `/events`, `/terminal/{id}` and `/vms/{id}/stream` authenticate with `?token=`; with the
+/// so `/events` and `/vms/{id}/stream` authenticate with `?token=`; with the
 /// default span every such request wrote the bearer token into gateway.log.
 fn request_trace_layer() -> TraceLayer<
     tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,

@@ -467,7 +467,7 @@ fn token_comparison_does_not_depend_on_prefix_agreement() {
 
 // --- Request spans must not record the query string ---
 //
-// The browser WebSocket API cannot set headers, so `/events` and `/terminal`
+// The browser WebSocket API cannot set headers, so `/events` and `/vms/{id}/stream`
 // authenticate with `?token=`. tower-http's default span records the full
 // URI at debug, and the gateway log runs `tower_http=debug`, so every such
 // request wrote the bearer token into gateway.log in clear text.

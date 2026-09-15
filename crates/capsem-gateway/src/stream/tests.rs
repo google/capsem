@@ -90,6 +90,7 @@ async fn authenticated_stream_is_tunnelled_byte_for_byte_without_credentials() {
     }
     let headers = forwarded.recv().await.unwrap();
     assert_eq!(headers["sec-websocket-protocol"], "capsem.stream.v1");
+    assert_eq!(headers[http::header::HOST], "localhost");
     assert!(headers.get(http::header::AUTHORIZATION).is_none());
     assert!(
         !format!("{headers:?}").contains(TOKEN),
@@ -121,4 +122,99 @@ async fn invalid_vm_ids_are_refused_before_the_service() {
         .unwrap_err();
     assert!(error.to_string().contains("400"), "{error}");
     assert!(forwarded.try_recv().is_err());
+}
+
+// --- validate_vm_id ---
+
+#[test]
+fn valid_alphanumeric_id() {
+    assert!(validate_vm_id("abc123").is_ok());
+}
+
+#[test]
+fn valid_id_with_hyphens() {
+    assert!(validate_vm_id("vm-12345").is_ok());
+}
+
+#[test]
+fn valid_id_with_underscores() {
+    assert!(validate_vm_id("my_dev").is_ok());
+}
+
+#[test]
+fn valid_mixed_id() {
+    assert!(validate_vm_id("vm-my_dev-123").is_ok());
+}
+
+#[test]
+fn valid_single_char() {
+    assert!(validate_vm_id("a").is_ok());
+}
+
+#[test]
+fn valid_max_length_id() {
+    let id = "a".repeat(64);
+    assert!(validate_vm_id(&id).is_ok());
+}
+
+#[test]
+fn valid_ephemeral_id_format() {
+    // Matches the service's auto-generated format: vm-{epoch_secs}
+    assert!(validate_vm_id("vm-1712678400").is_ok());
+}
+
+#[test]
+fn valid_run_id_format() {
+    // Matches the service's run format: run-{epoch_secs}
+    assert!(validate_vm_id("run-1712678400").is_ok());
+}
+
+#[test]
+fn rejects_empty_id() {
+    assert!(validate_vm_id("").is_err());
+}
+
+#[test]
+fn rejects_too_long_id() {
+    let id = "a".repeat(65);
+    assert!(validate_vm_id(&id).is_err());
+}
+
+#[test]
+fn rejects_path_separators() {
+    assert!(validate_vm_id("../etc/passwd").is_err());
+    assert!(validate_vm_id("foo/bar").is_err());
+}
+
+#[test]
+fn rejects_spaces() {
+    assert!(validate_vm_id("vm 123").is_err());
+}
+
+#[test]
+fn rejects_special_chars() {
+    assert!(validate_vm_id("vm;rm").is_err());
+    assert!(validate_vm_id("vm&id").is_err());
+    assert!(validate_vm_id("vm|id").is_err());
+    assert!(validate_vm_id("vm$id").is_err());
+}
+
+#[test]
+fn rejects_dots() {
+    assert!(validate_vm_id("vm.123").is_err());
+}
+
+#[test]
+fn rejects_id_starting_with_hyphen() {
+    assert!(validate_vm_id("-bad").is_err());
+}
+
+#[test]
+fn rejects_id_starting_with_underscore() {
+    assert!(validate_vm_id("_bad").is_err());
+}
+
+#[test]
+fn rejects_null_bytes() {
+    assert!(validate_vm_id("vm\0id").is_err());
 }

@@ -146,7 +146,7 @@ The host MCP server is built separately from `mcp/typescript` and distributed as
 | `capsem-process` | `capsem-process` | Per-VM: boots VM, bridges vsock, manages jobs |
 | `capsem` | `capsem` | CLI: HTTP over UDS to service |
 | `mcp/typescript` | `capsem-mcp` | npm MCP server: stdio, typed SDK, authenticated gateway HTTP |
-| `capsem-gateway` | `capsem-gateway` | HTTP gateway: TCP:19222, proxies to service, WebSocket terminal |
+| `capsem-gateway` | `capsem-gateway` | HTTP gateway: TCP:19222, proxies to service, tunnels `/vms/{id}/stream` |
 | `capsem-tray` | `capsem-tray` | System tray: polls gateway, shows VM status |
 | `capsem-app` | `capsem-app` | Thin Tauri webview: points at gateway, bundled frontend for the service-unavailable screen |
 | `capsem-proto` | (lib) | Shared protocol types (host-guest, service-process IPC) |

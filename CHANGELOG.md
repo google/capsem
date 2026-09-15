@@ -141,6 +141,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The gateway `/terminal/{id}` WebSocket relay and the per-VM owner terminal
+  socket (`instances/<id>-ws.sock`) are gone. Terminals, `capsem doctor` and
+  container attach use `GET /vms/{id}/stream`; no client connects to a VM
+  owner socket, and the gateway no longer derives per-VM socket paths.
+
 - The duplicate Rust host MCP crate has been retired in favor of `@capsem/mcp`;
   the Rust guest relay, aggregator, and built-in MCP components remain.
 

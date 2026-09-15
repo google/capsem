@@ -46,7 +46,7 @@ Sharing alone is not a reason to put code in `capsem-core`.
 capsem-process is a **low-privilege** per-VM process. Security invariants:
 
 1. **Minimal environment**: service uses `env_clear()` before spawn, then passes only `HOME`, `PATH`, `USER`, `TMPDIR`, `RUST_LOG`. API keys and tokens from the user's shell never reach the process.
-2. **Socket permissions 0600**: IPC (`{id}.sock`) and terminal WS (`{id}-ws.sock`) sockets are chmod 0600 after bind. Only the owning user can connect.
+2. **Socket permissions 0600**: Per-VM owner sockets (`{id}.sock` IPC, `{id}-handoff.sock`) are chmod 0600 after bind; no client dials them -- terminals and attach go through the service `/vms/{id}/stream` route. Only the owning user can connect.
 3. **Session directory 0700**: created by the service via `create_virtiofs_session`. Contains workspace/, system/, serial.log (0600), session.db.
 4. **No guest-triggered process exit**: control channel read errors cause `break` (loop exit), not `process::exit()`. Guest cannot DoS the host process.
 5. **Gateway auth layer**: external access goes through capsem-gateway (Bearer token, rate limiting, localhost CORS). Per-VM sockets are not exposed to the network.

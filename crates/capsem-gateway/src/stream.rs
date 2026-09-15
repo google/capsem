@@ -21,6 +21,24 @@ const REQUEST_HEADERS: [http::HeaderName; 5] = [
 ];
 const RESPONSE_HEADERS: [http::HeaderName; 4] = [CONNECTION, UPGRADE, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_PROTOCOL];
 
+/// Validate VM ID: alphanumeric, hyphens, underscores. Must start with
+/// alphanumeric, length 1-64. Matches capsem-service's `validate_vm_name`.
+pub(crate) fn validate_vm_id(id: &str) -> Result<(), &'static str> {
+    if id.is_empty() {
+        return Err("VM id cannot be empty");
+    }
+    if id.len() > 64 {
+        return Err("VM id too long (max 64 characters)");
+    }
+    if !id.chars().next().unwrap().is_ascii_alphanumeric() {
+        return Err("VM id must start with a letter or digit");
+    }
+    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("VM id must contain only letters, digits, hyphens, and underscores");
+    }
+    Ok(())
+}
+
 fn refuse(status: http::StatusCode, message: &str) -> Response {
     (status, axum::Json(serde_json::json!({ "error": message }))).into_response()
 }
@@ -30,7 +48,7 @@ pub async fn handle_stream_tunnel(
     Path(id): Path<String>,
     mut request: Request,
 ) -> Response {
-    if let Err(message) = terminal::validate_vm_id(&id) {
+    if let Err(message) = validate_vm_id(&id) {
         return refuse(http::StatusCode::BAD_REQUEST, message);
     }
     let is_upgrade = request
@@ -46,9 +64,11 @@ pub async fn handle_stream_tunnel(
     }
 
     // The query may carry the gateway token for browsers; it is never forwarded.
+    // An upgrade handshake is origin-form with a Host header (RFC 6455 4.1).
     let mut upstream = http::Request::builder()
         .method(http::Method::GET)
-        .uri(format!("http://localhost/vms/{id}/stream"));
+        .uri(format!("/vms/{id}/stream"))
+        .header(http::header::HOST, "localhost");
     for name in REQUEST_HEADERS {
         for value in request.headers().get_all(&name) {
             upstream = upstream.header(&name, value);

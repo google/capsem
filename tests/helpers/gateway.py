@@ -21,11 +21,9 @@ from .http_transport import Transport
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 GATEWAY_BINARY = BIN_DIR / "capsem-gateway"
-GATEWAY_SOURCE_PATHS = [
-    PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "main.rs",
-    PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "proxy.rs",
-    PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "status.rs",
-]
+# Every gateway source: a list of three files let a stream.rs change run the
+# tests against the previous binary.
+GATEWAY_SOURCE_PATHS = sorted((PROJECT_ROOT / "crates" / "capsem-gateway" / "src").rglob("*.rs"))
 
 
 def _ensure_gateway_binary_current() -> None:
