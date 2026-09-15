@@ -638,6 +638,13 @@ class ServiceInstance:
         return read_log_stream(self.tmp_dir / "service.log")
 
 
+def exec_output_text(response, stream="stdout"):
+    """Read one explicitly textual stream from the typed exec response."""
+    output = response[stream]
+    assert output["encoding"] == "utf8", response
+    return output["data"]
+
+
 def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
     """Wait until a VM responds to exec.
 
@@ -651,7 +658,7 @@ def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
             {"command": "echo ready", "timeout_secs": timeout},
             timeout=timeout + 5,
         )
-        return resp is not None and "ready" in resp.get("stdout", "")
+        return resp is not None and "ready" in exec_output_text(resp)
     except Exception:
         return False
 

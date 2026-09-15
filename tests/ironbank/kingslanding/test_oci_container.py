@@ -21,6 +21,8 @@ from helpers.service import (
     wait_exec_ready,
 )
 
+from tests.ironbank.kingslanding.test_run import exec_output_text
+
 pytestmark = pytest.mark.integration
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "oci"
 
@@ -63,7 +65,7 @@ def test_oci_kernel_and_runtime_are_functional(oci_vm, tmp_path):
     )
     (tmp_path / "oci-platform.json").write_text(json.dumps(result, indent=2))
     assert result["exit_code"] == 0, result
-    assert {"cpu", "memory", "pids"} <= set(result["stdout"].split()), result
+    assert {"cpu", "memory", "pids"} <= set(exec_output_text(result).split()), result
 
 
 def test_offline_oci_adversarial_suite(oci_vm, tmp_path):
@@ -91,7 +93,9 @@ def test_offline_oci_adversarial_suite(oci_vm, tmp_path):
     )
     (tmp_path / "oci-result.json").write_text(json.dumps(result, indent=2))
     assert result["exit_code"] == 0, result
-    output = result["stdout"] + result["stderr"]
+    stdout = exec_output_text(result)
+    stderr = exec_output_text(result, "stderr")
+    output = stdout + stderr
     digest = re.search(r"OCI_ROOTFS_SHA256=([0-9a-f]{64})", output)
     assert digest, output
     assert "Ran 8 tests" in output and "OK" in output, output
@@ -114,7 +118,7 @@ def test_offline_oci_adversarial_suite(oci_vm, tmp_path):
             ("/usr/bin/python3 /root/oci/probe.py",),
         ).fetchall()
     assert rows == [
-        (0, "api", len(result["stdout"].encode()), len(result["stderr"].encode()), None)
+        (0, "api", len(stdout.encode()), len(stderr.encode()), None)
     ]
 
 

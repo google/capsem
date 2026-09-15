@@ -17,6 +17,7 @@ from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_run import (
     command,
     environment,
+    exec_output_text,
     service,
     wait_for,
 )
@@ -273,7 +274,7 @@ def test_router_crash_cannot_stop_or_control_the_vm(redis, service):
         f"/vms/{redis['vm']['id']}/exec",
         {"command": "printf owner-alive", "timeout_secs": 5},
     )
-    assert response["exit_code"] == 0 and response["stdout"] == "owner-alive"
+    assert response["exit_code"] == 0 and exec_output_text(response) == "owner-alive"
     assert redis["process"].poll() is None
 
 

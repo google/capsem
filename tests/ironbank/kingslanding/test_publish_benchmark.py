@@ -22,7 +22,13 @@ from helpers.benchmark_output import benchmark_output_dir
 from helpers.constants import ASSETS_DIR, BIN_DIR, PROJECT_ROOT
 
 from tests.fixtures.oci.registry import registry
-from tests.ironbank.kingslanding.test_run import command, environment, service, wait_for
+from tests.ironbank.kingslanding.test_run import (
+    command,
+    environment,
+    exec_output_text,
+    service,
+    wait_for,
+)
 
 __all__ = ["service"]
 pytestmark = pytest.mark.integration
@@ -113,7 +119,11 @@ def guest(service, vm_id, shell, timeout=40, check=True):
     )
     if check:
         assert response.get("exit_code") == 0, response
-    return response
+    return {
+        **response,
+        "stdout": exec_output_text(response),
+        "stderr": exec_output_text(response, "stderr"),
+    }
 
 
 def start_in_guest(service, vm_id, name, shell):

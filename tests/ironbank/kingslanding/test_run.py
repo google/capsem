@@ -12,7 +12,7 @@ import time
 
 import pytest
 from helpers.constants import BIN_DIR, CODE_PROFILE_ID
-from helpers.service import ServiceInstance, vm_session_dir
+from helpers.service import ServiceInstance, exec_output_text, vm_session_dir
 
 from tests.fixtures.oci.registry import registry
 
@@ -178,7 +178,7 @@ def test_cli_run_image_streams_and_an_interrupt_destroys_the_vm(service, tmp_pat
                         "timeout_secs": 10,
                     },
                 )
-                assert proof["exit_code"] == 0 and proof["stdout"] == "+PONG\r\n", proof
+                assert proof["exit_code"] == 0 and exec_output_text(proof) == "+PONG\r\n", proof
                 (tmp_path / "proof.json").write_text(
                     json.dumps(
                         {"reference": reference, "vm": rows[0], "ping": proof}, indent=2
@@ -311,7 +311,7 @@ def test_cli_create_image_starts_detached_and_keeps_only_a_named_vm(service, tmp
                     "timeout_secs": 10,
                 },
             )
-            assert proof["exit_code"] == 0 and proof["stdout"] == "+PONG\r\n", proof
+            assert proof["exit_code"] == 0 and exec_output_text(proof) == "+PONG\r\n", proof
         assert client.get("/vms/list")["sandboxes"] == []
 
         unnamed = subprocess.run(

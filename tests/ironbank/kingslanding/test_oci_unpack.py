@@ -4,6 +4,7 @@ import importlib.util
 import platform
 
 from tests.ironbank.kingslanding.test_oci_container import FIXTURES, oci_vm
+from tests.ironbank.kingslanding.test_run import exec_output_text
 
 __all__ = ["oci_vm"]
 
@@ -33,8 +34,9 @@ def test_packaged_umoci_unpacks_layer_semantics(oci_vm, tmp_path):
         {"command": "umoci --version && python3 /root/unpack_probe.py", "timeout_secs": 30},
     )
     assert result["exit_code"] == 0, result
-    assert "OCI_UNPACK: whiteouts,binary,symlink,entrypoint,cmd=PASS" in result["stdout"]
-    (tmp_path / "identity.txt").write_text(f"{architecture}\n{digest}\n{result['stdout']}")
+    stdout = exec_output_text(result)
+    assert "OCI_UNPACK: whiteouts,binary,symlink,entrypoint,cmd=PASS" in stdout
+    (tmp_path / "identity.txt").write_text(f"{architecture}\n{digest}\n{stdout}")
 
 
 def test_unpack_profile_preserves_guest_hardening(oci_vm, tmp_path):
@@ -45,7 +47,8 @@ def test_unpack_profile_preserves_guest_hardening(oci_vm, tmp_path):
          "no_real_nics or rootfs_block_device_is_immutable'", "timeout_secs": 60},
         timeout=75,
     )
-    (tmp_path / "hardening.txt").write_text(result["stdout"] + result["stderr"])
+    stdout = exec_output_text(result)
+    (tmp_path / "hardening.txt").write_text(stdout + exec_output_text(result, "stderr"))
     assert result["exit_code"] == 0, result
-    assert "passed" in result["stdout"], result
-    assert "skipped" not in result["stdout"], result
+    assert "passed" in stdout, result
+    assert "skipped" not in stdout, result
