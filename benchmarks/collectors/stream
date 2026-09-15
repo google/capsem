@@ -67,12 +67,17 @@ def next_frame(stream: ClientConnection, timeout: float) -> tuple[int, object]:
     raise RuntimeError(f"stream sent client channel {frame[0]}")
 
 
-def read_until(stream: ClientConnection, marker: bytes, timeout: float) -> int:
-    """Bytes of output up to and including `marker`."""
+#: The guest shell's prompt ends in `# ` as root and `$ ` otherwise.
+PROMPTS = (b"# ", b"$ ")
+
+
+def read_until(stream: ClientConnection, marker: bytes | tuple[bytes, ...], timeout: float) -> int:
+    """Bytes of output up to and including `marker` (or any of several)."""
+    markers = marker if isinstance(marker, tuple) else (marker,)
     deadline = time.monotonic() + timeout
     seen = b""
     total = 0
-    while marker not in seen:
+    while not any(candidate in seen for candidate in markers):
         channel, payload = next_frame(stream, max(deadline - time.monotonic(), 0.001))
         if channel == STATUS:
             raise RuntimeError(f"stream ended while waiting for {marker!r}: {payload}")
@@ -86,7 +91,7 @@ def keystroke_echo(gateway: GatewayInstance, vm: str, keystrokes: int) -> list[f
     stream = open_stream(gateway, vm, {"type": "start", "kind": "terminal"})
     try:
         stream.send(bytes([STDIN]) + b"\n")
-        read_until(stream, b"$ ", timeout=30)
+        read_until(stream, PROMPTS, timeout=30)
         samples = []
         for index in range(keystrokes):
             if index and index % 40 == 0:
@@ -112,7 +117,7 @@ def terminal_output(gateway: GatewayInstance, vm: str) -> float:
     stream = open_stream(gateway, vm, {"type": "start", "kind": "terminal"})
     try:
         stream.send(bytes([STDIN]) + b"\n")
-        read_until(stream, b"$ ", timeout=30)
+        read_until(stream, PROMPTS, timeout=30)
         # The typed command echoes `STREAM_$((6*7))`; only its output says 42.
         command = f"head -c {TERMINAL_BYTES} /dev/zero | base64; echo STREAM_$((6*7))\n"
         stream.send(bytes([STDIN]) + command.encode())
@@ -164,8 +169,14 @@ def main() -> int:
         gateway = GatewayInstance(uds_path=service.uds_path)
         gateway.start()
         client = service.client()
-        vm = f"bench-stream-{uuid.uuid4().hex[:8]}"
-        client.post("/vms/create", {"name": vm, "profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        name = f"bench-stream-{uuid.uuid4().hex[:8]}"
+        created = client.post(
+            "/vms/create", {"name": name, "profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS}
+        )
+        # The stream route addresses a VM by the id create returns, not its name.
+        vm = str((created or {}).get("id") or "")
+        if not vm:
+            raise RuntimeError(f"create {name} returned {created}")
         if not wait_exec_ready(client, vm, timeout=EXEC_READY_TIMEOUT):
             raise RuntimeError(f"{vm} never became exec-ready")
         print(f"stream: {keystrokes} keystrokes", file=sys.stderr)
