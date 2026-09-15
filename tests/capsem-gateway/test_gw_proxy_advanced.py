@@ -54,16 +54,13 @@ class TestProxyEndpointCoverage:
         assert resp is not None
 
     def test_post_write_file(self, gw_client):
-        """POST /vms/{id}/files/write returns success."""
-        resp = gw_client.post("/vms/11111111-1111-4111-8111-111111111111/files/write", {
-            "path": "/root/test.txt",
-            "content": "hello",
-        })
+        """POST /vms/{id}/files/content returns success."""
+        resp = gw_client.upload_file("11111111-1111-4111-8111-111111111111", "/root/test.txt", "hello")
         assert resp is not None
 
     def test_post_read_file(self, gw_client):
-        """POST /vms/{id}/files/read returns file content."""
-        resp = gw_client.post("/vms/11111111-1111-4111-8111-111111111111/files/read", {"path": "/root/test.txt"})
+        """GET /vms/{id}/files/content returns exact bytes."""
+        resp = gw_client.download_file("11111111-1111-4111-8111-111111111111", "/root/test.txt")
         assert resp is not None
 
     def test_post_inspect_not_forwarded(self, gw_client):

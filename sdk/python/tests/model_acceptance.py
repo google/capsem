@@ -16,9 +16,9 @@ async def main() -> None:
         script = Path(os.environ["SDK_MODEL_SCRIPT"]).read_bytes()
         assert (await vm.copy.to_vm("sdk-model-proof.py", script)).success
         execution = await vm.exec("python3 /root/sdk-model-proof.py", timeout_secs=90)
-        assert execution.exit_code == 0, execution.stderr
+        assert execution.exit_code == 0, execution.stderr.data
         observation = json.loads(next(line.removeprefix("IRONBANK_CLIENT_RESULT=")
-                                      for line in execution.stdout.splitlines()
+                                      for line in execution.stdout.data.splitlines()
                                       if line.startswith("IRONBANK_CLIENT_RESULT=")))
         assert observation["file_matches"] and observation["output_contains_nonce"]
         assert await vm.copy.from_vm(observation["filename"]) == (observation["nonce"] + "\n").encode()

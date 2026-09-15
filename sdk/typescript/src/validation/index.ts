@@ -20,6 +20,8 @@ export {ErrorEventSchema} from "./ErrorEvent.js";
 export {ErrorResponseSchema} from "./ErrorResponse.js";
 export {EventBodySchema} from "./EventBody.js";
 export {ExecHistoryDetailsSchema} from "./ExecHistoryDetails.js";
+export {ExecOutputSchema} from "./ExecOutput.js";
+export {ExecOutputEncodingSchema} from "./ExecOutputEncoding.js";
 export {ExecRequestSchema} from "./ExecRequest.js";
 export {ExecResponseSchema} from "./ExecResponse.js";
 export {ExecSourceSchema} from "./ExecSource.js";

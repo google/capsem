@@ -22,6 +22,8 @@ from .error_event import ErrorEvent as ErrorEvent
 from .error_response import ErrorResponse as ErrorResponse
 from .event_body import EventBody as EventBody
 from .exec_history_details import ExecHistoryDetails as ExecHistoryDetails
+from .exec_output import ExecOutput as ExecOutput
+from .exec_output_encoding import ExecOutputEncoding as ExecOutputEncoding
 from .exec_request import ExecRequest as ExecRequest
 from .exec_response import ExecResponse as ExecResponse
 from .exec_source import ExecSource as ExecSource

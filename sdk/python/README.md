@@ -5,7 +5,7 @@ and bearer token; it does not discover services, open local service sockets,
 or run host commands.
 
 ```python
-from capsem import Hypervisor, VM
+from capsem import Hypervisor, VM, decode_exec_output
 from capsem.models import ContainerSpec, ExposureRequest, ExposureTarget, HostLogSource, TimelineLayer
 
 async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
@@ -25,7 +25,7 @@ async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     )
     await hv.networks.logs(network.id, vm=vm.id)
     result = await vm.exec("echo hello", timeout_secs=60)
-    print(result.stdout, result.exit_code)
+    print(decode_exec_output(result.stdout), result.exit_code)
     await vm.copy.to_vm("/hello.txt", b"hello\n")
     contents = await vm.copy.from_vm("/hello.txt")
     files = await vm.list("/")
@@ -60,7 +60,8 @@ HTTP `status` and response `body`; invalid typed responses raise Pydantic
 `timeout_secs` is the command deadline sent to the gateway. Choose an HTTP
 deadline long enough for the command. Mutations are never automatically retried.
 The guest exec channel currently combines both streams in `stdout`; `stderr`
-is empty. The SDK preserves this gateway behavior.
+is empty. Each is a typed `ExecOutput`; `decode_exec_output()` returns its exact
+bytes regardless of whether the wire value uses UTF-8 or base64.
 
 A VM selected by name resolves once, then retains its canonical ID. Handles
 returned by `create` and `fork` share their parent's connection. Close the

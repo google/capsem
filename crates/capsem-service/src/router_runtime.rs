@@ -52,8 +52,6 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/{id}/changes", get(handle_vm_changes))
         .route("/vms/{id}/logs", get(handle_logs))
         .route("/vms/{id}/exec", post(handle_exec))
-        .route("/vms/{id}/files/write", post(handle_write_file))
-        .route("/vms/{id}/files/read", post(handle_read_file))
         .route("/vms/{id}/stop", post(handle_stop))
         .route("/vms/{id}/pause", post(handle_suspend))
         .route("/vms/{id}/delete", delete(handle_delete))

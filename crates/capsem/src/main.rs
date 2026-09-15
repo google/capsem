@@ -1604,12 +1604,10 @@ async fn main() -> Result<()> {
             };
             let resp: ApiResponse<ExecResponse> = client.post(&format!("/vms/{}/exec", session_id), req).await?;
             let resp = resp.into_result()?;
-            if !resp.stdout.is_empty() {
-                print!("{}", resp.stdout);
-            }
-            if !resp.stderr.is_empty() {
-                eprint!("{}", resp.stderr);
-            }
+            let stdout_bytes = resp.stdout.decode()?;
+            let stderr_bytes = resp.stderr.decode()?;
+            tokio::io::stdout().write_all(&stdout_bytes).await?;
+            tokio::io::stderr().write_all(&stderr_bytes).await?;
             if let Some(notice) = resp.truncation_notice() {
                 eprintln!("{notice}");
             }

@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 from log_streams import read_log_stream
 
@@ -255,6 +256,23 @@ class TcpHttpClient:
         except ConnectionError:
             return 0, ""
         return status, data.decode(errors="replace")
+
+    def upload_file(self, vm_id, path, content, timeout=60):
+        data = content.encode() if isinstance(content, str) else content
+        status, _, response = self.call(
+            "POST",
+            f"/vms/{vm_id}/files/content?path={quote(path, safe='')}",
+            body=data,
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=timeout,
+        )
+        return json.loads(response) if status == 200 else None
+
+    def download_file(self, vm_id, path, timeout=30):
+        status, _, data = self.call(
+            "GET", f"/vms/{vm_id}/files/content?path={quote(path, safe='')}", timeout=timeout,
+        )
+        return data if status == 200 else None
 
     def ws_upgrade_status(self, path, timeout=5):
         """Send a WebSocket upgrade request, return the HTTP status code."""

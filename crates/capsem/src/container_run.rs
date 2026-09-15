@@ -66,10 +66,10 @@ async fn run_command(client: &UdsClient, args: &RunArgs) -> Result<i32> {
     let response: ApiResponse<ExecResponse> = client.post("/run", request).await?;
     let response = response.into_result()?;
     let mut stdout = tokio::io::stdout();
-    stdout.write_all(response.stdout.as_bytes()).await?;
+    stdout.write_all(&response.stdout.decode()?).await?;
     stdout.flush().await?;
     let mut stderr = tokio::io::stderr();
-    stderr.write_all(response.stderr.as_bytes()).await?;
+    stderr.write_all(&response.stderr.decode()?).await?;
     stderr.flush().await?;
     if let Some(notice) = response.truncation_notice() {
         eprintln!("{notice}");

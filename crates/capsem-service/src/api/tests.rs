@@ -262,30 +262,8 @@ fn exec_response_roundtrip() {
     };
     let json = serde_json::to_string(&r).unwrap();
     let r2: ExecResponse = serde_json::from_str(&json).unwrap();
-    assert_eq!(r2.stdout, "hello\n");
+    assert_eq!(r2.stdout.decode().unwrap(), b"hello\n");
     assert_eq!(r2.exit_code, 0);
-}
-
-// -----------------------------------------------------------------------
-// File I/O
-// -----------------------------------------------------------------------
-
-#[test]
-fn write_file_request_roundtrip() {
-    let json = json!({"path": "/tmp/f.txt", "content": "data"});
-    let r: WriteFileRequest = serde_json::from_value(json).unwrap();
-    assert_eq!(r.path, "/tmp/f.txt");
-    assert_eq!(r.content, "data");
-}
-
-#[test]
-fn read_file_response_roundtrip() {
-    let r = ReadFileResponse {
-        content: "file contents".into(),
-    };
-    let json = serde_json::to_string(&r).unwrap();
-    let r2: ReadFileResponse = serde_json::from_str(&json).unwrap();
-    assert_eq!(r2.content, "file contents");
 }
 
 // -----------------------------------------------------------------------
@@ -318,7 +296,7 @@ fn error_response_roundtrip() {
 fn exec_response_carries_truncation_to_the_client() {
     let r = ExecResponse {
         stdout: "first 10 MiB".into(),
-        stderr: String::new(),
+        stderr: String::new().into(),
         exit_code: 0,
         truncated: true,
     };
@@ -333,13 +311,14 @@ fn exec_response_carries_truncation_to_the_client() {
 }
 
 #[test]
-fn exec_response_from_an_older_service_decodes_as_not_truncated() {
-    // A client built with the field talking to a service without it must read
-    // absence as "complete", never as truncated.
-    let back: ExecResponse = serde_json::from_str(r#"{"stdout":"ok","stderr":"","exit_code":0}"#).unwrap();
+fn exec_response_without_truncation_decodes_as_not_truncated() {
+    let back: ExecResponse = serde_json::from_str(
+        r#"{"stdout":{"encoding":"utf8","data":"ok"},"stderr":{"encoding":"utf8","data":""},"exit_code":0}"#,
+    )
+    .unwrap();
 
     assert!(!back.truncated);
-    assert_eq!(back.stdout, "ok");
+    assert_eq!(back.stdout.decode().unwrap(), b"ok");
 }
 
 // ---------------------------------------------------------------------------

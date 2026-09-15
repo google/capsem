@@ -163,12 +163,10 @@ describes virtualization state.
 | `POST` | `/vms/{id}/fork` | Fork a session. |
 | `GET` | `/vms/{id}/fork/status` | Fork progress/status. |
 | `GET` | `/vms/{id}/logs` | Session log stream. |
-| `POST` | `/vms/{id}/exec` | Execute a command through the audited control path. |
-| `POST` | `/vms/{id}/files/write` | Write a file through the audited control path. |
-| `POST` | `/vms/{id}/files/read` | Read a file through the audited control path. |
+| `POST` | `/vms/{id}/exec` | Execute a command; each output names `utf8` or `base64` encoding. |
 | `GET` | `/vms/{id}/files/list` | List files through the service file browser route. |
-| `GET` | `/vms/{id}/files/content` | Download file content through the service route. |
-| `POST` | `/vms/{id}/files/content` | Upload file content through the service route. |
+| `GET` | `/vms/{id}/files/content` | Download exact file bytes through the audited service route. |
+| `POST` | `/vms/{id}/files/content` | Upload exact file bytes through the audited service route. |
 | `GET` | `/vms/{id}/snapshots/status` | Snapshot subsystem readiness for the session. |
 | `GET` | `/vms/{id}/snapshots/list` | Snapshot entries exposed by the snapshot subsystem, not security activity. |
 | `GET` | `/vms/{id}/timeline` | Session timeline. |

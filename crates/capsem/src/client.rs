@@ -221,36 +221,7 @@ pub struct HistoryResponse {
     pub has_more: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ExecRequest {
-    pub command: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_secs: Option<u64>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ExecResponse {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-    /// The guest produced more output than the per-exec capture limit, so
-    /// `stdout` is a prefix. Defaulted so an older service still decodes.
-    #[serde(default)]
-    pub truncated: bool,
-}
-
-impl ExecResponse {
-    /// Warning to print when the result was capped, or `None` when complete.
-    ///
-    /// The caller sends this to stderr: stdout stays byte-exact so piping and
-    /// programmatic consumers are unaffected by the notice. The limit itself
-    /// is deliberately not repeated here -- it lives in capsem-process, and
-    /// restating the number invites the two drifting apart.
-    pub fn truncation_notice(&self) -> Option<&'static str> {
-        self.truncated
-            .then_some("capsem: guest output exceeded the capture limit; showing the retained prefix")
-    }
-}
+pub use capsem_api::{ExecRequest, ExecResponse};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AssetEntry {

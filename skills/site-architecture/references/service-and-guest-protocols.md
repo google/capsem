@@ -72,11 +72,8 @@ surface requires explicit product/API approval.
 | POST | `/vms/{id}/fork` | Fork a session into reusable state |
 | DELETE | `/vms/{id}/delete` | Destroy session and wipe state |
 | POST | `/purge` | Delete defunct/incompatible service state |
-| POST | `/vms/{id}/files/write` | Write file to guest |
-| POST | `/vms/{id}/files/read` | Read file from guest |
+| GET/POST | `/vms/{id}/files/content` | Download/upload exact file bytes through the audited boundary |
 | GET | `/vms/{id}/files/list` | List guest files |
-| GET | `/vms/{id}/files/content` | Download file content |
-| POST | `/vms/{id}/files/content` | Upload file content |
 | GET | `/vms/{id}/logs` | Serial/boot logs |
 
 ### MCP tools (`@capsem/mcp`)

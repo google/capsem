@@ -1,4 +1,5 @@
 export * from './models/index.js';
+export {decodeExecOutput} from './execution.js';
 export {Hypervisor} from './hypervisor.js';
 export {VM} from './vm.js';
 export {Networks, Profiles, ProfileMcp} from './resources.js';

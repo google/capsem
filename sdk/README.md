@@ -51,9 +51,10 @@ are scoped: correlate them with trace/model IDs, never by call ID alone. A null
 parent event ID can mean the parent row is no longer retained. Existing stats
 event fields remain available while the UI migrates to this shared contract.
 
-Results retain gateway semantics. In particular, guest exec currently combines
-stdout and stderr into `stdout`; `stderr` is empty. A successful create/start
-acknowledges launch, and an exec request waits for the guest to become ready.
+Results retain gateway semantics. Guest exec currently combines both guest
+streams into `stdout`; `stderr` is empty. Each field is an `ExecOutput` whose
+`encoding` is `utf8` or `base64`, so arbitrary bytes remain exact. A successful
+create/start acknowledges launch, and an exec request waits for the guest to become ready.
 File copy requires a running VM's security ledger. A restart acknowledgement
 requires explicit reconnection with new credentials. No mutation is retried.
 

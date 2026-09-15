@@ -209,6 +209,49 @@ fn openapi_describes_binary_copy_and_required_vm_identity() {
 }
 
 #[test]
+fn openapi_exec_output_is_byte_safe_and_retires_ambiguous_file_json() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    let paths = &document["paths"];
+    assert!(paths.get("/vms/{id}/files/read").is_none());
+    assert!(paths.get("/vms/{id}/files/write").is_none());
+
+    let schemas = &document["components"]["schemas"];
+    for stream in ["stdout", "stderr"] {
+        assert_eq!(
+            schemas["ExecResponse"]["properties"][stream]["$ref"],
+            "#/components/schemas/ExecOutput"
+        );
+    }
+    assert_eq!(schemas["ExecOutput"]["properties"]["data"]["type"], "string");
+    assert_eq!(
+        schemas["ExecOutput"]["properties"]["encoding"]["$ref"],
+        "#/components/schemas/ExecOutputEncoding"
+    );
+    assert_eq!(
+        schemas["ExecOutputEncoding"]["enum"],
+        serde_json::json!(["utf8", "base64"])
+    );
+}
+
+#[test]
+fn exec_output_roundtrips_utf8_and_arbitrary_bytes() {
+    let utf8 = ExecOutput::from_bytes(b"hello\n".to_vec());
+    assert_eq!(utf8.encoding, ExecOutputEncoding::Utf8);
+    assert_eq!(utf8.data, "hello\n");
+    assert_eq!(utf8.decode().unwrap(), b"hello\n");
+
+    let binary = ExecOutput::from_bytes(vec![0, 0xff, b'\n']);
+    assert_eq!(binary.encoding, ExecOutputEncoding::Base64);
+    assert_eq!(binary.data, "AP8K");
+    let wire = serde_json::to_value(&binary).unwrap();
+    assert_eq!(wire, serde_json::json!({"encoding":"base64", "data":"AP8K"}));
+    assert_eq!(
+        serde_json::from_value::<ExecOutput>(wire).unwrap().decode().unwrap(),
+        vec![0, 0xff, b'\n']
+    );
+}
+
+#[test]
 fn openapi_describes_network_mutations_and_both_member_path_parameters() {
     let document = serde_json::to_value(crate::openapi()).unwrap();
     let paths = &document["paths"];

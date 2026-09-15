@@ -1,4 +1,5 @@
 use crate::SandboxInfo;
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
@@ -47,15 +48,72 @@ pub struct ExecRequest {
     pub timeout_secs: Option<u64>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecOutputEncoding {
+    Utf8,
+    Base64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
+pub struct ExecOutput {
+    pub encoding: ExecOutputEncoding,
+    pub data: String,
+}
+
+impl From<String> for ExecOutput {
+    fn from(data: String) -> Self {
+        Self {
+            encoding: ExecOutputEncoding::Utf8,
+            data,
+        }
+    }
+}
+
+impl From<&str> for ExecOutput {
+    fn from(data: &str) -> Self {
+        data.to_string().into()
+    }
+}
+
+impl ExecOutput {
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        match String::from_utf8(bytes) {
+            Ok(data) => Self {
+                encoding: ExecOutputEncoding::Utf8,
+                data,
+            },
+            Err(error) => Self {
+                encoding: ExecOutputEncoding::Base64,
+                data: base64::engine::general_purpose::STANDARD.encode(error.into_bytes()),
+            },
+        }
+    }
+
+    pub fn decode(&self) -> Result<Vec<u8>, base64::DecodeError> {
+        match self.encoding {
+            ExecOutputEncoding::Utf8 => Ok(self.data.as_bytes().to_vec()),
+            ExecOutputEncoding::Base64 => base64::engine::general_purpose::STANDARD.decode(&self.data),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct ExecResponse {
-    pub stdout: String,
-    pub stderr: String,
+    pub stdout: ExecOutput,
+    pub stderr: ExecOutput,
     pub exit_code: i32,
     /// The guest produced more output than the per-exec cap allows, so
     /// `stdout` is a prefix. Defaulted so an older client still decodes.
     #[serde(default)]
     pub truncated: bool,
+}
+
+impl ExecResponse {
+    pub fn truncation_notice(&self) -> Option<&'static str> {
+        self.truncated
+            .then_some("capsem: guest output exceeded the capture limit; showing the retained prefix")
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]

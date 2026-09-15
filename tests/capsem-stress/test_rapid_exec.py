@@ -50,17 +50,14 @@ def test_rapid_file_io():
 
         # Write 10 files
         for i in range(10):
-            resp = client.post(f"/vms/{name}/files/write", {
-                "path": f"/root/file-{i}.txt",
-                "content": f"content-{i}",
-            })
+            resp = client.upload_file(name, f"/root/file-{i}.txt", f"content-{i}")
             assert resp is not None, f"Write {i} failed"
 
         # Read them all back
         for i in range(10):
-            resp = client.post(f"/vms/{name}/files/read", {"path": f"/root/file-{i}.txt"})
+            resp = client.download_file(name, f"/root/file-{i}.txt")
             assert resp is not None, f"Read {i} failed"
-            assert f"content-{i}" in resp.get("content", ""), f"File {i} content mismatch"
+            assert resp == f"content-{i}".encode(), f"File {i} content mismatch"
 
     finally:
         with contextlib.suppress(Exception):

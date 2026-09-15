@@ -62,7 +62,7 @@ class TestExecImmediatelyAfterProvision:
         client.delete(f"/vms/{vm_id}/delete")
 
     def test_write_file_immediately_after_provision(self, service_env):
-        """POST /vms/{id}/files/write must succeed right after POST /vms/create."""
+        """POST /vms/{id}/files/content must succeed right after POST /vms/create."""
         client = service_env.client()
         name = vm_name("wi")
         resp = client.post(
@@ -78,11 +78,7 @@ class TestExecImmediatelyAfterProvision:
         vm_id = resp.get("id", name)
 
         # Immediately write -- server must wait for VM readiness.
-        write_resp = client.post(
-            f"/vms/{vm_id}/files/write",
-            {"path": "/root/race-test.txt", "content": "race-check"},
-            timeout=HTTP_TIMEOUT,
-        )
+        write_resp = client.upload_file(vm_id, "/root/race-test.txt", "race-check", timeout=HTTP_TIMEOUT)
         assert write_resp is not None, "write_file returned None"
         assert write_resp.get("success") is True, f"write_file failed: {write_resp}"
 
@@ -105,20 +101,12 @@ class TestExecImmediatelyAfterProvision:
         vm_id = resp.get("id", name)
 
         # Immediately write then read -- server must wait for VM readiness.
-        write_resp = client.post(
-            f"/vms/{vm_id}/files/write",
-            {"path": "/root/read-probe.txt", "content": "probe-data"},
-            timeout=HTTP_TIMEOUT,
-        )
+        write_resp = client.upload_file(vm_id, "/root/read-probe.txt", "probe-data", timeout=HTTP_TIMEOUT)
         assert write_resp is not None, "write_file returned None"
 
-        read_resp = client.post(
-            f"/vms/{vm_id}/files/read",
-            {"path": "/root/read-probe.txt"},
-            timeout=HTTP_TIMEOUT,
-        )
+        read_resp = client.download_file(vm_id, "/root/read-probe.txt", timeout=HTTP_TIMEOUT)
         assert read_resp is not None, "read_file returned None"
-        assert "content" in read_resp, f"read_file missing content: {read_resp}"
+        assert read_resp == b"probe-data", f"download returned unexpected bytes: {read_resp}"
 
         client.delete(f"/vms/{vm_id}/delete")
 

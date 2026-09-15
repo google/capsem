@@ -14,7 +14,7 @@ async def ready(vm: VM) -> None:
     async with asyncio.timeout(60):
         while True:
             result = await vm.exec("printf SDK_EXEC_READY", timeout_secs=5)
-            if result.exit_code == 0 and result.stdout == "SDK_EXEC_READY":
+            if result.exit_code == 0 and result.stdout.data == "SDK_EXEC_READY":
                 return
             await asyncio.sleep(0.2)
 
@@ -39,9 +39,9 @@ async def main() -> None:
             assert "sdk-proof.bin" in {entry.name for entry in (await vm.list()).entries}
             digest = hashlib.sha256(data).hexdigest()
             executed = await vm.exec("sha256sum /root/sdk-proof.bin; printf SDK_STDERR >&2; exit 7")
-            assert executed.exit_code == 7 and executed.stdout.split()[0] == digest
+            assert executed.exit_code == 7 and executed.stdout.data.split()[0] == digest
             # The guest exec channel currently combines stdout and stderr.
-            assert executed.stdout.endswith("\nSDK_STDERR") and executed.stderr == ""
+            assert executed.stdout.data.endswith("\nSDK_STDERR") and executed.stderr.data == ""
             assert isinstance(await vm.log(tail=10), models.LogsResponse)
             assert isinstance(await hv.log(tail=10), models.HostLogsResponse)
             assert isinstance(await vm.history(limit=10), models.HistoryResponse)

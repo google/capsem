@@ -59,10 +59,7 @@ class TestGuestShutdownPersistent:
 
         # Write a marker file
         marker = f"shutdown-test-{uuid.uuid4().hex[:8]}"
-        client.post(f"/vms/{name}/files/write", {
-            "path": f"/root/{marker}",
-            "content": f"hello from {marker}",
-        })
+        client.upload_file(name, f"/root/{marker}", f"hello from {marker}")
 
         # Guest-initiated shutdown
         client.post(f"/vms/{name}/exec", {
@@ -96,11 +93,9 @@ class TestGuestShutdownPersistent:
         assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), \
             f"VM {resumed_id} never became exec-ready after resume"
 
-        read_resp = client.post(f"/vms/{resumed_id}/files/read", {"path": f"/root/{marker}"})
-        assert isinstance(read_resp, dict) and "content" in read_resp, \
+        read_resp = client.download_file(resumed_id, f"/root/{marker}")
+        assert read_resp is not None and marker.encode() in read_resp, \
             f"read_file returned an error instead of content: {read_resp}"
-        assert marker in read_resp["content"], \
-            f"File did not survive guest shutdown + resume: {read_resp}"
 
         client.delete(f"/vms/{resumed_id}/delete")
 
@@ -180,10 +175,7 @@ class TestStopResumeE2E:
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         marker = f"e2e-{uuid.uuid4().hex[:8]}"
-        client.post(f"/vms/{name}/files/write", {
-            "path": f"/root/{marker}",
-            "content": f"hello from {marker}",
-        })
+        client.upload_file(name, f"/root/{marker}", f"hello from {marker}")
 
         # Stop
         client.post(f"/vms/{name}/stop", {})
@@ -195,8 +187,8 @@ class TestStopResumeE2E:
         assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT)
 
         # Read back
-        read_resp = client.post(f"/vms/{resumed_id}/files/read", {"path": f"/root/{marker}"})
-        assert marker in str(read_resp), \
+        read_resp = client.download_file(resumed_id, f"/root/{marker}")
+        assert read_resp is not None and marker.encode() in read_resp, \
             f"File did not survive stop + resume: {read_resp}"
 
         client.delete(f"/vms/{resumed_id}/delete")
@@ -248,10 +240,7 @@ class TestSuspendResume:
 
         # Write a marker file
         marker = f"suspend-test-{uuid.uuid4().hex[:8]}"
-        client.post(f"/vms/{vm_id}/files/write", {
-            "path": f"/root/{marker}",
-            "content": f"hello from {marker}",
-        })
+        client.upload_file(vm_id, f"/root/{marker}", f"hello from {marker}")
 
         # Suspend via service API
         suspend_resp = client.post(f"/vms/{vm_id}/pause", {}, timeout=EXEC_READY_TIMEOUT)
@@ -273,8 +262,8 @@ class TestSuspendResume:
             f"VM {resumed_id} never became exec-ready after warm resume"
 
         # Verify file survived
-        read_resp = client.post(f"/vms/{resumed_id}/files/read", {"path": f"/root/{marker}"})
-        assert marker in str(read_resp), \
+        read_resp = client.download_file(resumed_id, f"/root/{marker}")
+        assert read_resp is not None and marker.encode() in read_resp, \
             f"File did not survive suspend + resume: {read_resp}"
 
         client.delete(f"/vms/{resumed_id}/delete")

@@ -90,7 +90,12 @@ it.each(['logs', 'stats', 'service'] as const)('retains the offline fallback for
 });
 
 it('executes with a typed response and preserves the requested command timeout', async () => {
-  const result = { stdout: 'hello', stderr: '', exit_code: 0, truncated: false };
+  const result = {
+    stdout: { encoding: 'utf8', data: 'hello' },
+    stderr: { encoding: 'utf8', data: '' },
+    exit_code: 0,
+    truncated: false,
+  };
   mockFetch.mockResolvedValueOnce(json(result));
   expect(await api.execCommand('vm 1', 'echo hello', 10)).toEqual(result);
   const [url, options] = mockFetch.mock.calls[0]!;

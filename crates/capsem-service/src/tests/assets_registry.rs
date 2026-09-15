@@ -1260,14 +1260,6 @@ fn exec_request_shell_metacharacters() {
     assert_eq!(req.command, "echo $(whoami) && rm -rf /");
 }
 
-#[test]
-fn write_file_request_path_traversal() {
-    let json = serde_json::json!({"path": "../../etc/passwd", "content": "evil"});
-    let req: WriteFileRequest = serde_json::from_value(json).unwrap();
-    assert_eq!(req.path, "../../etc/passwd");
-    // Note: no validation at DTO level -- relies on guest-side enforcement
-}
-
 // -----------------------------------------------------------------------
 // Asset path resolution
 // -----------------------------------------------------------------------

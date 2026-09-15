@@ -2,6 +2,7 @@ import {describe, expect, it} from 'vitest';
 import type {z} from 'zod';
 import * as generated from '../src/validation/index.js';
 import {CredentialEventType, HostLogSource} from '../src/models/index.js';
+import {decodeExecOutput} from '../src/index.js';
 import {schemas, sample} from './contract.js';
 
 const validators: Record<string, z.ZodType> = generated;
@@ -44,4 +45,11 @@ it('rejects coerced or lossy numbers and out-of-contract fields', () => {
   if (!closed) throw new Error('Contract lost its closed object');
   const validator = validators[`${closed[0]}Schema`];
   expect(validator?.safeParse({...sample(closed[1]) as object, unexpected: true}).success).toBe(false);
+});
+
+it('decodes UTF-8 and base64 exec output to exact bytes', () => {
+  expect(decodeExecOutput({encoding: generated.ExecOutputEncodingSchema.parse('utf8'), data: 'café'}))
+    .toEqual(new TextEncoder().encode('café'));
+  expect(decodeExecOutput({encoding: generated.ExecOutputEncodingSchema.parse('base64'), data: 'AP8K'}))
+    .toEqual(Uint8Array.from([0, 0xFF, 10]));
 });

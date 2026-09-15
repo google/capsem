@@ -192,9 +192,7 @@ connection.
 | GET | `/vms/{id}/fork/status` | Fork operation status |
 | DELETE | `/vms/{id}/delete` | Destroy VM and wipe state |
 | POST | `/purge` | Stop/delete matching VMs according to the request |
-| POST | `/vms/{id}/files/write` | Write file to guest |
-| POST | `/vms/{id}/files/read` | Read file from guest |
-| GET/POST | `/vms/{id}/files/content` | Download or upload file content |
+| GET/POST | `/vms/{id}/files/content` | Download or upload exact file bytes through the audited boundary |
 | GET | `/vms/{id}/files/list` | List guest files through the file API |
 | GET | `/vms/{id}/logs` | Serial/boot logs |
 | GET | `/vms/{id}/timeline` | VM event timeline |

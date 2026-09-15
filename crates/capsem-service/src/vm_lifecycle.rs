@@ -923,8 +923,8 @@ pub(super) async fn handle_run(
             truncated,
             ..
         }) => Ok(Json(ExecResponse {
-            stdout: String::from_utf8(stdout).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-            stderr: String::from_utf8(stderr).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+            stdout: ExecOutput::from_bytes(stdout),
+            stderr: ExecOutput::from_bytes(stderr),
             exit_code,
             truncated,
         })),

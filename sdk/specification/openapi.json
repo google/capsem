@@ -3243,6 +3243,28 @@
           }
         }
       },
+      "ExecOutput": {
+        "type": "object",
+        "required": [
+          "encoding",
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "encoding": {
+            "$ref": "#/components/schemas/ExecOutputEncoding"
+          }
+        }
+      },
+      "ExecOutputEncoding": {
+        "type": "string",
+        "enum": [
+          "utf8",
+          "base64"
+        ]
+      },
       "ExecRequest": {
         "type": "object",
         "required": [
@@ -3275,10 +3297,10 @@
             "format": "int32"
           },
           "stderr": {
-            "type": "string"
+            "$ref": "#/components/schemas/ExecOutput"
           },
           "stdout": {
-            "type": "string"
+            "$ref": "#/components/schemas/ExecOutput"
           },
           "truncated": {
             "type": "boolean",

@@ -30,7 +30,7 @@ async fn example(url: &str, token: &str) -> Result<()> {
     println!("preview workload is on loopback port {}", exposure.host_port);
     hv.networks().logs(&network.id, Default::default()).await?;
     let result = vm.exec("echo hello", Some(60)).await?;
-    println!("{} (exit {})", result.stdout, result.exit_code);
+    println!("{} (exit {})", result.stdout.data, result.exit_code);
     vm.copy().to_vm("/hello.txt", b"hello\n".to_vec()).await?;
     let contents = vm.copy().from_vm("/hello.txt").await?;
     assert_eq!(contents, b"hello\n");
@@ -76,7 +76,7 @@ redirects or retry automatically. `with_timeout` sets this handle's HTTP
 deadline; `exec`'s optional `timeout_secs` sets the guest command deadline.
 Choose an HTTP deadline long enough for the command.
 The guest exec channel currently combines both streams in `stdout`; `stderr`
-is empty. The SDK preserves this gateway behavior.
+is empty. Each is a typed `ExecOutput`; `decode()` returns the exact bytes.
 
 `hv.restart().await?` returns a typed HTTP 202 acknowledgement. It requires an
 idle service managed by launchd or systemd; active/starting VMs return 409 and

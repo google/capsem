@@ -4,7 +4,7 @@ Async clients for the authenticated HTTP gateway, usable in browsers and Node.
 Supply the gateway URL and bearer token explicitly.
 
 ```ts
-import {ContainerState, ExposureTarget, Hypervisor, HostLogSource, VM} from '@capsem/sdk';
+import {ContainerState, decodeExecOutput, ExposureTarget, Hypervisor, HostLogSource, VM} from '@capsem/sdk';
 
 const hv = new Hypervisor(url, token, {timeoutMs: 120_000});
 try {
@@ -23,6 +23,7 @@ try {
   }
   await hv.networks.logs(network.id, {vm: vm.id});
   const result = await vm.exec('uname -a', {timeout_secs: 60});
+  console.log(decodeExecOutput(result.stdout));
   await vm.copy.toVm('/hello.txt', new TextEncoder().encode('hello'));
   const bytes = await vm.copy.fromVm('/hello.txt');
   const info = await vm.info(); // includes AI, network and files
@@ -63,7 +64,8 @@ or response-body connection failures and retains the original `cause`. Response
 validation errors remain distinct; cancellation and timeout reasons are preserved.
 Mutations are never retried.
 The guest exec channel currently combines both streams in `stdout`; `stderr`
-is empty. The SDK preserves this gateway behavior.
+is empty. Each is a typed `ExecOutput`; `decodeExecOutput()` returns its exact
+bytes regardless of whether the wire value uses UTF-8 or base64.
 
 Created/forked handles share their owner's connection. Closing a child leaves
 siblings usable; closing the owner invalidates its children. `close()` releases

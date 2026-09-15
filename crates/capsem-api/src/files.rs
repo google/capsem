@@ -50,22 +50,6 @@ pub struct UploadResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
-pub struct ReadFileRequest {
-    pub path: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
-pub struct ReadFileResponse {
-    pub content: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
-pub struct WriteFileRequest {
-    pub path: String,
-    pub content: String, // Base64 or plain text? For now let's assume plain text or base64 if we detect it.
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct LogsResponse {
     pub logs: String,
     #[serde(skip_serializing_if = "Option::is_none")]

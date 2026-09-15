@@ -54,7 +54,11 @@ describe('host-tools', () => {
       if (path === '/vms/create') return json(response, provision);
       if (path === '/vms/vm-1/info') return json(response, sandbox);
       if (path === '/vms/vm-1/exec' || path === '/run') {
-        return json(response, {exit_code: 0, stderr: '', stdout: 'ok'});
+        return json(response, {
+          exit_code: 0,
+          stderr: {encoding: 'utf8', data: ''},
+          stdout: {encoding: 'utf8', data: 'ok'},
+        });
       }
       if (path === '/vms/vm-1/files/content' && record.method === 'GET') {
         response.writeHead(200, {'content-type': 'application/octet-stream'});
@@ -146,7 +150,11 @@ describe('host-tools', () => {
     expect(structured(await client.callTool({name: 'capsem_info', arguments: {vm_id: 'vm-1'}}))).toEqual(sandbox);
     expect(structured(await client.callTool({
       name: 'capsem_exec', arguments: {vm_id: 'vm-1', command: 'printf ok', timeout_secs: 7},
-    }))).toEqual({exit_code: 0, stderr: '', stdout: 'ok'});
+    }))).toEqual({
+      exit_code: 0,
+      stderr: {encoding: 'utf8', data: ''},
+      stdout: {encoding: 'utf8', data: 'ok'},
+    });
     expect(requests.every(request => request.authorization === 'Bearer gateway-secret')).toBe(true);
     expect(requests.at(-1)?.method).toBe('POST');
     expect(JSON.parse(requests.at(-1)?.body.toString() ?? '')).toEqual({command: 'printf ok', timeout_secs: 7});

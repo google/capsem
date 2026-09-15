@@ -12,7 +12,7 @@ const hv = new Hypervisor(url, token, {timeoutMs: 120_000});
 const name = `sdk-ts-${randomUUID().slice(0, 8)}`;
 try {
   const vm = await hv.create(process.env.CAPSEM_TEST_PROFILE ?? 'code', {name, vcpu: 2, memory: '2G'});
-  assert.equal((await vm.exec('printf SDK_EXEC_READY')).stdout, 'SDK_EXEC_READY');
+  assert.equal((await vm.exec('printf SDK_EXEC_READY')).stdout.data, 'SDK_EXEC_READY');
   const info = await vm.info();
   assert.equal(info.id, vm.id);
   assert.equal(info.status, VmLifecycleState.RUNNING);
@@ -25,8 +25,8 @@ try {
   const digest = createHash('sha256').update(data).digest('hex');
   const exec = await vm.exec('sha256sum /root/sdk-proof.bin; printf SDK_STDERR >&2; exit 7');
   assert.equal(exec.exit_code, 7);
-  assert.equal(exec.stdout.split(' ')[0], digest);
-  assert(exec.stdout.endsWith('\nSDK_STDERR') && exec.stderr === '');
+  assert.equal(exec.stdout.data.split(' ')[0], digest);
+  assert(exec.stdout.data.endsWith('\nSDK_STDERR') && exec.stderr.data === '');
   await vm.log({tail: 10});
   await hv.log({tail: 10});
   await vm.history({limit: 10});

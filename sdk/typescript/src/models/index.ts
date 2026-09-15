@@ -20,6 +20,8 @@ export type { ErrorEvent } from "./ErrorEvent.js";
 export type { ErrorResponse } from "./ErrorResponse.js";
 export type { EventBody } from "./EventBody.js";
 export type { ExecHistoryDetails } from "./ExecHistoryDetails.js";
+export type { ExecOutput } from "./ExecOutput.js";
+export { ExecOutputEncoding } from "./ExecOutputEncoding.js";
 export type { ExecRequest } from "./ExecRequest.js";
 export type { ExecResponse } from "./ExecResponse.js";
 export { ExecSource } from "./ExecSource.js";

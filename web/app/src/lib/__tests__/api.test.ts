@@ -249,11 +249,16 @@ describe('api', () => {
     });
 
     it('execCommand sends POST /vms/{id}/exec', async () => {
-      mockFetch.mockReturnValueOnce(jsonResponse({ stdout: 'hello', stderr: '', exit_code: 0 }));
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        stdout: { encoding: 'utf8', data: 'hello' },
+        stderr: { encoding: 'utf8', data: '' },
+        exit_code: 0,
+        truncated: false,
+      }));
       const result = await api.execCommand('vm-1', 'echo hello');
       const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       expect(call[0]).toContain('/vms/vm-1/exec');
-      expect(result.stdout).toBe('hello');
+      expect(result.stdout.data).toBe('hello');
       expect(result.exit_code).toBe(0);
     });
 

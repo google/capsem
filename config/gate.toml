@@ -1129,13 +1129,13 @@ must_stay_below_lines = 3000
 "crates/capsem-service/src/ledger_routes.rs" = 2378
 "crates/capsem-service/src/main.rs" = 1528
 "crates/capsem-service/src/profile_routes.rs" = 2169
-"crates/capsem-service/src/vm_files.rs" = 1549
-"crates/capsem-service/src/tests/assets_registry.rs" = 1489
+"crates/capsem-service/src/vm_files.rs" = 1444
+"crates/capsem-service/src/tests/assets_registry.rs" = 1481
 "crates/capsem-service/src/tests/lifecycle.rs" = 2065
 "crates/capsem-service/src/tests/profile_routes.rs" = 2600
 "crates/capsem-tui/src/tests.rs" = 1563
 "crates/capsem-tui/src/ui.rs" = 1081
-"crates/capsem/src/main.rs" = 2224
+"crates/capsem/src/main.rs" = 2222
 "crates/capsem/src/support_bundle.rs" = 1047
 "crates/capsem/src/tests.rs" = 1323
 "crates/capsem/src/update.rs" = 2488
@@ -3002,8 +3002,6 @@ unmeasured = [
     "/vms/{id}/exec",
     "/vms/{id}/files/content",
     "/vms/{id}/files/list",
-    "/vms/{id}/files/read",
-    "/vms/{id}/files/write",
     "/vms/{id}/fork",
     "/vms/{id}/fork/status",
     "/vms/{id}/history",

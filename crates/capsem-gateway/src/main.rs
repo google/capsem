@@ -230,8 +230,6 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/{id}/changes", get(proxy::handle_proxy))
         .route("/vms/{id}/logs", get(proxy::handle_proxy))
         .route("/vms/{id}/exec", post(proxy::handle_proxy))
-        .route("/vms/{id}/files/write", post(proxy::handle_proxy))
-        .route("/vms/{id}/files/read", post(proxy::handle_proxy))
         .route("/vms/{id}/stop", post(proxy::handle_proxy))
         .route("/vms/{id}/pause", post(proxy::handle_proxy))
         .route("/vms/{id}/delete", delete(proxy::handle_proxy))

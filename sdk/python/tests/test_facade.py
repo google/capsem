@@ -6,9 +6,18 @@ import asyncio
 import json
 
 import pytest
-from capsem import VM, HttpError, Hypervisor, models
+from capsem import VM, HttpError, Hypervisor, decode_exec_output, models
 
 from .facade_gateway import gateway
+
+
+def test_exec_output_decodes_utf8_and_base64_to_exact_bytes() -> None:
+    assert decode_exec_output(models.ExecOutput(
+        encoding=models.ExecOutputEncoding.UTF8, data="café",
+    )) == "café".encode()
+    assert decode_exec_output(models.ExecOutput(
+        encoding=models.ExecOutputEncoding.BASE64, data="AP8K",
+    )) == bytes([0, 0xFF, 10])
 
 
 def test_hypervisor_creation_defaults_and_connection_ownership() -> None:

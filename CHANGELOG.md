@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- REST command execution preserves arbitrary stdout and stderr bytes with an
+  explicit UTF-8 or base64 encoding. File transfer now has one byte-safe HTTP
+  path at `/vms/{id}/files/content`; the ambiguous JSON read/write routes were
+  removed before the SDK contract reaches v1.
+
 ### Added
 
 - Guest agents can publish a VM or container port through the scoped

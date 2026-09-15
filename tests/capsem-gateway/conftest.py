@@ -279,13 +279,13 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         elif path_only.startswith("/vms/") and path_only.endswith("/exec"):
             data = json.loads(body) if body else {}
             cmd = data.get("command", "")
-            self._send_json({"stdout": f"mock: {cmd}\n", "stderr": "", "exit_code": 0})
+            self._send_json({
+                "stdout": {"encoding": "utf8", "data": f"mock: {cmd}\n"},
+                "stderr": {"encoding": "utf8", "data": ""},
+                "exit_code": 0,
+            })
         elif path_only.startswith("/vms/") and path_only.endswith("/stop"):
             self._send_json({"ok": True})
-        elif path_only.startswith("/vms/") and path_only.endswith("/files/write"):
-            self._send_json({"success": True})
-        elif path_only.startswith("/vms/") and path_only.endswith("/files/read"):
-            self._send_json({"content": "mock file content"})
         elif path_only.startswith("/vms/") and path_only.endswith("/files/content"):
             self._send_json({"success": True, "size": len(body)})
         elif path_only.startswith("/vms/") and path_only.endswith("/save"):
@@ -297,7 +297,11 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             if data.get("profile_id") != CODE_PROFILE_ID:
                 self._send_error(400, "profile_id is required")
                 return
-            self._send_json({"stdout": "mock run output\n", "stderr": "", "exit_code": 0})
+            self._send_json({
+                "stdout": {"encoding": "utf8", "data": "mock run output\n"},
+                "stderr": {"encoding": "utf8", "data": ""},
+                "exit_code": 0,
+            })
         elif path_only.startswith("/vms/") and path_only.endswith("/resume"):
             self._send_json({"id": "33333333-3333-4333-8333-333333333333"})
         elif path_only.startswith("/vms/") and path_only.endswith("/fork"):
