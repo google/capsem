@@ -17,12 +17,14 @@ Seven binaries run on the host machine. They are installed to
 | **capsem** | CLI client | HTTP over UDS to service |
 | **capsem-service** | Background daemon | Axum HTTP over UDS (`~/.capsem/run/service.sock`) |
 | **capsem-process** | Per-VM process | Spawned by service, MessagePack over UDS |
-| **capsem-mcp** | MCP server for AI agents | stdio (rmcp), HTTP over UDS to service |
 | **capsem-mcp-aggregator** | External MCP server connections | NDJSON over stdin/stdout, spawned by capsem-process |
+| **capsem-mcp-builtin** | Built-in HTTP and file/snapshot tools | stdio MCP, spawned by the aggregator |
 | **capsem-gateway** | HTTP/WebSocket gateway | TCP port 19222, proxies to service UDS |
 | **capsem-tray** | System tray | Polls gateway for VM status |
 
 Additionally, **capsem-app** is a thin Tauri webview shell (desktop GUI). It connects to the gateway at `http://127.0.0.1:19222` and has no direct VM logic -- all operations route through the gateway to the service.
+The separately installed `@capsem/mcp` npm package connects to the same
+authenticated gateway over HTTP and is not part of the native binary package.
 
 ## Guest binaries
 
@@ -44,7 +46,7 @@ All clients route through capsem-service. There is no direct VM boot from any ot
 graph TD
     subgraph Clients
         CLI["capsem (CLI)"]
-        MCP["capsem-mcp (MCP)"]
+        MCP["@capsem/mcp (stdio)"]
         GW["capsem-gateway (TCP:19222)"]
     end
 
@@ -57,7 +59,7 @@ graph TD
     TRAY -->|HTTP| GW
 
     CLI -->|HTTP/UDS| SVC
-    MCP -->|HTTP/UDS| SVC
+    MCP -->|"authenticated HTTP"| GW
     GW -->|HTTP/UDS| SVC
 
     SVC["capsem-service (daemon)"]
@@ -90,7 +92,8 @@ Each layer uses a different protocol optimized for its role:
 |-------|----------|--------|
 | Frontend/Tray -> gateway | HTTP/1.1 over TCP | `127.0.0.1:19222` (Bearer token auth) |
 | Gateway -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
-| CLI/MCP -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
+| CLI -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
+| SDK/npm MCP -> gateway | HTTP/1.1 over TCP | configured gateway URL (Bearer token auth) |
 | Service -> process | MessagePack over UDS | `~/.capsem/run/instances/{id}.sock` |
 | Process -> guest | Binary frames over vsock | Ports 5000, 5001, 5002, 5004, 5005, 5006, 5007 |
 
@@ -273,7 +276,7 @@ authority path.
 
 ```
 ~/.capsem/
-  bin/                 capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
+  bin/                 capsem, capsem-service, capsem-process, capsem-mcp-aggregator, capsem-mcp-builtin, capsem-gateway, capsem-tray
   assets/              manifest.json, manifest-metadata.json, vmlinuz-{hash16}, initrd-{hash16}.img, rootfs-{hash16}.erofs
   run/                 service.sock, service.pid, gateway.token, gateway.port, instances/
   settings.toml        UI/application preferences
@@ -308,8 +311,8 @@ from VM asset releases.
 | `capsem-service` | bin | Daemon. Axum HTTP over UDS, spawns/manages capsem-process children |
 | `capsem-process` | bin | Per-VM. Boots VM via capsem-core, bridges vsock, job store |
 | `capsem` | bin | CLI. HTTP over UDS to service, direct UDS to process for shell |
-| `capsem-mcp` | bin | MCP server (stdio). rmcp crate, bridges tool calls to service |
 | `capsem-mcp-aggregator` | bin | Isolated subprocess. Manages external MCP server connections via NDJSON |
+| `capsem-mcp-builtin` | bin | Isolated built-in HTTP and file/snapshot MCP tools |
 | `capsem-gateway` | bin | HTTP gateway. Axum on TCP:19222, Bearer auth, WebSocket terminal relay |
 | `capsem-app` | bin | Thin Tauri webview. Points at gateway, bundles web/app/dist for the service-unavailable screen |
 | `capsem-tray` | bin | System tray. Polls gateway, shows VM status |

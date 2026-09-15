@@ -27,7 +27,6 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 | `capsem` | CLI | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-tui` | Terminal UI | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-admin` | Profile/asset/release administration | Yes | Compile/no-run | Clippy | Yes |
-| `capsem-mcp` | Host MCP server | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-router` | Confined TCP publication relay | Yes | Subprocess + Redis E2E | Clippy | Yes |
 | `capsem-network` | smoltcp endpoint over framed packet streams | Yes (smoltcp client over an in-memory link) | Kingslanding tun0 lane | Clippy | Yes |
 | `capsem-mcp-aggregator` | External MCP subprocess manager | Yes | Compile/no-run | Clippy | Yes |
@@ -48,7 +47,7 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 | Python selected CI suite | 85% | `--cov-fail-under=85` | Ordinary CI |
 | Python full suite | 85% | `--cov-fail-under=85` | `just test` |
 | capsem-service | 80% | Codecov component | `codecov.yml` |
-| capsem-mcp | 80% | Codecov component | `codecov.yml` |
+| npm MCP | 90% | package coverage gate and Codecov component | `mcp/typescript`, `codecov.yml` |
 | capsem-gateway | 80% | Codecov component | `codecov.yml` |
 | capsem (CLI) | 80% | Codecov component | `codecov.yml` |
 
@@ -62,7 +61,7 @@ directories move. Do not copy the config-owned Rust floors into prose.
 | capsem-bootstrap | `bootstrap` | No | Collect; run in full gate after assets exist | No | Yes |
 | capsem-codesign | `codesign` | No | Collect; run in full gate after signing | No | Yes |
 | capsem-rootfs-artifacts | `rootfs` | No | Run | No | Yes |
-| capsem-mcp | `mcp` | Yes | Collect | Yes | Yes |
+| npm MCP profile ledger | `integration` | Yes | Collect | No | Yes |
 | capsem-service | `integration` | Yes | Collect | Yes | Yes |
 | capsem-cli | `integration` | Yes | Collect | Yes | Yes |
 | capsem-gateway | `gateway` | Yes | Collect | Yes | Yes |

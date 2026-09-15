@@ -125,6 +125,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Native installation and installed-package acceptance no longer require the
+  retired Rust host MCP binary or install Node.js; `@capsem/mcp` is configured
+  separately with explicit authenticated gateway HTTP credentials.
+
 - Python SDK workspace listings treat `/` as the gateway's workspace root.
 
 - Stopped persistent VM file listings resolve canonical VM IDs consistently

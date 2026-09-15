@@ -65,6 +65,11 @@ Snapshot creation/restoration, mounts and port exposure remain deferred. Private
 network operations use authenticated gateway HTTP and immutable network IDs;
 VM creation accepts existing network names through its `networks` option.
 
+The separately installed [`@capsem/mcp`](../mcp/typescript/README.md) package
+uses the TypeScript SDK to present these resources to AI agents over stdio. It
+requires an explicit gateway URL, bearer token, and HTTP transport timeout; the
+native Capsem installer does not install Node.js or download the npm package.
+
 ## Oversight
 
 Citadel inventories SDK source, including checked-in generated files. Python

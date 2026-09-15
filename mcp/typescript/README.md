@@ -15,6 +15,24 @@ Node or download this package.
 capsem-mcp --gateway-url http://127.0.0.1:19222 --token "$CAPSEM_TOKEN" --timeout-ms 30000
 ```
 
+An MCP client configuration can pass the same explicit settings. Use the
+client's secret expansion support for the token:
+
+```json
+{
+  "mcpServers": {
+    "capsem": {
+      "command": "capsem-mcp",
+      "args": [
+        "--gateway-url", "http://127.0.0.1:19222",
+        "--token", "${CAPSEM_GATEWAY_TOKEN}",
+        "--timeout-ms", "30000"
+      ]
+    }
+  }
+}
+```
+
 stdout is reserved for MCP protocol messages. Startup diagnostics are sanitized
 and written to stderr.
 
@@ -33,6 +51,15 @@ permissions, discover or refresh one server, and invoke a tool through gateway
 policy enforcement. Successful calls provide `structuredContent`; failures set
 MCP `isError` and return a machine-readable error kind without HTTP bodies or
 low-level causes.
+
+The bearer token belongs only to this host process. Do not pass it to VM or
+guest MCP tools, container environment variables, or workload content. The
+server has no service-socket, database, VM-runtime, or virtualization access.
+
+`--timeout-ms` bounds the SDK's HTTP request. Tool parameters named
+`timeout_secs` bound guest execution. Cancellation closes the local request but
+does not delete a VM or reverse a mutation already accepted by the gateway;
+mutations are never retried automatically.
 
 `capsem_pause` and `capsem_status` are the canonical names. Host logs use one
 `capsem_host_logs` tool with an allowlisted `source`; the package does not expose

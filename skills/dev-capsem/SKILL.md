@@ -36,7 +36,7 @@ choice), and even then lead with a recommendation. The full contract is
 | `capsem` | CLI client. HTTP over UDS to service. | `main.rs` (create, resume, shell, list, exec, run, stop, delete, persist, purge, info, logs, restart, version, doctor, fork, image) |
 | `capsem-tui` | Terminal control UI over the gateway API. | `main.rs`, view/state modules |
 | `capsem-admin` | Profile, asset, and release validation/materialization administration. | `main.rs` |
-| `capsem-mcp` | MCP server for AI agents. Stdio, bridges to service. | `main.rs` (rmcp handler, UDS client) |
+| `@capsem/mcp` (`mcp/typescript`) | Separately installed host MCP server for AI agents. Stdio, typed SDK, authenticated gateway HTTP. | `cli.ts`, `server.ts`, tool modules |
 | `capsem-router` | Confined TCP publication companion. Relays declared listeners to granted VSOCK data descriptors; no VM control authority. | `lib.rs`, `main.rs` |
 | `capsem-network` | Private networks between VMs: the u16-framed ethernet frame codec for a cable and the switch's MAC forwarding table. Pure code; the I/O lives in `capsem-router --network`, one L2 switch per network that VMs `plug()` into. | `frames.rs`, `switch.rs` |
 | `capsem-mcp-aggregator` | Low-privilege subprocess. Connects to external MCP servers and routes tool calls. Communicates with `capsem-process` via length-prefixed msgpack on stdio. No VM / DB / FS access. | `main.rs` (frame loop, server manager) |
@@ -114,7 +114,7 @@ When working on a specific area, consult the relevant skill:
 ## Communication paths
 
 ```
-AI Agent    -> capsem-mcp (stdio)      -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
+AI Agent    -> @capsem/mcp (stdio)     -> authenticated gateway HTTP -> capsem-service -> capsem-process -> vsock -> guest
 User CLI    -> capsem (HTTP/UDS)       -> capsem-service -> capsem-process -> vsock -> guest
 Desktop UI  -> capsem-gateway (TCP)    -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
 Tray app    -> capsem-gateway (TCP)    -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
@@ -176,7 +176,8 @@ Tart guest and boots its payload through physical Apple VZ. There is no public
 native-install or release-command fork.
 
 **Install layout** (`~/.capsem/`):
-- `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp, capsem-mcp-aggregator, capsem-mcp-builtin, capsem-gateway, capsem-tray
+- `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp-aggregator, capsem-mcp-builtin, capsem-gateway, capsem-tray
+- `@capsem/mcp` -- separately installed npm package; native installation does not install Node.js or download it
 - `assets/` -- manifest.json and profile-selected VM assets such as `vmlinuz`,
   `initrd.img`, and EROFS rootfs images
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/

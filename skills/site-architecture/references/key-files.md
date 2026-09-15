@@ -56,7 +56,7 @@
 
 ## MCP
 
-- `crates/capsem-mcp/src/` -- host MCP server and service-facing tool handlers
+- `mcp/typescript/src/` -- SDK-backed npm host MCP server and typed tool handlers
 - `crates/capsem-mcp-aggregator/src/` -- external-server lifecycle and transport
 - `crates/capsem-mcp-builtin/src/main.rs` -- built-in HTTP and file/snapshot tools
 - `crates/capsem-core/src/mcp/` -- VM/session-side MCP runtime integration

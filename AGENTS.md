@@ -47,7 +47,7 @@ crates/capsem/                 CLI client (create, shell, exec, list, install, a
 crates/capsem-tui/             Terminal control UI (reads and drives state via the gateway)
 crates/capsem-admin/           Profile/asset/release administration (validate, materialize, publish)
 crates/capsem-gateway/         TCP-to-UDS HTTP gateway (frontend + tray + remote auth)
-crates/capsem-mcp/             Host MCP server for AI agents (stdio, bridges to service)
+mcp/typescript/                SDK-backed npm host MCP server for AI agents (stdio, authenticated gateway HTTP)
 crates/capsem-router/     Confined TCP publication companion (data descriptors only)
 crates/capsem-network/    Host end of a guest tun0: smoltcp over a framed VSOCK packet stream
 crates/capsem-mcp-aggregator/  Low-privilege subprocess: connects to external MCP servers
