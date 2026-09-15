@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Measure the VM stream through the gateway: keystroke echo, terminal
+output, and a streaming command's output.
+
+Every interactive byte a user sees -- the web and TUI terminals, `capsem
+doctor`, `capsem run --image` -- crosses `GET /vms/{id}/stream`
+(`capsem.stream.v1`): gateway tunnel, service translation to VM-owner IPC,
+owner, guest. Nothing measured that path before it replaced the gateway's
+terminal relay, so this is the number a later transport change is compared
+against.
+
+Prints raw samples on stdout; `capsem-bench` computes every statistic.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+import uuid
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+# Both, because the test helpers import each other as `helpers.*` and the
+# repository scripts as `scripts.*`; a collector run outside pytest has to put
+# them on the path itself.
+sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(ROOT))
+
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.gateway import GatewayInstance
+from helpers.service import ServiceInstance, wait_exec_ready
+from websockets.sync.client import ClientConnection, connect
+from websockets.typing import Subprotocol
+
+SUBPROTOCOL = Subprotocol("capsem.stream.v1")
+STDIN, STDOUT, STDERR, CONTROL, STATUS = 0, 1, 2, 3, 4
+EXEC_BYTES = 100 * 1024 * 1024
+TERMINAL_BYTES = 16 * 1024 * 1024
+#: Kill-line (Ctrl-U), so the prompt line never grows past a screen.
+KILL_LINE = b"\x15"
+
+
+def control(message: dict) -> bytes:
+    return bytes([CONTROL]) + json.dumps(message).encode()
+
+
+def open_stream(gateway: GatewayInstance, vm: str, start: dict) -> ClientConnection:
+    url = f"ws://127.0.0.1:{gateway.port}/vms/{vm}/stream?token={gateway.token}"
+    stream = connect(url, subprotocols=[SUBPROTOCOL], max_size=None, open_timeout=30)
+    stream.send(control(start))
+    status = next_frame(stream, timeout=60)
+    if status != (STATUS, {"type": "started"}):
+        raise RuntimeError(f"stream did not start: {status}")
+    return stream
+
+
+def next_frame(stream: ClientConnection, timeout: float) -> tuple[int, object]:
+    frame = stream.recv(timeout=timeout)
+    if not isinstance(frame, bytes) or not frame:
+        raise RuntimeError(f"unexpected stream frame: {frame!r}")
+    if frame[0] == STATUS:
+        return STATUS, json.loads(frame[1:])
+    if frame[0] in (STDOUT, STDERR):
+        return frame[0], frame[1:]
+    raise RuntimeError(f"stream sent client channel {frame[0]}")
+
+
+def read_until(stream: ClientConnection, marker: bytes, timeout: float) -> int:
+    """Bytes of output up to and including `marker`."""
+    deadline = time.monotonic() + timeout
+    seen = b""
+    total = 0
+    while marker not in seen:
+        channel, payload = next_frame(stream, max(deadline - time.monotonic(), 0.001))
+        if channel == STATUS:
+            raise RuntimeError(f"stream ended while waiting for {marker!r}: {payload}")
+        assert isinstance(payload, bytes)
+        total += len(payload)
+        seen = (seen + payload)[-4096:]
+    return total
+
+
+def keystroke_echo(gateway: GatewayInstance, vm: str, keystrokes: int) -> list[float]:
+    stream = open_stream(gateway, vm, {"type": "start", "kind": "terminal"})
+    try:
+        stream.send(bytes([STDIN]) + b"\n")
+        read_until(stream, b"$ ", timeout=30)
+        samples = []
+        for index in range(keystrokes):
+            if index and index % 40 == 0:
+                stream.send(bytes([STDIN]) + KILL_LINE)
+                time.sleep(0.05)
+                while True:
+                    try:
+                        next_frame(stream, timeout=0.05)
+                    except TimeoutError:
+                        break
+            started = time.monotonic()
+            stream.send(bytes([STDIN]) + b"k")
+            read_until(stream, b"k", timeout=10)
+            samples.append((time.monotonic() - started) * 1000)
+        stream.send(bytes([STDIN]) + KILL_LINE)
+        return samples
+    finally:
+        stream.close()
+
+
+def terminal_output(gateway: GatewayInstance, vm: str) -> float:
+    """Megabits per second of base64 text rendered through the terminal."""
+    stream = open_stream(gateway, vm, {"type": "start", "kind": "terminal"})
+    try:
+        stream.send(bytes([STDIN]) + b"\n")
+        read_until(stream, b"$ ", timeout=30)
+        # The typed command echoes `STREAM_$((6*7))`; only its output says 42.
+        command = f"head -c {TERMINAL_BYTES} /dev/zero | base64; echo STREAM_$((6*7))\n"
+        stream.send(bytes([STDIN]) + command.encode())
+        started = time.monotonic()
+        received = read_until(stream, b"STREAM_42", timeout=300)
+        elapsed = time.monotonic() - started
+        return received * 8 / 1_000_000 / elapsed
+    finally:
+        stream.close()
+
+
+def exec_output(gateway: GatewayInstance, vm: str) -> tuple[float, float]:
+    """Megabits per second and seconds for a 100 MiB streaming command."""
+    stream = open_stream(gateway, vm, {"type": "start", "kind": "exec", "command": f"head -c {EXEC_BYTES} /dev/zero"})
+    try:
+        started = time.monotonic()
+        received = 0
+        while True:
+            channel, payload = next_frame(stream, timeout=300)
+            if channel == STATUS:
+                break
+            assert isinstance(payload, bytes)
+            received += len(payload)
+        elapsed = time.monotonic() - started
+        if payload != {"type": "exit", "code": 0, "truncated": False} or received != EXEC_BYTES:
+            raise RuntimeError(f"exec stream ended {payload} after {received} of {EXEC_BYTES} bytes")
+        return received * 8 / 1_000_000 / elapsed, elapsed
+    finally:
+        stream.close()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--quick", action="store_true", help="one transfer run and fewer keystrokes")
+    args = parser.parse_args()
+    runs = 1 if args.quick else 3
+    keystrokes = 50 if args.quick else 400
+
+    service = ServiceInstance()
+    gateway = None
+    metrics: dict[str, dict] = {}
+
+    def record(key: str, unit: str, value: float | list[float]) -> None:
+        samples = value if isinstance(value, list) else [value]
+        metrics.setdefault(key, {"unit": unit, "samples": []})["samples"].extend(samples)
+
+    try:
+        service.start()
+        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway.start()
+        client = service.client()
+        vm = f"bench-stream-{uuid.uuid4().hex[:8]}"
+        client.post("/vms/create", {"name": vm, "profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+        if not wait_exec_ready(client, vm, timeout=EXEC_READY_TIMEOUT):
+            raise RuntimeError(f"{vm} never became exec-ready")
+        print(f"stream: {keystrokes} keystrokes", file=sys.stderr)
+        record("terminal.keystroke_echo_ms", "milliseconds", keystroke_echo(gateway, vm, keystrokes))
+        for index in range(runs):
+            print(f"stream: transfer run {index + 1}/{runs}", file=sys.stderr)
+            record("terminal.output_mbps", "megabits_per_second", terminal_output(gateway, vm))
+            mbps, seconds = exec_output(gateway, vm)
+            record("exec.output_mbps", "megabits_per_second", mbps)
+            record("exec.output_100mib_seconds", "seconds", seconds)
+        client.delete(f"/vms/{vm}/delete")
+    finally:
+        if gateway is not None:
+            gateway.stop()
+        service.stop()
+
+    json.dump({"metrics": metrics}, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
