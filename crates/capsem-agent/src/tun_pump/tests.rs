@@ -64,6 +64,62 @@ fn frames_become_device_packets_and_a_clean_end_stops() {
     assert_eq!(kernel.receive.recv().unwrap(), vec![5]);
 }
 
+/// The host side of a cable as the pump reads it: every read is counted,
+/// and each hands over at most `chunk` bytes of what is waiting.
+struct HostStream {
+    waiting: io::Cursor<Vec<u8>>,
+    chunk: usize,
+    reads: usize,
+}
+
+impl Read for HostStream {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.reads += 1;
+        let limit = buffer.len().min(self.chunk);
+        self.waiting.read(&mut buffer[..limit])
+    }
+}
+
+fn records(count: usize, size: usize) -> Vec<u8> {
+    let mut wire = Vec::new();
+    for index in 0..count {
+        wire.extend_from_slice(&(size as u16).to_be_bytes());
+        wire.extend(std::iter::repeat_n(index as u8, size));
+    }
+    wire
+}
+
+#[test]
+fn one_read_from_the_host_delivers_every_whole_frame_it_holds() {
+    // Reading each header and each payload on its own cost two syscalls a
+    // frame, and the receiving pump sat at a full core at 1.7 Gb/s.
+    let (mut device, kernel) = fake_tun();
+    let mut host = HostStream {
+        waiting: io::Cursor::new(records(100, 1400)),
+        chunk: usize::MAX,
+        reads: 0,
+    };
+    stream_to_device(&mut host, &mut device, 1500).unwrap();
+    for index in 0..100 {
+        assert_eq!(kernel.receive.recv().unwrap(), vec![index as u8; 1400]);
+    }
+    assert!(host.reads <= 2, "{} reads for 100 frames waiting at once", host.reads);
+}
+
+#[test]
+fn a_frame_split_across_reads_is_written_whole() {
+    let (mut device, kernel) = fake_tun();
+    let mut host = HostStream {
+        waiting: io::Cursor::new(records(5, 1500)),
+        chunk: 7,
+        reads: 0,
+    };
+    stream_to_device(&mut host, &mut device, 1500).unwrap();
+    for index in 0..5 {
+        assert_eq!(kernel.receive.recv().unwrap(), vec![index as u8; 1500]);
+    }
+}
+
 #[test]
 fn a_frame_beyond_the_mtu_ends_the_link_instead_of_truncating() {
     let (mut device, _kernel) = fake_tun();

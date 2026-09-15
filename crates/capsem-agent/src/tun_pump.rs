@@ -136,28 +136,54 @@ pub fn device_to_stream(device: &mut impl PacketDevice, stream: &mut impl Write,
     }
 }
 
+/// How much of the host's queued records one read takes.
+const READ_BUFFER_BYTES: usize = 2 * 1024 * 1024;
+
 /// Records on the stream become device frames, until the stream ends.
-/// A frame longer than `largest` is a peer that disagrees about the link
-/// and ends the pump, rather than a frame to truncate.
+/// One read takes whatever the host has queued, and every whole record in it
+/// goes to the device before the next read; a record the read cut short waits
+/// at the front for the rest. A frame longer than `largest` is a peer that
+/// disagrees about the link and ends the pump, rather than a frame to
+/// truncate.
 pub fn stream_to_device(stream: &mut impl Read, device: &mut impl PacketDevice, largest: usize) -> io::Result<()> {
-    let mut header = [0u8; HEADER_BYTES];
-    let mut packet = vec![0u8; largest];
+    let mut buffer = vec![0u8; READ_BUFFER_BYTES.max(HEADER_BYTES + largest)];
+    let mut filled = 0;
     loop {
-        match stream.read_exact(&mut header) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
+        let read = match stream.read(&mut buffer[filled..]) {
+            Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => return Err(error),
+        };
+        if read == 0 {
+            return if filled == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "the cable ended inside a frame",
+                ))
+            };
         }
-        let length = usize::from(u16::from_be_bytes(header));
-        if length == 0 || length > largest {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("frame of {length} bytes on a link whose frames hold {largest}"),
-            ));
+        filled += read;
+        let mut start = 0;
+        while filled - start >= HEADER_BYTES {
+            let length = usize::from(u16::from_be_bytes([buffer[start], buffer[start + 1]]));
+            if length == 0 || length > largest {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("frame of {length} bytes on a link whose frames hold {largest}"),
+                ));
+            }
+            let end = start + HEADER_BYTES + length;
+            if end > filled {
+                break;
+            }
+            device.write_packet(&buffer[start + HEADER_BYTES..end])?;
+            STREAM_TO_DEVICE.record(length);
+            start = end;
         }
-        stream.read_exact(&mut packet[..length])?;
-        device.write_packet(&packet[..length])?;
-        STREAM_TO_DEVICE.record(length);
+        buffer.copy_within(start..filled, 0);
+        filled -= start;
     }
 }
 
