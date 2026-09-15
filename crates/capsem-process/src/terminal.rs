@@ -114,10 +114,7 @@ pub(crate) async fn handle_terminal_socket(
                         capsem_core::try_send!(
                             "ws_terminal_resize",
                             ctrl_tx_c
-                                .send(ServiceToProcess::TerminalResize {
-                                    cols: cols as u16,
-                                    rows: rows as u16
-                                })
+                                .send(ServiceToProcess::TerminalResize { cols, rows })
                                 .await
                         );
                     }
@@ -134,11 +131,17 @@ pub(crate) async fn handle_terminal_socket(
 }
 
 /// Parse a terminal resize JSON message, returning (cols, rows) if valid.
-pub(crate) fn parse_resize_message(text: &str) -> Option<(u64, u64)> {
-    let resize: serde_json::Value = serde_json::from_str(text).ok()?;
-    let cols = resize.get("cols")?.as_u64()?;
-    let rows = resize.get("rows")?.as_u64()?;
-    Some((cols, rows))
+///
+/// Both dimensions must fit a window size: `u16` deserialization refuses
+/// values above 65535 instead of wrapping them, and zero is refused.
+pub(crate) fn parse_resize_message(text: &str) -> Option<(u16, u16)> {
+    #[derive(serde::Deserialize)]
+    struct Resize {
+        cols: std::num::NonZeroU16,
+        rows: std::num::NonZeroU16,
+    }
+    let resize: Resize = serde_json::from_str(text).ok()?;
+    Some((resize.cols.get(), resize.rows.get()))
 }
 
 #[cfg(test)]

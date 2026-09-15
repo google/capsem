@@ -85,3 +85,19 @@ async fn relay_empty_buffer_returns_empty_replay() {
     let (replay, _rx) = relay.subscribe();
     assert!(replay.is_empty());
 }
+
+/// `cols`/`rows` reached TIOCSWINSZ through `as u16`, so 65536 became 0 and
+/// 70000 became 4464. A size outside 1..=u16::MAX is refused, not wrapped.
+#[test]
+fn resize_message_rejects_out_of_range() {
+    for text in [
+        r#"{"cols": 65536, "rows": 24}"#,
+        r#"{"cols": 80, "rows": 70000}"#,
+        r#"{"cols": 0, "rows": 24}"#,
+        r#"{"cols": 80, "rows": 0}"#,
+        r#"{"cols": -1, "rows": 24}"#,
+    ] {
+        assert_eq!(parse_resize_message(text), None, "{text}");
+    }
+    assert_eq!(parse_resize_message(r#"{"cols": 65535, "rows": 1}"#), Some((65535, 1)));
+}
