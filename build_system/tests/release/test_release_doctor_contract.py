@@ -1565,9 +1565,10 @@ def test_installed_service_owns_one_serial_automatic_update_path() -> None:
     router_runtime = _source_text("crates/capsem-service/src/router_runtime.rs")
     service_runtime = _source_text("crates/capsem-service/src/service_runtime.rs")
     update_command = _source_text("crates/capsem-service/src/update_command.rs")
-    api = _source_text("crates/capsem-service/src/api.rs")
+    service_api = _source_text("crates/capsem-service/src/api.rs")
+    shared_api = _source_text("crates/capsem-api/src/updates.rs")
     route_tests = _source_text("tests/capsem-service/test_update_routes.py")
-    apply_request = api.split("pub struct UpdateApplyRequest", maxsplit=1)[1].split(
+    apply_request = shared_api.split("pub struct UpdateApplyRequest", maxsplit=1)[1].split(
         "}", maxsplit=1
     )[0]
 
@@ -1601,7 +1602,8 @@ def test_installed_service_owns_one_serial_automatic_update_path() -> None:
     assert "std::process::id()" in update_command
     assert "UpdateCommandKind::Assets" not in update_command
     assert '"--assets".to_string()' not in update_command
-    assert "UpdateApplyAction" not in api
+    assert "pub struct UpdateApplyRequest" not in service_api
+    assert "UpdateApplyAction" not in shared_api
     assert "action" not in apply_request
     assert '["update", "--yes"]' in route_tests
     assert '["update", "--assets"]' not in route_tests
@@ -1743,7 +1745,11 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "pages deploy" not in workflow
     assert "tests/capsem-release/test_binary_lane_gate.py" in workflow
     assert "tests/capsem-release/test_release_lane_diff_policy.py" in workflow
-    assert "CLOUDFLARE_" not in workflow
+    deploy = workflow.split("  deploy-release-channel:", maxsplit=1)[1].split(
+        "\n  verify-release-downloads:", maxsplit=1
+    )[0]
+    assert "CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" in deploy
+    assert "CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}" in deploy
     for logical_name in (
         "vmlinuz",
         "initrd.img",
@@ -6020,7 +6026,8 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
 
     asset_pos = block.find("bash build_system/scripts/test/prepare-install-test-assets.sh")
     build_pos = block.find(
-        "cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mcp"
+        "cargo build -p capsem-process -p capsem-service -p capsem "
+        "-p capsem-mock-server -p capsem-bench"
     )
     bench_package_pos = block.find("-p capsem-bench")
     bench_binary_pos = block.find("cache/target/cargo/debug/capsem-bench-rs")
@@ -6034,6 +6041,7 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
 
     assert asset_pos != -1
     assert build_pos != -1
+    assert "-p capsem-mcp " not in block
     assert bench_package_pos != -1
     assert bench_binary_pos != -1
     assert "cache/target/cargo/debug/capsem-bench;" not in block
