@@ -13,7 +13,6 @@ use crate::helpers::clone_fd;
 use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
 
 mod dns;
-use dns::serve_dns_session;
 mod handshake;
 mod streams;
 use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, perform_handshake};
@@ -506,6 +505,15 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         hub_tx.send(HostToGuest::AbortPorts { flows }).await
                     );
                 }
+                ServiceToProcess::PlugCable { cable, address, prefix } => {
+                    capsem_core::try_send!(
+                        "hub_cable",
+                        hub_tx.send(HostToGuest::PlugCable { cable, address, prefix }).await
+                    );
+                }
+                ServiceToProcess::UnplugCable { cable } => {
+                    capsem_core::try_send!("hub_cable", hub_tx.send(HostToGuest::UnplugCable { cable }).await);
+                }
                 ServiceToProcess::Exec { id, command } => {
                     // active_execs is owned by ipc.rs's Exec handler -- it
                     // creates the capture slot *before* sending here. The
@@ -966,18 +974,9 @@ fn dispatch_aux_connection(
 ) {
     match HostVsockService::from_port(conn.port) {
         Some(HostVsockService::Publication) => job_store.publisher.accept(conn),
-        Some(HostVsockService::Network | HostVsockService::Private) => streams::serve(conn, job_store, vm_id),
+        Some(HostVsockService::Network) => streams::serve_network(conn, job_store, vm_id),
         Some(HostVsockService::SniProxy) => streams::serve_mitm(conn, Arc::clone(mitm_config)),
-        Some(HostVsockService::DnsProxy) => {
-            // Long-lived framed session, one DNS round trip per frame; every
-            // query becomes a `dns_events` row under the ambient trace id.
-            let handler = Arc::clone(dns_handler);
-            let db_for_dns = Arc::clone(db);
-            let security_rules = Arc::clone(security_rules);
-            tokio::spawn(async move {
-                serve_dns_session(conn, handler, db_for_dns, security_rules).await;
-            });
-        }
+        Some(HostVsockService::DnsProxy) => dns::serve(conn, dns_handler, db, security_rules),
         Some(HostVsockService::Exec) => {
             let js = Arc::clone(job_store);
             std::thread::spawn(move || {

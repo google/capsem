@@ -92,8 +92,7 @@ VM_OUTPUT_RULES = """\
 -P OUTPUT ACCEPT
 -A OUTPUT -p udp -m udp --dport 53 -j REDIRECT --to-ports 1053
 -A OUTPUT -p tcp -m tcp --dport 53 -j REDIRECT --to-ports 1053
--A OUTPUT -d 10.128.0.1/32 -p tcp -j RETURN
--A OUTPUT -d 10.128.0.0/9 -p tcp -j REDIRECT --to-ports 10128
+-A OUTPUT -d 10.128.0.0/9 -j RETURN
 -A OUTPUT -p tcp -m tcp --dport 443 -j REDIRECT --to-ports 10443
 -A OUTPUT -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 10080
 -A OUTPUT -p tcp -m tcp --dport 8080 -j REDIRECT --to-ports 10080
@@ -104,22 +103,22 @@ def test_gateway_redirects_mirror_the_vm_interception_rules(launcher):
     assert launcher.derive_redirects(VM_OUTPUT_RULES) == [
         ("udp", 53, 1053, None),
         ("tcp", 53, 1053, None),
-        ("tcp", None, 10128, "10.128.0.0/9"),
         ("tcp", 443, 10443, None),
         ("tcp", 80, 10080, None),
         ("tcp", 8080, 10080, None),
     ]
     assert launcher.derive_redirects("-P OUTPUT ACCEPT\n") == []
+    assert launcher.derive_returns(VM_OUTPUT_RULES) == ["10.128.0.0/9"]
+    assert launcher.derive_returns("-P OUTPUT ACCEPT\n") == []
 
 
 class FakeRun:
     """Records every command the hook issues and answers the three it reads."""
 
-    def __init__(self, rules, jump_exists=False, tap0_address=None):
+    def __init__(self, rules, jump_exists=False):
         self.calls = []
         self.rules = rules
         self.jump_exists = jump_exists
-        self.tap0_address = tap0_address
 
     def __call__(self, *argv, check=True, **kwargs):
         self.calls.append(list(argv))
@@ -127,12 +126,6 @@ class FakeRun:
         returncode = 0
         if "-S" in argv:
             stdout = self.rules
-        elif argv[:3] == ("ip", "-o", "addr"):
-            assert not check, "the link is probed without raising"
-            if self.tap0_address:
-                stdout = f"4: tap0    inet {self.tap0_address}/9 scope global tap0\n"
-            else:
-                returncode = 1
         if "-C" in argv:
             assert not check, "chain existence must be probed without raising"
             returncode = 0 if self.jump_exists else 1
@@ -326,86 +319,69 @@ def test_uploaded_image_remains_available_for_restart_and_fork(launcher, tmp_pat
         launcher.assemble(stage, layout)
 
 
-def test_network_ready_hook_opens_the_private_link_to_the_container(launcher, tmp_path):
-    """With a private link up, container UDP and ICMP to the pool leave through
-    tap0 as the VM's own address, and UDP arriving on tap0 lands in the
-    container; TCP keeps its DNAT to the proxy and everything else stays
-    dropped."""
-    run = FakeRun(VM_OUTPUT_RULES, tap0_address="10.129.7.200")
+def test_network_ready_hook_routes_the_container_through_every_cable(launcher, tmp_path):
+    """Whatever cables the VM has, now or plugged later, carry the container
+    too: every protocol to a member leaves through the cable that routes it,
+    as that cable's own address, and what arrives on a cable lands in the
+    container. Member traffic returns before any proxy DNAT, and everything
+    else from the container stays dropped."""
+    run = FakeRun(VM_OUTPUT_RULES)
     root = hook_environment(tmp_path)
     (root / "net/ipv4").mkdir(parents=True, exist_ok=True)
     launcher.network_ready(4242, run=run, sysctl_root=root)
     calls = run.calls
     iptables = launcher.IPTABLES
     assert (root / "net/ipv4/ip_forward").read_text() == "1\n"
-    snat = [
-        iptables,
-        "-t",
-        "nat",
-        "-A",
-        "POSTROUTING",
-        "-o",
-        "tap0",
-        "-s",
-        launcher.CONTAINER_ADDRESS,
-        "-j",
-        "SNAT",
-        "--to-source",
-        "10.129.7.200",
+    masquerade = [
+        iptables, "-t", "nat", "-A", "POSTROUTING",
+        "-o", "cable+", "-s", launcher.CONTAINER_ADDRESS, "-j", "MASQUERADE",
     ]
-    assert snat in calls
-    dnat = [
-        iptables,
-        "-t",
-        "nat",
-        "-A",
-        launcher.NAT_CHAIN,
-        "-i",
-        "tap0",
-        "-p",
-        "udp",
-        "-j",
-        "DNAT",
-        "--to-destination",
-        launcher.CONTAINER_ADDRESS,
+    assert masquerade in calls
+    # Only what is addressed to the VM itself: a packet routed through this
+    # VM toward another network is not the container's, and is dropped.
+    inbound = [
+        iptables, "-t", "nat", "-A", launcher.NAT_CHAIN,
+        "-i", "cable+", "-m", "addrtype", "--dst-type", "LOCAL",
+        "-j", "DNAT", "--to-destination", launcher.CONTAINER_ADDRESS,
     ]
-    assert dnat in calls
-    for proto in ("udp", "icmp"):
-        out = [
-            iptables,
-            "-I",
-            "FORWARD",
-            "-i",
-            "capsem0",
-            "-o",
-            "tap0",
-            "-d",
-            launcher.PRIVATE_POOL,
-            "-p",
-            proto,
-            "-j",
-            "ACCEPT",
-        ]
-        assert out in calls
-    back = [iptables, "-I", "FORWARD", "-i", "tap0", "-o", "capsem0", "-j", "ACCEPT"]
-    assert back in calls
+    assert inbound in calls
+    out = [iptables, "-I", "FORWARD", "-i", "capsem0", "-o", "cable+", "-j", "ACCEPT"]
+    back = [iptables, "-I", "FORWARD", "-i", "cable+", "-o", "capsem0", "-j", "ACCEPT"]
+    assert out in calls and back in calls
     drop = [iptables, "-I", "FORWARD", "-i", "capsem0", "-j", "DROP"]
     # Inserted after the drop, so they sit above it in the chain.
+    assert calls.index(out) > calls.index(drop)
     assert calls.index(back) > calls.index(drop)
-    assert all(
-        calls.index(call) > calls.index(drop)
-        for call in calls
-        if call[-1] == "ACCEPT" and "FORWARD" in call
-    )
+    pool_return = [
+        iptables, "-t", "nat", "-A", launcher.NAT_CHAIN,
+        "-i", "capsem0", "-d", "10.128.0.0/9", "-j", "RETURN",
+    ]
+    assert pool_return in calls
+    proxy_dnats = [
+        index for index, call in enumerate(calls)
+        if launcher.NAT_CHAIN in call and any(arg.startswith("127.0.0.1:") for arg in call)
+    ]
+    assert proxy_dnats and all(calls.index(pool_return) < index for index in proxy_dnats)
+    assert not any(call[:3] == ["ip", "-o", "addr"] for call in calls), "no cable is probed"
+    assert not any("tap0" in call for call in calls)
 
 
-def test_network_ready_hook_without_a_private_link_adds_no_link_rules(
+def test_network_ready_hook_never_makes_the_vm_a_router_between_its_networks(
     launcher, tmp_path
 ):
+    """The container needs forwarding on, which would also let a VM plugged
+    into two networks carry one member's packets to the other. Being on two
+    networks never joins them: cable to cable is dropped outright."""
     run = FakeRun(VM_OUTPUT_RULES)
-    launcher.network_ready(4242, run=run, sysctl_root=hook_environment(tmp_path))
-    # The link is probed and found absent; no rule names it.
-    assert not any(
-        call[0] == launcher.IPTABLES and "tap0" in call for call in run.calls
-    )
-    assert not (tmp_path / "net/ipv4/ip_forward").exists()
+    root = hook_environment(tmp_path)
+    (root / "net/ipv4").mkdir(parents=True, exist_ok=True)
+    launcher.network_ready(4242, run=run, sysctl_root=root)
+    iptables = launcher.IPTABLES
+    no_transit = [iptables, "-I", "FORWARD", "-i", "cable+", "-o", "cable+", "-j", "DROP"]
+    assert no_transit in run.calls
+    accepts = [
+        index for index, call in enumerate(run.calls)
+        if call[:3] == [iptables, "-I", "FORWARD"] and call[-1] == "ACCEPT"
+    ]
+    # Inserted last, so it sits first in the chain.
+    assert accepts and all(index < run.calls.index(no_transit) for index in accepts)

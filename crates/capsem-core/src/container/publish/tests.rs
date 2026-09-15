@@ -3,13 +3,12 @@ use std::os::fd::AsRawFd;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
-mod private;
 mod security;
 
 fn source_fixture() -> Arc<Source> {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let _client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-    Arc::new(Source::Tcp(listener.accept().unwrap().0))
+    Arc::new(Source(listener.accept().unwrap().0))
 }
 
 #[tokio::test]
@@ -22,7 +21,7 @@ async fn guest_reset_is_applied_before_control_ack_without_waiting_for_the_broke
     let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
         .await
         .unwrap();
-    let source = Arc::new(Source::Tcp(listener.accept().await.unwrap().0.into_std().unwrap()));
+    let source = Arc::new(Source(listener.accept().await.unwrap().0.into_std().unwrap()));
     let (close, mut reports) = mpsc::channel(1);
     let (pending, data) = owner.request(&source, close).unwrap();
     let flow = FlowKey {
@@ -68,7 +67,7 @@ async fn a_close_report_for_a_source_the_peer_already_reset_is_accepted() {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
     let accepted = listener.accept().await.unwrap().0.into_std().unwrap();
-    let source = Arc::new(Source::Tcp(accepted));
+    let source = Arc::new(Source(accepted));
     let (close, mut reports) = mpsc::channel(1);
     let (pending, _data) = owner.request(&source, close).unwrap();
     let flow = FlowKey {
@@ -111,7 +110,7 @@ async fn control_disconnect_revokes_even_an_endpoint_that_already_reported_compl
     let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
         .await
         .unwrap();
-    let source = Arc::new(Source::Tcp(listener.accept().await.unwrap().0.into_std().unwrap()));
+    let source = Arc::new(Source(listener.accept().await.unwrap().0.into_std().unwrap()));
     let (close, mut reports) = mpsc::channel(1);
     let (pending, data) = owner.request(&source, close).unwrap();
     let flow = FlowKey {
@@ -276,7 +275,6 @@ async fn serve_fixture(
         control,
         router.clone(),
         cancellation,
-        capsem_router::Class::Expose,
     )
     .await;
     router.closed.cancel();
@@ -359,7 +357,6 @@ async fn shared_admission_budget(budgets: capsem_config::router::RouterConfig, e
             control.clone(),
             router.clone(),
             cancellation.clone(),
-            capsem_router::Class::Expose,
         ));
         for _ in 0..5 {
             clients.push(tokio::net::TcpStream::connect(address).await.unwrap());

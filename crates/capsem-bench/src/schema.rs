@@ -37,6 +37,8 @@ pub enum Dimension {
     Vsock,
     Criterion,
     Protocol,
+    /// Members of a private network, VM to VM through the network's switch.
+    Network,
     // Guest, inside the VM.
     Disk,
     Rootfs,
@@ -61,6 +63,7 @@ impl Dimension {
         Dimension::Vsock,
         Dimension::Criterion,
         Dimension::Protocol,
+        Dimension::Network,
         Dimension::Disk,
         Dimension::Rootfs,
         Dimension::Storage,
@@ -83,6 +86,7 @@ impl Dimension {
             Dimension::Vsock => "vsock",
             Dimension::Criterion => "criterion",
             Dimension::Protocol => "protocol",
+            Dimension::Network => "network",
             Dimension::Disk => "disk",
             Dimension::Rootfs => "rootfs",
             Dimension::Storage => "storage",

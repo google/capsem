@@ -1,9 +1,17 @@
 # capsem-router
 
-The confined host companion carries TCP bytes between published loopback ports
-and connected guest VSOCK streams. The core publication broker owns destination
-selection and guest connection setup. The router has no hypervisor or service
-control dependency and does not resolve destinations or open outbound sockets.
+The confined host companion runs in one of two modes, each its own process:
+
+- **Expose** (default): one per VM, carrying TCP bytes between published
+  loopback ports and connected guest VSOCK streams. The core publication broker
+  owns destination selection and guest connection setup.
+- **`--network`**: one per private network, that network's L2 switch. The
+  service plugs and unplugs cables -- one guest tap's frame stream per VM
+  membership -- and the switch forwards frames between them (see
+  [Network switch](#network-switch)).
+
+The router has no hypervisor or service control dependency, does not resolve
+destinations, and never opens a socket of its own.
 
 ## Current descriptor and process ownership
 
@@ -22,10 +30,9 @@ After runtime initialization, the companion installs Seatbelt on macOS or
 seccomp on Linux before reporting readiness. It closes unrelated inherited
 descriptors, receives a cleared environment, and exits when its parent dies.
 It receives no virtualization entitlement. Two Tokio workers relay at most
-64 expose and 64 private connections per companion, without borrowing between
-classes. Published mappings share one VM-owned child; private routing is not
-yet connected to the VM broker. Core serializes grants across all mappings and
-dispatches bounded acknowledgements to the broker retaining each endpoint pair.
+64 expose connections per companion. Published mappings share one VM-owned
+child. Core serializes grants across all mappings and dispatches bounded
+acknowledgements to the broker retaining each endpoint pair.
 Expose admission is shared across every listener in the VM, by default: 64 queued/active
 connections, eight guest setups, and 32 setup requests per second with a burst
 of 16. Setup waits count against the eight-second deadline. Cancelling a queued
@@ -39,20 +46,13 @@ connections = 32
 setups = 4
 rate_per_second = 16
 burst = 8
-
-[network.router.private]
-connections = 64
-setups = 8
-rate_per_second = 32
-burst = 16
 ```
 
-Omitted fields retain the defaults above. Each class validates connections in
-1–64, setups in 1–8, setup rate in 1–1024 per second, and burst in 1–64. Zero
-never means unlimited. The VM loads these budgets before restoring published
-listeners and passes both connection ceilings to its confined child. Private
-setup pacing takes effect when the private broker is connected; it has no
-effect on today's expose traffic. Budgets apply for the VM process lifetime.
+Omitted fields retain the defaults above. Connections validate in 1–64, setups
+in 1–8, setup rate in 1–1024 per second, and burst in 1–64. Zero never means
+unlimited. The VM loads these budgets before restoring published listeners and
+passes the connection ceiling to its confined child. Budgets apply for the VM
+process lifetime.
 
 The parent retains shutdown handles for both endpoints until the child reports
 closure. Guest data handshakes include a fresh owner generation as well as the
@@ -111,15 +111,34 @@ cannot enter the legacy queue without a credit. A five-second missing guest clos
 ACK fails its control lease; the writer checks this between bounded writes. Control
 disconnect revokes all live TCP endpoints while leaving declared listeners available.
 
-## Networking extension boundary
+## Network switch
 
-Subsequent networking work will put connection admission through the existing
-SecurityEvent pipeline, extend admission to private setup requests,
-and carry private VM traffic through the existing guest net-proxy and DNS paths.
-Those behaviors are not provided by the descriptor handoff alone.
+`capsem-router --network` is one network's switch and nothing else: no uplink,
+no listener, no outbound socket. Its only inputs are `Plug` grants (a port id
+and one connected cable descriptor), `Unplug` grants (a port id), and the
+cables' frames; its only output is events to the service -- ready, accepted,
+refused, and a counter report when a port closes. A port id carries the
+membership's generation and address; the MAC is a function of the address, so
+nothing is learned from traffic.
 
-Policy evaluation, audit storage, and VM control remain outside this companion.
-See the [crate and privilege model](../../skills/site-architecture/references/crate-and-privilege-model.md)
+- A frame to a port's MAC goes to that port; a broadcast or multicast frame
+  floods every other port (ARP works unchanged), capped at 1024 floods per
+  second per port; an unknown destination is dropped, never flooded.
+- Port security: a frame must carry its port's MAC, and an IPv4 packet or ARP
+  message its port's address. Other ethertypes cross unchecked.
+- A plug with a generation no newer than the address's last is refused, so a
+  stale grant can never replace a current cable. At most `--port-limit` (64)
+  ports are live, closing ones included.
+- A port is one job owning both halves of its cable: the reader never waits on
+  another port's queue (64 frames each; a full queue drops and counts), the
+  writer batches vectored writes. Unplugging cancels the job, closing the
+  descriptor -- even under a writer blocked on a member that stopped reading --
+  before the port is reported closed and its slot reused.
+
+The switch is a network, not a security boundary: every member plugged into a
+switch can reach every other. Membership is the service's decision; policy
+evaluation, audit storage, and VM control remain outside this companion. See
+the [crate and privilege model](../../skills/site-architecture/references/crate-and-privilege-model.md)
 for the surrounding owners. Subprocess tests exercise the executable; foundation
 tests exercise OS authority denial, and Kingslanding proves published Redis
-traffic in real VMs.
+traffic and member traffic over the switch in real VMs.

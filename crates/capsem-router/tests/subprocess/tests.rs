@@ -1,5 +1,5 @@
 use capsem_foundation::unix::router_channel::Sender;
-use capsem_router::{send_grant, Class, Event, Grant, CONNECTIONS_PER_CLASS};
+use capsem_router::{send_grant, Event, Grant, CONNECTION_LIMIT};
 use std::net::Ipv4Addr;
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream as StdUnixStream;
@@ -17,17 +17,11 @@ struct Router {
 }
 
 #[tokio::test]
-async fn configured_class_limits_are_independent_in_the_confined_child() {
-    let mut router = Router::with_limits(2, 1).await;
+async fn the_configured_connection_limit_holds_in_the_confined_child() {
+    let mut router = Router::with_limit(2).await;
     let mut peers = Vec::new();
-    for (id, class, allowed) in [
-        (1, Class::Private, true),
-        (2, Class::Private, false),
-        (3, Class::Expose, true),
-        (4, Class::Expose, true),
-        (5, Class::Expose, false),
-    ] {
-        peers.push(router.class_pair(id, class).await);
+    for (id, allowed) in [(1, true), (2, true), (3, false)] {
+        peers.push(router.pair(id).await);
         assert_eq!(
             router.event().await,
             if allowed {
@@ -135,16 +129,10 @@ async fn stalled_destination_backpressures_tcp_with_bounded_router_rss() {
 }
 impl Router {
     async fn start() -> Self {
-        Self::with_limits(CONNECTIONS_PER_CLASS as u16, CONNECTIONS_PER_CLASS as u16).await
+        Self::with_limit(CONNECTION_LIMIT as u16).await
     }
-    async fn with_limits(expose: u16, private: u16) -> Self {
-        Self::spawn(&[
-            "--expose-limit",
-            &expose.to_string(),
-            "--private-limit",
-            &private.to_string(),
-        ])
-        .await
+    async fn with_limit(connections: u16) -> Self {
+        Self::spawn(&["--expose-limit", &connections.to_string()]).await
     }
     async fn spawn(args: &[&str]) -> Self {
         let (parent, child) = StdUnixStream::pair().unwrap();
@@ -187,9 +175,6 @@ impl Router {
         event
     }
     async fn pair(&mut self, id: u64) -> (TcpStream, UnixStream) {
-        self.class_pair(id, Class::Expose).await
-    }
-    async fn class_pair(&mut self, id: u64, class: Class) -> (TcpStream, UnixStream) {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
         let (source, _) = listener.accept().await.unwrap();
@@ -197,7 +182,6 @@ impl Router {
         peer.set_nonblocking(true).unwrap();
         self.grant(Grant::Connected {
             id,
-            class,
             source: source.as_fd(),
             destination: destination.as_fd(),
         })
@@ -272,11 +256,11 @@ async fn sandboxed_pair_preserves_half_close_without_a_listener_grant() {
 async fn connection_limit_refuses_excess_pair_and_abort_frees_slot() {
     let mut router = Router::start().await;
     let mut peers = Vec::new();
-    for id in 1..=CONNECTIONS_PER_CLASS as u64 {
+    for id in 1..=CONNECTION_LIMIT as u64 {
         peers.push(router.pair(id).await);
         assert_eq!(router.event().await, Event::Accepted(id));
     }
-    let excess = CONNECTIONS_PER_CLASS as u64 + 1;
+    let excess = CONNECTION_LIMIT as u64 + 1;
     let (mut refused, _peer) = router.pair(excess).await;
     assert_eq!(router.event().await, Event::Refused(excess));
     assert_eq!(
@@ -357,7 +341,6 @@ async fn unconnected_listener_descriptor_is_refused() {
     router
         .grant(Grant::Connected {
             id: 1,
-            class: Class::Expose,
             source: listener.as_fd(),
             destination: data.as_fd(),
         })
@@ -366,48 +349,12 @@ async fn unconnected_listener_descriptor_is_refused() {
     router.close().await;
 }
 
-#[tokio::test]
-async fn private_saturation_preserves_expose_reservation_without_borrowing() {
-    let mut router = Router::start().await;
-    let mut peers = Vec::new();
-    for id in 1..=CONNECTIONS_PER_CLASS as u64 {
-        peers.push(router.class_pair(id, Class::Private).await);
-        assert_eq!(router.event().await, Event::Accepted(id));
-    }
-    let excess = CONNECTIONS_PER_CLASS as u64 + 1;
-    let _refused = router.class_pair(excess, Class::Private).await;
-    assert_eq!(
-        router.event().await,
-        Event::Refused(excess),
-        "private borrowed expose capacity"
-    );
-    let (mut tcp, mut peer) = router.class_pair(excess + 1, Class::Expose).await;
-    assert_eq!(router.event().await, Event::Accepted(excess + 1));
-    tcp.write_all(b"ingress still works").await.unwrap();
-    let mut bytes = [0; 23];
-    timeout(Duration::from_secs(2), peer.read_exact(&mut bytes))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(bytes.to_vec(), frame(b"ingress still works"));
-    router.close().await;
-}
-
-/// One IPv4 UDP frame between two members, as the switch's verdict wants it.
-fn member_frame(source: Ipv4Addr, destination: Ipv4Addr, payload: &[u8]) -> Vec<u8> {
-    use capsem_proto::privatelink::mac_of;
+/// One framed ethernet record on a cable, sent from `source`'s MAC.
+fn cable_record(destination: [u8; 6], source: Ipv4Addr, ethertype: u16, payload: &[u8]) -> Vec<u8> {
     let mut frame = Vec::new();
-    frame.extend_from_slice(&mac_of(destination));
-    frame.extend_from_slice(&mac_of(source));
-    frame.extend_from_slice(&0x0800u16.to_be_bytes());
-    let mut packet = vec![0u8; 20];
-    packet[0] = 0x45;
-    packet[2..4].copy_from_slice(&((20 + payload.len()) as u16).to_be_bytes());
-    packet[8] = 64;
-    packet[9] = 17;
-    packet[12..16].copy_from_slice(&source.octets());
-    packet[16..20].copy_from_slice(&destination.octets());
-    frame.extend_from_slice(&packet);
+    frame.extend_from_slice(&destination);
+    frame.extend_from_slice(&capsem_proto::privatelink::mac_of(source));
+    frame.extend_from_slice(&ethertype.to_be_bytes());
     frame.extend_from_slice(payload);
     let mut record = (frame.len() as u16).to_be_bytes().to_vec();
     record.extend_from_slice(&frame);
@@ -415,34 +362,49 @@ fn member_frame(source: Ipv4Addr, destination: Ipv4Addr, payload: &[u8]) -> Vec<
 }
 
 #[tokio::test]
-async fn the_confined_switch_forwards_a_frame_between_two_linked_members() {
-    let mut router = Router::spawn(&["--switch"]).await;
+async fn the_confined_network_switch_carries_tcp_and_floods_arp_between_plugged_cables() {
+    use capsem_proto::privatelink::mac_of;
+    let mut router = Router::spawn(&["--network"]).await;
     let alpha = Ipv4Addr::new(10, 128, 0, 2);
     let beta = Ipv4Addr::new(10, 128, 0, 3);
     let mut guests = Vec::new();
-    for (seq, address) in [(1, alpha), (2, beta)] {
+    for address in [alpha, beta] {
         let (switch_end, guest_end) = StdUnixStream::pair().unwrap();
         guest_end.set_nonblocking(true).unwrap();
-        let id = capsem_router::link_id(seq, address);
+        let port = capsem_router::port_id(1, address);
         router
-            .grant(Grant::Link {
-                id,
+            .grant(Grant::Plug {
+                port,
                 socket: switch_end.as_fd(),
             })
             .await;
         router
             .retained
-            .insert(id, (switch_end.into(), StdUnixStream::pair().unwrap().0.into()));
-        assert_eq!(router.event().await, Event::Accepted(id));
+            .insert(port, (switch_end.into(), StdUnixStream::pair().unwrap().0.into()));
+        assert_eq!(router.event().await, Event::Accepted(port));
         guests.push(UnixStream::from_std(guest_end).unwrap());
     }
-    let record = member_frame(alpha, beta, b"confined hop");
-    guests[0].write_all(&record).await.unwrap();
-    let mut received = vec![0u8; record.len()];
-    timeout(Duration::from_secs(5), guests[1].read_exact(&mut received))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(received, record);
+    let mut segment = vec![0x45, 0, 0, 40, 0, 0, 0, 0, 64, 6, 0, 0];
+    segment.extend_from_slice(&alpha.octets());
+    segment.extend_from_slice(&beta.octets());
+    segment.resize(40, 0);
+    segment.extend_from_slice(b"confined hop");
+    let mut request = vec![0, 1, 8, 0, 6, 4, 0, 1];
+    request.extend_from_slice(&mac_of(alpha));
+    request.extend_from_slice(&alpha.octets());
+    request.extend_from_slice(&[0; 6]);
+    request.extend_from_slice(&beta.octets());
+    for record in [
+        cable_record(mac_of(beta), alpha, 0x0800, &segment),
+        cable_record([0xff; 6], alpha, 0x0806, &request),
+    ] {
+        guests[0].write_all(&record).await.unwrap();
+        let mut received = vec![0u8; record.len()];
+        timeout(Duration::from_secs(5), guests[1].read_exact(&mut received))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(received, record);
+    }
     router.close().await;
 }

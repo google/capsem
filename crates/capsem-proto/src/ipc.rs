@@ -82,31 +82,34 @@ pub enum ServiceToProcess {
     ConnectPort { flow: crate::router::FlowKey, port: u16 },
     /// Internal VM-owner cancellation for bounded generation-bound flows.
     AbortPorts { flows: Vec<crate::router::FlowKey> },
-    /// The service admitted a private TCP connection from `source_vm` to
-    /// `port` on this VM. The owner answers with the handoff socket the
-    /// source owner should deliver the stream to, keyed by `token`.
-    PrivateAccept {
-        id: u64,
-        token: String,
-        network: String,
-        network_name: String,
-        source_vm: String,
-        source_name: String,
-        source_generation: u64,
-        source_address: std::net::Ipv4Addr,
-        source_port: u16,
-        port: u16,
-    },
-    /// The service is linking this VM to a network's switch and wants the
-    /// guest's private link stream. The owner evaluates its profile once,
-    /// then answers with the handoff socket the service should ask on,
-    /// keyed by `token`; the stream comes back on that connection.
+    /// The service is plugging this VM into a network's switch and wants the
+    /// guest's stream for that network's cable. The owner evaluates its
+    /// profile once, has the guest bring the cable up with `address`/`prefix`,
+    /// then answers with the handoff socket the service should ask on, keyed
+    /// by `token`; the stream comes back on that connection. `generation` is
+    /// the attachment's, which only grows: the cable remembers the newest.
     LinkAttach {
         id: u64,
         token: String,
         network: String,
         network_name: String,
+        address: std::net::Ipv4Addr,
+        prefix: u8,
+        generation: u32,
     },
+    /// The VM left `network` as of `generation`: the owner forgets the
+    /// network's cable, and the guest's tap for it goes away, unless a newer
+    /// plug already took the cable over. Requests can reach the owner in
+    /// either order; the generation, not arrival, decides.
+    LinkDetach { id: u64, network: String, generation: u32 },
+    /// Internal VM-owner request: bring a cable up in the guest.
+    PlugCable {
+        cable: u32,
+        address: std::net::Ipv4Addr,
+        prefix: u8,
+    },
+    /// Internal VM-owner request: take a cable down in the guest.
+    UnplugCable { cable: u32 },
 }
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
@@ -187,13 +190,6 @@ pub enum ProcessToService {
         router_pid: u32,
         error: Option<String>,
     },
-    /// Response to PrivateAccept: where the source owner hands the stream
-    /// over, or why this owner will not take it.
-    PrivateAcceptResult {
-        id: u64,
-        handoff_socket: String,
-        error: Option<String>,
-    },
     /// Response to LinkAttach: where the service asks for the stream, or
     /// why this owner will not link.
     LinkAttachResult {
@@ -201,6 +197,8 @@ pub enum ProcessToService {
         handoff_socket: String,
         error: Option<String>,
     },
+    /// Response to LinkDetach.
+    LinkDetachResult { id: u64, error: Option<String> },
 }
 
 /// Status of an MCP server as reported through IPC.

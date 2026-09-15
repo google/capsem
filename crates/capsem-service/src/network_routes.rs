@@ -1,9 +1,9 @@
-//! Named networks: groups of VMs, each bringing its lifetime address.
+//! Named networks: a subnet each, and VMs that lease an address in it.
 //!
 //! The registry behind `ServiceState::networks` is the authority and makes
 //! every change durable before answering; these handlers only translate
 //! between it and the wire. Attaching records a `declared` membership; the
-//! link to the network's switch that makes it `ready` is `switches`' job.
+//! cable plugged into the network's switch that makes it `ready` is `switches`' job.
 use super::*;
 use capsem_core::net::network_registry::{LogQuery, NetworkError, NetworkRegistry, NETWORK_AUDIT_RETENTION};
 use uuid::Uuid;
@@ -12,20 +12,28 @@ use uuid::Uuid;
 /// past retention. Nothing here can fail the deletion: the VM is gone either
 /// way, and what could not be recorded is logged with the reason.
 pub(super) async fn vm_deleted(state: &Arc<ServiceState>, vm_id: &str) {
-    switches::unlink_everywhere(state, vm_id).await;
+    // Memberships go first, cables second: a plug finishing in between finds
+    // no membership and unplugs itself.
     let now_unix_ms = vm_lifecycle::unix_time_ms();
     let mut registry = state.networks.lock().await;
-    match registry.vm_deleted(vm_id, now_unix_ms).await {
-        Ok(departures) => {
-            for departure in departures.iter().filter(|departure| departure.retired) {
-                tracing::info!(vm_id, network = %departure.network, "network retired with its last member");
-                switches::retire(state, departure.network).await;
-            }
+    let retired = match registry.vm_deleted(vm_id, now_unix_ms).await {
+        Ok(departures) => departures
+            .iter()
+            .filter(|departure| departure.retired)
+            .map(|departure| departure.network)
+            .collect(),
+        Err(error) => {
+            tracing::warn!(vm_id, %error, "deleted VM left a network membership behind");
+            Vec::new()
         }
-        Err(error) => tracing::warn!(vm_id, %error, "deleted VM left a network membership behind"),
-    }
+    };
     sweep_retired(&mut registry, now_unix_ms);
     drop(registry);
+    switches::unplug_everywhere(state, vm_id).await;
+    for network in retired {
+        tracing::info!(vm_id, %network, "network retired with its last member");
+        switches::retire(state, network).await;
+    }
 }
 
 /// The retention sweep, run wherever a network retires and at startup.
@@ -38,10 +46,11 @@ pub(super) fn sweep_retired(registry: &mut NetworkRegistry, now_unix_ms: i64) {
 pub(super) fn network_error(error: NetworkError) -> AppError {
     let status = match &error {
         NetworkError::InvalidName(_) | NetworkError::Cursor(_) => StatusCode::BAD_REQUEST,
-        NetworkError::NameTaken { .. } | NetworkError::HasMembers { .. } => StatusCode::CONFLICT,
-        NetworkError::NotFound(_) | NetworkError::NotAMember { .. } | NetworkError::NoPrivatePath { .. } => {
-            StatusCode::NOT_FOUND
-        }
+        NetworkError::NameTaken { .. }
+        | NetworkError::HasMembers { .. }
+        | NetworkError::SubnetsExhausted { .. }
+        | NetworkError::AddressesExhausted { .. } => StatusCode::CONFLICT,
+        NetworkError::NotFound(_) | NetworkError::NotAMember { .. } => StatusCode::NOT_FOUND,
         NetworkError::Database { .. } => StatusCode::INTERNAL_SERVER_ERROR,
     };
     AppError(status, error.to_string())
@@ -75,26 +84,10 @@ fn network_info(registry: &NetworkRegistry, id: Uuid) -> Option<NetworkInfo> {
     Some(NetworkInfo {
         id: id.to_string(),
         name: summary.name,
+        subnet: summary.subnet.to_string(),
         created_unix_ms: summary.created_unix_ms,
         members,
     })
-}
-
-/// The VM's lifetime address, running or stopped. An entry written before
-/// addresses existed cannot join a network until it resumes and gets one.
-pub(super) fn vm_private_address(state: &ServiceState, vm_id: &str) -> Result<std::net::Ipv4Addr, AppError> {
-    if let Some(instance) = state.instances.lock().unwrap().get(vm_id) {
-        return Ok(instance.private_address);
-    }
-    match vm_lifecycle::find_persistent_entry_by_route_id(state, vm_id) {
-        Some(entry) => entry.private_address.ok_or_else(|| {
-            AppError(
-                StatusCode::CONFLICT,
-                format!("VM {vm_id} has no private address until it resumes"),
-            )
-        }),
-        None => Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {vm_id}"))),
-    }
 }
 
 /// Resolve network names to ids, refusing the whole request on any unknown
@@ -114,7 +107,6 @@ pub(super) fn resolve_network_names(registry: &NetworkRegistry, names: &[String]
 pub(super) async fn attach_provisioned(
     state: &Arc<ServiceState>,
     vm_id: &str,
-    address: std::net::Ipv4Addr,
     networks: &[Uuid],
 ) -> Result<(), AppError> {
     if networks.is_empty() {
@@ -123,20 +115,14 @@ pub(super) async fn attach_provisioned(
     let mut registry = state.networks.lock().await;
     for network in networks {
         registry
-            .attach(
-                *network,
-                vm_id,
-                address,
-                capsem_logger::MembershipState::Declared,
-                vm_lifecycle::unix_time_ms(),
-            )
+            .attach(*network, vm_id, vm_lifecycle::unix_time_ms())
             .await
             .map_err(network_error)?;
     }
     drop(registry);
     // The owner is registered by now; its guest may still be booting, which
-    // the link waits for.
-    switches::link_memberships(Arc::clone(state), vm_id.to_string());
+    // the plug waits for.
+    switches::plug_memberships(Arc::clone(state), vm_id.to_string());
     Ok(())
 }
 
@@ -200,27 +186,24 @@ pub(super) async fn handle_network_attach(
     Path((id, vm_id)): Path<(String, String)>,
 ) -> Result<Json<NetworkInfo>, AppError> {
     let network = parse_network_id(&id)?;
-    let address = vm_private_address(&state, &vm_id)?;
-    {
-        let mut registry = state.networks.lock().await;
-        registry
-            .attach(
-                network,
-                &vm_id,
-                address,
-                capsem_logger::MembershipState::Declared,
-                vm_lifecycle::unix_time_ms(),
-            )
-            .await
-            .map_err(network_error)?;
-        drop(registry);
+    let known = state.instances.lock().unwrap().contains_key(&vm_id)
+        || vm_lifecycle::find_persistent_entry_by_route_id(&state, &vm_id).is_some();
+    if !known {
+        return Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {vm_id}")));
     }
-    // A running member is linked before the answer, so the caller sees
+    state
+        .networks
+        .lock()
+        .await
+        .attach(network, &vm_id, vm_lifecycle::unix_time_ms())
+        .await
+        .map_err(network_error)?;
+    // A running member is plugged before the answer, so the caller sees
     // `ready`, or `failed` with the reason in the network's history. The
-    // membership stands either way: the VM joined, its link is retried when
-    // it next starts.
-    if let Err(error) = switches::link(&state, network, &vm_id).await {
-        tracing::warn!(%network, vm_id, %error, "member joined but its link failed");
+    // membership stands either way: the VM joined, its cable is plugged again
+    // when it next starts.
+    if let Err(error) = switches::plug(&state, network, &vm_id).await {
+        tracing::warn!(%network, vm_id, %error, "member joined but its cable was not plugged");
     }
     let info = network_info(&*state.networks.lock().await, network).expect("attached to an existing network");
     Ok(Json(info))
@@ -231,17 +214,8 @@ pub(super) async fn handle_network_detach(
     Path((id, vm_id)): Path<(String, String)>,
 ) -> Result<Json<NetworkInfo>, AppError> {
     let network = parse_network_id(&id)?;
-    switches::unlink(&state, network, &vm_id).await;
-    let info = {
-        let mut registry = state.networks.lock().await;
-        registry
-            .detach(network, &vm_id, vm_lifecycle::unix_time_ms())
-            .await
-            .map_err(network_error)?;
-        let info = network_info(&registry, network).expect("detached from an existing network");
-        drop(registry);
-        info
-    };
+    switches::detach(&state, network, &vm_id).await.map_err(network_error)?;
+    let info = network_info(&*state.networks.lock().await, network).expect("detached from an existing network");
     Ok(Json(info))
 }
 

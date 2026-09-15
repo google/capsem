@@ -129,10 +129,19 @@ CONFIG_NF_NAT_REDIRECT=y
 # reaches the DNAT target through the xt_nat compat module.
 CONFIG_VETH=y
 CONFIG_NETFILTER_XT_NAT=y
+# A container behind the VM leaves through whichever network cable routes its
+# destination, so its source NAT takes that cable's address (MASQUERADE)
+# rather than one fixed when the container started.
+CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y
+CONFIG_NF_NAT_MASQUERADE=y
+# Only what a cable delivers to one of the VM's own addresses is handed to
+# the container; a packet routed through the VM toward another network is
+# not, and meets the cable-to-cable drop.
+CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
 
-# Private network link: capsem-tun opens tun0 and pumps its packets over
-# VSOCK to the host's smoltcp endpoint (crates/capsem-network). The kernel
-# routes into the device; nothing else on the guest sees those packets.
+# Private network cables: capsem-tun opens one tap per network the VM is
+# plugged into and pumps its ethernet frames over VSOCK to that network's
+# layer-2 switch on the host. The guest kernel does ARP, IP and TCP itself.
 CONFIG_TUN=y
 
 # ==========================================

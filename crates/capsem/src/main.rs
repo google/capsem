@@ -1552,8 +1552,8 @@ async fn main() -> Result<()> {
                 println!("No sessions.");
             } else {
                 println!(
-                    "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10} {:<15}",
-                    "ID", "NAME", "STATUS", "RAM", "CPUs", "UPTIME", "ADDRESS"
+                    "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
+                    "ID", "NAME", "STATUS", "RAM", "CPUs", "UPTIME"
                 );
                 for s in &resp.sessions {
                     let name = s.name.as_deref().unwrap_or("-");
@@ -1563,10 +1563,9 @@ async fn main() -> Result<()> {
                         .unwrap_or_else(|| "-".into());
                     let cpus = s.cpus.map(|c| c.to_string()).unwrap_or_else(|| "-".into());
                     let uptime = format_uptime(s.uptime_secs);
-                    let address = s.private_address.as_deref().unwrap_or("-");
                     println!(
-                        "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10} {:<15}",
-                        s.id, name, s.status, ram, cpus, uptime, address
+                        "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
+                        s.id, name, s.status, ram, cpus, uptime
                     );
                     // Any row the service will not run explains itself inline,
                     // so the problem is visible without a second command. A

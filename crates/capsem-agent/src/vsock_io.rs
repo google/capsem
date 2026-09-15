@@ -115,13 +115,35 @@ fn wait_connected(socket: &std::os::unix::net::UnixStream, timeout: Duration) ->
             Ok(0) | Err(nix::errno::Errno::EINTR) => continue,
             Err(error) => return Err(error.into()),
             Ok(_) => {
-                if descriptors[0]
-                    .revents()
-                    .is_some_and(|flags| flags.contains(PollFlags::POLLNVAL))
-                {
+                let revents = descriptors[0].revents().unwrap_or(PollFlags::empty());
+                if revents.contains(PollFlags::POLLNVAL) {
                     return Err(io::Error::from(io::ErrorKind::InvalidInput));
                 }
-                return socket.take_error()?.map_or(Ok(()), Err);
+                if let Some(error) = socket.take_error()? {
+                    return Err(error);
+                }
+                // Writable is not connected: a refused connect may wake the
+                // poll with no pending error (macOS VSOCK does), so a hang-up
+                // fails, and only a socket the kernel names a peer for is up.
+                if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR) {
+                    return Err(io::Error::from(io::ErrorKind::ConnectionRefused));
+                }
+                let mut peer: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+                let mut length = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+                // SAFETY: the buffer and its length describe one writable
+                // sockaddr_storage; the descriptor is borrowed from `socket`.
+                let named = unsafe {
+                    libc::getpeername(
+                        std::os::fd::AsRawFd::as_raw_fd(socket),
+                        &mut peer as *mut libc::sockaddr_storage as *mut libc::sockaddr,
+                        &mut length,
+                    )
+                };
+                return if named == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::last_os_error())
+                };
             }
         }
     }

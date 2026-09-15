@@ -64,6 +64,62 @@ fn frames_become_device_packets_and_a_clean_end_stops() {
     assert_eq!(kernel.receive.recv().unwrap(), vec![5]);
 }
 
+/// The host side of a cable as the pump reads it: every read is counted,
+/// and each hands over at most `chunk` bytes of what is waiting.
+struct HostStream {
+    waiting: io::Cursor<Vec<u8>>,
+    chunk: usize,
+    reads: usize,
+}
+
+impl Read for HostStream {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.reads += 1;
+        let limit = buffer.len().min(self.chunk);
+        self.waiting.read(&mut buffer[..limit])
+    }
+}
+
+fn records(count: usize, size: usize) -> Vec<u8> {
+    let mut wire = Vec::new();
+    for index in 0..count {
+        wire.extend_from_slice(&(size as u16).to_be_bytes());
+        wire.extend(std::iter::repeat_n(index as u8, size));
+    }
+    wire
+}
+
+#[test]
+fn one_read_from_the_host_delivers_every_whole_frame_it_holds() {
+    // Reading each header and each payload on its own cost two syscalls a
+    // frame, and the receiving pump sat at a full core at 1.7 Gb/s.
+    let (mut device, kernel) = fake_tun();
+    let mut host = HostStream {
+        waiting: io::Cursor::new(records(100, 1400)),
+        chunk: usize::MAX,
+        reads: 0,
+    };
+    stream_to_device(&mut host, &mut device, 1500).unwrap();
+    for index in 0..100 {
+        assert_eq!(kernel.receive.recv().unwrap(), vec![index as u8; 1400]);
+    }
+    assert!(host.reads <= 2, "{} reads for 100 frames waiting at once", host.reads);
+}
+
+#[test]
+fn a_frame_split_across_reads_is_written_whole() {
+    let (mut device, kernel) = fake_tun();
+    let mut host = HostStream {
+        waiting: io::Cursor::new(records(5, 1500)),
+        chunk: 7,
+        reads: 0,
+    };
+    stream_to_device(&mut host, &mut device, 1500).unwrap();
+    for index in 0..5 {
+        assert_eq!(kernel.receive.recv().unwrap(), vec![index as u8; 1500]);
+    }
+}
+
 #[test]
 fn a_frame_beyond_the_mtu_ends_the_link_instead_of_truncating() {
     let (mut device, _kernel) = fake_tun();
@@ -104,26 +160,42 @@ fn both_directions_round_trip_through_a_stream_pair() {
     host_ingress.join().unwrap().unwrap();
 }
 
+fn options(extra: &[&str]) -> Result<Options, String> {
+    parse_options(
+        ["--cable", "3", "--address", "10.128.0.2"]
+            .iter()
+            .chain(extra)
+            .map(|s| s.to_string()),
+    )
+}
+
 #[test]
-fn options_require_an_address_and_bound_the_mtu() {
-    let parsed = parse_options(["--address", "10.128.0.2"].map(String::from)).unwrap();
+fn options_require_a_cable_and_an_address_and_bound_the_mtu() {
+    let parsed = options(&[]).unwrap();
+    assert_eq!(parsed.cable, 3);
+    assert_eq!(parsed.device(), "cable3");
     assert_eq!(parsed.address, Ipv4Addr::new(10, 128, 0, 2));
     assert_eq!(parsed.mtu, LINK_MTU, "the largest frame less its ethernet header");
     assert_eq!(parsed.frame_bytes(), MAX_FRAME_BYTES);
     assert_eq!(parsed.mac(), [0x02, 0xca, 10, 128, 0, 2]);
-    assert_eq!(parsed.mtu, LINK_MTU);
-    assert_eq!(parsed.prefix, 32, "a bare link routes only the peer");
+    assert_eq!(parsed.prefix, 32, "a bare cable routes only the peer");
     assert_eq!(parsed.netmask(), Ipv4Addr::new(255, 255, 255, 255));
-    let parsed = parse_options(["--address", "10.128.0.2", "--mtu", "1500"].map(String::from)).unwrap();
-    assert_eq!(parsed.mtu, 1500);
+    assert_eq!(options(&["--mtu", "1500"]).unwrap().mtu, 1500);
     for bad in [
-        vec!["--prefix", "9"],
-        vec!["--address", "nope"],
-        vec!["--address", "10.128.0.2", "--mtu", "100"],
-        vec!["--address", "10.128.0.2", "--mtu", "65522"],
-        vec!["--address", "10.128.0.2", "--bogus", "1"],
-        vec!["--address", "10.128.0.2", "--prefix", "0"],
-        vec!["--address", "10.128.0.2", "--prefix", "33"],
+        &["--mtu", "100"][..],
+        &["--mtu", "65522"],
+        &["--bogus", "1"],
+        &["--prefix", "0"],
+        &["--prefix", "33"],
+    ] {
+        assert!(options(bad).is_err(), "{bad:?}");
+    }
+    for bad in [
+        vec!["--address", "10.128.0.2"],
+        vec!["--cable", "0", "--address", "10.128.0.2"],
+        vec!["--cable", "x", "--address", "10.128.0.2"],
+        vec!["--cable", "3"],
+        vec!["--cable", "3", "--address", "nope"],
         vec!["--address"],
     ] {
         assert!(parse_options(bad.iter().map(|s| s.to_string())).is_err(), "{bad:?}");
@@ -131,14 +203,37 @@ fn options_require_an_address_and_bound_the_mtu() {
 }
 
 #[test]
-fn the_pool_prefix_becomes_the_device_netmask() {
-    let parsed = parse_options(["--address", "10.128.0.2", "--prefix", "9"].map(String::from)).unwrap();
-    assert_eq!(parsed.prefix, 9);
+fn the_network_prefix_becomes_the_device_netmask() {
+    let parsed = options(&["--prefix", "24"]).unwrap();
+    assert_eq!(parsed.prefix, 24);
     assert_eq!(
         parsed.netmask(),
-        Ipv4Addr::new(255, 128, 0, 0),
-        "10.128.0.0/9 routes into tap0"
+        Ipv4Addr::new(255, 255, 255, 0),
+        "only the network's own subnet routes into its cable"
     );
+}
+
+#[test]
+fn a_pump_names_its_cable_before_any_frame() {
+    let mut wire = Vec::new();
+    announce(&mut wire, 3).unwrap();
+    assert_eq!(wire, capsem_proto::privatelink::cable_header(3));
+}
+
+#[test]
+fn the_link_request_declares_ten_gigabit_full_duplex() {
+    let request = link_settings_request(LINK_SPEED_MBPS);
+    assert_eq!(request.len(), 44, "struct ethtool_cmd");
+    assert_eq!(u32::from_ne_bytes(request[..4].try_into().unwrap()), ETHTOOL_SSET);
+    let speed = u32::from(u16::from_ne_bytes([request[12], request[13]]))
+        | u32::from(u16::from_ne_bytes([request[32], request[33]])) << 16;
+    assert_eq!(speed, 10_000);
+    assert_eq!(request[14], 1, "full duplex");
+    assert_eq!(request[18], 0, "no autonegotiation on a virtual cable");
+    let faster = link_settings_request(100_000);
+    let speed = u32::from(u16::from_ne_bytes([faster[12], faster[13]]))
+        | u32::from(u16::from_ne_bytes([faster[32], faster[33]])) << 16;
+    assert_eq!(speed, 100_000, "speeds past 16 bits use speed_hi");
 }
 
 #[test]

@@ -15,20 +15,6 @@ pub struct StatsResponse {
     pub top_mcp_tools: Vec<McpToolSummary>,
 }
 
-/// Internal owner-authenticated request for a private TCP connection.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct PrivateConnectRequest {
-    pub source_vm: String,
-    pub owner_secret: String,
-    #[serde(default)]
-    pub source_generation: u64,
-    pub source_port: u16,
-    pub destination: Ipv4Addr,
-    pub port: u16,
-    #[serde(default)]
-    pub process_name: String,
-}
-
 /// Internal owner-authenticated private-name lookup.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct PrivateResolveRequest {
@@ -46,14 +32,6 @@ pub struct PrivateResolveResponse {
     pub address: Ipv4Addr,
     pub vm: String,
     pub network: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct PrivateConnectResponse {
-    pub network: String,
-    pub destination_vm: String,
-    pub handoff_socket: String,
-    pub token: String,
 }
 
 #[derive(Deserialize, Debug, Default)]

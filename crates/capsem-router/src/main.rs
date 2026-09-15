@@ -10,16 +10,14 @@ use std::time::Duration;
 struct Args {
     #[arg(long)]
     parent_pid: u32,
-    /// Switch private link frames between one network's members instead of
+    /// Be one network's switch, with a port per plugged cable, instead of
     /// relaying descriptor pairs for one VM.
     #[arg(long)]
-    switch: bool,
-    #[arg(long, default_value_t = capsem_router::CONNECTIONS_PER_CLASS as u16)]
-    link_limit: u16,
-    #[arg(long, default_value_t = capsem_router::CONNECTIONS_PER_CLASS as u16)]
+    network: bool,
+    #[arg(long, default_value_t = capsem_router::CONNECTION_LIMIT as u16)]
+    port_limit: u16,
+    #[arg(long, default_value_t = capsem_router::CONNECTION_LIMIT as u16)]
     expose_limit: u16,
-    #[arg(long, default_value_t = capsem_router::CONNECTIONS_PER_CLASS as u16)]
-    private_limit: u16,
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // SAFETY: process entry before descriptor owners or threads exist.
@@ -30,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         default_filter: "capsem_router=info",
     })?;
     let args = Args::parse();
-    let limits = capsem_router::ConnectionLimits::new(args.expose_limit, args.private_limit)?;
+    let limits = capsem_router::ConnectionLimits::new(args.expose_limit)?;
     capsem_guard::watch_parent_or_exit(Some(args.parent_pid))?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -55,8 +53,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "router requires versioned hello",
             ));
         }
-        if args.switch {
-            capsem_router::switch::run(grants, events, usize::from(args.link_limit)).await
+        if args.network {
+            capsem_router::switch::run(grants, events, usize::from(args.port_limit)).await
         } else {
             capsem_router::relay(grants, events, limits).await
         }

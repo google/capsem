@@ -1,23 +1,32 @@
-//! One confined switch per network, and each running member's link to it.
+//! One confined switch per network, and each running member's cable in it.
 //!
-//! The switch never sees the service's API: it gets one stream per linked
-//! member and reports when a link ends. Linking a VM is a handshake with
+//! The switch never sees the service's API: it gets one cable per plugged
+//! member and reports when a port closes. Plugging a VM is a handshake with
 //! its owner (`LinkAttach` over IPC, then the token on the handoff socket,
 //! then the guest stream back on that connection) and a grant to the
-//! switch; the service keeps the handoff connection as the link's keepalive
-//! and drops it to end the link. Membership states follow: `declared` until
-//! the VM runs, `attaching` during the handshake, `ready` once the switch
-//! has the stream, `failed` when the owner or the switch refused, and back
-//! to `declared` when the stream ends (the VM stopped or died). Every
-//! transition writes a row in the network's ledger.
+//! switch; the service keeps the handoff connection as the port's
+//! keepalive and drops it to unplug. Membership states follow: `declared`
+//! until the VM runs, `attaching` during the handshake, `ready` once the
+//! switch has the cable, `failed` when the owner or the switch refused, and
+//! back to `declared` when the cable ends (the VM stopped or died). Every
+//! transition writes a row in the network's ledger; a cable's close row
+//! carries the switch's counters for its port, an unplugged one included.
+//!
+//! Membership is the authority, and every plug and unplug bumps the
+//! attachment's generation. A plug finishes only if, under the registry
+//! lock, the VM is still a member and its generation is still the one the
+//! plug started with; otherwise it unplugs the port it just made. Leaving
+//! revokes the membership first and unplugs second, so a disconnect that
+//! returned can never leave a port behind (review finding 1 of PR #200).
 use super::*;
 use anyhow::ensure;
 use capsem_core::net::network_registry::NetworkRegistry;
-use capsem_core::net::switch_host::SwitchHost;
+use capsem_core::net::switch_host::{PortReports, SwitchHost};
 use capsem_foundation::unix::router_channel::{Receiver, Sender};
 use capsem_logger::{MembershipState, TransportEvent, TransportEventKind};
 use capsem_proto::privatelink::{seat_frame, SEAT_LINK};
-use capsem_router::CloseReport;
+use capsem_router::DropReason;
+use capsem_router::PortReport;
 use std::net::Ipv4Addr;
 use std::os::fd::AsFd;
 use std::time::Duration;
@@ -26,37 +35,52 @@ use uuid::Uuid;
 
 /// How long the owner has to answer `LinkAttach`.
 const ATTACH_TIMEOUT_SECS: u64 = 8;
-/// How long the owner may take to hand the stream over: a VM linked at
+/// How long the owner may take to hand the stream over: a VM plugged at
 /// creation is still booting its guest.
 const STREAM_TIMEOUT: Duration = Duration::from_secs(70);
-/// How long a VM linked as it starts may take to boot before its owner can
+/// How long a VM plugged as it starts may take to boot before its owner can
 /// be asked for the stream.
 const OWNER_READY_TIMEOUT_SECS: u64 = 70;
 
-type Reports = mpsc::Sender<(u64, CloseReport)>;
 type Starting = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Arc<SwitchHost>>> + Send>>;
-type Starter = Arc<dyn Fn(Uuid, Reports) -> Starting + Send + Sync>;
+type Starter = Arc<dyn Fn(Uuid, PortReports) -> Starting + Send + Sync>;
 
-struct Linked {
+struct Plugged {
     vm_id: String,
     address: Ipv4Addr,
+    generation: u32,
     connection: Uuid,
     /// The owner's handoff connection: dropped, the owner ends the guest stream.
     keepalive: std::os::unix::net::UnixStream,
 }
 
+/// A port the service unplugged whose close report has not arrived yet.
+struct Unplugging {
+    vm_id: String,
+    address: Ipv4Addr,
+    connection: Uuid,
+}
+
 struct NetworkSwitch {
     host: Arc<SwitchHost>,
-    links: HashMap<u64, Linked>,
+    ports: HashMap<u64, Plugged>,
+    unplugging: HashMap<u64, Unplugging>,
 }
 
 pub(crate) struct Switches {
     starter: Starter,
     networks: tokio::sync::Mutex<HashMap<Uuid, NetworkSwitch>>,
+    /// The current generation of every attachment that was ever plugged or
+    /// unplugged; never held across an await.
+    generations: std::sync::Mutex<HashMap<(Uuid, String), u32>>,
+    /// Holds a disconnect between revoking the membership and unplugging,
+    /// so a test can finish a plug inside that window.
+    #[cfg(test)]
+    pub(crate) detach_window: std::sync::Mutex<Option<Arc<(tokio::sync::Notify, tokio::sync::Notify)>>>,
 }
 
 impl Switches {
-    /// Switches as confined `capsem-router --switch` children.
+    /// Switches as confined `capsem-router --network` children.
     pub(crate) fn confined() -> Self {
         Self::with_starter(Arc::new(|network, reports| {
             Box::pin(SwitchHost::start(network, reports))
@@ -76,13 +100,13 @@ impl Switches {
                 tokio::spawn(capsem_router::switch::run(
                     grants,
                     tokio::net::UnixStream::from_std(child)?,
-                    capsem_router::CONNECTIONS_PER_CLASS,
+                    capsem_router::CONNECTION_LIMIT,
                 ));
                 let host = SwitchHost::attach(
-                    0,
                     Sender::new(parent.try_clone()?)?,
                     tokio::net::UnixStream::from_std(parent)?,
                     reports,
+                    None,
                 );
                 host.ready().await?;
                 Ok(host)
@@ -94,7 +118,36 @@ impl Switches {
         Self {
             starter,
             networks: tokio::sync::Mutex::new(HashMap::new()),
+            generations: std::sync::Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            detach_window: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Start a new generation of `vm_id`'s attachment to `network`: any plug
+    /// still under way for an older one will unplug itself.
+    fn next_generation(&self, network: Uuid, vm_id: &str) -> u32 {
+        let mut generations = self.generations.lock().unwrap();
+        let generation = generations.entry((network, vm_id.to_string())).or_insert(0);
+        *generation = generation.wrapping_add(1).max(1);
+        let current = *generation;
+        drop(generations);
+        current
+    }
+
+    fn is_current(&self, network: Uuid, vm_id: &str, generation: u32) -> bool {
+        self.generations.lock().unwrap().get(&(network, vm_id.to_string())) == Some(&generation)
+    }
+
+    /// The ports plugged into `network`'s switch, for tests.
+    #[cfg(test)]
+    pub(crate) async fn plugged(&self, network: Uuid) -> Vec<String> {
+        self.networks
+            .lock()
+            .await
+            .get(&network)
+            .map(|switch| switch.ports.values().map(|port| port.vm_id.clone()).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -105,15 +158,14 @@ fn now_hex_id() -> String {
     )
 }
 
-/// What a link row says happened: linked, refused with the reason, or ended.
+/// What a ledger row about a cable says happened.
 enum Outcome<'a> {
     Linked,
     Refused(&'a str),
-    Ended(&'a str, Option<&'a CloseReport>),
+    Ended(&'a str, Option<&'a PortReport>),
 }
 
-/// One ledger row about a VM's link: the same shape as a private
-/// connection's, with the VM on both ends and no port.
+/// One ledger row about a VM's cable: the VM on both ends and no port.
 fn link_event(
     network: Uuid,
     connection: Uuid,
@@ -122,7 +174,7 @@ fn link_event(
     outcome: Outcome<'_>,
 ) -> Result<TransportEvent, String> {
     let endpoint = json!({ "vm": { "id": vm_id }, "address": address.to_string(), "port": 0 });
-    let (kind, decision, reason, frames) = match outcome {
+    let (kind, decision, reason, report) = match outcome {
         Outcome::Linked => (TransportEventKind::Connect, "allow", "linked", None),
         Outcome::Refused(reason) => (TransportEventKind::Connect, "block", reason, None),
         Outcome::Ended(reason, report) => (TransportEventKind::Close, "allow", reason, report),
@@ -131,8 +183,19 @@ fn link_event(
         "network": { "context": "private", "protocol": "link", "source": endpoint, "destination": endpoint },
         "decision": { "effective": decision, "reason": reason },
     });
-    if let Some(report) = frames {
-        facts["frames"] = json!({ "forwarded": report.from_source, "delivered": report.to_source, "reason": format!("{:?}", report.reason) });
+    if let Some(report) = report {
+        let dropped: serde_json::Map<String, serde_json::Value> = DropReason::ALL
+            .iter()
+            .map(|reason| (reason.name().to_string(), json!(report.dropped[*reason as usize])))
+            .collect();
+        facts["frames"] = json!({
+            "reason": format!("{:?}", report.reason),
+            "frames_in": report.frames_in,
+            "bytes_in": report.bytes_in,
+            "frames_out": report.frames_out,
+            "bytes_out": report.bytes_out,
+            "dropped": dropped,
+        });
     }
     TransportEvent::new(
         now_hex_id(),
@@ -150,156 +213,175 @@ fn is_member(registry: &NetworkRegistry, network: Uuid, vm_id: &str) -> bool {
         .is_some_and(|members| members.iter().any(|member| member.vm_id == vm_id))
 }
 
-/// Write a membership state and a ledger row under the registry lock; a VM
-/// that left the network meanwhile gets neither, and the answer is false.
-async fn record(
-    state: &ServiceState,
+/// Write a membership state and a ledger row; the caller holds the registry.
+async fn record_locked(
+    registry: &mut NetworkRegistry,
     network: Uuid,
     vm_id: &str,
-    address: Ipv4Addr,
     membership: MembershipState,
-    event: TransportEvent,
-) -> bool {
-    let mut registry = state.networks.lock().await;
-    if !is_member(&registry, network, vm_id) {
-        return false;
-    }
+    event: Result<TransportEvent, String>,
+) {
     if let Err(error) = registry
-        .attach(network, vm_id, address, membership, vm_lifecycle::unix_time_ms())
+        .set_state(network, vm_id, membership, vm_lifecycle::unix_time_ms())
         .await
     {
         warn!(%network, vm_id, %error, "membership state was not recorded");
     }
-    if let Err(error) = registry.record(network, event).await {
-        warn!(%network, vm_id, %error, "link audit row was not recorded");
+    match event {
+        Ok(event) => {
+            if let Err(error) = registry.record(network, event).await {
+                warn!(%network, vm_id, %error, "cable audit row was not recorded");
+            }
+        }
+        Err(error) => warn!(%network, vm_id, %error, "cable audit row was not built"),
     }
-    drop(registry);
-    true
 }
 
-/// The network's switch, started on first use. Its close reports are
-/// consumed for as long as it lives; when it dies, every member it linked
-/// is linked again on a fresh one.
+/// The network's switch, started on first use. Its port reports are
+/// consumed for as long as it lives; when it dies, every member it had is
+/// plugged again into a fresh one.
 async fn host(state: &Arc<ServiceState>, network: Uuid) -> Result<Arc<SwitchHost>> {
     let mut networks = state.switches.networks.lock().await;
     if let Some(switch) = networks.get(&network) {
-        if !switch.host.closed.is_cancelled() {
+        if !switch.host.is_closed() {
             return Ok(Arc::clone(&switch.host));
         }
     }
     let (reports, mut closed) = mpsc::channel(64);
     let host = (state.switches.starter)(network, reports).await?;
-    networks.insert(
+    let replaced = networks.insert(
         network,
         NetworkSwitch {
             host: Arc::clone(&host),
-            links: HashMap::new(),
+            ports: HashMap::new(),
+            unplugging: HashMap::new(),
         },
     );
     drop(networks);
+    if let Some(dead) = replaced {
+        // A plug got here before the dead switch's watcher: its members are
+        // replugged now, alongside this one.
+        tokio::spawn(replug_orphans(Arc::clone(state), network, dead));
+    }
     let watched = Arc::clone(state);
+    let reporting = Arc::clone(&host);
     tokio::spawn(async move {
-        while let Some((id, report)) = closed.recv().await {
-            link_closed(&watched, network, id, &report).await;
+        while let Some((port, report)) = closed.recv().await {
+            port_closed(&watched, network, port, &report).await;
         }
-        relink_orphans(watched, network).await;
+        let orphans = {
+            let mut networks = watched.switches.networks.lock().await;
+            match networks.get(&network) {
+                Some(switch) if Arc::ptr_eq(&switch.host, &reporting) => networks.remove(&network),
+                _ => None,
+            }
+        };
+        match orphans {
+            Some(orphans) => replug_orphans(watched, network, orphans).await,
+            None => reporting.retire().await,
+        }
     });
     Ok(host)
 }
 
-/// The switch is gone: whoever was still linked is linked again on a fresh
-/// one. Boxed: linking starts a switch, whose watcher relinks.
-fn relink_orphans(
+/// A switch is gone: it is reaped, and whoever was still plugged into it is
+/// plugged again into a fresh one. Boxed: plugging starts a switch, whose
+/// watcher replugs.
+fn replug_orphans(
     state: Arc<ServiceState>,
     network: Uuid,
+    dead: NetworkSwitch,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     Box::pin(async move {
-        let orphans = state.switches.networks.lock().await.remove(&network);
-        let Some(orphans) = orphans else { return };
-        warn!(%network, switch_pid = orphans.host.pid, members = orphans.links.len(), "network switch ended; relinking its members");
-        for linked in orphans.links.into_values() {
-            drop(linked.keepalive);
-            if let Err(error) = link(&state, network, &linked.vm_id).await {
-                warn!(%network, vm_id = linked.vm_id, %error, "member was not relinked");
+        dead.host.retire().await;
+        warn!(%network, switch_pid = ?dead.host.pid(), members = dead.ports.len(), "network switch ended; replugging its members");
+        for (_, unplugged) in dead.unplugging {
+            record_unplugged(&state, network, &unplugged, None).await;
+        }
+        for plugged in dead.ports.into_values() {
+            drop(plugged.keepalive);
+            if let Err(error) = plug(&state, network, &plugged.vm_id).await {
+                warn!(%network, vm_id = plugged.vm_id, %error, "member was not replugged");
             }
         }
     })
 }
 
-/// The switch reported a link's end: the VM stopped, died, or its pump did.
-/// A member whose owner still runs is linked again once the pump has
+/// The switch reported a port's end: the VM stopped, died, or its pump did.
+/// A member whose owner still runs is plugged again once the pump has
 /// reconnected; one that is gone stays `declared` until it resumes.
-async fn link_closed(state: &Arc<ServiceState>, network: Uuid, id: u64, report: &CloseReport) {
-    let linked = state
-        .switches
-        .networks
-        .lock()
-        .await
-        .get_mut(&network)
-        .and_then(|switch| switch.links.remove(&id));
-    let Some(linked) = linked else { return };
-    info!(%network, vm_id = linked.vm_id, ?report, "private link closed");
-    drop(linked.keepalive);
-    match link_event(
-        network,
-        linked.connection,
-        &linked.vm_id,
-        linked.address,
-        Outcome::Ended("closed", Some(report)),
-    ) {
-        Ok(event) => {
-            record(
-                state,
-                network,
-                &linked.vm_id,
-                linked.address,
-                MembershipState::Declared,
-                event,
-            )
-            .await;
-        }
-        Err(error) => warn!(%network, %error, "link close row was not built"),
+async fn port_closed(state: &Arc<ServiceState>, network: Uuid, port: u64, report: &PortReport) {
+    let (plugged, unplugged) = match state.switches.networks.lock().await.get_mut(&network) {
+        Some(switch) => (switch.ports.remove(&port), switch.unplugging.remove(&port)),
+        None => (None, None),
+    };
+    if let Some(unplugged) = unplugged {
+        record_unplugged(state, network, &unplugged, Some(report)).await;
+        return;
     }
-    tokio::spawn(relink_later(Arc::clone(state), network, linked.vm_id));
+    let Some(plugged) = plugged else { return };
+    info!(%network, vm_id = plugged.vm_id, ?report, "network cable closed");
+    drop(plugged.keepalive);
+    {
+        let mut registry = state.networks.lock().await;
+        if !is_member(&registry, network, &plugged.vm_id)
+            || !state.switches.is_current(network, &plugged.vm_id, plugged.generation)
+        {
+            return;
+        }
+        let event = link_event(
+            network,
+            plugged.connection,
+            &plugged.vm_id,
+            plugged.address,
+            Outcome::Ended("closed", Some(report)),
+        );
+        record_locked(&mut registry, network, &plugged.vm_id, MembershipState::Declared, event).await;
+    }
+    tokio::spawn(replug_later(Arc::clone(state), network, plugged.vm_id));
 }
 
-/// A member whose owner still runs is linked again after its link closed:
+/// A member whose owner still runs is plugged again after its port closed:
 /// its pump restarts after its first backoff and the owner waits for the
-/// fresh stream. Boxed: linking starts a switch whose watcher reports
+/// fresh stream. Boxed: plugging starts a switch whose watcher reports
 /// closes here.
-fn relink_later(
+fn replug_later(
     state: Arc<ServiceState>,
     network: Uuid,
     vm_id: String,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     Box::pin(async move {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        if let Err(error) = link(&state, network, &vm_id).await {
-            info!(%network, vm_id, %error, "member not relinked after its link closed");
+        if let Err(error) = plug(&state, network, &vm_id).await {
+            info!(%network, vm_id, %error, "member not replugged after its port closed");
         }
     })
 }
 
-/// Ask the owner for the guest stream and grant it to the switch.
+/// Ask the owner for the guest stream and plug it into the switch as
+/// `generation`. Returns the port and the owner's handoff connection.
 async fn handshake(
     state: &Arc<ServiceState>,
     network: Uuid,
     uds_path: &StdPath,
     address: Ipv4Addr,
-) -> Result<(u64, std::os::unix::net::UnixStream)> {
-    let network_name = state
+    generation: u32,
+) -> Result<(Arc<SwitchHost>, u64, std::os::unix::net::UnixStream)> {
+    let summary = state
         .networks
         .lock()
         .await
         .summary(network)
-        .map(|summary| summary.name)
-        .unwrap_or_default();
+        .context("the network retired during the plug")?;
     let token = format!("{:016x}", Uuid::new_v4().as_u128() as u64);
     let ask = ServiceToProcess::LinkAttach {
         id: Uuid::new_v4().as_u128() as u64,
         token: token.clone(),
         network: network.to_string(),
-        network_name,
+        network_name: summary.name,
+        address,
+        prefix: summary.subnet.prefix_len(),
+        generation,
     };
     let handoff_socket = match send_ipc_command(uds_path, ask, Some(ATTACH_TIMEOUT_SECS)).await {
         Ok(ProcessToService::LinkAttachResult {
@@ -331,125 +413,227 @@ async fn handshake(
     );
     let stream = answer.fds.into_iter().next().unwrap();
     let host = host(state, network).await?;
-    let id = host.link(address, stream.as_fd()).await?;
-    Ok((id, socket))
+    let port = host.plug(generation, address, stream.as_fd()).await?;
+    Ok((host, port, socket))
 }
 
-/// Link a running member to its network's switch; a VM that is not running
-/// stays `declared` until it is. Membership is the authority throughout: a
-/// relink can outlive the membership it was for, so a VM that left before
-/// the link starts gets none, and one that left during the handshake has its
-/// fresh link ended.
-pub(crate) async fn link(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) -> Result<()> {
+/// Plug a running member's cable into its network's switch; a VM that is
+/// not running stays `declared` until it is. Membership and generation are
+/// checked again, under the registry lock, once the switch has the cable: a
+/// member that left meanwhile, or a newer plug or unplug, unplugs it.
+pub(crate) async fn plug(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) -> Result<()> {
     let running = state
         .instances
         .lock()
         .unwrap()
         .get(vm_id)
-        .map(|instance| (instance.uds_path.clone(), instance.private_address));
-    let Some((uds_path, address)) = running else {
+        .map(|instance| instance.uds_path.clone());
+    let Some(uds_path) = running else {
         return Ok(());
     };
-    {
+    let (generation, address) = {
         let mut registry = state.networks.lock().await;
-        if !is_member(&registry, network, vm_id) {
+        let Some(address) = registry.address_of(network, vm_id) else {
             return Ok(());
-        }
+        };
         registry
-            .attach(
-                network,
-                vm_id,
-                address,
-                MembershipState::Attaching,
-                vm_lifecycle::unix_time_ms(),
-            )
+            .set_state(network, vm_id, MembershipState::Attaching, vm_lifecycle::unix_time_ms())
             .await
             .map_err(|error| anyhow!("{error}"))?;
+        let generation = state.switches.next_generation(network, vm_id);
         drop(registry);
-    }
+        (generation, address)
+    };
     let connection = Uuid::new_v4();
-    match handshake(state, network, &uds_path, address).await {
-        Ok((id, keepalive)) => {
-            let mut networks = state.switches.networks.lock().await;
-            let switch = networks.get_mut(&network).context("the network's switch vanished")?;
-            switch.links.insert(
-                id,
-                Linked {
-                    vm_id: vm_id.to_string(),
-                    address,
-                    connection,
-                    keepalive,
-                },
-            );
-            drop(networks);
-            info!(%network, vm_id, %address, link_id = id, "private link ready");
-            let event =
-                link_event(network, connection, vm_id, address, Outcome::Linked).map_err(|error| anyhow!("{error}"))?;
-            if !record(state, network, vm_id, address, MembershipState::Ready, event).await {
-                // Detach ran while the owner answered: its unlink found nothing
-                // to end, so this link is ended here.
-                unlink(state, network, vm_id).await;
+    match handshake(state, network, &uds_path, address, generation).await {
+        Ok((host, port, keepalive)) => {
+            let mut registry = state.networks.lock().await;
+            if !is_member(&registry, network, vm_id) || !state.switches.is_current(network, vm_id, generation) {
+                drop(registry);
+                info!(%network, vm_id, generation, "plug outlived its attachment; unplugging it");
+                if let Err(error) = host.unplug(port).await {
+                    warn!(%network, vm_id, %error, "switch did not take the stale unplug");
+                }
+                drop(keepalive);
+                return Ok(());
             }
+            state
+                .switches
+                .networks
+                .lock()
+                .await
+                .get_mut(&network)
+                .filter(|switch| Arc::ptr_eq(&switch.host, &host))
+                .context("the network's switch was replaced during the plug")?
+                .ports
+                .insert(
+                    port,
+                    Plugged {
+                        vm_id: vm_id.to_string(),
+                        address,
+                        generation,
+                        connection,
+                        keepalive,
+                    },
+                );
+            info!(%network, vm_id, %address, port, "network cable plugged");
+            let event = link_event(network, connection, vm_id, address, Outcome::Linked);
+            record_locked(&mut registry, network, vm_id, MembershipState::Ready, event).await;
+            drop(registry);
             Ok(())
         }
         Err(error) => {
-            warn!(%network, vm_id, %address, %error, "private link failed");
-            let event = link_event(
-                network,
-                connection,
-                vm_id,
-                address,
-                Outcome::Refused(&format!("{error:#}")),
-            )
-            .map_err(|error| anyhow!("{error}"))?;
-            record(state, network, vm_id, address, MembershipState::Failed, event).await;
+            warn!(%network, vm_id, %address, %error, "network cable was not plugged");
+            let mut registry = state.networks.lock().await;
+            if is_member(&registry, network, vm_id) && state.switches.is_current(network, vm_id, generation) {
+                let event = link_event(
+                    network,
+                    connection,
+                    vm_id,
+                    address,
+                    Outcome::Refused(&format!("{error:#}")),
+                );
+                record_locked(&mut registry, network, vm_id, MembershipState::Failed, event).await;
+            }
+            drop(registry);
             Err(error)
         }
     }
 }
 
-/// End a member's link, if it has one.
-pub(crate) async fn unlink(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) {
+/// Unplug a member's cable, if it has one, and end any plug under way.
+/// Returns the attachment generation the unplug started, which every plug
+/// before it is older than.
+pub(crate) async fn unplug(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) -> u32 {
+    let generation = state.switches.next_generation(network, vm_id);
     let mut networks = state.switches.networks.lock().await;
     let Some(switch) = networks.get_mut(&network) else {
-        return;
+        return generation;
     };
-    let id = switch
-        .links
+    let port = switch
+        .ports
         .iter()
-        .find(|(_, linked)| linked.vm_id == vm_id)
-        .map(|(id, _)| *id);
-    let Some(id) = id else { return };
-    let linked = switch.links.remove(&id).unwrap();
+        .find(|(_, plugged)| plugged.vm_id == vm_id)
+        .map(|(port, _)| *port);
+    let Some(port) = port else { return generation };
+    let plugged = switch.ports.remove(&port).unwrap();
+    let unplugged = Unplugging {
+        vm_id: plugged.vm_id,
+        address: plugged.address,
+        connection: plugged.connection,
+    };
+    switch.unplugging.insert(port, unplugged);
     let host = Arc::clone(&switch.host);
     drop(networks);
-    if let Err(error) = host.unlink(id).await {
-        warn!(%network, vm_id, %error, "switch did not take the unlink");
-    }
-    drop(linked.keepalive);
-    if let Ok(event) = link_event(
-        network,
-        linked.connection,
-        vm_id,
-        linked.address,
-        Outcome::Ended("unlinked", None),
-    ) {
-        if let Err(error) = state.networks.lock().await.record(network, event).await {
-            warn!(%network, vm_id, %error, "unlink row was not recorded");
+    drop(plugged.keepalive);
+    // The close row waits for the switch's report on the port, which carries
+    // its counters; a switch that cannot take the unplug will send none.
+    if let Err(error) = host.unplug(port).await {
+        warn!(%network, vm_id, %error, "switch did not take the unplug");
+        let unplugged = match state.switches.networks.lock().await.get_mut(&network) {
+            Some(switch) => switch.unplugging.remove(&port),
+            None => None,
+        };
+        if let Some(unplugged) = unplugged {
+            record_unplugged(state, network, &unplugged, None).await;
         }
+    }
+    generation
+}
+
+/// The close row of a cable the service unplugged, with the switch's report
+/// when there is one.
+async fn record_unplugged(
+    state: &Arc<ServiceState>,
+    network: Uuid,
+    unplugged: &Unplugging,
+    report: Option<&PortReport>,
+) {
+    let vm_id = &unplugged.vm_id;
+    let event = link_event(
+        network,
+        unplugged.connection,
+        vm_id,
+        unplugged.address,
+        Outcome::Ended("unlinked", report),
+    );
+    match event {
+        Ok(event) => {
+            if let Err(error) = state.networks.lock().await.record(network, event).await {
+                warn!(%network, vm_id, %error, "unplug row was not recorded");
+            }
+        }
+        Err(error) => warn!(%network, vm_id, %error, "unplug row was not built"),
     }
 }
 
-/// Every network a VM belongs to gets its link, once the VM's owner runs:
-/// after a provision, a resume, or a switch that came back.
-pub(crate) fn link_memberships(state: Arc<ServiceState>, vm_id: String) {
+/// Revoke a membership, then unplug its cable: in that order, a plug that
+/// finishes in between finds the membership gone and unplugs itself.
+pub(crate) async fn detach(
+    state: &Arc<ServiceState>,
+    network: Uuid,
+    vm_id: &str,
+) -> Result<(), capsem_core::net::network_registry::NetworkError> {
+    state
+        .networks
+        .lock()
+        .await
+        .detach(network, vm_id, vm_lifecycle::unix_time_ms())
+        .await?;
+    #[cfg(test)]
+    {
+        let window = state.switches.detach_window.lock().unwrap().clone();
+        if let Some(window) = window {
+            window.0.notify_one();
+            window.1.notified().await;
+        }
+    }
+    let generation = unplug(state, network, vm_id).await;
+    take_cable_down(state, network, vm_id, generation);
+    Ok(())
+}
+
+/// A running VM that left a network has its owner take that cable down in
+/// the guest. Nothing waits on it: the VM already left, and an owner that
+/// cannot answer is a VM that is stopping. The request names the leave's
+/// generation, so if it reaches the owner after a rejoin's plug, the owner
+/// keeps the rejoined cable.
+fn take_cable_down(state: &Arc<ServiceState>, network: Uuid, vm_id: &str, generation: u32) {
+    let running = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(vm_id)
+        .map(|instance| instance.uds_path.clone());
+    let Some(uds_path) = running else { return };
+    let vm_id = vm_id.to_string();
+    tokio::spawn(async move {
+        let ask = ServiceToProcess::LinkDetach {
+            id: Uuid::new_v4().as_u128() as u64,
+            network: network.to_string(),
+            generation,
+        };
+        match send_ipc_command(&uds_path, ask, Some(ATTACH_TIMEOUT_SECS)).await {
+            Ok(ProcessToService::LinkDetachResult { error: None, .. }) => {}
+            Ok(ProcessToService::LinkDetachResult { error: Some(error), .. }) => {
+                warn!(%network, vm_id, %error, "owner did not take the cable down")
+            }
+            Ok(other) => warn!(%network, vm_id, ?other, "unexpected owner reply to a detach"),
+            Err(error) => info!(%network, vm_id, %error, "owner unreachable to take the cable down"),
+        }
+    });
+}
+
+/// Every network a VM belongs to gets its cable plugged, once the VM's owner
+/// runs: after a provision, a resume, or a switch that came back.
+pub(crate) fn plug_memberships(state: Arc<ServiceState>, vm_id: String) {
     tokio::spawn(async move {
         let networks = state.networks.lock().await.memberships_of(&vm_id);
         if networks.is_empty() {
             return;
         }
         // This runs as the VM starts, before its owner binds the socket the
-        // link asks through; asking then failed every link for good. The
+        // plug asks through; asking then failed every plug for good. The
         // ready sentinel is the owner's word that it answers, and the wait
         // ends early if the VM goes away.
         let uds_path = state
@@ -462,28 +646,39 @@ pub(crate) fn link_memberships(state: Arc<ServiceState>, vm_id: String) {
         if let Err(error) =
             crate::vm_files::wait_for_vm_ready(&uds_path, OWNER_READY_TIMEOUT_SECS, Some(&state), Some(&vm_id)).await
         {
-            warn!(vm_id, %error, "members were not linked: the VM's owner never became ready");
+            warn!(vm_id, %error, "members were not plugged: the VM's owner never became ready");
             return;
         }
         for network in networks {
-            if let Err(error) = link(&state, network, &vm_id).await {
-                warn!(%network, vm_id, %error, "member was not linked at start");
+            if let Err(error) = plug(&state, network, &vm_id).await {
+                warn!(%network, vm_id, %error, "member was not plugged at start");
             }
         }
     });
 }
 
-/// A VM is gone: its links end everywhere.
-pub(crate) async fn unlink_everywhere(state: &Arc<ServiceState>, vm_id: &str) {
+/// A VM is gone: its cables are unplugged everywhere.
+pub(crate) async fn unplug_everywhere(state: &Arc<ServiceState>, vm_id: &str) {
     let networks: Vec<Uuid> = state.switches.networks.lock().await.keys().copied().collect();
     for network in networks {
-        unlink(state, network, vm_id).await;
+        unplug(state, network, vm_id).await;
     }
 }
 
-/// A retired network's switch stops.
+/// A retired network's switch stops for good: its process is reaped before
+/// this returns.
 pub(crate) async fn retire(state: &Arc<ServiceState>, network: Uuid) {
-    if let Some(switch) = state.switches.networks.lock().await.remove(&network) {
-        switch.host.closed.cancel();
+    let switch = state.switches.networks.lock().await.remove(&network);
+    state
+        .switches
+        .generations
+        .lock()
+        .unwrap()
+        .retain(|(attached, _), _| *attached != network);
+    if let Some(switch) = switch {
+        switch.host.retire().await;
+        for (_, unplugged) in switch.unplugging {
+            record_unplugged(state, network, &unplugged, None).await;
+        }
     }
 }

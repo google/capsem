@@ -15,7 +15,6 @@ pub(super) fn running_sandbox_info(i: &InstanceInfo) -> SandboxInfo {
     info.cpus = Some(i.cpus);
     info.version = Some(i.base_version.clone());
     info.forked_from = i.forked_from.clone();
-    info.private_address = Some(i.private_address);
     info.uptime_secs = Some(i.start_time.elapsed().as_secs());
     info.can_resume = false;
     info.refresh_available_actions();
@@ -39,7 +38,6 @@ pub(super) fn inactive_sandbox_info(
     info.version = Some(entry.base_version.clone());
     info.forked_from = entry.forked_from.clone();
     info.description = entry.description.clone();
-    info.private_address = entry.private_address;
     info.can_resume = can_resume;
     if can_resume {
         info.resume_blocked_reason = None;

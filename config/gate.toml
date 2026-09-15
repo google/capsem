@@ -1102,7 +1102,7 @@ must_stay_below_lines = 3000
 "crates/capsem-admin/src/profile_images.rs" = 2189
 "crates/capsem-admin/src/release_graph.rs" = 1089
 "crates/capsem-admin/src/release_graph/tests.rs" = 1323
-"crates/capsem-agent/src/main.rs" = 1077
+"crates/capsem-agent/src/main.rs" = 1076
 "crates/capsem-agent/src/tests.rs" = 1681
 "crates/capsem-assets/src/asset_manager.rs" = 1355
 "crates/capsem-core/src/auto_snapshot/tests.rs" = 1034
@@ -1127,18 +1127,18 @@ must_stay_below_lines = 3000
 "crates/capsem-logger/src/writer.rs" = 1104
 "crates/capsem-logger/src/writer/tests.rs" = 1946
 "crates/capsem-mock-server/src/main.rs" = 1416
-"crates/capsem-process/src/vsock.rs" = 1455
+"crates/capsem-process/src/vsock.rs" = 1454
 "crates/capsem-proto/src/tests.rs" = 1457
-"crates/capsem-service/src/ledger_routes.rs" = 2452
-"crates/capsem-service/src/main.rs" = 1524
+"crates/capsem-service/src/ledger_routes.rs" = 2421
+"crates/capsem-service/src/main.rs" = 1530
 "crates/capsem-service/src/profile_routes.rs" = 2167
-"crates/capsem-service/src/vm_files.rs" = 1665
-"crates/capsem-service/src/tests/assets_registry.rs" = 1524
-"crates/capsem-service/src/tests/lifecycle.rs" = 2072
+"crates/capsem-service/src/vm_files.rs" = 1608
+"crates/capsem-service/src/tests/assets_registry.rs" = 1522
+"crates/capsem-service/src/tests/lifecycle.rs" = 2065
 "crates/capsem-service/src/tests/profile_routes.rs" = 2600
 "crates/capsem-tui/src/tests.rs" = 1563
 "crates/capsem-tui/src/ui.rs" = 1081
-"crates/capsem/src/main.rs" = 2273
+"crates/capsem/src/main.rs" = 2272
 "crates/capsem/src/support_bundle.rs" = 1047
 "crates/capsem/src/tests.rs" = 1323
 "crates/capsem/src/update.rs" = 2488
@@ -2288,8 +2288,7 @@ suite_path = "tests/ironbank/kingslanding"
 # wanted, ignored when only the acceptance proof is.
 benchmark_paths = [
     "tests/ironbank/kingslanding/test_redis_benchmark.py",
-    "tests/ironbank/kingslanding/test_private_link_benchmark.py",
-    "tests/ironbank/kingslanding/test_private_path_benchmark.py",
+    "tests/ironbank/kingslanding/test_publish_benchmark.py",
 ]
 
 [modules]
@@ -2908,7 +2907,7 @@ slowest_steps = 10
 # `internal` is a reasoned, ratcheted inventory for service-UDS control routes
 # that are deliberately neither public gateway routes nor benchmark subjects.
 [benchmark.routes]
-internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/connect" = "VM owners ask the service to admit a private TCP connection over the local service UDS; never a gateway route", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route" }
+internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route" }
 measured = [
     "/vms/{id}/changes",
     "/status",

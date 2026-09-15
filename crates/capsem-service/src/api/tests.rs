@@ -94,7 +94,6 @@ fn provision_response_roundtrip() {
         can_resume: false,
         available_actions: vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete],
         uds_path: Some(std::path::PathBuf::from("/tmp/r/instances/vm-123.sock")),
-        private_address: None,
     };
     let json = serde_json::to_string(&r).unwrap();
     let r2: ProvisionResponse = serde_json::from_str(&json).unwrap();
@@ -374,6 +373,7 @@ fn network_info_roundtrip_keeps_member_addresses_as_text() {
     let info = NetworkInfo {
         id: "0f0e0d0c-0b0a-4908-8706-050403020100".into(),
         name: "team".into(),
+        subnet: "10.128.0.0/24".into(),
         created_unix_ms: 1_700_000_000_000,
         members: vec![NetworkMemberInfo {
             vm_id: "vm-1".into(),

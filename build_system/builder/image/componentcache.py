@@ -108,6 +108,18 @@ def _paths(repository: Path) -> CachePaths:
     return load_paths(repository.resolve())
 
 
+def _checkout_output(repository: Path, paths: CachePaths, output: Path) -> bool:
+    """Whether `output` lives in a checkout's cache tree rather than a fixture's.
+
+    Either the authority's or the building checkout's own: a linked worktree
+    shares the main checkout's objects but stages under its own `cache/`, and
+    refusing that made every worktree run recompile its guest agents.
+    """
+    resolved = output.resolve()
+    trees = (paths.root, repository.resolve() / paths.policy.root)
+    return any(resolved.is_relative_to(tree.resolve()) for tree in trees)
+
+
 def _receipt(paths: CachePaths, component: str, identity: str) -> Path:
     if not TOKEN.fullmatch(component) or len(identity) != 64:
         raise ValueError("component cache identity is not canonical")
@@ -137,7 +149,7 @@ def current(
     """Return current exact outputs without mutating or trusting timestamps."""
     paths = _paths(repository)
     output_root = output.resolve()
-    if not output_root.is_relative_to(paths.root.resolve()):
+    if not _checkout_output(repository, paths, output):
         return None
     receipt = _load_receipt(paths, component, identity)
     if receipt is None:
@@ -168,7 +180,7 @@ def restore(
 ) -> tuple[Path, ...] | None:
     """Restore one complete component generation, or report a clean miss."""
     paths = _paths(repository)
-    if not output.resolve().is_relative_to(paths.root.resolve()):
+    if not _checkout_output(repository, paths, output):
         return None
     receipt = _load_receipt(paths, component, identity)
     if receipt is None:
@@ -190,7 +202,7 @@ def store(
 ) -> ComponentReceipt | None:
     """Publish a complete component receipt after importing every output."""
     paths = _paths(repository)
-    if not output.resolve().is_relative_to(paths.root.resolve()):
+    if not _checkout_output(repository, paths, output):
         return None
     files = {relative: import_file(paths, output / relative) for relative in relatives}
     receipt = ComponentReceipt(

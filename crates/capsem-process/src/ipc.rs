@@ -312,10 +312,13 @@ pub(crate) async fn handle_ipc_connection(
                     capsem_core::try_send!("publication_result", output.send(response).await);
                 });
             }
-            ServiceToProcess::ConnectPort { .. } | ServiceToProcess::AbortPorts { .. } => {
-                anyhow::bail!("publication data requests are VM-owner internal")
+            ServiceToProcess::ConnectPort { .. }
+            | ServiceToProcess::AbortPorts { .. }
+            | ServiceToProcess::PlugCable { .. }
+            | ServiceToProcess::UnplugCable { .. } => {
+                anyhow::bail!("guest data-plane requests are VM-owner internal")
             }
-            message @ (ServiceToProcess::PrivateAccept { .. } | ServiceToProcess::LinkAttach { .. }) => {
+            message @ (ServiceToProcess::LinkAttach { .. } | ServiceToProcess::LinkDetach { .. }) => {
                 private::handle(message, Arc::clone(&job_store), ipc_tx_out.clone());
             }
             ServiceToProcess::WriteFile { id, path, data }
@@ -913,8 +916,11 @@ fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::TerminalResize { .. } => IpcAction::Forward,
         ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => IpcAction::Job,
         ServiceToProcess::PublishPort { .. } => IpcAction::Job,
-        ServiceToProcess::ConnectPort { .. } | ServiceToProcess::AbortPorts { .. } => IpcAction::Unexpected,
-        ServiceToProcess::PrivateAccept { .. } | ServiceToProcess::LinkAttach { .. } => IpcAction::Job,
+        ServiceToProcess::ConnectPort { .. }
+        | ServiceToProcess::AbortPorts { .. }
+        | ServiceToProcess::PlugCable { .. }
+        | ServiceToProcess::UnplugCable { .. } => IpcAction::Unexpected,
+        ServiceToProcess::LinkAttach { .. } | ServiceToProcess::LinkDetach { .. } => IpcAction::Job,
         ServiceToProcess::WriteFile { .. } => IpcAction::Job,
         ServiceToProcess::ReadFile { .. } => IpcAction::Job,
         ServiceToProcess::LogFileBoundary { .. } => IpcAction::Job,

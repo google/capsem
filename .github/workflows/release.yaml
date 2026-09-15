@@ -31,12 +31,10 @@ concurrency:
   group: capsem-release-${{ inputs.channel }}
   cancel-in-progress: false
 
+# Read-only by default; a job that writes declares exactly what it writes.
 permissions:
   actions: read
-  contents: write
-  attestations: write
-  deployments: write
-  id-token: write
+  contents: read
 
 env:
   SOURCE_COMMIT: ${{ inputs.source_commit }}
@@ -102,28 +100,34 @@ jobs:
         run: |
           python3 build_system/scripts/release/fetch-channel-source-manifest.py \
             --channel "$RELEASE_CHANNEL" \
-            --source-commit "${{ inputs.source_commit }}" \
+            --source-commit "$SOURCE_COMMIT" \
             --require-profile-membership \
             --output cache/target/channel-source/manifest.json
 
       - name: Project inactive first-channel public-before state
         if: ${{ steps.public-before.outputs.bootstrap == 'true' }}
+        env:
+          PUBLIC_BEFORE_BOOTSTRAP: ${{ steps.public-before.outputs.bootstrap }}
+          PUBLIC_BEFORE_RETIRED: ${{ steps.public-before.outputs.retired }}
         run: |
           python3 build_system/scripts/release/project-first-channel-before.py \
             --source-manifest cache/target/channel-source/manifest.json \
             --channel "stable" \
-            --bootstrap "${{ steps.public-before.outputs.bootstrap }}" \
-            --retired "${{ steps.public-before.outputs.retired }}" \
+            --bootstrap "$PUBLIC_BEFORE_BOOTSTRAP" \
+            --retired "$PUBLIC_BEFORE_RETIRED" \
             --output cache/target/channel-source/public-before.json
 
       - name: Select public-before authority for exact pairing
         id: public-before-authority
+        env:
+          PUBLIC_BEFORE_BOOTSTRAP: ${{ steps.public-before.outputs.bootstrap }}
+          PUBLIC_BEFORE_MANIFEST_URL: ${{ steps.public-before.outputs.manifest-url }}
         run: |
-          if [[ "${{ steps.public-before.outputs.bootstrap }}" == "true" ]]; then
+          if [[ "$PUBLIC_BEFORE_BOOTSTRAP" == "true" ]]; then
             echo "manifest-url=file://$PWD/cache/target/channel-source/public-before.json" \
               >> "$GITHUB_OUTPUT"
           else
-            echo "manifest-url=${{ steps.public-before.outputs.manifest-url }}" \
+            echo "manifest-url=$PUBLIC_BEFORE_MANIFEST_URL" \
               >> "$GITHUB_OUTPUT"
           fi
 
@@ -353,9 +357,10 @@ jobs:
       - name: Write Apple API key file
         env:
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_PATH }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           mkdir -p "$RUNNER_TEMP/private_keys"
-          echo "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8"
+          echo "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/private_keys/AuthKey_${APPLE_API_KEY}.p8"
 
       - name: Validate build context completeness
         run: |
@@ -416,6 +421,8 @@ jobs:
           done
 
       - name: Build .pkg installer
+        env:
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
         run: |
           VERSION="${RELEASE_TAG#v}"
           bash build_system/packaging/macos/build-pkg.sh \
@@ -425,7 +432,7 @@ jobs:
             "cache/target/release/staging/assets" \
             "cache/target/config" \
             "$VERSION" \
-            "${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}"
+            "$APPLE_INSTALLER_SIGNING_IDENTITY"
 
       - name: Verify macOS package installation path policy
         run: |
@@ -1032,6 +1039,12 @@ jobs:
     needs: [test-native-macos-package, test-native-linux-package, test-binary-pairing]
     if: ${{ inputs.publish == true }}
     runs-on: ubuntu-latest
+    # The release and its assets; provenance and SBOM attestations.
+    permissions:
+      actions: read
+      contents: write
+      attestations: write
+      id-token: write
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
@@ -1168,6 +1181,10 @@ jobs:
   verify-release-candidate:
     needs: [create-release, assemble-release-channel]
     runs-on: ubuntu-24.04
+    # Persists the channel source manifest as a release asset.
+    permissions:
+      actions: read
+      contents: write
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
@@ -1189,7 +1206,7 @@ jobs:
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/release-package-contract.py verify-storage \
             --manifest "candidate-release/assets/$RELEASE_CHANNEL/manifest.json" \
-            --expected-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
+            --expected-prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/" \
             --expected-version "${RELEASE_TAG#v}" \
             --work-dir /tmp/candidate-packages
 
@@ -1213,12 +1230,19 @@ jobs:
 
   deploy-release-channel:
     needs: [verify-release-candidate]
+    # What release-channel.yaml's deploy job declares, and no more.
+    permissions:
+      actions: read
+      contents: read
+      deployments: write
     uses: ./.github/workflows/release-channel.yaml
     with:
       channel: ${{ inputs.channel }}
       dist_artifact: binary-channel-preview
       source_commit: ${{ inputs.source_commit }}
-    secrets: inherit
+    secrets:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   # ---------------------------------------------------------------------------
   # Post-release: verify the public asset channel remains reachable, then prove
@@ -1274,6 +1298,9 @@ jobs:
     needs: [verify-release-downloads]
     if: ${{ always() && inputs.publish == true && (failure() || cancelled()) }}
     runs-on: ubuntu-24.04
+    # Deletes the unpublished version's claim tag.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
@@ -1286,4 +1313,4 @@ jobs:
           python3 build_system/scripts/release/release_version_tag.py cleanup-exact \
             --tag "$RELEASE_TAG" \
             --source-commit "$SOURCE_COMMIT" \
-            --repository "${{ github.repository }}"
+            --repository "$GITHUB_REPOSITORY"

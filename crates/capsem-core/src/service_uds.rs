@@ -1,9 +1,9 @@
 //! One HTTP request to the service over its Unix socket, from a process the
 //! service spawned.
 //!
-//! The VM owner is a client of the service in exactly one place: asking for a
-//! private connection on its VM's behalf. One request per call, no pool, no
-//! keep-alive: the answer is small and the socket is local.
+//! The VM owner is a client of the service in exactly one place: asking what
+//! a private name or member address is, on its VM's behalf. One request per
+//! call, no pool, no keep-alive: the answer is small and the socket is local.
 use anyhow::{Context, Result};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;

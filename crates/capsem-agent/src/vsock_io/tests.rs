@@ -29,6 +29,16 @@ fn connection_readiness_obeys_its_deadline_when_the_peer_stalls() {
     assert!(started.elapsed() < Duration::from_secs(1));
 }
 
+/// A connect that failed can still wake the poll as writable, with no
+/// pending SO_ERROR: macOS reports a refused VSOCK connect that way on a
+/// runner that has a VSOCK transport. Readiness is not a connection.
+#[test]
+fn connection_readiness_is_a_failure_when_the_socket_is_not_connected() {
+    let (socket, peer) = UnixStream::pair().unwrap();
+    drop(peer);
+    assert!(wait_connected(&socket, Duration::from_secs(1)).is_err());
+}
+
 #[test]
 fn connection_readiness_succeeds_without_waiting_for_the_deadline() {
     let (socket, _peer) = UnixStream::pair().unwrap();

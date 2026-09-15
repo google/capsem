@@ -48,7 +48,7 @@ async fn handle_fork_creates_persistent_sandbox() {
             name: "fork-src".into(),
             uds_path: PathBuf::from("/tmp/fork-src.sock"),
             session_dir: session_dir.clone(),
-            ..test_instance(&state)
+            ..test_instance()
         },
     );
     let result = handle_fork(
@@ -110,7 +110,7 @@ async fn handle_fork_duplicate_returns_conflict() {
             name: "dup-src".into(),
             uds_path: PathBuf::from("/tmp/dup-src.sock"),
             session_dir,
-            ..test_instance(&state)
+            ..test_instance()
         },
     );
     // state is already Arc<ServiceState> from make_test_state*
@@ -195,7 +195,7 @@ async fn handle_persist_preserves_profile_identity() {
             name: "persist-src".into(),
             uds_path: PathBuf::from("/tmp/persist-src.sock"),
             session_dir: session_dir.clone(),
-            ..test_instance(&state)
+            ..test_instance()
         },
     );
 
@@ -260,7 +260,6 @@ fn resume_rejects_profile_revision_drift() {
                 last_error: None,
                 checkpoint_path: None,
                 env: None,
-                private_address: None,
             },
         );
     }
@@ -404,7 +403,6 @@ fn resume_rejects_profile_payload_hash_drift() {
                 last_error: None,
                 checkpoint_path: None,
                 env: None,
-                private_address: None,
             },
         );
     }
@@ -450,7 +448,6 @@ async fn handle_fork_rejects_asset_pin_drift() {
                 last_error: None,
                 checkpoint_path: None,
                 env: None,
-                private_address: None,
             },
         );
     }
@@ -622,7 +619,6 @@ async fn handle_info_shows_suspended_status() {
                 last_error: None,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
                 env: None,
-                private_address: None,
             },
         );
     }
@@ -776,7 +772,6 @@ async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
                 last_error: None,
                 checkpoint_path: None,
                 env: None,
-                private_address: None,
             },
         );
     }
@@ -864,7 +859,7 @@ async fn handle_suspend_rejects_ephemeral_vm() {
                 uds_path: state.run_dir.join("instances/eph-vm.sock"),
                 session_dir: state.run_dir.join("sessions/eph-vm"),
                 pid: 0,
-                ..test_instance(&state)
+                ..test_instance()
             },
         );
     }
@@ -951,7 +946,7 @@ async fn failed_restore_teardown_clears_running_instance_before_cold_fallback() 
             session_dir,
             pid: 0,
             persistent: true,
-            ..test_instance(&state)
+            ..test_instance()
         },
     );
 
@@ -1001,7 +996,6 @@ fn existing_resume_checkpoint_requires_completion_marker() {
                 last_error: None,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
                 env: None,
-                private_address: None,
             },
         );
     }
@@ -1051,7 +1045,6 @@ fn clear_resume_checkpoint_removes_completion_marker() {
                 last_error: None,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
                 env: None,
-                private_address: None,
             },
         );
     }

@@ -81,37 +81,6 @@ impl AuditFlow {
         }
     }
 
-    /// A private connection another member's owner handed over: this VM is
-    /// the destination, the source is the member the service named.
-    pub(super) fn private(
-        authority: Arc<Authority>,
-        network: NetworkIdentity,
-        source: NetworkVm,
-        source_address: SocketAddr,
-        port: u16,
-        protocol: NetworkProtocol,
-    ) -> Self {
-        Self {
-            facts: NetworkFlow {
-                connection_id: uuid::Uuid::new_v4(),
-                route: NetworkRoute::Private { network },
-                side: NetworkSide::Destination,
-                protocol,
-                source: NetworkEndpoint {
-                    vm: Some(source),
-                    address: source_address,
-                },
-                destination: NetworkEndpoint {
-                    vm: Some(authority.vm.clone()),
-                    address: (Ipv4Addr::LOCALHOST, port).into(),
-                },
-                report: None,
-            },
-            authority,
-            started: std::time::Instant::now(),
-        }
-    }
-
     /// This VM's link to a network's switch: its own address on both ends,
     /// no ports, judged once when the service links it.
     pub(super) fn link(authority: Arc<Authority>, network: NetworkIdentity, own: Ipv4Addr) -> Self {

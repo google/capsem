@@ -43,5 +43,8 @@ capsem-foundation = { path = "../capsem-foundation" }
 tracing.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
+[dev-dependencies]
+tempfile = "3"
+
 [lints]
 workspace = true

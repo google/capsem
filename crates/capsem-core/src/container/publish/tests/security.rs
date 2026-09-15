@@ -79,7 +79,6 @@ async fn deny_ask_plugin_and_closed_audit_never_open_a_guest_destination() {
             control,
             router,
             stop.clone(),
-            capsem_router::Class::Expose,
         ));
         // Denial may enqueue cleanup, but must never request a guest socket.
         let opened = tokio::time::timeout(Duration::from_millis(100), async {
@@ -150,14 +149,7 @@ async fn missing_security_context_never_requests_a_guest_connection() {
     assert!(feeder.is_err(), "a publisher without security fed a broker");
     let (feed, incoming) = mpsc::channel(1);
     drop(feed);
-    let broker = tokio::spawn(broker::serve(
-        owner.clone(),
-        incoming,
-        control,
-        router,
-        stop.clone(),
-        capsem_router::Class::Expose,
-    ));
+    let broker = tokio::spawn(broker::serve(owner.clone(), incoming, control, router, stop.clone()));
     let requested = tokio::time::timeout(Duration::from_millis(100), requests.recv()).await;
     stop.cancel();
     let result = broker.await.unwrap();
@@ -240,7 +232,6 @@ async fn a_control_lease_that_never_came_up_is_audited_as_unreachable() {
         control,
         fake_router(),
         stop.clone(),
-        capsem_router::Class::Expose,
     ));
 
     let rows = recorded_connect_results(&engine, &path).await;
@@ -271,7 +262,6 @@ async fn a_control_lease_lost_while_setup_waits_is_audited_as_cancelled() {
         control,
         fake_router(),
         stop.clone(),
-        capsem_router::Class::Expose,
     ));
     // Setup reached the guest request and is waiting on the bridge's reply.
     let request = tokio::time::timeout(Duration::from_secs(5), requests.recv())
@@ -286,4 +276,37 @@ async fn a_control_lease_lost_while_setup_waits_is_audited_as_cancelled() {
     owner.shutdown().await;
     assert!(rows.contains("cancelled"), "{rows}");
     assert!(!rows.contains("stale_generation"), "{rows}");
+}
+
+#[tokio::test]
+async fn the_link_audit_is_this_vms_own_portless_private_flow() {
+    let owner = security::authorized_publisher(capsem_config::router::RouterConfig::default());
+    let audit = owner
+        .private_link_audit(
+            crate::security_engine::network::NetworkIdentity::parse(
+                "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+                "team".into(),
+            )
+            .unwrap(),
+            Ipv4Addr::new(10, 128, 0, 3),
+        )
+        .unwrap();
+    assert_eq!(
+        audit.authorize().await.unwrap(),
+        crate::security_engine::SecurityEnforcementAction::Allow
+    );
+    let facts = audit.facts();
+    assert_eq!(facts.protocol, crate::security_engine::network::NetworkProtocol::Link);
+    assert_eq!(facts.source.address, "10.128.0.3:0".parse().unwrap());
+    assert_eq!(facts.destination.address, "10.128.0.3:0".parse().unwrap());
+    assert_eq!(facts.source.vm.as_ref().map(|vm| vm.id.as_str()), Some("vm-id"));
+    audit
+        .record(
+            crate::security_engine::RuntimeSecurityEventType::NetworkClose,
+            crate::security_engine::network::NetworkReason::Complete,
+            3,
+            4,
+        )
+        .await
+        .unwrap();
 }

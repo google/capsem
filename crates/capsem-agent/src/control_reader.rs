@@ -50,6 +50,10 @@ pub(crate) fn control_loop(
                 pending_responses.lock().unwrap().remove(&id);
             }
             Ok(HostToGuest::PortCloseAck { flow }) => ctrl_tx.network.acknowledge(flow),
+            Ok(HostToGuest::PlugCable { cable, address, prefix }) => {
+                crate::tun_supervisor::cables().plug(crate::tun_supervisor::CableSpec { cable, address, prefix })
+            }
+            Ok(HostToGuest::UnplugCable { cable }) => crate::tun_supervisor::cables().unplug(cable),
             Ok(HostToGuest::Resize { cols, rows }) => {
                 eprintln!("[capsem-agent] resize: {cols}x{rows}");
                 set_winsize(master_fd, cols, rows);
@@ -275,7 +279,9 @@ pub(crate) fn control_loop(
                 if fd >= 0 {
                     const BLKFLSBUF: i32 = 0x1261;
                     unsafe {
-                        if libc::ioctl(fd, BLKFLSBUF.try_into().unwrap()) != 0 {
+                        // The request is `c_ulong` on glibc and macOS and `c_int`
+                        // on musl: an inferred cast is right on every one.
+                        if libc::ioctl(fd, BLKFLSBUF as _) != 0 {
                             eprintln!(
                                 "[capsem-agent] ioctl(BLKFLSBUF) failed: {}",
                                 std::io::Error::last_os_error()

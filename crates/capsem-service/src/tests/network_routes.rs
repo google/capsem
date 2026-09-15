@@ -1,5 +1,5 @@
-//! Named networks over the service API: created, listed, joined by VMs with
-//! their lifetime addresses, and retired only once empty.
+//! Named networks over the service API: created with a subnet, listed, joined
+//! by VMs that lease an address in it, and retired only once empty.
 use super::*;
 use axum::http::Method;
 use std::time::Duration;
@@ -47,56 +47,76 @@ async fn networks_are_created_listed_inspected_and_retired() {
 }
 
 #[tokio::test]
-async fn members_join_with_their_lifetime_address_and_block_deletion() {
+async fn members_lease_an_address_in_the_networks_subnet_and_block_deletion() {
     let (state, _dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
     insert_fake_instance(&state, "running-vm", 4242);
-    let running_address = state.instances.lock().unwrap()["running-vm"].private_address;
     let stopped_dir = state.run_dir.join("persistent/stopped-vm");
     capsem_core::create_virtiofs_session(&stopped_dir, 64).unwrap();
-    let mut stopped = test_persistent_entry("stopped-vm", stopped_dir);
-    stopped.private_address = Some(std::net::Ipv4Addr::new(10, 128, 0, 77));
+    let stopped = test_persistent_entry("stopped-vm", stopped_dir);
     let stopped_id = stopped.id.clone();
     state.persistent_registry.lock().unwrap().register(stopped).unwrap();
-    let legacy_dir = state.run_dir.join("persistent/legacy-vm");
-    capsem_core::create_virtiofs_session(&legacy_dir, 64).unwrap();
-    let legacy = test_persistent_entry("legacy-vm", legacy_dir);
-    let legacy_id = legacy.id.clone();
-    state.persistent_registry.lock().unwrap().register(legacy).unwrap();
 
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
-    let member = |vm: &str| format!("/networks/{id}/members/{vm}");
+    let subnet = capsem_config::PrivatePool::parse(created["subnet"].as_str().unwrap()).unwrap();
+    let member = |network: &str, vm: &str| format!("/networks/{network}/members/{vm}");
 
-    let (status, joined) = route_request(app(&state), Method::PUT, &member("running-vm"), None).await;
+    let (status, joined) = route_request(app(&state), Method::PUT, &member(&id, "running-vm"), None).await;
     assert_eq!(status, StatusCode::OK, "{joined}");
     assert_eq!(joined["members"][0]["vm_id"], "running-vm");
-    assert_eq!(joined["members"][0]["address"], json!(running_address.to_string()));
-    // A running VM is linked at once; this fake owner has no seat, so the
-    // link fails and the membership says so.
+    let running_address: std::net::Ipv4Addr = joined["members"][0]["address"].as_str().unwrap().parse().unwrap();
+    assert!(
+        subnet.contains(running_address),
+        "{running_address} is outside {subnet}"
+    );
+    // A running VM is plugged at once; this fake owner has no seat, so the
+    // plug fails and the membership says so.
     assert_eq!(joined["members"][0]["state"], "failed");
-    let (status, joined) = route_request(app(&state), Method::PUT, &member(&stopped_id), None).await;
+    let (status, joined) = route_request(app(&state), Method::PUT, &member(&id, &stopped_id), None).await;
     assert_eq!(status, StatusCode::OK, "{joined}");
     assert_eq!(
         joined["members"].as_array().unwrap().len(),
         2,
-        "a stopped VM joins with its recorded address"
+        "a stopped VM joins too, and is plugged when it runs"
     );
-
-    let (status, refused) = route_request(app(&state), Method::PUT, &member(&legacy_id), None).await;
-    assert_eq!(status, StatusCode::CONFLICT, "no address yet: {refused}");
-    let (status, _) = route_request(app(&state), Method::PUT, &member("ghost-vm"), None).await;
+    let (status, again) = route_request(app(&state), Method::PUT, &member(&id, "running-vm"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let running = again["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|member| member["vm_id"] == "running-vm")
+        .unwrap();
+    assert_eq!(
+        running["address"],
+        json!(running_address.to_string()),
+        "joining again keeps the lease"
+    );
+    let (status, _) = route_request(app(&state), Method::PUT, &member(&id, "ghost-vm"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (_, other) = create_network(&state, "other").await;
+    let other_id = other["id"].as_str().unwrap().to_string();
+    let other_subnet = capsem_config::PrivatePool::parse(other["subnet"].as_str().unwrap()).unwrap();
+    assert!(!subnet.overlaps(other_subnet), "{subnet} and {other_subnet}");
+    let (status, joined_other) = route_request(app(&state), Method::PUT, &member(&other_id, "running-vm"), None).await;
+    assert_eq!(status, StatusCode::OK, "{joined_other}");
+    let other_address: std::net::Ipv4Addr = joined_other["members"][0]["address"].as_str().unwrap().parse().unwrap();
+    assert!(
+        other_subnet.contains(other_address),
+        "a VM on two networks has an address in each"
+    );
 
     let (status, refused) = route_request(app(&state), Method::DELETE, &format!("/networks/{id}"), None).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
 
-    let (status, left) = route_request(app(&state), Method::DELETE, &member("running-vm"), None).await;
+    let (status, left) = route_request(app(&state), Method::DELETE, &member(&id, "running-vm"), None).await;
     assert_eq!(status, StatusCode::OK, "{left}");
     assert_eq!(left["members"].as_array().unwrap().len(), 1);
-    let (status, _) = route_request(app(&state), Method::DELETE, &member("running-vm"), None).await;
+    let (status, _) = route_request(app(&state), Method::DELETE, &member(&id, "running-vm"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "leaving twice is not a member");
-    let (status, _) = route_request(app(&state), Method::DELETE, &member(&stopped_id), None).await;
+    let (status, _) = route_request(app(&state), Method::DELETE, &member(&id, &stopped_id), None).await;
     assert_eq!(status, StatusCode::OK);
     let (status, _) = route_request(app(&state), Method::DELETE, &format!("/networks/{id}"), None).await;
     assert_eq!(status, StatusCode::OK, "empty networks retire");
@@ -108,8 +128,7 @@ async fn deleting_a_vm_leaves_every_network_it_was_in() {
     install_test_profile_assets(&state);
     let stopped_dir = state.run_dir.join("persistent/stopped-vm");
     capsem_core::create_virtiofs_session(&stopped_dir, 64).unwrap();
-    let mut stopped = test_persistent_entry("stopped-vm", stopped_dir);
-    stopped.private_address = Some(std::net::Ipv4Addr::new(10, 128, 0, 77));
+    let stopped = test_persistent_entry("stopped-vm", stopped_dir);
     let stopped_id = stopped.id.clone();
     state.persistent_registry.lock().unwrap().register(stopped).unwrap();
     let (_, a) = create_network(&state, "alpha").await;
@@ -255,233 +274,6 @@ fn owner_secret(state: &ServiceState, vm: &str, secret: &str) {
 
 /// The TCP admission rows of a logs page; a running member's link rows
 /// (these fake owners have no seat, so theirs say `block`) sit beside them.
-fn tcp_events(logs: &serde_json::Value) -> Vec<serde_json::Value> {
-    logs["events"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|event| event["event"]["network"]["protocol"] == "tcp")
-        .cloned()
-        .collect()
-}
-
-async fn private_connect(state: &Arc<ServiceState>, request: serde_json::Value) -> (StatusCode, serde_json::Value) {
-    route_request(app(state), Method::POST, "/networks/private/connect", Some(request)).await
-}
-
-#[tokio::test]
-async fn a_private_connection_is_admitted_through_the_destination_owner_and_audited_for_both() {
-    let (state, dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    insert_fake_instance(&state, "vm-a", 4242);
-    insert_fake_instance(&state, "vm-b", 4243);
-    owner_secret(&state, "vm-a", "secret-a");
-    let address_b = state.instances.lock().unwrap()["vm-b"].private_address;
-    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
-    let (_, created) = create_network(&state, "team").await;
-    let id = created["id"].as_str().unwrap().to_string();
-    for vm in ["vm-a", "vm-b"] {
-        let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/{vm}"), None).await;
-        assert_eq!(status, StatusCode::OK);
-    }
-    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let owner_b = spawn_fake_process(&uds_b, 1, |message| {
-        let reply = match message {
-            ServiceToProcess::PrivateAccept {
-                id,
-                token,
-                source_vm,
-                port,
-                ..
-            } => {
-                assert_eq!(source_vm, "vm-a");
-                assert_eq!(*port, 6379);
-                assert!(!token.is_empty());
-                Some(ProcessToService::PrivateAcceptResult {
-                    id: *id,
-                    handoff_socket: "/run/vm-b/private-handoff.sock".into(),
-                    error: None,
-                })
-            }
-            other => panic!("unexpected owner message: {other:?}"),
-        };
-        Box::pin(async move { reply })
-    });
-    let request = json!({
-        "source_vm": "vm-a", "owner_secret": "secret-a",
-        "destination": address_b.to_string(), "port": 6379, "source_port": 40001, "process_name": "redis-cli",
-    });
-
-    let (status, admitted) = private_connect(&state, request.clone()).await;
-    assert_eq!(status, StatusCode::OK, "{admitted}");
-    assert_eq!(admitted["destination_vm"], "vm-b");
-    assert_eq!(admitted["network"], json!(id));
-    assert_eq!(admitted["handoff_socket"], "/run/vm-b/private-handoff.sock");
-    assert!(!admitted["token"].as_str().unwrap().is_empty());
-    let messages = owner_b.await.unwrap();
-    assert!(matches!(messages[0], ServiceToProcess::PrivateAccept { .. }));
-
-    let (status, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
-    assert_eq!(status, StatusCode::OK, "{logs}");
-    let events = tcp_events(&logs);
-    assert_eq!(events.len(), 1, "{logs}");
-    let facts = &events[0]["event"];
-    assert_eq!(facts["network"]["context"], "private");
-    assert_eq!(facts["network"]["source"]["vm"]["id"], "vm-a");
-    assert_eq!(facts["network"]["destination"]["vm"]["id"], "vm-b");
-    assert_eq!(facts["network"]["destination"]["port"], 6379);
-    assert_eq!(facts["decision"]["effective"], "allow");
-    let (_, by_a) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs?vm=vm-a"), None).await;
-    let (_, by_b) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs?vm=vm-b"), None).await;
-    assert_eq!(tcp_events(&by_a).len(), 1, "visible from the source: {by_a}");
-    assert_eq!(tcp_events(&by_b).len(), 1, "and from the destination: {by_b}");
-    drop(dir);
-}
-
-#[tokio::test]
-async fn a_private_connection_is_refused_before_any_owner_is_asked() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    insert_fake_instance(&state, "vm-a", 4242);
-    insert_fake_instance(&state, "vm-b", 4243);
-    insert_fake_instance(&state, "vm-c", 4244);
-    owner_secret(&state, "vm-a", "secret-a");
-    let address_b = state.instances.lock().unwrap()["vm-b"].private_address.to_string();
-    let address_c = state.instances.lock().unwrap()["vm-c"].private_address.to_string();
-    let (_, team) = create_network(&state, "team").await;
-    let (_, other) = create_network(&state, "other").await;
-    for (network, vm) in [(&team, "vm-a"), (&team, "vm-b"), (&other, "vm-c")] {
-        let path = format!("/networks/{}/members/{vm}", network["id"].as_str().unwrap());
-        let (status, _) = route_request(app(&state), Method::PUT, &path, None).await;
-        assert_eq!(status, StatusCode::OK);
-    }
-    let request = |secret: &str, destination: &str| json!({ "source_vm": "vm-a", "owner_secret": secret, "destination": destination, "port": 80, "source_port": 40001 });
-    // No fake owner listens anywhere: every refusal below happens first.
-    let (status, _) = private_connect(&state, request("wrong", &address_b)).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "a wrong secret is not an owner");
-    let (status, _) = private_connect(&state, request("secret-a", &address_c)).await;
-    assert_eq!(
-        status,
-        StatusCode::NOT_FOUND,
-        "a member of another network is unreachable"
-    );
-    let (status, _) = private_connect(&state, request("secret-a", "10.128.7.7")).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "nobody's address");
-    let (status, _) = private_connect(
-        &state,
-        json!({ "source_vm": "ghost", "owner_secret": "x", "destination": address_b, "port": 80, "source_port": 40001 }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "no such running VM");
-
-    // The destination is a member but stopped: refused and audited as such.
-    assert!(state.evict_instance("vm-b").is_some());
-    let (status, refused) = private_connect(&state, request("secret-a", &address_b)).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-    let id = team["id"].as_str().unwrap();
-    let (_, logs) = route_request(
-        app(&state),
-        Method::GET,
-        &format!("/networks/{id}/logs?decision=block"),
-        None,
-    )
-    .await;
-    let events = tcp_events(&logs);
-    assert_eq!(events.len(), 1, "{logs}");
-    assert_eq!(events[0]["event"]["decision"]["reason"], "destination_stopped");
-}
-
-#[tokio::test]
-async fn a_destination_owner_that_refuses_or_never_answers_blocks_and_is_audited() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    insert_fake_instance(&state, "vm-a", 4242);
-    insert_fake_instance(&state, "vm-b", 4243);
-    owner_secret(&state, "vm-a", "secret-a");
-    let address_b = state.instances.lock().unwrap()["vm-b"].private_address.to_string();
-    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
-    let (_, team) = create_network(&state, "team").await;
-    let id = team["id"].as_str().unwrap().to_string();
-    for vm in ["vm-a", "vm-b"] {
-        let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/{vm}"), None).await;
-        assert_eq!(status, StatusCode::OK);
-    }
-    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let owner_b = spawn_fake_process(&uds_b, 1, |message| {
-        let reply = match message {
-            ServiceToProcess::PrivateAccept { id, .. } => Some(ProcessToService::PrivateAcceptResult {
-                id: *id,
-                handoff_socket: String::new(),
-                error: Some("private handoff not available on this owner".into()),
-            }),
-            other => panic!("unexpected owner message: {other:?}"),
-        };
-        Box::pin(async move { reply })
-    });
-    let request = json!({ "source_vm": "vm-a", "owner_secret": "secret-a", "destination": address_b, "port": 80, "source_port": 40001 });
-    let (status, refused) = private_connect(&state, request.clone()).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-    owner_b.await.unwrap();
-    let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
-    let events = tcp_events(&logs);
-    assert_eq!(events.len(), 1, "{logs}");
-    assert_eq!(events[0]["event"]["decision"]["reason"], "destination_refused");
-
-    // Nobody listening on the destination's socket: unreachable, not a hang.
-    let _ = std::fs::remove_file(&uds_b);
-    let (status, refused) = private_connect(&state, request).await;
-    assert_eq!(status, StatusCode::BAD_GATEWAY, "{refused}");
-    let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
-    let events = tcp_events(&logs);
-    assert_eq!(events.len(), 2, "{logs}");
-    assert_eq!(events[1]["event"]["decision"]["reason"], "destination_unreachable");
-}
-
-#[tokio::test]
-async fn a_membership_that_changes_while_the_owner_answers_is_never_granted() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    insert_fake_instance(&state, "vm-a", 4242);
-    insert_fake_instance(&state, "vm-b", 4243);
-    owner_secret(&state, "vm-a", "secret-a");
-    let address_b = state.instances.lock().unwrap()["vm-b"].private_address.to_string();
-    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
-    let (_, team) = create_network(&state, "team").await;
-    let id = team["id"].as_str().unwrap().to_string();
-    for vm in ["vm-a", "vm-b"] {
-        let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/{vm}"), None).await;
-        assert_eq!(status, StatusCode::OK);
-    }
-    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    // The destination owner says yes, but by then vm-b has left the network.
-    let detaching = Arc::clone(&state);
-    let network = uuid::Uuid::parse_str(&id).unwrap();
-    let owner_b = spawn_fake_process(&uds_b, 1, move |message| {
-        let state = Arc::clone(&detaching);
-        let reply = match message {
-            ServiceToProcess::PrivateAccept { id, .. } => Some(ProcessToService::PrivateAcceptResult {
-                id: *id,
-                handoff_socket: "/run/vm-b/private-handoff.sock".into(),
-                error: None,
-            }),
-            other => panic!("unexpected owner message: {other:?}"),
-        };
-        Box::pin(async move {
-            state.networks.lock().await.detach(network, "vm-b", 9).await.unwrap();
-            reply
-        })
-    });
-    let request = json!({ "source_vm": "vm-a", "owner_secret": "secret-a", "destination": address_b, "port": 80, "source_port": 40001 });
-    let (status, refused) = private_connect(&state, request).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-    owner_b.await.unwrap();
-    let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
-    let events = tcp_events(&logs);
-    assert_eq!(events.len(), 1, "{logs}");
-    assert_eq!(events[0]["event"]["decision"]["effective"], "block");
-    assert_eq!(events[0]["event"]["decision"]["reason"], "membership_changed");
-}
-
 /// A fake owner's link seat: answers LinkAttach with its handoff socket,
 /// takes the token there `links` times, hands back one end of a fresh
 /// socket pair as the guest stream each time, and reports each time the
@@ -502,10 +294,13 @@ impl FakeLinkSeat {
     }
 }
 
+/// `detaches` is how many LinkDetach requests the owner answers besides
+/// its `links` LinkAttach ones.
 fn fake_link_seat(
     uds: &std::path::Path,
     refuse: bool,
     links: usize,
+    detaches: usize,
 ) -> (Arc<FakeLinkSeat>, tokio::task::JoinHandle<Vec<ServiceToProcess>>) {
     use capsem_foundation::unix::router_channel::{Receiver, Sender};
     use std::os::fd::AsRawFd;
@@ -545,7 +340,11 @@ fn fake_link_seat(
             });
         }
     });
-    let owner = spawn_fake_process(uds, links, move |message| {
+    let owner = spawn_fake_process(uds, links + detaches, move |message| {
+        if let ServiceToProcess::LinkDetach { id, .. } = message {
+            let reply = ProcessToService::LinkDetachResult { id: *id, error: None };
+            return Box::pin(async move { Some(reply) });
+        }
         let reply = match message {
             ServiceToProcess::LinkAttach {
                 id,
@@ -594,14 +393,14 @@ async fn attaching_a_running_member_links_it_to_the_networks_switch_until_it_lea
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (seat, owner) = fake_link_seat(&uds_b, false, 1);
+    let (seat, owner) = fake_link_seat(&uds_b, false, 1, 1);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
 
     let (status, joined) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
     assert_eq!(status, StatusCode::OK, "{joined}");
     assert_eq!(joined["members"][0]["state"], "ready", "{joined}");
-    assert!(matches!(owner.await.unwrap()[0], ServiceToProcess::LinkAttach { .. }));
+    let lease: std::net::Ipv4Addr = joined["members"][0]["address"].as_str().unwrap().parse().unwrap();
     let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
     let linked = logs["events"].as_array().unwrap().iter().any(|event| {
         event["event"]["network"]["protocol"] == "link"
@@ -637,30 +436,164 @@ async fn attaching_a_running_member_links_it_to_the_networks_switch_until_it_lea
     .unwrap();
     assert_eq!(read, 0);
     assert_eq!(member_state(&state, &id, "vm-b").await, "absent");
+
+    // The owner was told the member's address to bring the cable up with,
+    // and to take the cable down once the VM left.
+    let messages = tokio::time::timeout(Duration::from_secs(5), owner)
+        .await
+        .expect("the owner hears the plug and the detach")
+        .unwrap();
+    match &messages[..] {
+        [ServiceToProcess::LinkAttach {
+            network,
+            address,
+            prefix,
+            generation: plugged,
+            ..
+        }, ServiceToProcess::LinkDetach {
+            network: detached,
+            generation: left,
+            ..
+        }] => {
+            assert_eq!((network, *address, *prefix), (&id, lease, 24));
+            assert_eq!(detached, &id);
+            assert!(
+                left > plugged,
+                "the leave ends the plug's attachment: {left} > {plugged}"
+            );
+        }
+        other => panic!("unexpected owner messages {other:?}"),
+    }
+}
+
+/// A leave and the next join reach the owner as separate jobs, in either
+/// order. The leave names a generation older than the rejoin's plug, so the
+/// owner never lets a late leave take down the rejoined cable.
+#[tokio::test]
+async fn a_rejoin_plugs_with_a_generation_newer_than_the_leave_before_it() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-b", std::process::id());
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let (_seat, owner) = fake_link_seat(&uds_b, false, 2, 1);
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let member = format!("/networks/{id}/members/vm-b");
+    for method in [Method::PUT, Method::DELETE, Method::PUT] {
+        let (status, body) = route_request(app(&state), method, &member, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let messages = tokio::time::timeout(Duration::from_secs(10), owner)
+        .await
+        .expect("the owner hears plug, leave and plug")
+        .unwrap();
+    let generation = |kind: &str| -> Vec<u32> {
+        messages
+            .iter()
+            .filter_map(|message| match (kind, message) {
+                ("attach", ServiceToProcess::LinkAttach { generation, .. }) => Some(*generation),
+                ("detach", ServiceToProcess::LinkDetach { generation, .. }) => Some(*generation),
+                _ => None,
+            })
+            .collect()
+    };
+    let (attaches, detaches) = (generation("attach"), generation("detach"));
+    assert_eq!((attaches.len(), detaches.len()), (2, 1), "{messages:?}");
+    assert!(
+        attaches[0] < detaches[0] && detaches[0] < attaches[1],
+        "plug {} < leave {} < rejoin {}",
+        attaches[0],
+        detaches[0],
+        attaches[1]
+    );
+}
+
+/// Leaving is audited like any other end of a cable: the close row waits for
+/// the switch's report on the port, so the frames that crossed it are in the
+/// ledger. The row used to be written before the report arrived, and the
+/// report, finding no port, was dropped.
+#[tokio::test]
+async fn leaving_writes_the_close_row_with_the_switchs_counters_for_the_cable() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-b", std::process::id());
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let (_seat, _owner) = fake_link_seat(&uds_b, false, 1, 1);
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let (status, joined) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
+    assert_eq!(status, StatusCode::OK, "{joined}");
+    let (status, _) = route_request(
+        app(&state),
+        Method::DELETE,
+        &format!("/networks/{id}/members/vm-b"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let close = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let (_, logs) = route_request(app(&state), Method::GET, &format!("/networks/{id}/logs"), None).await;
+            let closes: Vec<serde_json::Value> = logs["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|event| event["event_type"] == "network.close")
+                .cloned()
+                .collect();
+            if !closes.is_empty() {
+                return closes;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("leaving writes a close row");
+    assert_eq!(close.len(), 1, "{close:?}");
+    let facts = &close[0]["event"];
+    assert_eq!(facts["decision"]["reason"], "unlinked", "{facts}");
+    assert_eq!(facts["network"]["source"]["vm"]["id"], "vm-b", "{facts}");
+    assert_eq!(facts["frames"]["reason"], "Cancelled", "{facts}");
+    let dropped = facts["frames"]["dropped"]
+        .as_object()
+        .expect("per-reason drop counters");
+    let mut reasons: Vec<&str> = dropped.keys().map(String::as_str).collect();
+    reasons.sort_unstable();
+    assert_eq!(
+        reasons,
+        [
+            "queue_full",
+            "short",
+            "source_address",
+            "source_mac",
+            "storm",
+            "unknown"
+        ]
+    );
 }
 
 /// A freshly spawned owner binds its socket some time after the service
 /// registers it. Linking at start tried once, found no socket, and left the
-/// member unlinked for good: its admitted TCP worked and its UDP never did.
+/// member without a cable for good.
 #[tokio::test]
 async fn a_member_links_at_start_even_when_its_owner_binds_late() {
     let (state, _dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
     insert_fake_instance(&state, "vm-b", std::process::id());
-    let (uds_b, address) = {
-        let instances = state.instances.lock().unwrap();
-        (instances["vm-b"].uds_path.clone(), instances["vm-b"].private_address)
-    };
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
 
     // As provisioning does: record the membership, then link it.
-    crate::network_routes::attach_provisioned(&state, "vm-b", address, &[id.parse().unwrap()])
+    crate::network_routes::attach_provisioned(&state, "vm-b", &[id.parse().unwrap()])
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let (_seat, owner) = fake_link_seat(&uds_b, false, 1);
+    let (_seat, owner) = fake_link_seat(&uds_b, false, 1, 0);
 
     let mut observed = String::new();
     for _ in 0..100 {
@@ -681,7 +614,7 @@ async fn a_member_whose_stream_ends_is_declared_and_then_linked_again() {
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (seat, owner) = fake_link_seat(&uds_b, false, 2);
+    let (seat, owner) = fake_link_seat(&uds_b, false, 2, 0);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
     let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
@@ -735,7 +668,9 @@ async fn a_member_that_leaves_before_its_relink_is_not_linked_back_in() {
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (seat, owner) = fake_link_seat(&uds_b, false, 2);
+    // Room for a second plug that must never come, besides the plug and the
+    // detach that do.
+    let (seat, owner) = fake_link_seat(&uds_b, false, 2, 1);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
     let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
@@ -769,7 +704,7 @@ async fn a_member_that_leaves_mid_handshake_keeps_no_link() {
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (seat, _owner) = fake_link_seat(&uds_b, false, 1);
+    let (seat, _owner) = fake_link_seat(&uds_b, false, 1, 0);
     seat.answers.forget_permits(1);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
@@ -802,6 +737,74 @@ async fn a_member_that_leaves_mid_handshake_keeps_no_link() {
     );
 }
 
+/// Finding 1 of the PR #200 review. Disconnect used to unplug first and
+/// revoke the membership second: a plug that finished between the two saw a
+/// member, kept its port, and the disconnect then returned success with the
+/// VM still on the network. The window is held open here, and the plug is
+/// finished inside it.
+#[tokio::test]
+async fn a_plug_that_finishes_inside_a_disconnect_leaves_no_port_behind() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    insert_fake_instance(&state, "vm-b", std::process::id());
+    let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
+    std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
+    let (seat, _owner) = fake_link_seat(&uds_b, false, 1, 0);
+    seat.answers.forget_permits(1);
+    let (_, created) = create_network(&state, "team").await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let network: uuid::Uuid = id.parse().unwrap();
+    let joining = {
+        let (router, uri) = (app(&state), format!("/networks/{id}/members/vm-b"));
+        tokio::spawn(async move { route_request(router, Method::PUT, &uri, None).await })
+    };
+    for _ in 0..100 {
+        if member_state(&state, &id, "vm-b").await == "attaching" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(member_state(&state, &id, "vm-b").await, "attaching");
+
+    let window = Arc::new((tokio::sync::Notify::new(), tokio::sync::Notify::new()));
+    *state.switches.detach_window.lock().unwrap() = Some(Arc::clone(&window));
+    let leaving = {
+        let (router, uri) = (app(&state), format!("/networks/{id}/members/vm-b"));
+        tokio::spawn(async move { route_request(router, Method::DELETE, &uri, None).await })
+    };
+    tokio::time::timeout(Duration::from_secs(5), window.0.notified())
+        .await
+        .expect("the disconnect reached its window");
+    // The owner answers now: the plug gets its port inside the window.
+    seat.answers.add_permits(1);
+    let (status, _) = joining.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    window.1.notify_one();
+    let (status, _) = leaving.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+
+    assert_eq!(member_state(&state, &id, "vm-b").await, "absent");
+    assert!(
+        state.switches.plugged(network).await.is_empty(),
+        "a disconnected member kept its port"
+    );
+    assert!(
+        released_within(&seat, Duration::from_secs(3)).await,
+        "the owner's stream was never let go"
+    );
+    let guest_end = seat.guest_end();
+    guest_end.set_nonblocking(true).unwrap();
+    let mut guest_end = tokio::net::UnixStream::from_std(guest_end).unwrap();
+    let read = tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio::io::AsyncReadExt::read(&mut guest_end, &mut [0u8; 1]),
+    )
+    .await
+    .expect("the switch closed the disconnected member's cable")
+    .unwrap();
+    assert_eq!(read, 0);
+}
+
 #[tokio::test]
 async fn an_owner_that_refuses_the_link_leaves_a_failed_membership() {
     let (state, _dir) = make_test_state_with_tempdir();
@@ -809,7 +812,7 @@ async fn an_owner_that_refuses_the_link_leaves_a_failed_membership() {
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (_seat, _owner) = fake_link_seat(&uds_b, true, 1);
+    let (_seat, _owner) = fake_link_seat(&uds_b, true, 1, 0);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
     let (status, joined) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
@@ -846,10 +849,8 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
         state.instances.lock().unwrap().get_mut(id).unwrap().name = name.into();
     }
     owner_secret(&state, "vm-a", "secret-a");
-    let addresses: HashMap<&str, String> = ["vm-a", "vm-b", "vm-c", "vm-d", "vm-e"]
-        .into_iter()
-        .map(|vm| (vm, state.instances.lock().unwrap()[vm].private_address.to_string()))
-        .collect();
+    // Each VM but vm-a is in one network, so its lease there is its address.
+    let mut addresses: HashMap<&str, String> = HashMap::new();
     let (_, team) = create_network(&state, "team").await;
     let (_, other) = create_network(&state, "other").await;
     let (_, apart) = create_network(&state, "apart").await;
@@ -864,7 +865,7 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
         (&other, "vm-d"),
         (&apart, "vm-e"),
     ] {
-        let (status, _) = route_request(
+        let (status, joined) = route_request(
             app(&state),
             Method::PUT,
             &format!("/networks/{network}/members/{vm}"),
@@ -872,6 +873,16 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
         )
         .await;
         assert_eq!(status, StatusCode::OK);
+        let lease = joined["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|member| member["vm_id"] == vm)
+            .unwrap()["address"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        addresses.insert(vm, lease);
     }
     let ask = |name: Option<&str>, address: Option<&str>| {
         let mut request = json!({ "source_vm": "vm-a", "owner_secret": "secret-a" });

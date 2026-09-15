@@ -83,9 +83,6 @@ connections = 12
 setups = 3
 rate_per_second = 7
 burst = 2
-
-[network.router.private]
-connections = 24
 "#,
     )
     .unwrap();
@@ -114,7 +111,6 @@ connections = 24
     assert_eq!(budgets.expose.setups, 3);
     assert_eq!(budgets.expose.rate_per_second, 7);
     assert_eq!(budgets.expose.burst, 2);
-    assert_eq!(budgets.private.connections, 24);
     let materialized = capsem_core::net::policy_config::network_config_from_policy_and_dns(
         &runtime.network,
         capsem_core::net::policy_config::DnsNetworkConfig::default(),

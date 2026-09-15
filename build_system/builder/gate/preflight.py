@@ -19,9 +19,7 @@ from contextlib import contextmanager
 from . import snapshot
 from .cachetooling import CompilerCache
 from .config import GateConfig
-from .context import Context
 from .errors import GateError
-from .fileactions import RefreshSourceTimes
 from .lifecycle import Resource, held
 from .locks import ExclusiveLock
 from .proc import Runner
@@ -54,7 +52,13 @@ def refuse_inside_a_run(config: GateConfig, name: str, *, exclusive: bool) -> No
 
 @contextmanager
 def locked(config: GateConfig, runner: Runner, name: str, *, exclusive: bool) -> Iterator[tuple[Resource, ...]]:
-    """Refresh compiler inputs after queueing, before observing immutable source."""
+    """Take the machine lock, refusing source that moved while this run queued.
+
+    Source timestamps are left alone. A build another checkout finishes while
+    this one queues cannot supply its objects: the workspace wrapper keys them
+    by checkout path. Touching every compiler input here instead made each
+    Cargo invocation of every run rebuild the whole workspace.
+    """
     if not exclusive:
         yield ()
         return
@@ -62,9 +66,6 @@ def locked(config: GateConfig, runner: Runner, name: str, *, exclusive: bool) ->
     with held(ExclusiveLock.for_gate(config, purpose=purpose(name))) as acquired:
         if before is not None and snapshot.digest(config.root, config) != before:
             raise GateError("source changed while waiting for the machine lock; start a fresh run")
-        RefreshSourceTimes(config.root, config.boundary.rust.suffixes).perform(
-            Context(runner, config, observing=runner.observing)
-        )
         yield acquired
 
 

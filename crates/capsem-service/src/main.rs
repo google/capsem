@@ -45,7 +45,6 @@ mod instance;
 mod instance_reaper;
 use instance::InstanceInfo;
 mod network_routes;
-mod private_address;
 mod private_routes;
 mod process_control;
 mod profile_mutation_cache;
@@ -230,8 +229,6 @@ struct ServiceState {
     /// readers or create per-route projection caches.
     session_db_handles: Mutex<HashMap<String, Arc<capsem_logger::DbHandle>>>,
     persistent_registry: SharedRegistry,
-    /// One lifetime address per VM; the persistent registry is its durable half.
-    private_addresses: Mutex<capsem_core::net::address_pool::AddressAllocator>,
     /// Named networks as groups of VMs, durable in each network's database.
     networks: tokio::sync::Mutex<capsem_core::net::network_registry::NetworkRegistry>,
     process_binary: PathBuf,

@@ -24,10 +24,6 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         )
         .route("/networks/{id}/logs", get(network_routes::handle_network_logs))
         .route(
-            "/networks/private/connect",
-            post(private_routes::handle_private_connect),
-        )
-        .route(
             "/networks/private/resolve",
             post(private_routes::handle_private_resolve),
         )

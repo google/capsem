@@ -94,7 +94,6 @@ fn setup_vm_with_workspace_and_uds(state: &ServiceState, dir: &std::path::Path, 
             persistent: false,
             env: None,
             forked_from: None,
-            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
             owner_secret: String::new(),
         },
     );
@@ -428,7 +427,6 @@ async fn write_file_logs_import_before_guest_write() {
             persistent: false,
             env: None,
             forked_from: None,
-            private_address: state.private_addresses.lock().unwrap().allocate().unwrap(),
             owner_secret: String::new(),
         },
     );

@@ -1,10 +1,9 @@
 mod aggregator_driver;
+mod cables;
 mod helpers;
 mod ipc;
 mod job_store;
 mod mcp_runtime;
-mod private_handoff;
-mod private_link;
 mod private_names;
 mod private_seats;
 mod runtime_config;
@@ -135,7 +134,7 @@ struct Args {
     #[arg(long)]
     run_dir: Option<PathBuf>,
     /// The service's own socket, where this owner asks on a guest's behalf
-    /// (private connections). Given by the service: it is not always
+    /// (private names). Given by the service: it is not always
     /// `{run_dir}/service.sock`.
     #[arg(long)]
     service_socket: Option<PathBuf>,
@@ -442,7 +441,6 @@ async fn run_async_main_loop(
     let seats = private_seats::bind(
         private_seats::Seats {
             id: &args.id,
-            env: &args.env,
             service_socket: args.service_socket.as_deref(),
             uds_path: &args.uds_path,
             run_dir: args.run_dir.as_deref(),

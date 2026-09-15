@@ -1,11 +1,12 @@
-//! Per-class admission budgets. These tune below the companion's hard ceilings.
+//! Published-port admission budgets. These tune below the companion's hard
+//! ceilings. Traffic between VMs has no budget here: it rides the network
+//! switch, whose limits are per port.
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RouterConfig {
     pub expose: ClassBudget,
-    pub private: ClassBudget,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,16 +31,15 @@ impl Default for ClassBudget {
 
 impl RouterConfig {
     pub fn validate(&self) -> Result<(), String> {
-        for (name, budget) in [("expose", &self.expose), ("private", &self.private)] {
-            for (field, value, maximum) in [
-                ("connections", budget.connections, 64),
-                ("setups", budget.setups, 8),
-                ("rate_per_second", budget.rate_per_second, 1024),
-                ("burst", budget.burst, 64),
-            ] {
-                if value == 0 || value > maximum {
-                    return Err(format!("network.router.{name}.{field} must be between 1 and {maximum}"));
-                }
+        let budget = &self.expose;
+        for (field, value, maximum) in [
+            ("connections", budget.connections, 64),
+            ("setups", budget.setups, 8),
+            ("rate_per_second", budget.rate_per_second, 1024),
+            ("burst", budget.burst, 64),
+        ] {
+            if value == 0 || value > maximum {
+                return Err(format!("network.router.expose.{field} must be between 1 and {maximum}"));
             }
         }
         Ok(())

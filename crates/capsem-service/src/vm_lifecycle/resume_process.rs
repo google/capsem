@@ -53,25 +53,6 @@ impl ServiceState {
         let cpus = cpus_override.unwrap_or(entry.cpus);
         let version = entry.base_version.clone();
 
-        // Entries written before addresses existed get one now, saved before
-        // the process that will advertise it starts.
-        let private_address = match entry.private_address {
-            Some(address) => address,
-            None => {
-                let lease = self.lease_private_address()?;
-                {
-                    let mut registry = self.persistent_registry.lock().unwrap();
-                    let Some(stored) = registry.get_mut(&name) else {
-                        return Err(anyhow!("persistent VM \"{}\" vanished during resume", name));
-                    };
-                    stored.private_address = Some(lease.address);
-                    registry.save()?;
-                }
-                lease.commit()
-            }
-        };
-        entry.private_address = Some(private_address);
-
         info!(name, version, "resume_sandbox: re-spawning process");
 
         let uds_path = self.instance_socket_path(&vm_id)?;
@@ -106,12 +87,6 @@ impl ServiceState {
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", vm_id));
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", name));
         child_cmd.arg("--vm-name").arg(&name);
-        child_cmd
-            .arg("--env")
-            .arg(format!("CAPSEM_PRIVATE_ADDRESS={private_address}"));
-        child_cmd
-            .arg("--env")
-            .arg(format!("CAPSEM_PRIVATE_POOL={}", capsem_config::PrivatePool::DEFAULT));
 
         // Replay user-provided env vars so they survive stop/resume cycles.
         if let Some(ref env_vars) = entry.env {
@@ -251,7 +226,6 @@ impl ServiceState {
                 persistent: true,
                 env: None,
                 forked_from: entry.forked_from,
-                private_address,
                 owner_secret,
             },
         );
@@ -259,7 +233,7 @@ impl ServiceState {
         let _reaper =
             instance_reaper::spawn_exit_reaper(child, vm_id.clone(), name, Arc::clone(self), uds_path, session_dir);
         // A resumed member's networks get their links back.
-        switches::link_memberships(Arc::clone(self), vm_id.clone());
+        switches::plug_memberships(Arc::clone(self), vm_id.clone());
         Ok(vm_id)
     }
 }

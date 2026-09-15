@@ -98,8 +98,6 @@ impl ServiceState {
         info!(id, version, persistent, from, "provision_sandbox called");
 
         let uds_path = self.instance_socket_path(id)?;
-        let lease = self.lease_private_address()?;
-
         // Persistent VMs go in persistent/, ephemeral in sessions/
         let session_dir = if persistent {
             self.run_dir.join("persistent").join(id)
@@ -153,12 +151,7 @@ impl ServiceState {
         let guest_name = if persistent { name } else { id };
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", id));
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", guest_name));
-        child_cmd
-            .arg("--env")
-            .arg(format!("CAPSEM_PRIVATE_ADDRESS={}", lease.address));
-        child_cmd
-            .arg("--env")
-            .arg(format!("CAPSEM_PRIVATE_POOL={}", capsem_config::PrivatePool::DEFAULT));
+        child_cmd.arg("--vm-name").arg(guest_name);
 
         // Add --env KEY=VALUE args for each user-specified env var
         if let Some(ref env_vars) = env {
@@ -288,7 +281,6 @@ impl ServiceState {
                 last_error: None,
                 checkpoint_path: None,
                 env: env.clone(),
-                private_address: Some(lease.address),
             });
             if let Err(error) = registration {
                 instance_reaper::kill_and_reap(child);
@@ -310,7 +302,6 @@ impl ServiceState {
             );
         }
 
-        let private_address = lease.commit();
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
             id.to_string(),
@@ -331,7 +322,6 @@ impl ServiceState {
                 persistent,
                 env,
                 forked_from: from,
-                private_address,
                 owner_secret,
             },
         );

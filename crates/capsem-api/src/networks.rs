@@ -29,6 +29,8 @@ pub struct NetworkMemberInfo {
 pub struct NetworkInfo {
     pub id: String,
     pub name: String,
+    /// CIDR allocated to this network.
+    pub subnet: String,
     pub created_unix_ms: i64,
     pub members: Vec<NetworkMemberInfo>,
 }

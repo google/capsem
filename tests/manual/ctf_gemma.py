@@ -225,8 +225,11 @@ def main() -> int:
                 client.put(f"/networks/{network['id']}/members/{vm['id']}")
             addr = ""
             for _ in range(20):
-                rows = {r["id"]: r for r in client.get("/vms/list")["sandboxes"]}
-                addr = rows.get(target["id"], {}).get("private_address") or ""
+                members = client.get(f"/networks/{network['id']}")["members"]
+                addr = next(
+                    (m["address"] for m in members if m["vm_id"] == target["id"] and m["state"] == "ready"),
+                    "",
+                )
                 if addr:
                     break
                 time.sleep(1)

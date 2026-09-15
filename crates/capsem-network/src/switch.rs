@@ -1,187 +1,162 @@
-//! The verdict on one frame from one member of a network.
+//! Where one frame goes on a network's switch.
 //!
-//! A member is known by its pool address; its MAC is `mac_of(address)`, so
-//! the switch needs no learning table and no broadcast domain. A frame is
-//! forwarded to exactly one other member, answered (an ARP request for a
-//! member), or dropped for a reason that is counted. The checks are the
-//! whole security of the data plane past membership: the source is pinned
-//! to the member the stream belongs to, the destination must be a linked
-//! member, and only UDP and ICMP echo or delivery errors cross. TCP has its
-//! own admitted path, and an allowlist is what keeps it there: any other
-//! protocol crossing would let a tunnel carry TCP around that admission.
+//! A switch is plugged ports, each known by the MAC of the cable plugged
+//! into it. It reads the two MACs at the front of a frame and nothing
+//! else: every protocol crosses, and the kernels at either end do ARP, IP
+//! and everything above. A frame to a port's MAC goes to that port; a frame
+//! to a group address (broadcast, multicast) floods to every other port,
+//! which is how guests find each other with ordinary ARP. The service
+//! programs the table on plug and unplug, so nothing is learned and an
+//! unknown destination is dropped rather than flooded.
 //!
-//! Only the bytes the verdict needs are read: two MACs, an ethertype, the
-//! IPv4 header's version, length, fragment offset, protocol and addresses,
-//! and an ICMP type. Fragments pass like any packet; nothing is reassembled.
-use capsem_proto::privatelink::{mac_of, ETHERNET_HEADER_BYTES};
-use std::net::Ipv4Addr;
+//! Every port is one station: the cable's MAC and the one address the
+//! service leased it. A frame must come from that MAC, and an IPv4 packet
+//! or an ARP message from that address -- port security, as a managed
+//! switch has it -- so no member speaks as another, no ARP reply steals
+//! another's traffic, and every counter names the port that sent the frame.
+//! Other ethertypes cross unchecked: members have IPv4 addresses and names
+//! only.
+//!
+//! The switch is a network, not a security boundary: whoever is plugged into
+//! it can reach everyone else plugged into it.
+use std::collections::HashMap;
 
-pub const ETHERTYPE_IPV4: u16 = 0x0800;
-pub const ETHERTYPE_ARP: u16 = 0x0806;
-const IPV4_HEADER_BYTES: usize = 20;
-const ARP_BYTES: usize = 28;
-const PROTOCOL_ICMP: u8 = 1;
-const PROTOCOL_UDP: u8 = 17;
-const FRAGMENT_OFFSET: u16 = 0x1fff;
-/// Echo reply, destination unreachable (path MTU discovery), echo request,
-/// time exceeded (traceroute).
-const ICMP_TYPES: [u8; 4] = [0, 3, 8, 11];
-const ARP_REQUEST: u16 = 1;
-const ARP_REPLY: u16 = 2;
-const BROADCAST: [u8; 6] = [0xff; 6];
+pub type Mac = [u8; 6];
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Verdict {
-    /// Deliver the frame as is to the member at this address.
-    Forward(Ipv4Addr),
-    /// Write this frame back to the member that sent the request.
-    Reply(Vec<u8>),
+/// The two MACs and the ethertype.
+pub const ETHERNET_HEADER_BYTES: usize = 14;
+const ETHERTYPE_IPV4: [u8; 2] = [0x08, 0x00];
+const ETHERTYPE_ARP: [u8; 2] = [0x08, 0x06];
+/// Where a frame names its sender's address: an IPv4 header's source, and
+/// the sender protocol address of an ARP message over ethernet.
+const IPV4_SOURCE: std::ops::Range<usize> = ETHERNET_HEADER_BYTES + 12..ETHERNET_HEADER_BYTES + 16;
+const ARP_SENDER: std::ops::Range<usize> = ETHERNET_HEADER_BYTES + 14..ETHERNET_HEADER_BYTES + 18;
+
+/// Who is plugged into a port: its cable's MAC and the address it leased.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Station {
+    pub mac: Mac,
+    pub address: [u8; 4],
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Route<'a, P> {
+    /// Deliver the frame as is to this port.
+    Unicast(&'a P),
+    /// Deliver the frame to every port but the sender's.
+    Flood,
     Drop(DropReason),
 }
 
+/// Why a frame was not delivered. Each reason indexes one counter slot, so
+/// the I/O side counts its own losses with the same array.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(usize)]
 pub enum DropReason {
-    /// Shorter than the headers the verdict needs.
+    /// Shorter than an ethernet header, or an IPv4 or ARP frame that ends
+    /// before naming its sender.
     Short,
-    /// Neither IPv4 nor ARP.
-    EtherType,
-    /// The source MAC is not the member's.
+    /// The source MAC is not the sending port's.
     SourceMac,
-    /// The source address is not the member's.
+    /// An IPv4 or ARP sender address is not the sending port's.
     SourceAddress,
-    /// An IPv4 header the verdict cannot trust.
-    Header,
-    /// Neither UDP nor ICMP: TCP has its own admitted path, and anything
-    /// else -- a tunnel above all -- would carry TCP around that admission.
-    Protocol,
-    /// ICMP that is neither echo nor a delivery error.
-    IcmpType,
-    /// The destination MAC does not name the destination address.
-    DestinationMac,
-    /// The destination is not a linked member, or is the sender itself.
+    /// No port owns the destination MAC, or the sender does.
     Unknown,
-    /// An ARP frame that is not a member's request for a member.
-    Arp,
+    /// The destination port's queue was full.
+    QueueFull,
+    /// The sender flooded past its broadcast cap.
+    Storm,
 }
 
 impl DropReason {
-    pub const ALL: [DropReason; 10] = [
+    pub const ALL: [DropReason; 6] = [
         Self::Short,
-        Self::EtherType,
         Self::SourceMac,
         Self::SourceAddress,
-        Self::Header,
-        Self::Protocol,
-        Self::IcmpType,
-        Self::DestinationMac,
         Self::Unknown,
-        Self::Arp,
+        Self::QueueFull,
+        Self::Storm,
     ];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Short => "short",
-            Self::EtherType => "ethertype",
             Self::SourceMac => "source_mac",
             Self::SourceAddress => "source_address",
-            Self::Header => "header",
-            Self::Protocol => "protocol",
-            Self::IcmpType => "icmp_type",
-            Self::DestinationMac => "destination_mac",
             Self::Unknown => "unknown",
-            Self::Arp => "arp",
+            Self::QueueFull => "queue_full",
+            Self::Storm => "storm",
         }
     }
 }
 
-fn address(bytes: &[u8]) -> Ipv4Addr {
-    Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])
+/// The ports plugged into one switch, by MAC.
+#[derive(Debug, Clone)]
+pub struct Table<P> {
+    ports: HashMap<Mac, P>,
 }
 
-/// The fate of `frame`, sent by the member at `own`, on a network where
-/// `member` says which addresses are linked.
-pub fn classify(own: Ipv4Addr, member: impl Fn(Ipv4Addr) -> bool, frame: &[u8]) -> Verdict {
-    if frame.len() < ETHERNET_HEADER_BYTES {
-        return Verdict::Drop(DropReason::Short);
-    }
-    let (header, payload) = frame.split_at(ETHERNET_HEADER_BYTES);
-    if header[6..12] != mac_of(own) {
-        return Verdict::Drop(DropReason::SourceMac);
-    }
-    match u16::from_be_bytes([header[12], header[13]]) {
-        ETHERTYPE_IPV4 => ipv4(own, member, header, payload),
-        ETHERTYPE_ARP => arp(own, member, header, payload),
-        _ => Verdict::Drop(DropReason::EtherType),
+impl<P> Default for Table<P> {
+    fn default() -> Self {
+        Self { ports: HashMap::new() }
     }
 }
 
-fn ipv4(own: Ipv4Addr, member: impl Fn(Ipv4Addr) -> bool, header: &[u8], packet: &[u8]) -> Verdict {
-    if packet.len() < IPV4_HEADER_BYTES {
-        return Verdict::Drop(DropReason::Short);
+impl<P> Table<P> {
+    /// Plug `port` in for `mac`, returning the port it replaces.
+    pub fn plug(&mut self, mac: Mac, port: P) -> Option<P> {
+        self.ports.insert(mac, port)
     }
-    let total_length = usize::from(u16::from_be_bytes([packet[2], packet[3]]));
-    if packet[0] >> 4 != 4 || packet[0] & 0x0f < 5 || total_length < IPV4_HEADER_BYTES || total_length > packet.len() {
-        return Verdict::Drop(DropReason::Header);
+
+    pub fn unplug(&mut self, mac: &Mac) -> Option<P> {
+        self.ports.remove(mac)
     }
-    if address(&packet[12..16]) != own {
-        return Verdict::Drop(DropReason::SourceAddress);
+
+    pub fn len(&self) -> usize {
+        self.ports.len()
     }
-    match packet[9] {
-        PROTOCOL_UDP => {}
-        PROTOCOL_ICMP => {
-            // Only the first fragment carries the type, and a later one cannot
-            // rewrite it: its offset is at least eight bytes past it.
-            let first_fragment = u16::from_be_bytes([packet[6], packet[7]]) & FRAGMENT_OFFSET == 0;
-            let header_bytes = usize::from(packet[0] & 0x0f) * 4;
-            if first_fragment {
-                if header_bytes >= total_length {
-                    return Verdict::Drop(DropReason::Short);
-                }
-                if !ICMP_TYPES.contains(&packet[header_bytes]) {
-                    return Verdict::Drop(DropReason::IcmpType);
-                }
+
+    pub fn is_empty(&self) -> bool {
+        self.ports.is_empty()
+    }
+
+    /// Where `frame`, sent by the port `own` is plugged into, goes.
+    pub fn route(&self, own: &Station, frame: &[u8]) -> Route<'_, P> {
+        if frame.len() < ETHERNET_HEADER_BYTES {
+            return Route::Drop(DropReason::Short);
+        }
+        if frame[6..12] != own.mac[..] {
+            return Route::Drop(DropReason::SourceMac);
+        }
+        let sender = match [frame[12], frame[13]] {
+            ETHERTYPE_IPV4 => Some(IPV4_SOURCE),
+            ETHERTYPE_ARP => Some(ARP_SENDER),
+            _ => None,
+        };
+        if let Some(sender) = sender {
+            match frame.get(sender) {
+                None => return Route::Drop(DropReason::Short),
+                Some(address) if address != own.address => return Route::Drop(DropReason::SourceAddress),
+                Some(_) => {}
             }
         }
-        _ => return Verdict::Drop(DropReason::Protocol),
+        let destination: &Mac = frame[..6].try_into().expect("six bytes");
+        if destination[0] & 1 == 1 {
+            return Route::Flood;
+        }
+        match self.ports.get(destination) {
+            Some(port) if *destination != own.mac => Route::Unicast(port),
+            _ => Route::Drop(DropReason::Unknown),
+        }
     }
-    let destination = address(&packet[16..20]);
-    if destination == own || !member(destination) {
-        return Verdict::Drop(DropReason::Unknown);
-    }
-    if header[..6] != mac_of(destination) {
-        return Verdict::Drop(DropReason::DestinationMac);
-    }
-    Verdict::Forward(destination)
-}
 
-/// A member's ARP request for another member is answered here, with the
-/// derived MAC; the request never reaches anyone else.
-fn arp(own: Ipv4Addr, member: impl Fn(Ipv4Addr) -> bool, header: &[u8], body: &[u8]) -> Verdict {
-    let own_mac = mac_of(own);
-    let request = body.len() >= ARP_BYTES
-        && body[..8] == [0, 1, 0x08, 0, 6, 4, 0, ARP_REQUEST as u8]
-        && body[8..14] == own_mac
-        && address(&body[14..18]) == own;
-    if !request {
-        return Verdict::Drop(DropReason::Arp);
+    /// Every port a flood from `own` reaches.
+    pub fn others<'a>(&'a self, own: &'a Mac) -> impl Iterator<Item = &'a P> {
+        self.ports
+            .iter()
+            .filter(move |(mac, _)| *mac != own)
+            .map(|(_, port)| port)
     }
-    let target = address(&body[24..28]);
-    let target_mac = mac_of(target);
-    let addressed = header[..6] == BROADCAST || header[..6] == target_mac;
-    if !addressed || target == own || !member(target) {
-        return Verdict::Drop(DropReason::Arp);
-    }
-    let mut reply = Vec::with_capacity(ETHERNET_HEADER_BYTES + ARP_BYTES);
-    reply.extend_from_slice(&own_mac);
-    reply.extend_from_slice(&target_mac);
-    reply.extend_from_slice(&ETHERTYPE_ARP.to_be_bytes());
-    reply.extend_from_slice(&[0, 1, 0x08, 0, 6, 4, 0, ARP_REPLY as u8]);
-    reply.extend_from_slice(&target_mac);
-    reply.extend_from_slice(&target.octets());
-    reply.extend_from_slice(&own_mac);
-    reply.extend_from_slice(&own.octets());
-    Verdict::Reply(reply)
 }
 
 #[cfg(test)]

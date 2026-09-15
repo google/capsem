@@ -126,27 +126,48 @@ def source(tmp_path: Path) -> Path:
 
 @pytest.mark.parametrize("queued", [False, True])
 def test_cargo_cannot_reuse_a_newer_binary_for_an_older_source_snapshot(tmp_path: Path, monkeypatch, queued) -> None:
-    """Cargo compares source mtimes against shared fingerprints across prefixes."""
+    """The checked-in workspace wrapper keys each tree's objects by its path.
+
+    Every source keeps one ancient mtime, so nothing here can pass by
+    timestamps: a snapshot runs its own source only because the wrapper path
+    Cargo hashes differs from the other tree's.
+    """
+    import tomllib
+
     from capsem_builder.gate import snapshot
 
+    config_text = (PROJECT_ROOT / ".cargo/config.toml").read_text()
+    wrapper = Path(tomllib.loads(config_text)["build"]["rustc-workspace-wrapper"])
     older, newer, copied = (tmp_path / name for name in ("older", "newer", "copied"))
+    paths = [Path("Cargo.toml"), Path("src/main.rs"), Path(".cargo/config.toml"), wrapper]
     for directory, value in ((older, 1), (newer, 2)):
         (directory / "src").mkdir(parents=True)
         (directory / "Cargo.toml").write_text(
             '[package]\nname="prefix-probe"\nversion="0.1.0"\nedition="2021"\n'
         )
         (directory / "src/main.rs").write_text(f'fn main() {{ println!("{value}"); }}\n')
-        for relative in ("Cargo.toml", "src/main.rs"):
+        (directory / ".cargo").mkdir()
+        (directory / ".cargo/config.toml").write_text(config_text)
+        (directory / wrapper).parent.mkdir(parents=True)
+        (directory / wrapper).write_bytes((PROJECT_ROOT / wrapper).read_bytes())
+        (directory / wrapper).chmod(0o755)
+        for relative in paths:
             os.utime(directory / relative, (1, 1))
-    environment = {**os.environ, "CARGO_TARGET_DIR": str(tmp_path / "target"), "RUSTC_WRAPPER": ""}
+    target = tmp_path / "cache/target/cargo"
+    environment = {**os.environ, "CARGO_TARGET_DIR": str(target), "RUSTC_WRAPPER": ""}
 
     def run(directory: Path) -> str:
+        # Built then executed directly: the checked-in config runs binaries
+        # through the macOS signing runner, which this fixture does not carry.
+        build = subprocess.run(
+            ["cargo", "build", "--offline", "--quiet"], cwd=directory, env=environment,
+            capture_output=True, text=True,
+        )
+        assert build.returncode == 0, build.stderr
         return subprocess.run(
-            ["cargo", "run", "--offline", "--quiet"], cwd=directory, env=environment,
-            capture_output=True, text=True, check=True,
+            [str(target / "debug" / "prefix-probe")], capture_output=True, text=True, check=True,
         ).stdout.strip()
 
-    paths = [Path("Cargo.toml"), Path("src/main.rs")]
     if queued:
         snapshot._copy_files(older, copied, paths)
     assert run(newer) == "2"
@@ -179,6 +200,41 @@ def test_cargo_cannot_reuse_a_newer_binary_for_an_older_source_snapshot(tmp_path
     monkeypatch.setattr(preflight.ExclusiveLock, "acquire", build_before_lock_returns)
     with preflight.locked(config, runner, "test", exclusive=True):
         assert run(copied) == "1", "a build while this snapshot queued must not supply its binary"
+
+
+def test_taking_the_machine_lock_leaves_compiler_input_timestamps_alone(tmp_path: Path, monkeypatch) -> None:
+    """A gate run must not make unchanged source look edited.
+
+    Touching every `.rs` under the lock made each Cargo invocation in every
+    run rebuild the whole workspace from `capsem-proto` up, 30-40s apiece with
+    no edit at all, and churned the developer's editor. Checkout isolation is
+    the workspace wrapper's job (`test_shared_target_isolates_workspace_source_
+    and_keeps_dependencies_warm`), which needs no timestamp.
+    """
+    from capsem_builder.gate import preflight, snapshot
+    from capsem_builder.gate.lifecycle import Resource
+
+    source = tmp_path / "crates/probe/src/lib.rs"
+    source.parent.mkdir(parents=True)
+    source.write_text("pub fn probe() {}\n")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    os.utime(source, (1, 1))
+
+    class Lock(Resource, name="untouched-inputs-test"):
+        def acquire(self):
+            pass
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(preflight.ExclusiveLock, "for_gate", lambda *args, **kwargs: Lock())
+    monkeypatch.setattr(snapshot, "digest", lambda *args: "unchanged")
+    runner = RecordingRunner(tmp_path)
+    runner.observing = False
+    assert "crates/probe/src/lib.rs" in [str(path) for path in snapshot._subject(tmp_path)]
+    with preflight.locked(_config().model_copy(update={"root": tmp_path}), runner, "test", exclusive=True):
+        pass
+    assert source.stat().st_mtime == 1, "the machine lock rewrote an unchanged compiler input's mtime"
 
 
 def test_source_changes_while_waiting_for_the_machine_are_refused(tmp_path: Path, monkeypatch) -> None:

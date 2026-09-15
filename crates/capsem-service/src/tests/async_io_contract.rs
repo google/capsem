@@ -56,6 +56,7 @@ const BLOCKING_HELPERS: &[&str] = &[
     "refresh_profile_plugin_policy_cache(",
     "settle_persistent_session_dir(",
     "claim_persistent_name(",
+    "forget_persistent_entry(",
     "delete_session_dir(",
     "archive_failed_restore_checkpoint(",
     "clear_resume_checkpoint(",
