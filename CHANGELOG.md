@@ -155,8 +155,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust coverage ratchets account for macOS's compiled code inventory while
   preserving the shared minimums and Linux floors.
 - Temporary build outputs cannot publish into the shared component cache;
-  guest cache reuse rejects placeholder or non-executable binaries and rebuilds them.
-- Install smoke tests use their configured writable pytest cache, allowing
+  guest cache reuse rejects placeholder or non-executable binaries and rebuilds them.- Install smoke tests use their configured writable pytest cache, allowing
   qualification to finish while the source directory remains protected.
 - Sealed install smoke checks retain tool stdout and stderr in gate evidence
   so failed qualification identifies the missing or broken input.
@@ -183,8 +182,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so guest tests launch the host binaries they just built.
   Copied source timestamps also invalidate stale Cargo fingerprints from other
   worktrees instead of reusing binaries for different source contents.
-  Compiler inputs are refreshed again under the machine lock, so a build that
-  finishes while another checkout queues cannot supply that checkout's binary.
+  Gate runs no longer touch every Rust source when they take the machine lock,
+  so an unedited checkout stops rebuilding the whole workspace on each Cargo
+  invocation; the checkout-keyed workspace wrapper already keeps a build that
+  finishes while another checkout queues from supplying that checkout's binary.
 - Failed or interrupted complete local tests now block automatic full reruns;
   retries require an explicitly approved reason, while focused checks and
   self-qualifying release commands remain available.
