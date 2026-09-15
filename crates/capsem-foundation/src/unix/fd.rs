@@ -190,6 +190,15 @@ pub fn set_stream_buffers(fd: BorrowedFd<'_>, bytes: usize) -> io::Result<()> {
     Ok(())
 }
 
+/// The send and receive queue sizes the kernel reports for a stream socket.
+/// Linux reports twice what was set, for its bookkeeping; Darwin the request.
+pub fn stream_buffer_sizes(fd: BorrowedFd<'_>) -> io::Result<(usize, usize)> {
+    Ok((
+        socket::getsockopt(&fd, socket::sockopt::SndBuf).map_err(errno::io)?,
+        socket::getsockopt(&fd, socket::sockopt::RcvBuf).map_err(errno::io)?,
+    ))
+}
+
 /// Reject files, listeners and datagram sockets before adopting a relay stream.
 pub fn validate_connected_stream(fd: BorrowedFd<'_>) -> io::Result<()> {
     if socket::getsockopt(&fd, socket::sockopt::SockType).map_err(errno::io)? != socket::SockType::Stream {
