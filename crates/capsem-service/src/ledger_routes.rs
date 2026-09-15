@@ -2088,6 +2088,7 @@ pub(super) async fn handle_enforcement_rule_upsert(
         })?;
     let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("enforcement_rule_upsert", &event);
+    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
     Ok(Json(EnforcementRuleResponse {
         rule_id,
         compiled_rule_id: compiled.rule_id,
@@ -2165,6 +2166,7 @@ pub(super) async fn handle_detection_rule_upsert(
         })?;
     let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("detection_rule_upsert", &event);
+    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
     Ok(Json(EnforcementRuleResponse {
         rule_id,
         compiled_rule_id: compiled.rule_id,
@@ -2205,6 +2207,7 @@ pub(super) async fn handle_enforcement_rule_delete(
     })?;
     let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("enforcement_rule_delete", &event);
+    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
     Ok(Json(EnforcementRuleDeleteResponse { rule_id, deleted: true }))
 }
 
@@ -2234,6 +2237,7 @@ pub(super) async fn handle_detection_rule_delete(
     })?;
     let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("detection_rule_delete", &event);
+    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
     Ok(Json(EnforcementRuleDeleteResponse { rule_id, deleted: true }))
 }
 

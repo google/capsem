@@ -251,6 +251,8 @@ fn insert_fake_instance(state: &ServiceState, id: &str, pid: u32) {
 pub(crate) type FakeProcessReply =
     std::pin::Pin<Box<dyn std::future::Future<Output = Option<ProcessToService>> + Send>>;
 
+const FAKE_PROCESS_ACCEPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// A stand-in capsem-process listening on `uds_path`: accepts `expected`
 /// service connections one at a time, answers each message through
 /// `handler` (no reply closes the connection), and returns everything it
@@ -266,8 +268,16 @@ pub(crate) fn spawn_fake_process(
     std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
     tokio::spawn(async move {
         let mut messages = Vec::new();
-        for _ in 0..expected {
-            let (stream, _) = listener.accept().await.unwrap();
+        for received in 0..expected {
+            // A route that stops talking to its VM used to hang the whole
+            // binary here: tests serialized on SETTINGS_ENV_LOCK stalled
+            // behind the one waiting forever. Fail with what was missing.
+            let (stream, _) = tokio::time::timeout(FAKE_PROCESS_ACCEPT_TIMEOUT, listener.accept())
+                .await
+                .unwrap_or_else(|_| {
+                    panic!("fake capsem-process got {received} of {expected} expected IPC connections")
+                })
+                .unwrap();
             let std_stream = stream.into_std().unwrap();
             let std_stream = tokio::task::spawn_blocking(move || {
                 let mut std_stream = std_stream;
