@@ -28,7 +28,7 @@ def test_expected_binaries_after_build():
         "capsem-service",
         "capsem-process",
         "capsem",
-        "capsem-mcp",
+
     ]
     target_dir = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug"
     for name in expected:

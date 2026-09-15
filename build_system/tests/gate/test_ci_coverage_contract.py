@@ -133,7 +133,7 @@ def test_workspace_crates_and_bins_enumerated() -> None:
         "capsem-bench-rs",
         "capsem-dns-proxy",
         "capsem-gateway",
-        "capsem-mcp",
+
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
         "capsem-mcp-server",
@@ -424,7 +424,7 @@ def test_release_binaries_and_package_rails_covered() -> None:
         "capsem-app",
         "capsem-bench",
         "capsem-gateway",
-        "capsem-mcp",
+
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
         "capsem-mock-server",

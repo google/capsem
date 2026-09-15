@@ -64,7 +64,7 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
         "capsem",
         "capsem-service",
         "capsem-process",
-        "capsem-mcp",
+
         "capsem-gateway",
         "capsem-tray",
     ];

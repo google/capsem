@@ -42,7 +42,6 @@ WINTERFELL_REQUIRED_BINARIES = (
     "capsem-service",
     "capsem-process",
     "capsem-gateway",
-    "capsem-mcp",
 )
 
 

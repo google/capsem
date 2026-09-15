@@ -42,6 +42,7 @@ EXPECTED_TARGETS = frozenset(
         "config/",
         "crates/",
         "guest/",
+        "mcp/",
         "sdk/",
         "skills/",
         "tests/",

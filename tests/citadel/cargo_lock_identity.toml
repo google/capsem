@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "a811a18506bfd7fce37aff1cd4a28e3ce57d7d9ec9a7527442e272843bfcc858"
-reason = "rustls 0.23.40 -> 0.23.45 for RUSTSEC-2026-0285 (TLS 1.3 handshake messages accepted across encryption levels), which pulls rustls-webpki 0.103.15 and aws-lc-rs 1.18.1 / aws-lc-sys 0.45.0; host TLS only, no guest crate links aws-lc"
+sha256 = "817c15e1073e60cd6ff967752dfd76e25c36dd6c7b86f235ea81721e3cb758cb"
+reason = "retired the capsem-mcp workspace package after its host implementation moved to npm; dependency versions are unchanged"

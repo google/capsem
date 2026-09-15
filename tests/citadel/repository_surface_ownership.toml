@@ -255,3 +255,15 @@ ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
 coverage = "Python and TypeScript line/branch coverage floors; Rust workspace and per-package measured ratchets. Generation has the same coverage ownership as handwritten SDK source."
 debt = "none: generated SDK sources obey the same size and quality checks"
 reason = "Gateway-only clients and the shared OpenAPI contract have executable language, package and contract owners."
+
+[[surface]]
+id = "npm-mcp"
+state = "retained"
+current = ["mcp/"]
+targets = ["mcp/"]
+lint = ["fast.audit.source-syntax"]
+tests = ["pnpm --dir mcp/typescript test", "tests/capsem-mcp/test_cli_parity.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "TypeScript line coverage floor plus packed-tarball stdio acceptance"
+debt = "none: the npm host has one SDK transport and no native packaging owner"
+reason = "The host MCP is a separately installed npm package backed exclusively by the typed gateway SDK."

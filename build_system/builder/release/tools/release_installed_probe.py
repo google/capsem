@@ -15,7 +15,7 @@ HOST_BINARIES = (
     "capsem-service",
     "capsem-process",
     "capsem-tui",
-    "capsem-mcp",
+
     "capsem-router",
     "capsem-mcp-aggregator",
     "capsem-mcp-builtin",

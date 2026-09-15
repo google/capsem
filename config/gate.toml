@@ -646,7 +646,6 @@ binaries = [
     "capsem-admin",
     "capsem-app",
     "capsem-gateway",
-    "capsem-mcp",
     "capsem-router",
     "capsem-mcp-aggregator",
     "capsem-mcp-builtin",
@@ -1067,7 +1066,7 @@ direct_concurrency = ["planrunner.py", "metadatasurvey.py"]
 # shrink must update or remove its entry immediately. This is debt inventory,
 # not an exemption list.
 [boundary.scripts]
-roots = ["build_system/scripts", "build_system/packaging", "sdk/python", "sdk/typescript"]
+roots = ["build_system/scripts", "build_system/packaging", "sdk/python", "sdk/typescript", "mcp/typescript"]
 suffixes = [".py", ".sh", ".ts", ".mjs"]
 max_lines = 300
 
@@ -1096,7 +1095,7 @@ max_lines = 1000
 must_stay_below_lines = 3000
 
 [boundary.rust.oversized_line_counts]
-"crates/capsem-admin/src/assets_channel_render.rs" = 1720
+"crates/capsem-admin/src/assets_channel_render.rs" = 1719
 "crates/capsem-admin/src/assets_channel_validation.rs" = 1412
 "crates/capsem-admin/src/main.rs" = 2182
 "crates/capsem-admin/src/profile_images.rs" = 2189
@@ -1131,7 +1130,7 @@ must_stay_below_lines = 3000
 "crates/capsem-proto/src/tests.rs" = 1457
 "crates/capsem-service/src/ledger_routes.rs" = 2421
 "crates/capsem-service/src/main.rs" = 1530
-"crates/capsem-service/src/profile_routes.rs" = 2167
+"crates/capsem-service/src/profile_routes.rs" = 2169
 "crates/capsem-service/src/vm_files.rs" = 1608
 "crates/capsem-service/src/tests/assets_registry.rs" = 1522
 "crates/capsem-service/src/tests/lifecycle.rs" = 2065
@@ -1163,7 +1162,7 @@ max_lines = 300
 "build_system/packaging/macos/build-pkg.sh" = 349
 "build_system/packaging/macos/macos_release_glowup.py" = 367
 "build_system/packaging/macos/macos_tart_glowup.py" = 526
-"build_system/packaging/macos/macos_tart_guest.sh" = 317
+"build_system/packaging/macos/macos_tart_guest.sh" = 316
 
 # ---------------------------------------------------------------------------
 # What may not run beside what
@@ -1257,7 +1256,7 @@ compiler_cache_command = "sccache"
 compiler_cache_socket_name = "sccache.sock"
 compiler_cache_client_side = true
 compiler_cache_idle_timeout_seconds = 0
-node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release_site", "sdk/typescript"]
+node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release_site", "sdk/typescript", "mcp/typescript"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the
 # lockfile.
@@ -1664,7 +1663,7 @@ spdx_version = "SPDX-2.3"
 entitlements = "build_system/packaging/macos/entitlements.plist"
 binaries = [
     "cache/target/cargo/debug/capsem", "cache/target/cargo/debug/capsem-service", "cache/target/cargo/debug/capsem-process",
-    "cache/target/cargo/debug/capsem-gateway", "cache/target/cargo/debug/capsem-mcp", "cache/target/cargo/debug/capsem-admin",
+    "cache/target/cargo/debug/capsem-gateway", "cache/target/cargo/debug/capsem-admin",
 ]
 # Every host binary a run needs on disk, as bin names. A superset of the signed
 # list, validated to be one: `binaries` is the subset that calls
@@ -1689,7 +1688,7 @@ binaries = [
 # bundle first; `capsem-agent`'s five bins are musl guest binaries that
 # `initrd.guest-agents` cross-compiles.
 built = [
-    "capsem", "capsem-admin", "capsem-bench-rs", "capsem-gateway", "capsem-mcp",
+    "capsem", "capsem-admin", "capsem-bench-rs", "capsem-gateway",
     "capsem-mcp-aggregator", "capsem-mcp-builtin", "capsem-mock-server", "capsem-process", "capsem-router",
     "capsem-service", "capsem-tray", "capsem-tui", "mcp_export",
 ]
@@ -2344,7 +2343,7 @@ rust_coverage_crate_minimum = 40.0
 # Raise to about measured minus 2.5, not minus 3: a floor on the band's edge
 # is refused by the next run's +0.04 jitter.
 rust_coverage_ratchet_headroom = 3.0
-rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-api = 40.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp = 43.40, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-network = 85.0, capsem-process = 40.0, capsem-proto = 90.82, capsem-router = 65.4, capsem-sdk = 97.0, capsem-service = 67.73, capsem-tray = 54.0, capsem-tui = 70.0 }
+rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-api = 40.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-network = 85.0, capsem-process = 40.0, capsem-proto = 90.82, capsem-router = 65.4, capsem-sdk = 97.0, capsem-service = 67.73, capsem-tray = 54.0, capsem-tui = 70.0 }
 # macOS compiles a different cfg-selected line inventory. Its stronger floors
 # must not raise Linux thresholds using code that Linux cannot compile or test.
 # Overrides may only increase the shared floors; no platform gets an exemption.
