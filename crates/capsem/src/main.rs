@@ -2120,15 +2120,7 @@ async fn main() -> Result<()> {
                                 if let Some(ref mut f) = log_file {
                                     let _ = std::io::Write::write_all(f, &data);
                                 }
-                                // Check for sentinel
-                                output_buf.push_str(&String::from_utf8_lossy(&data));
-                                // Keep only last 512 bytes to avoid unbounded growth.
-                                // Pad by sentinel length so we never split "RESULT: FAIL"
-                                // across a truncation boundary.
-                                if output_buf.len() > 1024 {
-                                    let keep = 512 + "RESULT: FAIL".len();
-                                    output_buf = output_buf.split_off(output_buf.len() - keep);
-                                }
+                                push_doctor_output_tail(&mut output_buf, &data);
                                 if output_buf.contains("RESULT: PASS") {
                                     break (0, DoctorSessionCleanup::Completed);
                                 } else if output_buf.contains("RESULT: FAIL") {
@@ -2265,6 +2257,23 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
             eprintln!("[cp] {} bytes  {}  ->  {}:{}", bytes.len(), src, session, guest_path,);
             Ok(())
         }
+    }
+}
+
+/// Bytes of decoded doctor output kept for sentinel matching. Padded by the
+/// sentinel length so "RESULT: FAIL" is never split across a trim.
+const DOCTOR_OUTPUT_TAIL_BYTES: usize = 512 + "RESULT: FAIL".len();
+
+/// Append lossily decoded terminal output to the doctor's sentinel tail and
+/// trim it to roughly `DOCTOR_OUTPUT_TAIL_BYTES`, always on a char boundary.
+fn push_doctor_output_tail(tail: &mut String, data: &[u8]) {
+    tail.push_str(&String::from_utf8_lossy(data));
+    if tail.len() > 2 * DOCTOR_OUTPUT_TAIL_BYTES {
+        let mut start = tail.len() - DOCTOR_OUTPUT_TAIL_BYTES;
+        while !tail.is_char_boundary(start) {
+            start += 1;
+        }
+        tail.drain(..start);
     }
 }
 
