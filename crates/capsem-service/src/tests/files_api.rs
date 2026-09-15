@@ -726,3 +726,50 @@ async fn listing_neither_follows_nor_shows_a_symlinked_directory() {
     let names: Vec<&str> = root.entries.iter().map(|e| e.name.as_str()).collect();
     assert_eq!(names, vec!["mine.txt"], "a symlink is neither followed nor advertised");
 }
+
+/// The gateway forwards bodies up to 10 MiB and the service accepts files of
+/// the same size, but the mounted router never set a body limit, so axum's
+/// 2 MiB default refused anything larger with 413 before the handler ran.
+#[tokio::test]
+async fn upload_above_axum_default_body_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1, WriteFileIpcReply::Success).await;
+    setup_vm_with_workspace_and_uds(&state, dir.path(), "large-upload-vm", uds_path);
+    let app = build_service_router(state);
+    let payload = vec![b'z'; 3 * 1024 * 1024];
+
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/vms/large-upload-vm/files/content?path=large.bin")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .expect("upload route should respond");
+    assert_eq!(response.status(), StatusCode::OK, "a 3 MiB file is within the 10 MiB file limit");
+    ipc.await.unwrap();
+    assert_eq!(
+        std::fs::metadata(dir.path().join("session/guest/workspace/large.bin")).unwrap().len(),
+        payload.len() as u64
+    );
+}
+
+#[tokio::test]
+async fn upload_above_the_api_body_limit_is_refused() {
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let app = build_service_router(state);
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/vms/any-vm/files/content?path=huge.bin")
+                .body(Body::from(vec![0u8; capsem_api::MAX_REQUEST_BODY_BYTES + 1]))
+                .unwrap(),
+        )
+        .await
+        .expect("upload route should respond");
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}

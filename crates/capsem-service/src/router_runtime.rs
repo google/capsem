@@ -210,6 +210,9 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             "/vms/{id}/files/content",
             get(handle_download_file).post(handle_upload_file),
         )
+        // Accept what the gateway forwards; axum's implicit 2 MiB default
+        // refused file uploads the API documents.
+        .layer(axum::extract::DefaultBodyLimit::max(capsem_api::MAX_REQUEST_BODY_BYTES))
         .layer(TraceLayer::new_for_http().on_request(()).on_response(()))
         .with_state(state)
 }

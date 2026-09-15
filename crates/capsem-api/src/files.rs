@@ -1,6 +1,14 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// Largest request body and workspace file the HTTP API accepts, in bytes.
+///
+/// One value for every layer: the gateway refuses larger bodies, the service
+/// router's body limit and its file transfer limit use it too. They were three
+/// literals, and the service router's unset limit fell back to axum's 2 MiB,
+/// refusing uploads the other two allowed.
+pub const MAX_REQUEST_BODY_BYTES: usize = 10 * 1024 * 1024;
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FileEntryType {

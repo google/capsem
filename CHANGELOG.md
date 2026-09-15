@@ -465,6 +465,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - VM creation no longer treats the legacy `image` request field as a clone source;
   callers must use the typed `from` field explicitly.
 
+- Workspace file uploads between 2 MiB and 10 MiB succeed. The service router
+  kept axum's implicit 2 MiB body limit while the gateway and file routes
+  allowed 10 MiB; all three now share one limit.
+
 - `capsem doctor` no longer panics when invalid UTF-8 in the guest's terminal
   output lands where it trims its result-sentinel buffer.
 

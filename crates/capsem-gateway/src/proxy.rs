@@ -13,8 +13,8 @@ use http_body_util::BodyExt;
 
 use crate::AppState;
 
-/// Maximum request body size (10 MB). Prevents OOM from malicious oversized payloads.
-const MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
+/// Maximum request body size. Prevents OOM from malicious oversized payloads.
+const MAX_BODY_SIZE: usize = capsem_api::MAX_REQUEST_BODY_BYTES;
 
 /// Default request timeout. Long enough for suspend (quiescence up to 10s +
 /// pause/save up to 15s) and exec operations.
