@@ -1,6 +1,5 @@
 // Gateway API client. Token is module-scoped -- never in localStorage, DOM, logs, or URLs.
 
-import { recordWsEvent } from './tauri-log';
 import * as gateway from '@capsem/sdk/operations';
 import { HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, SnapshotsStatus, SnapshotsList } from '@capsem/sdk';
@@ -703,98 +702,6 @@ function emptyStats(): StatsResponse {
       total_file_events: 0, total_requests: 0, total_allowed: 0, total_denied: 0,
     },
     sessions: [], top_providers: [], top_tools: [], top_mcp_tools: [],
-  };
-}
-
-// -- Terminal --
-
-export function getTerminalWsUrl(id: string): string {
-  const wsBase = _baseUrl.replace(/^http/, 'ws');
-  return `${wsBase}/terminal/${encodeURIComponent(id)}?token=${_token}`;
-}
-
-// Terminal WebSocket state (per-VM, lazy-connected).
-let _termWs: WebSocket | null = null;
-let _termBuffer: number[] = [];
-let _termWaiter: ((data: number[]) => void) | null = null;
-const _termSourceCallbacks: ((source: string) => void)[] = [];
-
-/** Connect terminal WebSocket for a given VM. */
-export function connectTerminal(id: string) {
-  if (_termWs) {
-    _termWs.close();
-    _termWs = null;
-  }
-  _termBuffer = [];
-  const url = getTerminalWsUrl(id);
-  _termWs = new WebSocket(url);
-  _termWs.binaryType = 'arraybuffer';
-  _termWs.onopen = () => {
-    for (const cb of _termSourceCallbacks) cb('websocket');
-  };
-  _termWs.onmessage = (ev) => {
-    const data = Array.from(new Uint8Array(ev.data as ArrayBuffer));
-    // T5/F3: feed __capsemDebug.lastWsEvents ring buffer (no-op in
-    // production unless ?debug=1 set installs the global).
-    recordWsEvent({ kind: 'message', bytes: data.length, ts: Date.now() });
-    if (_termWaiter) {
-      const w = _termWaiter;
-      _termWaiter = null;
-      w(data);
-    } else {
-      _termBuffer.push(...data);
-    }
-  };
-  _termWs.onclose = () => {
-    recordWsEvent({ kind: 'close', ts: Date.now() });
-    _termWs = null;
-  };
-}
-
-/** Send input data to the terminal. */
-export async function serialInput(data: string): Promise<void> {
-  if (_termWs?.readyState === WebSocket.OPEN) {
-    _termWs.send(new TextEncoder().encode(data));
-  }
-}
-
-/** Poll for terminal output (returns buffered data or waits for next message). */
-export async function terminalPoll(): Promise<number[]> {
-  if (_termBuffer.length > 0) {
-    const data = _termBuffer;
-    _termBuffer = [];
-    return data;
-  }
-  if (!_termWs || _termWs.readyState !== WebSocket.OPEN) {
-    throw new Error('terminal closed');
-  }
-  return new Promise((resolve, reject) => {
-    _termWaiter = resolve;
-    // Reject if WebSocket closes while waiting.
-    const ws = _termWs;
-    const onClose = () => {
-      if (_termWaiter === resolve) {
-        _termWaiter = null;
-        reject(new Error('terminal closed'));
-      }
-    };
-    ws?.addEventListener('close', onClose, { once: true });
-  });
-}
-
-/** Send a resize event to the terminal. */
-export async function terminalResize(cols: number, rows: number): Promise<void> {
-  if (_termWs?.readyState === WebSocket.OPEN) {
-    _termWs.send(JSON.stringify({ type: 'resize', cols, rows }));
-  }
-}
-
-/** Register a callback for terminal source changes (e.g., WebSocket connects). */
-export async function onTerminalSourceChanged(cb: (source: string) => void): Promise<() => void> {
-  _termSourceCallbacks.push(cb);
-  return () => {
-    const i = _termSourceCallbacks.indexOf(cb);
-    if (i >= 0) _termSourceCallbacks.splice(i, 1);
   };
 }
 

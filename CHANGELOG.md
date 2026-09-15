@@ -483,6 +483,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The desktop terminal no longer types a newline into the VM each time it
+  reconnects, which submitted half-typed commands and inserted lines in editors.
+
 - VM creation no longer treats the legacy `image` request field as a clone source;
   callers must use the typed `from` field explicitly.
 

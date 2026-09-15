@@ -1170,34 +1170,6 @@ describe('api', () => {
     });
   });
 
-  // ---- Terminal ----
-
-  describe('terminal', () => {
-    it('getTerminalWsUrl constructs correct URL', () => {
-      const url = api.getTerminalWsUrl('vm-1');
-      expect(url).toContain('ws://');
-      expect(url).toContain('/terminal/vm-1');
-      expect(url).toContain('token=');
-    });
-
-    it('serialInput does not throw when no WebSocket', async () => {
-      await api.serialInput('hello');
-      // No error thrown.
-    });
-
-    it('terminalResize does not throw when no WebSocket', async () => {
-      await api.terminalResize(80, 24);
-      // No error thrown.
-    });
-
-    it('onTerminalSourceChanged returns unsubscribe function', async () => {
-      const cb = vi.fn();
-      const unsub = await api.onTerminalSourceChanged(cb);
-      expect(typeof unsub).toBe('function');
-      unsub();
-    });
-  });
-
   // ---- Misc ----
 
   describe('getBaseUrl', () => {
