@@ -30,10 +30,28 @@ async fn send_ipc_command_ignores_lifecycle_broadcasts() {
         for noise in [
             ProcessToService::ShutdownRequested { id: "vm".into() },
             ProcessToService::SuspendRequested { id: "vm".into() },
-            ProcessToService::SuspendFailed { id: "vm".into(), error: "busy".into() },
-            ProcessToService::ExecOutput { id, data: b"partial".to_vec() },
-            ProcessToService::ExecResult { id: id + 1, stdout: b"other".to_vec(), stderr: vec![], exit_code: 9, truncated: false },
-            ProcessToService::ExecResult { id, stdout: b"ok".to_vec(), stderr: vec![], exit_code: 0, truncated: false },
+            ProcessToService::SuspendFailed {
+                id: "vm".into(),
+                error: "busy".into(),
+            },
+            ProcessToService::ExecOutput {
+                id,
+                data: b"partial".to_vec(),
+            },
+            ProcessToService::ExecResult {
+                id: id + 1,
+                stdout: b"other".to_vec(),
+                stderr: vec![],
+                exit_code: 9,
+                truncated: false,
+            },
+            ProcessToService::ExecResult {
+                id,
+                stdout: b"ok".to_vec(),
+                stderr: vec![],
+                exit_code: 0,
+                truncated: false,
+            },
         ] {
             tx.send(noise).await.unwrap();
         }
@@ -41,13 +59,18 @@ async fn send_ipc_command_ignores_lifecycle_broadcasts() {
 
     let reply = send_ipc_command(
         &uds_path,
-        ServiceToProcess::Exec { id: 41, command: "true".into() },
+        ServiceToProcess::Exec {
+            id: 41,
+            command: "true".into(),
+        },
         Some(5),
     )
     .await
     .expect("command must complete despite broadcasts");
     match reply {
-        ProcessToService::ExecResult { id, stdout, exit_code, .. } => {
+        ProcessToService::ExecResult {
+            id, stdout, exit_code, ..
+        } => {
             assert_eq!((id, stdout.as_slice(), exit_code), (41, &b"ok"[..], 0));
         }
         other => panic!("broadcast or unrelated message returned as the reply: {other:?}"),

@@ -749,10 +749,16 @@ async fn upload_above_axum_default_body_limit() {
         )
         .await
         .expect("upload route should respond");
-    assert_eq!(response.status(), StatusCode::OK, "a 3 MiB file is within the 10 MiB file limit");
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "a 3 MiB file is within the 10 MiB file limit"
+    );
     ipc.await.unwrap();
     assert_eq!(
-        std::fs::metadata(dir.path().join("session/guest/workspace/large.bin")).unwrap().len(),
+        std::fs::metadata(dir.path().join("session/guest/workspace/large.bin"))
+            .unwrap()
+            .len(),
         payload.len() as u64
     );
 }

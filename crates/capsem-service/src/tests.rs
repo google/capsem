@@ -274,9 +274,7 @@ pub(crate) fn spawn_fake_process(
             // behind the one waiting forever. Fail with what was missing.
             let (stream, _) = tokio::time::timeout(FAKE_PROCESS_ACCEPT_TIMEOUT, listener.accept())
                 .await
-                .unwrap_or_else(|_| {
-                    panic!("fake capsem-process got {received} of {expected} expected IPC connections")
-                })
+                .unwrap_or_else(|_| panic!("fake capsem-process got {received} of {expected} expected IPC connections"))
                 .unwrap();
             let std_stream = stream.into_std().unwrap();
             let std_stream = tokio::task::spawn_blocking(move || {
