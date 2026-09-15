@@ -20,7 +20,7 @@ use super::*;
 use bytes::{Buf, Bytes, BytesMut};
 use capsem_network::frames::HEADER_BYTES;
 use capsem_network::switch::{Mac, Route, Station, Table};
-use capsem_proto::privatelink::{mac_of, CABLE_SOCKET_BUFFER_BYTES};
+use capsem_proto::privatelink::mac_of;
 use std::io::IoSlice;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
@@ -276,7 +276,7 @@ pub async fn run(grants: Receiver, mut events: UnixStream, port_limit: usize) ->
                             Event::Refused(port).write(&mut events).await?;
                             continue;
                         }
-                        let stream = match adopt(socket, CABLE_SOCKET_BUFFER_BYTES) {
+                        let stream = match adopt(socket) {
                             Ok(stream) => stream,
                             Err(error) => {
                                 tracing::debug!(port, %address, %error, "switch rejected cable descriptor");
