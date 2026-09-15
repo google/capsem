@@ -465,6 +465,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - VM creation no longer treats the legacy `image` request field as a clone source;
   callers must use the typed `from` field explicitly.
 
+- VM exec, file, snapshot and network routes no longer fail with "unexpected
+  IPC response" when a shutdown or suspend broadcast from the VM reaches the
+  service before the command's reply; replies are matched by request id.
+
 - VM security, detection and history routes show rows committed since the last
   read. Their response cache keyed on `session.db` size and modification time,
   which a commit that only reaches the write-ahead log leaves unchanged, so new

@@ -1356,16 +1356,18 @@ pub(super) async fn send_ipc_command(
             },
         };
 
-        match msg {
-            ProcessToService::Pong => {
-                if matches!(cmd, ServiceToProcess::Ping | ServiceToProcess::ReloadConfig) {
-                    return Ok(ProcessToService::Pong);
-                }
-                continue;
+        // The connection also carries lifecycle broadcasts and, for streams,
+        // output chunks; only the message answering this request's id is the
+        // reply. Id-less requests are answered by `Pong`.
+        let answers = match cmd.request_id() {
+            Some(id) => msg.reply_id() == Some(id),
+            None => {
+                matches!(msg, ProcessToService::Pong)
+                    && matches!(cmd, ServiceToProcess::Ping | ServiceToProcess::ReloadConfig)
             }
-            ProcessToService::TerminalOutput { .. } => continue,
-            ProcessToService::StateChanged { .. } => continue,
-            res => return Ok(res),
+        };
+        if answers {
+            return Ok(msg);
         }
     }
 }

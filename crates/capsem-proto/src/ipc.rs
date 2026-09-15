@@ -201,6 +201,56 @@ pub enum ProcessToService {
     LinkDetachResult { id: u64, error: Option<String> },
 }
 
+impl ServiceToProcess {
+    /// The id a reply to this request carries, when the request has one.
+    ///
+    /// Requests without an id are either answered with `Pong` (`Ping`,
+    /// `ReloadConfig`) or not answered on the connection at all.
+    pub fn request_id(&self) -> Option<u64> {
+        match self {
+            Self::Exec { id, .. }
+            | Self::ExecStream { id, .. }
+            | Self::WriteFile { id, .. }
+            | Self::ReadFile { id, .. }
+            | Self::LogFileBoundary { id, .. }
+            | Self::McpListServers { id }
+            | Self::McpListTools { id }
+            | Self::McpRefreshTools { id }
+            | Self::SnapshotStatus { id }
+            | Self::McpCallTool { id, .. }
+            | Self::PublishPort { id, .. }
+            | Self::LinkAttach { id, .. }
+            | Self::LinkDetach { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
+}
+
+impl ProcessToService {
+    /// The request id this message finally answers.
+    ///
+    /// Lifecycle broadcasts (`StateChanged`, `ShutdownRequested`, ...) reach
+    /// every IPC connection and answer nothing; `ExecOutput` is a chunk of a
+    /// streaming exec, not its reply. Correlate on this, never on arrival order.
+    pub fn reply_id(&self) -> Option<u64> {
+        match self {
+            Self::ExecResult { id, .. }
+            | Self::WriteFileResult { id, .. }
+            | Self::ReadFileResult { id, .. }
+            | Self::LogFileBoundaryResult { id, .. }
+            | Self::McpServersResult { id, .. }
+            | Self::McpToolsResult { id, .. }
+            | Self::McpRefreshResult { id, .. }
+            | Self::SnapshotStatusResult { id, .. }
+            | Self::McpCallToolResult { id, .. }
+            | Self::PortPublished { id, .. }
+            | Self::LinkAttachResult { id, .. }
+            | Self::LinkDetachResult { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
+}
+
 /// Status of an MCP server as reported through IPC.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct McpServerStatus {

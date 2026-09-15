@@ -721,6 +721,7 @@ mod db_handle_ownership;
 mod files_api;
 mod inspection;
 mod interactions;
+mod ipc_command;
 mod ledger_routes;
 mod lifecycle;
 mod logs_api;
