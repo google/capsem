@@ -64,6 +64,20 @@ def test_desktop_build_compiles_sdk_before_embedding_frontend() -> None:
     assert bundle in plan.after_of("app.debug"), RATIONALE
 
 
+def test_sealed_linux_frontend_builds_the_current_sdk_first() -> None:
+    runner = (ROOT / "build_system/scripts/test/test-linux-rust.sh").read_text()
+    base = (ROOT / "build_system/docker/Dockerfile.linux-rust-base").read_text()
+
+    sdk_build = "pnpm --dir sdk/typescript run build"
+    frontend_build = "check-web-surface.sh frontend-build"
+    assert sdk_build in runner and runner.index(sdk_build) < runner.index(frontend_build), RATIONALE
+    assert "COPY sdk/typescript /src/sdk/typescript" in base, RATIONALE
+    assert base.index("COPY sdk/typescript") < base.index("COPY web/app"), RATIONALE
+    assert "sdk/typescript/pnpm-lock.yaml" in CONFIG.hostimage.identity_inputs, RATIONALE
+    assert "\n    capsem-api\n" in runner and "\n    capsem-sdk\n" in runner, RATIONALE
+    assert "\n    capsem-mcp\n" not in runner, RATIONALE
+
+
 @pytest.mark.parametrize("removed", ["install", "build", "verify"])
 def test_missing_sdk_predecessors_are_rejected(removed: str) -> None:
     plan = gate_plan("test-fast")

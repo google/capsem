@@ -88,13 +88,14 @@ RUN bash -lc 'eval "$(cargo llvm-cov show-env --export-prefix)" \
     && cargo build --locked --workspace --all-targets' \
     || echo "prewarm incomplete; the lane will surface anything missing"
 
-# `capsem-app` embeds `web/app/dist` at compile time, so
-# `build_system/scripts/test/test-linux-rust.sh` builds the frontend when that directory is
-# missing -- with `pnpm install`, over the network. Sealed, that is a hard
-# failure, which is how it was found: every previous run of this lane had been
-# quietly pulling from npm. Built here instead, with network, like every other
-# dependency; the lane's own check then sees `web/app/dist/index.html` and
-# skips the fetch entirely.
+# `capsem-app` embeds `web/app/dist`, which imports the compiled TypeScript SDK.
+# Materialize both dependency trees here while the base build has network; the
+# sealed lane rebuilds their current source without fetching.
+COPY sdk/typescript /src/sdk/typescript
+RUN cd /src/sdk/typescript \
+    && CI=true pnpm install --frozen-lockfile \
+    && pnpm run build
+
 COPY web/app /src/web/app
 RUN cd /src/web/app \
     && CI=true pnpm install --frozen-lockfile \

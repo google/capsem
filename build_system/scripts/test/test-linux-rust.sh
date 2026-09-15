@@ -8,6 +8,8 @@ export NEXTEST_STATE_DIR="$OUTPUT_DIR/nextest"
 
 packages=(
     capsem-assets
+    capsem-api
+    capsem-sdk
     capsem-config
     capsem-credentials
     capsem-foundation
@@ -21,7 +23,6 @@ packages=(
     capsem-service
     capsem
     capsem-tui
-    capsem-mcp
     capsem-mcp-aggregator
     capsem-mcp-builtin
     capsem-process
@@ -37,13 +38,11 @@ done
 
 cd "$ROOT"
 
-# capsem-app embeds web/app/dist at compile time. The macOS full gate builds
-# it before mounting this checkout read-only in the Linux parity container;
-# the independent native-Linux CI job has to materialize it for itself.
-if [[ ! -s "$ROOT/web/app/dist/index.html" ]]; then
-    pnpm --dir web/app install --frozen-lockfile
-    bash build_system/scripts/web/check-web-surface.sh frontend-build
-fi
+# The networked base owns dependency installation. Rebuild the current SDK and
+# frontend source inside this sealed lane before capsem-app embeds the bundle.
+pnpm --dir sdk/typescript run build
+bash build_system/scripts/web/check-web-surface.sh frontend-build
+test -s "$ROOT/web/app/dist/index.html"
 
 cross_target=$(python3 build_system/scripts/bootstrap/provision-linux-workspace.py --cross-rust-target)
 cargo clippy --target "$cross_target" -p capsem-core --lib --tests -- -D warnings
