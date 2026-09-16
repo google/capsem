@@ -492,7 +492,7 @@ def test_public_release_storage_is_verified_before_channel_deployment() -> None:
     assert "binary-channel-preview" in candidate
     assert "https://capsem.org/install.sh" in candidate_proof
     assert "CAPSEM_MANIFEST_URL" in candidate_proof
-    assert "github.com/${{ github.repository }}/releases/download" in candidate
+    assert "github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/" in candidate
     assert "build_system/scripts/release/release-package-contract.py verify-storage" in candidate
     assert "build_system/scripts/release/prove-candidate-installer.sh" in candidate
     assert "needs: [verify-release-candidate]" in deploy
