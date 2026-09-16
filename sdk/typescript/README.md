@@ -4,25 +4,22 @@ Async clients for the authenticated HTTP gateway, usable in browsers and Node.
 Supply the gateway URL and bearer token explicitly.
 
 ```ts
-import {decodeExecOutput, ExposureAccess, ExposureTarget, Hypervisor, HostLogSource, VM} from '@capsem/sdk';
+import {Hypervisor, HostLogSource, VM} from '@capsem/sdk';
 
 const hv = new Hypervisor(url, token, {timeoutMs: 120_000});
 try {
   const status = await hv.info(); // health, version, profiles and updates
   const network = await hv.networks.create('private');
   const vm = await hv.create('code', {
-    name: 'work', vcpu: 4, memory: '8G', networks: ['private'],
+    name: 'work', cpus: 4, memory: 8, networks: [network],
+    image: 'docker.io/library/nginx:alpine', command: ['nginx', '-g', 'daemon off;'],
     env: {MODE: 'preview'},
-    container: {image: 'docker.io/library/nginx:alpine'},
   });
-  const exposure = await vm.exposures.create({
-    guest_port: 80, target: ExposureTarget.CONTAINER, access: ExposureAccess.HTTP_PREVIEW,
-  });
-  const preview = await vm.exposures.previewSession(exposure.id);
-  console.log(preview.url);
+  const port = await vm.ports.open(80, {authenticate: true});
+  console.log(port.url);
   await hv.networks.logs(network.id, {vm: vm.id});
   const result = await vm.exec('uname -a', {timeout_secs: 60});
-  console.log(decodeExecOutput(result.stdout));
+  console.log(result.stdout.data, result.exit_code);
   await vm.copy.toVm('/hello.txt', new TextEncoder().encode('hello'));
   const bytes = await vm.copy.fromVm('/hello.txt');
   const info = await vm.info(); // includes AI, network and files
@@ -31,6 +28,7 @@ try {
   const triage = await hv.triage({vm_id: vm.id, since: '1h'});
   const tools = await hv.profiles.mcp('code').tools('filesystem');
   const logs = await hv.log({source: HostLogSource.GATEWAY, tail: 100});
+  await vm.ports.close(port);
 } finally {
   hv.close();
 }
@@ -46,7 +44,7 @@ and integers that JavaScript cannot represent safely. Generated source is
 included in strict compilation, lint, coverage, drift and module-size checks.
 
 Named VMs are persistent. Unnamed VMs are ephemeral. Omitted CPU and memory
-values use the selected profile's defaults; numeric memory values are MB.
+values use the selected profile's defaults; memory is a positive integer in GiB.
 VM names resolve through `hv.list()` and cache the canonical ID. Missing or
 ambiguous names fail before a VM operation is sent.
 
@@ -77,14 +75,14 @@ Obtain fresh credentials and construct a new client explicitly; never replay
 the restart call. Acceptance does not claim reconnection has completed.
 
 `hv.networks` provides typed create/list/inspect/delete, member attach/detach and
-cursor-based audit logs. VM creation accepts a typed container object. When it
-is present, the create environment configures that container workload; the VM
-is its runtime. Creation returns after HTTP reports the workload ready, while
-`vm.container.status()` remains a read-only diagnostic. Registry credentials
-are transient inputs. `vm.exposures.create/list/delete/previewSession` manages policy-checked
-loopback listeners and authenticated HTTP previews. The target chooses the VM
-or container namespace; preview sessions return a URL and a separate single-use
-token for a POST bootstrap.
+cursor-based audit logs; pass returned network objects directly to creation.
+`image` selects a container workload, with `command`, `env`, `registry`, and
+`attach` as optional settings. Creation returns after HTTP reports the workload
+ready, while `vm.container.status()` remains a read-only diagnostic.
+`vm.ports.open` creates a plain loopback listener by default and uses the
+browser-authentication flow when `authenticate` is true. The SDK infers whether
+the workload target is the container or VM. `list` and `close` manage the same
+typed port objects.
 Snapshot create/restore and mounts remain pending.
 
 `hv.run(command)` executes once in a temporary VM. `hv.panics()`, `hv.triage()`

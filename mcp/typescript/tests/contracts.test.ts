@@ -60,7 +60,7 @@ describe('contracts', () => {
     }
     const create = tools.find(tool => tool.name === 'capsem_create');
     expect(Object.keys(create?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining([
-      'profile', 'name', 'vcpu', 'memory', 'env', 'networks', 'container',
+      'profile', 'name', 'cpus', 'memory', 'env', 'network_ids', 'image', 'command',
     ]));
     const exec = tools.find(tool => tool.name === 'capsem_exec');
     expect(Object.keys(exec?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(['vm_id', 'command', 'timeout_secs']));

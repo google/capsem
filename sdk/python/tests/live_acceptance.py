@@ -22,7 +22,7 @@ async def ready(vm: VM) -> None:
 async def main() -> None:
     async with Hypervisor(os.environ["SDK_GATEWAY_URL"], os.environ["SDK_GATEWAY_TOKEN"], timeout=120) as hv:
         name = "sdk-live-" + uuid.uuid4().hex[:8]
-        vm = await hv.create(os.environ.get("CAPSEM_TEST_PROFILE", "code"), name=name, vcpu=2, memory="2G")
+        vm = await hv.create(os.environ.get("CAPSEM_TEST_PROFILE", "code"), name=name, cpus=2, memory=2)
         fork: VM | None = None
         completed = False
         try:

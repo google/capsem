@@ -6,15 +6,12 @@ import {Transport, type CallOptions, type TransportOptions} from './transport.js
 import {Networks, Profiles} from './resources.js';
 import {VM} from './vm.js';
 
-function memoryMb(memory: string | number | undefined): number | null {
+function memoryMb(memory: number | undefined): number | null {
   if (memory === undefined) return null;
-  if (typeof memory === 'string') {
-    const match = /^([1-9][0-9]*)(M|G)$/i.exec(memory);
-    if (!match) throw new TypeError("Memory must be a positive MB count or a size such as '512M' or '8G'");
-    memory = Number(match[1]) * (match[2]?.toUpperCase() === 'G' ? 1024 : 1);
-  }
-  if (!Number.isSafeInteger(memory) || memory <= 0) throw new TypeError('Memory must be a positive MB count');
-  return memory;
+  if (!Number.isSafeInteger(memory) || memory <= 0) throw new TypeError('Memory must be a positive GiB count');
+  const megabytes = memory * 1024;
+  if (!Number.isSafeInteger(megabytes)) throw new TypeError('Memory is too large');
+  return megabytes;
 }
 
 export class Hypervisor extends Client {
@@ -36,24 +33,30 @@ export class Hypervisor extends Client {
     return new VM(this.transport, selector);
   }
   async create(profile: string, options: CreateOptions = {}): Promise<VM> {
-    if (options.vcpu !== undefined && (!Number.isSafeInteger(options.vcpu) || options.vcpu < 1)) {
-      throw new TypeError('vcpu must be positive');
+    if (options.cpus !== undefined && (!Number.isSafeInteger(options.cpus) || options.cpus < 1)) {
+      throw new TypeError('cpus must be positive');
     }
-    if (options.container !== undefined && 'env' in options.container) {
-      throw new TypeError('container.env is not supported; use create env');
+    if (options.image === undefined && (options.command !== undefined || options.registry !== undefined || options.attach === true)) {
+      throw new TypeError('Container command, registry, and attach require an image');
     }
-    const container = options.container === undefined ? undefined : {
-      ...options.container,
+    if (options.image !== undefined && (typeof options.image !== 'string' || !options.image)) {
+      throw new TypeError('Image must be a nonempty string');
+    }
+    const container = options.image === undefined ? undefined : {
+      image: options.image,
+      args: [...(options.command ?? [])],
       env: options.env ?? {},
+      ...(options.registry === undefined ? {} : {registry: options.registry}),
+      attach: options.attach ?? false,
     };
     const response = await api.createVm(this.transport, {body: {
       profile_id: profile, name: options.name || null, persistent: Boolean(options.name),
-      cpus: options.vcpu ?? null, ram_mb: memoryMb(options.memory),
+      cpus: options.cpus ?? null, ram_mb: memoryMb(options.memory),
       env: container === undefined ? options.env ?? null : null,
-      networks: options.networks ?? [],
+      networks: (options.networks ?? []).map(network => network.name),
       ...(container === undefined ? {} : {container}),
     }}, options);
-    return VM.bind(this.transport, response.id, response.name);
+    return VM.bind(this.transport, response.id, response.name, container !== undefined);
   }
   async log(options: HostLogOptions = {}): Promise<models.HostLogsResponse> {
     return api.getHypervisorLogs(this.transport, {...options, name: options.source ?? models.HostLogSource.SERVICE}, options);
@@ -61,7 +64,7 @@ export class Hypervisor extends Client {
   async run(command: string, options: RunOptions = {}): Promise<models.ExecResponse> {
     return api.runVm(this.transport, {body: {
       command, profile_id: options.profile ?? 'code', timeout_secs: options.timeout_secs ?? null,
-      cpus: options.vcpu ?? null, ram_mb: memoryMb(options.memory), env: options.env ?? null,
+      cpus: options.cpus ?? null, ram_mb: memoryMb(options.memory), env: options.env ?? null,
     }}, options);
   }
   async purge(options: CallOptions & {all?: boolean} = {}): Promise<models.PurgeResponse> {

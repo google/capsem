@@ -1,4 +1,4 @@
-import {HostLogSource, TimelineLayer, type ContainerOptions, type Hypervisor, type VM} from '@capsem/sdk';
+import {HostLogSource, TimelineLayer, type Hypervisor, type VM} from '@capsem/sdk';
 import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
 import {toolCall} from './results.js';
@@ -17,12 +17,6 @@ const logFilters = {
 const registry = z.object({
   username: z.string().optional(), password: z.string().optional(), ca_pem: z.string().optional(),
 });
-const container = z.object({
-  image: z.string().min(1),
-  args: z.array(z.string()).optional(),
-  registry: registry.optional(),
-  attach: z.boolean().optional(),
-}).strict();
 
 function vm(hypervisor: Hypervisor, id: string): VM {
   return hypervisor.vm({id});
@@ -38,15 +32,6 @@ function defined<T extends object>(input: T): {[K in keyof T]?: Exclude<T[K], un
   };
 }
 
-function containerOptions(input: z.infer<typeof container>): ContainerOptions {
-  const {image, registry: access, ...options} = input;
-  return {
-    image,
-    ...defined(options),
-    ...(access === undefined ? {} : {registry: defined(access)}),
-  };
-}
-
 export function registerHostTools(server: McpServer, hypervisor: Hypervisor): void {
   server.registerTool('capsem_list', {
     description: 'List VMs with identity, lifecycle, resources, and telemetry.',
@@ -57,16 +42,20 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
     inputSchema: {
       profile: z.string().min(1).default('code'),
       name: z.string().min(1).optional(),
-      vcpu: positiveInt.optional(),
-      memory: z.union([positiveInt, z.string().regex(/^[1-9][0-9]*[MG]$/i)]).optional(),
+      cpus: positiveInt.optional(),
+      memory: positiveInt.optional().describe('Guest memory in GiB'),
       env: z.record(z.string(), z.string()).optional(),
-      networks: z.array(z.string().min(1)).optional(),
-      container: container.optional(),
+      network_ids: z.array(z.string().min(1)).optional(),
+      image: z.string().min(1).optional(),
+      command: z.array(z.string()).optional(),
+      registry: registry.optional(),
+      attach: z.boolean().optional(),
     },
-  }, ({profile, container: workload, ...options}) => toolCall(async () => {
+  }, ({profile, network_ids, registry: access, ...options}) => toolCall(async () => {
+    const networks = await Promise.all((network_ids ?? []).map(id => hypervisor.networks.inspect(id)));
     const created = await hypervisor.create(profile, {
-      ...defined(options),
-      ...(workload === undefined ? {} : {container: containerOptions(workload)}),
+      ...defined(options), networks,
+      ...(access === undefined ? {} : {registry: defined(access)}),
     });
     return {id: created.id, name: created.name};
   }));
@@ -85,8 +74,8 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
     description: 'Run a command in a fresh service-managed VM and return stdout, stderr, and exit code.',
     inputSchema: {
       command: z.string().min(1), profile: z.string().min(1).optional(), timeout_secs: positiveInt.optional(),
-      vcpu: positiveInt.optional(),
-      memory: z.union([positiveInt, z.string().regex(/^[1-9][0-9]*[MG]$/i)]).optional(),
+      cpus: positiveInt.optional(),
+      memory: positiveInt.optional().describe('Guest memory in GiB'),
       env: z.record(z.string(), z.string()).optional(),
     },
   }, ({command, ...options}) => toolCall(() => hypervisor.run(command, defined(options))));

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 
 from . import _operations as api
@@ -10,21 +9,16 @@ from . import models
 from ._client import Client
 from ._networks import Networks
 from ._profiles import Profiles
-from .options import ContainerOptions
+from .execution import ExecResult
 from .vm import VM
 
 
-def _memory_mb(memory: str | int | None) -> int | None:
+def _memory_mb(memory: int | None) -> int | None:
     if memory is None:
         return None
-    if isinstance(memory, str):
-        match = re.fullmatch(r"([1-9][0-9]*)(M|G)", memory.upper())
-        if match is None:
-            raise ValueError("memory must be a positive MB count or size such as '512M' or '8G'")
-        return int(match[1]) * (1024 if match[2] == "G" else 1)
     if isinstance(memory, bool) or not isinstance(memory, int) or memory <= 0:
-        raise ValueError("memory must be a positive MB count")
-    return memory
+        raise ValueError("memory must be a positive GiB count")
+    return memory * 1024
 
 
 class Hypervisor(Client):
@@ -39,31 +33,38 @@ class Hypervisor(Client):
     async def list(self) -> models.ListResponse:
         return await api.list_vms(self._transport)
 
-    async def create(self, profile: str, *, name: str = "", vcpu: int | None = None,
-                     memory: str | int | None = None, env: dict[str, str] | None = None,
-                     networks: Sequence[str] = (),
-                     container: ContainerOptions | None = None) -> VM:
-        if vcpu is not None and vcpu < 1:
-            raise ValueError("vcpu must be positive")
-        if container is not None and not isinstance(container, ContainerOptions):
-            raise TypeError("container must be a ContainerOptions instance")
+    async def create(self, profile: str, *, name: str = "", cpus: int | None = None,
+                     memory: int | None = None, env: dict[str, str] | None = None,
+                     networks: Sequence[models.NetworkInfo] = (), image: str | None = None,
+                     command: Sequence[str] = (), registry: models.RegistryAccess | None = None,
+                     attach: bool = False) -> VM:
+        if cpus is not None and (isinstance(cpus, bool) or not isinstance(cpus, int) or cpus < 1):
+            raise ValueError("cpus must be positive")
+        if image is None and (command or registry is not None or attach):
+            raise ValueError("container command, registry, and attach require an image")
+        if image is not None and (not isinstance(image, str) or not image):
+            raise ValueError("image must be a nonempty string")
+        network_names: list[str] = []
+        for network in networks:
+            if not isinstance(network, models.NetworkInfo):
+                raise TypeError("networks must contain NetworkInfo objects returned by capsem.networks")
+            network_names.append(network.name)
         wire: models.ContainerSpec | None = None
-        if container is not None:
+        if image is not None:
             wire = models.ContainerSpec(
-                image=container.image, args=container.args, env=env or {}, attach=container.attach,
-            ) if container.registry is None else models.ContainerSpec(
-                image=container.image, args=container.args, env=env or {},
-                registry=container.registry, attach=container.attach,
+                image=image, args=list(command), env=env or {}, attach=attach,
+            ) if registry is None else models.ContainerSpec(
+                image=image, args=list(command), env=env or {}, registry=registry, attach=attach,
             )
         request = models.ProvisionRequest(
             profile_id=profile, name=name or None, persistent=bool(name),
-            cpus=vcpu, ram_mb=_memory_mb(memory),
-            env=env if container is None else None, networks=list(networks),
+            cpus=cpus, ram_mb=_memory_mb(memory),
+            env=env if image is None else None, networks=network_names,
         )
         if wire is not None:
             request.container = wire
         response = await api.create_vm(self._transport, body=request)
-        return VM._bind(self._transport, id=response.id, name=response.name)
+        return VM._bind(self._transport, id=response.id, name=response.name, container=image is not None)
 
     async def log(self, source: models.HostLogSource = models.HostLogSource.SERVICE, *,
                   grep: str | None = None, tail: int | None = None,
@@ -71,12 +72,13 @@ class Hypervisor(Client):
         return await api.get_hypervisor_logs(self._transport, name=source, grep=grep, tail=tail, max_bytes=max_bytes)
 
     async def run(self, command: str, *, profile: str = "code", timeout_secs: int | None = None,
-                  vcpu: int | None = None, memory: str | int | None = None,
-                  env: dict[str, str] | None = None) -> models.ExecResponse:
-        return await api.run_vm(self._transport, body=models.RunRequest(
+                  cpus: int | None = None, memory: int | None = None,
+                  env: dict[str, str] | None = None) -> ExecResult:
+        response = await api.run_vm(self._transport, body=models.RunRequest(
             command=command, profile_id=profile, timeout_secs=timeout_secs,
-            cpus=vcpu, ram_mb=_memory_mb(memory), env=env,
+            cpus=cpus, ram_mb=_memory_mb(memory), env=env,
         ))
+        return ExecResult.from_wire(response)
 
     async def purge(self, *, all: bool = False) -> models.PurgeResponse:
         return await api.purge_vms(self._transport, body=models.PurgeRequest(all=all))

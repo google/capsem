@@ -1,5 +1,5 @@
 import {expect, it} from 'vitest';
-import {ExposureAccess, ExposureTarget, HistoryLayerFilter, HostLogSource, HttpError, Hypervisor, RestartAuthentication, RestartStatus, TimelineLayer, VM} from '../src/index.js';
+import {HistoryLayerFilter, HostLogSource, HttpError, Hypervisor, RestartAuthentication, RestartStatus, TimelineLayer, VM, type NetworkInfo} from '../src/index.js';
 import {gateway} from './gateway.js';
 import {sample, schemas} from './contract.js';
 import {FacadeGateway} from './facade-gateway.js';
@@ -9,7 +9,8 @@ it('creates bound VM handles with profile defaults and shared lifetime', async (
     ...sample(schemas.ProvisionResponse ?? {}) as object, id: 'vm-0', name: 'chosen',
   })), async (url, received) => {
     const hv = new Hypervisor(url, 'secret');
-    const vm = await hv.create('code', {name: 'chosen', memory: '8G', vcpu: 4, networks: ['team']});
+    const network = {...sample(schemas.NetworkInfo ?? {}) as object, name: 'team'} as NetworkInfo;
+    const vm = await hv.create('code', {name: 'chosen', memory: 8, cpus: 4, networks: [network]});
     expect(vm).toBeInstanceOf(VM);
     expect(vm.id).toBe('vm-0');
     expect(vm.name).toBe('chosen');
@@ -115,24 +116,24 @@ it.each([{}, {id: ''}, {name: ''}, {name: 'a', id: 'b'}, {name: 12}, {id: 12}])(
   expect(() => new VM('http://localhost', 'secret', selector as never)).toThrow('exactly one');
 });
 
-it.each([0, -1, NaN, 1.5, '8GB', '0G', '1.5G', '9007199254740992M'])('rejects invalid memory %j before HTTP', async memory => {
+it.each([0, -1, NaN, 1.5, '8G', Number.MAX_SAFE_INTEGER])('rejects invalid memory %j before HTTP', async memory => {
   const hv = new Hypervisor('http://127.0.0.1:1', 'secret');
-  try {await expect(hv.create('code', {memory})).rejects.toThrow('Memory');}
+  try {await expect(hv.create('code', {memory: memory as number})).rejects.toThrow('Memory');}
   finally {hv.close();}
 });
-it.each([0, -1, 1.5])('rejects invalid vcpu %s before HTTP', async vcpu => {
+it.each([0, -1, 1.5])('rejects invalid cpus %s before HTTP', async cpus => {
   const hv = new Hypervisor('http://127.0.0.1:1', 'secret');
-  try {await expect(hv.create('code', {vcpu})).rejects.toThrow('vcpu');}
+  try {await expect(hv.create('code', {cpus})).rejects.toThrow('cpus');}
   finally {hv.close();}
 });
 
-it.each(['512M', 512])('accepts positive memory in MB: %s', async memory => {
+it.each([1, 8])('accepts positive memory in GiB: %s', async memory => {
   const state = new FacadeGateway();
   await gateway((request, response) => state.handle(request, response), async (url, received) => {
     const hv = new Hypervisor(url, 'secret');
     try {
       const vm = await hv.create('code', {memory, env: {LANG: 'C'}});
-      expect(JSON.parse(received[0]?.body.toString() ?? '')).toMatchObject({ram_mb: 512, env: {LANG: 'C'}});
+      expect(JSON.parse(received[0]?.body.toString() ?? '')).toMatchObject({ram_mb: memory * 1024, env: {LANG: 'C'}});
       vm.close();
     } finally {hv.close();}
   });
@@ -158,7 +159,7 @@ it('creates ready containers and exposes read-only diagnostic status', async () 
     const hv = new Hypervisor(url, 'secret');
     const vm = await hv.create('code', {
       env: {MODE: 'preview'},
-      container: {image: 'docker://busybox:latest', args: [], attach: false},
+      image: 'docker://busybox:latest', command: [], attach: false,
     });
     try {
       expect(JSON.parse(received[0]?.body.toString() ?? '') as unknown).toMatchObject({
@@ -171,32 +172,35 @@ it('creates ready containers and exposes read-only diagnostic status', async () 
   });
 });
 
-it('rejects the former nested container environment before HTTP', async () => {
+it('rejects container options without an image before HTTP', async () => {
   const hv = new Hypervisor('http://127.0.0.1:1', 'secret');
   try {
-    await expect(hv.create('code', {
-      container: {image: 'docker://busybox:latest', env: {OLD: 'path'}} as never,
-    })).rejects.toThrow('use create env');
+    await expect(hv.create('code', {command: ['true']})).rejects.toThrow('require an image');
   } finally {hv.close();}
 });
 
-it('maps typed exposure lifecycle through VM-scoped routes', async () => {
+it('opens typed ports and hides exposure targets and preview sessions', async () => {
   const state = new FacadeGateway();
   await gateway((request, response) => state.handle(request, response), async (url, received) => {
-    const vm = new VM(url, 'secret', {id: 'vm-0'});
+    const hv = new Hypervisor(url, 'secret');
+    const vm = await hv.create('code', {image: 'nginx:alpine'});
     try {
-      const created = await vm.exposures.create({
-        target: ExposureTarget.CONTAINER, guest_port: 8080, host_port: 0, access: ExposureAccess.HTTP_PREVIEW,
-      });
-      await vm.exposures.list();
-      await vm.exposures.delete(created.id);
-      await vm.exposures.previewSession(created.id);
+      const plain = await vm.ports.open(8080);
+      const authenticated = await vm.ports.open(3000, {authenticate: true});
+      expect(plain.authenticate).toBe(false);
+      expect(authenticated.authenticate).toBe(true);
+      expect(authenticated.url).toBeDefined();
+      await vm.ports.list();
+      await vm.ports.close(plain);
       expect(received.map(request => [request.method, request.url])).toEqual([
-        ['POST', '/vms/vm-0/exposures'], ['GET', '/vms/vm-0/exposures'],
-        ['DELETE', `/vms/vm-0/exposures/${created.id}`],
-        ['POST', `/vms/vm-0/exposures/${created.id}/preview-session`],
+        ['POST', '/vms/create'],
+        ['POST', '/vms/vm-0/exposures'],
+        ['POST', '/vms/vm-0/exposures'],
+        ['POST', `/vms/vm-0/exposures/${authenticated.id}/preview-session`],
+        ['GET', '/vms/vm-0/exposures'],
+        ['DELETE', `/vms/vm-0/exposures/${plain.id}`],
       ]);
-    } finally {vm.close();}
+    } finally {vm.close(); hv.close();}
   });
 });
 

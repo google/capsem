@@ -10,9 +10,10 @@ from . import _operations as api
 from . import models
 from ._client import Client
 from ._container import Container
-from ._exposures import Exposures
+from ._ports import Ports
 from ._resources import Copy, Snapshots, Stats
-from ._transport import Transport
+from ._transport import HttpError, Transport
+from .execution import ExecResult
 
 
 class VM(Client):
@@ -30,13 +31,16 @@ class VM(Client):
         self.snapshots = Snapshots(self)
         self.stats = Stats(self)
         self.container = Container(self)
-        self.exposures = Exposures(self)
+        self._has_container: bool | None = None
+        self.ports = Ports(self)
 
     @classmethod
-    def _bind(cls, transport: Transport, *, id: str, name: str | None = None) -> VM:
+    def _bind(cls, transport: Transport, *, id: str, name: str | None = None,
+              container: bool | None = None) -> VM:
         vm = cls._from_transport(transport)
         vm._select(name=None, id=id)
         vm._name = name
+        vm._has_container = container
         return vm
 
     @property
@@ -57,13 +61,26 @@ class VM(Client):
             self._id = matches[0].id
         return self._id
 
+    async def _port_target(self) -> models.ExposureTarget:
+        if self._has_container is None:
+            try:
+                await api.get_vm_container(self._transport, id=await self._resolve())
+            except HttpError as error:
+                if error.status != 404:
+                    raise
+                self._has_container = False
+            else:
+                self._has_container = True
+        return models.ExposureTarget.CONTAINER if self._has_container else models.ExposureTarget.VM
+
     async def info(self) -> models.SandboxInfo:
         return await api.get_vm_info(self._transport, id=await self._resolve())
 
-    async def exec(self, command: str, *, timeout_secs: int | None = None) -> models.ExecResponse:
-        return await api.exec_vm(self._transport, id=await self._resolve(), body=models.ExecRequest(
+    async def exec(self, command: str, *, timeout_secs: int | None = None) -> ExecResult:
+        response = await api.exec_vm(self._transport, id=await self._resolve(), body=models.ExecRequest(
             command=command, timeout_secs=timeout_secs,
         ))
+        return ExecResult.from_wire(response)
 
     async def start(self) -> models.ProvisionResponse:
         return await api.start_vm(self._transport, id=await self._resolve())
@@ -89,7 +106,9 @@ class VM(Client):
         response = await api.fork_vm(self._transport, id=await self._resolve(), body=models.ForkRequest(
             name=name, description=description,
         ))
-        return VM._bind(self._transport, id=response.id, name=response.name)
+        return VM._bind(
+            self._transport, id=response.id, name=response.name, container=self._has_container,
+        )
 
     async def log(self, *, grep: str | None = None, tail: int | None = None,
                   max_bytes: int | None = None) -> models.LogsResponse:

@@ -24,6 +24,17 @@ export class FacadeGateway {
       const body = JSON.parse(request.body.toString()) as {name: string};
       value = {...value as object, id: operation.operationId === 'createVm' ? 'vm-0' : 'fork-0', name: body.name ?? 'generated'};
     }
+    if (operation.operationId === 'createNetwork') {
+      value = {...value as object, name: (JSON.parse(request.body.toString()) as {name: string}).name};
+    }
+    if (operation.operationId === 'createVmExposure') {
+      const body = JSON.parse(request.body.toString()) as {
+        access: string; guest_port: number; host_port: number; target: string;
+      };
+      value = {...value as object, ...body,
+        id: body.access === 'http_preview' ? 'preview-id' : '49152',
+        host_port: body.access === 'http_preview' ? null : body.host_port || 49152};
+    }
     if (operation.operationId === 'getVmContainer') {
       const state = this.containerStates.length > 1 ? this.containerStates.shift() : this.containerStates[0];
       value = {...value as object, image: 'docker://busybox:latest', state: state ?? 'running'};

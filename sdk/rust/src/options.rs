@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use crate::models::{HistoryLayerFilter, TimelineLayer};
-use crate::Memory;
+use crate::models::{HistoryLayerFilter, NetworkInfo, RegistryAccess, TimelineLayer};
 
 /// Exactly one way to select a VM; names resolve once through the gateway.
 #[derive(Debug, Clone)]
@@ -10,32 +9,28 @@ pub enum VmSelector {
     Name(String),
 }
 
-/// Container workload settings. Workload environment belongs to [`CreateOptions::env`].
-#[derive(Debug, Clone)]
-pub struct ContainerOptions {
-    pub image: String,
-    pub args: Vec<String>,
-    pub registry: Option<crate::models::RegistryAccess>,
-    pub attach: bool,
-}
-
 /// Omitted CPU and memory values retain the selected profile's defaults.
 #[derive(Debug, Clone, Default)]
 pub struct CreateOptions {
     pub name: Option<String>,
-    pub vcpu: Option<u32>,
-    pub memory: Option<Memory>,
+    pub cpus: Option<u32>,
+    /// Guest memory in GiB.
+    pub memory: Option<u64>,
     pub env: Option<HashMap<String, String>>,
-    pub networks: Vec<String>,
-    pub container: Option<ContainerOptions>,
+    pub networks: Vec<NetworkInfo>,
+    pub image: Option<String>,
+    pub command: Vec<String>,
+    pub registry: Option<RegistryAccess>,
+    pub attach: bool,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
     pub profile: Option<String>,
     pub timeout_secs: Option<u64>,
-    pub vcpu: Option<u32>,
-    pub memory: Option<Memory>,
+    pub cpus: Option<u32>,
+    /// Guest memory in GiB.
+    pub memory: Option<u64>,
     pub env: Option<HashMap<String, String>>,
 }
 

@@ -14,6 +14,18 @@ pub struct Hypervisor {
 }
 
 impl Hypervisor {
+    fn memory_mb(memory: Option<u64>) -> Result<Option<u64>> {
+        memory
+            .map(|gib| {
+                gib.checked_mul(1024)
+                    .filter(|value| *value > 0)
+                    .ok_or(Error::InvalidInput(
+                        "memory must be a positive GiB count without overflow",
+                    ))
+            })
+            .transpose()
+    }
+
     pub fn new(url: &str, token: &str) -> Result<Self> {
         Ok(Self {
             client: Client::new(url, token)?,
@@ -52,32 +64,39 @@ impl Hypervisor {
     }
 
     pub async fn create(&self, profile: &str, options: CreateOptions) -> Result<VM> {
-        if options.vcpu == Some(0) {
-            return Err(Error::InvalidInput("vcpu must be positive"));
+        if options.cpus == Some(0) {
+            return Err(Error::InvalidInput("cpus must be positive"));
+        }
+        if options.image.is_none() && (!options.command.is_empty() || options.registry.is_some() || options.attach) {
+            return Err(Error::InvalidInput(
+                "container command, registry, and attach require an image",
+            ));
         }
         let name = options.name.filter(|name| !name.is_empty());
-        let (env, container) = match options.container {
-            Some(container) => (
+        let has_container = options.image.is_some();
+        let (env, container) = match options.image {
+            Some(image) if !image.is_empty() => (
                 None,
                 Some(models::ContainerSpec {
-                    image: container.image,
-                    args: container.args,
+                    image,
+                    args: options.command,
                     env: options.env.unwrap_or_default().into_iter().collect(),
-                    registry: container.registry,
-                    attach: container.attach,
+                    registry: options.registry,
+                    attach: options.attach,
                 }),
             ),
+            Some(_) => return Err(Error::InvalidInput("image must be a nonempty string")),
             None => (options.env, None),
         };
         let body = models::ProvisionRequest {
             profile_id: profile.to_owned(),
             persistent: name.is_some(),
             name,
-            cpus: options.vcpu,
-            ram_mb: options.memory.map(crate::Memory::megabytes).transpose()?,
+            cpus: options.cpus,
+            ram_mb: Self::memory_mb(options.memory)?,
             env,
             from: None,
-            networks: options.networks,
+            networks: options.networks.into_iter().map(|network| network.name).collect(),
             container,
         };
         let result = api::create_vm(
@@ -86,7 +105,7 @@ impl Hypervisor {
             self.client.options,
         )
         .await?;
-        VM::created(self.client.clone(), result.id, result.name)
+        VM::created(self.client.clone(), result.id, result.name, Some(has_container))
     }
 
     pub async fn log(&self, source: models::HostLogSource, options: LogOptions) -> Result<models::HostLogsResponse> {
@@ -100,8 +119,8 @@ impl Hypervisor {
     }
 
     pub async fn run(&self, command: &str, options: RunOptions) -> Result<models::ExecResponse> {
-        if options.vcpu == Some(0) {
-            return Err(Error::InvalidInput("vcpu must be positive"));
+        if options.cpus == Some(0) {
+            return Err(Error::InvalidInput("cpus must be positive"));
         }
         api::run_vm(
             &self.client.transport,
@@ -110,8 +129,8 @@ impl Hypervisor {
                     command: command.into(),
                     profile_id: options.profile.unwrap_or_else(|| "code".into()),
                     timeout_secs: options.timeout_secs,
-                    ram_mb: options.memory.map(crate::Memory::megabytes).transpose()?,
-                    cpus: options.vcpu,
+                    ram_mb: Self::memory_mb(options.memory)?,
+                    cpus: options.cpus,
                     env: options.env,
                 },
             },

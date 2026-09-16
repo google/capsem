@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- SDK creation now accepts typed network objects and top-level container
+  workload settings. Ports use `open/list/close`, infer their workload target,
+  and enable browser authentication with `authenticate=true`; Python execution
+  results print their stdout directly.
+
 - Container-backed HTTP creation now waits for service-owned workload readiness
   with bounded exponential backoff. SDK and MCP callers no longer orchestrate
   a separate container wait.
@@ -41,10 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Typed Rust, Python, and TypeScript exposure resources can declare an HTTP
-  preview and create its authenticated browser session. The streaming preview
-  path supports request bodies, redirects, workload cookies, and WebSocket
-  upgrades without opening a direct workload port.
+- Typed Rust, Python, and TypeScript port resources open plain loopback ports by
+  default and can opt into the authenticated browser flow. That flow supports
+  request bodies, redirects, workload cookies, and WebSocket upgrades without
+  opening a direct workload port.
 
 - Streaming exec and attached containers accept bounded stdin with explicit
   EOF, preserve separate stdout and stderr lanes, and cancel the guest process
@@ -85,9 +90,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   audit tools through the typed SDK network resource.
 
 - `@capsem/mcp` creates typed OCI workloads, reads container diagnostics, and
-  manages policy-checked VM/container port exposures with explicit
-  loopback TCP or authenticated HTTP preview access through the TypeScript SDK
-  and gateway HTTP.
+  manages policy-checked workload ports with automatic VM/container target
+  selection and optional browser authentication through the TypeScript SDK and
+  gateway HTTP.
 
 - `@capsem/mcp` provides typed profile MCP discovery and invocation, canonical
   tool names and SDK-aligned parameters, plus redacted machine-readable errors.
@@ -101,10 +106,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Python, TypeScript and Rust SDK network resources provide typed create, list,
   inspect, delete, member attach/detach and cursor-based audit operations over
-  authenticated gateway HTTP. VM creation accepts existing network names.
+  authenticated gateway HTTP. VM creation accepts the returned network objects.
 
 - Python, TypeScript and Rust VM resources expose typed container diagnostics,
-  plus scoped exposure creation, listing and revocation through authenticated
+  plus simple workload port opening, listing and closing through authenticated
   gateway HTTP.
 
 - SDK detailed statistics expose shared model/MCP interaction objects with typed

@@ -52,6 +52,9 @@ describe('host-tools', () => {
       const path = new URL(record.url, 'http://gateway.test').pathname;
       if (path === '/vms/list') return json(response, {sandboxes: [sandbox]});
       if (path === '/vms/create') return json(response, provision);
+      if (path === '/networks/net-1') return json(response, {
+        id: 'net-1', name: 'private', subnet: '10.0.0.0/24', created_unix_ms: 1, members: [],
+      });
       if (path === '/vms/vm-1/info') return json(response, sandbox);
       if (path === '/vms/vm-1/exec' || path === '/run') {
         return json(response, {
@@ -142,7 +145,7 @@ describe('host-tools', () => {
     expect(names).toContain('capsem_host_logs');
     expect(names).toContain('capsem_stats_detail');
     expect(names).toContain('capsem_container_status');
-    expect(names).toContain('capsem_exposure_create');
+    expect(names).toContain('capsem_port_open');
     expect(names).not.toContain('capsem_suspend');
     expect(names).not.toContain('capsem_version');
     expect(names).not.toContain('capsem_service_logs');
@@ -167,26 +170,24 @@ describe('host-tools', () => {
   it('passes typed create resources and environment through the SDK without echoing secrets', async () => {
     const result = await client.callTool({
       name: 'capsem_create',
-      arguments: {profile: 'code', name: 'demo', vcpu: 2, memory: '2G', env: {API_KEY: 'guest-secret'}, networks: ['net-1']},
+      arguments: {profile: 'code', name: 'demo', cpus: 2, memory: 2, env: {API_KEY: 'guest-secret'}, network_ids: ['net-1']},
     });
     expect(structured(result)).toEqual({id: 'vm-1', name: 'demo'});
     expect(JSON.stringify(result)).not.toContain('guest-secret');
     expect(JSON.parse(requests.at(-1)?.body.toString() ?? '')).toEqual({
       profile_id: 'code', name: 'demo', persistent: true, cpus: 2, ram_mb: 2048,
-      env: {API_KEY: 'guest-secret'}, networks: ['net-1'],
+      env: {API_KEY: 'guest-secret'}, networks: ['private'],
     });
   });
 
-  it('creates and inspects containers and manages scoped exposures through SDK resources', async () => {
+  it('creates and inspects containers and manages ports through SDK resources', async () => {
     const created = await client.callTool({
       name: 'capsem_create',
       arguments: {
         profile: 'code',
         env: {APP_SECRET: 'container-secret'},
-        container: {
-          image: 'registry.example/app:latest', args: ['serve'],
-          registry: {username: 'robot', password: 'registry-secret'}, attach: false,
-        },
+        image: 'registry.example/app:latest', command: ['serve'],
+        registry: {username: 'robot', password: 'registry-secret'}, attach: false,
       },
     });
     expect(structured(created)).toEqual({id: 'vm-1', name: 'demo'});
@@ -202,28 +203,26 @@ describe('host-tools', () => {
     expect(structured(await client.callTool({name: 'capsem_container_status', arguments: {vm_id: 'vm-1'}})))
       .toEqual({image: 'docker://busybox:latest', state: 'running'});
     expect(structured(await client.callTool({
-      name: 'capsem_exposure_create', arguments: {
-        vm_id: 'vm-1', target: 'container', access: 'loopback_tcp', guest_port: 8080, host_port: 0,
-      },
-    }))).toMatchObject({id: '49152', host_port: 49152});
-    expect(structured(await client.callTool({name: 'capsem_exposure_list', arguments: {vm_id: 'vm-1'}})))
-      .toMatchObject({owner_generation: '7'});
+      name: 'capsem_port_open', arguments: {vm_id: 'vm-1', guest_port: 8080},
+    }))).toMatchObject({id: '49152', host: 49152, authenticate: false});
+    expect(structured(await client.callTool({name: 'capsem_port_list', arguments: {vm_id: 'vm-1'}})))
+      .toEqual({ports: [{id: '49152', guest: 8080, host: 49152, authenticate: false}]});
     expect(structured(await client.callTool({
-      name: 'capsem_exposure_delete', arguments: {vm_id: 'vm-1', exposure_id: '49152'},
+      name: 'capsem_port_close', arguments: {vm_id: 'vm-1', port_id: '49152'},
     }))).toEqual({success: true});
     expect(JSON.parse(requests.at(-3)?.body.toString() ?? '')).toEqual({
       target: 'container', access: 'loopback_tcp', guest_port: 8080, host_port: 0,
     });
-    expect(requests.slice(-5).map(request => `${request.method} ${new URL(request.url, 'http://x').pathname}`)).toEqual([
-      'POST /vms/create', 'GET /vms/vm-1/container', 'POST /vms/vm-1/exposures',
+    expect(requests.slice(-6).map(request => `${request.method} ${new URL(request.url, 'http://x').pathname}`)).toEqual([
+      'POST /vms/create', 'GET /vms/vm-1/container', 'GET /vms/vm-1/container', 'POST /vms/vm-1/exposures',
       'GET /vms/vm-1/exposures', 'DELETE /vms/vm-1/exposures/49152',
     ]);
   });
 
-  it('rejects the former nested container environment', async () => {
+  it('rejects container options without an image', async () => {
     const result = await client.callTool({
       name: 'capsem_create',
-      arguments: {container: {image: 'busybox:latest', env: {OLD: 'path'}}},
+      arguments: {command: ['true']},
     });
     expect(result.isError).toBe(true);
     expect(requests).toHaveLength(0);

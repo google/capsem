@@ -1,18 +1,19 @@
 import {Client} from './client.js';
 import * as api from './operations/index.js';
-import type * as models from './models/index.js';
+import * as models from './models/index.js';
 import type {HistoryOptions, LogOptions, PageOptions, TimelineOptions, VmSelector} from './options.js';
-import {Container, Copy, Exposures, Snapshots, Stats, type VmContext} from './resources.js';
-import {Transport, type CallOptions, type TransportOptions} from './transport.js';
+import {Container, Copy, Ports, Snapshots, Stats, type VmContext} from './resources.js';
+import {HttpError, Transport, type CallOptions, type TransportOptions} from './transport.js';
 
 export class VM extends Client {
   #id: string | undefined;
   #name: string | undefined;
+  #hasContainer: boolean | undefined;
   readonly copy: Copy;
   readonly snapshots: Snapshots;
   readonly stats: Stats;
   readonly container: Container;
-  readonly exposures: Exposures;
+  readonly ports: Ports;
 
   constructor(url: string, token: string, selector: VmSelector, options?: TransportOptions);
   /** @internal */
@@ -33,12 +34,13 @@ export class VM extends Client {
     this.snapshots = new Snapshots(context);
     this.stats = new Stats(context);
     this.container = new Container(context);
-    this.exposures = new Exposures(context);
+    this.ports = new Ports(context, call => this.portTarget(call));
   }
   /** @internal */
-  static bind(transport: Transport, id: string, name: string): VM {
+  static bind(transport: Transport, id: string, name: string, hasContainer?: boolean): VM {
     const vm = new VM(transport, {id});
     vm.#name = name;
+    vm.#hasContainer = hasContainer;
     return vm;
   }
   get id(): string | undefined {return this.#id;}
@@ -54,6 +56,19 @@ export class VM extends Client {
       this.#id = match.id;
     }
     return {transport, id: this.#id};
+  }
+  private async portTarget(options: CallOptions): Promise<models.ExposureTarget> {
+    if (this.#hasContainer === undefined) {
+      const {transport, id} = await this.context(options);
+      try {
+        await api.getVmContainer(transport, {id}, options);
+        this.#hasContainer = true;
+      } catch (error) {
+        if (!(error instanceof HttpError) || error.status !== 404) throw error;
+        this.#hasContainer = false;
+      }
+    }
+    return this.#hasContainer ? models.ExposureTarget.CONTAINER : models.ExposureTarget.VM;
   }
   async info(options: CallOptions = {}): Promise<models.SandboxInfo> {
     const {transport, id} = await this.context(options);
@@ -90,7 +105,7 @@ export class VM extends Client {
   async fork(name: string, options: CallOptions & {description?: string} = {}): Promise<VM> {
     const {transport, id} = await this.context(options);
     const response = await api.forkVm(transport, {id, body: {name, description: options.description ?? null}}, options);
-    return VM.bind(transport, response.id, response.name);
+    return VM.bind(transport, response.id, response.name, this.#hasContainer);
   }
   async log(options: LogOptions = {}): Promise<models.LogsResponse> {
     const {transport, id} = await this.context(options);

@@ -39,16 +39,18 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
             assert!(body.get(omitted).is_none());
         }
     }
+    let network = hv.networks().create("team").await.unwrap();
+    request(&mut server, "/networks").await;
     let vm = hv
         .create(
             "co-work",
             CreateOptions {
                 name: Some("work".into()),
-                vcpu: Some(4),
-                memory: Some("8G".parse().unwrap()),
+                cpus: Some(4),
+                memory: Some(8),
                 env: Some([("EDITOR".into(), "vim".into())].into()),
-                networks: vec!["team".into()],
-                container: None,
+                networks: vec![network.clone()],
+                ..Default::default()
             },
         )
         .await
@@ -59,7 +61,7 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
     assert_eq!(body["name"], "work");
     assert_eq!(body["persistent"], true);
     assert_eq!(body["env"]["EDITOR"], "vim");
-    assert_eq!(body["networks"], json!(["team"]));
+    assert_eq!(body["networks"], json!([network.name]));
     hv.update().await.unwrap();
     assert_eq!(
         request(&mut server, "/update/apply").await,
@@ -116,7 +118,7 @@ async fn cloned_vm_handles_resolve_names_once_even_concurrently() {
 }
 
 #[tokio::test]
-async fn container_and_exposure_resources_use_typed_vm_routes() {
+async fn container_and_port_resources_hide_wire_exposure_details() {
     let mut server = gateway().await;
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
     let vm = hv
@@ -124,12 +126,7 @@ async fn container_and_exposure_resources_use_typed_vm_routes() {
             "code",
             CreateOptions {
                 env: Some([("MODE".into(), "preview".into())].into()),
-                container: Some(crate::ContainerOptions {
-                    image: "docker://busybox:latest".into(),
-                    args: Vec::new(),
-                    registry: None,
-                    attach: false,
-                }),
+                image: Some("docker://busybox:latest".into()),
                 ..Default::default()
             },
         )
@@ -141,23 +138,28 @@ async fn container_and_exposure_resources_use_typed_vm_routes() {
     assert_eq!(create["container"]["env"]["MODE"], "preview");
     vm.container().status().await.unwrap();
     request(&mut server, "/vms/vm-1/container").await;
-    let exposure = vm
-        .exposures()
-        .create(models::ExposureRequest {
-            guest_port: 8080,
-            host_port: 0,
-            target: models::ExposureTarget::Container,
-            access: models::ExposureAccess::HttpPreview,
-        })
+    let port = vm.ports().open(8080).await.unwrap();
+    request(&mut server, "/vms/vm-1/exposures").await;
+    assert!(!port.authenticate);
+    let authenticated = vm
+        .ports()
+        .open_with(
+            3000,
+            PortOptions {
+                host: 0,
+                authenticate: true,
+            },
+        )
         .await
         .unwrap();
     request(&mut server, "/vms/vm-1/exposures").await;
-    vm.exposures().list().await.unwrap();
-    request(&mut server, "/vms/vm-1/exposures").await;
-    vm.exposures().delete(&exposure.id).await.unwrap();
-    request(&mut server, "/vms/vm-1/exposures/vm-1").await;
-    vm.exposures().preview_session(&exposure.id).await.unwrap();
     request(&mut server, "/vms/vm-1/exposures/vm-1/preview-session").await;
+    assert!(authenticated.authenticate);
+    assert!(authenticated.url.is_some());
+    vm.ports().list().await.unwrap();
+    request(&mut server, "/vms/vm-1/exposures").await;
+    vm.ports().close(&port).await.unwrap();
+    request(&mut server, "/vms/vm-1/exposures/vm-1").await;
 }
 
 #[tokio::test]
@@ -277,11 +279,11 @@ async fn invalid_create_or_selector_is_rejected_before_http() {
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
     for options in [
         CreateOptions {
-            vcpu: Some(0),
+            cpus: Some(0),
             ..Default::default()
         },
         CreateOptions {
-            memory: Some(Memory::Megabytes(0)),
+            memory: Some(0),
             ..Default::default()
         },
     ] {
@@ -341,8 +343,8 @@ async fn diagnostics_persistence_and_profile_mcp_use_typed_routes() {
         RunOptions {
             profile: Some("co-work".into()),
             timeout_secs: Some(4),
-            vcpu: Some(2),
-            memory: Some("1G".parse().unwrap()),
+            cpus: Some(2),
+            memory: Some(1),
             env: Some([("EDITOR".into(), "vim".into())].into()),
         },
     )

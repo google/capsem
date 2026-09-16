@@ -46,6 +46,8 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
         if request.path == "/vms/create":
             payload = json.loads(body)
             return web.json_response(response_model("ProvisionResponse", id="created-id", name=payload["name"] or "temporary"))
+        if request.path == "/networks" and request.method == "POST":
+            return web.json_response(response_model("NetworkInfo", name=json.loads(body)["name"]))
         if request.path.endswith("/fork"):
             return web.json_response(response_model("ForkResponse", id="forked-id", name=json.loads(body)["name"]))
         if request.path.endswith("/exec"):
@@ -57,6 +59,14 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
             return web.json_response(response_model(
                 "ContainerStatusResponse", image="docker://busybox:latest",
                 state=state_name,
+            ))
+        if request.path.endswith("/exposures") and request.method == "POST":
+            payload = json.loads(body)
+            preview = payload["access"] == "http_preview"
+            payload["host_port"] = None if preview else (payload["host_port"] or 49152)
+            return web.json_response(response_model(
+                "ExposureInfo", **payload,
+                id="preview-id" if preview else "49152",
             ))
         if request.path.endswith("/files/content"):
             path = request.query["path"]

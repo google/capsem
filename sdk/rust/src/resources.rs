@@ -6,7 +6,7 @@ pub struct Copy<'a>(pub(crate) &'a VM);
 pub struct Snapshots<'a>(pub(crate) &'a VM);
 pub struct Stats<'a>(pub(crate) &'a VM);
 pub struct Container<'a>(pub(crate) &'a VM);
-pub struct Exposures<'a>(pub(crate) &'a VM);
+pub struct Ports<'a>(pub(crate) &'a VM);
 pub struct Networks<'a>(pub(crate) &'a Client);
 pub struct Profiles<'a>(pub(crate) &'a Client);
 pub struct ProfileMcp<'a> {
@@ -94,48 +94,108 @@ impl Container<'_> {
     }
 }
 
-impl Exposures<'_> {
-    pub async fn create(&self, request: models::ExposureRequest) -> Result<models::ExposureInfo> {
-        api::create_vm_exposure(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Port {
+    pub id: String,
+    pub guest: u16,
+    pub host: Option<u16>,
+    pub authenticate: bool,
+    pub url: Option<String>,
+    pub bootstrap_token: Option<String>,
+    pub expires_in_seconds: Option<u16>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PortOptions {
+    pub host: u16,
+    pub authenticate: bool,
+}
+
+impl Port {
+    fn from_exposure(exposure: models::ExposureInfo) -> Self {
+        Self {
+            id: exposure.id,
+            guest: exposure.guest_port,
+            host: exposure.host_port,
+            authenticate: exposure.access == models::ExposureAccess::HttpPreview,
+            url: None,
+            bootstrap_token: None,
+            expires_in_seconds: None,
+        }
+    }
+}
+
+impl Ports<'_> {
+    pub async fn open(&self, guest: u16) -> Result<Port> {
+        self.open_with(guest, PortOptions::default()).await
+    }
+
+    pub async fn open_with(&self, guest: u16, options: PortOptions) -> Result<Port> {
+        if guest == 0 {
+            return Err(crate::Error::InvalidInput("guest port must be between 1 and 65535"));
+        }
+        if options.authenticate && options.host != 0 {
+            return Err(crate::Error::InvalidInput(
+                "authenticated ports cannot select a host port",
+            ));
+        }
+        let id = self.0.resolve().await?;
+        let exposure = api::create_vm_exposure(
             &self.0.client.transport,
             &api::CreateVmExposureParams {
-                id: self.0.resolve().await?,
-                body: request,
+                id: id.clone(),
+                body: models::ExposureRequest {
+                    guest_port: guest,
+                    host_port: options.host,
+                    target: self.0.port_target().await?,
+                    access: if options.authenticate {
+                        models::ExposureAccess::HttpPreview
+                    } else {
+                        models::ExposureAccess::LoopbackTcp
+                    },
+                },
             },
             self.0.client.options,
         )
-        .await
+        .await?;
+        let mut port = Port::from_exposure(exposure);
+        port.authenticate = options.authenticate;
+        if options.authenticate {
+            let session = api::create_vm_preview_session(
+                &self.0.client.transport,
+                &api::CreateVmPreviewSessionParams {
+                    id,
+                    exposure_id: port.id.clone(),
+                },
+                self.0.client.options,
+            )
+            .await?;
+            port.host = None;
+            port.url = Some(session.url);
+            port.bootstrap_token = Some(session.bootstrap_token);
+            port.expires_in_seconds = Some(session.expires_in_seconds);
+        }
+        Ok(port)
     }
 
-    pub async fn list(&self) -> Result<models::ExposureListResponse> {
-        api::list_vm_exposures(
+    pub async fn list(&self) -> Result<Vec<Port>> {
+        let response = api::list_vm_exposures(
             &self.0.client.transport,
             &api::ListVmExposuresParams {
                 id: self.0.resolve().await?,
             },
             self.0.client.options,
         )
-        .await
+        .await?;
+        Ok(response.exposures.into_iter().map(Port::from_exposure).collect())
     }
 
-    pub async fn delete(&self, exposure_id: &str) -> Result<models::VmActionResponse> {
+    pub async fn close(&self, port: &Port) -> Result<models::VmActionResponse> {
         api::delete_vm_exposure(
             &self.0.client.transport,
             &api::DeleteVmExposureParams {
                 id: self.0.resolve().await?,
-                exposure_id: exposure_id.into(),
-            },
-            self.0.client.options,
-        )
-        .await
-    }
-
-    pub async fn preview_session(&self, exposure_id: &str) -> Result<models::PreviewSessionResponse> {
-        api::create_vm_preview_session(
-            &self.0.client.transport,
-            &api::CreateVmPreviewSessionParams {
-                id: self.0.resolve().await?,
-                exposure_id: exposure_id.into(),
+                exposure_id: port.id.clone(),
             },
             self.0.client.options,
         )

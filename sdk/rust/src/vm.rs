@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::sync::OnceCell;
 
 use crate::client::Client;
-use crate::resources::{Container, Copy, Exposures, Snapshots, Stats};
+use crate::resources::{Container, Copy, Ports, Snapshots, Stats};
 use crate::{models, operations as api, Error, Result, VmSelector};
 
 mod queries;
@@ -13,6 +13,7 @@ mod queries;
 struct Identity {
     id: OnceCell<String>,
     name: Option<String>,
+    port_target: OnceCell<models::ExposureTarget>,
 }
 
 /// A VM handle. Clones share canonical identity and the HTTP connection pool.
@@ -27,8 +28,8 @@ impl VM {
         Container(self)
     }
 
-    pub fn exposures(&self) -> Exposures<'_> {
-        Exposures(self)
+    pub fn ports(&self) -> Ports<'_> {
+        Ports(self)
     }
 
     pub fn new(url: &str, token: &str, selector: VmSelector) -> Result<Self> {
@@ -46,15 +47,25 @@ impl VM {
             identity: Arc::new(Identity {
                 id: OnceCell::new_with(id),
                 name,
+                port_target: OnceCell::new(),
             }),
         })
     }
 
-    pub(crate) fn created(client: Client, id: String, name: String) -> Result<Self> {
+    pub(crate) fn created(client: Client, id: String, name: String, has_container: Option<bool>) -> Result<Self> {
         let mut vm = Self::bind(client, VmSelector::Id(id))?;
-        Arc::get_mut(&mut vm.identity)
-            .expect("new VM identity is not shared")
-            .name = Some(name);
+        let identity = Arc::get_mut(&mut vm.identity).expect("new VM identity is not shared");
+        identity.name = Some(name);
+        if let Some(has_container) = has_container {
+            identity
+                .port_target
+                .set(if has_container {
+                    models::ExposureTarget::Container
+                } else {
+                    models::ExposureTarget::Vm
+                })
+                .expect("new VM target is unset");
+        }
         Ok(vm)
     }
 
@@ -94,6 +105,29 @@ impl VM {
             })
             .await?;
         Ok(id.clone())
+    }
+
+    pub(crate) async fn port_target(&self) -> Result<models::ExposureTarget> {
+        let target = self
+            .identity
+            .port_target
+            .get_or_try_init(|| async {
+                let result = api::get_vm_container(
+                    &self.client.transport,
+                    &api::GetVmContainerParams {
+                        id: self.resolve().await?,
+                    },
+                    self.client.options,
+                )
+                .await;
+                match result {
+                    Ok(_) => Ok(models::ExposureTarget::Container),
+                    Err(Error::Http { status: 404, .. }) => Ok(models::ExposureTarget::Vm),
+                    Err(error) => Err(error),
+                }
+            })
+            .await?;
+        Ok(*target)
     }
 
     pub async fn info(&self) -> Result<models::SandboxInfo> {
@@ -182,7 +216,15 @@ impl VM {
             },
         };
         let result = api::fork_vm(&self.client.transport, &params, self.client.options).await?;
-        Self::created(self.client.clone(), result.id, result.name)
+        Self::created(
+            self.client.clone(),
+            result.id,
+            result.name,
+            self.identity
+                .port_target
+                .get()
+                .map(|target| *target == models::ExposureTarget::Container),
+        )
     }
 
     pub async fn persist(&self, name: &str) -> Result<models::PersistResponse> {

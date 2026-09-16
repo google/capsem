@@ -4,28 +4,30 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import cast
+from typing import Any
 
 import pytest
 from capsem import (
     VM,
-    ContainerOptions,
+    ExecResult,
     HttpError,
     Hypervisor,
-    decode_exec_output,
+    Port,
     models,
 )
 
 from .facade_gateway import gateway
 
 
-def test_exec_output_decodes_utf8_and_base64_to_exact_bytes() -> None:
-    assert decode_exec_output(models.ExecOutput(
-        encoding=models.ExecOutputEncoding.UTF8, data="café",
-    )) == "café".encode()
-    assert decode_exec_output(models.ExecOutput(
-        encoding=models.ExecOutputEncoding.BASE64, data="AP8K",
-    )) == bytes([0, 0xFF, 10])
+def test_exec_result_prints_stdout_and_preserves_exact_bytes() -> None:
+    result = ExecResult(
+        exit_code=0,
+        stdout=models.ExecOutput(encoding=models.ExecOutputEncoding.UTF8, data="café\n"),
+        stderr=models.ExecOutput(encoding=models.ExecOutputEncoding.BASE64, data="AP8K"),
+    )
+    assert str(result) == "café"
+    assert result.stdout_bytes == "café\n".encode()
+    assert result.stderr_bytes == bytes([0, 0xFF, 10])
 
 
 def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
@@ -33,8 +35,10 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
             assert isinstance(await hv.info(), models.HypervisorInfo)
             assert isinstance(await hv.list(), models.ListResponse)
+            network = await hv.networks.create("team")
             vm = await hv.create(
-                "code", name="new", vcpu=4, memory="8G", env={"LANG": "C"}, networks=["team"],
+                profile="code", name="new", cpus=4, memory=8,
+                env={"LANG": "C"}, networks=[network],
             )
             assert vm.id == "created-id" and vm.name == "new"
             body = json.loads(state.requests[-1][2])
@@ -52,7 +56,7 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             assert body["persistent"] is False and body["name"] is None
             assert body["cpus"] is None and body["ram_mb"] is None
             assert isinstance(await hv.log(models.HostLogSource.SERVICE, grep="boot", tail=3, max_bytes=1024), models.HostLogsResponse)
-            assert isinstance(await hv.run("printf ok", profile="code", timeout_secs=4), models.ExecResponse)
+            assert isinstance(await hv.run("printf ok", profile="code", timeout_secs=4), ExecResult)
             assert isinstance(await hv.panics(since="5m", limit=3), models.PanicsResponse)
             assert isinstance(await hv.triage(vm_id="vm-0", since="1h", limit=2), models.TriageResponse)
             assert isinstance(await hv.purge(all=True), models.PurgeResponse)
@@ -83,7 +87,7 @@ def test_name_is_resolved_once_and_each_vm_interface_returns_typed_results() -> 
             assert isinstance(await vm.info(), models.SandboxInfo)
             assert vm.id == "vm-0"
             state.names = ["renamed"]
-            assert isinstance(await vm.exec("echo hello", timeout_secs=12), models.ExecResponse)
+            assert isinstance(await vm.exec("echo hello", timeout_secs=12), ExecResult)
             assert json.loads(state.requests[-1][2]) == {"command": "echo hello", "timeout_secs": 12}
             assert isinstance(await vm.start(), models.ProvisionResponse)
             assert isinstance(await vm.persist("saved"), models.PersistResponse)
@@ -150,44 +154,53 @@ def test_cancelling_execution_does_not_retry_or_break_the_connection() -> None:
 
 def test_container_create_is_ready_and_status_is_read_only() -> None:
     async def run() -> None:
-        spec = ContainerOptions(image="docker://busybox:latest", args=[], attach=False)
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
-            vm = await hv.create("code", env={"MODE": "preview"}, container=spec)
+            vm = await hv.create(
+                "code", image="docker://busybox:latest", command=[], env={"MODE": "preview"},
+            )
             body = json.loads(state.requests[-1][2])
             assert body["env"] is None
             assert body["container"] == {
-                "image": spec.image, "args": [], "env": {"MODE": "preview"}, "attach": False,
+                "image": "docker://busybox:latest", "args": [], "env": {"MODE": "preview"}, "attach": False,
             }
-            assert (await vm.container.status()).image == spec.image
+            assert (await vm.container.status()).image == "docker://busybox:latest"
             assert {method for method, path, _ in state.requests if path.endswith("/container")} == {"GET"}
     asyncio.run(run())
 
 
-def test_container_wire_model_is_rejected_by_the_facade() -> None:
+def test_container_options_without_an_image_are_rejected_before_http() -> None:
     async def run() -> None:
-        wire = models.ContainerSpec(image="docker://busybox:latest", env={"OLD": "path"})
         async with gateway() as (url, _), Hypervisor(url, "token") as hv:
-            with pytest.raises(TypeError, match="ContainerOptions"):
-                await hv.create("code", container=cast(ContainerOptions, wire))
+            with pytest.raises(ValueError, match="image"):
+                await hv.create("code", command=["true"])
     asyncio.run(run())
 
 
-def test_exposure_resource_uses_typed_vm_scoped_routes() -> None:
+def test_ports_hide_wire_exposures_and_infer_the_container_target() -> None:
     async def run() -> None:
-        async with gateway() as (url, state), VM(url, "token", id="vm-0") as vm:
-            created = await vm.exposures.create(models.ExposureRequest(
-                target=models.ExposureTarget.CONTAINER, guest_port=8080, host_port=0,
-                access=models.ExposureAccess.HTTP_PREVIEW,
-            ))
-            assert isinstance(created, models.ExposureInfo)
-            assert isinstance(await vm.exposures.list(), models.ExposureListResponse)
-            assert isinstance(await vm.exposures.delete(created.id), models.VmActionResponse)
-            assert isinstance(await vm.exposures.preview_session(created.id), models.PreviewSessionResponse)
+        async with gateway() as (url, state), Hypervisor(url, "token") as hv:
+            vm = await hv.create("code", image="nginx:alpine")
+            plain = await vm.ports.open(8080)
+            assert isinstance(plain, Port)
+            assert plain.guest == 8080 and plain.authenticate is False
+            authenticated = await vm.ports.open(3000, authenticate=True)
+            assert authenticated.authenticate is True
+            assert authenticated.url is not None and authenticated.bootstrap_token is not None
+            assert await vm.ports.list() == []
+            assert isinstance(await vm.ports.close(plain), models.VmActionResponse)
+            create_bodies = [json.loads(body) for method, path, body in state.requests
+                             if method == "POST" and path.endswith("/exposures")]
+            assert create_bodies == [
+                {"guest_port": 8080, "host_port": 0, "target": "container", "access": "loopback_tcp"},
+                {"guest_port": 3000, "host_port": 0, "target": "container", "access": "http_preview"},
+            ]
             assert [(method, path.split("?")[0]) for method, path, _ in state.requests] == [
-                ("POST", "/vms/vm-0/exposures"),
-                ("GET", "/vms/vm-0/exposures"),
-                ("DELETE", f"/vms/vm-0/exposures/{created.id}"),
-                ("POST", f"/vms/vm-0/exposures/{created.id}/preview-session"),
+                ("POST", "/vms/create"),
+                ("POST", "/vms/created-id/exposures"),
+                ("POST", "/vms/created-id/exposures"),
+                ("POST", f"/vms/created-id/exposures/{authenticated.id}/preview-session"),
+                ("GET", "/vms/created-id/exposures"),
+                ("DELETE", f"/vms/created-id/exposures/{plain.id}"),
             ]
     asyncio.run(run())
 
@@ -203,8 +216,8 @@ def test_http_deadline_bounds_execution_without_replaying_it() -> None:
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("memory", [0, -1, True, "0G", "8GB", "junk"])
-def test_invalid_memory_is_rejected_before_network(memory: str | int) -> None:
+@pytest.mark.parametrize("memory", [0, -1, True, 1.5, "8G"])
+def test_invalid_memory_is_rejected_before_network(memory: Any) -> None:
     async def run() -> None:
         async with Hypervisor("http://127.0.0.1:1", "token") as hv:
             with pytest.raises(ValueError, match="memory"):
@@ -212,8 +225,8 @@ def test_invalid_memory_is_rejected_before_network(memory: str | int) -> None:
     asyncio.run(run())
 
 
-@pytest.mark.parametrize(("memory", "expected"), [(512, 512), ("256M", 256), ("2g", 2048)])
-def test_memory_units_are_converted(memory: str | int, expected: int) -> None:
+@pytest.mark.parametrize(("memory", "expected"), [(1, 1024), (8, 8192)])
+def test_memory_is_measured_in_gibibytes(memory: int, expected: int) -> None:
     async def run() -> None:
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
             await hv.create("code", memory=memory)
@@ -221,11 +234,11 @@ def test_memory_units_are_converted(memory: str | int, expected: int) -> None:
     asyncio.run(run())
 
 
-def test_zero_vcpu_is_rejected_before_network() -> None:
+def test_zero_cpus_is_rejected_before_network() -> None:
     async def run() -> None:
         async with Hypervisor("http://127.0.0.1:1", "token") as hv:
-            with pytest.raises(ValueError, match="vcpu"):
-                await hv.create("code", vcpu=0)
+            with pytest.raises(ValueError, match="cpus"):
+                await hv.create("code", cpus=0)
     asyncio.run(run())
 
 

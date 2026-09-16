@@ -61,10 +61,10 @@ All VM-scoped tools take the immutable `vm_id` returned by `capsem_create` or
 | --- | --- | --- |
 | `capsem_status` | — | Read gateway and service status. |
 | `capsem_list` | — | List VMs and their typed lifecycle state. |
-| `capsem_create` | `profile`, `name?`, `vcpu?`, `memory?`, `env?`, `networks?`, `container?` | Create a detached VM, optionally with a typed OCI workload. A name makes it persistent. |
+| `capsem_create` | `profile`, `name?`, `cpus?`, `memory?`, `env?`, `network_ids?`, `image?`, `command?`, `registry?`, `attach?` | Create a detached workload. Memory is GiB; an image selects OCI execution. |
 | `capsem_info` | `vm_id` | Read VM identity, resources, network, files, and telemetry. |
 | `capsem_exec` | `vm_id`, `command`, `timeout_secs?` | Execute in an existing VM. |
-| `capsem_run` | `command`, `profile?`, `vcpu?`, `memory?`, `env?`, `timeout_secs?` | Execute once in a temporary VM. |
+| `capsem_run` | `command`, `profile?`, `cpus?`, `memory?`, `env?`, `timeout_secs?` | Execute once in a temporary VM. |
 | `capsem_start` / `capsem_stop` | `vm_id` | Start or stop a VM. |
 | `capsem_pause` / `capsem_resume` | `vm_id` | Pause or resume a VM. |
 | `capsem_delete` | `vm_id` | Delete the VM and its owned state. |
@@ -75,8 +75,8 @@ All VM-scoped tools take the immutable `vm_id` returned by `capsem_create` or
 | `capsem_read_file` | `vm_id`, `path`, `encoding?` | Read UTF-8 or base64 file content. |
 | `capsem_write_file` | `vm_id`, `path`, `content`, `encoding?` | Write UTF-8 or base64 bytes. |
 | `capsem_container_status` | `vm_id` | Read workload diagnostics; creation already waits for readiness. |
-| `capsem_exposure_create` | `vm_id`, `guest_port`, `target?`, `host_port?` | Open a policy-checked host-loopback listener. |
-| `capsem_exposure_list` / `capsem_exposure_delete` | `vm_id`, `exposure_id?` | Inspect or revoke the VM owner's listeners. |
+| `capsem_port_open` | `vm_id`, `guest_port`, `host_port?`, `authenticate?` | Open a workload port; target selection is automatic. |
+| `capsem_port_list` / `capsem_port_close` | `vm_id`, `port_id?` | Inspect or close the workload's ports. |
 
 File transfers use the gateway's existing file API and require a running VM's
 security ledger. Cancelling a request never deletes a VM.

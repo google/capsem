@@ -16,7 +16,7 @@ the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
 | VM snapshots | `snapshots.list`, `snapshots.status` |
 | VM stats | `stats.summary`, `stats.details` |
 | VM container | `container.status` |
-| VM exposures | `exposures.create/list/delete/preview_session` (`previewSession` in TypeScript) |
+| VM ports | `ports.open/list/close` |
 | VM copy | Python/Rust `from_vm` and `to_vm`; TypeScript `fromVm` and `toVm` |
 
 Rust accesses the nested resources as methods, for example
@@ -64,17 +64,16 @@ diagnostics, while `triage` can include one VM's session ledger. Profile MCP
 calls preserve arbitrary JSON arguments and results while discovery and
 permissions remain typed.
 
-VM creation accepts typed OCI `container` options. When present, the create
-environment configures that workload and the VM remains its runtime.
+VM creation accepts a top-level OCI image, command, environment, registry, and
+attach settings. The VM remains the workload's private runtime.
 The create request returns after the service reports workload readiness;
-`vm.container` exposes read-only diagnostic status. `vm.exposures` creates, lists, and revokes
-policy-checked host-loopback listeners for an explicit VM or container target;
-host port zero asks the owner to allocate a free port. HTTP previews expose no
-direct workload listener; `preview_session` returns a URL and a separate,
-single-use bootstrap token that callers submit in a POST body.
+`vm.container` exposes read-only diagnostic status. `vm.ports.open` creates a
+plain host-loopback listener by default; `authenticate=true` selects the
+existing browser-authentication flow. The SDK infers the container or VM target.
+Port objects can be listed and closed without exposing wire request enums.
 
 Private network operations use authenticated gateway HTTP and immutable network
-IDs; VM creation accepts existing network names through its `networks` option.
+IDs; VM creation accepts typed objects returned by the network resource.
 Snapshot creation/restoration and mounts remain deferred.
 
 The separately installed [`@capsem/mcp`](../mcp/typescript/README.md) package
