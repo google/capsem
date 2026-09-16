@@ -12,6 +12,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
 
+const CREATE_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(110);
+
 /// A verified image layout on the host, kept alive while it is staged.
 pub(crate) struct PulledImage {
     pub(crate) root: PathBuf,
@@ -85,6 +87,36 @@ impl ContainerSetups {
 
     pub(crate) fn status(&self, id: &str) -> Option<ContainerStatusResponse> {
         self.records.lock().unwrap().get(id).map(|record| record.status.clone())
+    }
+
+    /// Wait for the workload state owned by `POST /vms/create` to settle.
+    /// The shared poll primitive provides a deadline and exponential backoff;
+    /// callers never retry the mutation that created the VM.
+    pub(crate) async fn wait_for_create(
+        &self,
+        id: &str,
+    ) -> Result<ContainerStatusResponse, capsem_proto::poll::TimedOut> {
+        self.wait_with_options(
+            id,
+            capsem_foundation::poll::PollOpts::new("container-create-ready", CREATE_READY_TIMEOUT),
+        )
+        .await
+    }
+
+    async fn wait_with_options(
+        &self,
+        id: &str,
+        options: capsem_foundation::poll::PollOpts,
+    ) -> Result<ContainerStatusResponse, capsem_proto::poll::TimedOut> {
+        capsem_foundation::poll::poll_until(options, || async {
+            self.status(id).filter(|status| {
+                !matches!(
+                    status.state,
+                    ContainerState::Pulling | ContainerState::Staging | ContainerState::Starting
+                )
+            })
+        })
+        .await
     }
 
     /// Stop an in-flight setup and forget the VM's workload. A setup that

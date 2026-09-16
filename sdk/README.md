@@ -15,7 +15,7 @@ the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
 | VM inspection | `list`, `log`, `history`, `timeline`, `changes` |
 | VM snapshots | `snapshots.list`, `snapshots.status` |
 | VM stats | `stats.summary`, `stats.details` |
-| VM container | `container.status`, `container.wait` |
+| VM container | `container.status` |
 | VM exposures | `exposures.create/list/delete/preview_session` (`previewSession` in TypeScript) |
 | VM copy | Python/Rust `from_vm` and `to_vm`; TypeScript `fromVm` and `toVm` |
 
@@ -66,8 +66,8 @@ permissions remain typed.
 
 VM creation accepts typed OCI `container` options. When present, the create
 environment configures that workload and the VM remains its runtime.
-`vm.container` reads setup/runtime state and provides a
-cancellable read-only wait. `vm.exposures` creates, lists, and revokes
+The create request returns after the service reports workload readiness;
+`vm.container` exposes read-only diagnostic status. `vm.exposures` creates, lists, and revokes
 policy-checked host-loopback listeners for an explicit VM or container target;
 host port zero asks the owner to allocate a free port. HTTP previews expose no
 direct workload listener; `preview_session` returns a URL and a separate,

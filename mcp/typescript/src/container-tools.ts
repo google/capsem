@@ -12,13 +12,6 @@ export function registerContainerTools(server: McpServer, hypervisor: Hypervisor
     inputSchema: {vm_id: vmId},
   }, ({vm_id}, extra) => toolCall(() => hypervisor.vm({id: vm_id}).container.status({signal: extra.signal})));
 
-  server.registerTool('capsem_container_wait', {
-    description: 'Wait by read-only polling until a VM container reaches a stable state; cancellation leaves the VM running.',
-    inputSchema: {vm_id: vmId, interval_ms: z.number().int().positive().optional()},
-  }, ({vm_id, interval_ms}, extra) => toolCall(() => hypervisor.vm({id: vm_id}).container.wait({
-    ...(interval_ms === undefined ? {} : {intervalMs: interval_ms}), signal: extra.signal,
-  })));
-
   server.registerTool('capsem_exposure_create', {
     description: 'Expose one VM or container port through the authenticated, policy-checked lifecycle.',
     inputSchema: {

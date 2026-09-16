@@ -24,7 +24,6 @@ async fn example(url: &str, token: &str) -> Result<()> {
         }),
         ..Default::default()
     }).await?;
-    vm.container().wait(Duration::from_millis(250)).await?;
     let exposure = vm.exposures().create(ExposureRequest {
         guest_port: 80, host_port: 0, target: ExposureTarget::Container,
         access: ExposureAccess::HttpPreview,
@@ -90,9 +89,9 @@ the restart call. Acceptance does not claim reconnection has completed.
 `hv.networks()` provides typed create/list/inspect/delete, member attach/detach
 and cursor-based audit logs. VM creation accepts typed `ContainerOptions`. When
 present, the create environment configures that container workload because the
-VM is its runtime. Registry credentials are transient inputs.
-`vm.container().status()` and `wait()` only read status, so
-dropping a wait does not delete the VM. `vm.exposures()` creates, lists, and
+VM is its runtime. Creation returns after HTTP reports the workload ready;
+`vm.container().status()` remains a read-only diagnostic. Registry credentials
+are transient inputs. `vm.exposures()` creates, lists, and
 revokes policy-checked loopback listeners. Host port zero allocates a free port,
 and `ExposureTarget` selects the VM or container namespace. Authenticated
 browser preview sessions are not yet in the gateway contract. Explicit snapshot

@@ -1,7 +1,6 @@
 use crate::client::Client;
-use std::time::Duration;
 
-use crate::{models, operations as api, Error, NetworkLogOptions, Result, VM};
+use crate::{models, operations as api, NetworkLogOptions, Result, VM};
 
 pub struct Copy<'a>(pub(crate) &'a VM);
 pub struct Snapshots<'a>(pub(crate) &'a VM);
@@ -92,22 +91,6 @@ impl Container<'_> {
             self.0.client.options,
         )
         .await
-    }
-
-    pub async fn wait(&self, interval: Duration) -> Result<models::ContainerStatusResponse> {
-        if interval.is_zero() {
-            return Err(Error::InvalidInput("container wait interval must be positive"));
-        }
-        loop {
-            let status = self.status().await?;
-            if !matches!(
-                status.state,
-                models::ContainerState::Pulling | models::ContainerState::Staging | models::ContainerState::Starting
-            ) {
-                return Ok(status);
-            }
-            tokio::time::sleep(interval).await;
-        }
     }
 }
 

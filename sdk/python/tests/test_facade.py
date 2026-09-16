@@ -148,7 +148,7 @@ def test_cancelling_execution_does_not_retry_or_break_the_connection() -> None:
     asyncio.run(run())
 
 
-def test_container_create_status_and_cancellable_wait_are_read_only() -> None:
+def test_container_create_is_ready_and_status_is_read_only() -> None:
     async def run() -> None:
         spec = ContainerOptions(image="docker://busybox:latest", args=[], attach=False)
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
@@ -159,17 +159,7 @@ def test_container_create_status_and_cancellable_wait_are_read_only() -> None:
                 "image": spec.image, "args": [], "env": {"MODE": "preview"}, "attach": False,
             }
             assert (await vm.container.status()).image == spec.image
-            state.container_states = ["pulling", "running"]
-            assert (await vm.container.wait(interval=0.001)).state is models.ContainerState.RUNNING
-            state.container_states = ["pulling"]
-            task = asyncio.create_task(vm.container.wait(interval=0.01))
-            await asyncio.sleep(0.02)
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
             assert {method for method, path, _ in state.requests if path.endswith("/container")} == {"GET"}
-            with pytest.raises(ValueError, match="interval"):
-                await vm.container.wait(interval=0)
     asyncio.run(run())
 
 

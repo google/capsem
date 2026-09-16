@@ -106,6 +106,56 @@ fn images() -> FixtureImages {
     }
 }
 
+#[tokio::test]
+async fn create_wait_uses_shared_exponential_polling_until_running() {
+    let fx = fixture(images());
+    let generation = fx.state.containers.begin("box", "registry.example/app:1");
+    let state = Arc::clone(&fx.state);
+    let update = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        state
+            .containers
+            .advance("box", generation, |status| status.state = ContainerState::Running);
+    });
+    let status = fx
+        .state
+        .containers
+        .wait_with_options(
+            "box",
+            capsem_foundation::poll::PollOpts {
+                label: "container-create-test",
+                timeout: std::time::Duration::from_secs(1),
+                initial_delay: std::time::Duration::from_millis(1),
+                max_delay: std::time::Duration::from_millis(4),
+            },
+        )
+        .await
+        .unwrap();
+    update.await.unwrap();
+    assert_eq!(status.state, ContainerState::Running);
+}
+
+#[tokio::test]
+async fn create_wait_returns_terminal_failure_without_retrying_setup() {
+    let fx = fixture(images());
+    let generation = fx.state.containers.begin("box", "registry.example/app:1");
+    fx.state.containers.advance("box", generation, |status| {
+        status.state = ContainerState::Failed;
+        status.error = Some("pull refused".into());
+    });
+    let status = fx
+        .state
+        .containers
+        .wait_with_options(
+            "box",
+            capsem_foundation::poll::PollOpts::new("container-create-test", std::time::Duration::from_secs(1)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status.state, ContainerState::Failed);
+    assert_eq!(status.error.as_deref(), Some("pull refused"));
+}
+
 fn owner_accepting_stage_and_launch(
     uds_path: &StdPath,
     expected: usize,

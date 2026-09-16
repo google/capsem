@@ -55,7 +55,7 @@ describe('contracts', () => {
     for (const name of ['capsem_status', 'capsem_pause', 'capsem_host_logs', 'capsem_mcp_call']) {
       expect(names.has(name), name).toBe(true);
     }
-    for (const name of ['capsem_version', 'capsem_suspend', 'capsem_service_logs']) {
+    for (const name of ['capsem_version', 'capsem_suspend', 'capsem_service_logs', 'capsem_container_wait']) {
       expect(names.has(name), name).toBe(false);
     }
     const create = tools.find(tool => tool.name === 'capsem_create');

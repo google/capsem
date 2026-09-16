@@ -202,9 +202,6 @@ describe('host-tools', () => {
     expect(structured(await client.callTool({name: 'capsem_container_status', arguments: {vm_id: 'vm-1'}})))
       .toEqual({image: 'docker://busybox:latest', state: 'running'});
     expect(structured(await client.callTool({
-      name: 'capsem_container_wait', arguments: {vm_id: 'vm-1', interval_ms: 1},
-    }))).toEqual({image: 'docker://busybox:latest', state: 'running'});
-    expect(structured(await client.callTool({
       name: 'capsem_exposure_create', arguments: {
         vm_id: 'vm-1', target: 'container', access: 'loopback_tcp', guest_port: 8080, host_port: 0,
       },
@@ -218,7 +215,7 @@ describe('host-tools', () => {
       target: 'container', access: 'loopback_tcp', guest_port: 8080, host_port: 0,
     });
     expect(requests.slice(-5).map(request => `${request.method} ${new URL(request.url, 'http://x').pathname}`)).toEqual([
-      'GET /vms/vm-1/container', 'GET /vms/vm-1/container', 'POST /vms/vm-1/exposures',
+      'POST /vms/create', 'GET /vms/vm-1/container', 'POST /vms/vm-1/exposures',
       'GET /vms/vm-1/exposures', 'DELETE /vms/vm-1/exposures/49152',
     ]);
   });

@@ -4,7 +4,7 @@ Async clients for the authenticated HTTP gateway, usable in browsers and Node.
 Supply the gateway URL and bearer token explicitly.
 
 ```ts
-import {ContainerState, decodeExecOutput, ExposureAccess, ExposureTarget, Hypervisor, HostLogSource, VM} from '@capsem/sdk';
+import {decodeExecOutput, ExposureAccess, ExposureTarget, Hypervisor, HostLogSource, VM} from '@capsem/sdk';
 
 const hv = new Hypervisor(url, token, {timeoutMs: 120_000});
 try {
@@ -15,14 +15,11 @@ try {
     env: {MODE: 'preview'},
     container: {image: 'docker.io/library/nginx:alpine'},
   });
-  const container = await vm.container.wait({intervalMs: 250});
-  if (container.state === ContainerState.RUNNING) {
-    const exposure = await vm.exposures.create({
-      guest_port: 80, target: ExposureTarget.CONTAINER, access: ExposureAccess.HTTP_PREVIEW,
-    });
-    const preview = await vm.exposures.previewSession(exposure.id);
-    console.log(preview.url);
-  }
+  const exposure = await vm.exposures.create({
+    guest_port: 80, target: ExposureTarget.CONTAINER, access: ExposureAccess.HTTP_PREVIEW,
+  });
+  const preview = await vm.exposures.previewSession(exposure.id);
+  console.log(preview.url);
   await hv.networks.logs(network.id, {vm: vm.id});
   const result = await vm.exec('uname -a', {timeout_secs: 60});
   console.log(decodeExecOutput(result.stdout));
@@ -82,8 +79,9 @@ the restart call. Acceptance does not claim reconnection has completed.
 `hv.networks` provides typed create/list/inspect/delete, member attach/detach and
 cursor-based audit logs. VM creation accepts a typed container object. When it
 is present, the create environment configures that container workload; the VM
-is its runtime. Registry credentials are transient inputs. `vm.container.status()` and cancellable `wait()` poll read-only
-state. `vm.exposures.create/list/delete/previewSession` manages policy-checked
+is its runtime. Creation returns after HTTP reports the workload ready, while
+`vm.container.status()` remains a read-only diagnostic. Registry credentials
+are transient inputs. `vm.exposures.create/list/delete/previewSession` manages policy-checked
 loopback listeners and authenticated HTTP previews. The target chooses the VM
 or container namespace; preview sessions return a URL and a separate single-use
 token for a POST bootstrap.

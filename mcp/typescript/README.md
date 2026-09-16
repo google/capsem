@@ -37,7 +37,7 @@ stdout is reserved for MCP protocol messages. Startup diagnostics are sanitized
 and written to stderr.
 
 The server exposes typed tools for VM and OCI-container creation, lifecycle
-actions, container status/wait, exposure lifecycle, command execution, file
+actions, container status, exposure lifecycle, command execution, file
 listing and byte-preserving transfers, logs, history, timeline, statistics,
 snapshots, panics, and triage. VM tools take the immutable `vm_id` returned by
 `capsem_list` or `capsem_create`. File content can be passed as UTF-8 or base64.

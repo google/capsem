@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Container-backed HTTP creation now waits for service-owned workload readiness
+  with bounded exponential backoff. SDK and MCP callers no longer orchestrate
+  a separate container wait.
+
 - Container-backed SDK creation now treats the container as the workload:
   top-level create environment variables configure it, and the public container
   options no longer expose a second environment field.
@@ -80,8 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@capsem/mcp` exposes private-network lifecycle, membership, and cursor-based
   audit tools through the typed SDK network resource.
 
-- `@capsem/mcp` creates typed OCI workloads, reads or waits for container
-  status, and manages policy-checked VM/container port exposures with explicit
+- `@capsem/mcp` creates typed OCI workloads, reads container diagnostics, and
+  manages policy-checked VM/container port exposures with explicit
   loopback TCP or authenticated HTTP preview access through the TypeScript SDK
   and gateway HTTP.
 
@@ -99,9 +103,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inspect, delete, member attach/detach and cursor-based audit operations over
   authenticated gateway HTTP. VM creation accepts existing network names.
 
-- Python, TypeScript and Rust VM resources expose typed container status and
-  cancellable read-only waits, plus scoped exposure creation, listing and
-  revocation through authenticated gateway HTTP.
+- Python, TypeScript and Rust VM resources expose typed container diagnostics,
+  plus scoped exposure creation, listing and revocation through authenticated
+  gateway HTTP.
 
 - SDK detailed statistics expose shared model/MCP interaction objects with typed
   messages, content blocks, calls and results, structured tool JSON, stable ledger

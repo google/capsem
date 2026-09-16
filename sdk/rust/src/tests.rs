@@ -141,10 +141,6 @@ async fn container_and_exposure_resources_use_typed_vm_routes() {
     assert_eq!(create["container"]["env"]["MODE"], "preview");
     vm.container().status().await.unwrap();
     request(&mut server, "/vms/vm-1/container").await;
-    assert!(matches!(
-        vm.container().wait(Duration::ZERO).await,
-        Err(Error::InvalidInput(_))
-    ));
     let exposure = vm
         .exposures()
         .create(models::ExposureRequest {

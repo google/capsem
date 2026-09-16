@@ -152,7 +152,7 @@ it('uses a canonical ID without a name lookup and forwards cancellation', async 
   });
 });
 
-it('creates containers and exposes read-only status with cancellable wait', async () => {
+it('creates ready containers and exposes read-only diagnostic status', async () => {
   const state = new FacadeGateway();
   await gateway((request, response) => state.handle(request, response), async (url, received) => {
     const hv = new Hypervisor(url, 'secret');
@@ -166,14 +166,6 @@ it('creates containers and exposes read-only status with cancellable wait', asyn
         container: {image: 'docker://busybox:latest', env: {MODE: 'preview'}},
       });
       expect((await vm.container.status()).image).toBe('docker://busybox:latest');
-      await expect(vm.container.wait({intervalMs: 0})).rejects.toThrow('intervalMs');
-      state.containerStates = ['pulling', 'running'];
-      expect((await vm.container.wait({intervalMs: 1})).state).toBe('running');
-      state.containerStates = ['pulling'];
-      const controller = new AbortController();
-      const waiting = vm.container.wait({intervalMs: 1000, signal: controller.signal});
-      setTimeout(() => controller.abort(), 10);
-      await expect(waiting).rejects.toMatchObject({name: 'AbortError'});
       expect(received.filter(request => request.url.endsWith('/container')).every(request => request.method === 'GET')).toBe(true);
     } finally {vm.close(); hv.close();}
   });

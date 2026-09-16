@@ -124,7 +124,41 @@ pub(crate) async fn handle_provision(
             let response = provision_response_for_running(&state, id.clone())?;
             network_routes::attach_provisioned(&state, &id, &networks).await?;
             if let Some(spec) = payload.container {
-                container_setup::start(&state, id, spec);
+                container_setup::start(&state, id.clone(), spec);
+                let status = state.containers.wait_for_create(&id).await.map_err(|timed_out| {
+                    warn!(vm_id = id, attempts = timed_out.attempts, "container create readiness timed out");
+                    AppError(
+                        StatusCode::GATEWAY_TIMEOUT,
+                        format!(
+                            "container workload for VM {id} did not become ready before the HTTP deadline; setup continues under service ownership"
+                        ),
+                    )
+                })?;
+                match status.state {
+                    api::ContainerState::Running | api::ContainerState::Staged => {}
+                    api::ContainerState::Exited | api::ContainerState::Failed => {
+                        error!(
+                            vm_id = id,
+                            state = ?status.state,
+                            exit_code = status.exit_code,
+                            "container create reached a terminal failure"
+                        );
+                        return Err(AppError(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!(
+                                "container workload for VM {id} reached {:?}: {}",
+                                status.state,
+                                status.error.unwrap_or_else(|| status
+                                    .exit_code
+                                    .map(|code| format!("exit code {code}"))
+                                    .unwrap_or_else(|| "no failure detail".into()))
+                            ),
+                        ));
+                    }
+                    api::ContainerState::Pulling | api::ContainerState::Staging | api::ContainerState::Starting => {
+                        unreachable!("container readiness returned a pending state")
+                    }
+                }
             }
             Ok(Json(response))
         }

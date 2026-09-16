@@ -20,7 +20,6 @@ async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
         env={"MODE": "preview"},
         container=ContainerOptions(image="docker.io/library/nginx:alpine"),
     )
-    container = await vm.container.wait(interval=0.25)
     exposure = await vm.exposures.create(
         ExposureRequest(
             guest_port=80, target=ExposureTarget.CONTAINER,
@@ -86,8 +85,8 @@ Private networks are available through `hv.networks`; resource mutations use
 immutable IDs, while VM creation accepts existing network names. A typed
 `ContainerOptions` describes the container. When present, `create` environment
 variables configure that workload because the VM is its runtime. Registry
-credentials are transient runtime inputs. `vm.container.status()` and
-`wait()` are read-only, and cancelling a local wait does not delete the VM.
+credentials are transient runtime inputs. Creation returns after HTTP reports
+the workload ready; `vm.container.status()` remains a read-only diagnostic.
 `vm.exposures` manages policy-checked loopback listeners and authenticated HTTP
 previews. Host port zero allocates a free loopback port; specify
 `ExposureTarget.VM` or `CONTAINER` when namespace choice matters. A preview
