@@ -40,8 +40,7 @@ async def main() -> None:
             digest = hashlib.sha256(data).hexdigest()
             executed = await vm.exec("sha256sum /root/sdk-proof.bin; printf SDK_STDERR >&2; exit 7")
             assert executed.exit_code == 7 and executed.stdout.data.split()[0] == digest
-            # The guest exec channel currently combines stdout and stderr.
-            assert executed.stdout.data.endswith("\nSDK_STDERR") and executed.stderr.data == ""
+            assert executed.stderr.data == "SDK_STDERR"
             assert isinstance(await vm.log(tail=10), models.LogsResponse)
             assert isinstance(await hv.log(tail=10), models.HostLogsResponse)
             assert isinstance(await vm.history(limit=10), models.HistoryResponse)

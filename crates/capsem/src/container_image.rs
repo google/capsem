@@ -13,7 +13,7 @@ use capsem_api::{
     RegistryAccess,
 };
 use capsem_core::container;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::client::{self, ApiResponse, ProvisionRequest, ProvisionResponse, StreamEvent, UdsClient};
 
@@ -170,16 +170,35 @@ pub(super) async fn attach(client: &UdsClient, id: &str) -> Result<i32> {
         command: None,
     };
     let mut attached = client.open_stream(id, start).await.context("attach container")?;
+    let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
+    let mut stderr = tokio::io::stderr();
+    let mut input = [0_u8; 8192];
+    let mut stdin_closed = false;
     loop {
-        match attached.next().await? {
-            StreamEvent::Output(data) => {
-                stdout.write_all(&data).await?;
-                stdout.flush().await?;
+        tokio::select! {
+            read = stdin.read(&mut input), if !stdin_closed => {
+                let read = read.context("read container stdin")?;
+                if read == 0 {
+                    stdin_closed = true;
+                    attached.close_stdin().await?;
+                } else {
+                    attached.send_stdin(&input[..read]).await?;
+                }
             }
-            StreamEvent::Exit { code, truncated } => {
-                ensure!(!truncated && code >= 0, "container exec transport failed");
-                return Ok(code);
+            event = attached.next() => match event? {
+                StreamEvent::Output(data) => {
+                    stdout.write_all(&data).await?;
+                    stdout.flush().await?;
+                }
+                StreamEvent::ErrorOutput(data) => {
+                    stderr.write_all(&data).await?;
+                    stderr.flush().await?;
+                }
+                StreamEvent::Exit { code, truncated } => {
+                    ensure!(!truncated && code >= 0, "container exec transport failed");
+                    return Ok(code);
+                }
             }
         }
     }

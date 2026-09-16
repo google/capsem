@@ -29,6 +29,10 @@ pub(crate) struct JobStore {
     /// never acks. See `vsock.rs::setup_vsock` for the bridge end and
     /// `ipc.rs::handle_ipc_connection` for the IPC end.
     pub(crate) pending_acks: Mutex<HashMap<u64, HostToGuest>>,
+    /// Correlation ids for reliable control operations that target an
+    /// existing job id. They occupy the upper half so ordinary service job
+    /// ids and cancellation acknowledgements cannot replace each other.
+    pub(crate) next_control_id: std::sync::atomic::AtomicU64,
     /// Fired when the guest reports `GuestToHost::ShutdownComplete`. The
     /// `Shutdown` IPC handler waits on it (bounded) before stopping the VM,
     /// so a clean shutdown costs the shell's exit time, not a fixed timer.
@@ -50,10 +54,16 @@ pub(crate) struct ActiveExec {
     pub(crate) started_at: Instant,
     pub(crate) event_id: Option<capsem_core::security_engine::SecurityEventId>,
     pub(crate) captured: Vec<u8>,
+    pub(crate) captured_stderr: Vec<u8>,
     /// Bytes the guest actually wrote, which exceeds `captured.len()` when the
     /// output was capped. Telemetry reports this so `stdout_bytes` stays the
     /// real volume rather than the retained slice.
     pub(crate) total_bytes: u64,
+    pub(crate) stderr_bytes: u64,
+    /// Bounded stdin queue exists before the guest opens its exec VSOCK, so a
+    /// client may send immediately after the stream-start acknowledgement.
+    pub(crate) input_tx: tokio::sync::mpsc::Sender<capsem_proto::ExecInputFrame>,
+    pub(crate) input_rx: Option<tokio::sync::mpsc::Receiver<capsem_proto::ExecInputFrame>>,
     pub(crate) deposited: Arc<Notify>,
     pub(crate) stream: Option<tokio::sync::mpsc::Sender<capsem_proto::ipc::ProcessToService>>,
     pub(crate) completion_started: bool,
@@ -62,11 +72,16 @@ pub(crate) struct ActiveExec {
 
 impl ActiveExec {
     pub(crate) fn new() -> Self {
+        let (input_tx, input_rx) = tokio::sync::mpsc::channel(16);
         Self {
             started_at: Instant::now(),
             event_id: None,
             captured: Vec::new(),
+            captured_stderr: Vec::new(),
             total_bytes: 0,
+            stderr_bytes: 0,
+            input_tx,
+            input_rx: Some(input_rx),
             deposited: Arc::new(Notify::new()),
             stream: None,
             completion_started: false,
@@ -84,6 +99,7 @@ impl JobStore {
             active_file_ops: Mutex::new(HashMap::new()),
             snapshot_ready: Mutex::new(None),
             pending_acks: Mutex::new(HashMap::new()),
+            next_control_id: std::sync::atomic::AtomicU64::new(1_u64 << 63),
             shutdown_complete: Notify::new(),
             cables: std::sync::OnceLock::new(),
             cable_seat: std::sync::OnceLock::new(),

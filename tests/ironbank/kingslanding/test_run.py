@@ -207,20 +207,29 @@ def test_cli_run_image_streams_and_an_interrupt_destroys_the_vm(service, tmp_pat
 
 
 @pytest.mark.parametrize(
-    ("args", "options", "code", "output"),
+    ("args", "options", "stdin", "code", "stdout", "stderr_suffix"),
     [
         (
-            ["/bin/sh", "-c", "printf '\\000\\377hello'; exit 7"],
+            ["/bin/sh", "-c", "cat; printf lane-error >&2; exit 7"],
             [],
+            b"\x00\xffhello",
             7,
             b"\x00\xffhello",
+            b"lane-error",
         ),
-        (["/bin/sh", "-c", "sleep 120 & wait"], ["--timeout", "5"], 124, b""),
-        (["/missing-command"], [], 127, None),
+        (
+            ["/bin/sh", "-c", "sleep 120 & wait"],
+            ["--timeout", "5"],
+            None,
+            124,
+            b"",
+            b"Container timed out\n",
+        ),
+        (["/missing-command"], [], None, 127, None, None),
     ],
 )
 def test_cli_exit_timeout_and_failed_launch(
-    service, tmp_path, args, options, code, output
+    service, tmp_path, args, options, stdin, code, stdout, stderr_suffix
 ):
     client = service.client()
     with registry(tmp_path) as (reference, certificate, requests):
@@ -228,14 +237,17 @@ def test_cli_exit_timeout_and_failed_launch(
             result = subprocess.run(
                 [*command(service, reference, certificate, *options), *args],
                 env=environment(service),
+                input=stdin,
                 capture_output=True,
                 timeout=45,
                 check=False,
             )
             (tmp_path / f"attempt-{attempt}.stderr").write_bytes(result.stderr)
             assert result.returncode == code, result.stderr + result.stdout
-            if output is not None:
-                assert result.stdout == output, result.stdout
+            if stdout is not None:
+                assert result.stdout == stdout, result.stdout
+            if stderr_suffix is not None:
+                assert result.stderr.endswith(stderr_suffix), result.stderr
             assert client.get("/vms/list")["sandboxes"] == []
         assert len([path for path in requests if "/blobs/" in path]) == 2, requests
 
@@ -289,12 +301,9 @@ def test_shell_run_still_uses_existing_command_path(service):
         timeout=45,
         check=False,
     )
-    # The existing guest exec transport combines independent stdout/stderr
-    # pipes. Each short write must survive, but their relative arrival order
-    # is not guaranteed. Keep exact bytes, exit status, and cleanup assertions.
     assert result.returncode == 3, result.stderr
-    assert result.stdout in (b"shell-proofshell-error", b"shell-errorshell-proof")
-    assert result.stderr == b""
+    assert result.stdout == b"shell-proof"
+    assert result.stderr == b"shell-error"
     assert service.client().get("/vms/list")["sandboxes"] == []
 
 

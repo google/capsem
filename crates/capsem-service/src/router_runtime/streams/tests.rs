@@ -118,12 +118,14 @@ async fn exec_stream_relays_output_and_ends_with_the_exit_status() {
         .unwrap();
         tx.send(ProcessToService::ExecOutput {
             id: id + 1,
+            channel: capsem_proto::ExecOutputChannel::Stdout,
             data: b"not ours".to_vec(),
         })
         .await
         .unwrap();
         tx.send(ProcessToService::ExecOutput {
             id,
+            channel: capsem_proto::ExecOutputChannel::Stdout,
             data: b"hi\n\xff".to_vec(),
         })
         .await
@@ -232,6 +234,78 @@ async fn terminal_stream_relays_output_input_and_resize() {
             message: "terminal closed".into()
         }
     );
+    owner.await.unwrap();
+}
+
+#[tokio::test]
+async fn exec_stream_relays_stdin_eof_separate_stderr_and_disconnect_cancellation() {
+    let fx = fixture().await;
+    let owner = owner(&fx.uds_path, |tx, rx| async move {
+        let ServiceToProcess::ExecStream { id, command } = rx.recv().await.unwrap() else {
+            panic!("expected ExecStream")
+        };
+        assert_eq!(command, "cat; echo problem >&2");
+        assert!(matches!(
+            rx.recv().await.unwrap(),
+            ServiceToProcess::ExecStreamInput { id: input_id, data }
+                if input_id == id && data == b"hello\n"
+        ));
+        assert!(matches!(
+            rx.recv().await.unwrap(),
+            ServiceToProcess::ExecStreamCloseStdin { id: input_id } if input_id == id
+        ));
+        tx.send(ProcessToService::ExecOutput {
+            id,
+            channel: capsem_proto::ExecOutputChannel::Stdout,
+            data: b"hello\n".to_vec(),
+        })
+        .await
+        .unwrap();
+        tx.send(ProcessToService::ExecOutput {
+            id,
+            channel: capsem_proto::ExecOutputChannel::Stderr,
+            data: b"problem\n".to_vec(),
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            rx.recv().await.unwrap(),
+            ServiceToProcess::CancelExec { id: cancelled } if cancelled == id
+        ));
+    });
+    let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
+    client
+        .send(ClientMessage::Binary(
+            encode_control(&StreamControl::Start {
+                kind: StreamKind::Exec,
+                command: Some("cat; echo problem >&2".into()),
+            })
+            .into(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        status(&next_server_frame(&mut client).await.unwrap().1),
+        StreamStatus::Started
+    );
+    client
+        .send(ClientMessage::Binary(
+            encode_data(StreamChannel::Stdin, b"hello\n").into(),
+        ))
+        .await
+        .unwrap();
+    client
+        .send(ClientMessage::Binary(encode_control(&StreamControl::CloseStdin).into()))
+        .await
+        .unwrap();
+    let (channel, stdout) = next_server_frame(&mut client).await.unwrap();
+    assert_eq!((channel, &stdout[1..]), (StreamChannel::Stdout as u8, &b"hello\n"[..]));
+    let (channel, stderr) = next_server_frame(&mut client).await.unwrap();
+    assert_eq!(
+        (channel, &stderr[1..]),
+        (StreamChannel::Stderr as u8, &b"problem\n"[..])
+    );
+    client.close(None).await.unwrap();
     owner.await.unwrap();
 }
 

@@ -175,6 +175,7 @@ pub(crate) async fn handle_ipc_connection(
     // StopTerminalStream and connection teardown can abort it instead of
     // letting it outlive the IPC connection.
     let mut stream_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut connection_execs = std::collections::HashSet::new();
 
     loop {
         let received = tokio::select! {
@@ -283,6 +284,7 @@ pub(crate) async fn handle_ipc_connection(
                     ServiceToProcess::ExecStream { id, command } => (id, command, true),
                     _ => unreachable!(),
                 };
+                connection_execs.insert(id);
                 tokio::spawn(exec::run(
                     id,
                     command,
@@ -292,6 +294,21 @@ pub(crate) async fn handle_ipc_connection(
                     ipc_tx_out.clone(),
                     Arc::clone(&net_state.db),
                 ));
+            }
+            ServiceToProcess::ExecStreamInput { id, data } => {
+                if let Err(error) = exec::input(id, capsem_proto::ExecInputFrame::Data(data), &job_store).await {
+                    warn!(id, %error, "exec stdin input refused");
+                }
+            }
+            ServiceToProcess::ExecStreamCloseStdin { id } => {
+                if let Err(error) = exec::input(id, capsem_proto::ExecInputFrame::StdinEof, &job_store).await {
+                    warn!(id, %error, "exec stdin EOF refused");
+                }
+            }
+            ServiceToProcess::CancelExec { id } => {
+                if let Err(error) = exec::cancel(id, &job_store, &ctrl_tx).await {
+                    warn!(id, %error, "exec cancellation failed");
+                }
             }
             ServiceToProcess::PublishPort {
                 id,
@@ -934,6 +951,11 @@ pub(crate) async fn handle_ipc_connection(
                 // not expected over IPC from service.
                 warn!("unexpected lifecycle IPC command received");
             }
+        }
+    }
+    for id in connection_execs {
+        if let Err(error) = exec::cancel(id, &job_store, &ctrl_tx).await {
+            warn!(id, %error, "IPC disconnect could not cancel exec");
         }
     }
     // Connection ended: cancel any in-flight stream task. Without this the

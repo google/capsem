@@ -9,6 +9,9 @@ pub(super) fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         ServiceToProcess::TerminalInput { .. } | ServiceToProcess::TerminalResize { .. } => IpcAction::Forward,
         ServiceToProcess::Exec { .. }
         | ServiceToProcess::ExecStream { .. }
+        | ServiceToProcess::ExecStreamInput { .. }
+        | ServiceToProcess::ExecStreamCloseStdin { .. }
+        | ServiceToProcess::CancelExec { .. }
         | ServiceToProcess::PublishPort { .. }
         | ServiceToProcess::RevokePort { .. }
         | ServiceToProcess::ListPublications { .. }

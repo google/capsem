@@ -79,8 +79,18 @@ pub enum ServiceToProcess {
         namespaced_name: String,
         arguments_json: String,
     },
-    /// Execute with bounded live merged stdout/stderr, followed by ExecResult.
+    /// Execute with bounded live stdout/stderr, followed by ExecResult.
     ExecStream { id: u64, command: String },
+    /// Send bytes to one running exec's stdin.
+    ExecStreamInput {
+        id: u64,
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
+    /// Deliver explicit in-band EOF to one running exec's stdin.
+    ExecStreamCloseStdin { id: u64 },
+    /// Cancel one running guest exec and its process group.
+    CancelExec { id: u64 },
     /// Publish one loopback host TCP port into the `target` guest namespace.
     PublishPort {
         id: u64,
@@ -214,9 +224,10 @@ pub enum ProcessToService {
     /// Warm suspend failed before the durable checkpoint marker was written.
     /// Named MessagePack variants remain stable independently of source order.
     SuspendFailed { id: String, error: String },
-    /// Live merged stdout/stderr for an ExecStream job. Each chunk is at most 8 KiB.
+    /// Live stdout or stderr for an ExecStream job. Each chunk is at most 8 KiB.
     ExecOutput {
         id: u64,
+        channel: crate::ExecOutputChannel,
         #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },

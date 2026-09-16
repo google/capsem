@@ -74,7 +74,14 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
             },
             None,
         ),
-        (ProcessToService::ExecOutput { id: 7, data: vec![1] }, None),
+        (
+            ProcessToService::ExecOutput {
+                id: 7,
+                channel: crate::ExecOutputChannel::Stdout,
+                data: vec![1],
+            },
+            None,
+        ),
         (
             ProcessToService::ContainerPullAdmission {
                 id: 12,

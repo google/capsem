@@ -2021,7 +2021,7 @@ async fn main() -> Result<()> {
                         std::process::exit(130);
                     }
                     result = tokio::time::timeout_at(boot_deadline, attached.next()) => match result {
-                        Ok(Ok(StreamEvent::Output(data))) => {
+                        Ok(Ok(StreamEvent::Output(data) | StreamEvent::ErrorOutput(data))) => {
                             let text = String::from_utf8_lossy(&data);
                             if text.contains("# ") || text.contains("$ ") {
                                 break;
@@ -2068,7 +2068,7 @@ async fn main() -> Result<()> {
                         attached.next(),
                     ) => {
                         match result {
-                            Ok(Ok(StreamEvent::Output(data))) => {
+                            Ok(Ok(StreamEvent::Output(data) | StreamEvent::ErrorOutput(data))) => {
                                 let _ = stdout.write_all(&data).await;
                                 let _ = stdout.flush().await;
                                 if let Some(ref mut f) = log_file {

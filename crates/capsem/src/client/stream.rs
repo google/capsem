@@ -10,6 +10,7 @@ use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValu
 #[derive(Debug, PartialEq, Eq)]
 pub enum StreamEvent {
     Output(Vec<u8>),
+    ErrorOutput(Vec<u8>),
     Exit { code: i32, truncated: bool },
 }
 
@@ -50,6 +51,7 @@ impl UdsClient {
 #[derive(Debug)]
 enum Frame {
     Output(Vec<u8>),
+    ErrorOutput(Vec<u8>),
     Status(StreamStatus),
 }
 
@@ -65,12 +67,18 @@ impl ServiceStream {
         self.send_frame(stream::encode_data(StreamChannel::Stdin, data)).await
     }
 
+    pub async fn close_stdin(&mut self) -> Result<()> {
+        self.send_frame(stream::encode_control(&StreamControl::CloseStdin))
+            .await
+    }
+
     async fn next_frame(&mut self) -> Result<Frame> {
         loop {
             match self.socket.next().await {
                 Some(Ok(Message::Binary(bytes))) => {
                     return match stream::decode_server_frame(&bytes).map_err(|e| anyhow::anyhow!("VM stream: {e}"))? {
-                        ServerFrame::Stdout(data) | ServerFrame::Stderr(data) => Ok(Frame::Output(data.to_vec())),
+                        ServerFrame::Stdout(data) => Ok(Frame::Output(data.to_vec())),
+                        ServerFrame::Stderr(data) => Ok(Frame::ErrorOutput(data.to_vec())),
                         ServerFrame::Status(status) => Ok(Frame::Status(status)),
                     };
                 }
@@ -88,6 +96,7 @@ impl ServiceStream {
         loop {
             match self.next_frame().await? {
                 Frame::Output(data) => return Ok(StreamEvent::Output(data)),
+                Frame::ErrorOutput(data) => return Ok(StreamEvent::ErrorOutput(data)),
                 Frame::Status(StreamStatus::Exit { code, truncated }) => {
                     return Ok(StreamEvent::Exit { code, truncated })
                 }

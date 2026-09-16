@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Streaming exec and attached containers accept bounded stdin with explicit
+  EOF, preserve separate stdout and stderr lanes, and cancel the guest process
+  group when the authenticated stream disconnects.
+
 - Guest agents can publish a VM or container port through the scoped
   `capsem__expose_port` MCP tool. The existing relay supplies trusted VM
   identity; the tool accepts no gateway credential and keeps MCP plus exposure

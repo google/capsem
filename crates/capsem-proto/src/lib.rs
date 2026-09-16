@@ -11,6 +11,7 @@
 //! encode/decode function pairs.
 
 pub mod credential_reference;
+mod exec_stream;
 pub mod handshake;
 pub mod ipc;
 pub mod mcp;
@@ -21,6 +22,10 @@ pub mod privatelink;
 pub mod router;
 mod wire_bytes;
 
+pub use exec_stream::{
+    read_exec_input, read_exec_output, write_exec_input, write_exec_output, ExecInputFrame, ExecOutputChannel,
+    ExecOutputFrame, MAX_EXEC_DATA_BYTES,
+};
 pub use handshake::{HandshakeError, Hello};
 
 use std::path::Path;
@@ -55,7 +60,9 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// Version 6 names the namespace a publication connects to.
 /// Version 7 replaces native-endian unbounded host IPC with bounded,
 /// big-endian length-prefixed MessagePack and binary byte payloads.
-pub const PROTOCOL_VERSION: u16 = 7;
+/// Version 8 adds framed exec stdin/EOF, separated output lanes and reliable
+/// host cancellation.
+pub const PROTOCOL_VERSION: u16 = 8;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
 pub const GUEST_DNS_PROXY_PORT: u16 = 1053;
@@ -450,6 +457,9 @@ pub enum HostToGuest {
     Resize { cols: u16, rows: u16 },
     /// Execute command in guest PTY.
     Exec { id: u64, command: String },
+    /// Stop an in-flight exec and its process group. Idempotent so replaying a
+    /// cancellation after a control-channel rekey cannot affect another job.
+    CancelExec { id: u64, cancellation_id: u64 },
     // -- Heartbeat --
     /// Liveness check + clock resync (handles Mac sleep drift).
     Ping { epoch_secs: u64 },

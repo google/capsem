@@ -18,9 +18,9 @@ pub const MAX_STREAM_FRAME_BYTES: usize = 256 * 1024;
 pub enum StreamChannel {
     /// Client to server: bytes for the stream's stdin or terminal.
     Stdin = 0,
-    /// Server to client: output (merged stdout and stderr today).
+    /// Server to client: standard output.
     Stdout = 1,
-    /// Server to client: reserved for separated stderr.
+    /// Server to client: standard error.
     Stderr = 2,
     /// Client to server: [`StreamControl`].
     Control = 3,

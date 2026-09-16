@@ -21,6 +21,12 @@ pub(super) async fn run(
         } else {
             let mut state = ActiveExec::new();
             state.stream = streaming.then(|| output.clone());
+            if !streaming {
+                state
+                    .input_tx
+                    .try_send(capsem_proto::ExecInputFrame::StdinEof)
+                    .expect("a new exec input queue has room for EOF");
+            }
             active.insert(id, state);
             drop(active);
             pending.insert(id, tx);
@@ -32,13 +38,12 @@ pub(super) async fn run(
     } else if control.send(ServiceToProcess::Exec { id, command }).await.is_err() {
         Err("guest control channel closed".to_string())
     } else {
-        // User work has no implicit duration limit. Closing the streaming
-        // connection releases this job's queues; the VM lifecycle owns killing
-        // the command and descendants on explicit stop/delete.
-        tokio::select! {
-            result = await_exec_result(rx) => result,
-            _ = output.closed(), if streaming => Err("exec stream consumer disconnected".to_string()),
-        }
+        // User work has no implicit duration limit. The owning IPC connection
+        // cancels the guest process group when its HTTP/WebSocket caller leaves.
+        // The owning IPC connection performs cancellation before dropping its
+        // registrations. Watching the output queue here races that cleanup and
+        // can erase the guest job before the cancellation reaches it.
+        await_exec_result(rx).await
     };
     if installed {
         jobs.jobs.lock().unwrap().remove(&id);
@@ -79,6 +84,27 @@ pub(super) async fn run(
     // Preserve the existing DB-owned visibility barrier before the result.
     db.flush_after_quiescence(std::time::Duration::from_millis(50)).await;
     capsem_core::try_send!("ipc_exec_result", output.send(response).await);
+}
+
+pub(super) async fn input(id: u64, frame: capsem_proto::ExecInputFrame, jobs: &JobStore) -> Result<(), String> {
+    let sender = jobs
+        .active_execs
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(|active| active.input_tx.clone())
+        .ok_or_else(|| "exec is not running".to_string())?;
+    sender.send(frame).await.map_err(|_| "exec stdin is closed".to_string())
+}
+
+pub(super) async fn cancel(id: u64, jobs: &JobStore, control: &mpsc::Sender<ServiceToProcess>) -> Result<(), String> {
+    if !jobs.active_execs.lock().unwrap().contains_key(&id) {
+        return Ok(());
+    }
+    control
+        .send(ServiceToProcess::CancelExec { id })
+        .await
+        .map_err(|_| "guest control channel closed".to_string())
 }
 
 #[cfg(test)]

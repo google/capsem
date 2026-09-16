@@ -36,9 +36,11 @@ pub(super) async fn complete(
     let event_id = active.event_id;
     let duration_ms = active.started_at.elapsed().as_millis() as u64;
     let stdout = active.captured;
-    let total_bytes = active.total_bytes;
+    let stderr = active.captured_stderr;
+    let stdout_bytes = active.total_bytes;
+    let stderr_bytes = active.stderr_bytes;
     let streaming = stream.is_some();
-    let truncated = !streaming && total_bytes > stdout.len() as u64;
+    let truncated = !streaming && (stdout_bytes > stdout.len() as u64 || stderr_bytes > stderr.len() as u64);
 
     let complete = capsem_logger::ExecEventComplete {
         exec_id: id,
@@ -47,9 +49,11 @@ pub(super) async fn complete(
         stdout_preview: Some(
             String::from_utf8_lossy(&stdout[..stdout.len().min(super::exec_output::EXEC_LEDGER_PREVIEW_BYTES)]).into(),
         ),
-        stderr_preview: None,
-        stdout_bytes: total_bytes,
-        stderr_bytes: 0,
+        stderr_preview: Some(
+            String::from_utf8_lossy(&stderr[..stderr.len().min(super::exec_output::EXEC_LEDGER_PREVIEW_BYTES)]).into(),
+        ),
+        stdout_bytes,
+        stderr_bytes,
         pid: None,
     };
     if let Some(event_id) = event_id {
@@ -73,7 +77,7 @@ pub(super) async fn complete(
         } else {
             JobResult::Exec {
                 stdout: if streaming { Vec::new() } else { stdout },
-                stderr: vec![],
+                stderr: if streaming { Vec::new() } else { stderr },
                 exit_code,
                 truncated,
             }

@@ -59,6 +59,19 @@ async fn a_stream_starts_then_delivers_output_and_exit() {
             decode_client_frame(&bytes).unwrap(),
             ClientFrame::Stdin(b"capsem-doctor\n")
         );
+        let Some(Ok(Message::Binary(bytes))) = socket.next().await else {
+            panic!("expected stdin EOF")
+        };
+        assert_eq!(
+            decode_client_frame(&bytes).unwrap(),
+            ClientFrame::Control(StreamControl::CloseStdin)
+        );
+        socket
+            .send(Message::Binary(
+                encode_data(StreamChannel::Stderr, b"diagnostic").into(),
+            ))
+            .await
+            .unwrap();
         socket
             .send(Message::Binary(
                 encode_data(StreamChannel::Stdout, b"RESULT: PASS\xff").into(),
@@ -88,6 +101,11 @@ async fn a_stream_starts_then_delivers_output_and_exit() {
         .await
         .unwrap();
     attached.send_stdin(b"capsem-doctor\n").await.unwrap();
+    attached.close_stdin().await.unwrap();
+    assert_eq!(
+        attached.next().await.unwrap(),
+        StreamEvent::ErrorOutput(b"diagnostic".to_vec())
+    );
     assert_eq!(
         attached.next().await.unwrap(),
         StreamEvent::Output(b"RESULT: PASS\xff".to_vec())

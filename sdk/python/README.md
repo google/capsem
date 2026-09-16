@@ -59,8 +59,8 @@ HTTP `status` and response `body`; invalid typed responses raise Pydantic
 `ValidationError`. HTTP `timeout` is the client deadline, while `exec`'s
 `timeout_secs` is the command deadline sent to the gateway. Choose an HTTP
 deadline long enough for the command. Mutations are never automatically retried.
-The guest exec channel currently combines both streams in `stdout`; `stderr`
-is empty. Each is a typed `ExecOutput`; `decode_exec_output()` returns its exact
+The guest exec channel preserves separate `stdout` and `stderr` lanes. Each is
+a typed `ExecOutput`; `decode_exec_output()` returns its exact
 bytes regardless of whether the wire value uses UTF-8 or base64.
 
 A VM selected by name resolves once, then retains its canonical ID. Handles

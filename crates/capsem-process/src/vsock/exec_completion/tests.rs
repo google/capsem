@@ -41,9 +41,17 @@ async fn slow_stream_completion_leaves_control_and_other_jobs_responsive() {
     let (other_tx, other_result) = oneshot::channel();
     js.jobs.lock().unwrap().insert(2, other_tx);
     js.active_execs.lock().unwrap().insert(2, ActiveExec::new());
-    super::super::deposit_exec_output(&js, 2, b"independent".to_vec(), 11)
-        .unwrap()
-        .notify_one();
+    super::super::exec_output::deposit(
+        &js,
+        2,
+        super::super::exec_output::ExecCapture {
+            stdout: b"independent".to_vec(),
+            stdout_bytes: 11,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .notify_one();
     super::super::handle_guest_msg(
         GuestToHost::ExecDone { id: 2, exit_code: 0 },
         &js,
@@ -63,9 +71,17 @@ async fn slow_stream_completion_leaves_control_and_other_jobs_responsive() {
         &plugins,
     )
     .await;
-    super::super::deposit_exec_output(&js, 1, b"last bytes".to_vec(), 10)
-        .unwrap()
-        .notify_one();
+    super::super::exec_output::deposit(
+        &js,
+        1,
+        super::super::exec_output::ExecCapture {
+            stdout: b"last bytes".to_vec(),
+            stdout_bytes: 10,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .notify_one();
     match tokio::time::timeout(Duration::from_secs(1), result)
         .await
         .unwrap()

@@ -75,6 +75,9 @@ fn service_to_process_variant_names_and_roundtrips_are_stable() {
             id: 10,
             command: "printf live".into(),
         },
+        ServiceToProcess::ExecStreamInput { id: 10, data: vec![4] },
+        ServiceToProcess::ExecStreamCloseStdin { id: 10 },
+        ServiceToProcess::CancelExec { id: 10 },
     ];
 
     let names = [
@@ -99,6 +102,9 @@ fn service_to_process_variant_names_and_roundtrips_are_stable() {
         "SnapshotStatus",
         "McpCallTool",
         "ExecStream",
+        "ExecStreamInput",
+        "ExecStreamCloseStdin",
+        "CancelExec",
     ];
     assert_eq!(messages.len(), names.len());
     for (message, expected) in messages.iter().zip(names) {
@@ -171,6 +177,7 @@ fn process_to_service_variant_names_and_roundtrips_are_stable() {
         },
         ProcessToService::ExecOutput {
             id: 10,
+            channel: crate::ExecOutputChannel::Stderr,
             data: vec![0, 255, 10],
         },
     ];
@@ -239,4 +246,20 @@ fn ipc_byte_payloads_use_messagepack_binary() {
     );
     let decoded: ServiceToProcess = rmp_serde::from_slice(&binary).unwrap();
     assert!(matches!(decoded, ServiceToProcess::TerminalInput { data } if data == vec![0xff; 1024 * 1024]));
+}
+
+#[test]
+fn guest_cancel_keeps_job_and_ack_ids_distinct() {
+    let message = crate::HostToGuest::CancelExec {
+        id: 17,
+        cancellation_id: 1_u64 << 63,
+    };
+    let frame = crate::encode_host_msg(&message).unwrap();
+    assert!(matches!(
+        crate::decode_host_msg(&frame[4..]).unwrap(),
+        crate::HostToGuest::CancelExec {
+            id: 17,
+            cancellation_id
+        } if cancellation_id == 1_u64 << 63
+    ));
 }

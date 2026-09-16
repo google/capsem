@@ -36,6 +36,7 @@ async fn send_ipc_command_ignores_lifecycle_broadcasts() {
             },
             ProcessToService::ExecOutput {
                 id,
+                channel: capsem_proto::ExecOutputChannel::Stdout,
                 data: b"partial".to_vec(),
             },
             ProcessToService::ExecResult {

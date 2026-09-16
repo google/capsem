@@ -318,12 +318,13 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
     sender
         .send(ProcessToService::ExecOutput {
             id: 19,
+            channel: capsem_proto::ExecOutputChannel::Stdout,
             data: b"live\0\xff".to_vec(),
         })
         .await
         .unwrap();
     assert!(
-        matches!(service_rx.recv().await.unwrap(), ProcessToService::ExecOutput { id: 19, data } if data == b"live\0\xff")
+        matches!(service_rx.recv().await.unwrap(), ProcessToService::ExecOutput { id: 19, channel: capsem_proto::ExecOutputChannel::Stdout, data } if data == b"live\0\xff")
     );
     job_store
         .jobs

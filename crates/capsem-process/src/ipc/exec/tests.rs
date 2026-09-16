@@ -2,12 +2,20 @@ use super::*;
 use std::time::Duration;
 
 #[tokio::test]
-async fn disconnect_releases_stream_registration_and_pending_ack() {
+async fn owner_cancellation_releases_stream_registration_and_pending_ack() {
     let jobs = Arc::new(JobStore::new());
     let db = Arc::new(capsem_logger::DbWriter::open_in_memory(16).unwrap());
     let (control, mut commands) = mpsc::channel(1);
     let (output, consumer) = mpsc::channel(1);
-    let task = tokio::spawn(run(11, "sleep 100".into(), true, jobs.clone(), control, output, db));
+    let task = tokio::spawn(run(
+        11,
+        "sleep 100".into(),
+        true,
+        jobs.clone(),
+        control.clone(),
+        output,
+        db,
+    ));
     assert!(matches!(
         commands.recv().await,
         Some(ServiceToProcess::Exec { id: 11, .. })
@@ -20,6 +28,23 @@ async fn disconnect_releases_stream_registration_and_pending_ack() {
         },
     );
     drop(consumer);
+    cancel(11, &jobs, &control).await.unwrap();
+    assert!(matches!(
+        commands.recv().await,
+        Some(ServiceToProcess::CancelExec { id: 11 })
+    ));
+    jobs.jobs
+        .lock()
+        .unwrap()
+        .remove(&11)
+        .unwrap()
+        .send(JobResult::Exec {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            exit_code: 143,
+            truncated: false,
+        })
+        .unwrap();
     tokio::time::timeout(Duration::from_secs(1), task)
         .await
         .unwrap()

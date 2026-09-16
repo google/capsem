@@ -150,9 +150,13 @@ async fn open_owner(uds_path: &StdPath) -> Result<OwnerChannel, String> {
     capsem_foundation::ipc_channel::channel_from_std(socket).map_err(|e| format!("VM owner channel: {e}"))
 }
 
-async fn send_data(client_tx: &mut futures::stream::SplitSink<WebSocket, Message>, data: &[u8]) -> Result<(), String> {
+async fn send_data(
+    client_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
+    channel: StreamChannel,
+    data: &[u8],
+) -> Result<(), String> {
     client_tx
-        .send(Message::Binary(stream::encode_data(StreamChannel::Stdout, data).into()))
+        .send(Message::Binary(stream::encode_data(channel, data).into()))
         .await
         .map_err(|e| format!("client left: {e}"))
 }
@@ -178,8 +182,9 @@ async fn terminal(
         .await
         .map_err(owner_closed)?;
     send_status(client_tx, &StreamStatus::Started).await?;
-    let result = loop {
-        tokio::select! {
+    let result = async {
+        loop {
+            tokio::select! {
             frame = next_client_frame(client_rx) => match frame? {
                 None => break Ok(()),
                 Some(ClientControl::Stdin(data)) => {
@@ -192,19 +197,21 @@ async fn terminal(
                 Some(ClientControl::Control(StreamControl::Start { .. })) => break Err("stream already started".into()),
             },
             message = owner_rx.recv() => match message.map_err(owner_closed)? {
-                ProcessToService::TerminalOutput { data } => send_data(client_tx, &data).await?,
+                ProcessToService::TerminalOutput { data } => send_data(client_tx, StreamChannel::Stdout, &data).await?,
                 ProcessToService::TerminalStreamEnded { reason } => break Err(reason),
                 _ => {}
             },
+            }
         }
-    };
+    }
+    .await;
     // Late output must not follow the client's decision to leave.
     let _ = owner_tx.send(ServiceToProcess::StopTerminalStream).await;
     result
 }
 
 /// Run `command` attached. `Ok(Some(code))` is its exit; `Ok(None)` means the
-/// client left first, and the command keeps running unobserved.
+/// client left first and the command was cancelled.
 async fn exec(
     state: &ServiceState,
     (owner_tx, owner_rx): OwnerChannel,
@@ -219,27 +226,46 @@ async fn exec(
         .await
         .map_err(owner_closed)?;
     send_status(client_tx, &StreamStatus::Started).await?;
-    loop {
+    let mut stdin_closed = false;
+    let result = loop {
         tokio::select! {
             frame = next_client_frame(client_rx) => match frame? {
-                None => return Ok(None),
-                Some(ClientControl::Stdin(_)) => return Err("stdin is not supported for exec streams yet".into()),
-                Some(ClientControl::Control(StreamControl::Start { .. })) => return Err("stream already started".into()),
-                Some(ClientControl::Control(_)) => {}
+                None => break Ok(None),
+                Some(ClientControl::Stdin(_)) if stdin_closed => break Err("exec stdin is already closed".into()),
+                Some(ClientControl::Stdin(data)) => {
+                    owner_tx.send(ServiceToProcess::ExecStreamInput { id: job, data }).await.map_err(owner_closed)?;
+                }
+                Some(ClientControl::Control(StreamControl::CloseStdin)) if !stdin_closed => {
+                    stdin_closed = true;
+                    owner_tx.send(ServiceToProcess::ExecStreamCloseStdin { id: job }).await.map_err(owner_closed)?;
+                }
+                Some(ClientControl::Control(StreamControl::CloseStdin)) => {}
+                Some(ClientControl::Control(StreamControl::Start { .. })) => break Err("stream already started".into()),
+                Some(ClientControl::Control(StreamControl::Resize { .. })) => {}
             },
             message = owner_rx.recv() => match message.map_err(owner_closed)? {
-                ProcessToService::ExecOutput { id, data } if id == job => send_data(client_tx, &data).await?,
+                ProcessToService::ExecOutput { id, channel, data } if id == job => {
+                    let channel = match channel {
+                        capsem_proto::ExecOutputChannel::Stdout => StreamChannel::Stdout,
+                        capsem_proto::ExecOutputChannel::Stderr => StreamChannel::Stderr,
+                    };
+                    send_data(client_tx, channel, &data).await?;
+                }
                 ProcessToService::ExecResult { id, exit_code, stderr, truncated, .. } if id == job => {
                     if exit_code < 0 && !stderr.is_empty() {
-                        return Err(String::from_utf8_lossy(&stderr).into_owned());
+                        break Err(String::from_utf8_lossy(&stderr).into_owned());
                     }
                     send_status(client_tx, &StreamStatus::Exit { code: exit_code, truncated }).await?;
-                    return Ok(Some(exit_code));
+                    break Ok(Some(exit_code));
                 }
                 _ => {}
             },
         }
+    };
+    if !matches!(result, Ok(Some(_))) {
+        let _ = owner_tx.send(ServiceToProcess::CancelExec { id: job }).await;
     }
+    result
 }
 
 #[cfg(test)]

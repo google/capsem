@@ -26,7 +26,7 @@ try {
   const exec = await vm.exec('sha256sum /root/sdk-proof.bin; printf SDK_STDERR >&2; exit 7');
   assert.equal(exec.exit_code, 7);
   assert.equal(exec.stdout.data.split(' ')[0], digest);
-  assert(exec.stdout.data.endsWith('\nSDK_STDERR') && exec.stderr.data === '');
+  assert(exec.stderr.data === 'SDK_STDERR');
   await vm.log({tail: 10});
   await hv.log({tail: 10});
   await vm.history({limit: 10});

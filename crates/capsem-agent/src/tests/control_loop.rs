@@ -72,7 +72,7 @@ fn run_control_loop_full(
             child_pid,
             &[],
             ctrl_tx,
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             pending_for_loop,
         );
@@ -142,7 +142,7 @@ fn control_loop_resize_changes_pty_winsize() {
             child_pid,
             &[],
             ctrl_tx,
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         );
@@ -372,7 +372,7 @@ fn control_loop_shutdown_returns_once_the_writer_confirms_the_report() {
         child_pid,
         &[],
         ctrl_tx,
-        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     );
