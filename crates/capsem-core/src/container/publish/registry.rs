@@ -17,16 +17,18 @@ impl Live for super::Publication {
 
 /// One declared listener and the handle keeping it open.
 pub struct Declared<P> {
-    pub host_port: u16,
+    pub id: String,
+    pub host_port: Option<u16>,
     pub guest_port: u16,
     pub target: PublicationTarget,
+    pub access: capsem_proto::PublicationAccess,
     pub handle: P,
 }
 
-/// Declared publications keyed by their loopback host port, which is unique
-/// on the host and is the exposure's identity.
+/// Declared publications keyed by their exposure identity. Loopback TCP keeps
+/// its host-port text identity; browser previews use owner-generated UUIDs.
 pub struct Registry<P> {
-    entries: Mutex<BTreeMap<u16, Declared<P>>>,
+    entries: Mutex<BTreeMap<String, Declared<P>>>,
 }
 
 impl<P> Default for Registry<P> {
@@ -42,19 +44,31 @@ impl<P: Live> Registry<P> {
     pub fn insert(&self, declared: Declared<P>) {
         let mut entries = self.entries.lock().unwrap();
         entries.retain(|_, entry| !entry.handle.is_finished());
-        entries.insert(declared.host_port, declared);
+        entries.insert(declared.id.clone(), declared);
     }
 
     /// Forget a publication; the returned handle closes when dropped.
-    pub fn remove(&self, host_port: u16) -> Option<Declared<P>> {
-        self.entries.lock().unwrap().remove(&host_port)
+    pub fn remove(&self, id: &str) -> Option<Declared<P>> {
+        self.entries.lock().unwrap().remove(id)
     }
 
-    /// Live publications in host port order, as `(host, guest, target, handle view)`.
+    /// Live publications in stable exposure-id order.
     pub fn list<T>(&self, view: impl Fn(&Declared<P>) -> T) -> Vec<T> {
         let mut entries = self.entries.lock().unwrap();
         entries.retain(|_, entry| !entry.handle.is_finished());
         entries.values().map(view).collect()
+    }
+
+    pub fn with<T>(&self, id: &str, view: impl FnOnce(&Declared<P>) -> T) -> Option<T> {
+        let mut entries = self.entries.lock().unwrap();
+        entries.retain(|_, entry| !entry.handle.is_finished());
+        entries.get(id).map(view)
+    }
+
+    pub fn find_map<T>(&self, mut view: impl FnMut(&Declared<P>) -> Option<T>) -> Option<T> {
+        let mut entries = self.entries.lock().unwrap();
+        entries.retain(|_, entry| !entry.handle.is_finished());
+        entries.values().find_map(&mut view)
     }
 }
 

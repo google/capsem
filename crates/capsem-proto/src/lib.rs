@@ -61,8 +61,9 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// Version 7 replaces native-endian unbounded host IPC with bounded,
 /// big-endian length-prefixed MessagePack and binary byte payloads.
 /// Version 8 adds framed exec stdin/EOF, separated output lanes and reliable
-/// host cancellation.
-pub const PROTOCOL_VERSION: u16 = 8;
+/// host cancellation. Version 9 adds owner-scoped HTTP preview declarations,
+/// credentials and descriptor handoff admission.
+pub const PROTOCOL_VERSION: u16 = 9;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
 pub const GUEST_DNS_PROXY_PORT: u16 = 1053;
@@ -88,6 +89,21 @@ pub enum PublicationTarget {
     Container,
     /// Loopback in the VM's own namespace, minus Capsem's service ports.
     Vm,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicationAccess {
+    #[default]
+    LoopbackTcp,
+    HttpPreview,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewAdmissionKind {
+    Request,
+    WebsocketUpgrade,
 }
 
 impl PublicationTarget {

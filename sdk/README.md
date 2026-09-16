@@ -16,7 +16,7 @@ the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
 | VM snapshots | `snapshots.list`, `snapshots.status` |
 | VM stats | `stats.summary`, `stats.details` |
 | VM container | `container.status`, `container.wait` |
-| VM exposures | `exposures.create/list/delete` |
+| VM exposures | `exposures.create/list/delete/preview_session` (`previewSession` in TypeScript) |
 | VM copy | Python/Rust `from_vm` and `to_vm`; TypeScript `fromVm` and `toVm` |
 
 Rust accesses the nested resources as methods, for example
@@ -68,8 +68,9 @@ VM creation accepts a typed OCI `container` specification separately from the
 VM environment. `vm.container` reads setup/runtime state and provides a
 cancellable read-only wait. `vm.exposures` creates, lists, and revokes
 policy-checked host-loopback listeners for an explicit VM or container target;
-host port zero asks the owner to allocate a free port. Authenticated browser
-preview sessions are not part of the current gateway contract.
+host port zero asks the owner to allocate a free port. HTTP previews expose no
+direct workload listener; `preview_session` returns a URL and a separate,
+single-use bootstrap token that callers submit in a POST body.
 
 Private network operations use authenticated gateway HTTP and immutable network
 IDs; VM creation accepts existing network names through its `networks` option.

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Browser previews use exposure-specific localhost origins, single-use POST
+  bootstrap tokens, scoped HttpOnly cookies, owner-generation admission, and
+  the existing confined router. Capsem credentials are removed before guest
+  HTTP or WebSocket traffic, policy denial opens no guest destination, and
+  lifecycle plus byte outcomes remain in the network security ledger.
+
 - Service-to-VM-owner IPC now rejects frames above 16 MiB before allocation
   and uses explicit big-endian MessagePack framing. Binary IPC, guest control,
   and DNS payloads use MessagePack byte strings instead of expanded integers.
@@ -26,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removed before the SDK contract reaches v1.
 
 ### Added
+
+- Typed Rust, Python, and TypeScript exposure resources can declare an HTTP
+  preview and create its authenticated browser session. The streaming preview
+  path supports request bodies, redirects, workload cookies, and WebSocket
+  upgrades without opening a direct workload port.
 
 - Streaming exec and attached containers accept bounded stdin with explicit
   EOF, preserve separate stdout and stderr lanes, and cancel the guest process

@@ -257,6 +257,11 @@ fn security_event_cel_exposes_all_first_party_roots() {
         .with_udp(UdpSecurityEvent {
             port: Some("53".to_string()),
         })
+        .with_container(ContainerSecurityEvent {
+            image: "registry.example/app:1".into(),
+            registry: "registry.example".into(),
+            digest: Some("sha256:verified".into()),
+        })
         .with_network(NetworkSecurityEvent::Flow(network::tests::private_flow()));
 
     let conditions = [
@@ -322,6 +327,10 @@ fn security_event_cel_exposes_all_first_party_roots() {
         r#"tcp.port == "11434""#,
         r#"udp.valid == "true""#,
         r#"udp.port == "53""#,
+        r#"container.valid == "true""#,
+        r#"container.image == "registry.example/app:1""#,
+        r#"container.registry == "registry.example""#,
+        r#"container.digest == "sha256:verified""#,
         r#"network.valid == "true""#,
         r#"network.name == "eval""#,
     ];

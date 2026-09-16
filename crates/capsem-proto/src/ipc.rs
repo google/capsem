@@ -19,11 +19,17 @@ pub enum ServiceToProcess {
         data: Vec<u8>,
     },
     /// Resize the guest PTY.
-    TerminalResize { cols: u16, rows: u16 },
+    TerminalResize {
+        cols: u16,
+        rows: u16,
+    },
     /// Request the process to gracefully shut down the VM.
     Shutdown,
     /// Execute a command and wait for completion (structured).
-    Exec { id: u64, command: String },
+    Exec {
+        id: u64,
+        command: String,
+    },
     /// Write a file to the guest.
     WriteFile {
         id: u64,
@@ -32,7 +38,10 @@ pub enum ServiceToProcess {
         data: Vec<u8>,
     },
     /// Read a file from the guest.
-    ReadFile { id: u64, path: String },
+    ReadFile {
+        id: u64,
+        path: String,
+    },
     /// Record an explicit file import/export boundary through the process-owned
     /// security-event ledger.
     LogFileBoundary {
@@ -58,17 +67,27 @@ pub enum ServiceToProcess {
     /// Resume guest filesystem I/O after snapshot.
     Unfreeze,
     /// Suspend VM and save checkpoint to disk.
-    Suspend { checkpoint_path: String },
+    Suspend {
+        checkpoint_path: String,
+    },
     /// Resume VM from checkpoint (warm restore).
     Resume,
     /// Query MCP aggregator for server list with connection status.
-    McpListServers { id: u64 },
+    McpListServers {
+        id: u64,
+    },
     /// Query MCP aggregator for discovered tool catalog.
-    McpListTools { id: u64 },
+    McpListTools {
+        id: u64,
+    },
     /// Tell MCP aggregator to reconnect all servers with fresh config.
-    McpRefreshTools { id: u64 },
+    McpRefreshTools {
+        id: u64,
+    },
     /// Query process-owned, in-memory VM snapshot state.
-    SnapshotStatus { id: u64 },
+    SnapshotStatus {
+        id: u64,
+    },
     /// Call an MCP tool via the aggregator subprocess.
     ///
     /// `arguments_json` is the JSON-serialized argument object. Keeping the
@@ -80,7 +99,10 @@ pub enum ServiceToProcess {
         arguments_json: String,
     },
     /// Execute with bounded live stdout/stderr, followed by ExecResult.
-    ExecStream { id: u64, command: String },
+    ExecStream {
+        id: u64,
+        command: String,
+    },
     /// Send bytes to one running exec's stdin.
     ExecStreamInput {
         id: u64,
@@ -88,9 +110,13 @@ pub enum ServiceToProcess {
         data: Vec<u8>,
     },
     /// Deliver explicit in-band EOF to one running exec's stdin.
-    ExecStreamCloseStdin { id: u64 },
+    ExecStreamCloseStdin {
+        id: u64,
+    },
     /// Cancel one running guest exec and its process group.
-    CancelExec { id: u64 },
+    CancelExec {
+        id: u64,
+    },
     /// Publish one loopback host TCP port into the `target` guest namespace.
     PublishPort {
         id: u64,
@@ -98,10 +124,38 @@ pub enum ServiceToProcess {
         guest_port: u16,
         target: crate::PublicationTarget,
     },
-    /// Close a declared publication and forget it across owner restarts.
-    RevokePort { id: u64, host_port: u16 },
+    /// Declare an HTTP preview without opening a bypass listener.
+    DeclarePreview {
+        id: u64,
+        listener_port: u16,
+        guest_port: u16,
+        target: crate::PublicationTarget,
+    },
+    /// Close a declared exposure. Loopback ids remain their host-port text;
+    /// preview ids are owner-generated UUIDs.
+    RevokeExposure {
+        id: u64,
+        exposure_id: String,
+    },
     /// The owner's live publications and its generation.
-    ListPublications { id: u64 },
+    ListPublications {
+        id: u64,
+    },
+    CreatePreviewSession {
+        id: u64,
+        exposure_id: String,
+    },
+    ExchangePreviewBootstrap {
+        id: u64,
+        exposure_id: String,
+        bootstrap_token: String,
+    },
+    AdmitPreviewConnection {
+        id: u64,
+        exposure_id: String,
+        session_token: String,
+        kind: crate::PreviewAdmissionKind,
+    },
     /// Internal VM-owner request for one declared publication data stream.
     ConnectPort {
         flow: crate::router::FlowKey,
@@ -109,7 +163,9 @@ pub enum ServiceToProcess {
         target: crate::PublicationTarget,
     },
     /// Internal VM-owner cancellation for bounded generation-bound flows.
-    AbortPorts { flows: Vec<crate::router::FlowKey> },
+    AbortPorts {
+        flows: Vec<crate::router::FlowKey>,
+    },
     /// The service is plugging this VM into a network's switch and wants the
     /// guest's stream for that network's cable. The owner evaluates its
     /// profile once, has the guest bring the cable up with `address`/`prefix`,
@@ -129,7 +185,11 @@ pub enum ServiceToProcess {
     /// network's cable, and the guest's tap for it goes away, unless a newer
     /// plug already took the cable over. Requests can reach the owner in
     /// either order; the generation, not arrival, decides.
-    LinkDetach { id: u64, network: String, generation: u32 },
+    LinkDetach {
+        id: u64,
+        network: String,
+        generation: u32,
+    },
     /// Internal VM-owner request: bring a cable up in the guest.
     PlugCable {
         cable: u32,
@@ -137,7 +197,9 @@ pub enum ServiceToProcess {
         prefix: u8,
     },
     /// Internal VM-owner request: take a cable down in the guest.
-    UnplugCable { cable: u32 },
+    UnplugCable {
+        cable: u32,
+    },
     /// Ask the VM owner to apply its effective policy and admit the primary
     /// audit row before the service opens a registry connection. Credentials
     /// are deliberately absent.
@@ -233,8 +295,7 @@ pub enum ProcessToService {
     },
     PortPublished {
         id: u64,
-        host_port: u16,
-        router_pid: u32,
+        publication: Option<PublicationInfo>,
         error: Option<String>,
         /// The VM's rules refused the exposure, rather than it failing to open.
         policy_refused: bool,
@@ -248,8 +309,28 @@ pub enum ProcessToService {
     },
     /// Response to LinkDetach.
     LinkDetachResult { id: u64, error: Option<String> },
-    /// Response to RevokePort: whether the port was declared.
-    PortRevoked {
+    PreviewSessionCreated {
+        id: u64,
+        bootstrap_token: Option<String>,
+        expires_in_seconds: u16,
+        error: Option<String>,
+    },
+    PreviewBootstrapExchanged {
+        id: u64,
+        session_token: Option<String>,
+        expires_in_seconds: u16,
+        error: Option<String>,
+    },
+    PreviewConnectionAdmitted {
+        id: u64,
+        handoff_socket: String,
+        handoff_token: u64,
+        owner_generation: u64,
+        error: Option<String>,
+        policy_refused: bool,
+    },
+    /// Response to RevokeExposure: whether it was declared.
+    ExposureRevoked {
         id: u64,
         revoked: bool,
         error: Option<String>,
@@ -289,8 +370,12 @@ impl ServiceToProcess {
             | Self::SnapshotStatus { id }
             | Self::McpCallTool { id, .. }
             | Self::PublishPort { id, .. }
-            | Self::RevokePort { id, .. }
+            | Self::DeclarePreview { id, .. }
+            | Self::RevokeExposure { id, .. }
             | Self::ListPublications { id }
+            | Self::CreatePreviewSession { id, .. }
+            | Self::ExchangePreviewBootstrap { id, .. }
+            | Self::AdmitPreviewConnection { id, .. }
             | Self::LinkAttach { id, .. }
             | Self::LinkDetach { id, .. }
             | Self::AdmitContainerPull { id, .. } => Some(*id),
@@ -317,8 +402,11 @@ impl ProcessToService {
             | Self::SnapshotStatusResult { id, .. }
             | Self::McpCallToolResult { id, .. }
             | Self::PortPublished { id, .. }
-            | Self::PortRevoked { id, .. }
+            | Self::ExposureRevoked { id, .. }
             | Self::PublicationList { id, .. }
+            | Self::PreviewSessionCreated { id, .. }
+            | Self::PreviewBootstrapExchanged { id, .. }
+            | Self::PreviewConnectionAdmitted { id, .. }
             | Self::LinkAttachResult { id, .. }
             | Self::LinkDetachResult { id, .. }
             | Self::ContainerPullAdmission { id, .. } => Some(*id),
@@ -340,11 +428,13 @@ pub struct McpServerStatus {
 }
 
 /// One live publication as its VM owner declares it.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct PublicationInfo {
-    pub host_port: u16,
+    pub id: String,
+    pub host_port: Option<u16>,
     pub guest_port: u16,
     pub target: crate::PublicationTarget,
+    pub access: crate::PublicationAccess,
     pub router_pid: u32,
 }
 

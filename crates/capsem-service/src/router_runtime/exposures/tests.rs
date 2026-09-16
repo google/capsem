@@ -6,9 +6,105 @@ fn fixture() -> (Arc<ServiceState>, PathBuf, tempfile::TempDir) {
     let state = crate::tests::make_test_state();
     let session_dir = dir.path().join("session");
     std::fs::create_dir_all(session_dir.join("guest/workspace")).unwrap();
+    std::fs::write(state.run_dir.join("preview.port"), "19444").unwrap();
     insert_fake_instance_with_session_dir(&state, "box", 1, session_dir);
     let uds_path = state.instances.lock().unwrap()["box"].uds_path.clone();
     (state, uds_path, dir)
+}
+
+#[tokio::test]
+async fn create_preview_declares_an_owner_resource_without_a_bypass_port() {
+    let (state, uds_path, _dir) = fixture();
+    let exposure_id = "0199df26-d0f2-74f2-a304-ef67b79d1217";
+    let owner = spawn_fake_process(&uds_path, 1, move |message| {
+        let ServiceToProcess::DeclarePreview {
+            id,
+            listener_port: 19444,
+            guest_port: 8080,
+            target: PublicationTarget::Container,
+        } = message
+        else {
+            panic!("unexpected {message:?}")
+        };
+        let reply = ProcessToService::PortPublished {
+            id: *id,
+            publication: Some(capsem_proto::ipc::PublicationInfo {
+                id: exposure_id.into(),
+                host_port: None,
+                guest_port: 8080,
+                target: PublicationTarget::Container,
+                access: PublicationAccess::HttpPreview,
+                router_pid: 7,
+            }),
+            error: None,
+            policy_refused: false,
+        };
+        Box::pin(async move { Some(reply) })
+    });
+    let (status, body) = call(
+        &state,
+        axum::http::Method::POST,
+        "/vms/box/exposures",
+        Some(json!({"guest_port": 8080, "access": "http_preview"})),
+    )
+    .await;
+    owner.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!({
+            "id": exposure_id,
+            "host_port": null,
+            "guest_port": 8080,
+            "target": "container",
+            "access": "http_preview"
+        })
+    );
+}
+
+#[tokio::test]
+async fn preview_session_material_is_bound_to_the_current_owner_generation() {
+    let (state, uds_path, _dir) = fixture();
+    let exposure_id = "0199df26-d0f2-74f2-a304-ef67b79d1217";
+    let owner = spawn_fake_process(&uds_path, 2, move |message| {
+        let reply = match message {
+            ServiceToProcess::ListPublications { id } => ProcessToService::PublicationList {
+                id: *id,
+                generation: 42,
+                publications: vec![capsem_proto::ipc::PublicationInfo {
+                    id: exposure_id.into(),
+                    host_port: None,
+                    guest_port: 8080,
+                    target: PublicationTarget::Container,
+                    access: PublicationAccess::HttpPreview,
+                    router_pid: 7,
+                }],
+            },
+            ServiceToProcess::CreatePreviewSession {
+                id,
+                exposure_id: requested,
+            } if requested == exposure_id => ProcessToService::PreviewSessionCreated {
+                id: *id,
+                bootstrap_token: Some("single-use-bootstrap".into()),
+                expires_in_seconds: 30,
+                error: None,
+            },
+            other => panic!("unexpected {other:?}"),
+        };
+        Box::pin(async move { Some(reply) })
+    });
+    let (status, body) = call(
+        &state,
+        axum::http::Method::POST,
+        &format!("/internal/vms/box/exposures/{exposure_id}/preview-session"),
+        Some(json!({})),
+    )
+    .await;
+    owner.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["owner_generation"], "42");
+    assert_eq!(body["bootstrap_token"], "single-use-bootstrap");
+    assert_eq!(body["exposure"]["id"], exposure_id);
 }
 
 async fn call(
@@ -32,8 +128,14 @@ async fn create_relays_the_target_to_the_owner_and_returns_the_bound_port() {
                 target: PublicationTarget::Vm,
             } => Some(ProcessToService::PortPublished {
                 id: *id,
-                host_port: 49152,
-                router_pid: 7,
+                publication: Some(capsem_proto::ipc::PublicationInfo {
+                    id: "49152".into(),
+                    host_port: Some(49152),
+                    guest_port: 8080,
+                    target: PublicationTarget::Vm,
+                    access: PublicationAccess::LoopbackTcp,
+                    router_pid: 7,
+                }),
                 error: None,
                 policy_refused: false,
             }),
@@ -52,7 +154,7 @@ async fn create_relays_the_target_to_the_owner_and_returns_the_bound_port() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body,
-        json!({"id": "49152", "host_port": 49152, "guest_port": 8080, "target": "vm"})
+        json!({"id": "49152", "host_port": 49152, "guest_port": 8080, "target": "vm", "access": "loopback_tcp"})
     );
 }
 
@@ -80,8 +182,7 @@ async fn owner_refusal_is_a_conflict_carrying_its_reason() {
         };
         let reply = ProcessToService::PortPublished {
             id: *id,
-            host_port: 0,
-            router_pid: 0,
+            publication: None,
             error: Some("VM publication limit reached".into()),
             policy_refused: false,
         };
@@ -108,8 +209,7 @@ async fn a_policy_refusal_is_forbidden_carrying_its_reason() {
         };
         let reply = ProcessToService::PortPublished {
             id: *id,
-            host_port: 0,
-            router_pid: 0,
+            publication: None,
             error: Some("exposure of guest port 22 is blocked by policy".into()),
             policy_refused: true,
         };
@@ -138,9 +238,11 @@ async fn list_reports_the_owner_registry_and_its_generation() {
             id: *id,
             generation: u64::MAX,
             publications: vec![capsem_proto::ipc::PublicationInfo {
-                host_port: 16379,
+                id: "16379".into(),
+                host_port: Some(16379),
                 guest_port: 6379,
                 target: PublicationTarget::Container,
+                access: PublicationAccess::LoopbackTcp,
                 router_pid: 9,
             }],
         };
@@ -151,7 +253,7 @@ async fn list_reports_the_owner_registry_and_its_generation() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body,
-        json!({"owner_generation": u64::MAX.to_string(), "exposures": [{"id": "16379", "host_port": 16379, "guest_port": 6379, "target": "container"}]})
+        json!({"owner_generation": u64::MAX.to_string(), "exposures": [{"id": "16379", "host_port": 16379, "guest_port": 6379, "target": "container", "access": "loopback_tcp"}]})
     );
     assert!(
         body.to_string().find("router").is_none(),
@@ -160,15 +262,15 @@ async fn list_reports_the_owner_registry_and_its_generation() {
 }
 
 #[tokio::test]
-async fn delete_revokes_by_id_and_unknown_or_malformed_ids_are_not_found() {
+async fn delete_revokes_by_id_and_unknown_ids_are_not_found() {
     let (state, uds_path, _dir) = fixture();
     let owner = spawn_fake_process(&uds_path, 2, |message| {
-        let ServiceToProcess::RevokePort { id, host_port } = message else {
+        let ServiceToProcess::RevokeExposure { id, exposure_id } = message else {
             panic!("unexpected {message:?}")
         };
-        let reply = ProcessToService::PortRevoked {
+        let reply = ProcessToService::ExposureRevoked {
             id: *id,
-            revoked: *host_port == 16379,
+            revoked: exposure_id == "16379",
             error: None,
         };
         Box::pin(async move { Some(reply) })
@@ -178,16 +280,6 @@ async fn delete_revokes_by_id_and_unknown_or_malformed_ids_are_not_found() {
     let (status, _) = call(&state, axum::http::Method::DELETE, "/vms/box/exposures/18080", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     owner.await.unwrap();
-    for malformed in ["0", "65536", "abc", "-1"] {
-        let (status, _) = call(
-            &state,
-            axum::http::Method::DELETE,
-            &format!("/vms/box/exposures/{malformed}"),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{malformed}");
-    }
 }
 
 #[tokio::test]

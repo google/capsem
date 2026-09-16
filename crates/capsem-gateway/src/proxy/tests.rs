@@ -20,6 +20,7 @@ fn proxy_app(uds_path: &str) -> Router {
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
+        previews: crate::preview::PreviewState::new(0),
     });
     Router::new()
         .route("/big", any(handle_proxy))

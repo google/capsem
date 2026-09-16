@@ -939,6 +939,7 @@ dependencies = [
  "capsem-api",
  "capsem-foundation",
  "capsem-guard",
+ "capsem-proto",
  "clap",
  "futures",
  "http",
@@ -956,6 +957,7 @@ dependencies = [
  "tower-service",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -1129,7 +1131,11 @@ dependencies = [
  "capsem-network",
  "capsem-proto",
  "clap",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

@@ -5,6 +5,7 @@ export {callProfileMcpTool} from "./callProfileMcpTool.js";
 export {createNetwork} from "./createNetwork.js";
 export {createVm} from "./createVm.js";
 export {createVmExposure} from "./createVmExposure.js";
+export {createVmPreviewSession} from "./createVmPreviewSession.js";
 export {deleteNetwork} from "./deleteNetwork.js";
 export {deleteVm} from "./deleteVm.js";
 export {deleteVmExposure} from "./deleteVmExposure.js";

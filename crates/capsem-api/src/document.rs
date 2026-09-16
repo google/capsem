@@ -150,6 +150,10 @@ impl Document {
         let path = "/vms/{id}/exposures/{exposure_id}";
         let revoke = self.operation::<VmActionResponse>(path, "deleteVmExposure");
         self.add(path, HttpMethod::Delete, revoke);
+        self.empty_post::<PreviewSessionResponse>(
+            "/vms/{id}/exposures/{exposure_id}/preview-session",
+            "createVmPreviewSession",
+        );
     }
 
     fn networks(&mut self) {

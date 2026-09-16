@@ -27,6 +27,7 @@ from .exec_output_encoding import ExecOutputEncoding as ExecOutputEncoding
 from .exec_request import ExecRequest as ExecRequest
 from .exec_response import ExecResponse as ExecResponse
 from .exec_source import ExecSource as ExecSource
+from .exposure_access import ExposureAccess as ExposureAccess
 from .exposure_info import ExposureInfo as ExposureInfo
 from .exposure_list_response import ExposureListResponse as ExposureListResponse
 from .exposure_request import ExposureRequest as ExposureRequest
@@ -99,6 +100,7 @@ from .panic_event import PanicEvent as PanicEvent
 from .panics_response import PanicsResponse as PanicsResponse
 from .persist_request import PersistRequest as PersistRequest
 from .persist_response import PersistResponse as PersistResponse
+from .preview_session_response import PreviewSessionResponse as PreviewSessionResponse
 from .process_event import ProcessEvent as ProcessEvent
 from .profile_artifact_issue import ProfileArtifactIssue as ProfileArtifactIssue
 from .profile_availability_summary import (

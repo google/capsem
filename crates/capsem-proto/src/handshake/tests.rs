@@ -46,7 +46,7 @@ fn verify_detects_version_mismatch() {
     h.version = 7;
     let err = verify(&h).unwrap_err();
     assert!(
-        matches!(err, HandshakeError::Version { ours: 8, peer: 7, .. }),
+        matches!(err, HandshakeError::Version { ours: 9, peer: 7, .. }),
         "{err:?}"
     );
     let msg = err.to_string();

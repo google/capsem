@@ -95,8 +95,18 @@ impl NetworkProtocol {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum NetworkRoute {
-    Expose { publication_id: Uuid, listener: SocketAddr },
-    Private { network: NetworkIdentity },
+    Expose {
+        publication_id: Uuid,
+        listener: SocketAddr,
+    },
+    Preview {
+        publication_id: Uuid,
+        listener: SocketAddr,
+        kind: capsem_proto::PreviewAdmissionKind,
+    },
+    Private {
+        network: NetworkIdentity,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -183,6 +193,7 @@ impl NetworkLifecycleAction {
 pub struct NetworkExposure {
     pub publication_id: Uuid,
     pub target: capsem_proto::PublicationTarget,
+    pub access: capsem_proto::PublicationAccess,
     pub action: NetworkLifecycleAction,
     pub listener: SocketAddr,
     pub destination: NetworkEndpoint,
@@ -266,6 +277,11 @@ impl NetworkSecurityEvent {
                     NetworkRoute::Expose {
                         publication_id,
                         listener,
+                    }
+                    | NetworkRoute::Preview {
+                        publication_id,
+                        listener,
+                        ..
                     } => {
                         require(
                             listener.ip().is_loopback() && listener.port() != 0,
@@ -327,6 +343,7 @@ impl NetworkSecurityEvent {
         match field {
             "mode" => Some(borrowed(match flow.route {
                 NetworkRoute::Expose { .. } => "expose",
+                NetworkRoute::Preview { .. } => "http_preview",
                 NetworkRoute::Private { .. } => "private",
             })),
             "side" => Some(borrowed(match flow.side {
@@ -339,7 +356,20 @@ impl NetworkSecurityEvent {
                 NetworkProtocol::SyntheticPing => "synthetic_ping",
             })),
             "publication.id" => match flow.route {
-                NetworkRoute::Expose { publication_id, .. } => Some(owned(publication_id)),
+                NetworkRoute::Expose { publication_id, .. } | NetworkRoute::Preview { publication_id, .. } => {
+                    Some(owned(publication_id))
+                }
+                _ => None,
+            },
+            "action" => match flow.route {
+                NetworkRoute::Preview {
+                    kind: capsem_proto::PreviewAdmissionKind::Request,
+                    ..
+                } => Some(borrowed("preview_request")),
+                NetworkRoute::Preview {
+                    kind: capsem_proto::PreviewAdmissionKind::WebsocketUpgrade,
+                    ..
+                } => Some(borrowed("preview_upgrade")),
                 _ => None,
             },
             _ => field
@@ -359,7 +389,10 @@ impl NetworkSecurityEvent {
 /// It has no side or protocol, so connection rules never match it.
 fn exposure_field<'a>(exposure: &'a NetworkExposure, field: &str) -> Option<PolicySubjectValue<'a>> {
     match field {
-        "mode" => Some(borrowed("expose")),
+        "mode" => Some(borrowed(match exposure.access {
+            capsem_proto::PublicationAccess::LoopbackTcp => "expose",
+            capsem_proto::PublicationAccess::HttpPreview => "http_preview",
+        })),
         "action" => Some(borrowed(exposure.action.as_str())),
         "target" => Some(borrowed(match exposure.target {
             capsem_proto::PublicationTarget::Container => "container",

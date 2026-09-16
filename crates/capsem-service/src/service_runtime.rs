@@ -687,7 +687,7 @@ pub(super) async fn spawn_companions(
     // A previous service may have exited before its gateway removed runtime
     // markers. Never let those stale files satisfy our readiness poll for the
     // replacement gateway.
-    for name in ["gateway.token", "gateway.port", "gateway.pid"] {
+    for name in ["gateway.token", "gateway.port", "gateway.pid", "preview.port"] {
         let path = run_dir.join(name);
         if let Err(error) = std::fs::remove_file(&path) {
             if error.kind() != std::io::ErrorKind::NotFound {
@@ -725,16 +725,19 @@ pub(super) async fn spawn_companions(
             // Wait for gateway to write token + port files (up to 5s)
             let token_path = run_dir.join("gateway.token");
             let port_path = run_dir.join("gateway.port");
+            let preview_port_path = run_dir.join("preview.port");
             {
                 let tp = token_path.clone();
                 let pp = port_path.clone();
+                let ppp = preview_port_path.clone();
                 let _ = capsem_foundation::poll::poll_until(
                     capsem_foundation::poll::PollOpts::new("gateway-ready", std::time::Duration::from_secs(5)),
                     || {
                         let tp = tp.clone();
                         let pp = pp.clone();
+                        let ppp = ppp.clone();
                         async move {
-                            if tp.exists() && pp.exists() {
+                            if tp.exists() && pp.exists() && ppp.exists() {
                                 Some(())
                             } else {
                                 None
@@ -745,7 +748,7 @@ pub(super) async fn spawn_companions(
                 .instrument(gateway_span.clone())
                 .await;
             }
-            if token_path.exists() && port_path.exists() {
+            if token_path.exists() && port_path.exists() && preview_port_path.exists() {
                 gateway_span.record("status", "ok");
             } else {
                 gateway_span.record("status", "error");

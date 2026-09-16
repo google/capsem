@@ -53,6 +53,60 @@ fn rules(text: &str) -> SecurityRuleSet {
     .unwrap()
 }
 
+fn preview_flow(kind: capsem_proto::PreviewAdmissionKind) -> NetworkFlow {
+    NetworkFlow {
+        connection_id: Uuid::from_u128(3),
+        route: NetworkRoute::Preview {
+            publication_id: Uuid::from_u128(4),
+            listener: "127.0.0.1:19444".parse().unwrap(),
+            kind,
+        },
+        side: NetworkSide::Destination,
+        protocol: NetworkProtocol::Tcp,
+        source: NetworkEndpoint {
+            vm: None,
+            address: "127.0.0.1:45000".parse().unwrap(),
+        },
+        destination: NetworkEndpoint {
+            vm: Some(NetworkVm {
+                id: "vm-id".into(),
+                name: "web".into(),
+                generation: NonZeroU64::new(9).unwrap(),
+            }),
+            address: "127.0.0.1:8080".parse().unwrap(),
+        },
+        report: None,
+    }
+}
+
+#[test]
+fn preview_request_and_upgrade_are_separate_explicit_admissions() {
+    let policy = rules(concat!(
+        "[profiles.rules.preview_request]\nname = \"preview_request\"\naction = \"allow\"\n",
+        "match = 'network.mode == \"http_preview\" && network.action == \"preview_request\"'\n",
+    ));
+    for (kind, expected) in [
+        (
+            capsem_proto::PreviewAdmissionKind::Request,
+            SecurityEnforcementAction::Allow,
+        ),
+        (
+            capsem_proto::PreviewAdmissionKind::WebsocketUpgrade,
+            SecurityEnforcementAction::Block,
+        ),
+    ] {
+        let event = SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect)
+            .with_network(NetworkSecurityEvent::Flow(preview_flow(kind)));
+        assert_eq!(
+            evaluate_security_boundary(&policy, BTreeMap::new(), event)
+                .unwrap()
+                .enforcement
+                .action,
+            expected
+        );
+    }
+}
+
 #[test]
 fn network_boundary_rejects_missing_facts() {
     let policy = rules("");
@@ -324,6 +378,7 @@ pub(crate) fn exposure(action: NetworkLifecycleAction, guest_port: u16) -> Netwo
     NetworkSecurityEvent::Exposure(NetworkExposure {
         publication_id: Uuid::from_u128(5),
         target: capsem_proto::PublicationTarget::Container,
+        access: capsem_proto::PublicationAccess::LoopbackTcp,
         action,
         listener: "127.0.0.1:41000".parse().unwrap(),
         destination: NetworkEndpoint {

@@ -670,3 +670,27 @@ async fn child_control_eof_cancels_guest_setup_and_closes_accepted_tcp() {
         std::io::ErrorKind::ConnectionReset
     );
 }
+
+#[test]
+fn preview_bootstrap_and_handoff_credentials_are_scoped_and_single_use() {
+    let (incoming, _requests) = mpsc::channel(1);
+    let preview = PreviewState::new(incoming);
+    let bootstrap = preview.create_session().unwrap();
+    let session = preview.exchange(&bootstrap).unwrap();
+    assert!(
+        preview.exchange(&bootstrap).is_err(),
+        "a bootstrap token must not replay"
+    );
+    assert!(preview
+        .admit("not-a-session", capsem_proto::PreviewAdmissionKind::Request)
+        .is_err());
+
+    let handoff = preview
+        .admit(&session, capsem_proto::PreviewAdmissionKind::WebsocketUpgrade)
+        .unwrap();
+    assert_eq!(
+        preview.redeem(handoff),
+        Some(capsem_proto::PreviewAdmissionKind::WebsocketUpgrade)
+    );
+    assert_eq!(preview.redeem(handoff), None, "a descriptor handoff must not replay");
+}

@@ -47,6 +47,18 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             "/vms/{id}/exposures/{exposure_id}",
             delete(exposures::handle_delete_exposure),
         )
+        .route(
+            "/internal/vms/{id}/exposures/{exposure_id}/preview-session",
+            post(exposures::handle_create_preview_session),
+        )
+        .route(
+            "/internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap",
+            post(exposures::handle_exchange_preview_bootstrap),
+        )
+        .route(
+            "/internal/vms/{id}/exposures/{exposure_id}/preview-admission",
+            post(exposures::handle_admit_preview_connection),
+        )
         .route("/vms/{id}/snapshots/status", get(handle_vm_snapshots_status))
         .route("/vms/{id}/snapshots/list", get(handle_vm_snapshots_list))
         .route("/vms/{id}/changes", get(handle_vm_changes))

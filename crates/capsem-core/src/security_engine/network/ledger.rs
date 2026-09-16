@@ -48,7 +48,7 @@ impl NetworkSecurity {
             NetworkSecurityEvent::Flow(flow) => {
                 let network_id = match &flow.route {
                     NetworkRoute::Private { network } => Some(network.id),
-                    NetworkRoute::Expose { .. } => None,
+                    NetworkRoute::Expose { .. } | NetworkRoute::Preview { .. } => None,
                 };
                 (network_id, Some(flow.connection_id))
             }

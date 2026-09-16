@@ -32,3 +32,10 @@ class Exposures:
             id=await self._vm._resolve(),
             exposure_id=exposure_id,
         )
+
+    async def preview_session(self, exposure_id: str) -> models.PreviewSessionResponse:
+        return await api.create_vm_preview_session(
+            self._vm._transport,
+            id=await self._vm._resolve(),
+            exposure_id=exposure_id,
+        )

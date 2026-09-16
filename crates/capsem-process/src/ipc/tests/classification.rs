@@ -13,8 +13,12 @@ pub(super) fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         | ServiceToProcess::ExecStreamCloseStdin { .. }
         | ServiceToProcess::CancelExec { .. }
         | ServiceToProcess::PublishPort { .. }
-        | ServiceToProcess::RevokePort { .. }
+        | ServiceToProcess::DeclarePreview { .. }
+        | ServiceToProcess::RevokeExposure { .. }
         | ServiceToProcess::ListPublications { .. }
+        | ServiceToProcess::CreatePreviewSession { .. }
+        | ServiceToProcess::ExchangePreviewBootstrap { .. }
+        | ServiceToProcess::AdmitPreviewConnection { .. }
         | ServiceToProcess::AdmitContainerPull { .. }
         | ServiceToProcess::LinkAttach { .. }
         | ServiceToProcess::LinkDetach { .. }

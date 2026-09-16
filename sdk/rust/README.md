@@ -5,7 +5,7 @@ explicitly; the SDK does not discover local services or run host commands.
 
 ```rust,no_run
 use capsem_sdk::{CreateOptions, Hypervisor, LogOptions, Result, TriageOptions, VmSelector};
-use capsem_sdk::models::{ContainerSpec, ExposureRequest, ExposureTarget, HostLogSource};
+use capsem_sdk::models::{ContainerSpec, ExposureAccess, ExposureRequest, ExposureTarget, HostLogSource};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -26,8 +26,10 @@ async fn example(url: &str, token: &str) -> Result<()> {
     vm.container().wait(Duration::from_millis(250)).await?;
     let exposure = vm.exposures().create(ExposureRequest {
         guest_port: 80, host_port: 0, target: ExposureTarget::Container,
+        access: ExposureAccess::HttpPreview,
     }).await?;
-    println!("preview workload is on loopback port {}", exposure.host_port);
+    let preview = vm.exposures().preview_session(&exposure.id).await?;
+    println!("submit the bootstrap token by POST to {}", preview.url);
     hv.networks().logs(&network.id, Default::default()).await?;
     let result = vm.exec("echo hello", Some(60)).await?;
     println!("{} (exit {})", result.stdout.data, result.exit_code);

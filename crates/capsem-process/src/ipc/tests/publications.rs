@@ -34,14 +34,14 @@ async fn owner_answers_publication_list_and_revoke_requests() {
         other => panic!("unexpected list response: {other:?}"),
     }
     service_tx
-        .send(ServiceToProcess::RevokePort {
+        .send(ServiceToProcess::RevokeExposure {
             id: 72,
-            host_port: 16379,
+            exposure_id: "16379".into(),
         })
         .await
         .unwrap();
     match service_rx.recv().await.unwrap() {
-        ProcessToService::PortRevoked { id, revoked, error } => {
+        ProcessToService::ExposureRevoked { id, revoked, error } => {
             assert_eq!((id, revoked, error), (72, false, None));
         }
         other => panic!("unexpected revoke response: {other:?}"),

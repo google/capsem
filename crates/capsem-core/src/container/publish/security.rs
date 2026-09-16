@@ -38,17 +38,19 @@ impl Publisher {
     pub(super) async fn audit_revoked(
         &self,
         publication_id: uuid::Uuid,
-        host_port: u16,
+        listener: SocketAddr,
         guest_port: u16,
         target: capsem_proto::PublicationTarget,
+        access: capsem_proto::PublicationAccess,
     ) -> Result<()> {
         let authority = self.security.clone().context("publication security context missing")?;
         authority
             .evaluate_exposure(
                 publication_id,
-                (Ipv4Addr::LOCALHOST, host_port).into(),
+                listener,
                 guest_port,
                 target,
+                access,
                 NetworkLifecycleAction::Revoked,
             )
             .await
@@ -105,12 +107,14 @@ impl Authority {
         listener: SocketAddr,
         guest_port: u16,
         target: capsem_proto::PublicationTarget,
+        access: capsem_proto::PublicationAccess,
         action: NetworkLifecycleAction,
     ) -> Result<crate::security_engine::SecurityEnforcementDecision> {
         let event = SecurityEvent::new(RuntimeSecurityEventType::NetworkLifecycle).with_network(
             NetworkSecurityEvent::Exposure(NetworkExposure {
                 publication_id,
                 target,
+                access,
                 action,
                 listener,
                 destination: NetworkEndpoint {
@@ -135,10 +139,11 @@ impl Authority {
         listener: SocketAddr,
         guest_port: u16,
         target: capsem_proto::PublicationTarget,
+        access: capsem_proto::PublicationAccess,
         action: NetworkLifecycleAction,
     ) -> Result<()> {
         let decision = self
-            .evaluate_exposure(publication_id, listener, guest_port, target, action)
+            .evaluate_exposure(publication_id, listener, guest_port, target, access, action)
             .await?;
         match decision.action {
             SecurityEnforcementAction::Allow => Ok(()),
@@ -200,6 +205,39 @@ impl AuditFlow {
                 route: NetworkRoute::Expose {
                     publication_id,
                     listener,
+                },
+                side: NetworkSide::Destination,
+                protocol: NetworkProtocol::Tcp,
+                source: NetworkEndpoint {
+                    vm: None,
+                    address: peer,
+                },
+                destination: NetworkEndpoint {
+                    vm: Some(authority.vm.clone()),
+                    address: (Ipv4Addr::LOCALHOST, port).into(),
+                },
+                report: None,
+            },
+            authority,
+            started: std::time::Instant::now(),
+        }
+    }
+
+    pub(super) fn preview(
+        authority: Arc<Authority>,
+        publication_id: uuid::Uuid,
+        listener: SocketAddr,
+        peer: SocketAddr,
+        port: u16,
+        kind: capsem_proto::PreviewAdmissionKind,
+    ) -> Self {
+        Self {
+            facts: NetworkFlow {
+                connection_id: uuid::Uuid::new_v4(),
+                route: NetworkRoute::Preview {
+                    publication_id,
+                    listener,
+                    kind,
                 },
                 side: NetworkSide::Destination,
                 protocol: NetworkProtocol::Tcp,

@@ -153,7 +153,7 @@ async fn expose_asks_the_service_for_each_mapping_and_stops_at_a_refusal() {
             "POST",
             "/vms/vm-1/exposures",
             200,
-            json!({"id": "4100", "host_port": 4100, "guest_port": 6379, "target": "container"}),
+            json!({"id": "4100", "host_port": 4100, "guest_port": 6379, "target": "container", "access": "loopback_tcp"}),
         )
         .route(
             "POST",
@@ -168,6 +168,6 @@ async fn expose_asks_the_service_for_each_mapping_and_stops_at_a_refusal() {
     assert_eq!(requests.len(), 2, "a refused mapping stops the rest");
     assert_eq!(
         requests[1].json(),
-        json!({"guest_port": 9099, "host_port": 9099, "target": "container"})
+        json!({"guest_port": 9099, "host_port": 9099, "target": "container", "access": "loopback_tcp"})
     );
 }

@@ -146,6 +146,18 @@ impl Exposures<'_> {
         )
         .await
     }
+
+    pub async fn preview_session(&self, exposure_id: &str) -> Result<models::PreviewSessionResponse> {
+        api::create_vm_preview_session(
+            &self.0.client.transport,
+            &api::CreateVmPreviewSessionParams {
+                id: self.0.resolve().await?,
+                exposure_id: exposure_id.into(),
+            },
+            self.0.client.options,
+        )
+        .await
+    }
 }
 
 impl Networks<'_> {

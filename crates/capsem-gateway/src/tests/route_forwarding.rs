@@ -8,6 +8,7 @@ fn service_proxy_app(uds_path: &str) -> axum::Router {
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
+        previews: crate::preview::PreviewState::new(0),
     });
     service_proxy_routes().with_state(state)
 }

@@ -1,5 +1,5 @@
 import {expect, it} from 'vitest';
-import {ExposureTarget, HistoryLayerFilter, HostLogSource, HttpError, Hypervisor, RestartAuthentication, RestartStatus, TimelineLayer, VM} from '../src/index.js';
+import {ExposureAccess, ExposureTarget, HistoryLayerFilter, HostLogSource, HttpError, Hypervisor, RestartAuthentication, RestartStatus, TimelineLayer, VM} from '../src/index.js';
 import {gateway} from './gateway.js';
 import {sample, schemas} from './contract.js';
 import {FacadeGateway} from './facade-gateway.js';
@@ -180,12 +180,16 @@ it('maps typed exposure lifecycle through VM-scoped routes', async () => {
   await gateway((request, response) => state.handle(request, response), async (url, received) => {
     const vm = new VM(url, 'secret', {id: 'vm-0'});
     try {
-      const created = await vm.exposures.create({target: ExposureTarget.CONTAINER, guest_port: 8080, host_port: 0});
+      const created = await vm.exposures.create({
+        target: ExposureTarget.CONTAINER, guest_port: 8080, host_port: 0, access: ExposureAccess.HTTP_PREVIEW,
+      });
       await vm.exposures.list();
       await vm.exposures.delete(created.id);
+      await vm.exposures.previewSession(created.id);
       expect(received.map(request => [request.method, request.url])).toEqual([
         ['POST', '/vms/vm-0/exposures'], ['GET', '/vms/vm-0/exposures'],
         ['DELETE', `/vms/vm-0/exposures/${created.id}`],
+        ['POST', `/vms/vm-0/exposures/${created.id}/preview-session`],
       ]);
     } finally {vm.close();}
   });

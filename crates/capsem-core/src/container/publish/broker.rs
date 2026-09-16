@@ -17,6 +17,7 @@ struct Active {
     acknowledgement: Option<Instant>,
     accepted: bool,
     close_deadline: Option<Instant>,
+    preview: bool,
 }
 impl Drop for Active {
     fn drop(&mut self) {
@@ -61,7 +62,7 @@ pub(super) async fn serve(
                 _ = cancellation.cancelled() => return Ok(()),
                 _ = router.closed.cancelled() => anyhow::bail!("VM router closed"),
                 arrival = incoming.recv(), if active.len() + connecting.len() < MAX_CONNECTIONS => {
-                    let Some(Incoming { source, audit, port: guest_port, target }) = arrival else {
+                    let Some(Incoming { source, audit, port: guest_port, target, preview }) = arrival else {
                         return Ok(());
                     };
                     let Ok(permit) = ingress.clone().try_acquire_owned() else {
@@ -119,7 +120,7 @@ pub(super) async fn serve(
                         (id, result, reason)
                     });
                     tracing::debug!(connection_id = id, guest_port, "publication connection accepted");
-                    connecting.insert(id, Active { audit, guest: flow, _pending: pending, graceful: false, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false, close_deadline: None });
+                    connecting.insert(id, Active { audit, guest: flow, _pending: pending, graceful: false, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false, close_deadline: None, preview });
                 }
                 Some((guest, report)) = guest_records.recv() => {
                     if report.reason != capsem_proto::router::CloseReason::Complete {
@@ -188,7 +189,14 @@ pub(super) async fn serve(
                                     capsem_foundation::unix::router_stream::SOCKET_BUFFER_SIZE)?;
                                 flow.connection = Some(connection);
                                 flow.acknowledgement = Some(Instant::now() + Duration::from_secs(2));
-                                router.grant(flow.source.as_fd(), destination.as_fd(), queue.clone()).await
+                                router
+                                    .grant(
+                                        flow.source.as_fd(),
+                                        destination.as_fd(),
+                                        queue.clone(),
+                                        flow.preview,
+                                    )
+                                    .await
                             }.await;
                             match grant {
                                 Ok(id) => { active.insert(id, flow); }

@@ -100,6 +100,11 @@ operation!(get_vm_container, "getVmContainer", GetVmContainerParams);
 operation!(list_vm_exposures, "listVmExposures", ListVmExposuresParams);
 operation!(create_vm_exposure, "createVmExposure", CreateVmExposureParams);
 operation!(delete_vm_exposure, "deleteVmExposure", DeleteVmExposureParams);
+operation!(
+    create_vm_preview_session,
+    "createVmPreviewSession",
+    CreateVmPreviewSessionParams
+);
 operation!(stop_vm, "stopVm", StopVmParams);
 operation!(get_vm_timeline, "getVmTimeline", GetVmTimelineParams);
 

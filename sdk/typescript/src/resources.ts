@@ -76,6 +76,10 @@ export class Exposures extends Resource {
     const {transport, id} = await this.context(options);
     return api.deleteVmExposure(transport, {id, exposure_id: exposureId}, options);
   }
+  async previewSession(exposureId: string, options: CallOptions = {}): Promise<models.PreviewSessionResponse> {
+    const {transport, id} = await this.context(options);
+    return api.createVmPreviewSession(transport, {id, exposure_id: exposureId}, options);
+  }
 }
 
 export class Networks {

@@ -160,7 +160,7 @@ mod against_the_service {
                 "POST",
                 "/vms/vm-3/exposures",
                 200,
-                json!({"id": "4100", "host_port": 4100, "guest_port": 6379, "target": "container"}),
+                json!({"id": "4100", "host_port": 4100, "guest_port": 6379, "target": "container", "access": "loopback_tcp"}),
             );
         create(
             &service.client,
@@ -189,7 +189,7 @@ mod against_the_service {
         assert_eq!(service.find("GET", "/vms/vm-3/container").len(), 2);
         assert_eq!(
             service.find("POST", "/vms/vm-3/exposures")[0].json(),
-            json!({"guest_port": 6379, "host_port": 0, "target": "container"})
+            json!({"guest_port": 6379, "host_port": 0, "target": "container", "access": "loopback_tcp"})
         );
         assert!(service.find("DELETE", "/vms/vm-3/delete").is_empty());
     }

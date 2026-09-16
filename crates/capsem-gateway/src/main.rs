@@ -1,6 +1,7 @@
 mod auth;
 mod cors;
 mod listener;
+mod preview;
 mod proxy;
 mod schema;
 mod service_client;
@@ -65,6 +66,7 @@ pub struct AppState {
     pub auth_failures: AuthFailureTracker,
     /// Broadcast channel for real-time events to WebSocket /events clients.
     pub events_tx: tokio::sync::broadcast::Sender<String>,
+    pub previews: preview::PreviewState,
 }
 
 #[tokio::main]
@@ -129,9 +131,15 @@ async fn main() -> Result<()> {
         .context("failed to bind TCP listener")?;
     let bound_port = listener.local_addr().context("failed to read bound TCP port")?.port();
 
-    // Generate auth token and write runtime files (token/port/pid).
+    let preview_listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .await
+        .context("failed to bind preview listener")?;
+    let preview_port = preview_listener.local_addr()?.port();
+
+    // Generate auth token and write runtime files only after both listeners
+    // exist. gateway.token is the final readiness marker.
     let token = auth::generate_token();
-    let auth_state = AuthState::new(&run_dir, &token, bound_port)?;
+    let auth_state = AuthState::new(&run_dir, &token, bound_port, preview_port)?;
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<String>(64);
     let service_client = ServiceClient::new(&uds_path);
@@ -142,6 +150,12 @@ async fn main() -> Result<()> {
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx,
+        previews: preview::PreviewState::new(preview_port),
+    });
+
+    let preview_state = state.clone();
+    tokio::spawn(async move {
+        preview::serve(preview_listener, preview_state).await;
     });
 
     let app = Router::new()
@@ -225,6 +239,10 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             get(proxy::handle_proxy).post(proxy::handle_proxy),
         )
         .route("/vms/{id}/exposures/{exposure_id}", delete(proxy::handle_proxy))
+        .route(
+            "/vms/{id}/exposures/{exposure_id}/preview-session",
+            post(preview::create_session),
+        )
         .route("/vms/{id}/snapshots/status", get(proxy::handle_proxy))
         .route("/vms/{id}/snapshots/list", get(proxy::handle_proxy))
         .route("/vms/{id}/changes", get(proxy::handle_proxy))

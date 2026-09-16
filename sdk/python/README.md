@@ -6,7 +6,7 @@ or run host commands.
 
 ```python
 from capsem import Hypervisor, VM, decode_exec_output
-from capsem.models import ContainerSpec, ExposureRequest, ExposureTarget, HostLogSource, TimelineLayer
+from capsem.models import ContainerSpec, ExposureAccess, ExposureRequest, ExposureTarget, HostLogSource, TimelineLayer
 
 async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     overview = await hv.info()  # health, versions, profiles, updates
@@ -21,8 +21,12 @@ async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     )
     container = await vm.container.wait(interval=0.25)
     exposure = await vm.exposures.create(
-        ExposureRequest(guest_port=80, host_port=0, target=ExposureTarget.CONTAINER)
+        ExposureRequest(
+            guest_port=80, target=ExposureTarget.CONTAINER,
+            access=ExposureAccess.HTTP_PREVIEW,
+        )
     )
+    preview = await vm.exposures.preview_session(exposure.id)
     await hv.networks.logs(network.id, vm=vm.id)
     result = await vm.exec("echo hello", timeout_secs=60)
     print(decode_exec_output(result.stdout), result.exit_code)
@@ -82,9 +86,10 @@ immutable IDs, while VM creation accepts existing network names. A typed
 `ContainerSpec` keeps container arguments/environment separate from VM options;
 registry credentials are transient runtime inputs. `vm.container.status()` and
 `wait()` are read-only, and cancelling a local wait does not delete the VM.
-`vm.exposures` manages policy-checked loopback listeners. Host port zero
-allocates a free port; specify `ExposureTarget.VM` or `CONTAINER` when namespace
-choice matters. Browser preview sessions are not yet in the HTTP contract.
+`vm.exposures` manages policy-checked loopback listeners and authenticated HTTP
+previews. Host port zero allocates a free loopback port; specify
+`ExposureTarget.VM` or `CONTAINER` when namespace choice matters. A preview
+session returns its URL and a separate single-use token for a POST bootstrap.
 Snapshot creation/restoration and mounts remain pending.
 
 `hv.run(command)` executes once in a temporary VM. `hv.panics()` and

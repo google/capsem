@@ -18,6 +18,7 @@ use crate::terminal::TerminalRelay;
 mod container_pull;
 mod exec;
 mod private;
+mod publication;
 mod snapshot;
 use snapshot::snapshot_status_from_scheduler;
 
@@ -315,63 +316,53 @@ pub(crate) async fn handle_ipc_connection(
                 host_port,
                 guest_port,
                 target,
-            } => {
-                let jobs = job_store.clone();
-                let control = ctrl_tx.clone();
-                let output = ipc_tx_out.clone();
-                tokio::spawn(async move {
-                    let response = match jobs
-                        .publisher
-                        .publish_saved(host_port, guest_port, target, control)
-                        .await
-                    {
-                        Ok(publication) => ProcessToService::PortPublished {
-                            id,
-                            host_port: publication.host_port,
-                            router_pid: publication.router_pid,
-                            error: None,
-                            policy_refused: false,
-                        },
-                        Err(error) => ProcessToService::PortPublished {
-                            id,
-                            host_port: 0,
-                            router_pid: 0,
-                            policy_refused: error.is::<capsem_core::container::publish::ExposureRefused>(),
-                            error: Some(format!("{error:#}")),
-                        },
-                    };
-                    capsem_core::try_send!("publication_result", output.send(response).await);
-                });
-            }
+            } => publication::spawn_declare(
+                &job_store,
+                &ctrl_tx,
+                &ipc_tx_out,
+                id,
+                None,
+                host_port,
+                guest_port,
+                target,
+            ),
+            ServiceToProcess::DeclarePreview {
+                id,
+                listener_port,
+                guest_port,
+                target,
+            } => publication::spawn_declare(
+                &job_store,
+                &ctrl_tx,
+                &ipc_tx_out,
+                id,
+                Some(listener_port),
+                0,
+                guest_port,
+                target,
+            ),
             message @ ServiceToProcess::AdmitContainerPull { .. } => {
                 container_pull::spawn(&job_store, &ipc_tx_out, message)
             }
-            ServiceToProcess::RevokePort { id, host_port } => {
-                let jobs = job_store.clone();
-                let output = ipc_tx_out.clone();
-                tokio::spawn(async move {
-                    let response = match jobs.publisher.revoke(host_port).await {
-                        Ok(revoked) => ProcessToService::PortRevoked {
-                            id,
-                            revoked,
-                            error: None,
-                        },
-                        Err(error) => ProcessToService::PortRevoked {
-                            id,
-                            revoked: false,
-                            error: Some(format!("{error:#}")),
-                        },
-                    };
-                    capsem_core::try_send!("publication_revoke_result", output.send(response).await);
-                });
+            ServiceToProcess::RevokeExposure { id, exposure_id } => {
+                publication::spawn_revoke(&job_store, &ipc_tx_out, id, exposure_id)
             }
+            ServiceToProcess::CreatePreviewSession { id, exposure_id } => {
+                publication::create_session(&job_store, &ipc_tx_out, id, &exposure_id).await;
+            }
+            ServiceToProcess::ExchangePreviewBootstrap {
+                id,
+                exposure_id,
+                bootstrap_token,
+            } => publication::exchange_bootstrap(&job_store, &ipc_tx_out, id, &exposure_id, &bootstrap_token).await,
+            ServiceToProcess::AdmitPreviewConnection {
+                id,
+                exposure_id,
+                session_token,
+                kind,
+            } => publication::admit(&job_store, &ipc_tx_out, id, &exposure_id, &session_token, kind).await,
             ServiceToProcess::ListPublications { id } => {
-                let response = ProcessToService::PublicationList {
-                    id,
-                    generation: job_store.publisher.generation().get(),
-                    publications: job_store.publisher.publications(),
-                };
-                capsem_core::try_send!("publication_list_result", ipc_tx_out.send(response).await);
+                publication::list(&job_store, &ipc_tx_out, id).await;
             }
             ServiceToProcess::ConnectPort { .. }
             | ServiceToProcess::AbortPorts { .. }

@@ -51,6 +51,7 @@ async fn gateway(service: &std::path::Path) -> std::net::SocketAddr {
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
+        previews: crate::preview::PreviewState::new(0),
     });
     let app = service_proxy_routes()
         .layer(axum::middleware::from_fn_with_state(

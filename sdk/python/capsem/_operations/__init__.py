@@ -5,6 +5,9 @@ from .call_profile_mcp_tool import call_profile_mcp_tool as call_profile_mcp_too
 from .create_network import create_network as create_network
 from .create_vm import create_vm as create_vm
 from .create_vm_exposure import create_vm_exposure as create_vm_exposure
+from .create_vm_preview_session import (
+    create_vm_preview_session as create_vm_preview_session,
+)
 from .delete_network import delete_network as delete_network
 from .delete_vm import delete_vm as delete_vm
 from .delete_vm_exposure import delete_vm_exposure as delete_vm_exposure

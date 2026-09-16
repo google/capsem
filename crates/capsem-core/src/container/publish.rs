@@ -13,7 +13,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixStream;
 use tokio::sync::{mpsc, oneshot, Semaphore};
@@ -91,6 +91,7 @@ pub struct Incoming {
     pub audit: security::AuditFlow,
     pub port: u16,
     pub target: capsem_proto::PublicationTarget,
+    pub preview: bool,
 }
 
 struct GuestFlow {
@@ -138,12 +139,117 @@ impl Publisher {
 }
 
 pub struct Publication {
-    pub host_port: u16,
+    pub host_port: Option<u16>,
+    listener: std::net::SocketAddr,
     pub router_pid: u32,
     /// The identity its admission, connections and revocation are audited under.
     pub publication_id: uuid::Uuid,
     task: tokio::task::AbortHandle,
     cancellation: CancellationToken,
+    preview: Option<Arc<PreviewState>>,
+}
+
+const PREVIEW_BOOTSTRAP_LIFETIME: Duration = Duration::from_secs(30);
+const PREVIEW_SESSION_LIFETIME: Duration = Duration::from_secs(15 * 60);
+const PREVIEW_HANDOFF_LIFETIME: Duration = Duration::from_secs(5);
+const MAX_PREVIEW_CREDENTIALS: usize = 128;
+
+struct PreviewCredentials {
+    bootstraps: HashMap<String, Instant>,
+    sessions: HashMap<String, Instant>,
+    handoffs: HashMap<u64, (Instant, capsem_proto::PreviewAdmissionKind)>,
+}
+
+struct PreviewState {
+    incoming: mpsc::Sender<Incoming>,
+    credentials: Mutex<PreviewCredentials>,
+}
+
+impl PreviewState {
+    fn new(incoming: mpsc::Sender<Incoming>) -> Self {
+        Self {
+            incoming,
+            credentials: Mutex::new(PreviewCredentials {
+                bootstraps: HashMap::new(),
+                sessions: HashMap::new(),
+                handoffs: HashMap::new(),
+            }),
+        }
+    }
+
+    fn secret() -> String {
+        format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple())
+    }
+
+    fn create_session(&self) -> Result<String> {
+        let now = Instant::now();
+        let mut credentials = self.credentials.lock().unwrap();
+        credentials.bootstraps.retain(|_, expires| *expires > now);
+        ensure!(
+            credentials.bootstraps.len() < MAX_PREVIEW_CREDENTIALS,
+            "preview bootstrap quota reached"
+        );
+        let token = Self::secret();
+        credentials
+            .bootstraps
+            .insert(token.clone(), now + PREVIEW_BOOTSTRAP_LIFETIME);
+        drop(credentials);
+        Ok(token)
+    }
+
+    fn exchange(&self, token: &str) -> Result<String> {
+        let now = Instant::now();
+        let mut credentials = self.credentials.lock().unwrap();
+        let expires = credentials
+            .bootstraps
+            .remove(token)
+            .context("unknown, reused or expired preview bootstrap")?;
+        ensure!(expires > now, "unknown, reused or expired preview bootstrap");
+        credentials.sessions.retain(|_, expires| *expires > now);
+        ensure!(
+            credentials.sessions.len() < MAX_PREVIEW_CREDENTIALS,
+            "preview session quota reached"
+        );
+        let session = Self::secret();
+        credentials
+            .sessions
+            .insert(session.clone(), now + PREVIEW_SESSION_LIFETIME);
+        drop(credentials);
+        Ok(session)
+    }
+
+    fn admit(&self, session: &str, kind: capsem_proto::PreviewAdmissionKind) -> Result<u64> {
+        let now = Instant::now();
+        let mut credentials = self.credentials.lock().unwrap();
+        credentials.sessions.retain(|_, expires| *expires > now);
+        ensure!(
+            credentials.sessions.contains_key(session),
+            "unknown or expired preview session"
+        );
+        credentials.handoffs.retain(|_, (expires, _)| *expires > now);
+        ensure!(
+            credentials.handoffs.len() < MAX_PREVIEW_CREDENTIALS,
+            "preview handoff quota reached"
+        );
+        let mut token = uuid::Uuid::new_v4().as_u128() as u64;
+        if token == 0 {
+            token = 1;
+        }
+        while credentials.handoffs.contains_key(&token) {
+            token = token.checked_add(1).context("preview handoff tokens exhausted")?;
+        }
+        credentials
+            .handoffs
+            .insert(token, (now + PREVIEW_HANDOFF_LIFETIME, kind));
+        drop(credentials);
+        Ok(token)
+    }
+
+    fn redeem(&self, token: u64) -> Option<capsem_proto::PreviewAdmissionKind> {
+        let now = Instant::now();
+        let (expires, kind) = self.credentials.lock().unwrap().handoffs.remove(&token)?;
+        (expires > now).then_some(kind)
+    }
 }
 
 impl Publication {
@@ -291,7 +397,14 @@ impl Publisher {
         // dropping it on refusal serves nothing.
         let publication_id = uuid::Uuid::new_v4();
         authority
-            .admit_exposure(publication_id, host_address, guest_port, target, action)
+            .admit_exposure(
+                publication_id,
+                host_address,
+                guest_port,
+                target,
+                capsem_proto::PublicationAccess::LoopbackTcp,
+                action,
+            )
             .await?;
         listener.set_nonblocking(true)?;
         let listener = tokio::net::TcpListener::from_std(listener)?;
@@ -314,11 +427,13 @@ impl Publisher {
         })?;
         drop(lifecycle);
         Ok(Publication {
-            host_port,
+            host_port: Some(host_port),
+            listener: host_address,
             router_pid,
             publication_id,
             task,
             cancellation,
+            preview: None,
         })
     }
 
@@ -444,9 +559,11 @@ impl Publisher {
     /// The owner's live publications, in host port order.
     pub fn publications(&self) -> Vec<capsem_proto::ipc::PublicationInfo> {
         self.declared.list(|entry| capsem_proto::ipc::PublicationInfo {
+            id: entry.id.clone(),
             host_port: entry.host_port,
             guest_port: entry.guest_port,
             target: entry.target,
+            access: entry.access,
             router_pid: entry.handle.router_pid,
         })
     }
@@ -458,18 +575,171 @@ impl Publisher {
         publication: Publication,
     ) -> capsem_proto::ipc::PublicationInfo {
         let info = capsem_proto::ipc::PublicationInfo {
+            id: publication
+                .host_port
+                .expect("loopback publication has a port")
+                .to_string(),
             host_port: publication.host_port,
             guest_port,
             target,
+            access: capsem_proto::PublicationAccess::LoopbackTcp,
             router_pid: publication.router_pid,
         };
         self.declared.insert(registry::Declared {
+            id: info.id.clone(),
             host_port: info.host_port,
             guest_port,
             target,
+            access: info.access,
             handle: publication,
         });
         info
+    }
+
+    /// Declare a browser-only exposure. The gateway owns the one shared
+    /// loopback listener; this owner receives only admitted connected sockets.
+    pub async fn declare_preview(
+        self: &Arc<Self>,
+        listener_port: u16,
+        guest_port: u16,
+        target: capsem_proto::PublicationTarget,
+        control: mpsc::Sender<ServiceToProcess>,
+    ) -> Result<capsem_proto::ipc::PublicationInfo> {
+        let lifecycle = self.drain.lock().await;
+        ensure!(!self.cancellation.is_cancelled(), "VM router is shutting down");
+        ensure!(listener_port != 0, "preview listener port is missing");
+        ensure!(target.admits(guest_port), "invalid preview guest port");
+        let permit = self
+            .mappings
+            .clone()
+            .try_acquire_owned()
+            .context("VM publication limit reached")?;
+        let publication_id = uuid::Uuid::new_v4();
+        let listener = (Ipv4Addr::LOCALHOST, listener_port).into();
+        let authority = self.security.clone().context("publication security context missing")?;
+        authority
+            .admit_exposure(
+                publication_id,
+                listener,
+                guest_port,
+                target,
+                capsem_proto::PublicationAccess::HttpPreview,
+                crate::security_engine::network::NetworkLifecycleAction::Published,
+            )
+            .await?;
+        let mut current = self.router.lock().await;
+        if current.as_ref().is_none_or(|router| router.closed.is_cancelled()) {
+            *current = Some(companion::start(self).await?);
+        }
+        let router = current.as_ref().unwrap().clone();
+        drop(current);
+        let router_pid = router.pid;
+        let (feed, incoming) = mpsc::channel(capsem_router::MAX_CONNECTIONS);
+        let preview = Arc::new(PreviewState::new(feed));
+        let cancellation = self.cancellation.child_token();
+        let stop = cancellation.clone();
+        let owner = self.clone();
+        let task = self.spawn(async move {
+            let _permit = permit;
+            if let Err(error) = broker::serve(owner, incoming, control, router, stop).await {
+                tracing::warn!(%error, %publication_id, "preview broker ended");
+            }
+        })?;
+        let id = publication_id.to_string();
+        let publication = Publication {
+            host_port: None,
+            listener,
+            router_pid,
+            publication_id,
+            task,
+            cancellation,
+            preview: Some(preview),
+        };
+        let info = capsem_proto::ipc::PublicationInfo {
+            id: id.clone(),
+            host_port: None,
+            guest_port,
+            target,
+            access: capsem_proto::PublicationAccess::HttpPreview,
+            router_pid,
+        };
+        self.declared.insert(registry::Declared {
+            id,
+            host_port: None,
+            guest_port,
+            target,
+            access: capsem_proto::PublicationAccess::HttpPreview,
+            handle: publication,
+        });
+        drop(lifecycle);
+        Ok(info)
+    }
+
+    pub fn create_preview_session(&self, id: &str) -> Result<String> {
+        self.declared
+            .with(id, |entry| {
+                entry.handle.preview.as_ref().map(|preview| preview.create_session())
+            })
+            .flatten()
+            .context("preview exposure not found")?
+    }
+
+    pub fn exchange_preview_bootstrap(&self, id: &str, token: &str) -> Result<String> {
+        self.declared
+            .with(id, |entry| {
+                entry.handle.preview.as_ref().map(|preview| preview.exchange(token))
+            })
+            .flatten()
+            .context("preview exposure not found")?
+    }
+
+    pub fn admit_preview_connection(
+        &self,
+        id: &str,
+        session: &str,
+        kind: capsem_proto::PreviewAdmissionKind,
+    ) -> Result<u64> {
+        self.declared
+            .with(id, |entry| {
+                entry
+                    .handle
+                    .preview
+                    .as_ref()
+                    .map(|preview| preview.admit(session, kind))
+            })
+            .flatten()
+            .context("preview exposure not found")?
+    }
+
+    pub async fn accept_preview_handoff(self: &Arc<Self>, token: u64, source: Source) -> Result<()> {
+        let found = self.declared.find_map(|entry| {
+            let preview = entry.handle.preview.as_ref()?;
+            let kind = preview.redeem(token)?;
+            Some((
+                preview.clone(),
+                entry.handle.publication_id,
+                entry.guest_port,
+                entry.target,
+                kind,
+            ))
+        });
+        let (preview, publication_id, guest_port, target, kind) =
+            found.context("unknown, reused or expired preview handoff")?;
+        let authority = self.security.clone().context("publication security context missing")?;
+        let listener = source.0.local_addr()?;
+        let peer = source.0.peer_addr()?;
+        let audit = security::AuditFlow::preview(authority, publication_id, listener, peer, guest_port, kind);
+        preview
+            .incoming
+            .send(Incoming {
+                source,
+                audit,
+                port: guest_port,
+                target,
+                preview: true,
+            })
+            .await
+            .context("preview broker closed")
     }
 
     pub fn generation(&self) -> NonZeroU64 {
@@ -521,6 +791,7 @@ impl Publisher {
                     audit,
                     port: guest_port,
                     target,
+                    preview: false,
                 };
                 if feed.send(arrival).await.is_err() {
                     return;

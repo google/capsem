@@ -111,7 +111,7 @@ impl Publisher {
         let _lock = saved.lock.lock().await;
         let publication = self.publish(host, guest, target, control).await?;
         let port = SavedPublication {
-            host: publication.host_port,
+            host: publication.host_port.expect("saved publication has a loopback port"),
             guest,
             target,
         };
@@ -129,14 +129,23 @@ impl Publisher {
     }
 
     /// Close a declared publication and forget its saved record.
-    pub async fn revoke(&self, host: u16) -> Result<bool> {
+    pub async fn revoke(&self, exposure_id: &str) -> Result<bool> {
         // Closed first: the listener does not wait on its audit row.
-        let declared = match self.declared.remove(host) {
+        let declared = match self.declared.remove(exposure_id) {
             Some(entry) => {
-                let (publication_id, guest, target) = (entry.handle.publication_id, entry.guest_port, entry.target);
+                let (publication_id, listener, guest, target, access) = (
+                    entry.handle.publication_id,
+                    entry.handle.listener,
+                    entry.guest_port,
+                    entry.target,
+                    entry.access,
+                );
                 drop(entry);
-                if let Err(error) = self.audit_revoked(publication_id, host, guest, target).await {
-                    tracing::warn!(%error, host_port = host, "exposure revocation audit was not admitted");
+                if let Err(error) = self
+                    .audit_revoked(publication_id, listener, guest, target, access)
+                    .await
+                {
+                    tracing::warn!(%error, %exposure_id, "exposure revocation audit was not admitted");
                 }
                 true
             }
@@ -146,6 +155,8 @@ impl Publisher {
             return Ok(declared);
         };
         let _lock = saved.lock.lock().await;
+        let host = exposure_id.parse::<u16>().ok().filter(|port| *port != 0);
+        let Some(host) = host else { return Ok(declared) };
         let path = saved.path.clone();
         let forgotten = tokio::task::spawn_blocking(move || forget(&path, host)).await??;
         Ok(declared || forgotten)

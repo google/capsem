@@ -9,8 +9,8 @@ use std::time::Duration;
 use anyhow::{ensure, Context, Result};
 use capsem_api::stream::{StreamControl, StreamKind};
 use capsem_api::{
-    ContainerSpec, ContainerState, ContainerStatusResponse, ExposureInfo, ExposureRequest, ExposureTarget,
-    RegistryAccess,
+    ContainerSpec, ContainerState, ContainerStatusResponse, ExposureAccess, ExposureInfo, ExposureRequest,
+    ExposureTarget, RegistryAccess,
 };
 use capsem_core::container;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -151,12 +151,16 @@ pub(super) async fn expose(client: &UdsClient, id: &str, mappings: &[container::
             guest_port: mapping.guest,
             host_port: mapping.host,
             target: ExposureTarget::Container,
+            access: ExposureAccess::LoopbackTcp,
         };
         let exposed: ApiResponse<ExposureInfo> = client.post(&format!("/vms/{id}/exposures"), request).await?;
         let exposed = exposed.into_result().context("publish port")?;
         eprintln!(
             "Published 127.0.0.1:{} -> {}/tcp",
-            exposed.host_port, exposed.guest_port
+            exposed
+                .host_port
+                .context("loopback exposure did not return a host port")?,
+            exposed.guest_port
         );
     }
     Ok(())

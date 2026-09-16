@@ -20,16 +20,17 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 RATIONALE = """\
-Exposure bytes are copied only by the confined capsem-router.
+Exposure bytes are carried only by the confined capsem-router.
 
-capsem-service authorizes exposures and streams and talks to the VM owner over
-typed IPC; capsem-gateway authenticates and tunnels the stream upgrade to the
-service. Neither opens TCP toward a guest or host port, and neither copies a
-byte stream except the gateway's one WebSocket upgrade tunnel to the service
-socket. The VM owner binds 127.0.0.1 and grants connected descriptor pairs to
-a router spawned with a cleared environment, "/" as its directory, no stdout,
-and a confirmed sandbox. Do not add a service or gateway reverse proxy, and do
-not give the router privileged crates, listeners, or destination choice.
+capsem-service authorizes exposures and talks to the VM owner over typed IPC.
+capsem-gateway may accept a loopback browser socket and read bounded control
+material needed to authenticate it, but hands that same descriptor to the VM
+owner without opening the guest destination or carrying workload bytes. The VM
+owner binds loopback TCP exposures, connects the authorized guest target, and
+grants connected descriptor pairs to a router spawned with a cleared
+environment, "/" as its directory, no stdout, and a confirmed sandbox. Do not
+add a service or gateway reverse proxy, and do not give the router privileged
+owners, listeners, or destination choice.
 """
 
 #: Service modules that own exposure, stream and container control.
@@ -39,17 +40,26 @@ SERVICE_CONTROL = (
     "crates/capsem-service/src/container_setup.rs",
 )
 TCP = re.compile(r"\bTcp(?:Stream|Listener|Socket)\b")
-BYTE_COPY = re.compile(r"\bcopy_bidirectional(?:_with_sizes)?\b|\bio::copy_buf\b|\btokio::io::copy\b")
+BYTE_COPY = re.compile(
+    r"\bcopy_bidirectional(?:_with_sizes)?\b|\bio::copy_buf\b|\btokio::io::copy\b"
+)
 
 #: The gateway's only byte-copying site: the stream upgrade tunnel.
 GATEWAY_TUNNEL = "crates/capsem-gateway/src/stream.rs"
-#: The gateway's only TCP site: its own authenticated listener.
-GATEWAY_LISTENER = ("crates/capsem-gateway/src/listener.rs", "crates/capsem-gateway/src/main.rs")
+#: The gateway owns its authenticated control listener and the loopback-only
+#: browser admission listener. The latter hands admitted descriptors onward.
+GATEWAY_LISTENER = (
+    "crates/capsem-gateway/src/listener.rs",
+    "crates/capsem-gateway/src/main.rs",
+    "crates/capsem-gateway/src/preview.rs",
+)
 
 
 def _code(path: Path) -> list[tuple[int, str]]:
     lines = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         code = line.split("//", 1)[0].strip()
         if code:
             lines.append((number, code))
@@ -98,20 +108,44 @@ def test_the_gateway_tunnel_is_the_stream_upgrade_to_the_service_socket() -> Non
 
 
 def test_vm_owner_binds_loopback_and_grants_connected_pairs() -> None:
-    publisher = (PROJECT_ROOT / "crates/capsem-core/src/container/publish.rs").read_text(encoding="utf-8")
-    broker = (PROJECT_ROOT / "crates/capsem-core/src/container/publish/broker.rs").read_text(encoding="utf-8")
+    publisher = (
+        PROJECT_ROOT / "crates/capsem-core/src/container/publish.rs"
+    ).read_text(encoding="utf-8")
+    broker = (
+        PROJECT_ROOT / "crates/capsem-core/src/container/publish/broker.rs"
+    ).read_text(encoding="utf-8")
     assert "TcpListener::bind((Ipv4Addr::LOCALHOST, host_port))" in publisher, RATIONALE
-    assert "router.grant(flow.source.as_fd(), destination.as_fd()" in broker, RATIONALE
+    grant = " ".join(broker.split())
+    assert ".grant( flow.source.as_fd(), destination.as_fd()," in grant, RATIONALE
+
+
+def test_gateway_preview_hands_the_admitted_descriptor_to_the_owner() -> None:
+    preview = (PROJECT_ROOT / "crates/capsem-gateway/src/preview.rs").read_text(
+        encoding="utf-8"
+    )
+    assert "source.as_raw_fd()" in preview and "Sender::new" in preview, RATIONALE
+    assert "SEAT_PREVIEW" in preview and "handoff_token" in preview, RATIONALE
 
 
 def test_router_spawn_is_environment_cleared_and_confirmed_confined() -> None:
-    spawn = (PROJECT_ROOT / "crates/capsem-core/src/net/router_process.rs").read_text(encoding="utf-8")
-    for required in (".env_clear()", '.current_dir("/")', ".stdout(Stdio::null())", "Event::ConfinementFailed"):
+    spawn = (PROJECT_ROOT / "crates/capsem-core/src/net/router_process.rs").read_text(
+        encoding="utf-8"
+    )
+    for required in (
+        ".env_clear()",
+        '.current_dir("/")',
+        ".stdout(Stdio::null())",
+        "Event::ConfinementFailed",
+    ):
         assert required in spawn, RATIONALE + f"\nmissing {required}"
-    companion = (PROJECT_ROOT / "crates/capsem-core/src/container/publish/companion.rs").read_text(encoding="utf-8")
+    companion = (
+        PROJECT_ROOT / "crates/capsem-core/src/container/publish/companion.rs"
+    ).read_text(encoding="utf-8")
     assert '"--expose-limit"' in companion, RATIONALE
     for secret in ("admin_token", "password", "ca_pem", "registry", "entitlement"):
-        assert secret not in companion.lower(), RATIONALE + f"\nrouter spawn names {secret}"
+        assert secret not in companion.lower(), (
+            RATIONALE + f"\nrouter spawn names {secret}"
+        )
 
 
 def _runtime_dependencies(table: dict[str, Any]) -> set[str]:
@@ -119,7 +153,9 @@ def _runtime_dependencies(table: dict[str, Any]) -> set[str]:
     for key, value in table.items():
         if key in {"dependencies", "build-dependencies"} and isinstance(value, dict):
             dependencies.update(
-                str(declaration.get("package", alias)) if isinstance(declaration, dict) else alias
+                str(declaration.get("package", alias))
+                if isinstance(declaration, dict)
+                else alias
                 for alias, declaration in value.items()
             )
         elif key != "dev-dependencies" and isinstance(value, dict):
@@ -128,21 +164,41 @@ def _runtime_dependencies(table: dict[str, Any]) -> set[str]:
 
 
 def test_router_cannot_acquire_privileged_owners_or_listeners() -> None:
-    manifest = tomllib.loads((PROJECT_ROOT / "crates/capsem-router/Cargo.toml").read_text(encoding="utf-8"))
-    privileged = {"capsem-config", "capsem-core", "capsem-credentials", "capsem-process", "capsem-service", "capsem-api"}
+    manifest = tomllib.loads(
+        (PROJECT_ROOT / "crates/capsem-router/Cargo.toml").read_text(encoding="utf-8")
+    )
+    privileged = {
+        "capsem-config",
+        "capsem-core",
+        "capsem-credentials",
+        "capsem-process",
+        "capsem-service",
+        "capsem-api",
+    }
     assert not _runtime_dependencies(manifest) & privileged, RATIONALE
-    main = (PROJECT_ROOT / "crates/capsem-router/src/main.rs").read_text(encoding="utf-8")
-    assert "router_sandbox::close_inherited_descriptors" in main and "router_sandbox::confine" in main, RATIONALE
+    main = (PROJECT_ROOT / "crates/capsem-router/src/main.rs").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "router_sandbox::close_inherited_descriptors" in main
+        and "router_sandbox::confine" in main
+    ), RATIONALE
     assert not TCP.search(main), RATIONALE
 
 
 def test_evasions_are_reported(tmp_path: Path) -> None:
     for relative, source in {
-        SERVICE_CONTROL[0]: "// TcpStream in prose is fine\nlet s = tokio::net::TcpStream::connect(addr).await?;\n",
+        SERVICE_CONTROL[
+            0
+        ]: "// TcpStream in prose is fine\nlet s = tokio::net::TcpStream::connect(addr).await?;\n",
         SERVICE_CONTROL[1]: "tokio::io::copy_bidirectional(&mut a, &mut b).await?;\n",
         SERVICE_CONTROL[2]: "use std::net::TcpListener as L;\n",
-        "crates/capsem-gateway/src/proxy.rs": "let s = TcpStream::connect((\"127.0.0.1\", port)).await?;\n",
+        "crates/capsem-gateway/src/proxy.rs": 'let s = TcpStream::connect(("127.0.0.1", port)).await?;\n',
         "crates/capsem-gateway/src/main.rs": "tokio::io::copy_bidirectional_with_sizes(&mut a, &mut b, 1, 1).await?;\n",
+        "crates/capsem-gateway/src/preview.rs": (
+            "let s = TcpStream::connect(addr).await?;\n"
+            "tokio::io::copy_bidirectional(&mut a, &mut b).await?;\n"
+        ),
         GATEWAY_TUNNEL: "tokio::io::copy_bidirectional(&mut client, &mut service).await?;\n",
     }.items():
         path = tmp_path / relative
@@ -155,5 +211,7 @@ def test_evasions_are_reported(tmp_path: Path) -> None:
     ]
     assert forwarding_in_gateway(tmp_path) == [
         "crates/capsem-gateway/src/main.rs:1: tokio::io::copy_bidirectional_with_sizes(&mut a, &mut b, 1, 1).await?;",
+        "crates/capsem-gateway/src/preview.rs:1: let s = TcpStream::connect(addr).await?;",
+        "crates/capsem-gateway/src/preview.rs:2: tokio::io::copy_bidirectional(&mut a, &mut b).await?;",
         'crates/capsem-gateway/src/proxy.rs:1: let s = TcpStream::connect(("127.0.0.1", port)).await?;',
     ]

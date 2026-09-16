@@ -9,6 +9,8 @@ mod create_vm;
 pub use create_vm::{create_vm, CreateVmParams};
 mod create_vm_exposure;
 pub use create_vm_exposure::{create_vm_exposure, CreateVmExposureParams};
+mod create_vm_preview_session;
+pub use create_vm_preview_session::{create_vm_preview_session, CreateVmPreviewSessionParams};
 mod delete_network;
 pub use delete_network::{delete_network, DeleteNetworkParams};
 mod delete_vm;

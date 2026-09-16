@@ -17,6 +17,7 @@ fn test_state(token: &str) -> Arc<AppState> {
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
+        previews: crate::preview::PreviewState::new(0),
     })
 }
 
@@ -98,11 +99,12 @@ fn token_uniqueness_over_100_samples() {
 #[test]
 fn auth_state_lifecycle() {
     let dir = tempfile::tempdir().unwrap();
-    let state = AuthState::new(dir.path(), "test-token", 19222).unwrap();
+    let state = AuthState::new(dir.path(), "test-token", 19222, 19223).unwrap();
 
     assert!(state.token_path.exists());
     assert_eq!(std::fs::read_to_string(&state.token_path).unwrap(), "test-token");
     assert_eq!(std::fs::read_to_string(&state.port_path).unwrap(), "19222");
+    assert_eq!(std::fs::read_to_string(&state.preview_port_path).unwrap(), "19223");
     assert!(state.pid_path.exists());
 
     #[cfg(unix)]
@@ -110,12 +112,15 @@ fn auth_state_lifecycle() {
         use std::os::unix::fs::PermissionsExt;
         let perms = std::fs::metadata(&state.token_path).unwrap().permissions();
         assert_eq!(perms.mode() & 0o777, 0o600);
+        let preview_perms = std::fs::metadata(&state.preview_port_path).unwrap().permissions();
+        assert_eq!(preview_perms.mode() & 0o777, 0o600);
     }
 
     state.cleanup();
     assert!(!state.token_path.exists());
     assert!(!state.port_path.exists());
     assert!(!state.pid_path.exists());
+    assert!(!state.preview_port_path.exists());
 }
 
 #[test]
@@ -124,7 +129,7 @@ fn auth_state_creates_run_dir_if_missing() {
     let nested = dir.path().join("nested/deep");
     assert!(!nested.exists());
 
-    let state = AuthState::new(&nested, "tok", 9999).unwrap();
+    let state = AuthState::new(&nested, "tok", 9999, 10000).unwrap();
     assert!(nested.exists());
     assert!(state.token_path.exists());
     state.cleanup();
@@ -133,7 +138,7 @@ fn auth_state_creates_run_dir_if_missing() {
 #[test]
 fn auth_state_pid_file_contains_current_pid() {
     let dir = tempfile::tempdir().unwrap();
-    let state = AuthState::new(dir.path(), "tok", 1234).unwrap();
+    let state = AuthState::new(dir.path(), "tok", 1234, 1235).unwrap();
     let pid: u32 = std::fs::read_to_string(&state.pid_path).unwrap().parse().unwrap();
     assert_eq!(pid, std::process::id());
     state.cleanup();
@@ -142,7 +147,7 @@ fn auth_state_pid_file_contains_current_pid() {
 #[test]
 fn cleanup_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
-    let state = AuthState::new(dir.path(), "tok", 1234).unwrap();
+    let state = AuthState::new(dir.path(), "tok", 1234, 1235).unwrap();
     state.cleanup();
     state.cleanup(); // second call should not panic
 }

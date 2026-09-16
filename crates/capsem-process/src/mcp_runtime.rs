@@ -114,7 +114,7 @@ impl ScopedMcpTools for GuestExposureTools {
                             PublicationTarget::Vm => "VM",
                         },
                         publication.guest_port,
-                        publication.host_port,
+                        publication.host_port.expect("guest exposure creates a loopback listener"),
                     )
                 }],
                 "structuredContent": structured,

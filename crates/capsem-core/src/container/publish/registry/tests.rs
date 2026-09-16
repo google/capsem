@@ -27,9 +27,11 @@ fn declared(host_port: u16, target: PublicationTarget) -> (Declared<Handle>, Arc
     };
     (
         Declared {
-            host_port,
+            id: host_port.to_string(),
+            host_port: Some(host_port),
             guest_port: 6379,
             target,
+            access: capsem_proto::PublicationAccess::LoopbackTcp,
             handle,
         },
         finished,
@@ -47,10 +49,13 @@ fn listing_is_the_live_publications_and_finished_ones_are_released() {
     let view = |d: &Declared<Handle>| (d.host_port, d.target);
     assert_eq!(
         registry.list(view),
-        vec![(16379, PublicationTarget::Container), (18080, PublicationTarget::Vm)]
+        vec![
+            (Some(16379), PublicationTarget::Container),
+            (Some(18080), PublicationTarget::Vm)
+        ]
     );
     finished.store(true, Ordering::SeqCst);
-    assert_eq!(registry.list(view), vec![(16379, PublicationTarget::Container)]);
+    assert_eq!(registry.list(view), vec![(Some(16379), PublicationTarget::Container)]);
     assert!(
         dropped.load(Ordering::SeqCst),
         "a finished publication must not be retained"
@@ -62,10 +67,10 @@ fn removing_a_publication_hands_back_the_handle_that_closes_it() {
     let registry = Registry::default();
     let (entry, _, dropped) = declared(16379, PublicationTarget::Container);
     registry.insert(entry);
-    let removed = registry.remove(16379).expect("declared publication");
+    let removed = registry.remove("16379").expect("declared publication");
     assert!(!dropped.load(Ordering::SeqCst));
     drop(removed);
     assert!(dropped.load(Ordering::SeqCst));
-    assert!(registry.remove(16379).is_none());
+    assert!(registry.remove("16379").is_none());
     assert!(registry.list(|d| d.host_port).is_empty());
 }

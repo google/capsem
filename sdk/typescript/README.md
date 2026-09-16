@@ -4,7 +4,7 @@ Async clients for the authenticated HTTP gateway, usable in browsers and Node.
 Supply the gateway URL and bearer token explicitly.
 
 ```ts
-import {ContainerState, decodeExecOutput, ExposureTarget, Hypervisor, HostLogSource, VM} from '@capsem/sdk';
+import {ContainerState, decodeExecOutput, ExposureAccess, ExposureTarget, Hypervisor, HostLogSource, VM} from '@capsem/sdk';
 
 const hv = new Hypervisor(url, token, {timeoutMs: 120_000});
 try {
@@ -17,9 +17,10 @@ try {
   const container = await vm.container.wait({intervalMs: 250});
   if (container.state === ContainerState.RUNNING) {
     const exposure = await vm.exposures.create({
-      guest_port: 80, host_port: 0, target: ExposureTarget.CONTAINER,
+      guest_port: 80, target: ExposureTarget.CONTAINER, access: ExposureAccess.HTTP_PREVIEW,
     });
-    console.log(exposure.host_port);
+    const preview = await vm.exposures.previewSession(exposure.id);
+    console.log(preview.url);
   }
   await hv.networks.logs(network.id, {vm: vm.id});
   const result = await vm.exec('uname -a', {timeout_secs: 60});
@@ -81,9 +82,10 @@ the restart call. Acceptance does not claim reconnection has completed.
 cursor-based audit logs. VM creation accepts a typed container object; its
 environment is separate from the VM environment and registry credentials are
 transient inputs. `vm.container.status()` and cancellable `wait()` poll read-only
-state. `vm.exposures.create/list/delete` manages policy-checked loopback
-listeners; host port zero allocates a free port and the target chooses the VM or
-container namespace. Browser preview sessions are not yet in the HTTP contract.
+state. `vm.exposures.create/list/delete/previewSession` manages policy-checked
+loopback listeners and authenticated HTTP previews. The target chooses the VM
+or container namespace; preview sessions return a URL and a separate single-use
+token for a POST bootstrap.
 Snapshot create/restore and mounts remain pending.
 
 `hv.run(command)` executes once in a temporary VM. `hv.panics()`, `hv.triage()`

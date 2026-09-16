@@ -166,14 +166,17 @@ def test_exposure_resource_uses_typed_vm_scoped_routes() -> None:
         async with gateway() as (url, state), VM(url, "token", id="vm-0") as vm:
             created = await vm.exposures.create(models.ExposureRequest(
                 target=models.ExposureTarget.CONTAINER, guest_port=8080, host_port=0,
+                access=models.ExposureAccess.HTTP_PREVIEW,
             ))
             assert isinstance(created, models.ExposureInfo)
             assert isinstance(await vm.exposures.list(), models.ExposureListResponse)
             assert isinstance(await vm.exposures.delete(created.id), models.VmActionResponse)
+            assert isinstance(await vm.exposures.preview_session(created.id), models.PreviewSessionResponse)
             assert [(method, path.split("?")[0]) for method, path, _ in state.requests] == [
                 ("POST", "/vms/vm-0/exposures"),
                 ("GET", "/vms/vm-0/exposures"),
                 ("DELETE", f"/vms/vm-0/exposures/{created.id}"),
+                ("POST", f"/vms/vm-0/exposures/{created.id}/preview-session"),
             ]
     asyncio.run(run())
 

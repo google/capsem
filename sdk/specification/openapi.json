@@ -1582,6 +1582,56 @@
         }
       }
     },
+    "/vms/{id}/exposures/{exposure_id}/preview-session": {
+      "post": {
+        "operationId": "createVmPreviewSession",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exposure_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewSessionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/files/content": {
       "get": {
         "operationId": "downloadVmFile",
@@ -3317,25 +3367,39 @@
           "frontend"
         ]
       },
+      "ExposureAccess": {
+        "type": "string",
+        "description": "How host clients may reach an exposure.",
+        "enum": [
+          "loopback_tcp",
+          "http_preview"
+        ]
+      },
       "ExposureInfo": {
         "type": "object",
         "description": "One live exposure as the VM owner declares it.",
         "required": [
           "id",
-          "host_port",
           "guest_port",
-          "target"
+          "target",
+          "access"
         ],
         "properties": {
+          "access": {
+            "$ref": "#/components/schemas/ExposureAccess"
+          },
           "guest_port": {
             "type": "integer",
             "format": "int32",
             "minimum": 0
           },
           "host_port": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int32",
-            "description": "Loopback host port that forwards to the guest.",
+            "description": "Loopback host port that forwards to the guest.\nPresent only for an ordinary loopback TCP listener. Browser previews\nuse the gateway's dedicated preview origin and expose no bypass port.",
             "minimum": 0
           },
           "id": {
@@ -3374,6 +3438,9 @@
           "guest_port"
         ],
         "properties": {
+          "access": {
+            "$ref": "#/components/schemas/ExposureAccess"
+          },
           "guest_port": {
             "type": "integer",
             "format": "int32",
@@ -4930,6 +4997,28 @@
           },
           "success": {
             "type": "boolean"
+          }
+        }
+      },
+      "PreviewSessionResponse": {
+        "type": "object",
+        "description": "A single-use browser bootstrap. The token is submitted in a POST body to\n`url`; it must never be appended to that URL.",
+        "required": [
+          "url",
+          "bootstrap_token",
+          "expires_in_seconds"
+        ],
+        "properties": {
+          "bootstrap_token": {
+            "type": "string"
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "url": {
+            "type": "string"
           }
         }
       },

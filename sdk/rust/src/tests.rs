@@ -151,6 +151,7 @@ async fn container_and_exposure_resources_use_typed_vm_routes() {
             guest_port: 8080,
             host_port: 0,
             target: models::ExposureTarget::Container,
+            access: models::ExposureAccess::HttpPreview,
         })
         .await
         .unwrap();
@@ -159,6 +160,8 @@ async fn container_and_exposure_resources_use_typed_vm_routes() {
     request(&mut server, "/vms/vm-1/exposures").await;
     vm.exposures().delete(&exposure.id).await.unwrap();
     request(&mut server, "/vms/vm-1/exposures/vm-1").await;
+    vm.exposures().preview_session(&exposure.id).await.unwrap();
+    request(&mut server, "/vms/vm-1/exposures/vm-1/preview-session").await;
 }
 
 #[tokio::test]

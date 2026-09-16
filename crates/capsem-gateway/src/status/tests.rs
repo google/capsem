@@ -292,6 +292,7 @@ fn test_app_state(uds_path: &str) -> AppState {
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
+        previews: crate::preview::PreviewState::new(0),
     }
 }
 
@@ -646,6 +647,7 @@ async fn status_does_not_hide_a_new_vm_behind_the_previous_snapshot() {
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
+        previews: crate::preview::PreviewState::new(0),
     });
 
     // A tray/UI poll can populate /status immediately before `capsem create`.
