@@ -77,8 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   audit tools through the typed SDK network resource.
 
 - `@capsem/mcp` creates typed OCI workloads, reads or waits for container
-  status, and manages policy-checked VM/container port exposures through the
-  TypeScript SDK and authenticated gateway HTTP.
+  status, and manages policy-checked VM/container port exposures with explicit
+  loopback TCP or authenticated HTTP preview access through the TypeScript SDK
+  and gateway HTTP.
 
 - `@capsem/mcp` provides typed profile MCP discovery and invocation, canonical
   tool names and SDK-aligned parameters, plus redacted machine-readable errors.

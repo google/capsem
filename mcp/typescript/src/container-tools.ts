@@ -1,4 +1,4 @@
-import {ExposureTarget, type Hypervisor} from '@capsem/sdk';
+import {ExposureAccess, ExposureTarget, type Hypervisor} from '@capsem/sdk';
 import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
 import {toolCall} from './results.js';
@@ -20,16 +20,19 @@ export function registerContainerTools(server: McpServer, hypervisor: Hypervisor
   })));
 
   server.registerTool('capsem_exposure_create', {
-    description: 'Expose one VM or container port on host loopback through the authenticated, policy-checked lifecycle.',
+    description: 'Expose one VM or container port through the authenticated, policy-checked lifecycle.',
     inputSchema: {
       vm_id: vmId,
       target: z.nativeEnum(ExposureTarget),
+      access: z.nativeEnum(ExposureAccess).optional(),
       guest_port: port,
       host_port: z.number().int().min(0).max(65_535).optional(),
     },
-  }, ({vm_id, target, guest_port, host_port}, extra) => toolCall(() =>
+  }, ({vm_id, target, access, guest_port, host_port}, extra) => toolCall(() =>
     hypervisor.vm({id: vm_id}).exposures.create({
-      target, guest_port, ...(host_port === undefined ? {} : {host_port}),
+      target, guest_port,
+      ...(access === undefined ? {} : {access}),
+      ...(host_port === undefined ? {} : {host_port}),
     }, {signal: extra.signal})));
 
   server.registerTool('capsem_exposure_list', {

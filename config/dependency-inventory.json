@@ -135,12 +135,6 @@
    "num-traits"
   ]
  },
- "arrayref": {
-  "build_script": false,
-  "dependencies": [
-   "quickcheck"
-  ]
- },
  "arrayvec": {
   "build_script": false,
   "dependencies": [
@@ -437,7 +431,8 @@
    "cc",
    "cmake",
    "dunce",
-   "fs_extra"
+   "fs_extra",
+   "pkg-config"
   ]
  },
  "axum": {
@@ -580,7 +575,6 @@
  "blake3": {
   "build_script": true,
   "dependencies": [
-   "arrayref",
    "arrayvec",
    "cc",
    "cfg-if",
@@ -733,6 +727,7 @@
    "anyhow",
    "blake3",
    "bytes",
+   "capsem-api",
    "capsem-assets",
    "capsem-core",
    "capsem-foundation",
@@ -740,6 +735,7 @@
    "clap",
    "clap_complete",
    "flate2",
+   "futures",
    "http-body-util",
    "hyper",
    "hyper-util",
@@ -754,7 +750,7 @@
    "tar",
    "tempfile",
    "tokio",
-   "tokio-unix-ipc",
+   "tokio-tungstenite",
    "toml",
    "tracing",
    "tracing-subscriber",
@@ -791,8 +787,18 @@
    "rmp-serde",
    "serde",
    "serde_json",
+   "tempfile",
    "tokio",
    "tracing"
+  ]
+ },
+ "capsem-api": {
+  "build_script": false,
+  "dependencies": [
+   "base64",
+   "serde",
+   "serde_json",
+   "utoipa"
   ]
  },
  "capsem-app": {
@@ -845,6 +851,7 @@
    "rusqlite",
    "serde",
    "serde_json",
+   "socket2",
    "tempfile",
    "tokio"
   ]
@@ -921,7 +928,6 @@
    "tokio",
    "tokio-rustls",
    "tokio-stream",
-   "tokio-unix-ipc",
    "tokio-util",
    "toml",
    "tracing",
@@ -947,6 +953,7 @@
  "capsem-foundation": {
   "build_script": false,
   "dependencies": [
+   "bincode",
    "blake3",
    "capsem-proto",
    "libc",
@@ -967,8 +974,10 @@
    "anyhow",
    "axum",
    "bytes",
+   "capsem-api",
    "capsem-foundation",
    "capsem-guard",
+   "capsem-proto",
    "clap",
    "futures",
    "http",
@@ -985,7 +994,8 @@
    "tower-http",
    "tower-service",
    "tracing",
-   "tracing-subscriber"
+   "tracing-subscriber",
+   "url"
   ]
  },
  "capsem-guard": {
@@ -1094,6 +1104,13 @@
    "tracing-subscriber"
   ]
  },
+ "capsem-network": {
+  "build_script": false,
+  "dependencies": [
+   "capsem-proto",
+   "tokio"
+  ]
+ },
  "capsem-process": {
   "build_script": false,
   "dependencies": [
@@ -1112,7 +1129,6 @@
    "serde_json",
    "tempfile",
    "tokio",
-   "tokio-unix-ipc",
    "tokio-util",
    "toml",
    "tracing",
@@ -1123,11 +1139,13 @@
   "build_script": true,
   "dependencies": [
    "anyhow",
-   "bincode",
    "blake3",
+   "quote",
    "rmp-serde",
    "serde",
+   "serde_bytes",
    "serde_json",
+   "syn",
    "tempfile",
    "thiserror",
    "tokio"
@@ -1136,11 +1154,30 @@
  "capsem-router": {
   "build_script": false,
   "dependencies": [
+   "bytes",
    "capsem-foundation",
    "capsem-guard",
+   "capsem-network",
+   "capsem-proto",
    "clap",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
    "tokio",
+   "tokio-util",
    "tracing"
+  ]
+ },
+ "capsem-sdk": {
+  "build_script": false,
+  "dependencies": [
+   "axum",
+   "capsem-api",
+   "reqwest",
+   "serde",
+   "serde_json",
+   "thiserror",
+   "tokio"
   ]
  },
  "capsem-service": {
@@ -1150,12 +1187,15 @@
    "axum",
    "base64",
    "blake3",
+   "capsem-api",
    "capsem-assets",
+   "capsem-config",
    "capsem-core",
    "capsem-foundation",
    "capsem-guard",
    "capsem-logger",
    "capsem-proto",
+   "capsem-router",
    "clap",
    "filetime",
    "futures",
@@ -1170,7 +1210,7 @@
    "tempfile",
    "tokio",
    "tokio-stream",
-   "tokio-unix-ipc",
+   "tokio-tungstenite",
    "tokio-util",
    "toml",
    "tower",
@@ -1204,6 +1244,7 @@
   "build_script": false,
   "dependencies": [
    "anyhow",
+   "capsem-sdk",
    "clap",
    "crossterm",
    "futures",
@@ -1656,7 +1697,7 @@
   ]
  },
  "crossbeam-deque": {
-  "build_script": false,
+  "build_script": true,
   "dependencies": [
    "crossbeam-epoch",
    "crossbeam-utils",
@@ -1675,7 +1716,8 @@
   "build_script": true,
   "dependencies": [
    "loom",
-   "rand"
+   "rand",
+   "rustversion"
   ]
  },
  "crossterm": {
@@ -1815,6 +1857,34 @@
    "libdbus-sys",
    "tempfile",
    "windows-sys"
+  ]
+ },
+ "defmt": {
+  "build_script": true,
+  "dependencies": [
+   "bitflags",
+   "defmt-macros",
+   "rustc_version",
+   "trybuild"
+  ]
+ },
+ "defmt-macros": {
+  "build_script": true,
+  "dependencies": [
+   "defmt-parser",
+   "maplit",
+   "pretty_assertions",
+   "proc-macro2",
+   "quote",
+   "rstest",
+   "syn"
+  ]
+ },
+ "defmt-parser": {
+  "build_script": false,
+  "dependencies": [
+   "rstest",
+   "thiserror"
   ]
  },
  "deltae": {
@@ -2210,7 +2280,6 @@
   "dependencies": [
    "cfg-if",
    "libc",
-   "libredox",
    "tempfile"
   ]
  },
@@ -2237,7 +2306,6 @@
  "flate2": {
   "build_script": false,
   "dependencies": [
-   "cloudflare-zlib-sys",
    "crc32fast",
    "document-features",
    "futures",
@@ -2391,6 +2459,8 @@
    "libc",
    "memchr",
    "pin-project-lite",
+   "portable-atomic",
+   "portable-atomic-util",
    "slab",
    "spin",
    "tokio",
@@ -2532,7 +2602,6 @@
    "rustc-std-workspace-core",
    "wasi",
    "wasip2",
-   "wasip3",
    "wasm-bindgen",
    "wasm-bindgen-test"
   ]
@@ -2628,7 +2697,7 @@
   "build_script": false,
   "dependencies": [
    "doc-comment",
-   "tempdir"
+   "tempfile"
   ]
  },
  "gobject-sys": {
@@ -2910,6 +2979,7 @@
    "tokio-test",
    "tokio-util",
    "tracing",
+   "tracing-subscriber",
    "want"
   ]
  },
@@ -3027,8 +3097,6 @@
  "icu_normalizer": {
   "build_script": false,
   "dependencies": [
-   "arraystring",
-   "arrayvec",
    "atoi",
    "criterion",
    "databake",
@@ -3054,11 +3122,13 @@
   "build_script": false,
   "dependencies": [
    "databake",
+   "displaydoc",
    "harfbuzz-traits",
    "icu_collections",
    "icu_locale_core",
    "icu_properties_data",
    "icu_provider",
+   "log",
    "serde",
    "unicode-bidi",
    "zerotrie",
@@ -3088,12 +3158,6 @@
    "zerofrom",
    "zerotrie",
    "zerovec"
-  ]
- },
- "id-arena": {
-  "build_script": false,
-  "dependencies": [
-   "rayon"
   ]
  },
  "ident_case": {
@@ -3171,7 +3235,7 @@
   ]
  },
  "inotify-sys": {
-  "build_script": false,
+  "build_script": true,
   "dependencies": [
    "libc"
   ]
@@ -3239,14 +3303,6 @@
    "serde_test"
   ]
  },
- "iri-string": {
-  "build_script": false,
-  "dependencies": [
-   "memchr",
-   "serde",
-   "serde_test"
-  ]
- },
  "is-docker": {
   "build_script": false,
   "dependencies": [
@@ -3310,6 +3366,70 @@
    "shell-words",
    "system-deps",
    "tempfile"
+  ]
+ },
+ "jiff": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "arbitrary",
+   "chrono",
+   "chrono-tz",
+   "defmt",
+   "hifitime",
+   "humantime",
+   "insta",
+   "jiff-core",
+   "jiff-static",
+   "jiff-tzdb",
+   "jiff-tzdb-platform",
+   "js-sys",
+   "log",
+   "portable-atomic",
+   "portable-atomic-util",
+   "postcard",
+   "quickcheck",
+   "serde",
+   "serde_core",
+   "serde_json",
+   "serde_yaml",
+   "tabwriter",
+   "tempfile",
+   "time",
+   "time-tz",
+   "tzfile",
+   "walkdir",
+   "wasm-bindgen",
+   "windows-link"
+  ]
+ },
+ "jiff-core": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "defmt",
+   "log",
+   "quickcheck"
+  ]
+ },
+ "jiff-static": {
+  "build_script": false,
+  "dependencies": [
+   "jiff-core",
+   "jiff-tzdb",
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "jiff-tzdb": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "jiff-tzdb-platform": {
+  "build_script": false,
+  "dependencies": [
+   "jiff-tzdb"
   ]
  },
  "jni": {
@@ -3386,7 +3506,6 @@
    "futures-lite",
    "futures-util",
    "half",
-   "once_cell",
    "wasm-bindgen"
   ]
  },
@@ -3494,10 +3613,6 @@
    "spin",
    "trybuild"
   ]
- },
- "leb128fmt": {
-  "build_script": false,
-  "dependencies": []
  },
  "libappindicator": {
   "build_script": false,
@@ -3654,7 +3769,6 @@
  "lzma-rust2": {
   "build_script": false,
   "dependencies": [
-   "crc",
    "criterion",
    "liblzma",
    "sha2"
@@ -3925,7 +4039,6 @@
    "caps",
    "cfg-if",
    "cfg_aliases",
-   "lazy_static",
    "libc",
    "memoffset",
    "parking_lot",
@@ -4388,8 +4501,7 @@
   "dependencies": [
    "dunce",
    "is-wsl",
-   "libc",
-   "pathdiff"
+   "libc"
   ]
  },
  "option-ext": {
@@ -4541,13 +4653,6 @@
   "build_script": false,
   "dependencies": []
  },
- "pathdiff": {
-  "build_script": false,
-  "dependencies": [
-   "camino",
-   "cfg-if"
-  ]
- },
  "pem": {
   "build_script": false,
   "dependencies": [
@@ -4593,9 +4698,7 @@
  "pest_meta": {
   "build_script": false,
   "dependencies": [
-   "cargo",
-   "pest",
-   "sha2"
+   "pest"
   ]
  },
  "phf": {
@@ -4666,12 +4769,6 @@
   ]
  },
  "pkg-config": {
-  "build_script": false,
-  "dependencies": [
-   "lazy_static"
-  ]
- },
- "plain": {
   "build_script": false,
   "dependencies": []
  },
@@ -4769,7 +4866,6 @@
   "build_script": true,
   "dependencies": [
    "build-context",
-   "crabgrind",
    "critical-section",
    "crossbeam-utils",
    "fastrand",
@@ -4817,15 +4913,6 @@
  "precomputed-hash": {
   "build_script": false,
   "dependencies": []
- },
- "prettyplease": {
-  "build_script": true,
-  "dependencies": [
-   "indoc",
-   "proc-macro2",
-   "quote",
-   "syn"
-  ]
  },
  "proc-macro-crate": {
   "build_script": false,
@@ -4960,7 +5047,6 @@
    "rcgen",
    "rustc-hash",
    "rustls",
-   "rustls-pemfile",
    "smol",
    "socket2",
    "thiserror",
@@ -5074,6 +5160,14 @@
    "serde"
   ]
  },
+ "rand_pcg": {
+  "build_script": false,
+  "dependencies": [
+   "postcard",
+   "rand_core",
+   "serde"
+  ]
+ },
  "rand_xorshift": {
   "build_script": false,
   "dependencies": [
@@ -5094,8 +5188,10 @@
   "build_script": false,
   "dependencies": [
    "assert_cmd",
+   "getrandom",
    "rand",
    "rand_core",
+   "rapidrand",
    "rustversion",
    "tempfile"
   ]
@@ -5612,6 +5708,7 @@
   "build_script": false,
   "dependencies": [
    "crabgrind",
+   "criterion",
    "web-time",
    "zeroize"
   ]
@@ -5779,6 +5876,16 @@
    "typeid"
   ]
  },
+ "serde_bytes": {
+  "build_script": false,
+  "dependencies": [
+   "bincode",
+   "serde",
+   "serde_core",
+   "serde_derive",
+   "serde_test"
+  ]
+ },
  "serde_core": {
   "build_script": true,
   "dependencies": [
@@ -5876,6 +5983,7 @@
    "hashbrown",
    "hex",
    "indexmap",
+   "jiff",
    "jsonschema",
    "mime",
    "pretty_assertions",
@@ -5954,8 +6062,7 @@
    "cfg-if",
    "cpufeatures",
    "digest",
-   "hex-literal",
-   "sha1-asm"
+   "hex-literal"
   ]
  },
  "sha2": {
@@ -6014,7 +6121,7 @@
  "simd-adler32": {
   "build_script": false,
   "dependencies": [
-   "adler",
+   "adler2",
    "adler32",
    "criterion",
    "rand"
@@ -6061,8 +6168,6 @@
   "dependencies": [
    "arbitrary",
    "bincode",
-   "debugger_test",
-   "debugger_test_parser",
    "malloc_size_of",
    "serde",
    "unty"
@@ -6551,6 +6656,7 @@
    "tauri",
    "tauri-plugin-deep-link",
    "thiserror",
+   "tokio",
    "tracing",
    "windows-sys",
    "zbus"
@@ -6771,8 +6877,7 @@
  "thread_local": {
   "build_script": false,
   "dependencies": [
-   "cfg-if",
-   "criterion"
+   "cfg-if"
   ]
  },
  "time": {
@@ -6838,21 +6943,18 @@
   "build_script": false,
   "dependencies": [
    "arbitrary",
+   "bin-proto",
    "borsh",
    "criterion",
    "debugger_test",
    "debugger_test_parser",
    "defmt",
    "generic-array",
+   "schemars",
    "serde_core",
    "serde_test",
-   "smallvec",
-   "tinyvec_macros"
+   "smallvec"
   ]
- },
- "tinyvec_macros": {
-  "build_script": false,
-  "dependencies": []
  },
  "tokio": {
   "build_script": false,
@@ -6943,19 +7045,6 @@
    "webpki-roots"
   ]
  },
- "tokio-unix-ipc": {
-  "build_script": false,
-  "dependencies": [
-   "backtrace",
-   "bincode",
-   "libc",
-   "nix",
-   "rand",
-   "rmp-serde",
-   "serde",
-   "tokio"
-  ]
- },
  "tokio-util": {
   "build_script": false,
   "dependencies": [
@@ -6968,6 +7057,7 @@
    "futures-test",
    "futures-util",
    "hashbrown",
+   "libc",
    "loom",
    "parking_lot",
    "pin-project-lite",
@@ -7093,8 +7183,8 @@
    "http-body-util",
    "http-range-header",
    "httpdate",
+   "hyper",
    "hyper-util",
-   "iri-string",
    "mime",
    "mime_guess",
    "once_cell",
@@ -7109,6 +7199,7 @@
    "tower-service",
    "tracing",
    "tracing-subscriber",
+   "url",
    "uuid",
    "zstd"
   ]
@@ -7483,6 +7574,44 @@
   "build_script": false,
   "dependencies": []
  },
+ "utoipa": {
+  "build_script": false,
+  "dependencies": [
+   "indexmap",
+   "insta",
+   "serde",
+   "serde_json",
+   "serde_norway",
+   "utoipa-gen"
+  ]
+ },
+ "utoipa-gen": {
+  "build_script": false,
+  "dependencies": [
+   "actix-web",
+   "axum",
+   "chrono",
+   "insta",
+   "jiff",
+   "once_cell",
+   "paste",
+   "proc-macro2",
+   "quote",
+   "regex",
+   "rocket",
+   "rust_decimal",
+   "serde",
+   "serde_json",
+   "serde_with",
+   "smallvec",
+   "syn",
+   "time",
+   "ulid",
+   "url",
+   "utoipa-config",
+   "uuid"
+  ]
+ },
  "uuid": {
   "build_script": false,
   "dependencies": [
@@ -7492,6 +7621,7 @@
    "borsh-derive",
    "bytemuck",
    "getrandom",
+   "gungraun",
    "js-sys",
    "md-5",
    "rand",
@@ -7621,17 +7751,6 @@
    "wit-bindgen"
   ]
  },
- "wasip3": {
-  "build_script": false,
-  "dependencies": [
-   "bytes",
-   "futures",
-   "http",
-   "http-body",
-   "thiserror",
-   "wit-bindgen"
-  ]
- },
  "wasm-bindgen": {
   "build_script": true,
   "dependencies": [
@@ -7679,33 +7798,6 @@
    "unicode-ident"
   ]
  },
- "wasm-encoder": {
-  "build_script": false,
-  "dependencies": [
-   "anyhow",
-   "leb128fmt",
-   "tempfile",
-   "wasmparser",
-   "wasmprinter"
-  ]
- },
- "wasm-metadata": {
-  "build_script": false,
-  "dependencies": [
-   "anyhow",
-   "auditable-serde",
-   "clap",
-   "flate2",
-   "indexmap",
-   "serde",
-   "serde_derive",
-   "serde_json",
-   "spdx",
-   "url",
-   "wasm-encoder",
-   "wasmparser"
-  ]
- },
  "wasm-streams": {
   "build_script": false,
   "dependencies": [
@@ -7718,22 +7810,6 @@
    "wasm-bindgen-futures",
    "wasm-bindgen-test",
    "web-sys"
-  ]
- },
- "wasmparser": {
-  "build_script": false,
-  "dependencies": [
-   "anyhow",
-   "bitflags",
-   "criterion",
-   "env_logger",
-   "hashbrown",
-   "indexmap",
-   "log",
-   "once_cell",
-   "rayon",
-   "semver",
-   "serde"
   ]
  },
  "web-sys": {
@@ -8142,89 +8218,6 @@
    "wit-bindgen-rust-macro"
   ]
  },
- "wit-bindgen-core": {
-  "build_script": false,
-  "dependencies": [
-   "anyhow",
-   "clap",
-   "heck",
-   "serde",
-   "wit-parser"
-  ]
- },
- "wit-bindgen-rust": {
-  "build_script": true,
-  "dependencies": [
-   "anyhow",
-   "bytes",
-   "clap",
-   "futures",
-   "heck",
-   "indexmap",
-   "prettyplease",
-   "serde",
-   "serde_json",
-   "syn",
-   "wasm-metadata",
-   "wit-bindgen-core",
-   "wit-component"
-  ]
- },
- "wit-bindgen-rust-macro": {
-  "build_script": true,
-  "dependencies": [
-   "anyhow",
-   "prettyplease",
-   "proc-macro2",
-   "quote",
-   "syn",
-   "wit-bindgen-core",
-   "wit-bindgen-rust"
-  ]
- },
- "wit-component": {
-  "build_script": false,
-  "dependencies": [
-   "anyhow",
-   "bitflags",
-   "env_logger",
-   "glob",
-   "indexmap",
-   "libtest-mimic",
-   "log",
-   "pretty_assertions",
-   "serde",
-   "serde_derive",
-   "serde_json",
-   "wasm-encoder",
-   "wasm-metadata",
-   "wasmparser",
-   "wasmprinter",
-   "wasmtime",
-   "wast",
-   "wat",
-   "wit-parser"
-  ]
- },
- "wit-parser": {
-  "build_script": false,
-  "dependencies": [
-   "anyhow",
-   "env_logger",
-   "id-arena",
-   "indexmap",
-   "libtest-mimic",
-   "log",
-   "pretty_assertions",
-   "semver",
-   "serde",
-   "serde_derive",
-   "serde_json",
-   "unicode-xid",
-   "wasmparser",
-   "wat"
-  ]
- },
  "writeable": {
   "build_script": false,
   "dependencies": [
@@ -8416,6 +8409,13 @@
    "zvariant"
   ]
  },
+ "zcheapstr": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "serde_json"
+  ]
+ },
  "zerocopy": {
   "build_script": true,
   "dependencies": [
@@ -8518,6 +8518,15 @@
    "syn"
   ]
  },
+ "zlib-rs": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "crc32fast",
+   "memoffset",
+   "quickcheck"
+  ]
+ },
  "zmij": {
   "build_script": true,
   "dependencies": [
@@ -8552,6 +8561,7 @@
   "dependencies": [
    "bindgen",
    "cc",
+   "cmake",
    "pkg-config"
   ]
  },
@@ -8574,6 +8584,7 @@
    "url",
    "uuid",
    "winnow",
+   "zcheapstr",
    "zvariant_derive",
    "zvariant_utils"
   ]

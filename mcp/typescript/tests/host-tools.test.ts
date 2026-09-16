@@ -99,10 +99,14 @@ describe('host-tools', () => {
         },
         'GET /vms/vm-1/changes': {changes: [], checkpoint: 'cp-1', has_more: false, total: 0},
         'GET /vms/vm-1/container': {image: 'docker://busybox:latest', state: 'running'},
-        'POST /vms/vm-1/exposures': {id: '49152', host_port: 49152, guest_port: 8080, target: 'container'},
+        'POST /vms/vm-1/exposures': {
+          access: 'loopback_tcp', id: '49152', host_port: 49152, guest_port: 8080, target: 'container',
+        },
         'GET /vms/vm-1/exposures': {
           owner_generation: '7',
-          exposures: [{id: '49152', host_port: 49152, guest_port: 8080, target: 'container'}],
+          exposures: [{
+            access: 'loopback_tcp', id: '49152', host_port: 49152, guest_port: 8080, target: 'container',
+          }],
         },
         'DELETE /vms/vm-1/exposures/49152': {success: true},
       };
@@ -198,13 +202,18 @@ describe('host-tools', () => {
       name: 'capsem_container_wait', arguments: {vm_id: 'vm-1', interval_ms: 1},
     }))).toEqual({image: 'docker://busybox:latest', state: 'running'});
     expect(structured(await client.callTool({
-      name: 'capsem_exposure_create', arguments: {vm_id: 'vm-1', target: 'container', guest_port: 8080, host_port: 0},
+      name: 'capsem_exposure_create', arguments: {
+        vm_id: 'vm-1', target: 'container', access: 'loopback_tcp', guest_port: 8080, host_port: 0,
+      },
     }))).toMatchObject({id: '49152', host_port: 49152});
     expect(structured(await client.callTool({name: 'capsem_exposure_list', arguments: {vm_id: 'vm-1'}})))
       .toMatchObject({owner_generation: '7'});
     expect(structured(await client.callTool({
       name: 'capsem_exposure_delete', arguments: {vm_id: 'vm-1', exposure_id: '49152'},
     }))).toEqual({success: true});
+    expect(JSON.parse(requests.at(-3)?.body.toString() ?? '')).toEqual({
+      target: 'container', access: 'loopback_tcp', guest_port: 8080, host_port: 0,
+    });
     expect(requests.slice(-5).map(request => `${request.method} ${new URL(request.url, 'http://x').pathname}`)).toEqual([
       'GET /vms/vm-1/container', 'GET /vms/vm-1/container', 'POST /vms/vm-1/exposures',
       'GET /vms/vm-1/exposures', 'DELETE /vms/vm-1/exposures/49152',
