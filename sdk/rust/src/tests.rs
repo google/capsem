@@ -123,10 +123,10 @@ async fn container_and_exposure_resources_use_typed_vm_routes() {
         .create(
             "code",
             CreateOptions {
-                container: Some(models::ContainerSpec {
+                env: Some([("MODE".into(), "preview".into())].into()),
+                container: Some(crate::ContainerOptions {
                     image: "docker://busybox:latest".into(),
                     args: Vec::new(),
-                    env: Default::default(),
                     registry: None,
                     attach: false,
                 }),
@@ -135,10 +135,10 @@ async fn container_and_exposure_resources_use_typed_vm_routes() {
         )
         .await
         .unwrap();
-    assert_eq!(
-        request(&mut server, "/vms/create").await["container"]["image"],
-        "docker://busybox:latest"
-    );
+    let create = request(&mut server, "/vms/create").await;
+    assert_eq!(create["env"], serde_json::Value::Null);
+    assert_eq!(create["container"]["image"], "docker://busybox:latest");
+    assert_eq!(create["container"]["env"]["MODE"], "preview");
     vm.container().status().await.unwrap();
     request(&mut server, "/vms/vm-1/container").await;
     assert!(matches!(

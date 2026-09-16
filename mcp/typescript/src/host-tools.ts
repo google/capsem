@@ -1,4 +1,4 @@
-import {HostLogSource, TimelineLayer, type ContainerSpec, type Hypervisor, type VM} from '@capsem/sdk';
+import {HostLogSource, TimelineLayer, type ContainerOptions, type Hypervisor, type VM} from '@capsem/sdk';
 import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
 import {toolCall} from './results.js';
@@ -20,10 +20,9 @@ const registry = z.object({
 const container = z.object({
   image: z.string().min(1),
   args: z.array(z.string()).optional(),
-  env: z.record(z.string(), z.string()).optional(),
   registry: registry.optional(),
   attach: z.boolean().optional(),
-});
+}).strict();
 
 function vm(hypervisor: Hypervisor, id: string): VM {
   return hypervisor.vm({id});
@@ -39,7 +38,7 @@ function defined<T extends object>(input: T): {[K in keyof T]?: Exclude<T[K], un
   };
 }
 
-function containerSpec(input: z.infer<typeof container>): ContainerSpec {
+function containerOptions(input: z.infer<typeof container>): ContainerOptions {
   const {image, registry: access, ...options} = input;
   return {
     image,
@@ -67,7 +66,7 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
   }, ({profile, container: workload, ...options}) => toolCall(async () => {
     const created = await hypervisor.create(profile, {
       ...defined(options),
-      ...(workload === undefined ? {} : {container: containerSpec(workload)}),
+      ...(workload === undefined ? {} : {container: containerOptions(workload)}),
     });
     return {id: created.id, name: created.name};
   }));

@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import cast
 
 import pytest
-from capsem import VM, HttpError, Hypervisor, decode_exec_output, models
+from capsem import (
+    VM,
+    ContainerOptions,
+    HttpError,
+    Hypervisor,
+    decode_exec_output,
+    models,
+)
 
 from .facade_gateway import gateway
 
@@ -142,10 +150,14 @@ def test_cancelling_execution_does_not_retry_or_break_the_connection() -> None:
 
 def test_container_create_status_and_cancellable_wait_are_read_only() -> None:
     async def run() -> None:
-        spec = models.ContainerSpec(image="docker://busybox:latest", args=[], env={}, attach=False)
+        spec = ContainerOptions(image="docker://busybox:latest", args=[], attach=False)
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
-            vm = await hv.create("code", container=spec)
-            assert json.loads(state.requests[-1][2])["container"]["image"] == spec.image
+            vm = await hv.create("code", env={"MODE": "preview"}, container=spec)
+            body = json.loads(state.requests[-1][2])
+            assert body["env"] is None
+            assert body["container"] == {
+                "image": spec.image, "args": [], "env": {"MODE": "preview"}, "attach": False,
+            }
             assert (await vm.container.status()).image == spec.image
             state.container_states = ["pulling", "running"]
             assert (await vm.container.wait(interval=0.001)).state is models.ContainerState.RUNNING
@@ -158,6 +170,15 @@ def test_container_create_status_and_cancellable_wait_are_read_only() -> None:
             assert {method for method, path, _ in state.requests if path.endswith("/container")} == {"GET"}
             with pytest.raises(ValueError, match="interval"):
                 await vm.container.wait(interval=0)
+    asyncio.run(run())
+
+
+def test_container_wire_model_is_rejected_by_the_facade() -> None:
+    async def run() -> None:
+        wire = models.ContainerSpec(image="docker://busybox:latest", env={"OLD": "path"})
+        async with gateway() as (url, _), Hypervisor(url, "token") as hv:
+            with pytest.raises(TypeError, match="ContainerOptions"):
+                await hv.create("code", container=cast(ContainerOptions, wire))
     asyncio.run(run())
 
 

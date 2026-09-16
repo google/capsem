@@ -10,6 +10,15 @@ pub enum VmSelector {
     Name(String),
 }
 
+/// Container workload settings. Workload environment belongs to [`CreateOptions::env`].
+#[derive(Debug, Clone)]
+pub struct ContainerOptions {
+    pub image: String,
+    pub args: Vec<String>,
+    pub registry: Option<crate::models::RegistryAccess>,
+    pub attach: bool,
+}
+
 /// Omitted CPU and memory values retain the selected profile's defaults.
 #[derive(Debug, Clone, Default)]
 pub struct CreateOptions {
@@ -18,7 +27,7 @@ pub struct CreateOptions {
     pub memory: Option<Memory>,
     pub env: Option<HashMap<String, String>>,
     pub networks: Vec<String>,
-    pub container: Option<crate::models::ContainerSpec>,
+    pub container: Option<ContainerOptions>,
 }
 
 #[derive(Debug, Clone, Default)]

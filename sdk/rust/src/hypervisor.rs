@@ -56,16 +56,29 @@ impl Hypervisor {
             return Err(Error::InvalidInput("vcpu must be positive"));
         }
         let name = options.name.filter(|name| !name.is_empty());
+        let (env, container) = match options.container {
+            Some(container) => (
+                None,
+                Some(models::ContainerSpec {
+                    image: container.image,
+                    args: container.args,
+                    env: options.env.unwrap_or_default().into_iter().collect(),
+                    registry: container.registry,
+                    attach: container.attach,
+                }),
+            ),
+            None => (options.env, None),
+        };
         let body = models::ProvisionRequest {
             profile_id: profile.to_owned(),
             persistent: name.is_some(),
             name,
             cpus: options.vcpu,
             ram_mb: options.memory.map(crate::Memory::megabytes).transpose()?,
-            env: options.env,
+            env,
             from: None,
             networks: options.networks,
-            container: options.container,
+            container,
         };
         let result = api::create_vm(
             &self.client.transport,

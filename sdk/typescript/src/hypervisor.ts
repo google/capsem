@@ -39,11 +39,19 @@ export class Hypervisor extends Client {
     if (options.vcpu !== undefined && (!Number.isSafeInteger(options.vcpu) || options.vcpu < 1)) {
       throw new TypeError('vcpu must be positive');
     }
+    if (options.container !== undefined && 'env' in options.container) {
+      throw new TypeError('container.env is not supported; use create env');
+    }
+    const container = options.container === undefined ? undefined : {
+      ...options.container,
+      env: options.env ?? {},
+    };
     const response = await api.createVm(this.transport, {body: {
       profile_id: profile, name: options.name || null, persistent: Boolean(options.name),
-      cpus: options.vcpu ?? null, ram_mb: memoryMb(options.memory), env: options.env ?? null,
+      cpus: options.vcpu ?? null, ram_mb: memoryMb(options.memory),
+      env: container === undefined ? options.env ?? null : null,
       networks: options.networks ?? [],
-      ...(options.container === undefined ? {} : {container: options.container}),
+      ...(container === undefined ? {} : {container}),
     }}, options);
     return VM.bind(this.transport, response.id, response.name);
   }

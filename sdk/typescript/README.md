@@ -12,7 +12,8 @@ try {
   const network = await hv.networks.create('private');
   const vm = await hv.create('code', {
     name: 'work', vcpu: 4, memory: '8G', networks: ['private'],
-    container: {image: 'docker.io/library/nginx:alpine', env: {MODE: 'preview'}},
+    env: {MODE: 'preview'},
+    container: {image: 'docker.io/library/nginx:alpine'},
   });
   const container = await vm.container.wait({intervalMs: 250});
   if (container.state === ContainerState.RUNNING) {
@@ -79,9 +80,9 @@ Obtain fresh credentials and construct a new client explicitly; never replay
 the restart call. Acceptance does not claim reconnection has completed.
 
 `hv.networks` provides typed create/list/inspect/delete, member attach/detach and
-cursor-based audit logs. VM creation accepts a typed container object; its
-environment is separate from the VM environment and registry credentials are
-transient inputs. `vm.container.status()` and cancellable `wait()` poll read-only
+cursor-based audit logs. VM creation accepts a typed container object. When it
+is present, the create environment configures that container workload; the VM
+is its runtime. Registry credentials are transient inputs. `vm.container.status()` and cancellable `wait()` poll read-only
 state. `vm.exposures.create/list/delete/previewSession` manages policy-checked
 loopback listeners and authenticated HTTP previews. The target chooses the VM
 or container namespace; preview sessions return a URL and a separate single-use

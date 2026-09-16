@@ -14,8 +14,8 @@ pub use error::{Error, Result};
 pub use hypervisor::Hypervisor;
 pub use memory::Memory;
 pub use options::{
-    CreateOptions, DiagnosticOptions, HistoryOptions, LogOptions, NetworkLogOptions, PageOptions, RunOptions,
-    TimelineOptions, TriageOptions, VmSelector,
+    ContainerOptions, CreateOptions, DiagnosticOptions, HistoryOptions, LogOptions, NetworkLogOptions, PageOptions,
+    RunOptions, TimelineOptions, TriageOptions, VmSelector,
 };
 pub use vm::VM;
 

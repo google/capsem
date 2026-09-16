@@ -64,8 +64,9 @@ diagnostics, while `triage` can include one VM's session ledger. Profile MCP
 calls preserve arbitrary JSON arguments and results while discovery and
 permissions remain typed.
 
-VM creation accepts a typed OCI `container` specification separately from the
-VM environment. `vm.container` reads setup/runtime state and provides a
+VM creation accepts typed OCI `container` options. When present, the create
+environment configures that workload and the VM remains its runtime.
+`vm.container` reads setup/runtime state and provides a
 cancellable read-only wait. `vm.exposures` creates, lists, and revokes
 policy-checked host-loopback listeners for an explicit VM or container target;
 host port zero asks the owner to allocate a free port. HTTP previews expose no

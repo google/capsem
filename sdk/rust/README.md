@@ -4,9 +4,9 @@ Typed async clients for the HTTP gateway. Supply its URL and bearer token
 explicitly; the SDK does not discover local services or run host commands.
 
 ```rust,no_run
-use capsem_sdk::{CreateOptions, Hypervisor, LogOptions, Result, TriageOptions, VmSelector};
-use capsem_sdk::models::{ContainerSpec, ExposureAccess, ExposureRequest, ExposureTarget, HostLogSource};
-use std::collections::BTreeMap;
+use capsem_sdk::{ContainerOptions, CreateOptions, Hypervisor, LogOptions, Result, TriageOptions, VmSelector};
+use capsem_sdk::models::{ExposureAccess, ExposureRequest, ExposureTarget, HostLogSource};
+use std::collections::HashMap;
 use std::time::Duration;
 
 async fn example(url: &str, token: &str) -> Result<()> {
@@ -16,9 +16,10 @@ async fn example(url: &str, token: &str) -> Result<()> {
     let vm = hv.create("code", CreateOptions {
         name: Some("work".into()), vcpu: Some(4), memory: Some("8G".parse()?),
         networks: vec!["private".into()],
-        container: Some(ContainerSpec {
+        env: Some(HashMap::from([("MODE".into(), "preview".into())])),
+        container: Some(ContainerOptions {
             image: "docker.io/library/nginx:alpine".into(),
-            args: Vec::new(), env: BTreeMap::from([("MODE".into(), "preview".into())]),
+            args: Vec::new(),
             registry: None, attach: false,
         }),
         ..Default::default()
@@ -87,9 +88,10 @@ Obtain fresh credentials and construct a new client explicitly; never replay
 the restart call. Acceptance does not claim reconnection has completed.
 
 `hv.networks()` provides typed create/list/inspect/delete, member attach/detach
-and cursor-based audit logs. VM creation accepts a typed `ContainerSpec`; its
-environment is separate from VM environment and registry credentials are
-transient inputs. `vm.container().status()` and `wait()` only read status, so
+and cursor-based audit logs. VM creation accepts typed `ContainerOptions`. When
+present, the create environment configures that container workload because the
+VM is its runtime. Registry credentials are transient inputs.
+`vm.container().status()` and `wait()` only read status, so
 dropping a wait does not delete the VM. `vm.exposures()` creates, lists, and
 revokes policy-checked loopback listeners. Host port zero allocates a free port,
 and `ExposureTarget` selects the VM or container namespace. Authenticated

@@ -182,8 +182,9 @@ describe('host-tools', () => {
       name: 'capsem_create',
       arguments: {
         profile: 'code',
+        env: {APP_SECRET: 'container-secret'},
         container: {
-          image: 'registry.example/app:latest', args: ['serve'], env: {APP_SECRET: 'container-secret'},
+          image: 'registry.example/app:latest', args: ['serve'],
           registry: {username: 'robot', password: 'registry-secret'}, attach: false,
         },
       },
@@ -191,7 +192,9 @@ describe('host-tools', () => {
     expect(structured(created)).toEqual({id: 'vm-1', name: 'demo'});
     expect(JSON.stringify(created)).not.toContain('container-secret');
     expect(JSON.stringify(created)).not.toContain('registry-secret');
-    expect(JSON.parse(requests.at(-1)?.body.toString() ?? '').container).toMatchObject({
+    const body = JSON.parse(requests.at(-1)?.body.toString() ?? '');
+    expect(body.env).toBeNull();
+    expect(body.container).toMatchObject({
       image: 'registry.example/app:latest', args: ['serve'], env: {APP_SECRET: 'container-secret'},
       registry: {username: 'robot', password: 'registry-secret'}, attach: false,
     });
@@ -218,6 +221,15 @@ describe('host-tools', () => {
       'GET /vms/vm-1/container', 'GET /vms/vm-1/container', 'POST /vms/vm-1/exposures',
       'GET /vms/vm-1/exposures', 'DELETE /vms/vm-1/exposures/49152',
     ]);
+  });
+
+  it('rejects the former nested container environment', async () => {
+    const result = await client.callTool({
+      name: 'capsem_create',
+      arguments: {container: {image: 'busybox:latest', env: {OLD: 'path'}}},
+    });
+    expect(result.isError).toBe(true);
+    expect(requests).toHaveLength(0);
   });
 
   it('transfers text and binary file content through the SDK byte APIs', async () => {

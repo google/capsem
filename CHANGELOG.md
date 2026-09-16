@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Container-backed SDK creation now treats the container as the workload:
+  top-level create environment variables configure it, and the public container
+  options no longer expose a second environment field.
+
 - REST command execution preserves arbitrary stdout and stderr bytes with an
   explicit UTF-8 or base64 encoding. File transfer now has one byte-safe HTTP
   path at `/vms/{id}/files/content`; the ambiguous JSON read/write routes were

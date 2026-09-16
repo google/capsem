@@ -2,9 +2,11 @@ import type {ContainerSpec, HistoryLayerFilter, HostLogSource, TimelineLayer} fr
 import type {CallOptions} from './transport.js';
 
 export type VmSelector = {id: string; name?: never} | {name: string; id?: never};
+/** Container workload settings. Workload environment belongs to CreateOptions.env. */
+export type ContainerOptions = Omit<ContainerSpec, 'env'>;
 export interface CreateOptions extends CallOptions {
   name?: string; vcpu?: number; memory?: string | number; env?: Record<string, string>; networks?: string[];
-  container?: ContainerSpec;
+  container?: ContainerOptions;
 }
 export interface RunOptions extends CallOptions {
   profile?: string; timeout_secs?: number; vcpu?: number; memory?: string | number; env?: Record<string, string>;

@@ -5,8 +5,8 @@ and bearer token; it does not discover services, open local service sockets,
 or run host commands.
 
 ```python
-from capsem import Hypervisor, VM, decode_exec_output
-from capsem.models import ContainerSpec, ExposureAccess, ExposureRequest, ExposureTarget, HostLogSource, TimelineLayer
+from capsem import ContainerOptions, Hypervisor, VM, decode_exec_output
+from capsem.models import ExposureAccess, ExposureRequest, ExposureTarget, HostLogSource, TimelineLayer
 
 async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     overview = await hv.info()  # health, versions, profiles, updates
@@ -17,7 +17,8 @@ async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
         vcpu=4,
         memory="8G",
         networks=["private"],
-        container=ContainerSpec(image="docker.io/library/nginx:alpine", env={"MODE": "preview"}),
+        env={"MODE": "preview"},
+        container=ContainerOptions(image="docker.io/library/nginx:alpine"),
     )
     container = await vm.container.wait(interval=0.25)
     exposure = await vm.exposures.create(
@@ -83,8 +84,9 @@ restart call. The acknowledgement does not claim reconnection has completed.
 
 Private networks are available through `hv.networks`; resource mutations use
 immutable IDs, while VM creation accepts existing network names. A typed
-`ContainerSpec` keeps container arguments/environment separate from VM options;
-registry credentials are transient runtime inputs. `vm.container.status()` and
+`ContainerOptions` describes the container. When present, `create` environment
+variables configure that workload because the VM is its runtime. Registry
+credentials are transient runtime inputs. `vm.container.status()` and
 `wait()` are read-only, and cancelling a local wait does not delete the VM.
 `vm.exposures` manages policy-checked loopback listeners and authenticated HTTP
 previews. Host port zero allocates a free loopback port; specify

@@ -10,6 +10,7 @@ from . import models
 from ._client import Client
 from ._networks import Networks
 from ._profiles import Profiles
+from .options import ContainerOptions
 from .vm import VM
 
 
@@ -41,15 +42,26 @@ class Hypervisor(Client):
     async def create(self, profile: str, *, name: str = "", vcpu: int | None = None,
                      memory: str | int | None = None, env: dict[str, str] | None = None,
                      networks: Sequence[str] = (),
-                     container: models.ContainerSpec | None = None) -> VM:
+                     container: ContainerOptions | None = None) -> VM:
         if vcpu is not None and vcpu < 1:
             raise ValueError("vcpu must be positive")
-        container_options = {"container": container} if container is not None else {}
+        if container is not None and not isinstance(container, ContainerOptions):
+            raise TypeError("container must be a ContainerOptions instance")
+        wire: models.ContainerSpec | None = None
+        if container is not None:
+            wire = models.ContainerSpec(
+                image=container.image, args=container.args, env=env or {}, attach=container.attach,
+            ) if container.registry is None else models.ContainerSpec(
+                image=container.image, args=container.args, env=env or {},
+                registry=container.registry, attach=container.attach,
+            )
         request = models.ProvisionRequest(
             profile_id=profile, name=name or None, persistent=bool(name),
-            cpus=vcpu, ram_mb=_memory_mb(memory), env=env, networks=list(networks),
-            **container_options,
+            cpus=vcpu, ram_mb=_memory_mb(memory),
+            env=env if container is None else None, networks=list(networks),
         )
+        if wire is not None:
+            request.container = wire
         response = await api.create_vm(self._transport, body=request)
         return VM._bind(self._transport, id=response.id, name=response.name)
 

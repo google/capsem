@@ -156,10 +156,14 @@ it('creates containers and exposes read-only status with cancellable wait', asyn
   const state = new FacadeGateway();
   await gateway((request, response) => state.handle(request, response), async (url, received) => {
     const hv = new Hypervisor(url, 'secret');
-    const vm = await hv.create('code', {container: {image: 'docker://busybox:latest', args: [], env: {}, attach: false}});
+    const vm = await hv.create('code', {
+      env: {MODE: 'preview'},
+      container: {image: 'docker://busybox:latest', args: [], attach: false},
+    });
     try {
       expect(JSON.parse(received[0]?.body.toString() ?? '') as unknown).toMatchObject({
-        container: {image: 'docker://busybox:latest'},
+        env: null,
+        container: {image: 'docker://busybox:latest', env: {MODE: 'preview'}},
       });
       expect((await vm.container.status()).image).toBe('docker://busybox:latest');
       await expect(vm.container.wait({intervalMs: 0})).rejects.toThrow('intervalMs');
@@ -173,6 +177,15 @@ it('creates containers and exposes read-only status with cancellable wait', asyn
       expect(received.filter(request => request.url.endsWith('/container')).every(request => request.method === 'GET')).toBe(true);
     } finally {vm.close(); hv.close();}
   });
+});
+
+it('rejects the former nested container environment before HTTP', async () => {
+  const hv = new Hypervisor('http://127.0.0.1:1', 'secret');
+  try {
+    await expect(hv.create('code', {
+      container: {image: 'docker://busybox:latest', env: {OLD: 'path'}} as never,
+    })).rejects.toThrow('use create env');
+  } finally {hv.close();}
 });
 
 it('maps typed exposure lifecycle through VM-scoped routes', async () => {
