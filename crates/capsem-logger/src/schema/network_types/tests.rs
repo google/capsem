@@ -90,9 +90,13 @@ fn an_existing_memory_ledger_upgrades_constraints_without_losing_pending_rows() 
     conn.execute_batch(&CREATE_SCHEMA.replace(NETWORK_TYPES, "")).unwrap();
     let uri = crate::schema::memory_uri_for_path(&path);
     crate::schema::create_memory_tables(&conn, &uri).unwrap();
-    conn.execute("INSERT INTO mem.security_rule_events(timestamp_unix_ms,event_id,event_type,rule_id,rule_action,rule_json,event_json) VALUES(1,'abcdef123456','http.request','pending','allow','{}','{}')", []).unwrap();
     conn.execute(
-        "UPDATE mem.sqlite_sequence SET seq=40 WHERE name='security_rule_events'",
+        "INSERT INTO mem.security_ask_events(timestamp_unix_ms,ask_id,event_id,event_type,rule_id,rule_name,status,rule_json,event_json) VALUES(1,'abcdef123456','abcdef123456','http.request','pending','test','pending','{}','{}')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE mem.sqlite_sequence SET seq=40 WHERE name='security_ask_events'",
         [],
     )
     .unwrap();
@@ -102,9 +106,13 @@ fn an_existing_memory_ledger_upgrades_constraints_without_losing_pending_rows() 
     migrate(&writer).unwrap();
     crate::schema::create_memory_tables(&conn, &uri).unwrap();
     crate::schema::create_memory_read_views(&conn).unwrap();
-    conn.execute("INSERT INTO mem.security_rule_events(timestamp_unix_ms,event_id,event_type,rule_id,rule_action,rule_json,event_json) VALUES(1,'abcdef123456','network.connect','new','allow','{}','{}')", []).unwrap();
+    conn.execute(
+        "INSERT INTO mem.security_ask_events(timestamp_unix_ms,ask_id,event_id,event_type,rule_id,rule_name,status,rule_json,event_json) VALUES(1,'abcdef123456','abcdef123456','network.connect','new','test','pending','{}','{}')",
+        [],
+    )
+    .unwrap();
     let rows: Vec<String> = conn
-        .prepare("SELECT rule_id FROM mem.security_rule_events ORDER BY id")
+        .prepare("SELECT rule_id FROM mem.security_ask_events ORDER BY id")
         .unwrap()
         .query_map([], |row| row.get(0))
         .unwrap()
@@ -112,7 +120,7 @@ fn an_existing_memory_ledger_upgrades_constraints_without_losing_pending_rows() 
         .unwrap();
     assert_eq!(rows, ["pending", "new"]);
     let maximum: i64 = conn
-        .query_row("SELECT MAX(id) FROM temp.security_rule_events", [], |row| row.get(0))
+        .query_row("SELECT MAX(id) FROM temp.security_ask_events", [], |row| row.get(0))
         .unwrap();
     assert_eq!(maximum, 41);
 }

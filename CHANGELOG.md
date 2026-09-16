@@ -76,6 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Security rule and decision ledgers are read from disk instead of being
+  mirrored into memory, so opening a large `session.db` no longer freezes
+  service startup for minutes or holds the whole forensic history in RAM.
 - Published TCP connections require an audited allow from the existing security
   rules and plugins before guest setup. Profile defaults explicitly allow expose;
   deny, pending approval, audit failure, and stale control leases refuse access.

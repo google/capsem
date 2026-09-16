@@ -802,6 +802,59 @@ fn resync_after_a_commit_reflects_in_place_updates_and_appended_rows() {
     assert_eq!(reader.disk_syncs(), 2);
 }
 
+/// Opening a reader mirrors every hot ledger into RAM and keeps it there for
+/// the life of the process. The forensic security ledgers are excluded from
+/// that mirror: they hold one full event payload per row and grow with the
+/// session, so a long-running sandbox turned `open` into a multi-minute,
+/// multi-GiB copy. They are served from the disk B-tree instead.
+#[test]
+fn opening_a_reader_serves_security_ledgers_from_disk_without_mirroring_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    {
+        let conn = Connection::open(&path).unwrap();
+        crate::schema::create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO net_events (timestamp, domain, decision)
+             VALUES ('2026-09-16T00:00:00Z', 'example.com', 'allowed');
+             INSERT INTO security_rule_events (
+                timestamp_unix_ms, event_id, event_type, rule_id, rule_action,
+                detection_level, rule_json, event_json
+             )
+             VALUES (1, 'abcdef123456', 'http.request', 'block_openai', 'block', 'critical', '{}', '{}');
+             INSERT INTO security_decision_events (
+                timestamp_unix_ms, event_id, event_type, stage, actor,
+                previous_decision, requested_decision, effective_decision, event_json
+             )
+             VALUES (1, 'abcdef123456', 'http.request', 'rule', 'engine', 'allow', 'block', 'block', '{}');",
+        )
+        .unwrap();
+    }
+
+    let reader = DbReader::open(&path).unwrap();
+    reader.ready().expect("a disk-only ledger is still a ready ledger");
+    // Control: verify `mem` schema is attached and mirrors hot tables.
+    let mirrored = reader.query_raw("SELECT COUNT(*) FROM mem.net_events").unwrap();
+    assert!(mirrored.contains("[[1]]"), "hot ledgers stay mirrored: {mirrored}");
+
+    for table in ["security_rule_events", "security_decision_events"] {
+        let error = reader
+            .query_raw(&format!("SELECT COUNT(*) FROM mem.{table}"))
+            .expect_err("a forensic ledger must have no memory mirror to read from");
+        assert!(error.contains(table), "{error}");
+        let rows = reader.query_raw(&format!("SELECT COUNT(*) FROM {table}")).unwrap();
+        assert!(
+            rows.contains("[[1]]"),
+            "{table} must still resolve to disk rows: {rows}"
+        );
+    }
+    assert_eq!(
+        reader.recent_security_rule_events(10).unwrap().len(),
+        1,
+        "typed reads must serve the same disk rows"
+    );
+}
+
 #[test]
 fn a_dropped_ledger_table_is_an_error_not_stale_memory_rows() {
     let dir = tempfile::tempdir().unwrap();

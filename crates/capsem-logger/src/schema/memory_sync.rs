@@ -4,11 +4,16 @@
 
 use super::*;
 
-/// Tables that live on disk only and never mirror into the memory schema:
-/// body blobs are too large to keep hot, the schema markers are not data, and
-/// the network registry tables (`network_db`) are small state, not a ledger.
+/// Tables that live on disk only (`main`) and never mirror into the in-memory schema (`mem`).
+///
+/// Tables whose rows grow with session history or carry large payloads (security ledgers,
+/// body blobs) are served from `main` via SQLite mmap (`SQLITE_MMAP_SIZE_BYTES`) rather
+/// than rehydrated into RAM on startup. Schema markers and `network_db` registry tables
+/// are metadata/state, not hot ledgers.
 const DISK_ONLY_TABLES: &[&str] = &[
     "event_body_blobs",
+    "security_rule_events",
+    "security_decision_events",
     "transport_schema",
     "network",
     "network_members",

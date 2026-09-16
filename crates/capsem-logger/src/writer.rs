@@ -622,20 +622,17 @@ fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'static str>) {
         WriteOp::SubstitutionEvent(_) => {
             tables.insert("substitution_events");
         }
-        WriteOp::SecurityRuleEvent(_) => {
-            tables.insert("security_rule_events");
-        }
         WriteOp::SecurityAskEvent(_) => {
             tables.insert("security_ask_events");
-        }
-        WriteOp::SecurityDecisionEvent(_) => {
-            tables.insert("security_decision_events");
         }
         WriteOp::ProfileMutationEvent(_) => {
             tables.insert("profile_mutation_events");
         }
-        // Disk-only registry tables: written to main directly, nothing to flush.
-        WriteOp::Network(_) | WriteOp::NetworkMembership(_) => {}
+        // Disk-only tables: written to main directly, nothing to flush.
+        WriteOp::SecurityRuleEvent(_)
+        | WriteOp::SecurityDecisionEvent(_)
+        | WriteOp::Network(_)
+        | WriteOp::NetworkMembership(_) => {}
     }
 }
 
