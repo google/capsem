@@ -68,11 +68,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Both profiles include `runc`; guest kernels support offline OCI process
   namespaces and cgroup CPU, memory, and process limits.
 - Both profiles include `umoci` for OCI image layer unpacking inside the VM.
+- Configurable VM snapshot settings in profile defaults (`[vm.snapshots]`
+  defining `auto_max`, `manual_max`, and `auto_interval`), per-sandbox API
+  provisioning override (`auto_snapshot`), and typed CLI flags
+  (`--auto-snapshot-max`, `--manual-snapshot-max`, `--auto-snapshot-interval`) on `capsem-process`.
 
 ### Security
 
 - rustls moves to 0.23.45 for RUSTSEC-2026-0285: TLS 1.3 handshake messages
   were accepted across encryption level boundaries on the host's TLS paths.
+
+### Fixed
+
+- `[vm.snapshots] manual_max` is honoured. The profile field was parsed and
+  documented but never reached the per-VM process, which hardcoded 12, so
+  setting it did nothing.
+- `[vm.snapshots] auto_interval = 0` disables automatic snapshots instead of
+  panicking `capsem-process` at boot on a zero tick period.
+- A persistent VM provisioned with `auto_snapshot: false` keeps that setting
+  across stop/start. The resume path re-read the profile default and silently
+  restored rolling snapshots.
+- `capsem run` no longer arms auto-snapshots for its one-shot VM, whose initial
+  background snapshot raced teardown on short commands.
 
 ### Changed
 
@@ -121,6 +138,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keychain verification dependencies.
 - Single-architecture asset builds and initrd repacks generate manifests for
   the selected architecture, preserving incomplete builds for other targets.
+- Auto-snapshots skip copying `system/rootfs.img` on filesystems without reflink
+  support (such as ext4), preventing severe write amplification while preserving
+  manual snapshot fidelity.
 - Release rehearsal reads Debian package identity, embedded manifest metadata,
   and inventoried binaries portably on macOS without host extraction tools.
 - Docker cache inventory accepts local timezone labels such as EDT while using

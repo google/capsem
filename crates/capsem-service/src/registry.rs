@@ -36,6 +36,10 @@ pub struct PersistentVmEntry {
     pub description: Option<String>,
     #[serde(default)]
     pub suspended: bool,
+    /// Per-VM auto-snapshot cap pinned at provisioning time (`None` follows profile default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_snapshot_max: Option<usize>,
+
     /// `true` when the most recent boot of this VM died before reaching
     /// ready (e.g. signed-manifest mismatch, asset hash drift, Apple VZ
     /// entitlement missing). Cleared on the next successful boot. Used

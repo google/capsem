@@ -15,6 +15,9 @@ fn provision_persistent_validates_name() {
         env: None,
         from: None,
         description: None,
+        auto_snapshot_max: 10,
+        manual_snapshot_max: 12,
+        auto_snapshot_interval: 300,
     });
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();

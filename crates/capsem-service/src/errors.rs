@@ -21,6 +21,14 @@ pub use crate::api::ErrorResponse;
 #[derive(Debug)]
 pub struct AppError(pub StatusCode, pub String);
 
+impl std::fmt::Display for AppError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.0, self.1)
+    }
+}
+
+impl std::error::Error for AppError {}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         let status = self.0;
