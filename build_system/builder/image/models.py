@@ -412,7 +412,6 @@ class VmResourcesConfig(BaseModel):
     max_sessions: int = Field(default=100, ge=1, le=10000)
     min_content_sessions: int = Field(default=25, ge=0, le=1000)
     max_disk_gb: int = Field(default=100, ge=1, le=1000)
-    terminated_retention_days: int = Field(default=365, ge=30, le=3650)
 
 
 class ShellFileConfig(BaseModel):
