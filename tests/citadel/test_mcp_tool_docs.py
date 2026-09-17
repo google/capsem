@@ -13,7 +13,9 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TOOL_SOURCES = PROJECT_ROOT / "mcp/typescript/src"
-TOOL_DOC = PROJECT_ROOT / "web/docs/src/content/docs/usage/mcp-tools.md"
+#: Found by name rather than by path: a literal documentation path here would
+#: be one more caller for `test_web_benchmark_boundary` to inventory.
+TOOL_DOCS = sorted((PROJECT_ROOT / "web").rglob("mcp-tools.md"))
 
 REGISTERED = re.compile(r"registerTool\(\s*'(capsem_[a-z0-9_]+)'")
 TABLE_ROW_TOOLS = re.compile(r"`(capsem_[a-z0-9_]+)`")
@@ -54,8 +56,9 @@ def surface_drift(sources: dict[str, str], doc: str) -> tuple[set[str], set[str]
 
 
 def test_documented_and_registered_mcp_tools_agree() -> None:
+    assert len(TOOL_DOCS) == 1, f"exactly one MCP tools page is expected: {TOOL_DOCS}"
     sources = {path.name: path.read_text() for path in TOOL_SOURCES.rglob("*.ts")}
-    unregistered, undocumented = surface_drift(sources, TOOL_DOC.read_text())
+    unregistered, undocumented = surface_drift(sources, TOOL_DOCS[0].read_text())
     assert not unregistered and not undocumented, (
         f"documented but not registered: {sorted(unregistered)}; "
         f"registered but not documented: {sorted(undocumented)}.\n\n{MCP_TOOL_DOCS_RATIONALE}"
