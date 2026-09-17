@@ -34,15 +34,26 @@
 //! produces a `test.bodies` beside the ledger and both files are committed
 //! together.
 //!
-//! One limitation, checked rather than assumed: the replay reads the ledger's
-//! own columns, and the current ledger keeps only display excerpts there. That
-//! is lossless for the legacy fixture, whose excerpts were the whole of its
-//! content, but it means this replay cannot regenerate a fixture it has
-//! already produced -- it would write the excerpts back as the bodies and
-//! shorten them. The run compares body bytes in against body bytes out and
-//! refuses instead of degrading, and the message says the fix: read the
-//! archive through `DbHandle::read_body` and restore the full bodies. Do that
-//! before the next schema change needs this fixture rebuilt.
+//! Regeneration is idempotent in content, not in bytes. Replaying the fixture
+//! reproduces `test.bodies` byte for byte, and every ledger row, body hash,
+//! block offset and length comes back identical -- but `test.db` does not hash
+//! the same twice, and cannot. Three of its values are minted per run and none
+//! of them is content: `event_body_blobs.created_at` and `body_blocks.sealed_at`
+//! are the wall clock, and the `event_id` of a tool call and a tool response is
+//! `new_event_id()`, because `ToolCallEntry` and `ToolResponseEntry` carry no id
+//! for the writer to reuse. Compare the rows, not the digest, when checking a
+//! rerun; the digest in `fixture_ownership.toml` is there to make replacing the
+//! binary a reviewed act, not to assert reproducibility.
+//!
+//! Bodies are read from the source archive, not from the ledger's own columns,
+//! and that is what makes the replay repeatable. Those columns are display
+//! excerpts capped at `PREVIEW_BYTES`; sourcing bodies from them is lossless
+//! exactly once, on a pre-archive fixture whose excerpts were all the content
+//! there was, and silently shortens a 42 KB request to 2 KB on every run after
+//! that. A ledger with no archive still falls back to the columns, which is the
+//! pre-archive case. Either way the run compares body bytes in against body
+//! bytes out and refuses rather than degrade, so the guard stands whether or
+//! not the sourcing is right.
 
 use super::*;
 
@@ -79,6 +90,81 @@ fn table_exists(conn: &Connection, table: &str) -> bool {
     .is_ok()
 }
 
+/// The recorded bodies of a source ledger, by the row that owns each one.
+///
+/// Keyed `(source_table, event_id, direction)`, which is the index's own unique
+/// key, so a lookup cannot pick up another row's body.
+type SourceBodies = BTreeMap<(String, String, String), String>;
+
+fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime for the archive reads")
+        .block_on(future)
+}
+
+/// Every body the source ledger archived, read back through the DB handle.
+///
+/// This is what makes the replay idempotent. The ledger's own columns are
+/// display excerpts capped at `PREVIEW_BYTES`; the bodies live in the archive.
+/// A replay sourcing bodies from the columns is lossless exactly once -- on a
+/// pre-archive fixture, whose excerpts were all the content there was -- and
+/// silently truncates every run after that, which is how a 42 KB request
+/// becomes 2 KB.
+///
+/// A ledger with no archive returns nothing, and the replay falls back to the
+/// columns; that is the pre-archive case, and the byte accounting at the end
+/// is what says whether the fallback lost anything.
+fn archived_bodies(db_path: &std::path::Path, conn: &Connection) -> SourceBodies {
+    if !table_exists(conn, "event_body_blobs") {
+        return SourceBodies::new();
+    }
+    let mut stmt = conn
+        .prepare("SELECT DISTINCT event_id FROM event_body_blobs ORDER BY event_id")
+        .expect("read the body index");
+    let event_ids: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("read the body index")
+        .map(Result::unwrap)
+        .collect();
+    if event_ids.is_empty() {
+        return SourceBodies::new();
+    }
+
+    let db = capsem_logger::DbHandle::open_external_reader(db_path).expect("open the source ledger's archive");
+    let mut bodies = SourceBodies::new();
+    for event_id in event_ids {
+        // One query per event returns every direction it stored, and the
+        // handle verifies each body against the row that named it.
+        for body in block_on(db.read_bodies(&event_id)).expect("read the archived bodies") {
+            // A body that is not text is not something a `*_full` field can
+            // carry; leaving it out falls back to the column, and the byte
+            // accounting reports the difference rather than hiding it.
+            if let Ok(text) = String::from_utf8(body.bytes) {
+                bodies.insert(
+                    (body.source_table, body.event_id, body.direction.as_str().to_string()),
+                    text,
+                );
+            }
+        }
+    }
+    bodies
+}
+
+/// The archived body for one row, or the column excerpt when there is none.
+fn body_of(
+    bodies: &SourceBodies,
+    source_table: &str,
+    event_id: Option<&str>,
+    direction: &str,
+    column: Option<String>,
+) -> Option<String> {
+    let archived = event_id
+        .and_then(|event_id| bodies.get(&(source_table.to_string(), event_id.to_string(), direction.to_string())));
+    archived.cloned().or(column)
+}
+
 fn decision_of(value: &str) -> Decision {
     match value {
         "denied" => Decision::Denied,
@@ -88,12 +174,13 @@ fn decision_of(value: &str) -> Decision {
     }
 }
 
-fn replay_net_events(conn: &Connection, writer: &DbWriter) -> usize {
+fn replay_net_events(conn: &Connection, writer: &DbWriter, bodies: &SourceBodies) -> usize {
     let mut stmt = conn.prepare("SELECT * FROM net_events ORDER BY id").unwrap();
     let events = stmt
         .query_map([], |row| {
+            let event_id: Option<String> = opt(row, "event_id");
             Ok(NetEvent {
-                event_id: opt(row, "event_id"),
+                event_id: event_id.clone(),
                 timestamp: at(row, "timestamp"),
                 domain: opt(row, "domain").unwrap_or_default(),
                 port: opt::<i64>(row, "port").unwrap_or(443) as u16,
@@ -112,8 +199,20 @@ fn replay_net_events(conn: &Connection, writer: &DbWriter) -> usize {
                 response_headers: opt(row, "response_headers"),
                 request_body_preview: opt(row, "request_body_preview"),
                 response_body_preview: opt(row, "response_body_preview"),
-                request_body_full: opt(row, "request_body_full"),
-                response_body_full: opt(row, "response_body_full"),
+                request_body_full: body_of(
+                    bodies,
+                    "net_events",
+                    event_id.as_deref(),
+                    "request",
+                    opt(row, "request_body_full"),
+                ),
+                response_body_full: body_of(
+                    bodies,
+                    "net_events",
+                    event_id.as_deref(),
+                    "response",
+                    opt(row, "response_body_full"),
+                ),
                 conn_type: opt(row, "conn_type"),
                 policy_mode: opt(row, "policy_mode"),
                 policy_action: opt(row, "policy_action"),
@@ -152,14 +251,20 @@ fn tool_calls_for(conn: &Connection, model_call_id: i64) -> Vec<ToolCallEntry> {
     .collect()
 }
 
-fn tool_responses_for(conn: &Connection, model_call_id: i64) -> Vec<ToolResponseEntry> {
+fn tool_responses_for(conn: &Connection, model_call_id: i64, bodies: &SourceBodies) -> Vec<ToolResponseEntry> {
     let mut stmt = conn
         .prepare("SELECT * FROM tool_responses WHERE model_call_id = ?1 ORDER BY id")
         .unwrap();
     stmt.query_map([model_call_id], |row| {
         Ok(ToolResponseEntry {
             call_id: opt(row, "call_id").unwrap_or_default(),
-            content_preview: opt(row, "content_preview"),
+            content_preview: body_of(
+                bodies,
+                "tool_responses",
+                opt::<String>(row, "event_id").as_deref(),
+                "response",
+                opt(row, "content_preview"),
+            ),
             is_error: opt::<i64>(row, "is_error").unwrap_or_default() != 0,
             trace_id: opt(row, "trace_id"),
             credential_ref: opt(row, "credential_ref"),
@@ -170,15 +275,16 @@ fn tool_responses_for(conn: &Connection, model_call_id: i64) -> Vec<ToolResponse
     .collect()
 }
 
-fn replay_model_calls(conn: &Connection, writer: &DbWriter) -> usize {
+fn replay_model_calls(conn: &Connection, writer: &DbWriter, bodies: &SourceBodies) -> usize {
     let mut stmt = conn.prepare("SELECT * FROM model_calls ORDER BY id").unwrap();
     let calls = stmt
         .query_map([], |row| {
             let id: i64 = row.get("id")?;
+            let event_id: Option<String> = opt(row, "event_id");
             Ok((
                 id,
                 ModelCall {
-                    event_id: opt(row, "event_id"),
+                    event_id: event_id.clone(),
                     timestamp: at(row, "timestamp"),
                     provider: opt(row, "provider").unwrap_or_default(),
                     protocol: opt(row, "protocol"),
@@ -193,12 +299,24 @@ fn replay_model_calls(conn: &Connection, writer: &DbWriter) -> usize {
                     tools_count: opt::<i64>(row, "tools_count").unwrap_or_default() as usize,
                     request_bytes: opt::<i64>(row, "request_bytes").unwrap_or_default() as u64,
                     request_body_preview: opt(row, "request_body_preview"),
-                    request_body_full: opt(row, "request_body_full"),
+                    request_body_full: body_of(
+                        bodies,
+                        "model_calls",
+                        event_id.as_deref(),
+                        "request",
+                        opt(row, "request_body_full"),
+                    ),
                     message_id: opt(row, "message_id"),
                     status_code: opt::<i64>(row, "status_code").map(|v| v as u16),
                     text_content: opt(row, "text_content"),
                     thinking_content: opt(row, "thinking_content"),
-                    response_body_full: opt(row, "response_body_full"),
+                    response_body_full: body_of(
+                        bodies,
+                        "model_calls",
+                        event_id.as_deref(),
+                        "response",
+                        opt(row, "response_body_full"),
+                    ),
                     stop_reason: opt(row, "stop_reason"),
                     input_tokens: opt::<i64>(row, "input_tokens").map(|v| v as u64),
                     output_tokens: opt::<i64>(row, "output_tokens").map(|v| v as u64),
@@ -221,13 +339,13 @@ fn replay_model_calls(conn: &Connection, writer: &DbWriter) -> usize {
     let count = calls.len();
     for (id, mut call) in calls {
         call.tool_calls = tool_calls_for(conn, id);
-        call.tool_responses = tool_responses_for(conn, id);
+        call.tool_responses = tool_responses_for(conn, id, bodies);
         writer.write_blocking(WriteOp::ModelCall(call));
     }
     count
 }
 
-fn replay_mcp_calls(conn: &Connection, writer: &DbWriter) -> usize {
+fn replay_mcp_calls(conn: &Connection, writer: &DbWriter, bodies: &SourceBodies) -> usize {
     // The old fixture keeps MCP evidence in its own table; the current ledger
     // keeps it in `tool_calls` with `origin = 'mcp'`.
     let sql = if table_exists(conn, "mcp_calls") {
@@ -238,15 +356,28 @@ fn replay_mcp_calls(conn: &Connection, writer: &DbWriter) -> usize {
     let mut stmt = conn.prepare(sql).unwrap();
     let calls = stmt
         .query_map([], |row| {
+            let event_id: Option<String> = opt(row, "event_id");
             Ok(McpCall {
-                event_id: opt(row, "event_id"),
+                event_id: event_id.clone(),
                 timestamp: at(row, "timestamp"),
                 server_name: opt(row, "server_name").unwrap_or_default(),
                 method: opt(row, "method").unwrap_or_default(),
                 tool_name: opt(row, "tool_name"),
                 request_id: opt(row, "request_id"),
-                request_preview: opt(row, "request_preview").or_else(|| opt(row, "arguments")),
-                response_preview: opt(row, "response_preview"),
+                request_preview: body_of(
+                    bodies,
+                    "tool_calls",
+                    event_id.as_deref(),
+                    "request",
+                    opt(row, "request_preview").or_else(|| opt(row, "arguments")),
+                ),
+                response_preview: body_of(
+                    bodies,
+                    "tool_calls",
+                    event_id.as_deref(),
+                    "response",
+                    opt(row, "response_preview"),
+                ),
                 decision: opt(row, "decision").unwrap_or_else(|| "allowed".to_string()),
                 duration_ms: opt::<i64>(row, "duration_ms").unwrap_or_default() as u64,
                 error_message: opt(row, "error_message"),
@@ -354,13 +485,86 @@ impl Rail {
     }
 }
 
+/// A count that fails loudly.
+///
+/// This used to swallow every error into 0, which made "the table is not there,
+/// as expected" and "the query is broken" the same answer. A renamed
+/// `event_body_blobs` would then have read 0 source body bytes and waved a
+/// lossy rerun straight through the guard below.
 fn count(conn: &Connection, sql: &str) -> i64 {
-    conn.query_row(sql, [], |row| row.get(0)).unwrap_or(0)
+    conn.query_row(sql, [], |row| row.get(0))
+        .unwrap_or_else(|error| panic!("counting rows failed: {sql}: {error}"))
+}
+
+/// The same count for a table that may legitimately be absent from the shape
+/// being read. Absence answers 0; anything else still fails.
+fn count_if_table(conn: &Connection, table: &str, sql: &str) -> i64 {
+    if table_exists(conn, table) {
+        count(conn, sql)
+    } else {
+        0
+    }
+}
+
+/// What makes the regeneration idempotent, tested in the suite that runs every
+/// time rather than in the one that runs when someone rebuilds the fixture.
+///
+/// A body larger than the display excerpt is the whole question: sourced from
+/// the column it comes back at `PREVIEW_BYTES`, sourced from the archive it
+/// comes back whole.
+#[test]
+fn replay_bodies_come_from_the_archive_not_the_preview_column() {
+    let staging = tempfile::tempdir().unwrap();
+    let source_path = staging.path().join("source.db");
+    let body = "x".repeat(5 * 1024);
+
+    let writer = DbWriter::open(&source_path, 64).unwrap();
+    let mut event = sample_net_event("bodies.example", Decision::Allowed);
+    event.event_id = Some("0123456789ab".to_string());
+    event.response_body_preview = Some(body[..64].to_string());
+    event.response_body_full = Some(body.clone());
+    writer.write_blocking(WriteOp::NetEvent(event));
+    writer.shutdown_blocking();
+
+    let source = Connection::open_with_flags(&source_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let column: Option<String> = source
+        .query_row(
+            "SELECT response_body_preview FROM net_events WHERE event_id = '0123456789ab'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        column.as_ref().is_some_and(|value| value.len() < body.len()),
+        "the fixture for this test is only meaningful if the column is an excerpt"
+    );
+
+    let bodies = archived_bodies(&source_path, &source);
+    let rebuilt_path = staging.path().join("rebuilt.db");
+    let rebuilt_writer = DbWriter::open(&rebuilt_path, 64).unwrap();
+    replay_net_events(&source, &rebuilt_writer, &bodies);
+    rebuilt_writer.shutdown_blocking();
+
+    let replayed = block_on(async {
+        capsem_logger::DbHandle::open_external_reader(&rebuilt_path)
+            .unwrap()
+            .read_body("0123456789ab", capsem_logger::BodyDirection::Response)
+            .await
+            .unwrap()
+    })
+    .expect("the replayed event carries a body");
+    assert_eq!(
+        replayed.bytes.len(),
+        body.len(),
+        "the replay must source bodies from the archive; the preview column would give {} bytes",
+        column.map(|value| value.len()).unwrap_or_default()
+    );
+    assert_eq!(replayed.bytes, body.as_bytes());
 }
 
 /// The accounting is the part of the regeneration that can rot silently: it
 /// only runs when someone rebuilds the fixture, so it gets its adversarial
-/// case here, in the suite that runs every time.
+/// case here too.
 #[test]
 fn rail_accounting_reports_undeclared_drops_only() {
     let clean = Rail {
@@ -433,12 +637,15 @@ fn regenerate_session_fixture() {
             "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp' AND method = 'tools/call'",
         )
     };
-    let snapshot_events = count(&source, "SELECT COUNT(*) FROM snapshot_events") as usize;
+    let snapshot_events = count_if_table(&source, "snapshot_events", "SELECT COUNT(*) FROM snapshot_events") as usize;
 
-    let net = replay_net_events(&source, &writer);
-    let model = replay_model_calls(&source, &writer);
-    let mcp = replay_mcp_calls(&source, &writer);
+    // Bodies come from the archive, not from the display columns beside them.
+    let bodies = archived_bodies(&fixture, &source);
+    let net = replay_net_events(&source, &writer, &bodies);
+    let model = replay_model_calls(&source, &writer, &bodies);
+    let mcp = replay_mcp_calls(&source, &writer, &bodies);
     let files = replay_file_events(&source, &writer);
+    drop(bodies);
     writer.shutdown_blocking();
 
     // Checked before anything else opens the file: only the ledger is
@@ -514,7 +721,11 @@ fn regenerate_session_fixture() {
     // content there was. On a fixture this replay already produced it is not:
     // a second run would write the excerpts back as the bodies and quietly
     // shorten them. Refuse rather than degrade.
-    let source_body_bytes = count(&source, "SELECT COALESCE(SUM(original_bytes), 0) FROM event_body_blobs");
+    let source_body_bytes = count_if_table(
+        &source,
+        "event_body_blobs",
+        "SELECT COALESCE(SUM(original_bytes), 0) FROM event_body_blobs",
+    );
     let rebuilt_body_bytes = count(
         &rebuilt_conn,
         "SELECT COALESCE(SUM(original_bytes), 0) FROM event_body_blobs",
@@ -542,15 +753,48 @@ fn regenerate_session_fixture() {
     let rebuilt_bodies = rebuilt.with_extension("bodies");
     let fixture_bodies = fixture.with_extension("bodies");
     println!("indexed bodies: {indexed_bodies}");
-    std::fs::copy(&rebuilt, &fixture).expect("write the regenerated fixture");
+    // The same ordering the writer itself keeps: bytes before the index that
+    // names them. If the second copy fails, the pair left behind is a stale
+    // archive under an old index, not an index pointing into bytes that are not
+    // there. Removal runs the other way for the same reason -- the index goes
+    // first, so nothing is left naming an archive that is gone.
     if indexed_bodies > 0 {
         std::fs::copy(&rebuilt_bodies, &fixture_bodies).expect("write the regenerated body archive");
-    } else if fixture_bodies.exists() {
-        std::fs::remove_file(&fixture_bodies).unwrap();
+        std::fs::copy(&rebuilt, &fixture).expect("write the regenerated fixture");
+    } else {
+        std::fs::copy(&rebuilt, &fixture).expect("write the regenerated fixture");
+        if fixture_bodies.exists() {
+            std::fs::remove_file(&fixture_bodies).unwrap();
+        }
     }
 
     let reader = DbReader::open_disk_only(&fixture).unwrap();
     reader
         .ready()
         .expect("the regenerated fixture must be a current-shape ledger");
+    drop(reader);
+
+    // Opening the fixture leaves a WAL and an shm index beside it. Only the two
+    // committed files belong in the tree, so a run that left those behind would
+    // put two untracked SQLite sidecars there for someone to `git add -A` by
+    // accident. The WAL is checked empty before either is removed -- a WAL with
+    // content would mean the ledger is not entirely in the file being committed.
+    // (The shm is a fixed-size shared-memory index and carries no ledger bytes,
+    // so its size says nothing.)
+    let wal = fixture.with_extension("db-wal");
+    if let Ok(metadata) = std::fs::metadata(&wal) {
+        assert_eq!(
+            metadata.len(),
+            0,
+            "{} holds {} bytes the committed fixture would not carry",
+            wal.display(),
+            metadata.len()
+        );
+    }
+    for extension in ["db-wal", "db-shm"] {
+        let sidecar = fixture.with_extension(extension);
+        if sidecar.exists() {
+            std::fs::remove_file(&sidecar).unwrap();
+        }
+    }
 }
