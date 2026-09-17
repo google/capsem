@@ -1,7 +1,5 @@
 //! TUI action intent uses the gateway SDK's typed HTTP contract.
 
-use std::time::Duration;
-
 use capsem_sdk::models::ProvisionRequest;
 use capsem_sdk::operations as api;
 use capsem_sdk::transport::{CallOptions, Transport};
@@ -10,8 +8,11 @@ use capsem_sdk::{Error, Hypervisor, Result, VmSelector};
 use crate::app::ControlAction;
 use crate::gateway_provider::ActionOutcome;
 
-pub async fn invoke(base_url: &str, token: &str, action: &ControlAction) -> Result<ActionOutcome> {
-    let vm = |id: &str| Hypervisor::new(base_url, token)?.vm(VmSelector::Id(id.into()));
+/// Run one control action against the caller's already-built clients, which
+/// share a connection pool. Building a `Hypervisor` here made every action
+/// (and every one-second refresh) construct a fresh reqwest client.
+pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &ControlAction) -> Result<ActionOutcome> {
+    let vm = |id: &str| hypervisor.vm(VmSelector::Id(id.into()));
     match action {
         ControlAction::CreateSession { name, profile_id } => {
             // TUI workspaces persist even when the service chooses their name.
@@ -28,8 +29,7 @@ pub async fn invoke(base_url: &str, token: &str, action: &ControlAction) -> Resu
                     container: None,
                 },
             };
-            let transport = Transport::new(base_url, token, Duration::from_secs(30))?;
-            let vm = api::create_vm(&transport, &input, CallOptions::default()).await?;
+            let vm = api::create_vm(transport, &input, CallOptions::default()).await?;
             Ok(ActionOutcome {
                 message: name
                     .as_deref()

@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use capsem_sdk::models::{HypervisorInfo, ServiceAvailability, UpdateStatusResponse, VmLifecycleState, VmSummary};
+use capsem_sdk::transport::Transport;
 use capsem_sdk::Hypervisor;
 use serde::Deserialize;
 
@@ -17,8 +18,13 @@ use crate::provider::StateProvider;
 #[derive(Clone, Debug)]
 pub struct GatewayProvider {
     base_url: String,
+    /// Used only for `GET /token`, which precedes having one.
     client: reqwest::Client,
     token: Arc<Mutex<Option<String>>>,
+    /// The SDK clients for the current token. They hold the connection pool
+    /// (and its TLS setup), so they are built once per token rather than once
+    /// per refresh tick and per action.
+    clients: Arc<Mutex<Option<(String, Hypervisor, Transport)>>>,
 }
 
 impl PartialEq for GatewayProvider {
@@ -59,6 +65,23 @@ impl GatewayProvider {
         Ok(())
     }
 
+    /// The SDK clients for `token`, rebuilt only when the token rotates.
+    fn clients(&self, token: &str) -> Result<(Hypervisor, Transport)> {
+        let mut cached = self
+            .clients
+            .lock()
+            .map_err(|_| anyhow::anyhow!("capsem gateway client cache poisoned"))?;
+        if let Some((current, hypervisor, transport)) = cached.as_ref() {
+            if current == token {
+                return Ok((hypervisor.clone(), transport.clone()));
+            }
+        }
+        let hypervisor = Hypervisor::new(&self.base_url, token)?;
+        let transport = Transport::new(&self.base_url, token, Duration::from_secs(30))?;
+        *cached = Some((token.to_string(), hypervisor.clone(), transport.clone()));
+        Ok((hypervisor, transport))
+    }
+
     async fn token(&self) -> Result<String> {
         if let Some(token) = self.auth_token()? {
             return Ok(token);
@@ -74,6 +97,7 @@ impl GatewayProvider {
             base_url: base_url.trim_end_matches('/').to_string(),
             client: reqwest::Client::new(),
             token: Arc::new(Mutex::new(None)),
+            clients: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -92,16 +116,18 @@ impl GatewayProvider {
     pub async fn load_async(&self) -> Result<AppState> {
         let mut token = self.token().await?;
         let started = Instant::now();
-        let status = match fetch_status(&self.base_url, &token).await {
+        let (mut hypervisor, _) = self.clients(&token)?;
+        let status = match fetch_status(&hypervisor).await {
             Ok(status) => status,
             Err(first_error) => {
                 self.clear_auth_token()?;
                 token = self.token().await.context(first_error)?;
-                fetch_status(&self.base_url, &token).await?
+                hypervisor = self.clients(&token)?.0;
+                fetch_status(&hypervisor).await?
             }
         };
         let mut state = status_response_to_state(status, started.elapsed());
-        state.profiles = fetch_profiles(&self.base_url, &token).await.unwrap_or_default();
+        state.profiles = fetch_profiles(&hypervisor).await.unwrap_or_default();
         Ok(state)
     }
 
@@ -121,7 +147,8 @@ impl GatewayProvider {
             return update_with_binary(&capsem_binary()).await;
         }
         let token = self.token().await?;
-        invoke_action(&self.base_url, &token, action).await
+        let (hypervisor, transport) = self.clients(&token)?;
+        invoke_action(&hypervisor, &transport, action).await
     }
 }
 
@@ -147,15 +174,11 @@ async fn fetch_token(client: &reqwest::Client, base_url: &str) -> Result<String>
     Ok(token.token)
 }
 
-async fn fetch_status(base_url: &str, token: &str) -> Result<HypervisorInfo> {
-    Hypervisor::new(base_url, token)?
-        .info()
-        .await
-        .map_err(crate::sdk_actions::display_error)
+async fn fetch_status(hypervisor: &Hypervisor) -> Result<HypervisorInfo> {
+    hypervisor.info().await.map_err(crate::sdk_actions::display_error)
 }
 
-async fn fetch_profiles(base_url: &str, token: &str) -> Result<Vec<ProfileOption>> {
-    let hypervisor = Hypervisor::new(base_url, token)?;
+async fn fetch_profiles(hypervisor: &Hypervisor) -> Result<Vec<ProfileOption>> {
     Ok(hypervisor
         .profiles()
         .list()
@@ -337,12 +360,16 @@ pub struct ActionOutcome {
     pub focus_session: Option<String>,
 }
 
-async fn invoke_action(base_url: &str, token: &str, action: &ControlAction) -> Result<ActionOutcome> {
+async fn invoke_action(
+    hypervisor: &Hypervisor,
+    transport: &Transport,
+    action: &ControlAction,
+) -> Result<ActionOutcome> {
     match action {
         ControlAction::StartService => start_service().await,
         ControlAction::Update => update_with_binary(&capsem_binary()).await,
         ControlAction::Purge { all } => {
-            let response = Hypervisor::new(base_url, token)?
+            let response = hypervisor
                 .purge(*all)
                 .await
                 .map_err(crate::sdk_actions::display_error)?;
@@ -361,7 +388,7 @@ async fn invoke_action(base_url: &str, token: &str, action: &ControlAction) -> R
                 focus_session: None,
             })
         }
-        action => crate::sdk_actions::invoke(base_url, token, action)
+        action => crate::sdk_actions::invoke(hypervisor, transport, action)
             .await
             .map_err(crate::sdk_actions::display_error),
     }
