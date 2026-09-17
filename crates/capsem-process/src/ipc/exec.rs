@@ -86,15 +86,20 @@ pub(super) async fn run(
     capsem_core::try_send!("ipc_exec_result", output.send(response).await);
 }
 
-pub(super) async fn input(id: u64, frame: capsem_proto::ExecInputFrame, jobs: &JobStore) -> Result<(), String> {
-    let sender = jobs
-        .active_execs
-        .lock()
-        .unwrap()
-        .get(&id)
-        .map(|active| active.input_tx.clone())
-        .ok_or_else(|| "exec is not running".to_string())?;
-    sender.send(frame).await.map_err(|_| "exec stdin is closed".to_string())
+/// Queue one stdin frame without waiting: the connection's read loop calls
+/// this inline, and must stay free to read `CancelExec`. The service sends
+/// within `EXEC_STDIN_WINDOW` credit, so a full queue is a protocol breach.
+pub(super) fn input(id: u64, frame: capsem_proto::ExecInputFrame, jobs: &JobStore) -> Result<(), String> {
+    let active = jobs.active_execs.lock().unwrap();
+    let sender = match active.get(&id) {
+        Some(running) => running.input_tx.clone(),
+        None => return Err("exec is not running".to_string()),
+    };
+    drop(active);
+    sender.try_send(frame).map_err(|error| match error {
+        mpsc::error::TrySendError::Full(_) => "exec stdin window exceeded".to_string(),
+        mpsc::error::TrySendError::Closed(_) => "exec stdin is closed".to_string(),
+    })
 }
 
 pub(super) async fn cancel(id: u64, jobs: &JobStore, control: &mpsc::Sender<ServiceToProcess>) -> Result<(), String> {

@@ -5,6 +5,12 @@ use std::io::{self, Read, Write};
 
 /// Largest stdin or output chunk carried by one exec frame.
 pub const MAX_EXEC_DATA_BYTES: usize = 256 * 1024;
+/// Stdin frames (data or EOF) one streaming exec may have in flight between
+/// the service and the guest. The VM owner queues at most this many and
+/// reports each one it hands to the guest with
+/// `ProcessToService::ExecInputConsumed`; the service sends a
+/// frame only while it holds credit, so neither side ever waits on the other.
+pub const EXEC_STDIN_WINDOW: usize = 16;
 /// Largest encoded exec frame. The typed envelope stays well below this when
 /// its data is at [`MAX_EXEC_DATA_BYTES`].
 const MAX_EXEC_FRAME_BYTES: u32 = 512 * 1024;

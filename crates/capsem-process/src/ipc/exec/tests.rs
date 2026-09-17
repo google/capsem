@@ -89,3 +89,18 @@ async fn duplicate_id_does_not_replace_original_job_or_dispatch_again() {
     ));
     assert!(jobs.active_execs.lock().unwrap().contains_key(&13));
 }
+
+/// The IPC read loop handles stdin inline. A full stdin queue used to park
+/// that loop, so CancelExec on the same connection was never read and a
+/// command ignoring stdin could not be cancelled. Overflow is refused at once.
+#[test]
+fn stdin_beyond_the_window_is_refused_without_waiting() {
+    let jobs = JobStore::new();
+    jobs.active_execs.lock().unwrap().insert(21, ActiveExec::new());
+    let frame = || capsem_proto::ExecInputFrame::Data(b"x".to_vec());
+    for _ in 0..capsem_proto::EXEC_STDIN_WINDOW {
+        input(21, frame(), &jobs).unwrap();
+    }
+    let refused = input(21, frame(), &jobs).unwrap_err();
+    assert!(refused.contains("window"), "{refused}");
+}

@@ -10,6 +10,9 @@ use futures::{SinkExt, StreamExt};
 
 /// How long a client may take to send its `start` control message.
 const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// How often an exec waiting for stdin credit pings the client it is not
+/// reading, so a client that left is noticed and its command cancelled.
+const CREDIT_WAIT_PING: std::time::Duration = std::time::Duration::from_secs(1);
 
 type OwnerChannel = (
     capsem_foundation::ipc_channel::Sender<ServiceToProcess>,
@@ -227,23 +230,39 @@ async fn exec(
         .map_err(owner_closed)?;
     send_status(client_tx, &StreamStatus::Started).await?;
     let mut stdin_closed = false;
+    // Stdin frames the owner can still queue. Client frames are read only
+    // while there is credit, so the owner's read loop never waits on a full
+    // stdin queue and stays free to process CancelExec.
+    let mut credit = capsem_proto::EXEC_STDIN_WINDOW;
+    let mut ping = tokio::time::interval(CREDIT_WAIT_PING);
+    ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let result = loop {
         tokio::select! {
-            frame = next_client_frame(client_rx) => match frame? {
+            frame = next_client_frame(client_rx), if credit > 0 => match frame? {
                 None => break Ok(None),
                 Some(ClientControl::Stdin(_)) if stdin_closed => break Err("exec stdin is already closed".into()),
                 Some(ClientControl::Stdin(data)) => {
+                    credit -= 1;
                     owner_tx.send(ServiceToProcess::ExecStreamInput { id: job, data }).await.map_err(owner_closed)?;
                 }
                 Some(ClientControl::Control(StreamControl::CloseStdin)) if !stdin_closed => {
                     stdin_closed = true;
+                    credit -= 1;
                     owner_tx.send(ServiceToProcess::ExecStreamCloseStdin { id: job }).await.map_err(owner_closed)?;
                 }
                 Some(ClientControl::Control(StreamControl::CloseStdin)) => {}
                 Some(ClientControl::Control(StreamControl::Start { .. })) => break Err("stream already started".into()),
                 Some(ClientControl::Control(StreamControl::Resize { .. })) => {}
             },
+            _ = ping.tick(), if credit == 0 => {
+                if client_tx.send(Message::Ping(Default::default())).await.is_err() {
+                    break Ok(None);
+                }
+            }
             message = owner_rx.recv() => match message.map_err(owner_closed)? {
+                ProcessToService::ExecInputConsumed { id } if id == job => {
+                    credit = (credit + 1).min(capsem_proto::EXEC_STDIN_WINDOW);
+                }
                 ProcessToService::ExecOutput { id, channel, data } if id == job => {
                     let channel = match channel {
                         capsem_proto::ExecOutputChannel::Stdout => StreamChannel::Stdout,

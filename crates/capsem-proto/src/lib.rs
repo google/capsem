@@ -24,7 +24,7 @@ mod wire_bytes;
 
 pub use exec_stream::{
     read_exec_input, read_exec_output, write_exec_input, write_exec_output, ExecInputFrame, ExecOutputChannel,
-    ExecOutputFrame, MAX_EXEC_DATA_BYTES,
+    ExecOutputFrame, EXEC_STDIN_WINDOW, MAX_EXEC_DATA_BYTES,
 };
 pub use handshake::{HandshakeError, Hello};
 

@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Piping a large stdin into a command that does not read it (for example
+  `capsem exec 'sleep 600' < big-file`) no longer wedges the VM owner's IPC
+  connection: streaming exec stdin is flow-controlled, so cancellation and
+  output keep flowing, and a client that leaves while stdin is blocked still
+  cancels its command.
+
 - `capsem_read_file` takes `offset` and `max_bytes` and reports `size` and
   `truncated`, so one call can no longer pull an unbounded file into an
   agent's context, and large structured results are no longer mirrored into

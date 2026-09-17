@@ -1002,7 +1002,7 @@ fn dispatch_aux_connection(
                         .get_mut(&id)
                         .map(|active| (active.stream.clone(), active.input_rx.take()))
                         .unwrap_or((None, None));
-                    let _input_handle = exec_input::spawn(&conn, input);
+                    let _input_handle = exec_input::spawn(&conn, id, input, stream.clone());
                     let result = match stream {
                         Some(sender) => exec_output::stream_exec_output(&mut file, id, &sender),
                         None => Ok(read_exec_output(&mut file)),

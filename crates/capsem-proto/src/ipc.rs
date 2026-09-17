@@ -293,6 +293,10 @@ pub enum ProcessToService {
         #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
+    /// One stdin frame of a streaming exec left the owner's queue for the
+    /// guest; the service may send one more. See
+    /// [`crate::exec_stream::EXEC_STDIN_WINDOW`].
+    ExecInputConsumed { id: u64 },
     PortPublished {
         id: u64,
         publication: Option<PublicationInfo>,

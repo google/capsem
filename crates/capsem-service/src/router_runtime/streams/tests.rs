@@ -3,6 +3,8 @@ use crate::tests::{insert_fake_instance_with_session_dir, make_test_state};
 use capsem_api::stream::{decode_server_frame, encode_control, encode_data, ServerFrame};
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as ClientMessage};
 
+mod flow;
+
 type Client = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 struct Fixture {

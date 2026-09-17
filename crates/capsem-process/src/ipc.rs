@@ -297,12 +297,12 @@ pub(crate) async fn handle_ipc_connection(
                 ));
             }
             ServiceToProcess::ExecStreamInput { id, data } => {
-                if let Err(error) = exec::input(id, capsem_proto::ExecInputFrame::Data(data), &job_store).await {
+                if let Err(error) = exec::input(id, capsem_proto::ExecInputFrame::Data(data), &job_store) {
                     warn!(id, %error, "exec stdin input refused");
                 }
             }
             ServiceToProcess::ExecStreamCloseStdin { id } => {
-                if let Err(error) = exec::input(id, capsem_proto::ExecInputFrame::StdinEof, &job_store).await {
+                if let Err(error) = exec::input(id, capsem_proto::ExecInputFrame::StdinEof, &job_store) {
                     warn!(id, %error, "exec stdin EOF refused");
                 }
             }

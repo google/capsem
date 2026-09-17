@@ -62,6 +62,7 @@ pub(crate) struct ActiveExec {
     pub(crate) stderr_bytes: u64,
     /// Bounded stdin queue exists before the guest opens its exec VSOCK, so a
     /// client may send immediately after the stream-start acknowledgement.
+    /// Its capacity is the service's stdin credit window.
     pub(crate) input_tx: tokio::sync::mpsc::Sender<capsem_proto::ExecInputFrame>,
     pub(crate) input_rx: Option<tokio::sync::mpsc::Receiver<capsem_proto::ExecInputFrame>>,
     pub(crate) deposited: Arc<Notify>,
@@ -72,7 +73,7 @@ pub(crate) struct ActiveExec {
 
 impl ActiveExec {
     pub(crate) fn new() -> Self {
-        let (input_tx, input_rx) = tokio::sync::mpsc::channel(16);
+        let (input_tx, input_rx) = tokio::sync::mpsc::channel(capsem_proto::EXEC_STDIN_WINDOW);
         Self {
             started_at: Instant::now(),
             event_id: None,
