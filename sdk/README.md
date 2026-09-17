@@ -12,12 +12,12 @@ the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
 | Private networks | `networks.create/list/inspect/delete/attach/detach/logs` |
 | Profiles and MCP | `profiles.list`, `profiles.mcp(...).info/servers/default_permission/tools/refresh/call` |
 | VM | `info`, `exec`, `persist`, `start`, `stop`, `pause`, `resume`, `delete`, `fork` |
-| VM inspection | `list`, `log`, `history`, `timeline`, `changes` |
+| VM inspection | `log`, `history`, `timeline` |
+| VM files | `files.list/read/write/history` |
 | VM snapshots | `snapshots.list`, `snapshots.status` |
 | VM stats | `stats.summary`, `stats.details` |
 | VM container | `container.status` |
 | VM ports | `ports.open/list/close` |
-| VM copy | Python/Rust `from_vm` and `to_vm`; TypeScript `fromVm` and `toVm` |
 
 Rust accesses the nested resources as methods, for example
 `vm.stats().details().await?`. `info` combines versions, profiles and update
@@ -55,7 +55,7 @@ Results retain gateway semantics. Guest exec preserves separate `stdout` and
 `stderr` lanes. Each field is an `ExecOutput` whose
 `encoding` is `utf8` or `base64`, so arbitrary bytes remain exact. A successful
 create/start acknowledges launch, and an exec request waits for the guest to become ready.
-File copy requires a running VM's security ledger. A restart acknowledgement
+File access requires a running VM's security ledger. A restart acknowledgement
 requires explicit reconnection with new credentials. No mutation is retried.
 
 `run` executes a command in a temporary VM and accepts its own profile, CPU,
@@ -104,7 +104,7 @@ These Ironbank tests use disposable services and explicit gateway credentials:
 
 - `test_braavos_sdk.py`: all three SDKs, authentication, profile/MCP and host
   diagnostic resources, name resolution,
-  stopped workspace files, snapshot changes and copy refusal.
+  stopped workspace files, snapshot changes and file-access refusal.
 - `test_sdk_live.py`: Python and TypeScript create/exec, exact binary transfer,
   fork isolation, stop/start, pause/resume and deletion on Apple VZ.
 - `test_sdk_model.py`: Python inspection of a real VM's model/tool interaction

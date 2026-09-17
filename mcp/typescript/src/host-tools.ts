@@ -125,12 +125,12 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
   server.registerTool('capsem_list_files', {
     description: 'List files in a VM using the gateway file API.',
     inputSchema: {vm_id: vmId, path: z.string().default('/'), depth: positiveInt.optional()},
-  }, ({vm_id, path, depth}) => toolCall(() => vm(hypervisor, vm_id).list(path, defined({depth}))));
+  }, ({vm_id, path, depth}) => toolCall(() => vm(hypervisor, vm_id).files.list(path, defined({depth}))));
   server.registerTool('capsem_read_file', {
     description: 'Read a VM file as UTF-8 text or base64 through the gateway file API.',
     inputSchema: {vm_id: vmId, path: z.string().min(1), encoding: z.enum(['utf8', 'base64']).default('utf8')},
   }, ({vm_id, path, encoding}) => toolCall(async () => {
-    const data = await vm(hypervisor, vm_id).copy.fromVm(path);
+    const data = await vm(hypervisor, vm_id).files.read(path);
     return {path, encoding, size: data.byteLength, content: Buffer.from(data).toString(encoding)};
   }));
   server.registerTool('capsem_write_file', {
@@ -138,7 +138,7 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
     inputSchema: {
       vm_id: vmId, path: z.string().min(1), content: z.string(), encoding: z.enum(['utf8', 'base64']).default('utf8'),
     },
-  }, ({vm_id, path, content, encoding}) => toolCall(() => vm(hypervisor, vm_id).copy.toVm(path, bytes(content, encoding))));
+  }, ({vm_id, path, content, encoding}) => toolCall(() => vm(hypervisor, vm_id).files.write(path, bytes(content, encoding))));
 
   server.registerTool('capsem_vm_logs', {
     description: 'Read serial and process logs for a VM.',
@@ -180,8 +180,8 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
   server.registerTool('capsem_snapshot_status', {
     description: 'Read VM filesystem snapshot readiness.', inputSchema: {vm_id: vmId},
   }, ({vm_id}) => toolCall(() => vm(hypervisor, vm_id).snapshots.status()));
-  server.registerTool('capsem_changes', {
+  server.registerTool('capsem_file_history', {
     description: 'Read paginated filesystem changes since a snapshot checkpoint.',
     inputSchema: {vm_id: vmId, checkpoint: z.string().min(1), ...page},
-  }, ({vm_id, checkpoint, ...options}) => toolCall(() => vm(hypervisor, vm_id).changes(checkpoint, defined(options))));
+  }, ({vm_id, checkpoint, ...options}) => toolCall(() => vm(hypervisor, vm_id).files.history(checkpoint, defined(options))));
 }

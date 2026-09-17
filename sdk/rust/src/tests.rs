@@ -217,10 +217,10 @@ async fn controls_and_resources_use_the_canonical_vm_routes() {
     request(&mut server, "/vms/vm-1/stats/summary").await;
     fork.stats().details().await.unwrap();
     request(&mut server, "/vms/vm-1/stats/detail").await;
-    assert_eq!(fork.copy().from_vm("/test.bin").await.unwrap(), [0, 255, 13, 10]);
+    assert_eq!(fork.files().read("/test.bin").await.unwrap(), [0, 255, 13, 10]);
     let (parts, _) = server.received.recv().await.unwrap();
     assert_eq!(parts.uri.to_string(), "/vms/vm-1/files/content?path=%2Ftest.bin");
-    fork.copy().to_vm("/test.bin", vec![0, 255, 13, 10]).await.unwrap();
+    fork.files().write("/test.bin", vec![0, 255, 13, 10]).await.unwrap();
     let (parts, body) = server.received.recv().await.unwrap();
     assert_eq!(parts.method, "POST");
     assert_eq!(parts.uri.to_string(), "/vms/vm-1/files/content?path=%2Ftest.bin");
@@ -254,17 +254,18 @@ async fn query_options_preserve_wire_names_enums_and_root_listing() {
     })
     .await
     .unwrap();
-    vm.changes(
-        "cp-1",
-        PageOptions {
-            limit: Some(2),
-            offset: Some(3),
-        },
-    )
-    .await
-    .unwrap();
-    vm.list("/", None).await.unwrap();
-    vm.list("/folder", Some(2)).await.unwrap();
+    vm.files()
+        .history(
+            "cp-1",
+            PageOptions {
+                limit: Some(2),
+                offset: Some(3),
+            },
+        )
+        .await
+        .unwrap();
+    vm.files().list("/", None).await.unwrap();
+    vm.files().list("/folder", Some(2)).await.unwrap();
     for expected in [
         "/vms/vm-1/logs?grep=hello+world&tail=2&max_bytes=64",
         "/vms/vm-1/history?limit=2&offset=3&search=printf&layer=exec",

@@ -26,10 +26,10 @@ async fn example(url: &str, token: &str) -> Result<()> {
     hv.networks().logs(&network.id, Default::default()).await?;
     let result = vm.exec("echo hello", Some(60)).await?;
     println!("{} (exit {})", result.stdout.data, result.exit_code);
-    vm.copy().to_vm("/hello.txt", b"hello\n".to_vec()).await?;
-    let contents = vm.copy().from_vm("/hello.txt").await?;
+    vm.files().write("/hello.txt", b"hello\n".to_vec()).await?;
+    let contents = vm.files().read("/hello.txt").await?;
     assert_eq!(contents, b"hello\n");
-    vm.list("/", None).await?;
+    vm.files().list("/", None).await?;
     vm.snapshots().list().await?;
     vm.stats().details().await?;
     vm.persist("saved-workspace").await?;
@@ -61,9 +61,9 @@ measured in GiB.
 VM controls are `start`, `stop`, `pause`, `resume`, `delete`, and
 `fork(name, description)`. Queries include `log(LogOptions)`,
 `history(HistoryOptions)`, `timeline(TimelineOptions)`,
-`changes(checkpoint, PageOptions)`, and `list(path, depth)`.
+and `files().list/read/write/history`.
 Snapshots support `list()` and `status()`; stats support `summary()` and
-`details()`. Copy transfers single-file bytes and requires a running VM's
+`details()`. File reads and writes preserve bytes and require a running VM's
 security ledger. `hv.update()` applies the configured update.
 
 Responses and enums reuse `capsem_sdk::models` (the gateway's `capsem-api`

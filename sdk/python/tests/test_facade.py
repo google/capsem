@@ -100,18 +100,18 @@ def test_name_is_resolved_once_and_each_vm_interface_returns_typed_results() -> 
             assert isinstance(await vm.timeline(layers=[models.TimelineLayer.EXEC, models.TimelineLayer.MODEL], since="now", limit=3), models.TimelineResponse)
             assert "layers=exec%2Cmodel" in state.requests[-1][1]
             await vm.timeline()
-            assert isinstance(await vm.list("/work", depth=2), models.FileListResponse)
-            await vm.list()
+            assert isinstance(await vm.files.list("/work", depth=2), models.FileListResponse)
+            await vm.files.list()
             assert state.requests[-1][1] == "/vms/vm-0/files/list"
-            assert isinstance(await vm.changes("cp-10", limit=3, offset=1), models.ChangesResponse)
+            assert isinstance(await vm.files.history("cp-10", limit=3, offset=1), models.ChangesResponse)
             assert isinstance(await vm.stats.summary(), models.VmStatsSummaryResponse)
             assert isinstance(await vm.stats.details(), models.VmStatsDetailResponse)
             assert isinstance(await vm.snapshots.list(), models.SnapshotsList)
             assert isinstance(await vm.snapshots.status(), models.SnapshotsStatus)
-            assert isinstance(await vm.copy.to_vm("/work/bytes", b"\x00\xff"), models.UploadResponse)
-            assert await vm.copy.from_vm("/work/bytes") == b"\x00\xff"
+            assert isinstance(await vm.files.write("/work/bytes", b"\x00\xff"), models.UploadResponse)
+            assert await vm.files.read("/work/bytes") == b"\x00\xff"
             with pytest.raises(HttpError) as error:
-                await vm.copy.from_vm("/missing")
+                await vm.files.read("/missing")
             assert error.value.status == 404
             child = await vm.fork("child", description="copy")
             assert child.id == "forked-id" and child.name == "child"

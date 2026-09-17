@@ -54,16 +54,16 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       await vm.timeline();
       await vm.log({grep: 'hello', tail: 2, max_bytes: 100});
       await vm.log();
-      await vm.list(); await vm.list('/nested', {depth: 2});
-      await vm.changes('cp-10', {limit: 2}); await vm.changes('cp-10');
+      await vm.files.list(); await vm.files.list('/nested', {depth: 2});
+      await vm.files.history('cp-10', {limit: 2}); await vm.files.history('cp-10');
       const fork = await vm.fork('copy', {description: 'checkpoint'});
       expect(fork.id).toBe('fork-0'); expect(fork.name).toBe('copy');
       fork.close();
       const another = await vm.fork('another'); another.close();
       const bytes = new Uint8Array([0, 255]);
-      await vm.copy.toVm('/copy.bin', bytes);
-      expect(await vm.copy.fromVm('/copy.bin')).toEqual(bytes);
-      await expect(vm.copy.fromVm('/missing')).rejects.toBeInstanceOf(HttpError);
+      await vm.files.write('/copy.bin', bytes);
+      expect(await vm.files.read('/copy.bin')).toEqual(bytes);
+      await expect(vm.files.read('/missing')).rejects.toBeInstanceOf(HttpError);
       await vm.delete();
       const expected = [
         '/vms/list', '/vms/vm-0/info', '/vms/vm-0/exec', '/vms/vm-0/exec', '/vms/vm-0/start',
@@ -149,7 +149,7 @@ it('uses a canonical ID without a name lookup and forwards cancellation', async 
       await vm.info();
       expect(received.map(request => request.url)).toEqual(['/vms/vm-0/info']);
       await expect(vm.exec('true', {signal: AbortSignal.abort()})).rejects.toMatchObject({name: 'AbortError'});
-      await expect(vm.copy.fromVm('/copy.bin', {signal: AbortSignal.abort()})).rejects.toMatchObject({name: 'AbortError'});
+      await expect(vm.files.read('/copy.bin', {signal: AbortSignal.abort()})).rejects.toMatchObject({name: 'AbortError'});
       expect(received).toHaveLength(1);
     } finally {vm.close();}
   });

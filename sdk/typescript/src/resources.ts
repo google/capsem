@@ -1,6 +1,6 @@
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
-import type {NetworkLogOptions} from './options.js';
+import type {NetworkLogOptions, PageOptions} from './options.js';
 import type {CallOptions, Transport} from './transport.js';
 
 export interface VmContext {transport: Transport; id: string}
@@ -8,14 +8,22 @@ class Resource {
   constructor(protected readonly context: (options: CallOptions) => Promise<VmContext>) {}
 }
 
-export class Copy extends Resource {
-  async fromVm(path: string, options: CallOptions = {}): Promise<Uint8Array> {
+export class Files extends Resource {
+  async read(path: string, options: CallOptions = {}): Promise<Uint8Array> {
     const {transport, id} = await this.context(options);
     return api.downloadVmFile(transport, {id, path}, options);
   }
-  async toVm(path: string, data: Uint8Array, options: CallOptions = {}): Promise<models.UploadResponse> {
+  async write(path: string, data: Uint8Array, options: CallOptions = {}): Promise<models.UploadResponse> {
     const {transport, id} = await this.context(options);
     return api.uploadVmFile(transport, {id, path, body: data}, options);
+  }
+  async list(path = '/', options: CallOptions & {depth?: number} = {}): Promise<models.FileListResponse> {
+    const {transport, id} = await this.context(options);
+    return api.listVmFiles(transport, {...options, id, ...(path === '/' ? {} : {path})}, options);
+  }
+  async history(checkpoint: string, options: PageOptions = {}): Promise<models.ChangesResponse> {
+    const {transport, id} = await this.context(options);
+    return api.getVmChanges(transport, {...options, id, checkpoint}, options);
   }
 }
 export class Snapshots extends Resource {

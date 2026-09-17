@@ -37,10 +37,10 @@ async def main() -> None:
             assert info.ai is not None and info.network is not None and info.files is not None
             assert info.cpus == 2 and info.ram_mb == 2048
             data = bytes(range(256)) * 17 + b"\x00SDK_BINARY\xff"
-            uploaded = await vm.copy.to_vm("sdk-proof.bin", data)
+            uploaded = await vm.files.write("sdk-proof.bin", data)
             assert uploaded.success and uploaded.size == len(data)
-            assert await vm.copy.from_vm("sdk-proof.bin") == data
-            assert "sdk-proof.bin" in {entry.name for entry in (await vm.list()).entries}
+            assert await vm.files.read("sdk-proof.bin") == data
+            assert "sdk-proof.bin" in {entry.name for entry in (await vm.files.list()).entries}
             digest = hashlib.sha256(data).hexdigest()
             executed = await vm.exec("sha256sum /root/sdk-proof.bin; printf SDK_STDERR >&2; exit 7")
             assert executed.exit_code == 7 and executed.stdout.data.split()[0] == digest
@@ -59,16 +59,16 @@ async def main() -> None:
             assert fork.id != vm.id and (await fork.info()).forked_from == vm.id
             await fork.start()
             await ready(fork)
-            assert await fork.copy.from_vm("sdk-proof.bin") == data
-            await fork.copy.to_vm("sdk-proof.bin", b"fork-only")
+            assert await fork.files.read("sdk-proof.bin") == data
+            await fork.files.write("sdk-proof.bin", b"fork-only")
             await vm.start()
             await ready(vm)
-            assert await vm.copy.from_vm("sdk-proof.bin") == data
+            assert await vm.files.read("sdk-proof.bin") == data
             await vm.pause()
             assert (await vm.info()).status == models.VmLifecycleState.SUSPENDED
             await vm.resume()
             await ready(vm)
-            assert await vm.copy.from_vm("sdk-proof.bin") == data
+            assert await vm.files.read("sdk-proof.bin") == data
             print(f"SDK_LIVE_ACCEPTANCE_OK bytes={len(data)} sha256={digest}")
             completed = True
         finally:

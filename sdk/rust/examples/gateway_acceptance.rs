@@ -30,6 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(hv.list().await?.sandboxes.iter().any(|vm| vm.id == id));
     let vm = hv.vm(VmSelector::Name("route-workspace".into()))?;
     assert!(vm
+        .files()
         .list("/", None)
         .await?
         .entries
@@ -39,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let snapshots = vm.snapshots().list().await?;
     assert_eq!(snapshots.total, 1);
     assert_eq!(snapshots.snapshots[0].checkpoint, "cp-10");
-    let changes = vm.changes("cp-10", PageOptions::default()).await?;
+    let changes = vm.files().history("cp-10", PageOptions::default()).await?;
     assert_eq!(changes.changes.len(), 3);
     for (path, kind) in [
         ("created.txt", FileChangeKind::Created),
@@ -52,14 +53,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .any(|entry| entry.path == path && entry.kind == kind));
     }
     assert!(
-        matches!(vm.copy().from_vm("/created.txt").await, Err(Error::Http { status: 409, body })
+        matches!(vm.files().read("/created.txt").await, Err(Error::Http { status: 409, body })
         if String::from_utf8_lossy(&body).contains("running sandbox security ledger"))
     );
     assert!(
-        matches!(vm.copy().to_vm("/refused.txt", vec![1]).await, Err(Error::Http { status: 409, body })
+        matches!(vm.files().write("/refused.txt", vec![1]).await, Err(Error::Http { status: 409, body })
         if String::from_utf8_lossy(&body).contains("running sandbox security ledger"))
     );
     assert!(!vm
+        .files()
         .list("/", None)
         .await?
         .entries

@@ -282,7 +282,7 @@ describe('host-tools', () => {
       {name: 'capsem_stats_detail', arguments: {vm_id: 'vm-1'}},
       {name: 'capsem_snapshots', arguments: {vm_id: 'vm-1'}},
       {name: 'capsem_snapshot_status', arguments: {vm_id: 'vm-1'}},
-      {name: 'capsem_changes', arguments: {vm_id: 'vm-1', checkpoint: 'cp-1', limit: 10}},
+      {name: 'capsem_file_history', arguments: {vm_id: 'vm-1', checkpoint: 'cp-1', limit: 10}},
     ];
     for (const call of calls) {
       expect((await client.callTool(call)).isError, call.name).not.toBe(true);

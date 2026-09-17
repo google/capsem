@@ -25,9 +25,9 @@ async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     await hv.networks.logs(network.id, vm=vm.id)
     result = await vm.exec("echo hello", timeout_secs=60)
     print(result)
-    await vm.copy.to_vm("/hello.txt", b"hello\n")
-    contents = await vm.copy.from_vm("/hello.txt")
-    files = await vm.list("/")
+    await vm.files.write("/hello.txt", b"hello\n")
+    contents = await vm.files.read("/hello.txt")
+    files = await vm.files.list("/")
     snapshots = await vm.snapshots.list()
     details = await vm.stats.details()
     history = await vm.history()
@@ -53,8 +53,9 @@ defaults. Memory is a positive integer in GiB.
 `hv.list()` returns a typed VM inventory. `hv.update()` applies the configured
 update. VM lifecycle methods are `start`, `stop`, `pause`, `resume`, `delete`
 and `fork(name)`. A fork returns another `VM` handle. Snapshot inspection uses
-`vm.snapshots.list()` and `status()`; `vm.changes(checkpoint)` compares workspace
-paths against an existing checkpoint. Stats has `summary()` and `details()`.
+`vm.snapshots.list()` and `status()`; `vm.files.history(checkpoint)` compares
+workspace paths against an existing checkpoint. Stats has `summary()` and
+`details()`.
 
 Objects and enums live in `capsem.models`. `HttpError` exposes the gateway's
 HTTP `status` and response `body`; invalid typed responses raise Pydantic

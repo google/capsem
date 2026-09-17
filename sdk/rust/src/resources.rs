@@ -1,8 +1,8 @@
 use crate::client::Client;
 
-use crate::{models, operations as api, NetworkLogOptions, Result, VM};
+use crate::{models, operations as api, NetworkLogOptions, PageOptions, Result, VM};
 
-pub struct Copy<'a>(pub(crate) &'a VM);
+pub struct Files<'a>(pub(crate) &'a VM);
 pub struct Snapshots<'a>(pub(crate) &'a VM);
 pub struct Stats<'a>(pub(crate) &'a VM);
 pub struct Container<'a>(pub(crate) &'a VM);
@@ -14,8 +14,8 @@ pub struct ProfileMcp<'a> {
     profile_id: String,
 }
 
-impl Copy<'_> {
-    pub async fn from_vm(&self, path: &str) -> Result<Vec<u8>> {
+impl Files<'_> {
+    pub async fn read(&self, path: &str) -> Result<Vec<u8>> {
         let params = api::DownloadVmFileParams {
             id: self.0.resolve().await?,
             path: path.into(),
@@ -23,13 +23,32 @@ impl Copy<'_> {
         api::download_vm_file(&self.0.client.transport, &params, self.0.client.options).await
     }
 
-    pub async fn to_vm(&self, path: &str, data: Vec<u8>) -> Result<models::UploadResponse> {
+    pub async fn write(&self, path: &str, data: Vec<u8>) -> Result<models::UploadResponse> {
         let params = api::UploadVmFileParams {
             id: self.0.resolve().await?,
             path: path.into(),
             body: data,
         };
         api::upload_vm_file(&self.0.client.transport, &params, self.0.client.options).await
+    }
+
+    pub async fn list(&self, path: &str, depth: Option<i64>) -> Result<models::FileListResponse> {
+        let params = api::ListVmFilesParams {
+            id: self.0.resolve().await?,
+            path: (path != "/").then(|| path.to_owned()),
+            depth,
+        };
+        api::list_vm_files(&self.0.client.transport, &params, self.0.client.options).await
+    }
+
+    pub async fn history(&self, checkpoint: &str, options: PageOptions) -> Result<models::ChangesResponse> {
+        let params = api::GetVmChangesParams {
+            id: self.0.resolve().await?,
+            checkpoint: checkpoint.into(),
+            limit: options.limit,
+            offset: options.offset,
+        };
+        api::get_vm_changes(&self.0.client.transport, &params, self.0.client.options).await
     }
 }
 

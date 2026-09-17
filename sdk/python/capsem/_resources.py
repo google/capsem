@@ -16,12 +16,25 @@ class Resource:
         self._vm = vm
 
 
-class Copy(Resource):
-    async def from_vm(self, path: str) -> bytes:
+class Files(Resource):
+    async def read(self, path: str) -> bytes:
         return await api.download_vm_file(self._vm._transport, id=await self._vm._resolve(), path=path)
 
-    async def to_vm(self, path: str, data: bytes) -> models.UploadResponse:
+    async def write(self, path: str, data: bytes) -> models.UploadResponse:
         return await api.upload_vm_file(self._vm._transport, id=await self._vm._resolve(), path=path, body=data)
+
+    async def list(self, path: str = "/", *, depth: int | None = None) -> models.FileListResponse:
+        return await api.list_vm_files(
+            self._vm._transport, id=await self._vm._resolve(),
+            path=None if path == "/" else path, depth=depth,
+        )
+
+    async def history(self, checkpoint: str, *, limit: int | None = None,
+                      offset: int | None = None) -> models.ChangesResponse:
+        return await api.get_vm_changes(
+            self._vm._transport, id=await self._vm._resolve(), checkpoint=checkpoint,
+            limit=limit, offset=offset,
+        )
 
 
 class Snapshots(Resource):

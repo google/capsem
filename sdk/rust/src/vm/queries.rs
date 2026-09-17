@@ -1,4 +1,4 @@
-use crate::{models, operations as api, HistoryOptions, LogOptions, PageOptions, Result, TimelineOptions, VM};
+use crate::{models, operations as api, HistoryOptions, LogOptions, Result, TimelineOptions, VM};
 
 impl VM {
     pub async fn log(&self, options: LogOptions) -> Result<models::LogsResponse> {
@@ -20,25 +20,6 @@ impl VM {
             layer: options.layer,
         };
         api::get_vm_history(&self.client.transport, &params, self.client.options).await
-    }
-
-    pub async fn list(&self, path: &str, depth: Option<i64>) -> Result<models::FileListResponse> {
-        let params = api::ListVmFilesParams {
-            id: self.resolve().await?,
-            path: (path != "/").then(|| path.to_owned()),
-            depth,
-        };
-        api::list_vm_files(&self.client.transport, &params, self.client.options).await
-    }
-
-    pub async fn changes(&self, checkpoint: &str, options: PageOptions) -> Result<models::ChangesResponse> {
-        let params = api::GetVmChangesParams {
-            id: self.resolve().await?,
-            checkpoint: checkpoint.into(),
-            limit: options.limit,
-            offset: options.offset,
-        };
-        api::get_vm_changes(&self.client.transport, &params, self.client.options).await
     }
 
     pub async fn timeline(&self, options: TimelineOptions) -> Result<models::TimelineResponse> {

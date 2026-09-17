@@ -11,7 +11,7 @@ from . import models
 from ._client import Client
 from ._container import Container
 from ._ports import Ports
-from ._resources import Copy, Snapshots, Stats
+from ._resources import Files, Snapshots, Stats
 from ._transport import HttpError, Transport
 from .execution import ExecResult
 
@@ -27,7 +27,7 @@ class VM(Client):
             raise ValueError("select a VM by exactly one nonempty name or id")
         self._name = TypeAdapter(StrictStr).validate_python(name) if name else None
         self._id = TypeAdapter(StrictStr).validate_python(id) if id else None
-        self.copy = Copy(self)
+        self.files = Files(self)
         self.snapshots = Snapshots(self)
         self.stats = Stats(self)
         self.container = Container(self)
@@ -117,13 +117,6 @@ class VM(Client):
     async def history(self, *, limit: int | None = None, offset: int | None = None,
                       search: str | None = None, layer: models.HistoryLayerFilter | None = None) -> models.HistoryResponse:
         return await api.get_vm_history(self._transport, id=await self._resolve(), limit=limit, offset=offset, search=search, layer=layer)
-
-    async def list(self, path: str = "/", *, depth: int | None = None) -> models.FileListResponse:
-        return await api.list_vm_files(self._transport, id=await self._resolve(), path=None if path == "/" else path, depth=depth)
-
-    async def changes(self, checkpoint: str, *, limit: int | None = None,
-                      offset: int | None = None) -> models.ChangesResponse:
-        return await api.get_vm_changes(self._transport, id=await self._resolve(), checkpoint=checkpoint, limit=limit, offset=offset)
 
     async def timeline(self, *, trace_id: str | None = None, since: str | None = None,
                        limit: int | None = None, layers: Sequence[models.TimelineLayer] | None = None) -> models.TimelineResponse:

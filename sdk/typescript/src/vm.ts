@@ -1,15 +1,15 @@
 import {Client} from './client.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
-import type {HistoryOptions, LogOptions, PageOptions, TimelineOptions, VmSelector} from './options.js';
-import {Container, Copy, Ports, Snapshots, Stats, type VmContext} from './resources.js';
+import type {HistoryOptions, LogOptions, TimelineOptions, VmSelector} from './options.js';
+import {Container, Files, Ports, Snapshots, Stats, type VmContext} from './resources.js';
 import {HttpError, Transport, type CallOptions, type TransportOptions} from './transport.js';
 
 export class VM extends Client {
   #id: string | undefined;
   #name: string | undefined;
   #hasContainer: boolean | undefined;
-  readonly copy: Copy;
+  readonly files: Files;
   readonly snapshots: Snapshots;
   readonly stats: Stats;
   readonly container: Container;
@@ -30,7 +30,7 @@ export class VM extends Client {
     this.#id = id;
     this.#name = name;
     const context = (call: CallOptions): Promise<VmContext> => this.context(call);
-    this.copy = new Copy(context);
+    this.files = new Files(context);
     this.snapshots = new Snapshots(context);
     this.stats = new Stats(context);
     this.container = new Container(context);
@@ -114,14 +114,6 @@ export class VM extends Client {
   async history(options: HistoryOptions = {}): Promise<models.HistoryResponse> {
     const {transport, id} = await this.context(options);
     return api.getVmHistory(transport, {...options, id}, options);
-  }
-  async list(path = '/', options: CallOptions & {depth?: number} = {}): Promise<models.FileListResponse> {
-    const {transport, id} = await this.context(options);
-    return api.listVmFiles(transport, {...options, id, ...(path === '/' ? {} : {path})}, options);
-  }
-  async changes(checkpoint: string, options: PageOptions = {}): Promise<models.ChangesResponse> {
-    const {transport, id} = await this.context(options);
-    return api.getVmChanges(transport, {...options, id, checkpoint}, options);
   }
   async timeline(options: TimelineOptions = {}): Promise<models.TimelineResponse> {
     const {transport, id} = await this.context(options);

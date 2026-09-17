@@ -28,25 +28,25 @@ async def main() -> None:
         assert isinstance(await hv.triage(since="1h", limit=2), models.TriageResponse)
         inventory = await hv.list()
         assert any(entry.id == expected_id for entry in inventory.sandboxes)
-        files = await vm.list("/")
+        files = await vm.files.list("/")
         assert vm.id == expected_id
         assert {entry.name for entry in files.entries} >= {"modified.txt", "created.txt"}
         snapshots = await vm.snapshots.list()
         assert snapshots.total == 1 and snapshots.snapshots[0].checkpoint == "cp-10"
-        changes = await vm.changes("cp-10")
+        changes = await vm.files.history("cp-10")
         assert {(entry.path, entry.kind) for entry in changes.changes} == {
             ("created.txt", models.FileChangeKind.CREATED),
             ("modified.txt", models.FileChangeKind.MODIFIED),
             ("deleted.txt", models.FileChangeKind.DELETED),
         }
-        for call in (lambda: vm.copy.from_vm("/created.txt"), lambda: vm.copy.to_vm("/refused.txt", b"new")):
+        for call in (lambda: vm.files.read("/created.txt"), lambda: vm.files.write("/refused.txt", b"new")):
             try:
                 await call()
             except HttpError as error:
                 assert error.status == 409 and "running sandbox security ledger" in error.body
             else:
                 raise AssertionError("stopped copy bypassed the security ledger")
-        assert "refused.txt" not in {entry.name for entry in (await vm.list()).entries}
+        assert "refused.txt" not in {entry.name for entry in (await vm.files.list()).entries}
     async with VM(url, token, id=expected_id) as vm:
         assert (await vm.snapshots.status()).total == 1
     print("BRAAVOS_SDK_ACCEPTANCE_OK")

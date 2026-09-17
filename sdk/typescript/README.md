@@ -20,8 +20,8 @@ try {
   await hv.networks.logs(network.id, {vm: vm.id});
   const result = await vm.exec('uname -a', {timeout_secs: 60});
   console.log(result.stdout.data, result.exit_code);
-  await vm.copy.toVm('/hello.txt', new TextEncoder().encode('hello'));
-  const bytes = await vm.copy.fromVm('/hello.txt');
+  await vm.files.write('/hello.txt', new TextEncoder().encode('hello'));
+  const bytes = await vm.files.read('/hello.txt');
   const info = await vm.info(); // includes AI, network and files
   const stats = await vm.stats.details();
   await vm.persist('saved-workspace');
@@ -34,7 +34,7 @@ try {
 }
 
 const vm = new VM(url, token, {name: 'work'}); // or {id: canonicalId}
-try { const files = await vm.list('/'); }
+try { const files = await vm.files.list('/'); }
 finally { vm.close(); }
 ```
 
@@ -50,10 +50,10 @@ pass an object from `await hv.profiles.list()` to `create` or `run`.
 VM names resolve through `hv.list()` and cache the canonical ID. Missing or
 ambiguous names fail before a VM operation is sent.
 
-Methods mirror the gateway, including `vm.history()`, `vm.changes(checkpoint)`,
+Methods mirror the gateway, including `vm.history()`, `vm.files.history(checkpoint)`,
 `vm.timeline()`, `vm.snapshots.list/status()` and `vm.stats.summary/details()`.
 Query options retain the gateway's spelling, such as `max_bytes` and `trace_id`.
-`hv.update()` applies the update. Single-file copy requires a running VM security
+`hv.update()` applies the update. File access requires a running VM security
 ledger; stopped VMs return the gateway's conflict error.
 
 Pass `{signal}` to cancel a call. Choose `timeoutMs` long enough for the command's

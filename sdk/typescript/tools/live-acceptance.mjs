@@ -23,10 +23,10 @@ try {
   assert.equal(info.status, VmLifecycleState.RUNNING);
   assert(info.persistent && info.ai && info.network && info.files);
   const data = Uint8Array.from({length: 4364}, (_, index) => index % 256);
-  const upload = await vm.copy.toVm('sdk-proof.bin', data);
+  const upload = await vm.files.write('sdk-proof.bin', data);
   assert(upload.success && upload.size === data.length);
-  assert.deepEqual(await vm.copy.fromVm('sdk-proof.bin'), data);
-  assert((await vm.list()).entries.some(entry => entry.name === 'sdk-proof.bin'));
+  assert.deepEqual(await vm.files.read('sdk-proof.bin'), data);
+  assert((await vm.files.list()).entries.some(entry => entry.name === 'sdk-proof.bin'));
   const digest = createHash('sha256').update(data).digest('hex');
   const exec = await vm.exec('sha256sum /root/sdk-proof.bin; printf SDK_STDERR >&2; exit 7');
   assert.equal(exec.exit_code, 7);
@@ -46,15 +46,15 @@ try {
   assert.notEqual(fork.id, vm.id);
   assert.equal((await fork.info()).forked_from, vm.id);
   await fork.start();
-  assert.deepEqual(await fork.copy.fromVm('sdk-proof.bin'), data);
-  await fork.copy.toVm('sdk-proof.bin', new Uint8Array([42]));
+  assert.deepEqual(await fork.files.read('sdk-proof.bin'), data);
+  await fork.files.write('sdk-proof.bin', new Uint8Array([42]));
   await vm.start();
-  assert.deepEqual(await vm.copy.fromVm('sdk-proof.bin'), data);
+  assert.deepEqual(await vm.files.read('sdk-proof.bin'), data);
   await vm.pause();
   assert.equal((await vm.info()).status, VmLifecycleState.SUSPENDED);
   await vm.resume();
   assert.equal((await vm.exec('printf SDK_RESUMED')).stdout, 'SDK_RESUMED');
-  assert.deepEqual(await vm.copy.fromVm('sdk-proof.bin'), data);
+  assert.deepEqual(await vm.files.read('sdk-proof.bin'), data);
   // On failure the owning service fixture preserves evidence before cleanup.
   await fork.delete();
   await vm.delete();

@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- VM file operations now live under one `vm.files` resource with
+  `list/read/write/history`; the top-level file list/changes methods and copy
+  helper were removed.
+
 - Friendly SDK creation now accepts a `Registry` object and no longer exposes
   the container stream `attach` wire flag. Python and Rust debug output redacts
   registry fields, and HTTP creation always owns workload readiness.
