@@ -60,9 +60,13 @@ pub fn reconcile_memory_tables_from_disk(conn: &Connection) -> rusqlite::Result<
                  DROP TABLE {MEMORY_SCHEMA}.{name};"
             ))?;
         }
+        // The memory table is derived from the disk table's own declaration,
+        // and the disk table has already been refused if its CHECK predates
+        // this build -- so the mirror cannot be built from an older list.
+        // `reconcile_memory` used to rebuild it here when it was, by renaming
+        // and copying the live mem table out from under an open reader.
         let mem_sql =
             memory_table_sql(&name, &sql).ok_or_else(|| rusqlite::Error::InvalidParameterName(name.clone()))?;
-        network_types::reconcile_memory(conn, &name, &mem_sql)?;
         conn.execute_batch(&mem_sql)?;
     }
 

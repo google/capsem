@@ -1,0 +1,85 @@
+//! The security ledgers know every event type this build can record.
+//!
+//! `security_rule_events`, `security_decision_events` and `security_ask_events`
+//! each carry a `CHECK (event_type IN (...))`. The list is the build's, so a
+//! ledger written before a type existed has a narrower one, and a row of that
+//! type cannot be inserted into it at all -- a security decision that was made
+//! and cannot be recorded.
+//!
+//! This module used to fix that by rewriting the table. `network_types::
+//! rebuild` renamed the live table to `<name>_before_network_types`, created a
+//! new one from `CREATE_SCHEMA`, copied every row across, dropped the old one,
+//! and restored the `AUTOINCREMENT` sequence so the ids would look untouched.
+//! Three of Capsem's security ledgers, renamed and rewritten in place, on open,
+//! with the row ids reset to hide that it happened. That is the shape a
+//! forensic ledger must not have, whatever it is used for: the value of these
+//! tables is that nobody edited them, and a rail that can rewrite them on the
+//! writer's own initiative cannot promise that.
+//!
+//! Capsem has published no release, so there is no such ledger in the field to
+//! rescue. What is left is the detection, which was always the sound half: the
+//! same `sql.contains(...)` test, reported instead of acted on. A ledger whose
+//! CHECK predates this build is stale, and stale fails by name.
+use super::{table_exists, SECURITY_EVENT_TYPE_CHECK};
+use rusqlite::Connection;
+
+/// The three ledgers whose `event_type` is constrained to a known list.
+pub(super) const TABLES: &[&str] = &[
+    "security_rule_events",
+    "security_decision_events",
+    "security_ask_events",
+];
+
+/// Tables present in `schema` whose `event_type` CHECK is not this build's.
+///
+/// A table that is absent is not this module's problem -- readiness reports a
+/// missing table, and saying it twice in two vocabularies helps nobody.
+fn stale(conn: &Connection, schema: &str) -> rusqlite::Result<Vec<&'static str>> {
+    let mut found = Vec::new();
+    for table in TABLES {
+        if !table_exists(conn, schema, table)? {
+            continue;
+        }
+        let sql: Option<String> = conn.query_row(
+            &format!("SELECT sql FROM {schema}.sqlite_master WHERE type='table' AND name=?1"),
+            [table],
+            |row| row.get(0),
+        )?;
+        if !sql.is_some_and(|sql| sql.contains(SECURITY_EVENT_TYPE_CHECK)) {
+            found.push(*table);
+        }
+    }
+    Ok(found)
+}
+
+/// The writer's check: refuse to open a ledger this build cannot fully record.
+pub(super) fn assert_current(conn: &Connection) -> rusqlite::Result<()> {
+    let stale = stale(conn, "main")?;
+    if stale.is_empty() {
+        return Ok(());
+    }
+    Err(rusqlite::Error::InvalidParameterName(format!(
+        "session ledger predates this build's security event types: {} \
+         constrains event_type to an older list",
+        stale.join(", ")
+    )))
+}
+
+/// The reader's check, in readiness's vocabulary.
+///
+/// Column names cannot catch this: a table with the old CHECK has exactly the
+/// columns the new one has. Readiness has to read the declaration itself.
+pub(super) fn validate_ready(conn: &Connection, schema: &str) -> Result<(), String> {
+    let stale =
+        stale(conn, schema).map_err(|error| format!("failed to inspect security event types in {schema}: {error}"))?;
+    if stale.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "session db table {schema}.{} constrains event_type to a list older than this build",
+        stale.join(", ")
+    ))
+}
+
+#[cfg(test)]
+mod tests;

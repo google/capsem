@@ -31,7 +31,6 @@ fn create_tables_idempotent() {
 fn db_mem_tables_match_schema() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    migrate(&conn).unwrap();
     create_memory_tables(&conn, &memory_uri_for_name("db_mem_tables_match_schema")).unwrap();
 
     for (table, _) in READY_SCHEMA_COLUMNS {
@@ -53,26 +52,6 @@ fn db_mem_tables_match_schema() {
 }
 
 #[test]
-fn fresh_create_schema_has_no_migration_only_columns() {
-    let conn = Connection::open_in_memory().unwrap();
-    create_tables(&conn).unwrap();
-    let before = READY_SCHEMA_COLUMNS
-        .iter()
-        .map(|(table, _)| (*table, columns_for_schema(&conn, "main", table)))
-        .collect::<BTreeMap<_, _>>();
-
-    migrate(&conn).unwrap();
-
-    for (table, columns_before_migrate) in before {
-        assert_eq!(
-            columns_before_migrate,
-            columns_for_schema(&conn, "main", table),
-            "fresh CREATE_SCHEMA must publish the final {table} shape; migrations are only for existing databases"
-        );
-    }
-}
-
-#[test]
 fn fresh_schema_is_final_before_external_memory_rehydrate() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
@@ -84,7 +63,6 @@ fn fresh_schema_is_final_before_external_memory_rehydrate() {
 
     // Reproduce the production ordering window: an external reader mirrors
     // the freshly published schema before the writer runs legacy migrations.
-    migrate(&conn).unwrap();
     sync_memory_tables_from_disk(&conn, ["security_ask_events"])
         .expect("fresh canonical DDL must already match its post-migration shape");
 
@@ -99,7 +77,6 @@ fn fresh_schema_is_final_before_external_memory_rehydrate() {
 fn db_mem_disk_ready_rejects_missing_memory_schema() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    migrate(&conn).unwrap();
 
     let error =
         validate_ready_schema(&conn, true).expect_err("ready() must fail if DB-owned memory tables were not created");
@@ -113,7 +90,6 @@ fn db_mem_disk_ready_rejects_missing_memory_schema() {
 fn db_mem_flush_uses_per_table_id_watermark() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    migrate(&conn).unwrap();
     create_memory_tables(&conn, &memory_uri_for_name("db_mem_flush_uses_per_table_id_watermark")).unwrap();
     let mut watermarks = initial_memory_flush_watermarks(&conn, ["net_events"]).expect("initial watermarks");
 
@@ -173,7 +149,6 @@ fn db_mem_disk_memory_tables_work_before_query_only_guard() {
         let conn = Connection::open(&path).unwrap();
         apply_pragmas(&conn).unwrap();
         create_tables(&conn).unwrap();
-        migrate(&conn).unwrap();
     }
 
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
@@ -218,12 +193,9 @@ fn writer_pragmas_enable_file_backed_mmap() {
 }
 
 #[test]
-fn migrate_trace_columns_idempotent() {
+fn create_tables_publishes_trace_columns() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    // Run twice -- second call must not error.
-    migrate(&conn).unwrap();
-    migrate(&conn).unwrap();
     // Verify trace_id column exists by inserting a row with it.
     conn.execute(
         "INSERT INTO model_calls (timestamp, provider, method, path, trace_id)
@@ -262,11 +234,9 @@ fn create_tables_includes_fs_events() {
 }
 
 #[test]
-fn migrate_fs_events_idempotent() {
+fn create_tables_publishes_the_fs_events_table() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    migrate(&conn).unwrap();
-    migrate(&conn).unwrap();
     conn.execute(
         "INSERT INTO fs_events (timestamp, action, path)
              VALUES ('2026-01-01T00:00:00Z', 'deleted', 'project/old.txt')",
@@ -282,11 +252,9 @@ fn migrate_fs_events_idempotent() {
 }
 
 #[test]
-fn migrate_tool_calls_origin_idempotent() {
+fn create_tables_publishes_tool_call_origin_columns() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    migrate(&conn).unwrap();
-    migrate(&conn).unwrap();
     // Verify origin/server/method columns exist by inserting one unified MCP-origin row.
     conn.execute(
         "INSERT INTO model_calls (timestamp, provider, method, path)

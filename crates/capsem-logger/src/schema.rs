@@ -18,7 +18,7 @@ mod ddl;
 pub use ddl::CREATE_SCHEMA;
 
 mod memory_sync;
-mod network_types;
+mod security_event_types;
 pub(crate) mod transport;
 #[cfg(test)]
 pub(crate) use memory_sync::UPDATABLE_HOT_TABLES;
@@ -44,7 +44,8 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     if never_stamped {
         conn.execute_batch(ddl::CREATE_TRANSPORT)?;
     }
-    transport::assert_current(conn)
+    transport::assert_current(conn)?;
+    security_event_types::assert_current(conn)
 }
 
 /// Attach the DB-owned in-memory schema and mirror hot ledger tables into it.
@@ -175,6 +176,13 @@ pub fn validate_ready_schema(conn: &Connection, memory_mirror: bool) -> Result<(
         }
     }
 
+    // A CHECK constraint is not a column, so the loop above cannot see a
+    // security ledger that was declared against an older list of event types.
+    security_event_types::validate_ready(conn, "main")?;
+    if memory_mirror {
+        security_event_types::validate_ready(conn, MEMORY_SCHEMA)?;
+    }
+
     Ok(())
 }
 
@@ -204,20 +212,6 @@ fn validate_table_columns(
         }
     }
     Ok(())
-}
-
-/// Bring the network-type lookup rows up to date.
-///
-/// This is all that is left of `migrate`. The session schema is declared once,
-/// in `schema/ddl.rs`: the seventy `ALTER TABLE ... ADD COLUMN` statements
-/// that used to live here each discarded their result, so a locked database
-/// and an already-present column produced the same silence, and on an older
-/// file the ones that succeeded left a table matching no declaration anywhere.
-/// A `session.db` is created per session by the writer that owns it and never
-/// carried across builds, so a file an older build wrote now fails at
-/// `create_tables`/`ready()` naming the column it lacks.
-pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
-    network_types::migrate(conn)
 }
 
 #[cfg(test)]
