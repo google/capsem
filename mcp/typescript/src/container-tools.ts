@@ -20,11 +20,15 @@ export function registerContainerTools(server: McpServer, hypervisor: Hypervisor
       host_port: z.number().int().min(0).max(65_535).optional(),
       authenticate: z.boolean().optional(),
     },
-  }, ({vm_id, guest_port, host_port, authenticate}, extra) => toolCall(() =>
-    hypervisor.vm({id: vm_id}).ports.open(guest_port, {
+  }, ({vm_id, guest_port, host_port, authenticate}, extra) => toolCall(async () => {
+    const opened = await hypervisor.vm({id: vm_id}).ports.open(guest_port, {
       ...(host_port === undefined ? {} : {host: host_port}),
       ...(authenticate === undefined ? {} : {authenticate}), signal: extra.signal,
-    })));
+    });
+    // The SDK keeps the token out of the Port's enumerable fields so it is
+    // never logged; the agent that asked for the port is the one who needs it.
+    return opened.bootstrapToken === undefined ? opened : {...opened, bootstrapToken: opened.bootstrapToken};
+  }));
 
   server.registerTool('capsem_port_list', {
     description: 'List the live ports owned by a workload.',

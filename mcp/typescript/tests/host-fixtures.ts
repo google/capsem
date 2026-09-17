@@ -60,4 +60,8 @@ export const routeFixtures: Record<string, object> = {
     }],
   },
   'DELETE /vms/vm-1/exposures/49152': {success: true},
+  'POST /vms/vm-1/exposures/49152/preview-session': {
+    url: 'http://49152.localhost:19223/_capsem/bootstrap', bootstrap_token: 'bootstrap-secret',
+    expires_in_seconds: 30,
+  },
 };

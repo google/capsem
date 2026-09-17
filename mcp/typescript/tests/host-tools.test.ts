@@ -187,6 +187,19 @@ describe('host-tools', () => {
     expect(requests).toHaveLength(0);
   });
 
+  // The agent opening an authenticated port is the one who hands the browser
+  // its bootstrap token, so the tool result must carry it even though the SDK
+  // keeps it out of the Port's enumerable (logged) fields.
+  it('returns the bootstrap token for an authenticated port', async () => {
+    const opened = structured(await client.callTool({
+      name: 'capsem_port_open', arguments: {vm_id: 'vm-1', guest_port: 8080, authenticate: true},
+    }));
+    expect(opened).toMatchObject({
+      id: '49152', host: null,
+      url: 'http://49152.localhost:19223/_capsem/bootstrap', bootstrapToken: 'bootstrap-secret',
+    });
+  });
+
   it('transfers text and binary file content through the SDK byte APIs', async () => {
     const read = await client.callTool({
       name: 'capsem_read_file', arguments: {vm_id: 'vm-1', path: '/workspace/a.txt'},
