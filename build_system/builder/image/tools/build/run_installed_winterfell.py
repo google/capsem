@@ -61,6 +61,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         os.fspath(Path(sys.executable)),
         "-m",
         "pytest",
+        "-p",
+        "no:cacheprovider",
         "-c",
         "build_system/pyproject.toml",
         "--rootdir",
