@@ -196,10 +196,10 @@ describe('StatsView detail drawer contract', () => {
     expect(source).not.toContain('detail.data.event_json');
     expect(source).toContain("payloadSectionMeta({ key: 'payload_body' }, detail.data)");
     // And no metadata means no section: an unguarded one rendered an empty
-    // heading over a lone "TRUNCATED no".
-    expect(source).toContain(
-      "{#if payloadSectionMeta({ key: 'payload_body' }, detail.data).length > 0}",
-    );
+    // heading over a lone "TRUNCATED no". The template tests and iterates one
+    // derived value rather than recomputing it per render.
+    expect(source).toContain('{#if payloadMeta.length > 0}');
+    expect(source).toContain('{#each payloadMeta as row}');
   });
 
   it('gives detail fields enough room to wrap without overlapping values', () => {

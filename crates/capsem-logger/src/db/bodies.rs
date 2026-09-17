@@ -132,8 +132,11 @@ impl DbHandle {
     ///
     /// `max_total_bytes` is the second bound, and the one that matters: a row
     /// count alone permits `event_ids.len()` times the 10 MiB body cap in
-    /// resident memory. Accumulation stops at the budget and the rows not read
-    /// are counted rather than silently dropped, so a caller can say so.
+    /// resident memory. A body that does not fit what is left of the budget is
+    /// skipped and counted rather than silently dropped, so a caller can say
+    /// so; the walk continues, so a smaller body later in the page may still
+    /// fit. What the budget guarantees is the ceiling on resident bytes, not
+    /// that the result is a prefix of the page.
     ///
     /// # Errors
     ///
@@ -147,6 +150,8 @@ impl DbHandle {
         max_total_bytes: usize,
     ) -> DbResult<ArchivedBodies> {
         let mut archived = ArchivedBodies::default();
+        // One budget for the whole page, not one per chunk: the chunking is a
+        // SQLite parameter limit, not a unit of memory anyone agreed to.
         let mut budget = max_total_bytes;
         for chunk in event_ids.chunks(MAX_EVENT_IDS_PER_QUERY) {
             let placeholders = (3..3 + chunk.len())

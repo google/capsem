@@ -169,6 +169,12 @@
     await load();
   });
 
+  // The open detail's archived-payload metadata, computed once: the template
+  // both tests it and iterates it.
+  const payloadMeta = $derived(
+    detail ? payloadSectionMeta({ key: 'payload_body' }, detail.data) : [],
+  );
+
   const modelCalls = $derived(modelStats.reduce((sum, row) => sum + number(row.call_count), 0));
   const modelInput = $derived(modelStats.reduce((sum, row) => sum + number(row.input_tokens), 0));
   const modelOutput = $derived(modelStats.reduce((sum, row) => sum + number(row.output_tokens), 0));
@@ -496,11 +502,11 @@
             <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Rule Snapshot</div>
             <div class="detail-shiki rounded overflow-auto max-h-64 bg-background-1">{@html formatAndHighlight(compactJsonForDisplay(detail.data.rule_json), 'json')}</div>
           </div>
-          {#if payloadSectionMeta({ key: 'payload_body' }, detail.data).length > 0}
+          {#if payloadMeta.length > 0}
             <div>
               <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Matched Event</div>
               <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-muted-foreground-1">
-                {#each payloadSectionMeta({ key: 'payload_body' }, detail.data) as row}
+                {#each payloadMeta as row}
                   <div class="min-w-0">
                     <span class="uppercase tracking-wider">{row.label}</span>
                     <span class="detail-value ms-1 font-mono text-foreground">{row.value}</span>

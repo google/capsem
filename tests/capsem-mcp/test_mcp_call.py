@@ -186,14 +186,14 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(capsem_service, shared_v
         assert all(row["detection_level"] in {"none", "informational"} for row in security_rows)
         # The matched event's payload is archive-backed, not a column, and
         # one reader serves the whole page.
-        archive = SessionArchive(_session_db_path(capsem_service, vm_name))
-        for row in security_rows:
-            event = archive.security_payload(row["event_id"])
-            rule = json.loads(row["rule_json"])
-            assert event["event_type"] == "mcp.tool_call"
-            assert event["mcp"]["server_name"] == "local"
-            assert event["mcp"]["tool_call_name"] in {"http_headers", "local__http_headers"}
-            assert rule["name"]
+        with SessionArchive(_session_db_path(capsem_service, vm_name)) as archive:
+            for row in security_rows:
+                event = archive.security_payload(row["event_id"])
+                rule = json.loads(row["rule_json"])
+                assert event["event_type"] == "mcp.tool_call"
+                assert event["mcp"]["server_name"] == "local"
+                assert event["mcp"]["tool_call_name"] in {"http_headers", "local__http_headers"}
+                assert rule["name"]
     finally:
         stop_process(mock_proc)
 

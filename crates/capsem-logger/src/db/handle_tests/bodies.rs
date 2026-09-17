@@ -150,6 +150,72 @@ async fn the_payload_budget_stops_accumulating_and_counts_what_it_refused() {
     );
 }
 
+/// A page longer than SQLite's variable limit is read in chunks, and the two
+/// bounds have to survive the seam: the budget is one budget across chunks, not
+/// one per chunk, and every chunk's rows reach the result.
+#[tokio::test]
+async fn a_page_past_the_parameter_limit_is_one_budget_across_its_chunks() {
+    let p = temp_db_path("security-rule-payload-chunks");
+    let db = DbHandle::open(&p).expect("open handle");
+    // 1000 events is one full chunk of 997 plus a second of 3, so anything
+    // that resets per chunk or drops the tail shows up here.
+    let event_ids = write_security_payloads(&db, 1000).await;
+    let asked: Vec<&str> = event_ids.iter().map(String::as_str).collect();
+
+    let whole_page = db
+        .read_bodies_for_events(&asked, "security_rule_events", BodyDirection::Payload, 1 << 20)
+        .await
+        .expect("read the whole page");
+    assert_eq!(whole_page.bodies.len(), 1000, "every chunk's rows reach the result");
+    assert_eq!(whole_page.truncated_rows, 0);
+    assert!(
+        whole_page.bodies.iter().any(|body| body.event_id == event_ids[999]),
+        "the short trailing chunk is read too, not just the full one"
+    );
+    // Archive order within a chunk is the order the writer staged them, and
+    // the writer staged them in the order they were written.
+    let first_chunk: Vec<&str> = whole_page.bodies[..997]
+        .iter()
+        .map(|body| body.event_id.as_str())
+        .collect();
+    let expected_first: Vec<&str> = event_ids[..997].iter().map(String::as_str).collect();
+    assert_eq!(first_chunk, expected_first, "a chunk comes back in archive order");
+    let second_chunk: Vec<&str> = whole_page.bodies[997..]
+        .iter()
+        .map(|body| body.event_id.as_str())
+        .collect();
+    let expected_second: Vec<&str> = event_ids[997..].iter().map(String::as_str).collect();
+    assert_eq!(second_chunk, expected_second, "and so does the next one");
+
+    // A budget smaller than the first chunk must stay spent when the second
+    // chunk starts: a per-chunk budget would read 997 more bodies here.
+    let payload_bytes: usize = whole_page.bodies.iter().map(|body| body.bytes.len()).sum();
+    let half = db
+        .read_bodies_for_events(
+            &asked,
+            "security_rule_events",
+            BodyDirection::Payload,
+            payload_bytes / 2,
+        )
+        .await
+        .expect("read within half the budget");
+    assert_eq!(
+        half.bodies.len() + half.truncated_rows,
+        1000,
+        "every row is either read or counted, across the chunk seam"
+    );
+    assert!(
+        half.truncated_rows > 0 && half.bodies.len() < 1000,
+        "half the bytes cannot buy the whole page: {half:?}"
+    );
+    let held: usize = half.bodies.iter().map(|body| body.bytes.len()).sum();
+    assert!(
+        held <= payload_bytes / 2,
+        "the budget is the ceiling on resident bytes, across chunks: {held} > {}",
+        payload_bytes / 2
+    );
+}
+
 fn archive_path(db_path: &std::path::Path) -> std::path::PathBuf {
     db_path.with_extension("bodies")
 }

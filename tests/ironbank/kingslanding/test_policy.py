@@ -118,21 +118,21 @@ def test_expose_security_prevents_redis_accept_and_retains_trusted_facts(redis, 
             return denied_peers <= seen
 
         wait_for(audited, "denied connection security rows", timeout=15)
-        archive = SessionArchive(session_db)
-        for row in rows:
-            if row["event_type"] != "network.connect":
-                continue
-            event = archive.security_payload(row["event_id"])
-            facts = event["network"]
-            if facts["source"]["address"] not in denied_peers:
-                continue
-            assert event["decision"]["effective"] == ("ask" if policy == "ask" else "block")
-            assert facts["source"]["vm"] is None
-            assert facts["destination"]["address"] == "127.0.0.1:6379"
-            assert facts["destination"]["vm"]["id"] == vm_id
-            # An unnamed VM is known by its route id; its list label is the UI's.
-            assert facts["destination"]["vm"]["name"] == redis["vm"]["id"]
-            assert int(facts["destination"]["vm"]["generation"]) > 0
-            assert facts["route"]["listener"] == f"127.0.0.1:{port}"
-            assert facts["route"]["publication_id"] and facts["connection_id"]
-            assert facts["protocol"] == "tcp" and facts["side"] == "destination"
+        with SessionArchive(session_db) as archive:
+            for row in rows:
+                if row["event_type"] != "network.connect":
+                    continue
+                event = archive.security_payload(row["event_id"])
+                facts = event["network"]
+                if facts["source"]["address"] not in denied_peers:
+                    continue
+                assert event["decision"]["effective"] == ("ask" if policy == "ask" else "block")
+                assert facts["source"]["vm"] is None
+                assert facts["destination"]["address"] == "127.0.0.1:6379"
+                assert facts["destination"]["vm"]["id"] == vm_id
+                # An unnamed VM is known by its route id; its list label is the UI's.
+                assert facts["destination"]["vm"]["name"] == redis["vm"]["id"]
+                assert int(facts["destination"]["vm"]["generation"]) > 0
+                assert facts["route"]["listener"] == f"127.0.0.1:{port}"
+                assert facts["route"]["publication_id"] and facts["connection_id"]
+                assert facts["protocol"] == "tcp" and facts["side"] == "destination"

@@ -156,13 +156,13 @@ def test_container_egress_is_intercepted_policed_and_audited(egress, tmp_path):
     session_db = vm_session_db_path(service.tmp_dir, client, vm_id)
     http = []
     dns = []
-    archive = SessionArchive(session_db)
-    for row in latest:
-        event = archive.security_payload(row["event_id"])
-        if row["event_type"] == "http.request":
-            http.append((event["http"]["host"], event["http"]["path"], row["rule_id"], row["rule_action"]))
-        elif row["event_type"] == "dns.query":
-            dns.append((event["dns"]["qname"], row["rule_id"], row["rule_action"]))
+    with SessionArchive(session_db) as archive:
+        for row in latest:
+            event = archive.security_payload(row["event_id"])
+            if row["event_type"] == "http.request":
+                http.append((event["http"]["host"], event["http"]["path"], row["rule_id"], row["rule_action"]))
+            elif row["event_type"] == "dns.query":
+                dns.append((event["dns"]["qname"], row["rule_id"], row["rule_action"]))
     # The transcript also records DNS exchanges, which have no path.
     transcript = [
         record["path"]

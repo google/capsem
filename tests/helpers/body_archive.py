@@ -139,10 +139,16 @@ class SessionArchive:
         # Bounded before anything is sized by them: these lengths come off
         # disk, and the product refuses the same two ceilings rather than
         # allocating whatever a forged or torn header asks for.
-        if raw_len > MAX_BLOCK_RAW_BYTES or comp_len > MAX_BLOCK_COMP_BYTES:
+        #
+        # Zero is refused with them, and not as a nicety: `max_length=0` means
+        # *unlimited* to Python's inflater, so a forged `raw_len` of 0 would
+        # turn the bound below into no bound at all. A block of nothing cannot
+        # exist anyway -- `body_blocks.raw_len` is CHECK(raw_len > 0), and the
+        # Rust reader's `decompress_to_vec_with_limit(_, 0)` errors.
+        if not 0 < raw_len <= MAX_BLOCK_RAW_BYTES or not 0 < comp_len <= MAX_BLOCK_COMP_BYTES:
             raise AssertionError(
                 f"block at {block_offset} of {self._archive} declares "
-                f"raw_len={raw_len} comp_len={comp_len}, past the archive's ceilings"
+                f"raw_len={raw_len} comp_len={comp_len}, outside the archive's bounds"
             )
         expected_hash = header[12:BLOCK_HEADER_BYTES].hex()
         compressed = self._file.read(comp_len)
@@ -153,9 +159,14 @@ class SessionArchive:
         # inflated by a test either.
         inflater = zlib.decompressobj(-15)
         raw = inflater.decompress(compressed, raw_len)
-        if len(raw) != raw_len or inflater.unconsumed_tail:
+        # `eof` is the third thing that can be wrong: a stream that stopped at
+        # the right length without reaching its own end is a truncated block
+        # that happens to measure correctly, and unconsumed_tail is empty when
+        # the limit was never the thing that stopped it.
+        if len(raw) != raw_len or not inflater.eof or inflater.unconsumed_tail:
             raise AssertionError(
-                f"block at {block_offset} of {self._archive} inflated to the wrong length"
+                f"block at {block_offset} of {self._archive} did not inflate to the "
+                f"{raw_len} bytes it declares"
             )
         if _blake3(raw) != expected_hash:
             raise AssertionError(
