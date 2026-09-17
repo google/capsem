@@ -50,6 +50,12 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
             return web.json_response(response_model("ProvisionResponse", id="created-id", name=payload["name"] or "temporary"))
         if request.path == "/networks" and request.method == "POST":
             return web.json_response(response_model("NetworkInfo", name=json.loads(body)["name"]))
+        if request.path == "/networks":
+            return web.json_response({"networks": [response_model(
+                "NetworkInfo", id="net-1", name="team", members=[{
+                    "vm_id": "vm-0", "address": "10.0.0.2", "state": "ready", "updated_unix_ms": 1,
+                }],
+            )]})
         if request.path.endswith("/fork"):
             return web.json_response(response_model("ForkResponse", id="forked-id", name=json.loads(body)["name"]))
         if request.path.endswith("/exec"):

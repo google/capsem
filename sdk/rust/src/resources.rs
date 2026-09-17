@@ -7,6 +7,7 @@ pub struct Snapshots<'a>(pub(crate) &'a VM);
 pub struct Stats<'a>(pub(crate) &'a VM);
 pub struct Container<'a>(pub(crate) &'a VM);
 pub struct Ports<'a>(pub(crate) &'a VM);
+pub struct VmNetworks<'a>(pub(crate) &'a VM);
 pub struct Networks<'a>(pub(crate) &'a Client);
 pub struct Profiles<'a>(pub(crate) &'a Client);
 pub struct ProfileMcp<'a> {
@@ -256,30 +257,6 @@ impl Networks<'_> {
         .await
     }
 
-    pub async fn attach(&self, network_id: &str, vm_id: &str) -> Result<models::NetworkInfo> {
-        api::attach_network_member(
-            &self.0.transport,
-            &api::AttachNetworkMemberParams {
-                id: network_id.into(),
-                vm_id: vm_id.into(),
-            },
-            self.0.options,
-        )
-        .await
-    }
-
-    pub async fn detach(&self, network_id: &str, vm_id: &str) -> Result<models::NetworkInfo> {
-        api::detach_network_member(
-            &self.0.transport,
-            &api::DetachNetworkMemberParams {
-                id: network_id.into(),
-                vm_id: vm_id.into(),
-            },
-            self.0.options,
-        )
-        .await
-    }
-
     pub async fn logs(&self, network_id: &str, options: NetworkLogOptions) -> Result<models::NetworkLogsResponse> {
         api::get_network_logs(
             &self.0.transport,
@@ -295,6 +272,42 @@ impl Networks<'_> {
                 until: options.until,
             },
             self.0.options,
+        )
+        .await
+    }
+}
+
+impl VmNetworks<'_> {
+    pub async fn list(&self) -> Result<Vec<models::NetworkInfo>> {
+        let vm_id = self.0.resolve().await?;
+        let response = api::list_networks(&self.0.client.transport, self.0.client.options).await?;
+        Ok(response
+            .networks
+            .into_iter()
+            .filter(|network| network.members.iter().any(|member| member.vm_id == vm_id))
+            .collect())
+    }
+
+    pub async fn attach(&self, network: &models::NetworkInfo) -> Result<models::NetworkInfo> {
+        api::attach_network_member(
+            &self.0.client.transport,
+            &api::AttachNetworkMemberParams {
+                id: network.id.clone(),
+                vm_id: self.0.resolve().await?,
+            },
+            self.0.client.options,
+        )
+        .await
+    }
+
+    pub async fn detach(&self, network: &models::NetworkInfo) -> Result<models::NetworkInfo> {
+        api::detach_network_member(
+            &self.0.client.transport,
+            &api::DetachNetworkMemberParams {
+                id: network.id.clone(),
+                vm_id: self.0.resolve().await?,
+            },
+            self.0.client.options,
         )
         .await
     }

@@ -34,6 +34,20 @@ pub fn reply(operation: &str) -> Value {
             }
         }]);
     }
+    if operation == "listNetworks" {
+        value["networks"] = json!([{
+            "id": "net-1",
+            "name": "team",
+            "subnet": "10.0.0.0/24",
+            "created_unix_ms": 1,
+            "members": [{
+                "vm_id": "vm-1",
+                "address": "10.0.0.2",
+                "state": "ready",
+                "updated_unix_ms": 1
+            }]
+        }]);
+    }
     value
 }
 

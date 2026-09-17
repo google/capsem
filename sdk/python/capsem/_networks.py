@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import builtins
+from typing import TYPE_CHECKING
+
 from . import _operations as api
 from . import models
 from ._transport import Transport
+
+if TYPE_CHECKING:
+    from .vm import VM
 
 
 class Networks:
@@ -24,12 +30,6 @@ class Networks:
 
     async def delete(self, network_id: str) -> models.VmActionResponse:
         return await api.delete_network(self._transport, id=network_id)
-
-    async def attach(self, network_id: str, vm_id: str) -> models.NetworkInfo:
-        return await api.attach_network_member(self._transport, id=network_id, vm_id=vm_id)
-
-    async def detach(self, network_id: str, vm_id: str) -> models.NetworkInfo:
-        return await api.detach_network_member(self._transport, id=network_id, vm_id=vm_id)
 
     async def logs(
         self,
@@ -55,4 +55,29 @@ class Networks:
             decision=decision,
             since=since,
             until=until,
+        )
+
+
+class VmNetworks:
+    def __init__(self, vm: VM) -> None:
+        self._vm = vm
+
+    async def list(self) -> builtins.list[models.NetworkInfo]:
+        vm_id = await self._vm._resolve()
+        response = await api.list_networks(self._vm._transport)
+        return [network for network in response.networks
+                if any(member.vm_id == vm_id for member in network.members)]
+
+    async def attach(self, network: models.NetworkInfo) -> models.NetworkInfo:
+        if not isinstance(network, models.NetworkInfo):
+            raise TypeError("network must be an object returned by capsem.networks")
+        return await api.attach_network_member(
+            self._vm._transport, id=network.id, vm_id=await self._vm._resolve(),
+        )
+
+    async def detach(self, network: models.NetworkInfo) -> models.NetworkInfo:
+        if not isinstance(network, models.NetworkInfo):
+            raise TypeError("network must be an object returned by capsem.networks")
+        return await api.detach_network_member(
+            self._vm._transport, id=network.id, vm_id=await self._vm._resolve(),
         )

@@ -117,14 +117,24 @@ export class Networks {
   async delete(networkId: string, options: CallOptions = {}): Promise<models.VmActionResponse> {
     return api.deleteNetwork(this.transport, {id: networkId}, options);
   }
-  async attach(networkId: string, vmId: string, options: CallOptions = {}): Promise<models.NetworkInfo> {
-    return api.attachNetworkMember(this.transport, {id: networkId, vm_id: vmId}, options);
-  }
-  async detach(networkId: string, vmId: string, options: CallOptions = {}): Promise<models.NetworkInfo> {
-    return api.detachNetworkMember(this.transport, {id: networkId, vm_id: vmId}, options);
-  }
   async logs(networkId: string, options: NetworkLogOptions = {}): Promise<models.NetworkLogsResponse> {
     return api.getNetworkLogs(this.transport, {...options, id: networkId}, options);
+  }
+}
+
+export class VmNetworks extends Resource {
+  async list(options: CallOptions = {}): Promise<models.NetworkInfo[]> {
+    const {transport, id} = await this.context(options);
+    const response = await api.listNetworks(transport, options);
+    return response.networks.filter(network => network.members.some(member => member.vm_id === id));
+  }
+  async attach(network: models.NetworkInfo, options: CallOptions = {}): Promise<models.NetworkInfo> {
+    const {transport, id} = await this.context(options);
+    return api.attachNetworkMember(transport, {id: network.id, vm_id: id}, options);
+  }
+  async detach(network: models.NetworkInfo, options: CallOptions = {}): Promise<models.NetworkInfo> {
+    const {transport, id} = await this.context(options);
+    return api.detachNetworkMember(transport, {id: network.id, vm_id: id}, options);
   }
 }
 

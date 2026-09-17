@@ -31,11 +31,17 @@ export function registerNetworkTools(server: McpServer, hypervisor: Hypervisor):
   server.registerTool('capsem_network_attach', {
     description: 'Attach a VM to a private network and return actual membership state.',
     inputSchema: {network_id: networkId, vm_id: vmId},
-  }, ({network_id, vm_id}) => toolCall(() => hypervisor.networks.attach(network_id, vm_id)));
+  }, ({network_id, vm_id}) => toolCall(async () => {
+    const network = await hypervisor.networks.inspect(network_id);
+    return hypervisor.vm({id: vm_id}).networks.attach(network);
+  }));
   server.registerTool('capsem_network_detach', {
     description: 'Detach a VM from a private network and return actual membership state.',
     inputSchema: {network_id: networkId, vm_id: vmId},
-  }, ({network_id, vm_id}) => toolCall(() => hypervisor.networks.detach(network_id, vm_id)));
+  }, ({network_id, vm_id}) => toolCall(async () => {
+    const network = await hypervisor.networks.inspect(network_id);
+    return hypervisor.vm({id: vm_id}).networks.detach(network);
+  }));
   server.registerTool('capsem_network_logs', {
     description: 'Read a cursor-based private-network audit stream with optional correlation filters.',
     inputSchema: {

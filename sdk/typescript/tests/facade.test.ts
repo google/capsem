@@ -218,18 +218,22 @@ it('maps the typed network resource including PUT membership and cursor logs', a
       const created = await hv.networks.create('team');
       await hv.networks.list();
       await hv.networks.inspect(created.id);
-      await hv.networks.attach(created.id, 'vm-0');
-      await hv.networks.detach(created.id, 'vm-0');
+      const vm = hv.vm({id: 'vm-0'});
+      expect((await vm.networks.list()).map(network => network.id)).toEqual(['net-1']);
+      await vm.networks.attach(created);
+      await vm.networks.detach(created);
       await hv.networks.logs(created.id, {cursor: 'next', limit: 4, type: 'network.connect'});
       await hv.networks.delete(created.id);
       expect(received.map(request => [request.method, request.url.split('?')[0]])).toEqual([
         ['POST', '/networks'], ['GET', '/networks'], ['GET', `/networks/${created.id}`],
+        ['GET', '/networks'],
         ['PUT', `/networks/${created.id}/members/vm-0`],
         ['DELETE', `/networks/${created.id}/members/vm-0`],
         ['GET', `/networks/${created.id}/logs`], ['DELETE', `/networks/${created.id}`],
       ]);
       expect(received.at(-2)?.url).toContain('cursor=next');
       expect(received.at(-2)?.url).toContain('type=network.connect');
+      vm.close();
     } finally {hv.close();}
   });
 });

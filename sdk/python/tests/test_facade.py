@@ -257,14 +257,17 @@ def test_network_resource_maps_typed_lifecycle_and_cursor_logs() -> None:
             created = await hv.networks.create("team")
             await hv.networks.list()
             await hv.networks.inspect(created.id)
-            await hv.networks.attach(created.id, "vm-0")
-            await hv.networks.detach(created.id, "vm-0")
+            async with VM(url, "token", id="vm-0") as vm:
+                assert [network.id for network in await vm.networks.list()] == ["net-1"]
+                await vm.networks.attach(created)
+                await vm.networks.detach(created)
             await hv.networks.logs(created.id, cursor="next", limit=4, event_type="network.connect")
             await hv.networks.delete(created.id)
             assert [(method, path.split("?")[0]) for method, path, _ in state.requests] == [
                 ("POST", "/networks"),
                 ("GET", "/networks"),
                 ("GET", f"/networks/{created.id}"),
+                ("GET", "/networks"),
                 ("PUT", f"/networks/{created.id}/members/vm-0"),
                 ("DELETE", f"/networks/{created.id}/members/vm-0"),
                 ("GET", f"/networks/{created.id}/logs"),

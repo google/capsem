@@ -2,7 +2,7 @@ import {Client} from './client.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
 import type {HistoryOptions, LogOptions, TimelineOptions, VmSelector} from './options.js';
-import {Container, Files, Ports, Snapshots, Stats, type VmContext} from './resources.js';
+import {Container, Files, Ports, Snapshots, Stats, VmNetworks, type VmContext} from './resources.js';
 import {HttpError, Transport, type CallOptions, type TransportOptions} from './transport.js';
 
 export class VM extends Client {
@@ -10,6 +10,7 @@ export class VM extends Client {
   #name: string | undefined;
   #hasContainer: boolean | undefined;
   readonly files: Files;
+  readonly networks: VmNetworks;
   readonly snapshots: Snapshots;
   readonly stats: Stats;
   readonly container: Container;
@@ -31,6 +32,7 @@ export class VM extends Client {
     this.#name = name;
     const context = (call: CallOptions): Promise<VmContext> => this.context(call);
     this.files = new Files(context);
+    this.networks = new VmNetworks(context);
     this.snapshots = new Snapshots(context);
     this.stats = new Stats(context);
     this.container = new Container(context);

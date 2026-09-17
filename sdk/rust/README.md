@@ -82,8 +82,9 @@ an unmanaged service returns 503. The gateway rotates its token on restart.
 Obtain fresh credentials and construct a new client explicitly; never replay
 the restart call. Acceptance does not claim reconnection has completed.
 
-`hv.networks()` provides typed create/list/inspect/delete, member attach/detach
-and cursor-based audit logs; pass returned network objects directly to creation.
+`hv.networks()` provides typed create/list/inspect/delete and cursor-based audit
+logs; pass returned network objects directly to creation. VM membership uses
+`vm.networks().list/attach/detach` with typed network objects.
 `image` selects a container workload, with command, environment, and a typed
 `Registry` alongside it. Creation returns after HTTP reports the workload
 ready; `vm.container().status()` remains a read-only diagnostic. `vm.ports()`

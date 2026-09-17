@@ -30,6 +30,10 @@ export class FacadeGateway {
     if (operation.operationId === 'createNetwork') {
       value = {...value as object, name: (JSON.parse(request.body.toString()) as {name: string}).name};
     }
+    if (operation.operationId === 'listNetworks') value = {networks: [{
+      ...sample(schemas.NetworkInfo ?? {}) as object, id: 'net-1', name: 'team',
+      members: [{vm_id: 'vm-0', address: '10.0.0.2', state: 'ready', updated_unix_ms: 1}],
+    }]};
     if (operation.operationId === 'createVmExposure') {
       const body = JSON.parse(request.body.toString()) as {
         access: string; guest_port: number; host_port: number; target: string;

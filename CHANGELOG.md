@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Private-network membership now lives under `vm.networks`; list, attach, and
+  detach use typed network objects while global network resources retain
+  create, inspect, delete, and audit operations.
+
 - VM file operations now live under one `vm.files` resource with
   `list/read/write/history`; the top-level file list/changes methods and copy
   helper were removed.

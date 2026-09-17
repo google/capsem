@@ -68,10 +68,12 @@ describe('network-tools', () => {
     ];
     for (const call of calls) expect((await client.callTool(call)).isError, call.name).not.toBe(true);
     expect(requests.every(request => request.authorization === 'Bearer secret')).toBe(true);
-    expect(requests.map(request => request.method)).toEqual(['POST', 'GET', 'GET', 'PUT', 'DELETE', 'GET', 'DELETE']);
+    expect(requests.map(request => request.method)).toEqual([
+      'POST', 'GET', 'GET', 'GET', 'PUT', 'GET', 'DELETE', 'GET', 'DELETE',
+    ]);
     expect(JSON.parse(requests[0]?.body.toString() ?? '')).toEqual({name: 'team'});
-    expect(requests[5]?.url).toContain('decision=denied');
-    expect(requests[5]?.url).toContain('connection=conn-1');
-    expect(requests[5]?.url).toContain('vm=vm-1');
+    expect(requests[7]?.url).toContain('decision=denied');
+    expect(requests[7]?.url).toContain('connection=conn-1');
+    expect(requests[7]?.url).toContain('vm=vm-1');
   });
 });

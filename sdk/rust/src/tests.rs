@@ -314,11 +314,14 @@ async fn network_resource_uses_typed_routes_put_and_cursor_logs() {
     request(&mut server, "/networks").await;
     hv.networks().inspect(&created.id).await.unwrap();
     request(&mut server, &format!("/networks/{}", created.id)).await;
-    hv.networks().attach(&created.id, "vm-1").await.unwrap();
+    let vm = hv.vm(VmSelector::Id("vm-1".into())).unwrap();
+    assert_eq!(vm.networks().list().await.unwrap()[0].id, "net-1");
+    request(&mut server, "/networks").await;
+    vm.networks().attach(&created).await.unwrap();
     let (parts, _) = server.received.recv().await.unwrap();
     assert_eq!(parts.method, "PUT");
     assert_eq!(parts.uri.path(), format!("/networks/{}/members/vm-1", created.id));
-    hv.networks().detach(&created.id, "vm-1").await.unwrap();
+    vm.networks().detach(&created).await.unwrap();
     let (parts, _) = server.received.recv().await.unwrap();
     assert_eq!(parts.method, "DELETE");
     hv.networks()

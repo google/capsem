@@ -10,6 +10,7 @@ from . import _operations as api
 from . import models
 from ._client import Client
 from ._container import Container
+from ._networks import VmNetworks
 from ._ports import Ports
 from ._resources import Files, Snapshots, Stats
 from ._transport import HttpError, Transport
@@ -28,6 +29,7 @@ class VM(Client):
         self._name = TypeAdapter(StrictStr).validate_python(name) if name else None
         self._id = TypeAdapter(StrictStr).validate_python(id) if id else None
         self.files = Files(self)
+        self.networks = VmNetworks(self)
         self.snapshots = Snapshots(self)
         self.stats = Stats(self)
         self.container = Container(self)
