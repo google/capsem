@@ -286,14 +286,17 @@ pub(crate) async fn handle_ipc_connection(
                     _ => unreachable!(),
                 };
                 connection_execs.insert(id);
+                // Registered here, inline, so stdin arriving immediately after
+                // this frame finds the exec running.
+                let registration = exec::install(id, streaming, &job_store, &ipc_tx_out);
                 tokio::spawn(exec::run(
                     id,
                     command,
-                    streaming,
                     Arc::clone(&job_store),
                     ctrl_tx.clone(),
                     ipc_tx_out.clone(),
                     Arc::clone(&net_state.db),
+                    registration,
                 ));
             }
             ServiceToProcess::ExecStreamInput { id, data } => {

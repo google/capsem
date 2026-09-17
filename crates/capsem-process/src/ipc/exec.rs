@@ -3,47 +3,61 @@ use crate::job_store::ActiveExec;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
+/// Register one exec before its task starts.
+///
+/// The connection's read loop calls this inline, so an `ExecStreamInput` that
+/// follows `ExecStream` on the same connection always finds the exec running.
+/// Registering inside the spawned task left a window where the client's first
+/// stdin was refused as "exec is not running" and dropped.
+pub(super) fn install(
+    id: u64,
+    streaming: bool,
+    jobs: &JobStore,
+    output: &mpsc::Sender<ProcessToService>,
+) -> Option<oneshot::Receiver<JobResult>> {
+    let (tx, rx) = oneshot::channel();
+    let mut pending = jobs.jobs.lock().unwrap();
+    let mut active = jobs.active_execs.lock().unwrap();
+    if pending.contains_key(&id) || active.contains_key(&id) {
+        return None;
+    }
+    let mut state = ActiveExec::new();
+    state.stream = streaming.then(|| output.clone());
+    if !streaming {
+        state
+            .input_tx
+            .try_send(capsem_proto::ExecInputFrame::StdinEof)
+            .expect("a new exec input queue has room for EOF");
+    }
+    active.insert(id, state);
+    drop(active);
+    pending.insert(id, tx);
+    Some(rx)
+}
+
 pub(super) async fn run(
     id: u64,
     command: String,
-    streaming: bool,
     jobs: Arc<JobStore>,
     control: mpsc::Sender<ServiceToProcess>,
     output: mpsc::Sender<ProcessToService>,
     db: Arc<capsem_logger::DbWriter>,
+    registration: Option<oneshot::Receiver<JobResult>>,
 ) {
-    let (tx, rx) = oneshot::channel();
-    let installed = {
-        let mut pending = jobs.jobs.lock().unwrap();
-        let mut active = jobs.active_execs.lock().unwrap();
-        if pending.contains_key(&id) || active.contains_key(&id) {
-            false
+    let installed = registration.is_some();
+    let result = if let Some(rx) = registration {
+        if control.send(ServiceToProcess::Exec { id, command }).await.is_err() {
+            Err("guest control channel closed".to_string())
         } else {
-            let mut state = ActiveExec::new();
-            state.stream = streaming.then(|| output.clone());
-            if !streaming {
-                state
-                    .input_tx
-                    .try_send(capsem_proto::ExecInputFrame::StdinEof)
-                    .expect("a new exec input queue has room for EOF");
-            }
-            active.insert(id, state);
-            drop(active);
-            pending.insert(id, tx);
-            true
+            // User work has no implicit duration limit. The owning IPC
+            // connection cancels the guest process group when its
+            // HTTP/WebSocket caller leaves, before dropping its registrations.
+            // Watching the output queue here races that cleanup and can erase
+            // the guest job before the cancellation reaches it.
+            await_exec_result(rx).await
         }
-    };
-    let result = if !installed {
-        Err("exec id is already in use".to_string())
-    } else if control.send(ServiceToProcess::Exec { id, command }).await.is_err() {
-        Err("guest control channel closed".to_string())
     } else {
-        // User work has no implicit duration limit. The owning IPC connection
-        // cancels the guest process group when its HTTP/WebSocket caller leaves.
-        // The owning IPC connection performs cancellation before dropping its
-        // registrations. Watching the output queue here races that cleanup and
-        // can erase the guest job before the cancellation reaches it.
-        await_exec_result(rx).await
+        Err("exec id is already in use".to_string())
     };
     if installed {
         jobs.jobs.lock().unwrap().remove(&id);
