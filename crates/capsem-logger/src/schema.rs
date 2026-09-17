@@ -52,8 +52,8 @@ pub const CREATE_SCHEMA: &str = "
         matched_rule TEXT,
         request_headers TEXT,
         response_headers TEXT,
-        request_body_preview TEXT,
-        response_body_preview TEXT,
+        request_body_preview TEXT, -- display excerpt; the full body is in event_body_blobs
+        response_body_preview TEXT, -- display excerpt; the full body is in event_body_blobs
         conn_type TEXT DEFAULT 'https',
         policy_mode TEXT,
         policy_action TEXT,
@@ -76,11 +76,11 @@ pub const CREATE_SCHEMA: &str = "
         method TEXT NOT NULL,
         path TEXT NOT NULL,
         stream INTEGER DEFAULT 0,
-        system_prompt_preview TEXT,
+        system_prompt_preview TEXT, -- display excerpt; the full body is in event_body_blobs
         messages_count INTEGER DEFAULT 0,
         tools_count INTEGER DEFAULT 0,
         request_bytes INTEGER DEFAULT 0,
-        request_body_preview TEXT,
+        request_body_preview TEXT, -- display excerpt; the full body is in event_body_blobs
         message_id TEXT,
         status_code INTEGER,
         text_content TEXT,
@@ -131,8 +131,9 @@ pub const CREATE_SCHEMA: &str = "
         call_index INTEGER NOT NULL,
         call_id TEXT NOT NULL,
         tool_name TEXT NOT NULL,
-        arguments TEXT,
-        response_preview TEXT,
+        arguments TEXT, -- native tool-call arguments; for origin='mcp' this is the
+                        -- MCP request display excerpt, and the full body is in event_body_blobs
+        response_preview TEXT, -- display excerpt; the full body is in event_body_blobs
         origin TEXT NOT NULL DEFAULT 'native',
         transport TEXT NOT NULL DEFAULT 'unknown' CHECK (transport IN ('http', 'sse', 'websocket', 'vsock_frame', 'direct', 'unknown')),
         server_name TEXT,

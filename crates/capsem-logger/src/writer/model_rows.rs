@@ -1,16 +1,17 @@
 use rusqlite::{params, Connection};
 
 use super::{
-    blake3_ref, cap_field, format_timestamp, insert_event_body_blob, new_event_id, EventBodyBlob, WriteTarget,
+    blake3_ref, cap_field, cap_preview, format_timestamp, insert_event_body_blob, new_event_id, EventBodyBlob,
+    WriteTarget,
 };
 use crate::events::ModelCall;
 
 pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: WriteTarget) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(call.timestamp);
-    let req_body = cap_field(&call.request_body_preview);
+    let req_body = cap_preview(&call.request_body_preview);
     let text_content = cap_field(&call.text_content);
     let thinking_content = cap_field(&call.thinking_content);
-    let sys_prompt = cap_field(&call.system_prompt_preview);
+    let sys_prompt = cap_preview(&call.system_prompt_preview);
     let event_id = call.event_id.clone().unwrap_or_else(new_event_id);
     super::execute_cached(
         conn,
@@ -129,6 +130,10 @@ pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: Wri
     for tr in &call.tool_responses {
         let tr_trace = tr.trace_id.clone().or_else(|| call.trace_id.clone());
         let tr_credential_ref = tr.credential_ref.clone().or_else(|| call.credential_ref.clone());
+        // No blob-backed copy yet; the archive task moves this.
+        // event_body_blobs.source_table's CHECK has no 'tool_responses'
+        // entry, so this would be the only copy of the tool response body.
+        let tr_content_preview = cap_field(&tr.content_preview);
         super::execute_cached(
             conn,
             &format!(
@@ -139,7 +144,7 @@ pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: Wri
             params![
                 model_call_id,
                 tr.call_id,
-                tr.content_preview,
+                tr_content_preview,
                 i64::from(tr.is_error),
                 tr_trace,
                 call.trace_id,
@@ -168,7 +173,11 @@ fn insert_model_items(
      -> rusqlite::Result<()> {
         item_index += 1;
         let call_id = call_id.unwrap_or_default();
-        let content = cap_field(&content);
+        // Hash the ORIGINAL, uncapped content: content_hash feeds the
+        // UNIQUE(trace_id, kind, content_hash, call_id) dedup guard below,
+        // and two distinct turns whose bodies only differ after the cap
+        // point (e.g. share the same system prompt for the first 2 KB)
+        // must not collapse into one row. Only the stored value is capped.
         let hash_material = serde_json::json!({
             "kind": kind,
             "call_id": call_id,
@@ -178,6 +187,9 @@ fn insert_model_items(
         })
         .to_string();
         let content_hash = blake3_ref(&hash_material);
+        // model_items.content is the canonical ordered item ledger, not a
+        // preview -- no blob-backed copy yet; the archive task moves this.
+        let content = cap_field(&content);
         super::execute_cached(
             conn,
             &format!(

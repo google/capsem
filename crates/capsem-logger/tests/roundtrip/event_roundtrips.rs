@@ -198,6 +198,51 @@ async fn model_items_without_trace_id_dedup_across_restarts() {
     assert_eq!(final_count, first_count);
 }
 
+/// content_hash feeds `UNIQUE(trace_id, kind, content_hash, call_id)` and the
+/// `INSERT OR IGNORE` dedup guard in `insert_model_items`. It must be computed
+/// on the ORIGINAL request body, not the capped display copy: two distinct
+/// turns in the same trace whose request bodies are identical for the first
+/// 4KB (e.g. share a system prompt) but differ after PREVIEW_BYTES (2KB) must
+/// not collapse into a single "request" item.
+#[tokio::test]
+async fn model_items_request_dedup_hashes_full_body_not_capped_preview() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+
+    let shared_prefix = "a".repeat(4096);
+    let mut first_call = sample_model_call("anthropic");
+    first_call.trace_id = Some("trace-hash-full-body".to_string());
+    first_call.request_body_preview = Some(format!("{shared_prefix}-turn-one"));
+    first_call.tool_calls = Vec::new();
+    first_call.tool_responses = Vec::new();
+
+    let mut second_call = first_call.clone();
+    second_call.request_body_preview = Some(format!("{shared_prefix}-turn-two"));
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::ModelCall(first_call)).await;
+    writer.write(WriteOp::ModelCall(second_call)).await;
+    drop(writer);
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let request_items: Vec<(String, String)> = conn
+        .prepare("SELECT content, content_hash FROM model_items WHERE trace_id = 'trace-hash-full-body' AND kind = 'request' ORDER BY item_index")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(
+        request_items.len(),
+        2,
+        "both request items must survive dedup: {request_items:#?}"
+    );
+    assert_ne!(request_items[0].1, request_items[1].1, "content_hash must differ");
+    assert!(request_items[0].0.ends_with("-turn-one"));
+    assert!(request_items[1].0.ends_with("-turn-two"));
+}
+
 // ── Count queries ────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -470,6 +515,13 @@ async fn unicode_strings() {
     assert_eq!(calls[0].1.text_content.as_deref(), Some("Bonjour le monde!"));
 }
 
+/// `net_events.*_body_preview` is a compact display field only (writer.rs);
+/// the forensic copy of a large body lives in `event_body_blobs`. This test
+/// used to assert the preview round-tripped at full size -- that was
+/// asserting the bug this cap fixes (previews duplicating up to 256KB of
+/// bytes already stored in full in the blob table). Now it asserts the
+/// preview is capped at `PREVIEW_BYTES` while the blob keeps the exact
+/// original body.
 #[tokio::test]
 async fn large_body_previews() {
     let dir = tempfile::tempdir().unwrap();
@@ -478,6 +530,7 @@ async fn large_body_previews() {
 
     let large_body = "x".repeat(100_000);
     let mut event = sample_net_event("big.com", Decision::Allowed);
+    event.event_id = Some("1a2b3c4d5e6f".into());
     event.request_body_preview = Some(large_body.clone());
     event.response_body_preview = Some(large_body.clone());
 
@@ -486,7 +539,24 @@ async fn large_body_previews() {
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
     let events = reader.recent_net_events(10).unwrap();
-    assert_eq!(events[0].request_body_preview.as_ref().unwrap().len(), 100_000);
+    // PREVIEW_BYTES (writer.rs) -- kept as a literal here since this is an
+    // external integration-test crate and the constant is crate-private.
+    assert_eq!(events[0].request_body_preview.as_ref().unwrap().len(), 2 * 1024);
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let (original_bytes, stored_bytes): (i64, i64) = conn
+        .query_row(
+            "SELECT original_bytes, stored_bytes FROM event_body_blobs
+             WHERE event_id = '1a2b3c4d5e6f' AND direction = 'request'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(original_bytes, 100_000, "the blob keeps the full body size");
+    assert_eq!(
+        stored_bytes, 100_000,
+        "the blob keeps the full body bytes, not the capped preview"
+    );
 }
 
 // ── Rapid-fire writes ────────────────────────────────────────────────

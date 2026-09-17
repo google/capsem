@@ -186,15 +186,22 @@ async fn mcp_call_bytes_roundtrip() {
     assert_eq!(calls[0]["bytes_received"], 4096);
 }
 
+/// `tool_calls.request_preview`/`response_preview` are compact display
+/// fields; the forensic copy lives in `event_body_blobs`. This test used to
+/// assert the preview round-tripped at full (10KB) size -- that was
+/// asserting the bug this cap fixes. Now it asserts the preview is capped
+/// at PREVIEW_BYTES (2KB) while the blob keeps the exact original body.
 #[tokio::test]
-async fn mcp_call_full_preview_not_truncated() {
+async fn mcp_call_preview_is_capped_and_blob_is_full() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("preview.db");
     let writer = DbWriter::open(&path, 64).unwrap();
 
-    // 10KB preview -- must NOT be truncated (old bug truncated at 200 chars)
+    // 10KB preview -- must be capped to 2KB in the display column, but kept
+    // in full in the event_body_blobs table.
     let preview = "x".repeat(10_000);
     let mut call = sample_mcp_call("github", "allowed");
+    call.event_id = Some("aa11bb22cc33".into());
     call.request_preview = Some(preview.clone());
     call.response_preview = Some(preview.clone());
     writer.write(WriteOp::McpCall(call)).await;
@@ -202,8 +209,25 @@ async fn mcp_call_full_preview_not_truncated() {
 
     let reader = DbReader::open(&path).unwrap();
     let calls = mcp_tool_rows(&reader);
-    assert_eq!(calls[0]["request_preview"].as_str().unwrap().len(), 10_000);
-    assert_eq!(calls[0]["response_preview"].as_str().unwrap().len(), 10_000);
+    // PREVIEW_BYTES (writer.rs) -- kept as a literal here since this is an
+    // external integration-test crate and the constant is crate-private.
+    assert_eq!(calls[0]["request_preview"].as_str().unwrap().len(), 2 * 1024);
+    assert_eq!(calls[0]["response_preview"].as_str().unwrap().len(), 2 * 1024);
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let (original_bytes, stored_bytes): (i64, i64) = conn
+        .query_row(
+            "SELECT original_bytes, stored_bytes FROM event_body_blobs
+             WHERE event_id = 'aa11bb22cc33' AND direction = 'request'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(original_bytes, 10_000, "the blob keeps the full body size");
+    assert_eq!(
+        stored_bytes, 10_000,
+        "the blob keeps the full body bytes, not the capped preview"
+    );
 }
 
 #[tokio::test]

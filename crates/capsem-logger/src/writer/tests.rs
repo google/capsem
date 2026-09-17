@@ -88,6 +88,29 @@ fn cap_field_mixed_ascii_and_multibyte() {
 }
 
 #[test]
+fn cap_bytes_max_zero_returns_empty_string() {
+    let s = Some("anything".to_string());
+    assert_eq!(cap_bytes(&s, 0).as_deref(), Some(""));
+}
+
+#[test]
+fn cap_bytes_truncates_at_char_boundary_below_multibyte_char() {
+    // "héllo": h(1) + é(2) + l(1) + l(1) + o(1) = 6 bytes. A max of 2 lands
+    // mid-way through the 2-byte 'é', so the boundary search must back off
+    // to the end of 'h' (byte 1), not split the char.
+    let s = Some("héllo".to_string());
+    assert_eq!(cap_bytes(&s, 2).as_deref(), Some("h"));
+}
+
+#[test]
+fn cap_preview_caps_to_exactly_preview_bytes() {
+    let s = Some("x".repeat(4 * 1024));
+    let result = cap_preview(&s).unwrap();
+    assert_eq!(result.len(), PREVIEW_BYTES);
+    assert_eq!(PREVIEW_BYTES, 2048);
+}
+
+#[test]
 fn net_event_stores_bounded_body_blobs_and_small_previews() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("body-blobs.db");

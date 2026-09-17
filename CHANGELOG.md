@@ -333,6 +333,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Session ledger display previews -- `net_events.request_body_preview`/`response_body_preview`,
+  `model_calls.request_body_preview`/`system_prompt_preview`, and
+  `tool_calls.request_preview`/`response_preview` -- are now capped at 2KB instead of 256KB. The
+  full original body is unaffected: it is stored in full in `event_body_blobs`.
+
 - `capsem stop` no longer reports "Service stopped." while another capsem
   service still answers on the socket: it names the socket and fails instead.
 

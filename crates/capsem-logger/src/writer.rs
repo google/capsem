@@ -23,10 +23,17 @@ use flush_faults::take_disk_flush_failure_for_tests;
 pub(crate) use flush_faults::{fail_disk_flushes_for_path_for_tests, fail_disk_flushes_for_tests};
 use model_rows::insert_model_call;
 
-/// Maximum bytes stored for any preview/content field (256 KB).
-/// Callers should truncate before constructing events, but the logger
-/// enforces this defensively to prevent unbounded storage.
+/// Maximum bytes stored for any non-preview text field (256 KB), e.g.
+/// request/response headers. Callers should truncate before constructing
+/// events, but the logger enforces this defensively to prevent unbounded
+/// storage.
 const MAX_FIELD_BYTES: usize = 256 * 1024;
+
+/// Display previews are a UI convenience; the forensic copy is the body
+/// blob. 2 KB shows the first screen of any JSON or SSE body. A 10-day
+/// session once carried 75 MB of "previews" averaging 28 KB, mirrored into
+/// RAM by two processes on top of the identical bytes in the blob table.
+pub(crate) const PREVIEW_BYTES: usize = 2 * 1024;
 const MAX_BODY_BLOB_BYTES: usize = 10 * 1024 * 1024;
 const DEFAULT_BATCH_CAPACITY: usize = 10_000;
 const DISK_FLUSH_THRESHOLD_OPS: usize = 1_000_000;
@@ -58,20 +65,32 @@ fn format_timestamp(timestamp: SystemTime) -> String {
     humantime::format_rfc3339_micros(timestamp).to_string()
 }
 
-/// Truncate an optional string field to MAX_FIELD_BYTES.
-fn cap_field(s: &Option<String>) -> Option<String> {
+/// Truncate an optional string field to at most `max` bytes, at a char
+/// boundary so the result stays valid UTF-8.
+fn cap_bytes(s: &Option<String>, max: usize) -> Option<String> {
     s.as_ref().map(|v| {
-        if v.len() <= MAX_FIELD_BYTES {
+        if v.len() <= max {
             v.clone()
         } else {
-            // Truncate at a char boundary to avoid invalid UTF-8.
-            let mut end = MAX_FIELD_BYTES;
+            let mut end = max;
             while end > 0 && !v.is_char_boundary(end) {
                 end -= 1;
             }
             v[..end].to_string()
         }
     })
+}
+
+/// Truncate an optional string field to MAX_FIELD_BYTES.
+fn cap_field(s: &Option<String>) -> Option<String> {
+    cap_bytes(s, MAX_FIELD_BYTES)
+}
+
+/// Truncate an optional display-preview field to PREVIEW_BYTES. The full
+/// body, when one exists, lives in `event_body_blobs`; this only bounds the
+/// compact copy shown in a UI list.
+pub(crate) fn cap_preview(s: &Option<String>) -> Option<String> {
+    cap_bytes(s, PREVIEW_BYTES)
 }
 
 fn blake3_ref(value: &str) -> String {
@@ -785,8 +804,8 @@ fn execute_cached(conn: &Connection, sql: &str, params: impl rusqlite::Params) -
 
 fn insert_net_event(conn: &Connection, event: &NetEvent, target: WriteTarget) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(event.timestamp);
-    let req_body = cap_field(&event.request_body_preview);
-    let resp_body = cap_field(&event.response_body_preview);
+    let req_body = cap_preview(&event.request_body_preview);
+    let resp_body = cap_preview(&event.response_body_preview);
     let req_headers = cap_field(&event.request_headers);
     let resp_headers = cap_field(&event.response_headers);
     let event_id = event.event_id.clone().unwrap_or_else(new_event_id);
@@ -904,8 +923,8 @@ fn split_event_path(path: &str) -> (String, String) {
 
 fn insert_mcp_call(conn: &Connection, call: &McpCall, target: WriteTarget) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(call.timestamp);
-    let req_preview = cap_field(&call.request_preview);
-    let resp_preview = cap_field(&call.response_preview);
+    let req_preview = cap_preview(&call.request_preview);
+    let resp_preview = cap_preview(&call.response_preview);
     let event_id = call.event_id.clone().unwrap_or_else(new_event_id);
     if call.method == "tools/call" {
         let tool_name = call.tool_name.as_deref().unwrap_or("");
@@ -1064,6 +1083,9 @@ fn insert_exec_event(conn: &Connection, event: &ExecEvent, target: WriteTarget) 
 }
 
 fn update_exec_event(conn: &Connection, complete: &ExecEventComplete, target: WriteTarget) -> rusqlite::Result<()> {
+    // No blob-backed copy yet; the archive task moves this. Capping to
+    // PREVIEW_BYTES here would be the only copy of exec output, so this
+    // stays at MAX_FIELD_BYTES via cap_field until a body-blob backs it.
     let stdout_preview = cap_field(&complete.stdout_preview);
     let stderr_preview = cap_field(&complete.stderr_preview);
     execute_cached(
