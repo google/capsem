@@ -15,6 +15,7 @@ use crate::WriteOp;
 const DB_BOUNDARY_RATIONALE: &str = "DB boundary contract: capsem-logger owns DB execution/storage; callers own query intent only. See AGENTS.md and skills/dev-testing/SKILL.md.";
 static DB_FLUSH_FAILURE_TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
+mod external_reader;
 mod query;
 
 #[test]

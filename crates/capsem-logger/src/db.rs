@@ -102,21 +102,61 @@ fn record_query_metrics(phase: &'static str, started: Instant, params_count: usi
     }
 }
 
+/// A worker reply, with whether the ledger moved under it.
+///
+/// `changed` is the handle's cue to expire its read caches and move the epochs
+/// route caches are keyed on. Only an external handle can see it set: an
+/// in-process one is told by its own writer instead.
+struct Observed<T> {
+    changed: bool,
+    value: T,
+}
+
+/// What the reader worker did for one `QueryMany` request.
+enum QueryManyReply {
+    Executed {
+        changed: bool,
+        results: Vec<DbQueryJson>,
+    },
+    /// Nothing had changed and the caller's cached result still stands, so the
+    /// worker executed nothing.
+    CacheStillValid,
+}
+
+/// Counters the reader worker keeps, read back by tests over the same channel
+/// the queries take so no test needs a second connection to the ledger.
+#[cfg(test)]
+pub(crate) struct ReaderIntrospection {
+    pub(crate) attached_schemas: Vec<String>,
+    pub(crate) disk_syncs: u64,
+    pub(crate) queries_executed: u64,
+    pub(crate) busy_timeout_ms: i64,
+}
+
 enum ReadRequest {
     Ready {
-        reply: tokio::sync::oneshot::Sender<DbResult<()>>,
+        /// Carries whether the ledger changed since the worker last looked, so
+        /// the handle can expire read caches keyed on its epochs.
+        reply: tokio::sync::oneshot::Sender<DbResult<bool>>,
     },
     Query {
         sql: String,
         params: Vec<serde_json::Value>,
-        reply: tokio::sync::oneshot::Sender<DbResult<String>>,
+        reply: tokio::sync::oneshot::Sender<DbResult<Observed<String>>>,
     },
     QueryMany {
         queries: Vec<DbQueryOwned>,
-        reply: tokio::sync::oneshot::Sender<DbResult<Vec<String>>>,
+        /// The handle holds a cached result for exactly these queries, so the
+        /// worker may skip execution when the ledger did not change.
+        cache_valid: bool,
+        reply: tokio::sync::oneshot::Sender<DbResult<QueryManyReply>>,
     },
     SessionStats {
-        reply: tokio::sync::oneshot::Sender<DbResult<SessionStats>>,
+        reply: tokio::sync::oneshot::Sender<DbResult<Observed<SessionStats>>>,
+    },
+    #[cfg(test)]
+    Introspect {
+        reply: tokio::sync::oneshot::Sender<DbResult<ReaderIntrospection>>,
     },
     Shutdown,
 }
@@ -153,7 +193,10 @@ struct DbHandleInner {
     query_many_cache: Mutex<DbQueryManyCache>,
     read_cache_epoch: AtomicU64,
     session_summary_cache_epoch: AtomicU64,
-    sync_from_disk_before_query: bool,
+    /// This handle reads a ledger another process writes. It owns no writer,
+    /// so SQLite's `data_version` -- not a local write -- is what tells it the
+    /// ledger moved and its read caches expired.
+    external: bool,
 }
 
 impl Drop for DbHandleInner {
@@ -175,7 +218,7 @@ impl DbHandle {
         let started = Instant::now();
         let writer = Arc::new(DbWriter::open(path, 1024)?);
         DbReader::open(path)?;
-        let handle = Self::open_with_writer(path.to_path_buf(), writer, false)?;
+        let handle = Self::open_with_writer(path.to_path_buf(), writer)?;
 
         tracing::debug!(
             db_path = %path.display(),
@@ -190,13 +233,15 @@ impl DbHandle {
     /// Open a DB handle for a session DB written by another process.
     ///
     /// Capsem service routes read session ledgers, but capsem-process owns the
-    /// telemetry/security writes. This handle keeps the same `ready/query`
-    /// contract while syncing its DB-owned memory tables from disk before
-    /// reads. It rejects `write` so caller mistakes fail loudly instead of
-    /// creating a second writer rail.
+    /// telemetry/security writes. Disk is the process boundary and WAL already
+    /// makes it readable while the writer commits, so this handle queries the
+    /// file directly and holds no copy of it; it caches whole `query_many`
+    /// batches until SQLite's `data_version` says the writer committed. It
+    /// rejects `write` so caller mistakes fail loudly instead of creating a
+    /// second writer rail.
     pub fn open_external_reader(path: &Path) -> rusqlite::Result<Self> {
         let started = Instant::now();
-        DbReader::open(path)?;
+        DbReader::open_disk_only(path)?;
         let handle = Self::open_reader(path.to_path_buf(), true)?;
         tracing::debug!(
             db_path = %path.display(),
@@ -207,12 +252,12 @@ impl DbHandle {
         Ok(handle)
     }
 
-    fn open_reader(db_path: PathBuf, sync_from_disk_before_query: bool) -> rusqlite::Result<Self> {
+    fn open_reader(db_path: PathBuf, external: bool) -> rusqlite::Result<Self> {
         let (reader_tx, reader_rx) = mpsc::channel();
         let reader_path = db_path.clone();
         let reader_join = std::thread::Builder::new()
             .name("capsem-db-reader".into())
-            .spawn(move || reader_loop(reader_path, reader_rx, sync_from_disk_before_query))
+            .spawn(move || reader_loop(reader_path, reader_rx, external))
             .expect("failed to spawn db reader thread");
 
         Ok(Self {
@@ -225,17 +270,15 @@ impl DbHandle {
                 query_many_cache: Mutex::new(None),
                 read_cache_epoch: AtomicU64::new(0),
                 session_summary_cache_epoch: AtomicU64::new(0),
-                sync_from_disk_before_query,
+                external,
             }),
         })
     }
 
-    fn open_with_writer(
-        db_path: PathBuf,
-        writer: Arc<DbWriter>,
-        sync_from_disk_before_query: bool,
-    ) -> rusqlite::Result<Self> {
-        let handle = Self::open_reader(db_path, sync_from_disk_before_query)?;
+    fn open_with_writer(db_path: PathBuf, writer: Arc<DbWriter>) -> rusqlite::Result<Self> {
+        // A handle that owns its writer is never external: its own writes are
+        // what move the ledger, and they invalidate its caches directly.
+        let handle = Self::open_reader(db_path, false)?;
         let mut inner = Arc::try_unwrap(handle.inner).ok().expect("new handle is unique");
         inner.writer = Some(writer);
         Ok(Self { inner: Arc::new(inner) })
@@ -245,7 +288,7 @@ impl DbHandle {
     pub(crate) fn open_existing_for_tests(path: &Path) -> rusqlite::Result<Self> {
         DbReader::open(path)?;
         let writer = Arc::new(DbWriter::open_in_memory(1)?);
-        Self::open_with_writer(path.to_path_buf(), writer, false)
+        Self::open_with_writer(path.to_path_buf(), writer)
     }
 
     pub fn path(&self) -> &Path {
@@ -287,6 +330,12 @@ impl DbHandle {
         let result = rx
             .await
             .map_err(|error| format!("db reader worker dropped ready reply: {error}"))?;
+        if matches!(result, Ok(true)) {
+            // The first look at an externally written ledger, and any commit
+            // since the last one, expire whatever this handle had cached.
+            self.invalidate_read_cache();
+        }
+        let result = result.map(|_changed| ());
         match &result {
             Ok(()) => tracing::debug!(
                 db_path = %self.inner.path.display(),
@@ -343,7 +392,8 @@ impl DbHandle {
             })?;
         let result = rx
             .await
-            .map_err(|error| format!("db reader worker dropped query reply: {error}"))?;
+            .map_err(|error| format!("db reader worker dropped query reply: {error}"))?
+            .map(|observed| self.take_observed(observed));
         record_query_metrics("handle", started, params_count, &result);
         match &result {
             Ok(_) => tracing::debug!(
@@ -376,32 +426,47 @@ impl DbHandle {
         let started = Instant::now();
         let query_count = queries.len();
         let params_count: usize = queries.iter().map(|(_, params)| params.len()).sum();
-        if !self.inner.sync_from_disk_before_query {
-            if let Some((cached_queries, cached_result)) = self.inner.query_many_cache.lock().unwrap().clone() {
-                if cached_queries == queries {
-                    tracing::debug!(
-                        db_path = %self.inner.path.display(),
-                        operation = "query_many",
-                        cached = true,
-                        query_count,
-                        params_count,
-                        duration_ms = elapsed_ms(started),
-                        "session db handle operation completed"
-                    );
-                    return Ok(cached_result);
-                }
+        let cached = self
+            .inner
+            .query_many_cache
+            .lock()
+            .unwrap()
+            .clone()
+            .and_then(|(cached_queries, cached_result)| (cached_queries == queries).then_some(cached_result));
+        if !self.inner.external {
+            // An in-process handle owns the writer, so anything that could
+            // invalidate this entry already has; the entry stands on its own.
+            if let Some(cached_result) = cached {
+                tracing::debug!(
+                    db_path = %self.inner.path.display(),
+                    operation = "query_many",
+                    cached = true,
+                    query_count,
+                    params_count,
+                    duration_ms = elapsed_ms(started),
+                    "session db handle operation completed"
+                );
+                return Ok(cached_result);
             }
         }
+        // An external handle cannot know the file is unchanged without asking
+        // SQLite, so it still pays one worker round trip. The worker checks
+        // `data_version` and re-executes the batch only when it moved.
+        let cache_valid = self.inner.external && cached.is_some();
         let cache_key = queries.clone();
         // The epoch the result will belong to. A write or an external
         // invalidation that lands while the reader thread is executing bumps
         // it, and a result from before it must not be cached: it would be
         // served as current until the next invalidation.
-        let epoch_before = self.read_cache_epoch(ReadCacheDomain::All);
+        let mut epoch_before = self.read_cache_epoch(ReadCacheDomain::All);
         let (reply, rx) = tokio::sync::oneshot::channel();
         self.inner
             .reader_tx
-            .send(ReadRequest::QueryMany { queries, reply })
+            .send(ReadRequest::QueryMany {
+                queries,
+                cache_valid,
+                reply,
+            })
             .map_err(|error| {
                 tracing::error!(
                     db_path = %self.inner.path.display(),
@@ -414,13 +479,30 @@ impl DbHandle {
                 );
                 format!("db reader worker closed: {error}")
             })?;
-        let result = rx
+        let reply = rx
             .await
             .map_err(|error| format!("db reader worker dropped query_many reply: {error}"))?;
-        if !self.inner.sync_from_disk_before_query {
-            if let Ok(raw) = &result {
-                self.store_query_many_cache(epoch_before, cache_key, raw.clone());
+        let result = reply.map(|reply| match reply {
+            QueryManyReply::CacheStillValid => cached,
+            QueryManyReply::Executed { changed, results } => {
+                if changed {
+                    // The worker observed a commit by the other process and
+                    // then executed against it: these results belong to the
+                    // new epoch, not the one this call started in.
+                    self.invalidate_read_cache();
+                    epoch_before = self.read_cache_epoch(ReadCacheDomain::All);
+                }
+                Some(results)
             }
+        });
+        // The worker answers `CacheStillValid` only to a request that said it
+        // had one; a `None` here would be the two sides disagreeing about that,
+        // which is a broken contract rather than an empty result.
+        let result = result.and_then(|served| {
+            served.ok_or_else(|| "db reader worker skipped execution without a cached result".to_string())
+        });
+        if let Ok(raw) = &result {
+            self.store_query_many_cache(epoch_before, cache_key, raw.clone());
         }
         match &result {
             Ok(_) => tracing::debug!(
@@ -453,6 +535,55 @@ impl DbHandle {
             .map_err(|error| format!("db reader worker closed: {error}"))?;
         rx.await
             .map_err(|error| format!("db reader worker dropped session stats reply: {error}"))?
+            .map(|observed| self.take_observed(observed))
+    }
+
+    /// Unwrap a worker reply, expiring this handle's read caches first when the
+    /// worker saw the other process commit.
+    ///
+    /// Every read path goes through here, so no route can be answered from a
+    /// cache the ledger has already moved past, whichever entrypoint it used.
+    fn take_observed<T>(&self, observed: Observed<T>) -> T {
+        if observed.changed {
+            self.invalidate_read_cache();
+        }
+        observed.value
+    }
+
+    #[cfg(test)]
+    async fn introspect_reader(&self) -> DbResult<ReaderIntrospection> {
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        self.inner
+            .reader_tx
+            .send(ReadRequest::Introspect { reply })
+            .map_err(|error| format!("db reader worker closed: {error}"))?;
+        rx.await
+            .map_err(|error| format!("db reader worker dropped introspect reply: {error}"))?
+    }
+
+    /// Schema names attached to the reader worker's connection.
+    #[cfg(test)]
+    pub(crate) async fn attached_schemas_for_tests(&self) -> DbResult<Vec<String>> {
+        Ok(self.introspect_reader().await?.attached_schemas)
+    }
+
+    /// How many times the reader worker observed the ledger change.
+    #[cfg(test)]
+    pub(crate) async fn disk_syncs_for_tests(&self) -> DbResult<u64> {
+        Ok(self.introspect_reader().await?.disk_syncs)
+    }
+
+    /// How many caller-owned queries the reader worker actually executed;
+    /// a batch served from this handle's cache never reaches it.
+    #[cfg(test)]
+    pub(crate) async fn queries_executed_for_tests(&self) -> DbResult<u64> {
+        Ok(self.introspect_reader().await?.queries_executed)
+    }
+
+    /// How long the reader worker waits out a file lock before failing, in ms.
+    #[cfg(test)]
+    pub(crate) async fn busy_timeout_ms_for_tests(&self) -> DbResult<i64> {
+        Ok(self.introspect_reader().await?.busy_timeout_ms)
     }
 
     /// Cache a `query_many` result unless the read epoch moved while the
@@ -619,157 +750,6 @@ impl DbHandle {
     }
 }
 
-fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, sync_from_disk_before_query: bool) {
-    let started = Instant::now();
-    let reader = match DbReader::open(&path) {
-        Ok(reader) => reader,
-        Err(error) => {
-            tracing::error!(
-                db_path = %path.display(),
-                operation = "reader_worker_open",
-                error = %error,
-                "session db reader worker failed"
-            );
-            return;
-        }
-    };
-    tracing::debug!(
-        db_path = %path.display(),
-        operation = "reader_worker_open",
-        duration_ms = elapsed_ms(started),
-        "session db reader worker opened"
-    );
-
-    while let Ok(request) = rx.recv() {
-        match request {
-            ReadRequest::Ready { reply } => {
-                let started = Instant::now();
-                let result = if sync_from_disk_before_query {
-                    reader
-                        .sync_from_disk()
-                        .map_err(|error| error.to_string())
-                        .and_then(|()| reader.ready())
-                } else {
-                    reader.ready()
-                };
-                match &result {
-                    Ok(()) => tracing::debug!(
-                        db_path = %path.display(),
-                        operation = "ready_execute",
-                        duration_ms = elapsed_ms(started),
-                        "session db readiness completed"
-                    ),
-                    Err(error) => tracing::error!(
-                        db_path = %path.display(),
-                        operation = "ready_execute",
-                        duration_ms = elapsed_ms(started),
-                        error = %error,
-                        "session db readiness failed"
-                    ),
-                }
-                let _ = reply.send(result);
-            }
-            ReadRequest::Query { sql, params, reply } => {
-                let started = Instant::now();
-                let sql_hash = sql_fingerprint(&sql);
-                let params_count = params.len();
-                let result = if sync_from_disk_before_query {
-                    reader
-                        .sync_from_disk()
-                        .map_err(|error| error.to_string())
-                        .and_then(|()| reader.query_raw_with_params(&sql, &params))
-                } else {
-                    reader.query_raw_with_params(&sql, &params)
-                };
-                record_query_metrics("execute", started, params_count, &result);
-                match &result {
-                    Ok(_) => tracing::debug!(
-                        db_path = %path.display(),
-                        operation = "query_execute",
-                        sql_hash,
-                        params_count,
-                        duration_ms = elapsed_ms(started),
-                        "session db query completed"
-                    ),
-                    Err(error) => tracing::error!(
-                        db_path = %path.display(),
-                        operation = "query_execute",
-                        sql_hash,
-                        params_count,
-                        duration_ms = elapsed_ms(started),
-                        error = %error,
-                        "session db query failed"
-                    ),
-                }
-                let _ = reply.send(result);
-            }
-            ReadRequest::QueryMany { queries, reply } => {
-                let started = Instant::now();
-                let query_count = queries.len();
-                let params_count: usize = queries.iter().map(|(_, params)| params.len()).sum();
-                let result = if sync_from_disk_before_query {
-                    reader
-                        .sync_from_disk()
-                        .map_err(|error| error.to_string())
-                        .and_then(|()| execute_query_many(&reader, queries))
-                } else {
-                    execute_query_many(&reader, queries)
-                };
-                match &result {
-                    Ok(_) => tracing::debug!(
-                        db_path = %path.display(),
-                        operation = "query_many_execute",
-                        query_count,
-                        params_count,
-                        duration_ms = elapsed_ms(started),
-                        "session db query batch completed"
-                    ),
-                    Err(error) => tracing::error!(
-                        db_path = %path.display(),
-                        operation = "query_many_execute",
-                        query_count,
-                        params_count,
-                        duration_ms = elapsed_ms(started),
-                        error = %error,
-                        "session db query batch failed"
-                    ),
-                }
-                let _ = reply.send(result);
-            }
-            ReadRequest::SessionStats { reply } => {
-                let result = if sync_from_disk_before_query {
-                    reader
-                        .sync_from_disk()
-                        .map_err(|error| error.to_string())
-                        .and_then(|()| reader.session_stats().map_err(|error| error.to_string()))
-                } else {
-                    reader.session_stats().map_err(|error| error.to_string())
-                };
-                let _ = reply.send(result);
-            }
-            ReadRequest::Shutdown => {
-                tracing::debug!(
-                    db_path = %path.display(),
-                    operation = "reader_worker_shutdown",
-                    "session db reader worker shutting down"
-                );
-                break;
-            }
-        }
-    }
-}
-
-fn execute_query_many(reader: &DbReader, queries: Vec<DbQueryOwned>) -> DbResult<Vec<String>> {
-    let mut results = Vec::with_capacity(queries.len());
-    for (sql, params) in queries {
-        let started = Instant::now();
-        let result = reader.query_raw_with_params(&sql, &params);
-        record_query_metrics("execute_many", started, params.len(), &result);
-        results.push(result?);
-    }
-    Ok(results)
-}
-
 impl SessionDb {
     /// Create a new SessionDb pointing at the given path.
     /// Does not open any connections; call `writer()` or `reader()` as needed.
@@ -799,141 +779,11 @@ impl SessionDb {
     }
 }
 
-/// Checkpoint and vacuum a session ledger.
-///
-/// The logger crate owns SQLite execution. Core/session code may decide when a
-/// ledger needs compaction, but the actual SQLite work stays behind this
-/// boundary.
-pub fn checkpoint_and_vacuum_session_db(path: &Path) -> anyhow::Result<()> {
-    let conn = rusqlite::Connection::open(path).map_err(|error| {
-        tracing::error!(
-            db_path = %path.display(),
-            operation = "checkpoint_vacuum_open",
-            error = %error,
-            "session db maintenance failed"
-        );
-        error
-    })?;
-    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").map_err(|error| {
-        tracing::error!(
-            db_path = %path.display(),
-            operation = "wal_checkpoint_truncate",
-            error = %error,
-            "session db maintenance failed"
-        );
-        error
-    })?;
-    conn.execute_batch("VACUUM").map_err(|error| {
-        tracing::error!(
-            db_path = %path.display(),
-            operation = "vacuum",
-            error = %error,
-            "session db maintenance failed"
-        );
-        error
-    })?;
-    tracing::debug!(
-        db_path = %path.display(),
-        operation = "checkpoint_and_vacuum",
-        "session db maintenance completed"
-    );
-    Ok(())
-}
+mod maintenance;
+mod reader_worker;
 
-/// Clone a session ledger into a new SQLite database with `VACUUM INTO`.
-///
-/// This creates a coherent snapshot without exposing raw SQLite connection
-/// ownership to snapshot or filesystem code.
-pub fn snapshot_session_db(src: &Path, dst: &Path) -> anyhow::Result<()> {
-    let src_conn = rusqlite::Connection::open_with_flags(
-        src,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|error| {
-        tracing::error!(
-            src_db_path = %src.display(),
-            dst_db_path = %dst.display(),
-            operation = "snapshot_open_source",
-            error = %error,
-            "session db snapshot failed"
-        );
-        error
-    })?;
-
-    if let Some(parent) = dst.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
-            tracing::error!(
-                src_db_path = %src.display(),
-                dst_db_path = %dst.display(),
-                parent_path = %parent.display(),
-                operation = "snapshot_create_parent",
-                error = %error,
-                "session db snapshot failed"
-            );
-            error
-        })?;
-    }
-    let _ = std::fs::remove_file(dst);
-    let escaped = dst.to_string_lossy().replace('\'', "''");
-    src_conn
-        .execute_batch(&format!("VACUUM INTO '{escaped}';"))
-        .map_err(|error| {
-            tracing::error!(
-                src_db_path = %src.display(),
-                dst_db_path = %dst.display(),
-                operation = "snapshot_vacuum_into",
-                error = %error,
-                "session db snapshot failed"
-            );
-            error
-        })?;
-    drop(src_conn);
-
-    let dst_conn = rusqlite::Connection::open_with_flags(
-        dst,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|error| {
-        tracing::error!(
-            src_db_path = %src.display(),
-            dst_db_path = %dst.display(),
-            operation = "snapshot_open_destination",
-            error = %error,
-            "session db snapshot failed"
-        );
-        error
-    })?;
-    let quick_check: String = dst_conn
-        .pragma_query_value(None, "quick_check", |row| row.get(0))
-        .map_err(|error| {
-            tracing::error!(
-                src_db_path = %src.display(),
-                dst_db_path = %dst.display(),
-                operation = "snapshot_quick_check",
-                error = %error,
-                "session db snapshot failed"
-            );
-            error
-        })?;
-    if quick_check.eq_ignore_ascii_case("ok") {
-        tracing::debug!(
-            src_db_path = %src.display(),
-            dst_db_path = %dst.display(),
-            operation = "snapshot",
-            "session db snapshot completed"
-        );
-        Ok(())
-    } else {
-        tracing::error!(
-            src_db_path = %src.display(),
-            dst_db_path = %dst.display(),
-            operation = "snapshot_quick_check",
-            quick_check,
-            "session db snapshot failed"
-        );
-        anyhow::bail!("cloned session db failed quick_check: {quick_check}")
-    }
-}
+pub use maintenance::{checkpoint_and_vacuum_session_db, snapshot_session_db};
+use reader_worker::reader_loop;
 
 #[cfg(test)]
 mod cache_tests;

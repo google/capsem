@@ -16,6 +16,7 @@ impl DbReader {
         const TIMEOUT_MS: u64 = 5_000;
         const PROGRESS_OPS: i32 = 10_000;
 
+        self.record_query_executed();
         let deadline = Instant::now() + Duration::from_millis(TIMEOUT_MS);
         self.conn
             .progress_handler(PROGRESS_OPS, Some(move || Instant::now() >= deadline));
@@ -141,13 +142,17 @@ impl DbReader {
 
 /// How long a read waits out SQLITE_LOCKED on the shared-cache memory schema.
 ///
-/// Readers run with `read_uncommitted`, so the writer's batches no longer lock
-/// them out of the hot tables (see `schema::apply_reader_pragmas`). Schema
-/// changes on the shared cache still take exclusive locks -- the writer
-/// reconciling a memory table, a rekey creating views -- and those surface
-/// as SQLITE_LOCKED for an instant rather than as `busy_timeout` waits, which
-/// only cover file locks. Waiting is bounded so a wedged writer still fails
-/// loudly.
+/// This covers the in-process reader, the only one with a `mem` schema. It
+/// runs with `read_uncommitted`, so the writer's batches no longer lock it out
+/// of the hot tables (see `schema::apply_reader_pragmas`). Schema changes on
+/// the shared cache still take exclusive locks -- the writer reconciling a
+/// memory table, a rekey creating views -- and those surface as SQLITE_LOCKED
+/// for an instant rather than as `busy_timeout` waits, which only cover file
+/// locks. Waiting is bounded so a wedged writer still fails loudly.
+///
+/// A disk-only reader has no shared cache and never sees SQLITE_LOCKED; the
+/// file locks it can meet (a checkpoint, a vacuum) are covered by its own
+/// `busy_timeout` instead.
 const TABLE_LOCK_WAIT: Duration = Duration::from_secs(2);
 const TABLE_LOCK_POLL: Duration = Duration::from_millis(1);
 

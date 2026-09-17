@@ -1933,8 +1933,9 @@ fn session_db_handle_registration_is_idempotent_for_same_session_path() {
     assert!(
         Arc::ptr_eq(&first, &second),
         "route races must not create parallel external reader handles for the same session DB; \
-         the UI polls stats and security ledgers concurrently, and multiple reader workers each \
-         syncing hot tables from disk can surface SQLite table-lock errors"
+         the UI polls stats and security ledgers concurrently, and each handle carries its own \
+         reader worker, connection and read cache, so a second one doubles the work and serves \
+         the same poll from a cache the first never invalidates"
     );
 }
 

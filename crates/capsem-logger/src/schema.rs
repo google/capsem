@@ -6,7 +6,10 @@ use std::{
 
 use rusqlite::{Connection, OptionalExtension};
 
-const MEMORY_SCHEMA: &str = "mem";
+/// The DB-owned in-memory mirror of the hot ledger tables. Only a reader that
+/// shares a process with the writer attaches it, to keep the two off each
+/// other's table locks; a reader in another process reads the file over WAL.
+pub(crate) const MEMORY_SCHEMA: &str = "mem";
 static MEMORY_SCHEMA_LOCK: Mutex<()> = Mutex::new(());
 
 const CREDENTIAL_REF_CHECK: &str =
@@ -572,7 +575,11 @@ pub use pragmas::{
 /// This intentionally fails on missing tables or columns. A valid empty DB is
 /// ready; a partially migrated or corrupted DB is not. Routes must surface this
 /// as a DB contract error rather than returning invented empty ledgers.
-pub fn validate_ready_schema(conn: &Connection) -> Result<(), String> {
+///
+/// `memory_mirror` says whether this connection attached `mem`. A disk-only
+/// reader answers from `main`, and demanding `mem` of it would fail a healthy
+/// ledger.
+pub fn validate_ready_schema(conn: &Connection, memory_mirror: bool) -> Result<(), String> {
     let integrity = conn
         .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
         .map_err(|error| format!("session db integrity check failed: {error}"))?;
@@ -582,7 +589,7 @@ pub fn validate_ready_schema(conn: &Connection) -> Result<(), String> {
 
     for (table, required_columns) in READY_SCHEMA_COLUMNS {
         validate_table_columns(conn, "main", table, required_columns)?;
-        if !is_disk_only_table(table) {
+        if memory_mirror && !is_disk_only_table(table) {
             validate_table_columns(conn, MEMORY_SCHEMA, table, required_columns)?;
         }
     }

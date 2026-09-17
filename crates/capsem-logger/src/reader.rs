@@ -12,6 +12,7 @@ use crate::events::{
     SecurityDetectionLevel, SecurityRuleAction, SecurityRuleEvent, ToolCallEntry, ToolResponseEntry,
 };
 use crate::schema;
+mod open;
 mod schema_sync;
 
 static IN_MEMORY_READER_ID: AtomicU64 = AtomicU64::new(0);
@@ -357,67 +358,28 @@ pub fn validate_select_only(sql: &str) -> Result<(), String> {
 
 /// Query-only connection to the session database.
 ///
-/// The DB layer opens the file read-write long enough to attach and populate
-/// its private `mem` schema, then enables SQLite `query_only`. Callers never
-/// receive the connection and `DbHandle::query` still rejects non-read SQL
-/// before execution.
+/// The DB layer opens the file read-write long enough to run schema upgrades
+/// and, for an in-process reader, to attach and populate its private `mem`
+/// schema; it then enables SQLite `query_only`. Callers never receive the
+/// connection and `DbHandle::query` still rejects non-read SQL before
+/// execution.
 pub struct DbReader {
     conn: Connection,
-    /// `PRAGMA main.data_version` at the last disk sync. It moves only when
-    /// another connection commits to the file, so an unchanged value means
-    /// the memory tables already hold everything on disk.
+    /// Whether the hot ledger tables are mirrored into the `mem` schema and
+    /// resolved through TEMP views. A reader that shares a process with the
+    /// writer mirrors them to stay off its table locks; a reader in another
+    /// process reads `main` through WAL and mirrors nothing.
+    memory_mirror: bool,
+    /// `PRAGMA main.data_version` as of the last change this reader both saw
+    /// and finished acting on. It moves only when another connection commits
+    /// to the file, so an unchanged value means results derived from it are
+    /// still current.
     synced_data_version: Cell<Option<i64>>,
-    /// `PRAGMA main.schema_version` at the last schema reconcile; DDL alone
-    /// moves it, so the sqlite_master scan and view creation run only then.
-    synced_schema_version: Cell<Option<i64>>,
     disk_syncs: Cell<u64>,
+    queries_executed: Cell<u64>,
 }
 
 impl DbReader {
-    /// Open a query-only connection to the given DB file.
-    pub fn open(path: &Path) -> rusqlite::Result<Self> {
-        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI;
-        let conn = Connection::open_with_flags(path, flags)?;
-        schema::transport::upgrade_legacy(&conn)?;
-        let memory_uri = schema::memory_uri_for_path(path);
-        schema::with_memory_schema_lock(|| {
-            schema::create_memory_tables(&conn, &memory_uri)?;
-            schema::rehydrate_memory_tables_from_disk_once(&conn, schema::hot_ledger_tables())?;
-            schema::create_memory_read_views(&conn)
-        })?;
-        schema::apply_reader_pragmas(&conn)?;
-        schema::record_sqlite_mmap_telemetry(&conn, path, "reader", "open");
-        Ok(Self {
-            conn,
-            synced_data_version: Cell::new(None),
-            synced_schema_version: Cell::new(None),
-            disk_syncs: Cell::new(0),
-        })
-    }
-
-    /// Open an in-memory database (for testing; typically unused since
-    /// in-memory DBs can't be shared between connections).
-    pub fn open_in_memory() -> rusqlite::Result<Self> {
-        let conn = Connection::open_in_memory()?;
-        schema::apply_pragmas(&conn)?; // in-memory is read-write, pragmas are fine
-        schema::create_tables(&conn)?;
-        let memory_uri = schema::memory_uri_for_name(&format!(
-            "reader-open-in-memory-{}-{}",
-            std::process::id(),
-            IN_MEMORY_READER_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        schema::with_memory_schema_lock(|| {
-            schema::create_memory_tables(&conn, &memory_uri)?;
-            schema::rehydrate_memory_tables_from_disk_once(&conn, schema::hot_ledger_tables())
-        })?;
-        Ok(Self {
-            conn,
-            synced_data_version: Cell::new(None),
-            synced_schema_version: Cell::new(None),
-            disk_syncs: Cell::new(0),
-        })
-    }
-
     fn has_column(&self, table: &str, column: &str) -> bool {
         let Ok(mut stmt) = self.conn.prepare(&format!("PRAGMA table_info({table})")) else {
             return false;

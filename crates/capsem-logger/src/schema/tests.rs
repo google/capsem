@@ -101,7 +101,8 @@ fn db_mem_disk_ready_rejects_missing_memory_schema() {
     create_tables(&conn).unwrap();
     migrate(&conn).unwrap();
 
-    let error = validate_ready_schema(&conn).expect_err("ready() must fail if DB-owned memory tables were not created");
+    let error =
+        validate_ready_schema(&conn, true).expect_err("ready() must fail if DB-owned memory tables were not created");
     assert!(
         error.contains("mem.net_events"),
         "missing memory schema must fail loudly instead of route projections hiding stale state: {error}"
@@ -182,8 +183,8 @@ fn db_mem_disk_memory_tables_work_before_query_only_guard() {
         &memory_uri_for_name("db_mem_disk_memory_tables_work_before_query_only_guard"),
     )
     .unwrap();
-    apply_reader_pragmas(&conn).unwrap();
-    validate_ready_schema(&conn).expect("query-only connection must still own its DB-local memory schema");
+    apply_reader_pragmas(&conn, true).unwrap();
+    validate_ready_schema(&conn, true).expect("query-only connection must still own its DB-local memory schema");
     let error = conn
         .execute(
             "INSERT INTO mem.net_events (timestamp, domain, decision) VALUES ('t', 'example.com', 'allowed')",
@@ -930,7 +931,7 @@ fn reader_pragmas_work_on_readonly_connection() {
     // Open read-only -- apply_reader_pragmas must not fail.
     let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let conn = Connection::open_with_flags(&path, flags).unwrap();
-    apply_reader_pragmas(&conn).unwrap();
+    apply_reader_pragmas(&conn, true).unwrap();
 }
 
 #[test]
@@ -945,7 +946,7 @@ fn reader_pragmas_enable_mmap_before_query_only() {
 
     let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let conn = Connection::open_with_flags(&path, flags).unwrap();
-    apply_reader_pragmas(&conn).unwrap();
+    apply_reader_pragmas(&conn, true).unwrap();
 
     let mmap_size: i64 = conn.query_row("PRAGMA mmap_size", [], |row| row.get(0)).unwrap();
     assert!(

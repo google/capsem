@@ -1,11 +1,11 @@
 //! What a service route pays to read a ledger another process writes.
 //!
 //! The service's session handles are external readers: capsem-process owns
-//! the writes and disk is the boundary. Before each query the reader brings
-//! its memory tables up to date with disk. Two cases matter: a poll when
-//! nothing was committed since the last one (the common UI case) and a poll
-//! right after a commit. Both used to copy every hot table from disk; the
-//! first now copies nothing and the second only the new rows.
+//! the writes and disk is the boundary. Two cases matter: a poll when nothing
+//! was committed since the last one (the common UI case) and a poll right
+//! after a commit. Both used to copy hot tables from disk into a RAM mirror
+//! before reading it. The reader now queries the file directly through WAL, so
+//! neither copies anything and the idle poll is just the SELECT.
 
 use std::time::{Duration, SystemTime};
 

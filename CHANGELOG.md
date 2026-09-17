@@ -76,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The service no longer holds a copy of each session's telemetry and security
+  ledger in memory, and no longer refreshes that copy before answering a
+  request. It reads the ledger file directly through SQLite's write-ahead log,
+  so its memory use no longer grows with the number of running and persistent
+  VMs or with how much each one has logged, and a dashboard poll no longer
+  costs work proportional to the size of the ledger it is polling.
+
 - Published TCP connections require an audited allow from the existing security
   rules and plugins before guest setup. Profile defaults explicitly allow expose;
   deny, pending approval, audit failure, and stale control leases refuse access.

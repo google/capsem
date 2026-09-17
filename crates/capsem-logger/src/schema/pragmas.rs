@@ -4,8 +4,13 @@
 //! SQLite, so a route never learns whether a query reads through the page
 //! cache, mmap or the DB-owned memory tables.
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rusqlite::Connection;
+
+/// How long a disk-only reader waits out an exclusive file lock, matching the
+/// writer's own `busy_timeout`.
+const READER_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// SQLite mmap window for file-backed ledger databases.
 ///
@@ -91,9 +96,22 @@ pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
 /// These connections may be opened read-write briefly so the DB layer can
 /// attach and populate its private `mem` schema. After setup, `query_only`
 /// prevents writes through the read worker.
-pub fn apply_reader_pragmas(conn: &Connection) -> rusqlite::Result<()> {
+pub fn apply_reader_pragmas(conn: &Connection, memory_mirror: bool) -> rusqlite::Result<()> {
     apply_mmap_pragma(conn)?;
     conn.pragma_update(None, "query_only", "ON")?;
+    if !memory_mirror {
+        // A disk-only reader takes no shared-cache table locks: WAL already
+        // lets it read the file while the writer commits. Leaving
+        // `read_uncommitted` off keeps it on committed data only.
+        //
+        // WAL is not the whole story, though: `wal_checkpoint(TRUNCATE)` and
+        // `VACUUM` take an exclusive file lock, and a read that lands during
+        // one gets SQLITE_BUSY, which `retry_while_table_locked` does not
+        // cover. Wait it out the same way the writer does rather than failing
+        // a route because a ledger was being compacted.
+        conn.busy_timeout(READER_BUSY_TIMEOUT)?;
+        return Ok(());
+    }
     // The hot ledger tables live in a shared-cache memory schema, where a
     // reader takes a table-level read lock and fails at once with
     // SQLITE_LOCKED while the writer's batch holds the table -- and starves
