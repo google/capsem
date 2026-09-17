@@ -82,8 +82,13 @@ impl FileSecurityEvent {
     }
 }
 
-/// The ledger row behind an explicit boundary event. Explicit boundaries --
-/// import, export, read, restore -- always name a file the caller opened.
+/// The ledger row behind an explicit boundary event.
+///
+/// `kind` is `File` without a stat because these boundaries never resolve a
+/// path themselves: import, export, read and restore each name a regular file
+/// the caller already opened, and the bytes arrive with the request rather
+/// than being read back off disk here. Nothing on this path dereferences a
+/// guest-controlled link.
 pub(super) fn explicit_primary_file_event(event: &ExplicitFileSecurityEvent) -> FileEvent {
     FileEvent {
         event_id: None,

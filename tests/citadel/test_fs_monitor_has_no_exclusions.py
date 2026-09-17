@@ -51,13 +51,25 @@ FORBIDDEN_IDENTIFIERS: tuple[tuple[str, str], ...] = (
     ("EXCLUD", "an exclusion list under any spelling"),
     ("IGNORED_DIRS", "an exclusion list under another name"),
     ("SKIP_DIRS", "an exclusion list under another name"),
+    ("DENY_DIRS", "an exclusion list under another name"),
+    ("PRUNE_DIRS", "an exclusion list under another name"),
     ("should_exclude", "an exclusion predicate"),
     ("should_skip", "an exclusion predicate under another name"),
     ("should_ignore", "an exclusion predicate under another name"),
+    ("is_noisy", "an exclusion predicate wearing a cost argument"),
     ("filter_entry(", "a pruned snapshot walk"),
+    ("filter_entry (", "a pruned snapshot walk, spaced past the check above"),
 )
 
 # Path literals whose only use in the monitor was to name what not to record.
+#
+# The check is deliberately quote-scoped: it matches the Rust string literal,
+# not the bare word, so prose in this file and comments in the monitor can name
+# the paths the finding is about. The cost of that scoping is that a doc
+# comment in the monitor must not write these paths in straight double quotes
+# -- spell them in backticks or bare, as the module doc does -- or this guard
+# will read the comment as the list coming back. That is the right trade: a
+# guard that cannot be explained is a guard nobody keeps.
 FORBIDDEN_LITERALS: tuple[tuple[str, str], ...] = (
     ('"node_modules"', "a hardcoded supply-chain path"),
     ('".git"', "a hardcoded persistence path"),
@@ -105,10 +117,14 @@ def test_the_predicate_catches_the_shapes_the_review_found() -> None:
     const EXCLUDED_DIRS: &[&str] = &[".git", "node_modules"];
     const IGNORED_DIRS: &[&str] = &[];
     const SKIP_DIRS: &[&str] = &[];
+    const DENY_DIRS: &[&str] = &[];
+    const PRUNE_DIRS: &[&str] = &[];
     fn should_exclude(path: &Path) -> bool { true }
     fn should_skip(path: &Path) -> bool { true }
     fn should_ignore(path: &Path) -> bool { true }
+    fn is_noisy(path: &Path) -> bool { true }
     fn walk() { WalkDir::new(dir).into_iter().filter_entry(|e| true); }
+    fn spaced() { WalkDir::new(dir).into_iter().filter_entry (|e| true); }
     """
     findings = fs_monitor_findings("adversarial.rs", adversarial)
     assert len(findings) == len(FORBIDDEN_IDENTIFIERS) + len(FORBIDDEN_LITERALS), findings

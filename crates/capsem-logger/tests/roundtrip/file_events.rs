@@ -47,6 +47,33 @@ async fn directory_file_event_round_trips_as_dir() {
     assert!(events[0].size.is_none());
 }
 
+/// A ledger written before `kind` existed is broken shape, not a ledger to be
+/// read with a guessed default. There is no published release to migrate, so
+/// the column is required and `ready()` says which one is missing rather than
+/// letting routes serve a ledger where every directory event reads as a file.
+#[tokio::test]
+async fn a_ledger_without_the_kind_column_fails_ready_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-pre-kind.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    drop(writer);
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("ALTER TABLE fs_events DROP COLUMN kind")
+            .expect("simulate a ledger created before the column existed");
+    }
+
+    let error = DbReader::open_disk_only(&path)
+        .unwrap()
+        .ready()
+        .expect_err("a ledger missing a required column must fail loudly");
+    assert!(
+        error.contains("fs_events") && error.contains("kind"),
+        "the failure must name the missing column: {error}"
+    );
+}
+
 /// Guest-side importers and exporters build FileEvents too, and they ship on
 /// their own cadence. A payload serialized before `kind` existed must still
 /// parse, as an ordinary file.

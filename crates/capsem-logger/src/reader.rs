@@ -1222,14 +1222,14 @@ impl DbReader {
 
     // ── File event queries ────────────────────────────────────────────
 
-    /// The fs_events column list, in the order `read_file_event_row` expects.
+    /// The fs_events column list `read_file_event_row` expects. `kind` is
+    /// required and selected outright: a ledger without it is broken schema.
     fn file_event_columns(&self) -> String {
         format!(
-            "timestamp, action, path, size, {}, {}, {}, {}",
+            "timestamp, action, path, size, {}, {}, {}, kind",
             self.optional_column_expr("fs_events", "trace_id"),
             self.optional_column_expr("fs_events", "credential_ref"),
             self.optional_column_expr("fs_events", "event_id"),
-            self.optional_column_expr("fs_events", "kind"),
         )
     }
 

@@ -61,7 +61,6 @@ hickory-proto = { workspace = true }
 # answer cache (T3.f). Pure-Rust, no_std-compatible, single small dep.
 lru = "0.18.2"
 ego-tree = "0.10"
-notify = "7"
 walkdir = "2"
 # Metrics facade. No recorder registered in this sprint -- emission is a
 # single relaxed atomic add against a no-op recorder. T5 wires the

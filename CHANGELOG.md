@@ -77,12 +77,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   where a compromise persists: `.git/hooks/*` and `.git/config`, npm install
   scripts, `.venv/bin/activate`, build scripts under `target/`. Those changes
   are now ledger rows and are evaluated by the profile's file security rules
-  like any other. Directory events are marked as such: `fs_events` carries a
-  `kind` column (`file`, `dir`, `symlink`, `other`), rules can read
-  `file.kind`, and a directory event no longer reports the directory inode's
-  size. Watching everything costs more to poll, so the monitor now measures
-  its own workspace scan and picks a rescan interval of ten scan-durations,
-  between 500ms and 10s.
+  like any other. Symlinks are never followed: a link is recorded as a link,
+  the scan does not descend through it, and the one place the monitor reads
+  bytes -- brokering credentials out of a `.env` the guest wrote -- opens with
+  `O_NOFOLLOW` and refuses anything that is not a regular file, so a `.env`
+  planted as a link to a host secret yields nothing. Directory events are
+  marked as such: `fs_events` carries a `kind` column (`file`, `dir`,
+  `symlink`, `other`), rules can read `file.kind`, and a directory event no
+  longer reports the directory inode's size. Watching everything costs more to
+  poll, so each scan now times itself and the next rescan is ten scan-durations
+  later, between 500ms and 10s -- a workspace that grows into a large install
+  re-adapts on the next cycle.
 - rustls moves to 0.23.45 for RUSTSEC-2026-0285: TLS 1.3 handshake messages
   were accepted across encryption level boundaries on the host's TLS paths.
 

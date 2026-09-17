@@ -67,11 +67,9 @@ pub(super) fn read_file_event_row(row: &Row<'_>) -> rusqlite::Result<FileEvent> 
         action: FileAction::parse_str(&action_str),
         path: row.get(2)?,
         size: row.get::<_, Option<i64>>(3)?.map(|s| s as u64),
-        kind: row
-            .get::<_, Option<String>>(7)
-            .ok()
-            .flatten()
-            .map_or(FileKind::File, |kind| FileKind::parse_str(&kind)),
+        // NOT NULL in the schema: a read error here is broken shape, not a
+        // legacy row, and propagates.
+        kind: FileKind::parse_str(&row.get::<_, String>(7)?),
         trace_id: row.get::<_, Option<String>>(4).ok().flatten(),
         credential_ref: row.get::<_, Option<String>>(5).ok().flatten(),
     })

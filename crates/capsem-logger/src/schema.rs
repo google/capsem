@@ -366,10 +366,6 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         "ALTER TABLE tool_calls ADD COLUMN credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))",
         [],
     );
-    let _ = conn.execute(
-        "ALTER TABLE fs_events ADD COLUMN kind TEXT NOT NULL DEFAULT 'file' CHECK (kind IN ('file','dir','symlink','other'))",
-        [],
-    );
     let _ = conn.execute("ALTER TABLE tool_calls ADD COLUMN response_preview TEXT", []);
     let _ = conn.execute(
         "ALTER TABLE tool_calls ADD COLUMN transport TEXT NOT NULL DEFAULT 'unknown' CHECK (transport IN ('http', 'sse', 'websocket', 'vsock_frame', 'direct', 'unknown'))",

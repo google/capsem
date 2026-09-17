@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "a8cac33e9601392559be1b1ebeb5de864f9f1616ef5ea8cc2ba653b306edcc2c"
-reason = "capsem-logger now depends on the in-tree capsem-archive crate: session bodies live in the block archive and SQLite keeps only the index. One line changed -- capsem-archive joins capsem-logger's dependency list -- and no third-party package or version moved"
+sha256 = "b037852041745ffb87b348bd331b0a5a49f84e96b901ca7be84d9fa03b4209a2"
+reason = "the host fs-monitor drops the notify dependency and owns its poll loop. notify's PollWatcher walks with follow_links(true) hardcoded and ignores configure, so one guest symlink to / turned every scan into a walk of the host's filesystem; the monitor already had the poller it needed (walkdir with follow_links(false), plus the snapshot diff). Nothing is added to the lock: notify, notify-types, inotify, inotify-sys, fsevent-sys, kqueue, kqueue-sys and instant leave it. The preceding record was capsem-logger taking the in-tree capsem-archive dependency"

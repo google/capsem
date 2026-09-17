@@ -63,6 +63,16 @@ fn monitor_over_new_workspace(dir: &std::path::Path) -> (PathBuf, PathBuf, Arc<D
     (workspace, db_path, db, monitor)
 }
 
+/// A write to `path`, as the scan would report it.
+fn env_event(path: &str, kind: FileKind) -> QueuedEvent {
+    QueuedEvent {
+        path: path.to_string(),
+        action: FileAction::Modified,
+        kind,
+        size: Some(1),
+    }
+}
+
 fn recorded_event(db_path: &Path, path: &str) -> Option<(String, String, Option<i64>)> {
     let conn = rusqlite::Connection::open(db_path).unwrap();
     conn.query_row(
@@ -173,181 +183,63 @@ fn env_candidate_matches_dotenv_files_only() {
     assert!(!is_env_candidate("project/not.env"));
 }
 
+/// The scan's emission bound: a 100k-file install must not be truncated
+/// silently, and anything past the bound is counted, not ignored.
 #[test]
-fn event_to_action_maps_correctly() {
-    assert_eq!(
-        event_to_action(&EventKind::Create(notify::event::CreateKind::File)),
-        Some(FileAction::Created)
-    );
-    assert_eq!(
-        event_to_action(&EventKind::Modify(notify::event::ModifyKind::Data(
-            notify::event::DataChange::Content
-        ))),
-        Some(FileAction::Modified)
-    );
-    assert_eq!(
-        event_to_action(&EventKind::Remove(notify::event::RemoveKind::File)),
-        Some(FileAction::Deleted)
-    );
-    assert_eq!(
-        event_to_action(&EventKind::Access(notify::event::AccessKind::Read)),
-        None
-    );
-}
-
-// -- flush coalescing tests --
-
-/// Test the coalescing logic by extracting it into a pure function.
-/// Returns the list of (path, action) pairs that would be emitted.
-fn coalesce(events: &[(&str, FileAction)]) -> Vec<(String, FileAction)> {
-    let mut pending: HashMap<String, FileAction> = HashMap::new();
-    let mut result = Vec::new();
-
-    for (path, action) in events {
-        let path = path.to_string();
-        match pending.get(&path) {
-            Some(&existing) if existing == *action => {
-                // Same path, same action -- coalesce
-            }
-            Some(_) => {
-                // Same path, different action -- emit old, store new
-                let old = pending.insert(path.clone(), *action).unwrap();
-                result.push((path, old));
-            }
-            None => {
-                pending.insert(path, *action);
-            }
-        }
-    }
-
-    for (path, action) in pending {
-        result.push((path, action));
-    }
-    result
-}
-
-#[test]
-fn flush_coalesces_same_action_same_path() {
-    let result = coalesce(&[
-        ("file.txt", FileAction::Modified),
-        ("file.txt", FileAction::Modified),
-        ("file.txt", FileAction::Modified),
-    ]);
-    assert_eq!(result.len(), 1);
-    assert_eq!(result[0].1, FileAction::Modified);
-}
-
-#[test]
-fn flush_preserves_different_actions_same_path() {
-    let result = coalesce(&[("file.txt", FileAction::Created), ("file.txt", FileAction::Deleted)]);
-    assert_eq!(result.len(), 2);
-    let actions: Vec<_> = result.iter().map(|(_, a)| *a).collect();
-    assert!(actions.contains(&FileAction::Created));
-    assert!(actions.contains(&FileAction::Deleted));
-}
-
-#[test]
-fn flush_different_paths_not_coalesced() {
-    let result = coalesce(&[("a.txt", FileAction::Modified), ("b.txt", FileAction::Modified)]);
-    assert_eq!(result.len(), 2);
-}
-
-#[test]
-fn flush_empty_queue_is_noop() {
-    let result = coalesce(&[]);
-    assert_eq!(result.len(), 0);
-}
-
-#[test]
-fn flush_create_modify_delete_sequence() {
-    let result = coalesce(&[
-        ("file.txt", FileAction::Created),
-        ("file.txt", FileAction::Modified),
-        ("file.txt", FileAction::Modified),
-        ("file.txt", FileAction::Modified),
-        ("file.txt", FileAction::Deleted),
-    ]);
-    // created -> modified (emits created), modified -> modified (coalesced),
-    // modified -> deleted (emits modified), remaining: deleted = 3 total
-    assert_eq!(result.len(), 3);
-    let actions: Vec<_> = result.iter().map(|(_, a)| *a).collect();
-    assert!(actions.contains(&FileAction::Created));
-    assert!(actions.contains(&FileAction::Modified));
-    assert!(actions.contains(&FileAction::Deleted));
-}
-
-#[test]
-fn flush_interleaved_paths() {
-    let result = coalesce(&[
-        ("a.txt", FileAction::Modified),
-        ("b.txt", FileAction::Created),
-        ("a.txt", FileAction::Modified),
-        ("b.txt", FileAction::Modified),
-    ]);
-    // a.txt: 2x modified -> 1 emitted (coalesced)
-    // b.txt: created then modified -> 2 emitted
-    assert_eq!(result.len(), 3);
-}
-
-#[test]
-fn flush_modify_modify_delete() {
-    // Common pattern: file saved multiple times then deleted
-    let result = coalesce(&[
-        ("temp.txt", FileAction::Modified),
-        ("temp.txt", FileAction::Modified),
-        ("temp.txt", FileAction::Deleted),
-    ]);
-    assert_eq!(result.len(), 2);
-    let actions: Vec<_> = result.iter().map(|(_, a)| *a).collect();
-    assert!(actions.contains(&FileAction::Modified));
-    assert!(actions.contains(&FileAction::Deleted));
-}
-
-#[test]
-fn flush_create_delete_create() {
-    // Edge case: file created, deleted, created again
-    let result = coalesce(&[
-        ("f.txt", FileAction::Created),
-        ("f.txt", FileAction::Deleted),
-        ("f.txt", FileAction::Created),
-    ]);
-    // created -> deleted (emits created), deleted -> created (emits deleted),
-    // remaining: created = 3 total
-    assert_eq!(result.len(), 3);
-}
-
-#[test]
-fn queue_overflow_caps_at_max() {
-    let mut queue: Vec<QueuedEvent> = Vec::new();
-    let mut dropped = 0u64;
-    // Fill queue to capacity
-    for i in 0..MAX_QUEUE_SIZE {
-        queue.push(QueuedEvent {
-            path: format!("file_{}.txt", i),
-            fs_path: PathBuf::from(format!("file_{}.txt", i)),
+fn cap_batch_drops_the_overflow_and_reports_it() {
+    let mut batch = (0..MAX_QUEUE_SIZE + 3)
+        .map(|i| QueuedEvent {
+            path: format!("file_{i}.txt"),
             action: FileAction::Modified,
-        });
-    }
-    // One more should increment dropped
-    if queue.len() >= MAX_QUEUE_SIZE {
-        dropped += 1;
-    }
-    assert_eq!(queue.len(), MAX_QUEUE_SIZE);
-    assert_eq!(dropped, 1);
+            kind: FileKind::File,
+            size: Some(1),
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(cap_batch(&mut batch), 3);
+    assert_eq!(batch.len(), MAX_QUEUE_SIZE);
 }
 
 #[test]
-fn reconciliation_finds_changes_missing_from_notify_queue() {
+fn reconciliation_between_scans_carries_kind_and_size_from_the_walk() {
     let root = tempfile::tempdir().unwrap();
     let before = workspace_snapshot(root.path(), root.path());
-    let created = root.path().join("late.txt");
-    std::fs::write(&created, "late write").unwrap();
+    std::fs::write(root.path().join("late.txt"), "late write").unwrap();
     let after = workspace_snapshot(root.path(), root.path());
 
     let events = reconciliation_events(&before, &after);
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].path, "late.txt");
-    assert_eq!(events[0].action, FileAction::Created);
+    assert_eq!(
+        events,
+        vec![QueuedEvent {
+            path: "late.txt".to_string(),
+            action: FileAction::Created,
+            kind: FileKind::File,
+            size: Some(10),
+        }]
+    );
+}
+
+/// A symlink is recorded as a symlink and never dereferenced: its `size` is
+/// not the target's, and the walk never descends through it.
+#[test]
+fn a_symlink_is_recorded_as_a_symlink_with_no_size() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("big.bin");
+    std::fs::write(&target, vec![0u8; 1024 * 1024]).unwrap();
+    let before = workspace_snapshot(root.path(), root.path());
+    std::os::unix::fs::symlink(&target, root.path().join("link")).unwrap();
+    let after = workspace_snapshot(root.path(), root.path());
+
+    let events = reconciliation_events(&before, &after);
+    assert_eq!(
+        events,
+        vec![QueuedEvent {
+            path: "link".to_string(),
+            action: FileAction::Created,
+            kind: FileKind::Symlink,
+            size: None,
+        }]
+    );
 }
 
 #[test]
@@ -377,7 +269,7 @@ match = 'file.create.path == "late.txt"'
     )
     .unwrap();
 
-    // Do not wait for PollWatcher's 500ms scan. Shutdown itself must be the
+    // Do not wait for the next scan. Shutdown itself must be the
     // visibility boundary for this already-materialized file.
     std::fs::write(workspace.join("late.txt"), "late write").unwrap();
     monitor.shutdown_and_join();
@@ -411,13 +303,13 @@ async fn emit_brokers_env_credentials_and_persists_reference() {
 
     let db = DbWriter::open(&db_path, 64).unwrap();
     FsMonitor::emit(
-        &db,
-        &empty_security_rules(),
-        &empty_trace_state(),
-        ".env",
-        &env_path,
-        FileAction::Modified,
-        FileKind::File,
+        &EmitContext {
+            db: &db,
+            security_rules: &empty_security_rules(),
+            trace_state: &empty_trace_state(),
+            strip_prefix: dir.path(),
+        },
+        &env_event(".env", FileKind::File),
     )
     .await;
     db.shutdown_blocking();
@@ -463,13 +355,18 @@ match = 'file.create.name == "skill.md" && file.create.ext == "md"'
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
 
     FsMonitor::emit(
-        &db,
-        &security_rules,
-        &empty_trace_state(),
-        "skill.md",
-        &file_path,
-        FileAction::Created,
-        FileKind::File,
+        &EmitContext {
+            db: &db,
+            security_rules: &security_rules,
+            trace_state: &empty_trace_state(),
+            strip_prefix: dir.path(),
+        },
+        &QueuedEvent {
+            path: "skill.md".to_string(),
+            action: FileAction::Created,
+            kind: FileKind::File,
+            size: Some(7),
+        },
     )
     .await;
     db.shutdown_blocking();
@@ -513,13 +410,18 @@ match = 'file.create.path == "openai-two.txt"'
         .unwrap()
         .register_tool_file_hints("trace-model", [r#"{"cmd":"printf x > /root/openai-two.txt"}"#]);
     FsMonitor::emit(
-        &db,
-        &security_rules,
-        &trace_state,
-        "openai-two.txt",
-        &file_path,
-        FileAction::Created,
-        FileKind::File,
+        &EmitContext {
+            db: &db,
+            security_rules: &security_rules,
+            trace_state: &trace_state,
+            strip_prefix: dir.path(),
+        },
+        &QueuedEvent {
+            path: "openai-two.txt".to_string(),
+            action: FileAction::Created,
+            kind: FileKind::File,
+            size: Some(6),
+        },
     )
     .await;
     db.shutdown_blocking();
@@ -567,13 +469,18 @@ match = 'file.write.path == "blocked.txt"'
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
 
     FsMonitor::emit(
-        &db,
-        &security_rules,
-        &empty_trace_state(),
-        "blocked.txt",
-        &file_path,
-        FileAction::Modified,
-        FileKind::File,
+        &EmitContext {
+            db: &db,
+            security_rules: &security_rules,
+            trace_state: &empty_trace_state(),
+            strip_prefix: dir.path(),
+        },
+        &QueuedEvent {
+            path: "blocked.txt".to_string(),
+            action: FileAction::Modified,
+            kind: FileKind::File,
+            size: Some(20),
+        },
     )
     .await;
     db.shutdown_blocking();
@@ -611,55 +518,128 @@ match = 'file.write.path == "blocked.txt"'
     );
 }
 
-// -- flush cadence under load --
-
-#[tokio::test(start_paused = true)]
-async fn flush_fires_on_interval_under_continuous_events() {
+/// The `.env` broker is the only place the monitor reads guest-controlled
+/// bytes. A guest that plants `.env` as a link to a host secret must get
+/// nothing: not a brokered reference, not a substitution row, and above all
+/// not the host file's contents anywhere near the ledger.
+#[tokio::test]
+async fn env_symlink_to_a_host_secret_is_never_read_or_brokered() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
-    let db = std::sync::Arc::new(DbWriter::open(&db_path, 64).unwrap());
-    let (event_tx, event_rx) = mpsc::channel::<Event>(1024);
-    let (_shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
-    let workspace = WorkspaceState {
-        watch_dir: dir.path().to_path_buf(),
-        strip_prefix: dir.path().to_path_buf(),
-        snapshot: HashMap::new(),
-    };
-    let loop_task = tokio::spawn(FsMonitor::event_loop(
-        event_rx,
-        shutdown_rx,
-        workspace,
-        std::sync::Arc::clone(&db),
-        empty_security_rules(),
-        empty_trace_state(),
-    ));
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
 
-    // Feed events every 60ms -- faster than the 100ms flush interval. With the
-    // old per-iteration `sleep`, each event reset the timer so no flush fired
-    // mid-stream and the events sat in the loop's local queue. An interval ticks
-    // on a fixed cadence regardless of event arrivals.
-    for i in 0..6 {
-        let p = dir.path().join(format!("f{i}.txt"));
-        std::fs::write(&p, b"x").unwrap();
-        let ev = Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(p);
-        event_tx.send(ev).await.unwrap();
-        tokio::task::yield_now().await;
-        tokio::time::advance(Duration::from_millis(60)).await;
-        tokio::task::yield_now().await;
-    }
+    let host_secret = dir.path().join("host-credentials");
+    std::fs::write(&host_secret, "AWS_SECRET_ACCESS_KEY=sk-host-only-secret\n").unwrap();
+    std::os::unix::fs::symlink(&host_secret, dir.path().join(".env")).unwrap();
 
-    // Make what the loop persisted visible WITHOUT shutting it down -- shutdown
-    // flushes unconditionally and would hide the bug.
-    db.flush().await;
+    let db = DbWriter::open(&db_path, 64).unwrap();
+    FsMonitor::emit(
+        &EmitContext {
+            db: &db,
+            security_rules: &empty_security_rules(),
+            trace_state: &empty_trace_state(),
+            strip_prefix: dir.path(),
+        },
+        // The scan's own lstat says symlink; the broker must refuse on that
+        // alone, and the O_NOFOLLOW open must refuse it again.
+        &env_event(".env", FileKind::Symlink),
+    )
+    .await;
+    db.shutdown_blocking();
+
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM fs_events", [], |r| r.get(0))
+    let credential_ref: Option<String> = conn
+        .query_row("SELECT credential_ref FROM fs_events WHERE path = '.env'", [], |row| {
+            row.get(0)
+        })
+        .expect("the symlink itself is still a recorded event");
+    assert_eq!(credential_ref, None, "a link to a host secret must broker nothing");
+    let substitutions: i64 = conn
+        .query_row("SELECT COUNT(*) FROM substitution_events", [], |row| row.get(0))
         .unwrap();
-    assert!(
-        count > 0,
-        "interval flush must persist events mid-stream, not only at shutdown"
-    );
+    assert_eq!(substitutions, 0);
+    let db_bytes = std::fs::read(&db_path).unwrap();
+    assert!(!String::from_utf8_lossy(&db_bytes).contains("sk-host-only-secret"));
+}
 
-    drop(event_tx);
-    let _ = loop_task.await;
+/// Even if the kind were wrong, the open refuses to follow the link: the
+/// scan's answer and the open are two independent refusals of the same trick.
+#[tokio::test]
+async fn env_symlink_is_refused_by_the_open_even_if_it_claims_to_be_a_file() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    let host_secret = dir.path().join("host-credentials");
+    std::fs::write(&host_secret, "AWS_SECRET_ACCESS_KEY=sk-host-only-secret\n").unwrap();
+    std::os::unix::fs::symlink(&host_secret, dir.path().join(".env")).unwrap();
+
+    let db = DbWriter::open(&db_path, 64).unwrap();
+    FsMonitor::emit(
+        &EmitContext {
+            db: &db,
+            security_rules: &empty_security_rules(),
+            trace_state: &empty_trace_state(),
+            strip_prefix: dir.path(),
+        },
+        &env_event(".env", FileKind::File),
+    )
+    .await;
+    db.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let credential_ref: Option<String> = conn
+        .query_row("SELECT credential_ref FROM fs_events WHERE path = '.env'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(credential_ref, None);
+    let db_bytes = std::fs::read(&db_path).unwrap();
+    assert!(!String::from_utf8_lossy(&db_bytes).contains("sk-host-only-secret"));
+}
+
+/// The monitor owns its poll loop, so a write lands in the ledger on the next
+/// cycle -- shutdown is not the only visibility barrier.
+#[tokio::test]
+async fn a_hook_write_is_recorded_after_one_poll_cycle_without_shutdown() {
+    let dir = tempfile::tempdir().unwrap();
+    let (workspace, db_path, db, monitor) = monitor_over_new_workspace(dir.path());
+
+    let hooks = workspace.join(".git/hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    std::fs::write(hooks.join("pre-commit"), "#!/bin/sh\nexfiltrate\n").unwrap();
+
+    // An empty workspace scans in well under a millisecond, so the interval is
+    // the 500ms floor. Wait at most three of those, checking as we go, and
+    // never shut the monitor down -- shutdown reconciles unconditionally and
+    // would hide a loop that never ticks.
+    let deadline = std::time::Instant::now() + Duration::from_millis(1500);
+    let recorded = loop {
+        db.flush().await;
+        if let Some(recorded) = recorded_event(&db_path, ".git/hooks/pre-commit") {
+            break Some(recorded);
+        }
+        if std::time::Instant::now() >= deadline {
+            break None;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    // Both of these park the calling thread, so they cannot run on the
+    // runtime driving this test.
+    let teardown_db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || {
+        monitor.shutdown_and_join();
+        teardown_db.shutdown_blocking();
+    })
+    .await
+    .unwrap();
+
+    let recorded = recorded.expect("a poll cycle must record the hook write without a shutdown");
+    assert_eq!((recorded.0.as_str(), recorded.1.as_str()), ("created", "file"));
 }
