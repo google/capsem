@@ -57,6 +57,7 @@ pub struct Transport {
     base: Url,
     client: Client,
     authorization: HeaderValue,
+    timeout: Duration,
 }
 
 impl Transport {
@@ -87,7 +88,13 @@ impl Transport {
             base,
             client,
             authorization,
+            timeout,
         })
+    }
+
+    /// The default deadline for one request, including its response body.
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
 
     pub async fn request(&self, method: Method, path: &str, request: Request<'_>) -> Result<Vec<u8>> {

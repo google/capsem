@@ -6,6 +6,7 @@ use crate::models::{HistoryLayerFilter, HostLogSource, TimelineLayer};
 use crate::test_gateway::Server;
 use crate::*;
 
+mod deadlines;
 mod fixture;
 mod interactions;
 use fixture::{gateway, reply, request};

@@ -124,6 +124,7 @@ impl Hypervisor {
         if options.cpus == Some(0) {
             return Err(Error::InvalidInput("cpus must be positive"));
         }
+        let call = self.client.command_options(options.timeout_secs);
         api::run_vm(
             &self.client.transport,
             &api::RunVmParams {
@@ -136,7 +137,7 @@ impl Hypervisor {
                     env: options.env,
                 },
             },
-            self.client.options,
+            call,
         )
         .await
     }

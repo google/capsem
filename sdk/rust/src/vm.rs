@@ -157,7 +157,12 @@ impl VM {
                 timeout_secs,
             },
         };
-        api::exec_vm(&self.client.transport, &params, self.client.options).await
+        api::exec_vm(
+            &self.client.transport,
+            &params,
+            self.client.command_options(timeout_secs),
+        )
+        .await
     }
 
     pub async fn start(&self) -> Result<models::ProvisionResponse> {
