@@ -85,11 +85,12 @@ async fn model_items_dedup_by_trace_kind_hash_and_call_id_across_restarts() {
     call.trace_id = Some("trace_ironbank_dedup".to_string());
     call.model = Some("gemma4:latest".to_string());
     call.path = "/v1/responses".to_string();
-    call.request_body_preview =
-        Some(r#"{"model":"gemma4:latest","input":"write nonce","tools":[{"name":"exec_command"}]}"#.to_string());
+    call.request_body =
+        Some(br#"{"model":"gemma4:latest","input":"write nonce","tools":[{"name":"exec_command"}]}"#.to_vec());
     call.thinking_content = Some("dedup reasoning".to_string());
     call.text_content = Some("dedup response".to_string());
     call.tool_calls = vec![ToolCallEntry {
+        event_id: None,
         call_index: 0,
         call_id: "call_dedup_01".to_string(),
         tool_name: "exec_command".to_string(),
@@ -107,14 +108,15 @@ async fn model_items_dedup_by_trace_kind_hash_and_call_id_across_restarts() {
     }
 
     let mut response_call = call.clone();
-    response_call.request_body_preview = Some(
-        r#"{"input":[{"type":"function_call_output","call_id":"call_dedup_01","output":"Process exited with code 0"}]}"#
-            .to_string(),
+    response_call.request_body = Some(
+        br#"{"input":[{"type":"function_call_output","call_id":"call_dedup_01","output":"Process exited with code 0"}]}"#
+            .to_vec(),
     );
     response_call.thinking_content = None;
     response_call.text_content = None;
     response_call.tool_calls = Vec::new();
     response_call.tool_responses = vec![ToolResponseEntry {
+        event_id: None,
         call_id: "call_dedup_01".to_string(),
         content_preview: Some("Process exited with code 0".to_string()),
         is_error: false,
@@ -212,12 +214,12 @@ async fn model_items_request_dedup_hashes_full_body_not_capped_preview() {
     let shared_prefix = "a".repeat(4096);
     let mut first_call = sample_model_call("anthropic");
     first_call.trace_id = Some("trace-hash-full-body".to_string());
-    first_call.request_body_preview = Some(format!("{shared_prefix}-turn-one"));
+    first_call.request_body = Some(format!("{shared_prefix}-turn-one").into_bytes());
     first_call.tool_calls = Vec::new();
     first_call.tool_responses = Vec::new();
 
     let mut second_call = first_call.clone();
-    second_call.request_body_preview = Some(format!("{shared_prefix}-turn-two"));
+    second_call.request_body = Some(format!("{shared_prefix}-turn-two").into_bytes());
 
     let writer = DbWriter::open(&path, 64).unwrap();
     writer.write(WriteOp::ModelCall(first_call)).await;
@@ -439,10 +441,8 @@ async fn empty_strings() {
         matched_rule: Some("".to_string()),
         request_headers: Some("".to_string()),
         response_headers: Some("".to_string()),
-        request_body_preview: Some("".to_string()),
-        response_body_preview: Some("".to_string()),
-        request_body_full: None,
-        response_body_full: None,
+        request_body: None,
+        response_body: None,
         conn_type: Some("".to_string()),
         policy_mode: None,
         policy_action: None,
@@ -485,13 +485,12 @@ async fn unicode_strings() {
         messages_count: 1,
         tools_count: 0,
         request_bytes: 100,
-        request_body_preview: None,
-        request_body_full: None,
+        request_body: None,
         message_id: None,
         status_code: Some(200),
         text_content: Some("Bonjour le monde!".to_string()),
         thinking_content: None,
-        response_body_full: Some("Bonjour le monde!".to_string()),
+        response_body: Some(b"Bonjour le monde!".to_vec()),
         stop_reason: Some("end_turn".to_string()),
         input_tokens: Some(5),
         output_tokens: Some(3),
@@ -531,8 +530,8 @@ async fn large_body_previews() {
     let large_body = "x".repeat(100_000);
     let mut event = sample_net_event("big.com", Decision::Allowed);
     event.event_id = Some("1a2b3c4d5e6f".into());
-    event.request_body_preview = Some(large_body.clone());
-    event.response_body_preview = Some(large_body.clone());
+    event.request_body = Some(large_body.clone().into_bytes());
+    event.response_body = Some(large_body.clone().into_bytes());
 
     writer.write(WriteOp::NetEvent(event)).await;
     drop(writer);
@@ -541,7 +540,7 @@ async fn large_body_previews() {
     let events = reader.recent_net_events(10).unwrap();
     // PREVIEW_BYTES (writer.rs) -- kept as a literal here since this is an
     // external integration-test crate and the constant is crate-private.
-    assert_eq!(events[0].request_body_preview.as_ref().unwrap().len(), 2 * 1024);
+    assert_eq!(events[0].request_body.as_ref().unwrap().len(), 2 * 1024);
 
     let conn = rusqlite::Connection::open(&path).unwrap();
     let (original_bytes, stored_bytes): (i64, i64) = conn
@@ -638,6 +637,7 @@ async fn model_call_many_tools() {
     let mut call = sample_model_call("anthropic");
     call.tool_calls = (0..10)
         .map(|i| ToolCallEntry {
+            event_id: None,
             call_index: i,
             call_id: format!("toolu_{i:02}"),
             tool_name: format!("tool_{i}"),
@@ -648,6 +648,7 @@ async fn model_call_many_tools() {
         .collect();
     call.tool_responses = (0..5)
         .map(|i| ToolResponseEntry {
+            event_id: None,
             call_id: format!("toolu_{i:02}"),
             content_preview: Some(format!("result {i}")),
             is_error: i == 3,
@@ -747,16 +748,16 @@ async fn net_event_body_preview_capped() {
 
     let huge = "x".repeat(500_000); // 500KB -- well beyond any reasonable preview
     let mut event = sample_net_event("big.com", Decision::Allowed);
-    event.request_body_preview = Some(huge.clone());
-    event.response_body_preview = Some(huge);
+    event.request_body = Some(huge.clone().into_bytes());
+    event.response_body = Some(huge.into_bytes());
 
     writer.write(WriteOp::NetEvent(event)).await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
     let events = reader.recent_net_events(10).unwrap();
-    let req_preview = events[0].request_body_preview.as_ref().unwrap();
-    let resp_preview = events[0].response_body_preview.as_ref().unwrap();
+    let req_preview = events[0].request_body.as_ref().unwrap();
+    let resp_preview = events[0].response_body.as_ref().unwrap();
     assert!(
         req_preview.len() <= 262_144,
         "request_body_preview should be capped at 256KB, got {}",
@@ -780,7 +781,7 @@ async fn model_call_content_fields_capped() {
     let mut call = sample_model_call("anthropic");
     call.text_content = Some(huge.clone());
     call.thinking_content = Some(huge);
-    call.request_body_preview = Some("z".repeat(500_000));
+    call.request_body = Some("z".repeat(500_000).into_bytes());
 
     writer.write(WriteOp::ModelCall(call)).await;
     drop(writer);
@@ -844,6 +845,7 @@ async fn multiple_model_calls_get_distinct_ids() {
 
     let mut call1 = sample_model_call("anthropic");
     call1.tool_calls = vec![ToolCallEntry {
+        event_id: None,
         call_index: 0,
         call_id: "tc_first".to_string(),
         tool_name: "tool_a".to_string(),
@@ -855,6 +857,7 @@ async fn multiple_model_calls_get_distinct_ids() {
 
     let mut call2 = sample_model_call("openai");
     call2.tool_calls = vec![ToolCallEntry {
+        event_id: None,
         call_index: 0,
         call_id: "tc_second".to_string(),
         tool_name: "tool_b".to_string(),

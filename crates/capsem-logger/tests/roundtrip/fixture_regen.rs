@@ -34,16 +34,21 @@
 //! produces a `test.bodies` beside the ledger and both files are committed
 //! together.
 //!
-//! Regeneration is idempotent in content, not in bytes. Replaying the fixture
-//! reproduces `test.bodies` byte for byte, and every ledger row, body hash,
-//! block offset and length comes back identical -- but `test.db` does not hash
-//! the same twice, and cannot. Three of its values are minted per run and none
-//! of them is content: `event_body_blobs.created_at` and `body_blocks.sealed_at`
-//! are the wall clock, and the `event_id` of a tool call and a tool response is
-//! `new_event_id()`, because `ToolCallEntry` and `ToolResponseEntry` carry no id
-//! for the writer to reuse. Compare the rows, not the digest, when checking a
-//! rerun; the digest in `fixture_ownership.toml` is there to make replacing the
-//! binary a reviewed act, not to assert reproducibility.
+//! Regeneration is idempotent in content, and in bytes everywhere but one
+//! column. Replaying the fixture reproduces `test.bodies` byte for byte, and
+//! every ledger row, body hash, block offset and length comes back identical.
+//! `event_body_blobs.created_at` and `body_blocks.sealed_at` used to be the
+//! wall clock; the replay pins them (`pin_replay_clock`). The `event_id` of a
+//! tool call and a tool response used to be minted per run; `ToolCallEntry`
+//! and `ToolResponseEntry` now carry one and the replay passes the source id
+//! through.
+//!
+//! What is left is `model_items.event_id`: those rows are derived from a
+//! `ModelCall` rather than replayed from a source row, so the writer mints
+//! each one and two runs differ in exactly those six values. Compare the rows,
+//! not the digest, when checking a rerun; the digest in
+//! `fixture_ownership.toml` is there to make replacing the binary a reviewed
+//! act, not to assert reproducibility.
 //!
 //! Bodies are read from the source archive, not from the ledger's own columns,
 //! and that is what makes the replay repeatable. Those columns are display
@@ -57,7 +62,37 @@
 
 use super::*;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, UNIX_EPOCH};
+
 use rusqlite::Connection;
+
+/// The instant the replay's archive index is stamped with, in nanoseconds
+/// since the epoch.
+///
+/// `event_body_blobs.created_at` and `body_blocks.sealed_at` are the only
+/// values in a rebuilt ledger that are not derived from what was recorded, so
+/// reading them from the wall clock is what made a rerun differ from the run
+/// before it. The replay pins them instead, to an instant it reads out of the
+/// source fixture -- so the same source always produces the same stamps, and
+/// the stamps still say something true about the session rather than 1970.
+static REPLAY_INSTANT_NANOS: AtomicU64 = AtomicU64::new(0);
+
+fn replay_clock() -> SystemTime {
+    UNIX_EPOCH + Duration::from_nanos(REPLAY_INSTANT_NANOS.load(Ordering::Relaxed))
+}
+
+/// Pin the replay clock to the latest instant the source ledger recorded.
+fn pin_replay_clock(source: &Connection) {
+    let latest: Option<String> = source
+        .query_row("SELECT MAX(timestamp) FROM net_events", [], |row| row.get(0))
+        .unwrap_or(None);
+    let instant = latest
+        .and_then(|value| humantime::parse_rfc3339(&value).ok())
+        .unwrap_or(UNIX_EPOCH);
+    let nanos = instant.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
+    REPLAY_INSTANT_NANOS.store(nanos, Ordering::Relaxed);
+}
 
 fn fixture_path() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -94,7 +129,7 @@ fn table_exists(conn: &Connection, table: &str) -> bool {
 ///
 /// Keyed `(source_table, event_id, direction)`, which is the index's own unique
 /// key, so a lookup cannot pick up another row's body.
-type SourceBodies = BTreeMap<(String, String, String), String>;
+type SourceBodies = BTreeMap<(String, String, String), Vec<u8>>;
 
 fn block_on<F: std::future::Future>(future: F) -> F::Output {
     tokio::runtime::Builder::new_current_thread()
@@ -138,15 +173,10 @@ fn archived_bodies(db_path: &std::path::Path, conn: &Connection) -> SourceBodies
         // One query per event returns every direction it stored, and the
         // handle verifies each body against the row that named it.
         for body in block_on(db.read_bodies(&event_id)).expect("read the archived bodies") {
-            // A body that is not text is not something a `*_full` field can
-            // carry; leaving it out falls back to the column, and the byte
-            // accounting reports the difference rather than hiding it.
-            if let Ok(text) = String::from_utf8(body.bytes) {
-                bodies.insert(
-                    (body.source_table, body.event_id, body.direction.as_str().to_string()),
-                    text,
-                );
-            }
+            bodies.insert(
+                (body.source_table, body.event_id, body.direction.as_str().to_string()),
+                body.bytes,
+            );
         }
     }
     bodies
@@ -159,10 +189,27 @@ fn body_of(
     event_id: Option<&str>,
     direction: &str,
     column: Option<String>,
-) -> Option<String> {
+) -> Option<Vec<u8>> {
     let archived = event_id
         .and_then(|event_id| bodies.get(&(source_table.to_string(), event_id.to_string(), direction.to_string())));
-    archived.cloned().or(column)
+    archived.cloned().or_else(|| column.map(String::into_bytes))
+}
+
+/// The same lookup for a row whose field is text rather than bytes.
+///
+/// An archived body that is not valid UTF-8 cannot be carried by a `String`
+/// field, so it falls back to the column and the byte accounting at the end of
+/// the replay reports the difference rather than hiding it.
+fn text_of(
+    bodies: &SourceBodies,
+    source_table: &str,
+    event_id: Option<&str>,
+    direction: &str,
+    column: Option<String>,
+) -> Option<String> {
+    body_of(bodies, source_table, event_id, direction, None)
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .or(column)
 }
 
 fn decision_of(value: &str) -> Decision {
@@ -197,21 +244,19 @@ fn replay_net_events(conn: &Connection, writer: &DbWriter, bodies: &SourceBodies
                 matched_rule: opt(row, "matched_rule"),
                 request_headers: opt(row, "request_headers"),
                 response_headers: opt(row, "response_headers"),
-                request_body_preview: opt(row, "request_body_preview"),
-                response_body_preview: opt(row, "response_body_preview"),
-                request_body_full: body_of(
+                request_body: body_of(
                     bodies,
                     "net_events",
                     event_id.as_deref(),
                     "request",
-                    opt(row, "request_body_full"),
+                    opt(row, "request_body_preview"),
                 ),
-                response_body_full: body_of(
+                response_body: body_of(
                     bodies,
                     "net_events",
                     event_id.as_deref(),
                     "response",
-                    opt(row, "response_body_full"),
+                    opt(row, "response_body_preview"),
                 ),
                 conn_type: opt(row, "conn_type"),
                 policy_mode: opt(row, "policy_mode"),
@@ -238,6 +283,7 @@ fn tool_calls_for(conn: &Connection, model_call_id: i64) -> Vec<ToolCallEntry> {
         .unwrap();
     stmt.query_map([model_call_id], |row| {
         Ok(ToolCallEntry {
+            event_id: opt(row, "event_id"),
             call_index: opt::<i64>(row, "call_index").unwrap_or_default() as u32,
             call_id: opt(row, "call_id").unwrap_or_default(),
             tool_name: opt(row, "tool_name").unwrap_or_default(),
@@ -257,8 +303,9 @@ fn tool_responses_for(conn: &Connection, model_call_id: i64, bodies: &SourceBodi
         .unwrap();
     stmt.query_map([model_call_id], |row| {
         Ok(ToolResponseEntry {
+            event_id: opt(row, "event_id"),
             call_id: opt(row, "call_id").unwrap_or_default(),
-            content_preview: body_of(
+            content_preview: text_of(
                 bodies,
                 "tool_responses",
                 opt::<String>(row, "event_id").as_deref(),
@@ -298,19 +345,18 @@ fn replay_model_calls(conn: &Connection, writer: &DbWriter, bodies: &SourceBodie
                     messages_count: opt::<i64>(row, "messages_count").unwrap_or_default() as usize,
                     tools_count: opt::<i64>(row, "tools_count").unwrap_or_default() as usize,
                     request_bytes: opt::<i64>(row, "request_bytes").unwrap_or_default() as u64,
-                    request_body_preview: opt(row, "request_body_preview"),
-                    request_body_full: body_of(
+                    request_body: body_of(
                         bodies,
                         "model_calls",
                         event_id.as_deref(),
                         "request",
-                        opt(row, "request_body_full"),
+                        opt(row, "request_body_preview"),
                     ),
                     message_id: opt(row, "message_id"),
                     status_code: opt::<i64>(row, "status_code").map(|v| v as u16),
                     text_content: opt(row, "text_content"),
                     thinking_content: opt(row, "thinking_content"),
-                    response_body_full: body_of(
+                    response_body: body_of(
                         bodies,
                         "model_calls",
                         event_id.as_deref(),
@@ -364,14 +410,14 @@ fn replay_mcp_calls(conn: &Connection, writer: &DbWriter, bodies: &SourceBodies)
                 method: opt(row, "method").unwrap_or_default(),
                 tool_name: opt(row, "tool_name"),
                 request_id: opt(row, "request_id"),
-                request_preview: body_of(
+                request_preview: text_of(
                     bodies,
                     "tool_calls",
                     event_id.as_deref(),
                     "request",
                     opt(row, "request_preview").or_else(|| opt(row, "arguments")),
                 ),
-                response_preview: body_of(
+                response_preview: text_of(
                     bodies,
                     "tool_calls",
                     event_id.as_deref(),
@@ -521,8 +567,7 @@ fn replay_bodies_come_from_the_archive_not_the_preview_column() {
     let writer = DbWriter::open(&source_path, 64).unwrap();
     let mut event = sample_net_event("bodies.example", Decision::Allowed);
     event.event_id = Some("0123456789ab".to_string());
-    event.response_body_preview = Some(body[..64].to_string());
-    event.response_body_full = Some(body.clone());
+    event.response_body = Some(body.clone().into_bytes());
     writer.write_blocking(WriteOp::NetEvent(event));
     writer.shutdown_blocking();
 
@@ -623,7 +668,8 @@ fn regenerate_session_fixture() {
 
     let staging = tempfile::tempdir().unwrap();
     let rebuilt = staging.path().join("session.db");
-    let writer = DbWriter::open(&rebuilt, 256).unwrap();
+    pin_replay_clock(&source);
+    let writer = DbWriter::open_with_clock(&rebuilt, 256, replay_clock).unwrap();
 
     let native_tool_calls = count(&source, "SELECT COUNT(*) FROM tool_calls WHERE origin != 'mcp'");
     let tool_responses = count(&source, "SELECT COUNT(*) FROM tool_responses");
@@ -736,7 +782,7 @@ fn regenerate_session_fixture() {
         "the replay would lose {} bytes of recorded body content. It reads the ledger's \
          preview columns, so it can only regenerate a fixture whose bodies are still in \
          them. To regenerate this one, teach the replay to read the archive \
-         (DbHandle::read_body) and set request_body_full/response_body_full from it.",
+         (DbHandle::read_body) and set request_body/response_body from it.",
         source_body_bytes - rebuilt_body_bytes
     );
     assert!(

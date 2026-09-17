@@ -12,8 +12,8 @@ pub(super) fn insert_net_event(
     bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(event.timestamp);
-    let req_body = cap_preview(&event.request_body_preview);
-    let resp_body = cap_preview(&event.response_body_preview);
+    let req_body = body_preview(event.request_body.as_deref());
+    let resp_body = body_preview(event.response_body.as_deref());
     let req_headers = cap_field(&event.request_headers);
     let resp_headers = cap_field(&event.response_headers);
     let event_id = event.event_id.clone().unwrap_or_else(new_event_id);
@@ -65,10 +65,7 @@ pub(super) fn insert_net_event(
         source_table: "net_events",
         direction: "request",
         content_type: event.request_headers.as_deref().and_then(content_type_from_headers),
-        body: event
-            .request_body_full
-            .as_deref()
-            .or(event.request_body_preview.as_deref()),
+        body: event.request_body.as_deref(),
         original_bytes: None,
         trace_id: event.trace_id.as_deref(),
         turn_id: event.trace_id.as_deref(),
@@ -79,10 +76,7 @@ pub(super) fn insert_net_event(
         source_table: "net_events",
         direction: "response",
         content_type: event.response_headers.as_deref().and_then(content_type_from_headers),
-        body: event
-            .response_body_full
-            .as_deref()
-            .or(event.response_body_preview.as_deref()),
+        body: event.response_body.as_deref(),
         original_bytes: None,
         trace_id: event.trace_id.as_deref(),
         turn_id: event.trace_id.as_deref(),
@@ -186,7 +180,7 @@ pub(super) fn insert_mcp_call(
             source_table: "tool_calls",
             direction: "request",
             content_type: Some("application/json"),
-            body: call.request_preview.as_deref(),
+            body: call.request_preview.as_deref().map(str::as_bytes),
             original_bytes: None,
             trace_id: call.trace_id.as_deref(),
             turn_id: call.trace_id.as_deref(),
@@ -197,7 +191,7 @@ pub(super) fn insert_mcp_call(
             source_table: "tool_calls",
             direction: "response",
             content_type: Some("application/json"),
-            body: call.response_preview.as_deref(),
+            body: call.response_preview.as_deref().map(str::as_bytes),
             original_bytes: None,
             trace_id: call.trace_id.as_deref(),
             turn_id: call.trace_id.as_deref(),
@@ -273,8 +267,16 @@ pub(super) fn update_exec_event(
     match &started {
         Some((event_id, trace_id)) => {
             for (direction, body, produced) in [
-                ("stdout", complete.stdout_preview.as_deref(), complete.stdout_bytes),
-                ("stderr", complete.stderr_preview.as_deref(), complete.stderr_bytes),
+                (
+                    "stdout",
+                    complete.stdout_preview.as_deref().map(str::as_bytes),
+                    complete.stdout_bytes,
+                ),
+                (
+                    "stderr",
+                    complete.stderr_preview.as_deref().map(str::as_bytes),
+                    complete.stderr_bytes,
+                ),
             ] {
                 bodies.stage(EventBodyBlob {
                     event_id,

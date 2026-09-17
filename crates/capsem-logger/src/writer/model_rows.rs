@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 
 use super::bodies::{BodyArchive, EventBodyBlob};
-use super::{blake3_ref, cap_field, cap_preview, format_timestamp, new_event_id, WriteTarget};
+use super::{blake3_ref, body_preview, cap_field, cap_preview, format_timestamp, new_event_id, WriteTarget};
 use crate::events::ModelCall;
 
 pub(super) fn insert_model_call(
@@ -11,7 +11,7 @@ pub(super) fn insert_model_call(
     bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(call.timestamp);
-    let req_body = cap_preview(&call.request_body_preview);
+    let req_body = body_preview(call.request_body.as_deref());
     let text_content = cap_field(&call.text_content);
     let thinking_content = cap_field(&call.thinking_content);
     let sys_prompt = cap_preview(&call.system_prompt_preview);
@@ -68,10 +68,7 @@ pub(super) fn insert_model_call(
         source_table: "model_calls",
         direction: "request",
         content_type: Some("application/json"),
-        body: call
-            .request_body_full
-            .as_deref()
-            .or(call.request_body_preview.as_deref()),
+        body: call.request_body.as_deref(),
         original_bytes: None,
         trace_id: call.trace_id.as_deref(),
         turn_id: call.trace_id.as_deref(),
@@ -82,7 +79,10 @@ pub(super) fn insert_model_call(
         source_table: "model_calls",
         direction: "response",
         content_type: None,
-        body: call.response_body_full.as_deref().or(call.text_content.as_deref()),
+        body: call
+            .response_body
+            .as_deref()
+            .or_else(|| call.text_content.as_deref().map(str::as_bytes)),
         original_bytes: None,
         trace_id: call.trace_id.as_deref(),
         turn_id: call.trace_id.as_deref(),
@@ -105,7 +105,7 @@ pub(super) fn insert_model_call(
                 target.table("tool_calls")
             ),
             params![
-                new_event_id(),
+                tc.event_id.clone().unwrap_or_else(new_event_id),
                 timestamp,
                 model_call_id,
                 call.provider,
@@ -132,7 +132,7 @@ pub(super) fn insert_model_call(
         // The full content is archived below; this column is the display
         // excerpt, reached from the same event_id the archive row carries.
         let tr_content_preview = cap_preview(&tr.content_preview);
-        let tr_event_id = new_event_id();
+        let tr_event_id = tr.event_id.clone().unwrap_or_else(new_event_id);
         bodies.stage(EventBodyBlob {
             event_id: &tr_event_id,
             // A tool result is part of the model exchange it continues;
@@ -141,7 +141,7 @@ pub(super) fn insert_model_call(
             source_table: "tool_responses",
             direction: "response",
             content_type: None,
-            body: tr.content_preview.as_deref(),
+            body: tr.content_preview.as_deref().map(str::as_bytes),
             original_bytes: None,
             trace_id: tr_trace.as_deref(),
             turn_id: call.trace_id.as_deref(),
@@ -251,8 +251,12 @@ fn insert_model_items(
     // A tool-result continuation request is represented by tool_response rows;
     // do not also log it as another user request for the same trace.
     if call.tool_responses.is_empty() {
-        if let Some(content) = &call.request_body_preview {
-            insert_item("request", None, None, None, Some(content.clone()))?;
+        // The item content is capped at the field ceiling, not the preview
+        // ceiling, and its hash is taken over the uncapped text -- so the
+        // whole captured body is what reaches `insert_item`, not an excerpt.
+        if let Some(body) = call.request_body.as_deref().filter(|body| !body.is_empty()) {
+            let content = String::from_utf8_lossy(body).into_owned();
+            insert_item("request", None, None, None, Some(content))?;
         }
     }
     if let Some(content) = &call.thinking_content {

@@ -612,7 +612,8 @@ fn tool_responses_for_tolerates_old_schema_without_credential_ref() {
                     model_call_id INTEGER NOT NULL,
                     call_id TEXT NOT NULL,
                     content_preview TEXT,
-                    is_error INTEGER NOT NULL DEFAULT 0
+                    is_error INTEGER NOT NULL DEFAULT 0,
+                    event_id TEXT
                 )",
             [],
         )

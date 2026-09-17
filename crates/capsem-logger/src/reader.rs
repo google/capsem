@@ -309,13 +309,16 @@ fn read_model_call_row(row: &Row<'_>) -> rusqlite::Result<(i64, ModelCall)> {
             messages_count: row.get::<_, i64>(11)? as usize,
             tools_count: row.get::<_, i64>(12)? as usize,
             request_bytes: row.get::<_, i64>(13)? as u64,
-            request_body_preview: row.get(14)?,
-            request_body_full: None,
+            // The reader reconstructs the event from the ledger row it
+            // reads, so the body it can offer is the display preview the
+            // writer stored there. The archived body is reached by event_id
+            // through the DB handle, never rebuilt into this struct.
+            request_body: row.get::<_, Option<String>>(14)?.map(String::into_bytes),
             message_id: row.get(15)?,
             status_code: row.get::<_, Option<i64>>(16)?.map(|c| c as u16),
             text_content: row.get(17)?,
             thinking_content: row.get(18)?,
-            response_body_full: None,
+            response_body: None,
             stop_reason: row.get(19)?,
             input_tokens: row.get::<_, Option<i64>>(20)?.map(|t| t as u64),
             output_tokens: row.get::<_, Option<i64>>(21)?.map(|t| t as u64),
@@ -459,10 +462,8 @@ impl DbReader {
                 matched_rule: row.get(13)?,
                 request_headers: row.get(14)?,
                 response_headers: row.get(15)?,
-                request_body_preview: row.get(16)?,
-                response_body_preview: row.get(17)?,
-                request_body_full: None,
-                response_body_full: None,
+                request_body: row.get::<_, Option<String>>(16)?.map(String::into_bytes),
+                response_body: row.get::<_, Option<String>>(17)?.map(String::into_bytes),
                 conn_type: row.get(18)?,
                 policy_mode: row.get(19)?,
                 policy_action: row.get(20)?,
@@ -674,11 +675,12 @@ impl DbReader {
     /// Get tool calls for a given model_call_id.
     pub fn tool_calls_for(&self, model_call_id: i64) -> rusqlite::Result<Vec<ToolCallEntry>> {
         let mut stmt = self.conn.prepare(
-            "SELECT call_index, call_id, tool_name, arguments, origin
+            "SELECT call_index, call_id, tool_name, arguments, origin, event_id
              FROM tool_calls WHERE model_call_id = ?1 ORDER BY call_index",
         )?;
         let rows = stmt.query_map(params![model_call_id], |row| {
             Ok(ToolCallEntry {
+                event_id: row.get(5)?,
                 call_index: row.get::<_, i64>(0)? as u32,
                 call_id: row.get(1)?,
                 tool_name: row.get(2)?,
@@ -694,12 +696,13 @@ impl DbReader {
     pub fn tool_responses_for(&self, model_call_id: i64) -> rusqlite::Result<Vec<ToolResponseEntry>> {
         let credential_ref_col = self.optional_column_expr("tool_responses", "credential_ref");
         let sql = format!(
-            "SELECT call_id, content_preview, is_error, {credential_ref_col}
+            "SELECT call_id, content_preview, is_error, {credential_ref_col}, event_id
              FROM tool_responses WHERE model_call_id = ?1",
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![model_call_id], |row| {
             Ok(ToolResponseEntry {
+                event_id: row.get(4)?,
                 call_id: row.get(0)?,
                 content_preview: row.get(1)?,
                 is_error: row.get::<_, i64>(2)? != 0,
@@ -921,10 +924,8 @@ impl DbReader {
                 matched_rule: row.get(13)?,
                 request_headers: row.get(14)?,
                 response_headers: row.get(15)?,
-                request_body_preview: row.get(16)?,
-                response_body_preview: row.get(17)?,
-                request_body_full: None,
-                response_body_full: None,
+                request_body: row.get::<_, Option<String>>(16)?.map(String::into_bytes),
+                response_body: row.get::<_, Option<String>>(17)?.map(String::into_bytes),
                 conn_type: row.get(18)?,
                 policy_mode: row.get(19)?,
                 policy_action: row.get(20)?,
@@ -1151,7 +1152,7 @@ impl DbReader {
 
         // Fetch all tool calls for this trace in one batch.
         let mut tool_calls_stmt = self.conn.prepare(
-            "SELECT tc.model_call_id, tc.call_index, tc.call_id, tc.tool_name, tc.arguments, tc.origin
+            "SELECT tc.model_call_id, tc.call_index, tc.call_id, tc.tool_name, tc.arguments, tc.origin, tc.event_id
              FROM tool_calls tc
              JOIN model_calls mc ON tc.model_call_id = mc.id
              WHERE mc.trace_id = ?1
@@ -1161,6 +1162,7 @@ impl DbReader {
             Ok((
                 row.get::<_, i64>(0)?,
                 ToolCallEntry {
+                    event_id: row.get(6)?,
                     call_index: row.get::<_, i64>(1)? as u32,
                     call_id: row.get(2)?,
                     tool_name: row.get(3)?,
@@ -1178,7 +1180,7 @@ impl DbReader {
             "NULL AS credential_ref".to_string()
         };
         let tool_response_sql = format!(
-            "SELECT tr.model_call_id, tr.call_id, tr.content_preview, tr.is_error, {tool_response_credential_ref_col}
+            "SELECT tr.model_call_id, tr.call_id, tr.content_preview, tr.is_error, {tool_response_credential_ref_col}, tr.event_id
              FROM tool_responses tr
              JOIN model_calls mc ON tr.model_call_id = mc.id
              WHERE mc.trace_id = ?1"
@@ -1188,6 +1190,7 @@ impl DbReader {
             Ok((
                 row.get::<_, i64>(0)?,
                 ToolResponseEntry {
+                    event_id: row.get(5)?,
                     call_id: row.get(1)?,
                     content_preview: row.get(2)?,
                     is_error: row.get::<_, i64>(3)? != 0,

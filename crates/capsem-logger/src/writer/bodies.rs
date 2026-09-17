@@ -15,13 +15,12 @@
 //! Moving `encode` onto its own thread stays a local change to `seal_pending`.
 
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use capsem_archive::{ArchiveError, BodyLogWriter, BodyRef, SealedBlock};
 use rusqlite::{params, Connection};
 use tracing::warn;
 
-use super::{blake3_bytes_ref, execute_cached, format_timestamp, MAX_BODY_BLOB_BYTES};
+use super::{blake3_bytes_ref, execute_cached, format_timestamp, LedgerClock, MAX_BODY_BLOB_BYTES};
 
 /// One body to archive, as its `insert_*` writer describes it.
 pub(super) struct EventBodyBlob<'a> {
@@ -30,7 +29,7 @@ pub(super) struct EventBodyBlob<'a> {
     pub(super) source_table: &'static str,
     pub(super) direction: &'static str,
     pub(super) content_type: Option<&'a str>,
-    pub(super) body: Option<&'a str>,
+    pub(super) body: Option<&'a [u8]>,
     /// What the producer says the whole body was, when `body` is already a
     /// capped excerpt of it. `None` means `body` is the whole thing.
     pub(super) original_bytes: Option<u64>,
@@ -66,6 +65,11 @@ pub(super) struct BodyArchive {
     /// unprovable. Both stage nothing rather than writing an index nobody can
     /// resolve.
     writer: Option<BodyLogWriter>,
+    /// What `created_at` and `sealed_at` are read from. Every other column in
+    /// the index is content, so this is the only value in it that a replay of
+    /// the same session cannot reproduce -- and the only reason the fixture
+    /// regenerator needs to supply its own.
+    now: LedgerClock,
     /// Rows for the block currently being staged.
     staged: Vec<BodyIndexRow>,
     /// Sequence number the next staged row takes.
@@ -100,7 +104,7 @@ pub(crate) fn archive_path_for_db(db_path: &Path) -> PathBuf {
 }
 
 impl BodyArchive {
-    pub(super) fn open(db_path: Option<&Path>) -> Self {
+    pub(super) fn open(db_path: Option<&Path>, now: LedgerClock) -> Self {
         let writer = db_path.and_then(|path| {
             let archive_path = archive_path_for_db(path);
             match BodyLogWriter::open(&archive_path) {
@@ -117,6 +121,7 @@ impl BodyArchive {
         });
         Self {
             writer,
+            now,
             staged: Vec::new(),
             next_seq: 0,
             appended: Vec::new(),
@@ -133,10 +138,9 @@ impl BodyArchive {
         if self.writer.is_none() {
             return;
         }
-        let Some(body) = blob.body.filter(|body| !body.is_empty()) else {
+        let Some(bytes) = blob.body.filter(|body| !body.is_empty()) else {
             return;
         };
-        let bytes = body.as_bytes();
         let stored_len = bytes.len().min(MAX_BODY_BLOB_BYTES);
         // What the producer sent may already be an excerpt -- guest exec
         // output is capped at the vsock boundary -- and then the row must
@@ -168,7 +172,7 @@ impl BodyArchive {
             body_offset: i64::from(reference.offset),
             trace_id: blob.trace_id.map(str::to_string),
             turn_id: blob.turn_id.map(str::to_string),
-            created_at: format_timestamp(SystemTime::now()),
+            created_at: format_timestamp((self.now)()),
         });
     }
 
@@ -374,7 +378,7 @@ impl BodyArchive {
                     block.block_offset as i64,
                     i64::from(block.raw_len),
                     i64::from(block.comp_len),
-                    format_timestamp(SystemTime::now()),
+                    format_timestamp((self.now)()),
                 ],
             )?;
             for row in rows.iter() {

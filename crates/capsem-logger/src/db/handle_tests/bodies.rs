@@ -231,7 +231,7 @@ fn net_event_with_response(event_id: &str, domain: &str, body: &str) -> NetEvent
     let mut event = make_net_event(domain, Decision::Allowed);
     event.event_id = Some(event_id.to_string());
     event.response_headers = Some("content-type: application/json".into());
-    event.response_body_full = Some(body.to_string());
+    event.response_body = Some(body.as_bytes().to_vec());
     event
 }
 
@@ -304,7 +304,7 @@ async fn read_bodies_returns_every_direction_with_one_inflate() {
 
     let mut event = net_event_with_response("0123456789ac", "both.example", r#"{"answer":"yes"}"#);
     event.request_headers = Some("content-type: application/json".into());
-    event.request_body_full = Some(r#"{"question":"is one inflate enough"}"#.into());
+    event.request_body = Some(br#"{"question":"is one inflate enough"}"#.to_vec());
     db.write(WriteOp::NetEvent(event)).await.expect("write event");
     db.flush().await.expect("flush");
 
@@ -494,6 +494,7 @@ async fn tool_response_and_exec_output_are_archived_and_previewed() {
     let mut call = make_correctness_tool_response_model_call(&credential_reference("test", "bodies-tool-not-a-secret"));
     call.event_id = Some("0123456789b0".into());
     call.tool_responses = vec![ToolResponseEntry {
+        event_id: None,
         call_id: "tool-call-archive-1".into(),
         content_preview: Some(big.clone()),
         is_error: false,
@@ -696,8 +697,7 @@ async fn previews_are_capped_but_blobs_keep_the_full_body() {
     let big = "x".repeat(64 * 1024);
     let mut event = make_net_event("preview-cap.example", Decision::Allowed);
     event.event_id = Some("0123456789ab".into());
-    event.response_body_preview = Some(big.clone());
-    event.response_body_full = Some(big.clone());
+    event.response_body = Some(big.clone().into_bytes());
     db.write(WriteOp::NetEvent(event)).await.expect("write event");
     db.flush().await.expect("flush");
 
@@ -794,6 +794,7 @@ async fn a_rejected_op_does_not_leave_the_archive_holding_a_block() {
     let mut call = make_correctness_tool_response_model_call(&credential_reference("test", "bodies-reject"));
     call.event_id = Some("0123456789c1".into());
     call.tool_responses = vec![ToolResponseEntry {
+        event_id: None,
         call_id: "tool-call-rejected".into(),
         content_preview: Some("a body staged by an op that will be rejected".repeat(8)),
         is_error: false,

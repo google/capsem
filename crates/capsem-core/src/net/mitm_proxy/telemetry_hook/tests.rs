@@ -167,8 +167,41 @@ fn build_net_event_carries_request_fields() {
     assert_eq!(ev.decision, Decision::Allowed);
     assert_eq!(ev.bytes_sent, 37); // length of the seeded preview bytes
     assert_eq!(ev.bytes_received, 4567);
-    assert_eq!(ev.response_body_preview.as_deref(), Some("chunk-preview"));
+    assert_eq!(ev.response_body.as_deref(), Some(b"chunk-preview".as_slice()));
     assert_eq!(ev.conn_type.as_deref(), Some("https-mitm"));
+}
+
+/// The event carries each captured body once.
+///
+/// It used to carry every body twice -- a `*_body_preview` string and a
+/// `*_body_full` string, both built from the same buffer on this hot path --
+/// and nothing held the two copies to each other. The display preview is now
+/// derived by the writer from the single field this asserts.
+#[test]
+fn build_net_event_carries_each_body_once() {
+    let req_ctx = anthropic_req_ctx();
+    let mut resp_stats = empty_resp_stats();
+    resp_stats.preview = b"the-response".to_vec();
+
+    let ev = build_net_event(&req_ctx, &resp_stats);
+    let request_body = ev.request_body.as_deref().expect("the request body is carried");
+    assert_eq!(
+        request_body,
+        req_ctx.request_body_stats.lock().unwrap().preview.as_slice(),
+        "the request body is the captured buffer, not a re-encoded copy of it"
+    );
+    assert_eq!(ev.response_body.as_deref(), Some(b"the-response".as_slice()));
+
+    // The single-source rule, asserted where a producer could break it: the
+    // struct has one field per direction and this is the whole of it.
+    let json = serde_json::to_value(&ev).expect("the event serializes");
+    let fields = json.as_object().expect("an object");
+    let body_fields: Vec<&String> = fields.keys().filter(|key| key.contains("body")).collect();
+    assert_eq!(
+        body_fields,
+        vec!["request_body", "response_body"],
+        "one body field per direction; see tests/citadel/test_ledger_body_single_source.py"
+    );
 }
 
 #[test]

@@ -61,6 +61,15 @@ pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
 /// is where it surfaces anywhere but a log line.
 pub const DB_ARCHIVE_BODIES_DROPPED_TOTAL: &str = "db.archive_bodies_dropped_total";
 
+/// What the writer reads `event_body_blobs.created_at` and
+/// `body_blocks.sealed_at` from.
+///
+/// Every other value the archive index holds is derived from the body it
+/// names, so this is the one thing a replay of the same session cannot
+/// reproduce. Injecting it is what lets the fixture regenerator rebuild a
+/// ledger that matches the one it read.
+pub type LedgerClock = fn() -> SystemTime;
+
 static IN_MEMORY_WRITER_ID: AtomicU64 = AtomicU64::new(0);
 
 fn new_event_id() -> String {
@@ -98,6 +107,19 @@ fn cap_field(s: &Option<String>) -> Option<String> {
 /// where; this only bounds the compact copy shown in a UI list.
 pub(crate) fn cap_preview(s: &Option<String>) -> Option<String> {
     cap_bytes(s, PREVIEW_BYTES)
+}
+
+/// Derive the display preview of a captured body.
+///
+/// The event carries the body once, as bytes; this is the only place that
+/// turns it into the compact string a UI list shows. Only the leading
+/// `PREVIEW_BYTES` are converted -- a 10 MiB body must not be transcoded in
+/// full to produce 2 KiB of it -- and the second cap absorbs the replacement
+/// character a cut multi-byte sequence expands into.
+pub(crate) fn body_preview(body: Option<&[u8]>) -> Option<String> {
+    let bytes = body.filter(|bytes| !bytes.is_empty())?;
+    let head = &bytes[..bytes.len().min(PREVIEW_BYTES)];
+    cap_bytes(&Some(String::from_utf8_lossy(head).into_owned()), PREVIEW_BYTES)
 }
 
 fn blake3_ref(value: &str) -> String {
@@ -202,13 +224,21 @@ impl DbWriter {
     /// Spawn a dedicated writer thread that owns the DB connection.
     /// `capacity` controls the mpsc channel size (backpressure).
     pub fn open(path: &Path, capacity: usize) -> rusqlite::Result<Self> {
+        Self::open_with_clock(path, capacity, SystemTime::now)
+    }
+
+    /// `open`, with the archive index's timestamps read from `now`.
+    ///
+    /// Only a replay of an existing ledger has any business supplying one; see
+    /// `LedgerClock`.
+    pub fn open_with_clock(path: &Path, capacity: usize, now: LedgerClock) -> rusqlite::Result<Self> {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
 
         let mut last_busy = None;
         for _ in 0..50 {
-            match Self::open_once(path, capacity) {
+            match Self::open_once(path, capacity, now) {
                 Ok(writer) => return Ok(writer),
                 Err(error) if is_sqlite_busy(&error) => {
                     last_busy = Some(error);
@@ -223,7 +253,7 @@ impl DbWriter {
         )))
     }
 
-    fn open_once(path: &Path, capacity: usize) -> rusqlite::Result<Self> {
+    fn open_once(path: &Path, capacity: usize, now: LedgerClock) -> rusqlite::Result<Self> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
@@ -255,7 +285,16 @@ impl DbWriter {
 
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx, writer_loop_db_path, batch_capacity, &loop_pending_body_bytes))
+            .spawn(move || {
+                writer_loop(
+                    conn,
+                    rx,
+                    writer_loop_db_path,
+                    batch_capacity,
+                    &loop_pending_body_bytes,
+                    now,
+                )
+            })
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
@@ -294,7 +333,16 @@ impl DbWriter {
         let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx, None, batch_capacity, &loop_pending_body_bytes))
+            .spawn(move || {
+                writer_loop(
+                    conn,
+                    rx,
+                    None,
+                    batch_capacity,
+                    &loop_pending_body_bytes,
+                    SystemTime::now,
+                )
+            })
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
@@ -431,6 +479,7 @@ fn writer_loop(
     db_path: Option<PathBuf>,
     batch_capacity: usize,
     pending_body_bytes: &AtomicU64,
+    now: LedgerClock,
 ) {
     let mut flush_watermarks =
         schema::with_memory_schema_lock(|| schema::initial_memory_flush_watermarks(&conn, schema::hot_ledger_tables()))
@@ -444,7 +493,7 @@ fn writer_loop(
     // The writer thread owns the archive for as long as it owns the
     // connection: bodies are staged here and their index rows commit in the
     // same transaction that moves the memory tables to disk.
-    let mut bodies = BodyArchive::open(db_path.as_deref());
+    let mut bodies = BodyArchive::open(db_path.as_deref(), now);
 
     // 1. Block until at least one op arrives. Returns None when all
     //    Senders are dropped (clean shutdown) and ends the loop.

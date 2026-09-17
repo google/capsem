@@ -151,7 +151,7 @@ pub(super) fn insert_security_rule_event(
         source_table: "security_rule_events",
         direction: "payload",
         content_type: Some("application/json"),
-        body: Some(&event.event_json),
+        body: Some(event.event_json.as_bytes()),
         original_bytes: None,
         trace_id: event.trace_id.as_deref(),
         turn_id: event.turn_id.as_deref(),

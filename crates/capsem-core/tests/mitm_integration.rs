@@ -1742,7 +1742,7 @@ async fn mitm_proxy_plain_http_body_larger_than_preview_cap_forwards_full_but_ca
         ev.bytes_sent as usize, req_body_len,
         "bytes_sent should be the full {req_body_len}-byte body",
     );
-    if let Some(preview) = &ev.request_body_preview {
+    if let Some(preview) = ev.request_body.as_deref().map(String::from_utf8_lossy) {
         assert!(
             preview.len() <= 4096,
             "preview should cap at default max_body_capture (4096), got {}",

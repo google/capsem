@@ -599,12 +599,13 @@ pub struct NetEvent {
     pub matched_rule: Option<String>,
     pub request_headers: Option<String>,
     pub response_headers: Option<String>,
-    pub request_body_preview: Option<String>,
-    pub response_body_preview: Option<String>,
+    /// The request body as it was captured, once. The writer derives the
+    /// display preview from it at insert and stages the bytes into the
+    /// session archive; nothing else carries a second copy.
     #[serde(default)]
-    pub request_body_full: Option<String>,
+    pub request_body: Option<Vec<u8>>,
     #[serde(default)]
-    pub response_body_full: Option<String>,
+    pub response_body: Option<Vec<u8>>,
     pub conn_type: Option<String>,
     #[serde(default)]
     pub policy_mode: Option<String>,
@@ -623,6 +624,11 @@ pub struct NetEvent {
 /// A tool call emitted by the model in a response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallEntry {
+    /// The ledger id this entry is written under. `None` lets the writer mint
+    /// one; a replay (the fixture regenerator) passes the source id through so
+    /// the regenerated ledger is byte-identical to the one it read.
+    #[serde(default)]
+    pub event_id: Option<String>,
     pub call_index: u32,
     pub call_id: String,
     pub tool_name: String,
@@ -645,6 +651,9 @@ fn default_tool_transport() -> String {
 /// A tool result sent back to the model in a subsequent request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResponseEntry {
+    /// See `ToolCallEntry::event_id`.
+    #[serde(default)]
+    pub event_id: Option<String>,
     pub call_id: String,
     pub content_preview: Option<String>,
     pub is_error: bool,
@@ -718,16 +727,16 @@ pub struct ModelCall {
     pub messages_count: usize,
     pub tools_count: usize,
     pub request_bytes: u64,
-    pub request_body_preview: Option<String>,
+    /// The request body as it was captured, once; see `NetEvent::request_body`.
     #[serde(default)]
-    pub request_body_full: Option<String>,
+    pub request_body: Option<Vec<u8>>,
     // Response metadata
     pub message_id: Option<String>,
     pub status_code: Option<u16>,
     pub text_content: Option<String>,
     pub thinking_content: Option<String>,
     #[serde(default)]
-    pub response_body_full: Option<String>,
+    pub response_body: Option<Vec<u8>>,
     pub stop_reason: Option<String>,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,

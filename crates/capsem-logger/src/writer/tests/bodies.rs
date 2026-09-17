@@ -16,9 +16,7 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     let event_id = "abc123def456".to_string();
     let trace_id = "trace-body-blob".to_string();
     let request_body = format!("{{\"prompt\":\"{}\"}}", "r".repeat(MAX_FIELD_BYTES + 1024));
-    let request_preview = "{\"prompt\":\"short\"}".to_string();
     let response_body = format!("event: message\ndata: {}\n\n", "s".repeat(MAX_BODY_BLOB_BYTES + 128));
-    let response_preview = "event: message\ndata: short\n\n".to_string();
     // The hash covers what the archive stores, which for this oversized body
     // is its first MAX_BODY_BLOB_BYTES and not the whole thing: a hash of
     // bytes nobody kept could never be checked against anything.
@@ -47,10 +45,8 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
                     matched_rule: Some("profiles.rules.ai_google_http_googleapis".into()),
                     request_headers: Some("content-type: application/json".into()),
                     response_headers: Some("content-type: text/event-stream".into()),
-                    request_body_preview: Some(request_preview.clone()),
-                    response_body_preview: Some(response_preview.clone()),
-                    request_body_full: Some(request_body.clone()),
-                    response_body_full: Some(response_body.clone()),
+                    request_body: Some(request_body.clone().into_bytes()),
+                    response_body: Some(response_body.clone().into_bytes()),
                     conn_type: Some("https-mitm".into()),
                     policy_mode: None,
                     policy_action: Some("allow".into()),
@@ -72,8 +68,11 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
-    assert_eq!(stored_request_preview, request_preview);
-    assert_eq!(stored_response_preview, response_preview);
+    // The display columns are derived from the bodies staged below, not
+    // supplied beside them: whatever the archive holds, the preview is its
+    // first PREVIEW_BYTES and cannot disagree with it.
+    assert_eq!(stored_request_preview, request_body[..PREVIEW_BYTES]);
+    assert_eq!(stored_response_preview, response_body[..PREVIEW_BYTES]);
 
     struct StoredBlob {
         direction: String,
@@ -156,7 +155,7 @@ fn body_blob<'a>(event_id: &'a str, body: &'a str) -> EventBodyBlob<'a> {
         source_table: "net_events",
         direction: "request",
         content_type: None,
-        body: Some(body),
+        body: Some(body.as_bytes()),
         original_bytes: None,
         trace_id: None,
         turn_id: None,
@@ -173,7 +172,7 @@ fn appended_blocks_are_flushed_before_their_index_rows_commit() {
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
-    let mut archive = BodyArchive::open(Some(&db_path));
+    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now);
     archive.stage(body_blob("0f1f2f3f4f5f", "a body worth flushing"));
     archive.seal_pending();
     archive.commit_index_rows(&conn).unwrap();
@@ -201,7 +200,7 @@ fn a_body_that_does_not_fit_the_pending_block_seals_and_retries() {
     crate::schema::create_tables(&conn).unwrap();
 
     let big = "z".repeat(MAX_BODY_BLOB_BYTES);
-    let mut archive = BodyArchive::open(Some(&db_path));
+    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now);
     archive.stage(body_blob("aaaaaaaaaaa1", &big));
     archive.stage(body_blob("aaaaaaaaaaa2", &big));
     archive.seal_pending();
@@ -248,7 +247,7 @@ fn a_poisoned_archive_drops_its_uncommitted_blocks_instead_of_retrying_forever()
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
-    let mut archive = BodyArchive::open(Some(&db_path));
+    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now);
     archive.stage(body_blob("0b0b0b0b0b0b", "a body whose writer dies after it"));
     archive.seal_pending();
     assert_eq!(archive.appended_len_for_tests(), 1, "the block is appended");
@@ -302,7 +301,7 @@ fn giving_up_drops_the_rows_that_can_no_longer_be_placed() {
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
-    let mut archive = BodyArchive::open(Some(&db_path));
+    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now);
     archive.stage(body_blob("0c0c0c0c0c0c", "a body staged before the writer died"));
     assert!(archive.has_work(), "the row and its bytes are pending");
 
@@ -338,7 +337,7 @@ fn the_body_lost_to_a_failed_seal_is_counted() {
     let body = "b".repeat(MAX_BODY_BLOB_BYTES);
 
     metrics::with_local_recorder(&recorder, || {
-        let mut archive = BodyArchive::open(Some(&db_path));
+        let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now);
         archive.stage(body_blob("0e0e0e0e0e0e", &body));
         archive.fail_next_append_for_tests();
         archive.stage(body_blob("0f0f0f0f0f0f", &body));

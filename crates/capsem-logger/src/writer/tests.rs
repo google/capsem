@@ -287,10 +287,8 @@ fn multi_writer_net_event_child_process() {
                 matched_rule: None,
                 request_headers: Some("host: 127.0.0.1".into()),
                 response_headers: Some("content-type: text/plain".into()),
-                request_body_preview: None,
-                response_body_preview: Some(response_body.clone()),
-                request_body_full: None,
-                response_body_full: Some(response_body),
+                request_body: None,
+                response_body: Some(response_body.into_bytes()),
                 conn_type: Some("http-mitm".into()),
                 policy_mode: None,
                 policy_action: None,
@@ -708,7 +706,9 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     crate::schema::create_memory_tables(&conn, &crate::schema::memory_uri_for_name("writer-metrics-test")).unwrap();
 
     let pending_body_bytes = AtomicU64::new(0);
-    metrics::with_local_recorder(&recorder, || writer_loop(conn, rx, None, 16, &pending_body_bytes));
+    metrics::with_local_recorder(&recorder, || {
+        writer_loop(conn, rx, None, 16, &pending_body_bytes, SystemTime::now)
+    });
 
     let snapshot = snapshotter.snapshot().into_vec();
     assert!(snapshot
@@ -807,10 +807,8 @@ fn brokered_substitution_persists_reference_and_not_secret() {
                     matched_rule: None,
                     request_headers: Some(format!("authorization: {credential_ref}")),
                     response_headers: None,
-                    request_body_preview: None,
-                    response_body_preview: None,
-                    request_body_full: None,
-                    response_body_full: None,
+                    request_body: None,
+                    response_body: None,
                     conn_type: Some("https".into()),
                     policy_mode: None,
                     policy_action: None,
@@ -1136,7 +1134,7 @@ fn mcp_protocol_only_event_does_not_claim_tool_storage() {
         credential_ref: None,
     });
 
-    let mut bodies = BodyArchive::open(None);
+    let mut bodies = BodyArchive::open(None, SystemTime::now);
     let outcome = metrics::with_local_recorder(&recorder, || {
         execute_memory_batch(&conn, &[event], &mut bodies).unwrap()
     });
@@ -1475,13 +1473,12 @@ fn minimal_model_call(trace_id: &str) -> WriteOp {
         messages_count: 1,
         tools_count: 0,
         request_bytes: 16,
-        request_body_preview: None,
-        request_body_full: None,
+        request_body: None,
         message_id: Some("msg_salvage".to_string()),
         status_code: Some(200),
         text_content: Some("hello".to_string()),
         thinking_content: None,
-        response_body_full: None,
+        response_body: None,
         stop_reason: Some("end_turn".to_string()),
         input_tokens: Some(1),
         output_tokens: Some(1),
