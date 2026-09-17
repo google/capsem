@@ -34,21 +34,23 @@
 //! produces a `test.bodies` beside the ledger and both files are committed
 //! together.
 //!
-//! Regeneration is idempotent in content, and in bytes everywhere but one
-//! column. Replaying the fixture reproduces `test.bodies` byte for byte, and
-//! every ledger row, body hash, block offset and length comes back identical.
-//! `event_body_blobs.created_at` and `body_blocks.sealed_at` used to be the
-//! wall clock; the replay pins them (`pin_replay_clock`). The `event_id` of a
-//! tool call and a tool response used to be minted per run; `ToolCallEntry`
-//! and `ToolResponseEntry` now carry one and the replay passes the source id
-//! through.
+//! Regeneration is byte-reproducible: two runs over the same source produce
+//! the same `test.db` and the same `test.bodies`, down to the byte. Three
+//! values used to stand in the way, and each is now derived from what was
+//! recorded rather than from the run. `event_body_blobs.created_at` and
+//! `body_blocks.sealed_at` were the wall clock; the replay pins them
+//! (`pin_replay_clock`). The `event_id` of a tool call and a tool response
+//! were minted per run; `ToolCallEntry` and `ToolResponseEntry` carry one and
+//! the replay passes the source id through. `model_items.event_id` was minted
+//! per run too -- those rows are derived from a `ModelCall`, not replayed from
+//! a source row -- and is now derived from the item's own identity, the same
+//! `(trace_id, kind, content_hash, call_id)` the table's `UNIQUE` uses.
 //!
-//! What is left is `model_items.event_id`: those rows are derived from a
-//! `ModelCall` rather than replayed from a source row, so the writer mints
-//! each one and two runs differ in exactly those six values. Compare the rows,
-//! not the digest, when checking a rerun; the digest in
-//! `fixture_ownership.toml` is there to make replacing the binary a reviewed
-//! act, not to assert reproducibility.
+//! That is what the digest in `fixture_ownership.toml` is for. It records
+//! custody either way, but only a reproducible regenerator lets a reviewer run
+//! the tool and diff instead of trusting a row comparison written by whoever
+//! changed the fixture -- which is custody without correctness, and the shape
+//! of failure this rail exists to refuse.
 //!
 //! Bodies are read from the source archive, not from the ledger's own columns,
 //! and that is what makes the replay repeatable. Those columns are display

@@ -912,4 +912,48 @@ async fn writer_reader_on_file_backed_sees_data() {
     assert_eq!(events[0].domain, "live.com");
 }
 
+/// Two writes of the same model call must agree on its items' ids.
+///
+/// Every other column of a `model_items` row is derived from the call, so a
+/// random id here was the one value that made replaying a session produce a
+/// different ledger -- which is what stopped the fixture regenerator from
+/// being byte-reproducible.
+#[tokio::test]
+async fn model_item_ids_are_derived_from_the_item_not_minted_per_write() {
+    async fn item_ids(path: &std::path::Path) -> Vec<String> {
+        let writer = DbWriter::open(path, 64).unwrap();
+        writer.write(WriteOp::ModelCall(sample_model_call("anthropic"))).await;
+        drop(writer);
+        let conn = rusqlite::Connection::open(path).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT event_id FROM model_items ORDER BY item_index")
+            .unwrap();
+        let ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        ids
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let first = item_ids(&dir.path().join("first.db")).await;
+    let second = item_ids(&dir.path().join("second.db")).await;
+
+    assert!(!first.is_empty(), "the sample call must produce items to compare");
+    assert_eq!(first, second, "the same call must mint the same item ids");
+
+    // Derived, not constant: rows that differ in identity still differ in id,
+    // and the column's CHECK still holds.
+    let unique = first.iter().collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(unique.len(), first.len(), "distinct items keep distinct ids");
+    for id in &first {
+        assert_eq!(id.len(), 12, "event_id is 12 characters: {id}");
+        assert!(
+            id.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "event_id is lowercase hex: {id}"
+        );
+    }
+}
+
 // ── Session stats + new query methods ───────────────────────────────

@@ -169,6 +169,26 @@ pub(super) fn insert_model_call(
     Ok(())
 }
 
+/// A model item's `event_id`, derived from the identity the row already has.
+///
+/// Every other column of a `model_items` row comes from the `ModelCall` it is
+/// derived from, so minting this one from a random UUID made it the single
+/// value in a rebuilt ledger that a replay of the same session could not
+/// reproduce -- which is what kept the fixture regenerator from being
+/// byte-reproducible, and with it the digest that is supposed to let a
+/// reviewer rerun the tool and diff.
+///
+/// `(trace_id, kind, content_hash, call_id)` is the tuple the `UNIQUE` on this
+/// table already treats as the row's identity, so two rows can only share a
+/// derived id if one of them cannot exist. That makes the id an answer about
+/// the item rather than an arbitrary label, and two writes of the same item
+/// now agree on it instead of disagreeing by construction. The width matches
+/// `new_event_id`: 12 lowercase hex, as the column's CHECK requires.
+fn model_item_event_id(trace_id: Option<&str>, kind: &str, content_hash: &str, call_id: &str) -> String {
+    let material = format!("{}\0{kind}\0{content_hash}\0{call_id}", trace_id.unwrap_or_default());
+    blake3::hash(material.as_bytes()).to_hex()[..12].to_string()
+}
+
 fn insert_model_items(
     conn: &Connection,
     model_call_id: i64,
@@ -227,7 +247,7 @@ fn insert_model_items(
              )"
             ),
             params![
-                new_event_id(),
+                model_item_event_id(call.trace_id.as_deref(), kind, &content_hash, call_id),
                 model_call_id,
                 timestamp,
                 call.provider,
