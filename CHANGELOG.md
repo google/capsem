@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem-mcp` now registers the documented `capsem_panics` and
+  `capsem_triage` diagnostics tools, and the MCP tools page lists
+  `capsem_file_history` (the workspace-changes tool) instead of a
+  nonexistent `capsem_changes`.
+
 - The desktop app no longer reports the gateway offline on macOS 14.0-14.3:
   the TypeScript SDK links request cancellation by hand where
   `AbortSignal.any` is missing. `@capsem/sdk` and `@capsem/mcp` now declare

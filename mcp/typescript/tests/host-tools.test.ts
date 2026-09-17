@@ -93,6 +93,7 @@ describe('host-tools', () => {
         'POST /purge': {ephemeral_purged: 1, persistent_purged: 0, purged: 1},
         'GET /vms/vm-1/files/list': {entries: []},
         'GET /vms/vm-1/logs': {logs: 'booted'},
+        'GET /panics': {panics: []},
         'GET /triage': {host: {errors: [], panics: [], slow_ops: []}, rank: [], session: {}, since: '5m'},
         'GET /vms/vm-1/timeline': {events: []},
         'GET /vms/vm-1/history': {commands: [], has_more: false, total: 0},
@@ -288,11 +289,15 @@ describe('host-tools', () => {
       {name: 'capsem_snapshots', arguments: {vm_id: 'vm-1'}},
       {name: 'capsem_snapshot_status', arguments: {vm_id: 'vm-1'}},
       {name: 'capsem_file_history', arguments: {vm_id: 'vm-1', checkpoint: 'cp-1', limit: 10}},
+      {name: 'capsem_panics', arguments: {since: '1h', limit: 4}},
+      {name: 'capsem_triage', arguments: {vm_id: 'vm-1', since: '5m', limit: 2}},
     ];
     for (const call of calls) {
       expect((await client.callTool(call)).isError, call.name).not.toBe(true);
     }
     expect(requests.some(request => request.url.includes('layers=exec%2Cnet'))).toBe(true);
+    expect(requests.some(request => request.url === '/panics?since=1h&limit=4')).toBe(true);
+    expect(requests.some(request => request.url === '/triage?since=5m&limit=2&id=vm-1')).toBe(true);
     expect(JSON.parse(requests.find(request => request.url === '/purge')?.body.toString() ?? '')).toEqual({all: true});
   });
 });

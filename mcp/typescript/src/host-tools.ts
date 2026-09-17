@@ -153,6 +153,14 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
     description: 'Read an allowlisted host log through the authenticated gateway.',
     inputSchema: {source: z.nativeEnum(HostLogSource).default(HostLogSource.SERVICE), ...logFilters},
   }, (options, extra) => toolCall(() => hypervisor.log({...defined(options), signal: extra.signal})));
+  server.registerTool('capsem_panics', {
+    description: 'Read structured host panics, newest first.',
+    inputSchema: {since: z.string().optional(), limit: positiveInt.optional()},
+  }, (options, extra) => toolCall(() => hypervisor.debug.panics({...defined(options), signal: extra.signal})));
+  server.registerTool('capsem_triage', {
+    description: 'Correlate recent host failures, optionally with one VM\'s session.',
+    inputSchema: {vm_id: vmId.optional(), since: z.string().optional(), limit: positiveInt.optional()},
+  }, (options, extra) => toolCall(() => hypervisor.debug.triage({...defined(options), signal: extra.signal})));
   server.registerTool('capsem_timeline', {
     description: 'Read the correlated exec, tool, network, file, and model timeline for a VM.',
     inputSchema: {
