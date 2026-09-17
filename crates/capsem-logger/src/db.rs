@@ -700,68 +700,6 @@ impl DbHandle {
             .as_ref()
             .map_or(0, |writer| writer.pending_body_bytes())
     }
-
-    /// Transitional blocking readiness bridge for legacy synchronous callers.
-    ///
-    /// New async route code should use `ready().await`. This method exists only
-    /// while service routes are being moved behind persistent async DB handles.
-    pub fn ready_blocking(&self) -> rusqlite::Result<()> {
-        match DbReader::open(&self.inner.path)
-            .and_then(|reader| reader.ready().map_err(rusqlite::Error::InvalidParameterName))
-        {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                tracing::error!(
-                    db_path = %self.inner.path.display(),
-                    operation = "ready_blocking",
-                    error = %error,
-                    "session db operation failed"
-                );
-                Err(error)
-            }
-        }
-    }
-
-    /// Transitional blocking query bridge for legacy synchronous callers.
-    ///
-    /// New async route code should use `query(sql, params).await`. This method
-    /// must not grow route-specific behavior or missing-schema compatibility.
-    pub fn query_raw_blocking(&self, sql: &str) -> Result<String, String> {
-        self.with_reader_string(|reader| reader.query_raw(sql))
-    }
-
-    /// Transitional blocking reader bridge for legacy typed reader methods.
-    ///
-    /// New route work should flow through `query`; future sprint items burn
-    /// this bridge as handles move into service session state.
-    pub fn with_reader_blocking<T>(&self, f: impl FnOnce(&DbReader) -> rusqlite::Result<T>) -> rusqlite::Result<T> {
-        let reader = match DbReader::open(&self.inner.path) {
-            Ok(reader) => reader,
-            Err(error) => {
-                tracing::error!(
-                    db_path = %self.inner.path.display(),
-                    operation = "open_reader_blocking",
-                    error = %error,
-                    "session db operation failed"
-                );
-                return Err(error);
-            }
-        };
-        f(&reader)
-    }
-
-    fn with_reader_string<T>(&self, f: impl FnOnce(&DbReader) -> Result<T, String>) -> Result<T, String> {
-        let reader = DbReader::open(&self.inner.path).map_err(|error| {
-            tracing::error!(
-                db_path = %self.inner.path.display(),
-                operation = "open_reader_blocking",
-                error = %error,
-                "session db operation failed"
-            );
-            error.to_string()
-        })?;
-        f(&reader)
-    }
 }
 
 impl SessionDb {

@@ -1789,10 +1789,11 @@ async fn db_boundary_route_contract_stats_routes_do_not_return_empty_on_broken_s
 fn logged_data_routes_do_not_bypass_logger_db_boundary() {
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
         .expect("service source must be readable");
+    // The three `*_blocking` bridges are gone from `DbHandle` entirely, so
+    // there is nothing here for main.rs to call; that rule now lives in
+    // tests/citadel/test_ledger_no_blocking_bridges.py, which guards the
+    // definitions rather than one caller's source text.
     let forbidden = [
-        "ready_blocking(",
-        "query_raw_blocking(",
-        "with_reader_blocking(",
         "DbReader::open(",
         "SessionIndex::open(",
         "SessionDb::new(",
