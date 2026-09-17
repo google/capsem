@@ -55,6 +55,9 @@ export class FacadeGateway {
         id: body.access === 'http_preview' ? 'preview-id' : '49152',
         host_port: body.access === 'http_preview' ? null : body.host_port || 49152};
     }
+    if (operation.operationId === 'createVmPreviewSession') {
+      value = {...value as object, bootstrap_token: 'bootstrap-secret'};
+    }
     if (operation.operationId === 'getVmContainer') {
       const state = this.containerStates.length > 1 ? this.containerStates.shift() : this.containerStates[0];
       value = {...value as object, image: 'docker://busybox:latest', state: state ?? 'running'};

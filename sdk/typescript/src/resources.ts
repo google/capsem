@@ -59,7 +59,8 @@ export interface Port {
   host: number | null;
   authenticate: boolean;
   url?: string;
-  bootstrapToken?: string;
+  /** Non-enumerable: never serialized or printed with the port. */
+  readonly bootstrapToken?: string;
   expiresInSeconds?: number;
 }
 
@@ -97,8 +98,11 @@ export class Ports extends Resource {
       await api.deleteVmExposure(transport, {id, exposure_id: exposure.id}).catch(() => undefined);
       throw error;
     }
-    return {...opened, host: null, url: session.url, bootstrapToken: session.bootstrap_token,
-      expiresInSeconds: session.expires_in_seconds};
+    const authenticated: Port = {...opened, host: null, url: session.url, expiresInSeconds: session.expires_in_seconds};
+    // The token opens a browser session on the workload: readable, but not
+    // enumerable, so JSON.stringify, console.log and spreads never carry it.
+    Object.defineProperty(authenticated, 'bootstrapToken', {value: session.bootstrap_token, enumerable: false});
+    return authenticated;
   }
   async list(options: CallOptions = {}): Promise<Port[]> {
     const {transport, id} = await this.context(options);

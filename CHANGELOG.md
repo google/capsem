@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The Rust, Python and TypeScript SDKs no longer print a preview port's
+  bootstrap token: Rust `Debug` and Python `repr` show `<redacted>`, and the
+  TypeScript `bootstrapToken` is non-enumerable, so logging or serializing a
+  `Port` omits it. `capsem_port_open` still returns it to the calling agent.
+
 - `capsem-mcp` no longer accepts the gateway bearer token on the command line,
   where any local process could read it from the process list. It reads
   `CAPSEM_GATEWAY_TOKEN` or `--token-file <path>`; `--token` is refused.
