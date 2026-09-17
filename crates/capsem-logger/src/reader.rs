@@ -12,7 +12,15 @@ use crate::events::{
     SecurityAskStatus, SecurityDetectionLevel, SecurityRuleAction, SecurityRuleMatch, ToolCallEntry, ToolResponseEntry,
 };
 use crate::schema;
+mod columns;
 mod file_events;
+
+#[cfg(test)]
+pub(crate) use columns::reader_select_columns;
+use columns::{
+    model_call_columns, AUDIT_EVENT_COLUMNS, AUDIT_HISTORY_COLUMNS, EXEC_EVENT_COLUMNS, EXEC_HISTORY_COLUMNS,
+    NET_EVENT_COLUMNS, TOOL_CALL_COLUMNS, TOOL_RESPONSE_COLUMNS,
+};
 mod open;
 mod schema_sync;
 
@@ -275,21 +283,6 @@ pub struct BrokeredCredentialStat {
     pub last_seen: Option<String>,
 }
 
-/// The net_events column list, in the order `NetEvent` is read from.
-///
-/// `credential_ref` and `event_id` used to be selected through
-/// `optional_column_expr`, which substituted `NULL AS credential_ref` on a
-/// ledger that lacked the column: an older file then read as a current one in
-/// which nothing was ever brokered. Both are declared in `schema/ddl.rs` and
-/// selected outright, so a file that lacks one says so.
-const NET_EVENT_COLUMNS: &str = "timestamp, domain, port, decision, process_name, pid,
-     method, path, query, status_code,
-     bytes_sent, bytes_received, duration_ms, matched_rule,
-     request_headers, response_headers,
-     request_body_preview, response_body_preview, conn_type,
-     policy_mode, policy_action, policy_rule, policy_reason,
-     trace_id, credential_ref, event_id";
-
 /// Shared SQL column tail for model_calls SELECT queries after provider/protocol.
 const MODEL_CALL_COLUMNS_TAIL: &str = "model, process_name, pid,
      method, path, stream,
@@ -403,16 +396,6 @@ pub struct DbReader {
 }
 
 impl DbReader {
-    /// The model_calls column list, in the order `read_model_call_row` reads.
-    ///
-    /// Every column is required. `protocol`, `credential_ref` and `event_id`
-    /// used to go through `optional_column_expr`, which quietly substituted
-    /// `NULL AS protocol` on a ledger that lacked the column, so an older
-    /// file read as a current one with the fields blank.
-    fn model_call_columns(&self) -> String {
-        format!("id, timestamp, provider, protocol, {MODEL_CALL_COLUMNS_TAIL}, credential_ref, usage_details, event_id")
-    }
-
     /// Query the most recent N network events, ordered newest first.
     pub fn recent_net_events(&self, limit: usize) -> rusqlite::Result<Vec<NetEvent>> {
         let sql = format!(
@@ -466,7 +449,7 @@ impl DbReader {
     pub fn recent_model_calls(&self, limit: usize) -> rusqlite::Result<Vec<(i64, ModelCall)>> {
         let sql = format!(
             "SELECT {} FROM model_calls ORDER BY id DESC LIMIT ?1",
-            self.model_call_columns()
+            model_call_columns()
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![limit as i64], read_model_call_row)?;
@@ -658,10 +641,8 @@ impl DbReader {
 
     /// Get tool calls for a given model_call_id.
     pub fn tool_calls_for(&self, model_call_id: i64) -> rusqlite::Result<Vec<ToolCallEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT call_index, call_id, tool_name, arguments, origin, event_id
-             FROM tool_calls WHERE model_call_id = ?1 ORDER BY call_index",
-        )?;
+        let sql = format!("SELECT {TOOL_CALL_COLUMNS} FROM tool_calls WHERE model_call_id = ?1 ORDER BY call_index");
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![model_call_id], |row| {
             Ok(ToolCallEntry {
                 event_id: row.get(5)?,
@@ -678,10 +659,8 @@ impl DbReader {
 
     /// Get tool responses for a given model_call_id.
     pub fn tool_responses_for(&self, model_call_id: i64) -> rusqlite::Result<Vec<ToolResponseEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT call_id, content_preview, is_error, credential_ref, event_id
-             FROM tool_responses WHERE model_call_id = ?1",
-        )?;
+        let sql = format!("SELECT {TOOL_RESPONSE_COLUMNS} FROM tool_responses WHERE model_call_id = ?1");
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![model_call_id], |row| {
             Ok(ToolResponseEntry {
                 event_id: row.get(4)?,
@@ -923,7 +902,7 @@ impl DbReader {
                 OR stop_reason LIKE ?1
              ORDER BY id DESC
              LIMIT ?2",
-            self.model_call_columns()
+            model_call_columns()
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![pattern, limit as i64], read_model_call_row)?;
@@ -1117,7 +1096,7 @@ impl DbReader {
     pub fn trace_detail(&self, trace_id: &str) -> rusqlite::Result<TraceDetail> {
         let sql = format!(
             "SELECT {} FROM model_calls WHERE trace_id = ?1 ORDER BY id ASC",
-            self.model_call_columns()
+            model_call_columns()
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows: Vec<(i64, ModelCall)> = stmt
@@ -1326,24 +1305,17 @@ impl DbReader {
         if layer == "all" || layer == "exec" {
             if let Some(q) = search {
                 let pattern = format!("%{q}%");
-                let mut stmt = self.conn.prepare(
-                    "SELECT timestamp, exec_id, command, exit_code, duration_ms,
-                            stdout_preview, stderr_preview, source, trace_id,
-                            process_name
-                     FROM exec_events WHERE command LIKE ?1
-                     ORDER BY timestamp DESC",
-                )?;
+                let sql = format!(
+                    "SELECT {EXEC_HISTORY_COLUMNS} FROM exec_events WHERE command LIKE ?1 ORDER BY timestamp DESC"
+                );
+                let mut stmt = self.conn.prepare(&sql)?;
                 let rows = stmt.query_map(params![pattern], read_exec_history_row)?;
                 for r in rows {
                     entries.push(r?);
                 }
             } else {
-                let mut stmt = self.conn.prepare(
-                    "SELECT timestamp, exec_id, command, exit_code, duration_ms,
-                            stdout_preview, stderr_preview, source, trace_id,
-                            process_name
-                     FROM exec_events ORDER BY timestamp DESC",
-                )?;
+                let sql = format!("SELECT {EXEC_HISTORY_COLUMNS} FROM exec_events ORDER BY timestamp DESC");
+                let mut stmt = self.conn.prepare(&sql)?;
                 let rows = stmt.query_map([], read_exec_history_row)?;
                 for r in rows {
                     entries.push(r?);
@@ -1354,22 +1326,18 @@ impl DbReader {
         if layer == "all" || layer == "audit" {
             if let Some(q) = search {
                 let pattern = format!("%{q}%");
-                let mut stmt = self.conn.prepare(
-                    "SELECT timestamp, pid, ppid, uid, exe, comm, argv, cwd,
-                            tty, session_id, audit_id, parent_exe, exit_code
-                     FROM audit_events WHERE argv LIKE ?1 OR exe LIKE ?1
-                     ORDER BY timestamp DESC",
-                )?;
+                let sql = format!(
+                    "SELECT {AUDIT_HISTORY_COLUMNS} FROM audit_events \
+                     WHERE argv LIKE ?1 OR exe LIKE ?1 ORDER BY timestamp DESC"
+                );
+                let mut stmt = self.conn.prepare(&sql)?;
                 let rows = stmt.query_map(params![pattern], read_audit_history_row)?;
                 for r in rows {
                     entries.push(r?);
                 }
             } else {
-                let mut stmt = self.conn.prepare(
-                    "SELECT timestamp, pid, ppid, uid, exe, comm, argv, cwd,
-                            tty, session_id, audit_id, parent_exe, exit_code
-                     FROM audit_events ORDER BY timestamp DESC",
-                )?;
+                let sql = format!("SELECT {AUDIT_HISTORY_COLUMNS} FROM audit_events ORDER BY timestamp DESC");
+                let mut stmt = self.conn.prepare(&sql)?;
                 let rows = stmt.query_map([], read_audit_history_row)?;
                 for r in rows {
                     entries.push(r?);
@@ -1408,11 +1376,8 @@ impl DbReader {
 
     /// Recent exec events (for Layer 1 queries).
     pub fn recent_exec_events(&self, limit: usize) -> rusqlite::Result<Vec<ExecEvent>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT timestamp, exec_id, command, source, trace_id, process_name,
-                    credential_ref, event_id
-             FROM exec_events ORDER BY timestamp DESC LIMIT ?1",
-        )?;
+        let sql = format!("SELECT {EXEC_EVENT_COLUMNS} FROM exec_events ORDER BY timestamp DESC LIMIT ?1");
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             let ts_str: String = row.get(0)?;
             let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
@@ -1432,12 +1397,8 @@ impl DbReader {
 
     /// Recent audit events (for Layer 3 queries).
     pub fn recent_audit_events(&self, limit: usize) -> rusqlite::Result<Vec<AuditEvent>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT timestamp, pid, ppid, uid, exe, comm, argv, cwd,
-                    tty, session_id, audit_id, exec_event_id, parent_exe,
-                    trace_id, credential_ref, event_id
-             FROM audit_events ORDER BY timestamp DESC LIMIT ?1",
-        )?;
+        let sql = format!("SELECT {AUDIT_EVENT_COLUMNS} FROM audit_events ORDER BY timestamp DESC LIMIT ?1");
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             let ts_str: String = row.get(0)?;
             let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);

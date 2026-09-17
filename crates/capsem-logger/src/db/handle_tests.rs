@@ -816,9 +816,13 @@ async fn db_handle_ready_rejects_broken_schema() {
         .ready()
         .await
         .expect_err("ready must reject missing route-critical columns");
+    // Which column it names is the gate's business -- it reports the first it
+    // finds missing, and the gate requires every column a reader selects. What
+    // this test holds is that it names the table and a column, rather than
+    // letting the route discover it as SQLite's `no such column`.
     assert!(
-        error.contains("net_events") && error.contains("event_id"),
-        "ready error should name the broken table and missing column: {error}. {DB_BOUNDARY_RATIONALE}"
+        error.contains("net_events") && error.contains("missing required column"),
+        "ready error should name the broken table and a missing column: {error}. {DB_BOUNDARY_RATIONALE}"
     );
 }
 

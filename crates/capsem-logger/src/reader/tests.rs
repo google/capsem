@@ -781,3 +781,50 @@ fn a_read_during_the_writers_open_batch_neither_fails_nor_waits() {
     );
     drop(handle);
 }
+
+/// The readiness gate knows every column a reader selects.
+///
+/// `ready()` is where a ledger an older build wrote is supposed to be caught,
+/// by name, before a route runs against it. That only works if
+/// `READY_SCHEMA_COLUMNS` demands everything a SELECT will ask for. A column
+/// the reader reads and the gate does not require still fails -- SQLite says
+/// "no such column" -- but it fails partway through a route, in SQLite's
+/// vocabulary, on a file readiness has already called healthy.
+///
+/// Rather than top the list up by hand whenever that happens, this walks every
+/// column list the reads are built from and names anything the gate is missing.
+/// Adding a column to a SELECT is then a failing test here, which is the
+/// cheapest place for it to fail.
+#[test]
+fn reader_select_columns_are_required_by_the_readiness_gate() {
+    let required: std::collections::BTreeMap<&str, std::collections::BTreeSet<&str>> =
+        crate::schema::REQUIRED_COLUMNS_FOR_TESTS
+            .iter()
+            .map(|(table, columns)| (*table, columns.iter().copied().collect()))
+            .collect();
+
+    let mut missing: Vec<String> = Vec::new();
+    for (table, list) in crate::reader::reader_select_columns() {
+        let gate = required
+            .get(table)
+            .unwrap_or_else(|| panic!("{table} is selected from but is not in READY_SCHEMA_COLUMNS at all"));
+        for column in list.split(',').map(str::trim).filter(|c| !c.is_empty()) {
+            assert!(
+                !column.contains(' '),
+                "{table}: `{column}` is an expression, not a column; the gate cannot require it"
+            );
+            if !gate.contains(column) {
+                missing.push(format!("{table}.{column}"));
+            }
+        }
+    }
+    missing.sort();
+    missing.dedup();
+    assert!(
+        missing.is_empty(),
+        "these columns are selected by a reader but not required by READY_SCHEMA_COLUMNS, \
+         so a ledger without them fails mid-route as SQLite's `no such column` instead of \
+         loudly at ready(). Add them to crates/capsem-logger/src/schema/columns.rs:\n  {}",
+        missing.join("\n  ")
+    );
+}

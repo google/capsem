@@ -507,14 +507,23 @@ async fn test_a_legacy_fs_events_shape_fails_readiness_by_name() {
     {
         let conn = rusqlite::Connection::open(&path).unwrap();
         capsem_logger::schema::create_tables(&conn).unwrap();
+        // The current table minus exactly one column, so the failure has only
+        // one thing it can name. `kind` is the one an fs_events written before
+        // the file/dir/symlink distinction lacks.
         conn.execute_batch(
             "DROP TABLE fs_events;
              CREATE TABLE fs_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))),
                 timestamp TEXT NOT NULL,
                 action TEXT NOT NULL,
                 path TEXT NOT NULL,
-                size INTEGER
+                directory TEXT,
+                name TEXT,
+                size INTEGER,
+                trace_id TEXT,
+                turn_id TEXT,
+                credential_ref TEXT
              );",
         )
         .unwrap();
@@ -525,8 +534,8 @@ async fn test_a_legacy_fs_events_shape_fails_readiness_by_name() {
         .ready()
         .expect_err("a pre-kind fs_events must not read as a current ledger");
     assert!(
-        error.contains("fs_events"),
-        "readiness must name the table an older build wrote: {error}"
+        error.contains("fs_events") && error.contains("kind"),
+        "readiness must name the table and the column an older build lacked: {error}"
     );
 }
 

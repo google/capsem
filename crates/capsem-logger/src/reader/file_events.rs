@@ -16,7 +16,7 @@ use super::*;
 /// one with nothing to correlate, instead of failing. `schema/ddl.rs`
 /// declares them, so a file that lacks one is broken schema and SQLite says
 /// so by name.
-const FILE_EVENT_COLUMNS: &str = "timestamp, action, path, size, trace_id, credential_ref, event_id, kind";
+pub(super) const FILE_EVENT_COLUMNS: &str = "timestamp, action, path, size, trace_id, credential_ref, event_id, kind";
 
 impl DbReader {
     /// Query the most recent N file events, ordered newest first.
