@@ -226,7 +226,7 @@ async fn model_items_request_dedup_hashes_full_body_not_capped_preview() {
 
     let conn = rusqlite::Connection::open(&path).unwrap();
     let request_items: Vec<(String, String)> = conn
-        .prepare("SELECT content, content_hash FROM model_items WHERE trace_id = 'trace-hash-full-body' AND kind = 'request' ORDER BY item_index")
+        .prepare("SELECT content, content_hash FROM model_items WHERE trace_id = 'trace-hash-full-body' AND kind = 'request' ORDER BY id")
         .unwrap()
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
         .unwrap()
