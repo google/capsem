@@ -44,13 +44,45 @@ def _assert_owners(fast: dict[str, Any], ci: dict[str, Any], coverage: dict[str,
     components = coverage["component_management"]["individual_components"]
     component = next(item for item in components if item["component_id"] == "python-sdk")
     assert component["paths"] == ["sdk/python/capsem/**"], RATIONALE
+    _assert_mcp_owner(fast, ci, coverage)
+
+
+MCP = "mcp/typescript"
+MCP_LCOV = "cache/target/coverage/mcp-typescript/lcov.info"
+
+
+def _assert_mcp_owner(fast: dict[str, Any], ci: dict[str, Any], coverage: dict[str, Any]) -> None:
+    """The npm MCP server is installed before the sealed fast gate and has a
+    CI job whose coverage reaches its Codecov component."""
+    steps = fast["jobs"]["static"]["steps"]
+    node = next(step for step in steps if step.get("uses", "").startswith("actions/setup-node@"))
+    assert f"{MCP}/pnpm-lock.yaml" in node["with"]["cache-dependency-path"].split(), RATIONALE
+    prewarm = next(step["run"] for step in steps if "pnpm --dir" in step.get("run", ""))
+    loop = next(line for line in prewarm.splitlines() if line.strip().startswith("for workspace in"))
+    assert MCP in loop.replace(";", " ").split(), RATIONALE
+    steps = ci["jobs"]["test"]["steps"]
+    sdk = next(index for index, step in enumerate(steps) if step.get("working-directory") == "sdk/typescript")
+    mcp = next(index for index, step in enumerate(steps) if step.get("working-directory") == MCP)
+    assert sdk < mcp, "the MCP build links the SDK package the SDK step builds; " + RATIONALE
+    assert "pnpm test " in steps[mcp]["run"], RATIONALE
+    upload = next(step for step in steps if step.get("with", {}).get("flags") == "mcp-server")
+    assert upload["with"]["files"] == MCP_LCOV, RATIONALE
+    vitest = (ROOT / MCP / "vitest.config.ts").read_text()
+    assert "'lcov'" in vitest and "reportsDirectory: '../../cache/target/coverage/mcp-typescript'" in vitest, RATIONALE
+    assert coverage["flags"]["mcp-server"]["paths"] == [f"{MCP}/src/**"], RATIONALE
+    components = coverage["component_management"]["individual_components"]
+    component = next(item for item in components if item["component_id"] == "mcp-server")
+    assert component["paths"] == [f"{MCP}/src/**"], RATIONALE
 
 
 def test_sdk_ci_owns_cold_install_tests_and_complete_coverage() -> None:
     _assert_owners(*_documents())
 
 
-@pytest.mark.parametrize("mutation", ["prewarm", "late_prewarm", "tests", "upload", "generated", "floor"])
+@pytest.mark.parametrize("mutation", [
+    "prewarm", "late_prewarm", "tests", "upload", "generated", "floor",
+    "mcp_cache", "mcp_prewarm", "mcp_tests", "mcp_upload", "mcp_flag",
+])
 def test_removing_ci_ownership_is_rejected(mutation: str) -> None:
     fast, ci, coverage = deepcopy(_documents())
     match mutation:
@@ -67,5 +99,19 @@ def test_removing_ci_ownership_is_rejected(mutation: str) -> None:
             coverage["flags"]["python-sdk"]["paths"] = ["sdk/python/capsem/client.py"]
         case "floor":
             coverage["coverage"]["status"]["project"]["python-sdk"]["target"] = "0%"
-    with pytest.raises((AssertionError, StopIteration)):
+        case "mcp_cache":
+            for step in fast["jobs"]["static"]["steps"]:
+                if "cache-dependency-path" in step.get("with", {}):
+                    step["with"]["cache-dependency-path"] = step["with"]["cache-dependency-path"].replace(
+                        "mcp/typescript/pnpm-lock.yaml", "")
+        case "mcp_prewarm":
+            for step in fast["jobs"]["static"]["steps"]:
+                step["run"] = step.get("run", "").replace(" mcp/typescript;", ";")
+        case "mcp_tests":
+            ci["jobs"]["test"]["steps"] = [step for step in ci["jobs"]["test"]["steps"] if step.get("working-directory") != "mcp/typescript"]
+        case "mcp_upload":
+            ci["jobs"]["test"]["steps"] = [step for step in ci["jobs"]["test"]["steps"] if step.get("with", {}).get("flags") != "mcp-server"]
+        case "mcp_flag":
+            del coverage["flags"]["mcp-server"]
+    with pytest.raises((AssertionError, StopIteration, KeyError)):
         _assert_owners(fast, ci, coverage)

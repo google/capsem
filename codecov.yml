@@ -50,6 +50,10 @@ flags:
     paths:
       - sdk/python/capsem/**
     carryforward: true
+  mcp-server:
+    paths:
+      - mcp/typescript/src/**
+    carryforward: true
   unit:
     paths:
       - crates/**

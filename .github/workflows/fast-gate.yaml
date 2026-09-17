@@ -48,6 +48,7 @@ jobs:
             web/marketing/pnpm-lock.yaml
             build_system/release_site/pnpm-lock.yaml
             sdk/typescript/pnpm-lock.yaml
+            mcp/typescript/pnpm-lock.yaml
 
       - name: Install Linux workspace lint prerequisites
         run: sudo python3 build_system/scripts/bootstrap/provision-linux-workspace.py --install apt
@@ -73,7 +74,7 @@ jobs:
           uv sync --project build_system --frozen
           python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project sdk/python --frozen --no-install-project
           cargo fetch --locked
-          for workspace in web/app web/docs web/marketing build_system/release_site sdk/typescript; do
+          for workspace in web/app web/docs web/marketing build_system/release_site sdk/typescript mcp/typescript; do
             pnpm --dir "$workspace" install --frozen-lockfile
           done
 

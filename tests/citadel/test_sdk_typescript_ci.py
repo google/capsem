@@ -11,7 +11,8 @@ from citadel.test_sdk_ci import RATIONALE, _documents
 def _assert_owners(fast: dict, ci: dict, coverage: dict) -> None:
     steps = fast["jobs"]["static"]["steps"]
     prewarm = next(index for index, step in enumerate(steps)
-                   if "build_system/release_site sdk/typescript; do" in step.get("run", ""))
+                   if "sdk/typescript" in step.get("run", "").replace(";", " ").split()
+                   and "for workspace in" in step.get("run", ""))
     sealed = next(index for index, step in enumerate(steps) if step.get("run") == "just fast-test")
     assert prewarm < sealed, RATIONALE
     steps = ci["jobs"]["test"]["steps"]
@@ -40,7 +41,7 @@ def test_removing_typescript_ci_ownership_is_rejected(mutation: str) -> None:
     match mutation:
         case "prewarm":
             for step in fast["jobs"]["static"]["steps"]:
-                step["run"] = step.get("run", "").replace(" sdk/typescript; do", "; do")
+                step["run"] = step.get("run", "").replace(" sdk/typescript ", " ")
         case "late":
             fast["jobs"]["static"]["steps"].reverse()
         case "tests":

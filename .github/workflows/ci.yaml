@@ -314,6 +314,13 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm test --reporter=default --reporter=junit --outputFile=../../cache/target/coverage/junit/typescript-sdk.xml
 
+      # Builds against the SDK package the step above just built.
+      - name: MCP server tests with coverage
+        working-directory: mcp/typescript
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test --reporter=default --reporter=junit --outputFile=../../cache/target/coverage/junit/mcp-typescript.xml
+
       - name: Cross-system Python schema tests with coverage
         run: >-
           uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml --rootdir .
@@ -387,6 +394,15 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+      - name: Upload MCP server coverage
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
+        with:
+          files: cache/target/coverage/mcp-typescript/lcov.info
+          flags: mcp-server
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
       - name: Upload Python SDK coverage
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
@@ -437,7 +453,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
         with:
-          files: cache/target/coverage/nextest/ci-unit/junit.xml,cache/target/coverage/nextest/ci-integration/junit.xml,cache/target/coverage/junit/frontend.xml,cache/target/coverage/junit/python-cross-system.xml,cache/target/coverage/junit/python-build-system.xml,cache/target/coverage/junit/python-sdk.xml,cache/target/coverage/junit/typescript-sdk.xml
+          files: cache/target/coverage/nextest/ci-unit/junit.xml,cache/target/coverage/nextest/ci-integration/junit.xml,cache/target/coverage/junit/frontend.xml,cache/target/coverage/junit/python-cross-system.xml,cache/target/coverage/junit/python-build-system.xml,cache/target/coverage/junit/python-sdk.xml,cache/target/coverage/junit/typescript-sdk.xml,cache/target/coverage/junit/mcp-typescript.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
