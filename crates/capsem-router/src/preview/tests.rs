@@ -39,6 +39,34 @@ fn workload_cookies_survive_but_the_reserved_session_cookie_does_not() {
     assert_eq!(values, ["app_session=guest; HttpOnly"]);
 }
 
+/// A workload's own cookie may carry raw UTF-8 bytes, which hyper accepts.
+/// Filtering on `to_str` dropped the whole header and logged the user out.
+#[test]
+fn a_non_ascii_workload_cookie_survives_both_directions() {
+    let mut headers = hyper::HeaderMap::new();
+    let raw = "name=caf\u{e9}; capsem_preview=owner-secret; theme=dark";
+    headers.insert(COOKIE, hyper::header::HeaderValue::from_bytes(raw.as_bytes()).unwrap());
+    strip_control_headers(&mut headers);
+    assert_eq!(
+        headers.get(COOKIE).unwrap().as_bytes(),
+        "name=caf\u{e9}; theme=dark".as_bytes()
+    );
+
+    let mut headers = hyper::HeaderMap::new();
+    headers.append(
+        SET_COOKIE,
+        hyper::header::HeaderValue::from_bytes("session=caf\u{e9}; HttpOnly".as_bytes()).unwrap(),
+    );
+    headers.append(SET_COOKIE, "capsem_preview=forged; Path=/".parse().unwrap());
+    strip_control_set_cookies(&mut headers);
+    let values: Vec<&[u8]> = headers
+        .get_all(SET_COOKIE)
+        .iter()
+        .map(|value| value.as_bytes())
+        .collect();
+    assert_eq!(values, ["session=caf\u{e9}; HttpOnly".as_bytes()]);
+}
+
 async fn read_framed_http(stream: &mut UnixStream) -> Vec<u8> {
     let mut request = Vec::new();
     loop {
