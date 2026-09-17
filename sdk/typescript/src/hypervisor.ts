@@ -1,5 +1,6 @@
 import {Client} from './client.js';
 import {Debug} from './debug.js';
+import {commandDeadlineMs} from './execution.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
 import type {CreateOptions, HostLogOptions, RunOptions, VmSelector} from './options.js';
@@ -68,7 +69,7 @@ export class Hypervisor extends Client {
     return api.runVm(this.transport, {body: {
       command, profile_id: options.profile?.id ?? 'code', timeout_secs: options.timeout_secs ?? null,
       cpus: options.cpus ?? null, ram_mb: memoryMb(options.memory), env: options.env ?? null,
-    }}, options);
+    }}, {...options, timeoutMs: options.timeoutMs ?? commandDeadlineMs(this.transport.timeoutMs, options.timeout_secs)});
   }
   async purge(options: CallOptions & {all?: boolean} = {}): Promise<models.PurgeResponse> {
     return api.purgeVms(this.transport, {body: {all: options.all ?? false}}, options);

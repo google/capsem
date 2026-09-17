@@ -1,4 +1,5 @@
 import {Client} from './client.js';
+import {commandDeadlineMs} from './execution.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
 import type {HistoryOptions, LogOptions, TimelineOptions, VmSelector} from './options.js';
@@ -78,7 +79,9 @@ export class VM extends Client {
   }
   async exec(command: string, options: CallOptions & {timeout_secs?: number} = {}): Promise<models.ExecResponse> {
     const {transport, id} = await this.context(options);
-    return api.execVm(transport, {id, body: {command, timeout_secs: options.timeout_secs ?? null}}, options);
+    return api.execVm(transport, {id, body: {command, timeout_secs: options.timeout_secs ?? null}}, {
+      ...options, timeoutMs: options.timeoutMs ?? commandDeadlineMs(transport.timeoutMs, options.timeout_secs),
+    });
   }
   async start(options: CallOptions = {}): Promise<models.ProvisionResponse> {
     const {transport, id} = await this.context(options);
