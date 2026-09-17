@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The npm MCP now keeps panic and triage diagnostics behind the SDK `debug`
+  namespace and exposes the reviewed container, file-history, and port tools.
+
 - The npm MCP now propagates client cancellation through every SDK-backed
   lifecycle, file, diagnostic, network, profile, container, and port request.
 

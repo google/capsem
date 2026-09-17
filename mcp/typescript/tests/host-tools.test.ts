@@ -81,7 +81,7 @@ describe('host-tools', () => {
         return json(response, {success: true, size: record.body.byteLength});
       }
       if (path === '/host-logs/service') return json(response, {source: 'service', text: 'ready'});
-      if (path === '/panics') return json(response, {error: 'must-not-leak gateway-secret'}, 403);
+      if (path === '/host-logs/mcp') return json(response, {error: 'must-not-leak gateway-secret'}, 403);
       const fixtures: Record<string, object> = {
         'POST /vms/vm-1/start': provision,
         'POST /vms/vm-1/stop': {persistent: false, success: true},
@@ -261,7 +261,7 @@ describe('host-tools', () => {
   it('uses the consolidated host log route and redacts gateway error bodies', async () => {
     expect(structured(await client.callTool({name: 'capsem_host_logs', arguments: {}})))
       .toEqual({source: 'service', text: 'ready'});
-    const denied = await client.callTool({name: 'capsem_panics', arguments: {}});
+    const denied = await client.callTool({name: 'capsem_host_logs', arguments: {source: 'mcp'}});
     expect(denied.isError).toBe(true);
     expect(JSON.stringify(denied)).toContain('HTTP 403');
     expect(JSON.stringify(denied)).not.toContain('gateway-secret');
@@ -281,7 +281,6 @@ describe('host-tools', () => {
       {name: 'capsem_purge', arguments: {all: true}},
       {name: 'capsem_list_files', arguments: {vm_id: 'vm-1', path: '/workspace', depth: 2}},
       {name: 'capsem_vm_logs', arguments: {vm_id: 'vm-1', grep: 'boot', tail: 3}},
-      {name: 'capsem_triage', arguments: {vm_id: 'vm-1', since: '5m', limit: 2}},
       {name: 'capsem_timeline', arguments: {vm_id: 'vm-1', layers: ['exec', 'net'], limit: 5}},
       {name: 'capsem_history', arguments: {vm_id: 'vm-1', limit: 5, offset: 0, search: 'cargo'}},
       {name: 'capsem_stats', arguments: {vm_id: 'vm-1'}},

@@ -80,7 +80,7 @@ describe('packed-package', () => {
         response.setHeader('content-type', 'application/json');
         return response.end(JSON.stringify({networks: []}));
       }
-      if (path === '/panics') return response.writeHead(403).end('private-denial-detail');
+      if (path === '/host-logs/mcp') return response.writeHead(403).end('private-denial-detail');
       if (path === '/status') {
         slowRequestStarted?.();
         request.on('close', () => slowRequestClosed?.());
@@ -112,7 +112,7 @@ describe('packed-package', () => {
     expect(two.structuredContent).toEqual({networks: []});
     expect(new Set(authorizations.slice(0, 2))).toEqual(new Set(['Bearer token-a', 'Bearer token-b']));
 
-    const denied = await first.client.callTool({name: 'capsem_panics', arguments: {}});
+    const denied = await first.client.callTool({name: 'capsem_host_logs', arguments: {source: 'mcp'}});
     expect(denied.isError).toBe(true);
     expect(denied.structuredContent).toEqual({error: {kind: 'http', status: 403}});
     expect(JSON.stringify(denied)).not.toContain('private-denial-detail');
