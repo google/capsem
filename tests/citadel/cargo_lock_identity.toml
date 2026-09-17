@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "a811a18506bfd7fce37aff1cd4a28e3ce57d7d9ec9a7527442e272843bfcc858"
-reason = "rustls 0.23.40 -> 0.23.45 for RUSTSEC-2026-0285 (TLS 1.3 handshake messages accepted across encryption levels), which pulls rustls-webpki 0.103.15 and aws-lc-rs 1.18.1 / aws-lc-sys 0.45.0; host TLS only, no guest crate links aws-lc"
+sha256 = "c8554ed79deacda3a219536d7c517eda9d6297b3b0be8fdbe66bd2052373cce8"
+reason = "new workspace member capsem-archive, the block-compressed body log for session ledgers; it resolves entirely to packages the lock already carried (blake3, capsem-foundation, miniz_oxide, thiserror, tempfile), so the entry is one [[package]] block and no third-party version moved. miniz_oxide is added as a workspace dependency for it: pure-Rust deflate, because tests/citadel/test_runtime_native_dependencies.py refuses a native codec in front of attacker-influenced ledger bytes"

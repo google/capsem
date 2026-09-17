@@ -765,6 +765,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-archive"
+version = "0.6.3"
+dependencies = [
+ "blake3",
+ "capsem-foundation",
+ "miniz_oxide",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "capsem-assets"
 version = "0.6.3"
 dependencies = [

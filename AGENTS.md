@@ -35,6 +35,7 @@ See `/dev-just` for the full recipe reference and dependency chains.
 
 ```
 crates/capsem-foundation/      Low-level paths, UDS, logging, polling, and IPC handshake
+crates/capsem-archive/  Block-compressed body archive for session ledgers (pure Rust)
 crates/capsem-assets/          Asset manifest compatibility, resolution, download, and verification
 crates/capsem-config/          Product config types, parsing, validation, and provider/MCP identity
 crates/capsem-credentials/     Credential provider contracts and durable credential store

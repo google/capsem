@@ -34,19 +34,56 @@ fn bytes_for_blocks<T: Into<u64>>(blocks: T, block_size: u64) -> u64 {
     blocks.into().saturating_mul(block_size)
 }
 
-/// Read a regular file without following a link or blocking on a special file.
-pub fn read_regular_file_no_follow(path: &Path) -> io::Result<Vec<u8>> {
-    let mut file = OpenOptions::new()
+/// Open a regular file for reading without following a link or blocking on a
+/// special file.
+///
+/// The handle is for callers that seek and read spans rather than slurping the
+/// file: reading it whole is `read_regular_file_no_follow`, which is this plus
+/// a `read_to_end`.
+pub fn open_regular_file_no_follow(path: &Path) -> io::Result<File> {
+    let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
         .map_err(|error| context(error, "open regular file without following links", path))?;
-    if !file.metadata()?.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{} is not a regular file", path.display()),
-        ));
+    require_regular_file(&file, path)?;
+    Ok(file)
+}
+
+/// Open an owner-only regular file for appending, creating it if absent,
+/// without following a link.
+///
+/// The handle reads and seeks as well as appends: append-mode writes go to the
+/// end whatever the read cursor is doing, which is what an append-only log
+/// wants. A file created here is 0o600, and an existing one is opened only if
+/// it is a regular file -- a symlink or a device planted at the path is
+/// refused rather than written through.
+pub fn open_private_append_no_follow(path: &Path) -> io::Result<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .append(true)
+        .create(true)
+        .mode(PRIVATE_FILE_MODE)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| context(error, "open private append-only file", path))?;
+    require_regular_file(&file, path)?;
+    Ok(file)
+}
+
+fn require_regular_file(file: &File, path: &Path) -> io::Result<()> {
+    if file.metadata()?.is_file() {
+        return Ok(());
     }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("{} is not a regular file", path.display()),
+    ))
+}
+
+/// Read a regular file without following a link or blocking on a special file.
+pub fn read_regular_file_no_follow(path: &Path) -> io::Result<Vec<u8>> {
+    let mut file = open_regular_file_no_follow(path)?;
     let mut contents = Vec::new();
     file.read_to_end(&mut contents)
         .map_err(|error| context(error, "read regular file", path))?;

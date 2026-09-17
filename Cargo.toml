@@ -5,6 +5,7 @@ members = [
     "crates/capsem-config",
     "crates/capsem-credentials",
     "crates/capsem-foundation",
+    "crates/capsem-archive",
     "crates/capsem-proto",
     "crates/capsem-core",
     "crates/capsem-app",
@@ -62,6 +63,9 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.hickory-proto]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
 opt-level = 3
 
 [profile.dev.package.memchr]
@@ -155,6 +159,11 @@ large_futures = "deny"
 anyhow = "1"
 socket2 = "0.6"
 thiserror = "2"
+# Pure-Rust deflate for the session body archive. The runtime ships exactly
+# one C library (SQLite via bundled rusqlite); a native codec in front of
+# attacker-influenced ledger bytes is refused by
+# `tests/citadel/test_runtime_native_dependencies.py`.
+miniz_oxide = "0.8"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

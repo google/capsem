@@ -2,8 +2,8 @@ use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::sync::{Arc, Barrier};
 
 use super::{
-    atomic_write_private, ensure_private_dir, filesystem_space, read_regular_file_no_follow,
-    write_new_regular_file_no_follow,
+    atomic_write_private, ensure_private_dir, filesystem_space, open_private_append_no_follow,
+    open_regular_file_no_follow, read_regular_file_no_follow, write_new_regular_file_no_follow,
 };
 
 #[test]
@@ -115,4 +115,77 @@ fn new_regular_file_is_complete_and_uses_requested_mode() {
         std::fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777,
         0o640
     );
+}
+
+#[test]
+fn private_append_open_creates_an_owner_only_file() {
+    use std::io::Write;
+
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("append.log");
+    let mut file = open_private_append_no_follow(&path).unwrap();
+    file.write_all(b"first").unwrap();
+    drop(file);
+
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+
+    let mut reopened = open_private_append_no_follow(&path).unwrap();
+    reopened.write_all(b" second").unwrap();
+    drop(reopened);
+    assert_eq!(std::fs::read(&path).unwrap(), b"first second");
+}
+
+/// The whole reason an append-only log can also read itself: the write cursor
+/// is the end of the file, not wherever the last read left off.
+#[test]
+fn private_append_open_writes_at_the_end_whatever_the_read_cursor_does() {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("append.log");
+    std::fs::write(&path, b"already here").unwrap();
+
+    let mut file = open_private_append_no_follow(&path).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+    let mut head = [0u8; 7];
+    file.read_exact(&mut head).unwrap();
+    assert_eq!(&head, b"already");
+    file.write_all(b", and more").unwrap();
+    drop(file);
+
+    assert_eq!(std::fs::read(&path).unwrap(), b"already here, and more");
+}
+
+#[test]
+fn private_append_open_refuses_a_symlink_and_a_fifo() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("target");
+    std::fs::write(&target, b"someone else's file").unwrap();
+    let link = root.path().join("link");
+    symlink(&target, &link).unwrap();
+
+    assert!(open_private_append_no_follow(&link).is_err());
+    assert_eq!(
+        std::fs::read(&target).unwrap(),
+        b"someone else's file",
+        "the link's target is never written through"
+    );
+
+    let fifo = root.path().join("fifo");
+    nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::from_bits_truncate(0o600)).unwrap();
+    let error = open_private_append_no_follow(&fifo).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[test]
+fn regular_file_open_refuses_a_symlink_and_a_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("target");
+    std::fs::write(&target, b"bytes").unwrap();
+    let link = root.path().join("link");
+    symlink(&target, &link).unwrap();
+
+    assert!(open_regular_file_no_follow(&link).is_err());
+    assert!(open_regular_file_no_follow(root.path()).is_err());
+    assert!(open_regular_file_no_follow(&target).is_ok());
 }
