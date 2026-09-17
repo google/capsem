@@ -76,6 +76,18 @@ pub const SESSION_SCHEMA: &str = "
     );
 ";
 
+/// An overflow marker is not a file event; it says some went unrecorded.
+const FILE_EVENT_COUNT: &str = "SELECT COUNT(*) FROM fs_events WHERE action != 'overflow'";
+
+/// Sessions that are over but not yet terminated, and not persistent.
+const ACTIVE_SESSIONS: &str =
+    "SELECT COUNT(*) FROM sessions WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0";
+
+/// One count. A missing table is a schema violation and bubbles up, not a zero.
+fn count_rows(conn: &Connection, sql: &str) -> rusqlite::Result<i64> {
+    conn.query_row(sql, [], |row| row.get(0))
+}
+
 pub fn ensure_session_index_schema(path: &Path) -> rusqlite::Result<()> {
     SessionIndex::open(path).map(|_| ())
 }
@@ -402,12 +414,7 @@ impl SessionIndex {
         max: usize,
         min_content_keep: usize,
     ) -> rusqlite::Result<usize> {
-        // Count non-terminated, non-running sessions.
-        let active_count: usize = self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0",
-            [],
-            |row| row.get(0),
-        )?;
+        let active_count = count_rows(&self.conn, ACTIVE_SESSIONS)? as usize;
 
         if active_count <= max {
             return Ok(0);
@@ -427,11 +434,7 @@ impl SessionIndex {
         )?;
 
         // Check if we're still over the cap after removing empty sessions.
-        let still_active: usize = self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0",
-            [],
-            |row| row.get(0),
-        )?;
+        let still_active = count_rows(&self.conn, ACTIVE_SESSIONS)? as usize;
 
         if still_active <= max {
             return Ok(empty_count);
@@ -531,9 +534,7 @@ impl SessionIndex {
 
     /// Total count of sessions.
     pub fn count(&self) -> rusqlite::Result<usize> {
-        self.conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| {
-            row.get::<_, i64>(0).map(|n| n as usize)
-        })
+        count_rows(&self.conn, "SELECT COUNT(*) FROM sessions").map(|n| n as usize)
     }
 
     // -- Cross-session aggregation reads ------------------------------------
@@ -804,11 +805,10 @@ impl SessionIndex {
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
-        let total_tool_calls: i64 = session_conn.query_row("SELECT COUNT(*) FROM tool_calls", [], |row| row.get(0))?;
-        let total_file_events: i64 = session_conn.query_row("SELECT COUNT(*) FROM fs_events", [], |row| row.get(0))?;
-        let exec_count: i64 = session_conn.query_row("SELECT COUNT(*) FROM exec_events", [], |row| row.get(0))?;
-        let audit_event_count: i64 =
-            session_conn.query_row("SELECT COUNT(*) FROM audit_events", [], |row| row.get(0))?;
+        let total_tool_calls = count_rows(&session_conn, "SELECT COUNT(*) FROM tool_calls")?;
+        let total_file_events = count_rows(&session_conn, FILE_EVENT_COUNT)?;
+        let exec_count = count_rows(&session_conn, "SELECT COUNT(*) FROM exec_events")?;
+        let audit_event_count = count_rows(&session_conn, "SELECT COUNT(*) FROM audit_events")?;
 
         let updated = self.conn.execute(
             "UPDATE sessions SET

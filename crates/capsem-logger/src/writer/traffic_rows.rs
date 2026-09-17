@@ -114,15 +114,21 @@ pub(super) fn insert_file_event(conn: &Connection, event: &FileEvent, target: Wr
     Ok(())
 }
 
-fn split_event_path(path: &str) -> (String, String) {
+/// Split a recorded path into the columns routes group and filter on.
+///
+/// An empty path is not a path in the current directory: the only event that
+/// carries one is the overflow marker, which names nothing. Writing `(".", "")`
+/// for it put a marker into every "changes under ." grouping, so an empty path
+/// gets NULL columns and drops out of those groupings entirely.
+fn split_event_path(path: &str) -> (Option<String>, Option<String>) {
     let normalized = path.trim_end_matches('/');
     if normalized.is_empty() {
-        return (".".to_string(), String::new());
+        return (None, None);
     }
     match normalized.rsplit_once('/') {
-        Some(("", name)) => ("/".to_string(), name.to_string()),
-        Some((dir, name)) if !name.is_empty() => (dir.to_string(), name.to_string()),
-        _ => (".".to_string(), normalized.to_string()),
+        Some(("", name)) => (Some("/".to_string()), Some(name.to_string())),
+        Some((dir, name)) if !name.is_empty() => (Some(dir.to_string()), Some(name.to_string())),
+        _ => (Some(".".to_string()), Some(normalized.to_string())),
     }
 }
 

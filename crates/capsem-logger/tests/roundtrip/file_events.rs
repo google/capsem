@@ -697,3 +697,55 @@ async fn try_write_production_burst_preserves_events() {
 
     assert_eq!(events.len(), accepted);
 }
+
+/// An overflow marker records that changes went unrecorded. It is not itself a
+/// change to a path, and every place that counts or groups paths has to agree
+/// about that, or the marker inflates the numbers a reader checks.
+#[tokio::test]
+async fn an_overflow_marker_is_not_counted_or_grouped_as_a_file_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-overflow.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "project/app.js",
+            FileAction::Created,
+            Some(12),
+        )))
+        .await;
+    writer
+        .write(WriteOp::FileEvent(FileEvent {
+            kind: FileKind::Other,
+            size: Some(4_096),
+            ..sample_file_event("", FileAction::Overflow, None)
+        }))
+        .await;
+    drop(writer);
+
+    // `directory` and `name` are what routes group and filter on. `(".", "")`
+    // put the marker inside "changes under .", so an empty path gets neither.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let marker: (Option<String>, Option<String>, Option<i64>) = conn
+        .query_row(
+            "SELECT directory, name, size FROM fs_events WHERE action = 'overflow'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(marker, (None, None, Some(4_096)));
+    let real: (Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT directory, name FROM fs_events WHERE action = 'created'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(real, (Some("project".to_string()), Some("app.js".to_string())));
+
+    let reader = DbReader::open(&path).unwrap();
+    let stats = reader.file_event_stats().unwrap();
+    assert_eq!(stats.total, 1, "the marker is not a file event");
+    assert_eq!(stats.created, 1);
+    assert_eq!(stats.overflow_windows, 1, "but it is counted as what it is");
+}

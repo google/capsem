@@ -98,6 +98,7 @@ symbols = [
 #   cargo test -p capsem-logger --test roundtrip -- --ignored regenerate_session_fixture
 # then update these digests in the same commit.
 sha256 = "4d44771cc948eeeff82625cf8effb60ba8c5eb8237a0ef51a02d65801392d111"
+regenerator = "crates/capsem-logger/tests/roundtrip/fixture_regen.rs"
 
 # The ledger's bodies live beside it. The index in test.db points into this
 # archive, so the two are one fixture and move together.

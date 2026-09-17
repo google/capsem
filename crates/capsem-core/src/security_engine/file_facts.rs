@@ -111,8 +111,12 @@ pub(super) fn explicit_primary_file_event(event: &ExplicitFileSecurityEvent) -> 
 }
 
 pub fn security_event_from_file_event(event: &FileEvent) -> SecurityEvent {
+    // A marker names no path, so it has no kind either. Publishing the `other`
+    // the row happens to carry would let `file.kind == "other"` match the
+    // record of what went unrecorded -- a rule about files firing on a
+    // bookkeeping row.
     let mut file = FileSecurityEvent {
-        kind: Some(event.kind.as_str().to_string()),
+        kind: (event.action != FileAction::Overflow).then(|| event.kind.as_str().to_string()),
         ..FileSecurityEvent::default()
     };
     file.set_action_facts(

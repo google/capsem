@@ -43,6 +43,7 @@ class Fixture:
     consumers: tuple[str, ...]
     symbols: tuple[str, ...]
     sha256: str
+    regenerator: str
     companions: tuple[Companion, ...]
 
 
@@ -57,6 +58,7 @@ class Audit:
     orphan_references: dict[str, tuple[str, ...]]
     digests: dict[str, str]
     binary: tuple[str, ...]
+    regenerators: dict[str, bool]
 
 
 def _git(*args: str, root: Path = ROOT) -> list[str]:
@@ -88,6 +90,7 @@ def _fixtures(policy: dict[str, Any]) -> list[Fixture]:
             ),
             symbols=tuple(row.get("symbols", [])),
             sha256=row.get("sha256", ""),
+            regenerator=row.get("regenerator", ""),
             companions=tuple(
                 Companion(path=entry.get("path", ""), sha256=entry.get("sha256", ""))
                 for entry in row.get("companion", [])
@@ -104,6 +107,12 @@ def _digest(path: Path) -> str:
 
 
 def _is_binary(path: Path) -> bool:
+    """Git's own heuristic: a NUL byte in the first 8 KiB means not text.
+
+    It is a heuristic, not a proof -- a binary whose first pages happen to be
+    NUL-free reads as text here. That only ever under-requires a digest, and
+    the digest field may be declared for any fixture regardless.
+    """
     with path.open("rb") as handle:
         return b"\0" in handle.read(8192)
 
@@ -191,6 +200,11 @@ def _audit(fixtures: list[Fixture]) -> Audit:
     )
     digests: dict[str, str] = {}
     binary: list[str] = []
+    regenerators = {
+        fixture.regenerator: (ROOT / fixture.regenerator).is_file()
+        for fixture in fixtures
+        if fixture.regenerator
+    }
     for fixture in fixtures:
         for name in (fixture.source, *(c.path for c in fixture.companions)):
             candidate = ROOT / name
@@ -217,6 +231,7 @@ def _audit(fixtures: list[Fixture]) -> Audit:
         orphan_references=orphan_references,
         digests=digests,
         binary=tuple(sorted(binary)),
+        regenerators=regenerators,
     )
 
 
@@ -266,6 +281,10 @@ def _problems(policy: dict[str, Any], audit: Audit) -> list[str]:
         for companion in fixture.companions:
             if companion.path not in audit.tracked_all:
                 problems.append(f"untracked fixture companion: {companion.path}")
+        # A digest freezes a binary fixture; something has to be able to
+        # produce the next one, or the freeze is just a dead end.
+        if fixture.regenerator and not audit.regenerators.get(fixture.regenerator):
+            problems.append(f"missing fixture regenerator: {fixture.regenerator}")
         if fixture.disposition == "retain":
             actual = audit.consumers.get(fixture.source, ())
             if not actual:
@@ -310,6 +329,7 @@ def _synthetic(**changes: object) -> Audit:
         "orphan_references": {},
         "digests": {"data/fixtures/live.html": "a" * 64},
         "binary": (),
+        "regenerators": {},
     }
     values.update(changes)
     return Audit(**values)  # type: ignore[arg-type]
@@ -387,6 +407,11 @@ def _synthetic_policy(**changes: object) -> dict[str, Any]:
             ),
             _synthetic(),
             "untracked fixture companion",
+        ),
+        (
+            _synthetic_policy(regenerator="tests/regenerate_live.py"),
+            _synthetic(regenerators={"tests/regenerate_live.py": False}),
+            "missing fixture regenerator",
         ),
         (
             _synthetic_policy(),

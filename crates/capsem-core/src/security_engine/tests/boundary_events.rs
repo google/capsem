@@ -88,6 +88,71 @@ match = 'file.create.path == "/workspace/skills/foo.md" && file.create.name == "
     assert_eq!(rule_row.1, "profiles.rules.file_create_seen");
 }
 
+/// An overflow marker is bookkeeping, not a path. A rule about files -- even
+/// one as broad as `file.kind == "other"` -- must not fire on the row that
+/// says a window of file events went unrecorded.
+#[tokio::test]
+async fn a_file_kind_rule_does_not_match_an_overflow_marker() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.any_other_kind]
+name = "any_other_kind"
+action = "allow"
+detection_level = "informational"
+match = 'file.kind == "other"'
+"#,
+    )
+    .unwrap();
+    let rules =
+        crate::net::policy_config::SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+
+    let marker = FileEvent {
+        event_id: None,
+        timestamp: SystemTime::now(),
+        action: FileAction::Overflow,
+        path: String::new(),
+        size: Some(4_096),
+        kind: capsem_logger::FileKind::Other,
+        trace_id: None,
+        credential_ref: None,
+    };
+    emit_file_security_write_and_rules(&writer, &rules, marker.clone())
+        .await
+        .expect("the marker is still a ledger row");
+    // The same kind on a real path is what the rule is for, so the test can
+    // tell "does not match" from "never matches anything".
+    emit_file_security_write_and_rules(
+        &writer,
+        &rules,
+        FileEvent {
+            action: FileAction::Created,
+            path: "dev/tty".to_string(),
+            ..marker
+        },
+    )
+    .await
+    .expect("a device node is a real file event");
+    writer.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT fs_events.path FROM security_rule_events
+             JOIN fs_events ON fs_events.event_id = security_rule_events.event_id
+             WHERE security_rule_events.rule_id = 'profiles.rules.any_other_kind'",
+        )
+        .unwrap();
+    let matched: Vec<String> = stmt
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(matched, vec!["dev/tty".to_string()]);
+}
+
 /// The finding this rail exists for: a rule watching `.git/hooks/` must see
 /// the hook write, and must be able to tell the hook from the directory it
 /// landed in.

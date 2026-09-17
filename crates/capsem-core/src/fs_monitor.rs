@@ -231,6 +231,14 @@ fn reconciliation_events(
 /// `previous` had never seen it) makes the loss temporary: the next scan
 /// computes the same difference for that path and emits it. The order is a
 /// delay, not a filter.
+///
+/// What a delay does cost is resolution, and only in one direction: a deferred
+/// deletion whose path is re-created before the next scan surfaces as a
+/// `Modified`, because that is what the two snapshots then differ by. Snapshot
+/// polling has that blind spot at any interval -- a delete-and-recreate inside
+/// one window reads the same way -- and deferral widens the window by one
+/// scan for the paths it holds back. The `overflow` row says which windows
+/// those were.
 fn defer_overflow(
     batch: &mut Vec<QueuedEvent>,
     previous: &HashMap<String, SnapshotEntry>,

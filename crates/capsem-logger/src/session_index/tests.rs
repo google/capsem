@@ -145,10 +145,9 @@ fn update_session_rollup_from_session_db_copies_counts_by_id() {
             INSERT INTO tool_calls DEFAULT VALUES;
             INSERT INTO tool_calls DEFAULT VALUES;
 
-            CREATE TABLE fs_events (id INTEGER PRIMARY KEY);
-            INSERT INTO fs_events DEFAULT VALUES;
-            INSERT INTO fs_events DEFAULT VALUES;
-            INSERT INTO fs_events DEFAULT VALUES;
+            -- Three changes and one overflow marker, which is not one of them.
+            CREATE TABLE fs_events (id INTEGER PRIMARY KEY, action TEXT NOT NULL);
+            INSERT INTO fs_events (action) VALUES ('created'), ('modified'), ('deleted'), ('overflow');
 
             CREATE TABLE exec_events (id INTEGER PRIMARY KEY);
             INSERT INTO exec_events DEFAULT VALUES;
@@ -203,7 +202,7 @@ fn update_session_rollup_from_session_db_fails_when_id_is_missing() {
                 estimated_cost_usd REAL
             );
             CREATE TABLE tool_calls (id INTEGER PRIMARY KEY);
-            CREATE TABLE fs_events (id INTEGER PRIMARY KEY);
+            CREATE TABLE fs_events (id INTEGER PRIMARY KEY, action TEXT NOT NULL);
             CREATE TABLE exec_events (id INTEGER PRIMARY KEY);
             CREATE TABLE audit_events (id INTEGER PRIMARY KEY);
             ",

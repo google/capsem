@@ -12,6 +12,7 @@ use crate::events::{
     SecurityAskStatus, SecurityDetectionLevel, SecurityRuleAction, SecurityRuleMatch, ToolCallEntry, ToolResponseEntry,
 };
 use crate::schema;
+mod file_events;
 mod open;
 mod schema_sync;
 
@@ -160,11 +161,15 @@ pub struct TraceModelCall {
 /// Aggregate file event statistics.
 #[derive(Debug, Clone, Serialize)]
 pub struct FileEventStats {
+    /// Changes to paths. Overflow markers are counted separately.
     pub total: u64,
     pub created: u64,
     pub modified: u64,
     pub deleted: u64,
     pub restored: u64,
+    /// Windows in which the monitor saw more changes than it emitted at once.
+    /// Non-zero means the rail is complete but its timing is coarser there.
+    pub overflow_windows: u64,
 }
 
 /// Aggregate user-facing tool-call statistics.
@@ -1220,63 +1225,6 @@ impl DbReader {
     }
 
     // ── File event queries ────────────────────────────────────────────
-
-    /// The fs_events column list `read_file_event_row` expects. `kind` is
-    /// required and selected outright: a ledger without it is broken schema.
-    fn file_event_columns(&self) -> String {
-        format!(
-            "timestamp, action, path, size, {}, {}, {}, kind",
-            self.optional_column_expr("fs_events", "trace_id"),
-            self.optional_column_expr("fs_events", "credential_ref"),
-            self.optional_column_expr("fs_events", "event_id"),
-        )
-    }
-
-    /// Query the most recent N file events, ordered newest first.
-    pub fn recent_file_events(&self, limit: usize) -> rusqlite::Result<Vec<FileEvent>> {
-        let sql = format!(
-            "SELECT {} FROM fs_events ORDER BY id DESC LIMIT ?1",
-            self.file_event_columns()
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![limit as i64], read_file_event_row)?;
-        rows.collect()
-    }
-
-    /// Search file events by path substring.
-    pub fn search_file_events(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<FileEvent>> {
-        let pattern = format!("%{query}%");
-        let sql = format!(
-            "SELECT {} FROM fs_events WHERE path LIKE ?1 ORDER BY id DESC LIMIT ?2",
-            self.file_event_columns()
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![pattern, limit as i64], read_file_event_row)?;
-        rows.collect()
-    }
-
-    /// Aggregate file event statistics. All aggregation done in SQL.
-    pub fn file_event_stats(&self) -> rusqlite::Result<FileEventStats> {
-        self.conn.query_row(
-            "SELECT
-                COUNT(*),
-                COALESCE(SUM(CASE WHEN action = 'created' THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN action = 'modified' THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN action = 'deleted' THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN action = 'restored' THEN 1 ELSE 0 END), 0)
-             FROM fs_events",
-            [],
-            |row| {
-                Ok(FileEventStats {
-                    total: row.get::<_, i64>(0)? as u64,
-                    created: row.get::<_, i64>(1)? as u64,
-                    modified: row.get::<_, i64>(2)? as u64,
-                    deleted: row.get::<_, i64>(3)? as u64,
-                    restored: row.get::<_, i64>(4)? as u64,
-                })
-            },
-        )
-    }
 
     /// Query the user-facing tool-call ledger, ordered newest first.
     pub fn recent_tool_calls(&self, limit: usize) -> rusqlite::Result<Vec<ToolCallLedgerEntry>> {

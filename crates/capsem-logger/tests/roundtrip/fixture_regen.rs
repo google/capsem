@@ -1,9 +1,10 @@
 //! Rebuild the checked-in session fixture in the current ledger shape.
 //!
-//! The fixture is a real recorded session, and it is shared by the frontend's
-//! mock mode and by these tests, so it must stay real *and* current. Editing
-//! the binary in place with an `ALTER TABLE` was how it stayed current once;
-//! that hides a schema change inside an opaque blob nobody reviews.
+//! The fixture is a real recorded session, read by the roundtrip tests named
+//! in `tests/citadel/fixture_ownership.toml`, so it must stay real *and*
+//! current. Editing the binary in place with an `ALTER TABLE` was how it
+//! stayed current once; that hides a schema change inside an opaque blob
+//! nobody reviews.
 //!
 //! This replays every row through the same `WriteOp` path production uses, so
 //! the regenerated file has whatever shape the writer publishes today and the
@@ -17,12 +18,31 @@
 //! `tests/citadel/fixture_ownership.toml`, which is what makes the edit a
 //! reviewed act rather than a silent one.
 //!
-//! Rows the current ledger has no home for are dropped, and the run says so:
-//! the old fixture carries a `snapshot_events` table that no longer exists in
-//! the schema. The recorded request and response text does survive, but not
-//! where it used to live: the current writer puts bodies in the block archive,
-//! so the replay produces a `test.bodies` beside the ledger and both files are
-//! committed together.
+//! Two rails lose rows on the way, both by design, and the run counts each one
+//! read against each one persisted so that a third kind of loss cannot pass
+//! unnoticed:
+//!
+//! - **`snapshot_events`**: the table is gone from the schema. Its 5 rows have
+//!   nowhere to land and are dropped whole.
+//! - **MCP**: the old fixture logged every protocol frame; the current ledger
+//!   records tool invocations, so only `tools/call` frames persist. 21 rows in,
+//!   7 out. The replay asserts the survivors are exactly the `tools/call` rows
+//!   rather than waiving the difference.
+//!
+//! The recorded request and response text does survive, but not where it used
+//! to live: the current writer puts bodies in the block archive, so the replay
+//! produces a `test.bodies` beside the ledger and both files are committed
+//! together.
+//!
+//! One limitation, checked rather than assumed: the replay reads the ledger's
+//! own columns, and the current ledger keeps only display excerpts there. That
+//! is lossless for the legacy fixture, whose excerpts were the whole of its
+//! content, but it means this replay cannot regenerate a fixture it has
+//! already produced -- it would write the excerpts back as the bodies and
+//! shorten them. The run compares body bytes in against body bytes out and
+//! refuses instead of degrading, and the message says the fix: read the
+//! archive through `DbHandle::read_body` and restore the full bodies. Do that
+//! before the next schema change needs this fixture rebuilt.
 
 use super::*;
 
@@ -287,6 +307,109 @@ fn replay_file_events(conn: &Connection, writer: &DbWriter) -> usize {
     count
 }
 
+/// One rail's account of the replay.
+///
+/// `read` and `persisted` are counted on opposite sides, because the number of
+/// rows handed to the writer is not the number the writer keeps: the log used
+/// to print what was read and call it what was written, which made a 14-row
+/// drop look like a clean run.
+struct Rail {
+    name: &'static str,
+    read: usize,
+    /// What the current ledger should hold, derived from the source rather
+    /// than asserted as a constant.
+    expected: i64,
+    persisted: i64,
+    /// Why this rail may keep fewer rows than it read. A rail that loses rows
+    /// without one is a bug, not a policy.
+    declared_drop: Option<&'static str>,
+}
+
+impl Rail {
+    fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if self.persisted != self.expected {
+            problems.push(format!(
+                "{}: expected {} rows in the rebuilt ledger, found {}",
+                self.name, self.expected, self.persisted
+            ));
+        }
+        if self.expected < self.read as i64 && self.declared_drop.is_none() {
+            problems.push(format!(
+                "{}: {} of {} rows dropped, and no declared reason says why",
+                self.name,
+                self.read as i64 - self.expected,
+                self.read
+            ));
+        }
+        problems
+    }
+
+    fn report(&self) -> String {
+        let mut line = format!("{}: {} read -> {} persisted", self.name, self.read, self.persisted);
+        if let (true, Some(reason)) = (self.expected < self.read as i64, self.declared_drop) {
+            line.push_str(&format!(" ({reason})"));
+        }
+        line
+    }
+}
+
+fn count(conn: &Connection, sql: &str) -> i64 {
+    conn.query_row(sql, [], |row| row.get(0)).unwrap_or(0)
+}
+
+/// The accounting is the part of the regeneration that can rot silently: it
+/// only runs when someone rebuilds the fixture, so it gets its adversarial
+/// case here, in the suite that runs every time.
+#[test]
+fn rail_accounting_reports_undeclared_drops_only() {
+    let clean = Rail {
+        name: "net_events",
+        read: 7,
+        expected: 7,
+        persisted: 7,
+        declared_drop: None,
+    };
+    assert!(clean.problems().is_empty());
+    assert_eq!(clean.report(), "net_events: 7 read -> 7 persisted");
+
+    let declared = Rail {
+        name: "mcp",
+        read: 21,
+        expected: 7,
+        persisted: 7,
+        declared_drop: Some("only tool invocations"),
+    };
+    assert!(declared.problems().is_empty());
+    assert!(declared.report().ends_with("(only tool invocations)"));
+
+    // The shape the old log hid: rows read, fewer kept, nobody said why.
+    let silent = Rail {
+        read: 21,
+        expected: 21,
+        persisted: 7,
+        declared_drop: None,
+        ..clean
+    };
+    assert_eq!(
+        silent.problems(),
+        vec!["net_events: expected 21 rows in the rebuilt ledger, found 7"]
+    );
+
+    // A drop the replay expects but nobody declared is equally a bug.
+    let undeclared = Rail {
+        read: 21,
+        expected: 7,
+        persisted: 7,
+        declared_drop: None,
+        ..clean
+    };
+    assert_eq!(
+        undeclared.problems(),
+        vec!["net_events: 14 of 21 rows dropped, and no declared reason says why"]
+    );
+}
+
 #[test]
 #[ignore = "rewrites the checked-in fixture; run deliberately, then commit the binary and its sha256"]
 fn regenerate_session_fixture() {
@@ -298,39 +421,124 @@ fn regenerate_session_fixture() {
     let rebuilt = staging.path().join("session.db");
     let writer = DbWriter::open(&rebuilt, 256).unwrap();
 
+    let native_tool_calls = count(&source, "SELECT COUNT(*) FROM tool_calls WHERE origin != 'mcp'");
+    let tool_responses = count(&source, "SELECT COUNT(*) FROM tool_responses");
+    // Only tool invocations survive the MCP rail, so the expectation is
+    // computed from the source rather than waived.
+    let mcp_tool_calls = if table_exists(&source, "mcp_calls") {
+        count(&source, "SELECT COUNT(*) FROM mcp_calls WHERE method = 'tools/call'")
+    } else {
+        count(
+            &source,
+            "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp' AND method = 'tools/call'",
+        )
+    };
+    let snapshot_events = count(&source, "SELECT COUNT(*) FROM snapshot_events") as usize;
+
     let net = replay_net_events(&source, &writer);
     let model = replay_model_calls(&source, &writer);
     let mcp = replay_mcp_calls(&source, &writer);
     let files = replay_file_events(&source, &writer);
     writer.shutdown_blocking();
 
-    if table_exists(&source, "snapshot_events") {
-        let dropped: i64 = source
-            .query_row("SELECT COUNT(*) FROM snapshot_events", [], |row| row.get(0))
-            .unwrap();
-        println!("dropped {dropped} snapshot_events rows: the current ledger has no such table");
+    // Checked before anything else opens the file: only the ledger is
+    // committed, so everything has to be in it and not in a WAL beside it.
+    // (A later read-only connection recreates an empty one.)
+    assert!(
+        !rebuilt.with_extension("db-wal").exists(),
+        "shutdown must checkpoint before the file is copied"
+    );
+
+    let rebuilt_conn = Connection::open_with_flags(&rebuilt, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let rails = [
+        Rail {
+            name: "net_events",
+            read: net,
+            expected: net as i64,
+            persisted: count(&rebuilt_conn, "SELECT COUNT(*) FROM net_events"),
+            declared_drop: None,
+        },
+        Rail {
+            name: "model_calls",
+            read: model,
+            expected: model as i64,
+            persisted: count(&rebuilt_conn, "SELECT COUNT(*) FROM model_calls"),
+            declared_drop: None,
+        },
+        Rail {
+            name: "tool_calls (native)",
+            read: native_tool_calls as usize,
+            expected: native_tool_calls,
+            persisted: count(&rebuilt_conn, "SELECT COUNT(*) FROM tool_calls WHERE origin != 'mcp'"),
+            declared_drop: None,
+        },
+        Rail {
+            name: "tool_responses",
+            read: tool_responses as usize,
+            expected: tool_responses,
+            persisted: count(&rebuilt_conn, "SELECT COUNT(*) FROM tool_responses"),
+            declared_drop: None,
+        },
+        Rail {
+            name: "mcp",
+            read: mcp,
+            expected: mcp_tool_calls,
+            persisted: count(&rebuilt_conn, "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'"),
+            declared_drop: Some("the ledger records tool invocations, not every protocol frame"),
+        },
+        Rail {
+            name: "fs_events",
+            read: files,
+            expected: files as i64,
+            persisted: count(&rebuilt_conn, "SELECT COUNT(*) FROM fs_events"),
+            declared_drop: None,
+        },
+        Rail {
+            name: "snapshot_events",
+            read: snapshot_events,
+            expected: 0,
+            persisted: 0,
+            declared_drop: Some("the current schema has no such table"),
+        },
+    ];
+
+    for rail in &rails {
+        println!("{}", rail.report());
     }
-    println!("replayed net={net} model={model} mcp={mcp} files={files}");
+    let problems = rails.iter().flat_map(Rail::problems).collect::<Vec<_>>();
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+
+    // Bodies are a rail too, and the one the replay cannot yet carry: it reads
+    // the ledger's display excerpts, and the archive holds the full bytes. On
+    // the legacy fixture that is lossless, because the excerpts were all the
+    // content there was. On a fixture this replay already produced it is not:
+    // a second run would write the excerpts back as the bodies and quietly
+    // shorten them. Refuse rather than degrade.
+    let source_body_bytes = count(&source, "SELECT COALESCE(SUM(original_bytes), 0) FROM event_body_blobs");
+    let rebuilt_body_bytes = count(
+        &rebuilt_conn,
+        "SELECT COALESCE(SUM(original_bytes), 0) FROM event_body_blobs",
+    );
+    println!("bodies: {source_body_bytes} source bytes -> {rebuilt_body_bytes} rebuilt bytes");
+    assert!(
+        rebuilt_body_bytes >= source_body_bytes,
+        "the replay would lose {} bytes of recorded body content. It reads the ledger's \
+         preview columns, so it can only regenerate a fixture whose bodies are still in \
+         them. To regenerate this one, teach the replay to read the archive \
+         (DbHandle::read_body) and set request_body_full/response_body_full from it.",
+        source_body_bytes - rebuilt_body_bytes
+    );
     assert!(
         net > 0 && model > 0 && files > 0,
         "the fixture must stay a real session"
     );
 
-    // Only the ledger file is the fixture; a WAL left beside it would make the
-    // committed blob depend on whether a checkpoint had run.
-    assert!(
-        !rebuilt.with_extension("db-wal").exists(),
-        "shutdown must checkpoint before the file is copied"
-    );
     // The old fixture kept request and response text in the ledger's own
     // preview columns. The current writer puts bodies in the block archive and
     // keeps only the index, so replaying that same content produces a
     // `session.bodies` beside the ledger -- and an index pointing into an
     // archive nobody committed would be worse than no fixture at all.
-    let indexed_bodies: i64 = Connection::open_with_flags(&rebuilt, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .unwrap()
-        .query_row("SELECT COUNT(*) FROM event_body_blobs", [], |row| row.get(0))
-        .unwrap();
+    let indexed_bodies = count(&rebuilt_conn, "SELECT COUNT(*) FROM event_body_blobs");
     let rebuilt_bodies = rebuilt.with_extension("bodies");
     let fixture_bodies = fixture.with_extension("bodies");
     println!("indexed bodies: {indexed_bodies}");
