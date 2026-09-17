@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 BRAAVOS = "tests/ironbank/test_braavos_sdk.py"
