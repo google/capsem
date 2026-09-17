@@ -10,7 +10,7 @@ pub mod resources;
 pub mod transport;
 mod vm;
 pub use error::{Error, Result};
-pub use hypervisor::Hypervisor;
+pub use hypervisor::{Hypervisor, Runtime};
 pub use options::{
     CreateOptions, DiagnosticOptions, HistoryOptions, LogOptions, NetworkLogOptions, PageOptions, Registry, RunOptions,
     TimelineOptions, TriageOptions, VmSelector,

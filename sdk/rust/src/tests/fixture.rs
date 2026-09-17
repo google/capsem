@@ -19,7 +19,9 @@ pub fn reply(operation: &str) -> Value {
             "profile_count": 1,
             "ready_count": 1,
             "profiles": [],
-            "default_profile_id": "code",
+            // The two defaults differ here on purpose: a container create
+            // must take the container claim, never the VM one.
+            "defaults": {"vm": "code", "container": "co-work"},
         });
     }
     if operation == "listVms" {

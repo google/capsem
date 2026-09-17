@@ -11,8 +11,17 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Hypervisor {
     client: Client,
-    /// The catalog default, resolved once per handle.
-    default_profile: tokio::sync::OnceCell<String>,
+    /// The catalog's defaults, resolved once per handle.
+    default_profiles: tokio::sync::OnceCell<models::ProfileDefaults>,
+}
+
+/// What a created sandbox runs, which decides whose default profile applies.
+/// A container brings its own userland, so its default is the catalog's to
+/// answer separately from the VM's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Runtime {
+    Vm,
+    Container,
 }
 
 impl Hypervisor {
@@ -31,7 +40,7 @@ impl Hypervisor {
     pub fn new(url: &str, token: &str) -> Result<Self> {
         Ok(Self {
             client: Client::new(url, token)?,
-            default_profile: tokio::sync::OnceCell::new(),
+            default_profiles: tokio::sync::OnceCell::new(),
         })
     }
 
@@ -45,28 +54,35 @@ impl Hypervisor {
         api::get_hypervisor_info(&self.client.transport, self.client.options).await
     }
 
-    /// The profile the gateway's catalog uses when a call names none, read
-    /// from `GET /status` on first use and cached for this handle, so no
-    /// profile name is compiled into the SDK.
-    pub async fn default_profile_id(&self) -> Result<String> {
-        self.default_profile
+    /// The profile the gateway's catalog uses for this runtime when a call
+    /// names none, read from `GET /status` on first use and cached for this
+    /// handle, so no profile name is compiled into the SDK.
+    pub async fn default_profile_id(&self, runtime: Runtime) -> Result<String> {
+        let defaults = self
+            .default_profiles
             .get_or_try_init(|| async {
-                let catalog = self.info().await?.profiles;
-                catalog
-                    .and_then(|catalog| catalog.default_profile_id)
-                    .filter(|id| !id.is_empty())
-                    .ok_or(Error::InvalidInput(
-                        "the gateway profile catalog names no default profile; pass a profile from profiles().list()",
-                    ))
+                Ok::<_, Error>(self.info().await?.profiles.map(|catalog| catalog.defaults).unwrap_or_default())
             })
-            .await
-            .cloned()
+            .await?;
+        match runtime {
+            Runtime::Vm => defaults.vm.clone(),
+            Runtime::Container => defaults.container.clone(),
+        }
+        .filter(|id| !id.is_empty())
+        .ok_or(match runtime {
+            Runtime::Vm => Error::InvalidInput(
+                "the gateway profile catalog names no default VM profile; pass a profile from profiles().list()",
+            ),
+            Runtime::Container => Error::InvalidInput(
+                "the gateway profile catalog names no default container profile; pass a profile from profiles().list()",
+            ),
+        })
     }
 
-    async fn profile_id(&self, profile: Option<models::ProfileSummary>) -> Result<String> {
+    async fn profile_id(&self, profile: Option<models::ProfileSummary>, runtime: Runtime) -> Result<String> {
         match profile {
             Some(profile) => Ok(profile.id),
-            None => self.default_profile_id().await,
+            None => self.default_profile_id(runtime).await,
         }
     }
 
@@ -122,7 +138,12 @@ impl Hypervisor {
         // the client asks the gateway anything.
         let ram_mb = Self::memory_mb(options.memory)?;
         let body = models::ProvisionRequest {
-            profile_id: self.profile_id(options.profile).await?,
+            profile_id: self
+                .profile_id(
+                    options.profile,
+                    if has_container { Runtime::Container } else { Runtime::Vm },
+                )
+                .await?,
             persistent: name.is_some(),
             name,
             cpus: options.cpus,
@@ -157,7 +178,7 @@ impl Hypervisor {
         }
         let call = self.client.command_options(options.timeout_secs);
         let ram_mb = Self::memory_mb(options.memory)?;
-        let profile_id = self.profile_id(options.profile).await?;
+        let profile_id = self.profile_id(options.profile, Runtime::Vm).await?;
         api::run_vm(
             &self.client.transport,
             &api::RunVmParams {
