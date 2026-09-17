@@ -123,8 +123,10 @@ impl EncodedBlock {
 
 impl Drop for BodyLogWriter {
     fn drop(&mut self) {
+        // Not while unwinding: a panic that happens to leave a block pending
+        // would abort the process instead of surfacing its own cause.
         debug_assert!(
-            self.pending.is_empty(),
+            std::thread::panicking() || self.pending.is_empty(),
             "BodyLogWriter dropped with {} bytes of unsealed bodies; seal before dropping",
             self.pending.len()
         );
@@ -144,6 +146,11 @@ impl BodyLogWriter {
     /// mode was widened afterwards, would otherwise keep serving group and
     /// other a session's bodies for the rest of its life; the mode is a
     /// property this writer maintains, not one it checks once at creation.
+    ///
+    /// That mode repair is the one way this can refuse a file it could
+    /// otherwise use: an `fchmod` the filesystem does not permit fails the
+    /// open, and the logger then warns and stores no bodies for the session
+    /// rather than writing to a file whose permissions it cannot vouch for.
     ///
     /// A reopened file is validated and appended after its current end. A
     /// torn tail from an earlier crash is left exactly where it is, because

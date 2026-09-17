@@ -31,6 +31,9 @@ pub(super) struct EventBodyBlob<'a> {
     pub(super) direction: &'static str,
     pub(super) content_type: Option<&'a str>,
     pub(super) body: Option<&'a str>,
+    /// What the producer says the whole body was, when `body` is already a
+    /// capped excerpt of it. `None` means `body` is the whole thing.
+    pub(super) original_bytes: Option<u64>,
     pub(super) trace_id: Option<&'a str>,
     pub(super) turn_id: Option<&'a str>,
 }
@@ -117,6 +120,12 @@ impl BodyArchive {
         };
         let bytes = body.as_bytes();
         let stored_len = bytes.len().min(MAX_BODY_BLOB_BYTES);
+        // What the producer sent may already be an excerpt -- guest exec
+        // output is capped at the vsock boundary -- and then the row must
+        // report the size it was cut from, not the size that arrived. A
+        // producer that reports less than it sent is not believed: the
+        // schema requires stored <= original, and the bytes are the evidence.
+        let original_bytes = blob.original_bytes.unwrap_or(bytes.len() as u64).max(stored_len as u64);
         let Some(reference) = self.stage_bytes(&bytes[..stored_len]) else {
             return;
         };
@@ -129,9 +138,9 @@ impl BodyArchive {
             source_table: blob.source_table,
             direction: blob.direction,
             content_type: blob.content_type.map(str::to_string),
-            original_bytes: bytes.len() as i64,
+            original_bytes: original_bytes as i64,
             stored_bytes: stored_len as i64,
-            truncated: bytes.len() > stored_len,
+            truncated: original_bytes > stored_len as u64,
             body_hash: blake3_bytes_ref(bytes),
             body_offset: i64::from(reference.offset),
             trace_id: blob.trace_id.map(str::to_string),
@@ -159,6 +168,7 @@ impl BodyArchive {
             Err(ArchiveError::BlockFull) => {}
             Err(error) => {
                 warn!(error = %error, body_bytes = bytes.len(), "body not archived");
+                self.drop_bodies(1, "stage");
                 return None;
             }
         }
@@ -167,6 +177,7 @@ impl BodyArchive {
             Ok(reference) => Some(reference),
             Err(error) => {
                 warn!(error = %error, body_bytes = bytes.len(), "body not archived after seal");
+                self.drop_bodies(1, "stage_after_seal");
                 None
             }
         }
@@ -208,8 +219,12 @@ impl BodyArchive {
         self.writer.as_ref().is_some_and(BodyLogWriter::wants_seal)
     }
 
-    pub(super) fn has_uncommitted_rows(&self) -> bool {
-        !self.appended.is_empty() || !self.staged.is_empty()
+    /// Whether a flush has anything to do here: rows waiting to commit, or
+    /// bytes waiting to seal. Pending bytes count even when their rows were
+    /// dropped by a rollback -- the block still has to reach the file and be
+    /// let go of, or the writer closes holding it.
+    pub(super) fn has_work(&self) -> bool {
+        !self.appended.is_empty() || !self.staged.is_empty() || self.pending_bytes() > 0
     }
 
     /// Deflate the pending block and append it to the archive file. Its index
@@ -233,6 +248,7 @@ impl BodyArchive {
                     dropped_bodies = rows.len(),
                     "session body archive append failed; no further bodies will be stored"
                 );
+                self.drop_bodies(rows.len(), "append");
                 self.writer = None;
             }
         }
@@ -248,12 +264,19 @@ impl BodyArchive {
     /// SQLite's durably-committed index rows naming blocks that never reached
     /// the disk -- a ledger that points past its own file, which is the one
     /// failure this ordering exists to prevent. The cost is one `fdatasync`
-    /// per sealed block: once per 256 KiB of bodies, or once per flush
-    /// interval, not once per body.
+    /// per flush that has blocks to index -- at most once per flush interval,
+    /// covering every block sealed since the last one, never once per body.
     ///
     /// A failed flush means those bytes may not be there, so their rows are
     /// dropped and archiving stops, exactly as a failed append does. Losing
     /// bodies is recoverable; an index that lies is not.
+    ///
+    /// The blocks stay in hand until the caller says the transaction
+    /// committed. An insert here can fail, and so can the memory-table copy
+    /// beside it and the commit after it; all three roll back every row. The
+    /// dirty tables are kept for the next flush to retry, and these blocks
+    /// are retried with them -- `INSERT OR REPLACE` makes the second attempt
+    /// the same as the first.
     pub(super) fn commit_index_rows(&mut self, conn: &Connection) -> rusqlite::Result<()> {
         if self.appended.is_empty() {
             return Ok(());
@@ -261,7 +284,12 @@ impl BodyArchive {
         if !self.sync_appended_blocks() {
             return Ok(());
         }
-        for (block, rows) in std::mem::take(&mut self.appended) {
+        // Recorded here, where the first row is actually written, and not
+        // beside the flush that precedes it: a trace whose two steps are
+        // pushed from one place proves their order only to itself.
+        #[cfg(test)]
+        self.steps.push("commit");
+        for (block, rows) in &self.appended {
             execute_cached(
                 conn,
                 "INSERT OR REPLACE INTO body_blocks (block_offset, raw_len, comp_len, sealed_at)
@@ -273,7 +301,7 @@ impl BodyArchive {
                     format_timestamp(SystemTime::now()),
                 ],
             )?;
-            for row in rows {
+            for row in rows.iter() {
                 execute_cached(
                     conn,
                     "INSERT OR REPLACE INTO event_body_blobs (
@@ -284,21 +312,21 @@ impl BodyArchive {
                      )
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                     params![
-                        row.event_id,
+                        &row.event_id,
                         row.event_type,
                         row.source_table,
                         row.direction,
-                        row.content_type,
+                        &row.content_type,
                         row.original_bytes,
                         row.stored_bytes,
                         i64::from(row.truncated),
-                        row.body_hash,
+                        &row.body_hash,
                         block.block_offset as i64,
                         row.body_offset,
                         row.stored_bytes,
-                        row.trace_id,
-                        row.turn_id,
-                        row.created_at,
+                        &row.trace_id,
+                        &row.turn_id,
+                        &row.created_at,
                     ],
                 )?;
             }
@@ -306,12 +334,23 @@ impl BodyArchive {
         Ok(())
     }
 
+    /// The transaction that `commit_index_rows` wrote into has committed, so
+    /// those blocks are indexed and this archive is done with them.
+    pub(super) fn index_rows_committed(&mut self) {
+        self.appended.clear();
+    }
+
     /// Flush the appended blocks to the device before their rows commit.
     /// `false` when the flush failed and the rows must not be written.
     fn sync_appended_blocks(&mut self) -> bool {
-        #[cfg(test)]
-        self.steps.push("sync");
         let Some(writer) = self.writer.as_mut() else {
+            // The writer is already gone -- an earlier append or flush gave
+            // up -- so these blocks will never be vouched for. Dropping them
+            // is the same fail-closed answer, and keeping them would leave
+            // every later flush opening a transaction to do nothing with.
+            let dropped: usize = self.appended.iter().map(|(_, rows)| rows.len()).sum();
+            self.appended.clear();
+            self.drop_bodies(dropped, "poisoned");
             return false;
         };
         if let Err(error) = writer.sync() {
@@ -320,22 +359,54 @@ impl BodyArchive {
                 dropped_blocks = self.appended.len(),
                 "session body archive could not be flushed; no further bodies will be stored"
             );
+            let dropped: usize = self.appended.iter().map(|(_, rows)| rows.len()).sum();
             self.appended.clear();
+            self.drop_bodies(dropped, "sync");
             self.writer = None;
             return false;
         }
         #[cfg(test)]
-        self.steps.push("commit");
+        self.steps.push("sync");
         true
     }
 
     /// Durability barrier for session close.
+    ///
+    /// Seals first, unconditionally: whatever is still pending has no index
+    /// row left that could reference it -- a flush would have taken it
+    /// otherwise -- but the block still has to leave the writer, which closes
+    /// holding nothing. An unreferenced block at the end of the file is the
+    /// documented cost; a writer dropped with bodies in hand is a bug.
     pub(super) fn sync(&mut self) {
+        self.seal_pending();
         if let Some(writer) = self.writer.as_mut() {
             if let Err(error) = writer.sync() {
                 warn!(error = %error, "session body archive sync failed");
             }
         }
+    }
+
+    /// Count bodies the archive gave up on. A session whose archive poisoned
+    /// itself keeps serving every other ledger row, so nothing downstream
+    /// looks wrong; this counter is how that shows up anywhere but a log line.
+    fn drop_bodies(&self, count: usize, reason: &'static str) {
+        if count == 0 {
+            return;
+        }
+        ::metrics::counter!(super::DB_ARCHIVE_BODIES_DROPPED_TOTAL, "reason" => reason).increment(count as u64);
+    }
+
+    /// Put this archive in the state a failed append leaves: no writer, and
+    /// whatever blocks had already been appended still waiting for their rows.
+    #[cfg(test)]
+    pub(super) fn poison_writer_for_tests(&mut self) {
+        self.writer = None;
+    }
+
+    /// Blocks appended but not yet indexed.
+    #[cfg(test)]
+    pub(super) fn appended_len_for_tests(&self) -> usize {
+        self.appended.len()
     }
 
     /// The flush/commit steps this archive has taken, in order.

@@ -146,6 +146,7 @@ fn body_blob<'a>(event_id: &'a str, body: &'a str) -> EventBodyBlob<'a> {
         direction: "request",
         content_type: None,
         body: Some(body),
+        original_bytes: None,
         trace_id: None,
         turn_id: None,
     }
@@ -222,4 +223,44 @@ fn a_body_that_does_not_fit_the_pending_block_seals_and_retries() {
     for body in bodies {
         assert_eq!(body, big.as_bytes());
     }
+}
+
+/// A failed append takes the writer out of service and leaves the blocks it
+/// had already appended holding their rows. Those rows can never be vouched
+/// for, so the next commit drops them -- and, just as importantly, stops
+/// counting them as work: otherwise every flush tick for the rest of the
+/// session opens a transaction to do nothing in.
+#[test]
+fn a_poisoned_archive_drops_its_uncommitted_blocks_instead_of_retrying_forever() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("poisoned-commit.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    crate::schema::create_tables(&conn).unwrap();
+
+    let mut archive = BodyArchive::open(Some(&db_path));
+    archive.stage(body_blob("0b0b0b0b0b0b", "a body whose writer dies after it"));
+    archive.seal_pending();
+    assert_eq!(archive.appended_len_for_tests(), 1, "the block is appended");
+
+    archive.poison_writer_for_tests();
+    archive.commit_index_rows(&conn).unwrap();
+
+    assert_eq!(
+        archive.appended_len_for_tests(),
+        0,
+        "a block nothing can vouch for is dropped, not kept for a retry that cannot work"
+    );
+    assert!(
+        !archive.has_work(),
+        "a poisoned archive must stop asking every flush for a transaction"
+    );
+    assert!(
+        archive.steps_for_tests().is_empty(),
+        "no flush happened, so none is recorded: {:?}",
+        archive.steps_for_tests()
+    );
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM event_body_blobs", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 0, "and no row claims bytes the archive cannot stand behind");
 }

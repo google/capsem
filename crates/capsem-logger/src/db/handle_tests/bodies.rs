@@ -239,9 +239,9 @@ async fn a_burst_of_large_bodies_seals_before_the_interval() {
     // the 5 s interval has not elapsed, and 1.6 MB of raw bodies is not
     // sitting in the writer thread.
     let blocks = count(&db, "SELECT COUNT(*) FROM body_blocks").await;
-    assert!(
-        blocks >= 4,
-        "a burst of large bodies must seal without waiting for the flush interval; sealed {blocks}"
+    assert_eq!(
+        blocks, 4,
+        "a burst of large bodies must seal without waiting for the flush interval"
     );
 }
 
@@ -262,11 +262,11 @@ async fn pending_body_bytes_are_bounded_after_flush() {
     }
     db.flush().await.expect("flush");
 
+    // A flush seals whatever is pending, so the bound after one is exact:
+    // nothing at all, let alone the 50 MB of raw bodies that went in.
     let pending = db.pending_body_bytes_for_tests().await;
-    assert!(
-        pending <= MAX_BODY_BLOB_BYTES as u64,
-        "the writer must not hold 50 MB of raw bodies; pending {pending}"
-    );
+    assert_eq!(pending, 0, "a flush leaves no body bytes in the writer");
+    assert!(pending <= MAX_BODY_BLOB_BYTES as u64);
 
     let longest = count(
         &db,
@@ -460,6 +460,9 @@ async fn index_rows_are_committed_only_after_their_block_is_appended() {
         .expect("read referenced blocks"),
     );
     let rows = blocks["rows"].as_array().expect("block rows");
+    // The load-bearing assertion: with the sync moved after the inserts, or
+    // the index committed before its block is appended, this query comes back
+    // empty and every bound below is vacuously true.
     assert!(!rows.is_empty(), "the flush must have committed index rows");
     for row in rows {
         let block_offset = row[0].as_u64().expect("block offset");
@@ -527,4 +530,144 @@ async fn previews_are_capped_but_blobs_keep_the_full_body() {
         json!(64 * 1024),
         "stored_bytes must be the full body size, not the capped preview"
     );
+}
+
+/// A flush that fails after the index rows are written rolls them back with
+/// everything else. The blocks are already on the disk, so the retry that
+/// exists for the table rows has to bring the bodies with it -- otherwise the
+/// bytes are there and nothing names them, for the rest of the session.
+#[tokio::test]
+async fn a_failed_flush_retries_bodies_with_the_rows() {
+    let _guard = DB_FLUSH_FAILURE_TEST_LOCK.lock().await;
+    crate::writer::fail_disk_flushes_for_tests(0);
+
+    let p = temp_db_path("bodies-flush-retry");
+    let db = DbHandle::open(&p).expect("open handle");
+    let body = "a body that survives a failed flush ".repeat(32);
+    db.write(WriteOp::NetEvent(net_event_with_response(
+        "0123456789c0",
+        "retry.example",
+        &body,
+    )))
+    .await
+    .expect("write event");
+
+    crate::writer::fail_disk_flushes_for_path_for_tests(&p, 1);
+    db.flush()
+        .await
+        .expect_err("the injected failure must be reported, not swallowed");
+    db.flush().await.expect("the next flush succeeds");
+    crate::writer::fail_disk_flushes_for_tests(0);
+
+    let stored = db
+        .read_body("0123456789c0", BodyDirection::Response)
+        .await
+        .expect("read body")
+        .expect("the retried flush indexes the body the first one rolled back");
+    assert_eq!(stored.bytes, body.as_bytes());
+    assert_eq!(
+        count(&db, "SELECT COUNT(*) FROM event_body_blobs").await,
+        1,
+        "the retry must not double-index the body"
+    );
+}
+
+/// An operation that stages a body and then fails its own row insert leaves
+/// bytes in the pending block with no row left to name them. The writer still
+/// has to let go of that block before it closes: the archive asserts it was
+/// not dropped holding one, and the file must stay readable.
+#[tokio::test]
+async fn a_rejected_op_does_not_leave_the_archive_holding_a_block() {
+    let p = temp_db_path("bodies-rejected-op");
+    let db = DbHandle::open(&p).expect("open handle");
+
+    // Nothing dirty to flush afterwards: the rejected op is the only work,
+    // so only the pending bytes can bring the final flush back.
+    db.flush().await.expect("settle the ledger first");
+
+    let mut call = make_correctness_tool_response_model_call(&credential_reference("test", "bodies-reject"));
+    call.event_id = Some("0123456789c1".into());
+    call.tool_responses = vec![ToolResponseEntry {
+        call_id: "tool-call-rejected".into(),
+        content_preview: Some("a body staged by an op that will be rejected".repeat(8)),
+        is_error: false,
+        trace_id: None,
+        // Refused by the tool_responses CHECK, after the bodies are staged.
+        credential_ref: Some("not-a-credential-reference".into()),
+    }];
+    db.write(WriteOp::ModelCall(call)).await.expect("write is accepted");
+    db.flush().await.expect("flush");
+    drop(db);
+
+    let reader = DbHandle::open_external_reader(&p).expect("reopen the ledger");
+    reader.ready().await.expect("the ledger is still sound");
+    // The block reached the file: a writer that closed still holding it
+    // would leave the archive at its bare 16-byte header, and the archive's
+    // own drop assertion -- which the writer thread swallows on join -- would
+    // be the only other sign.
+    let archive = std::fs::metadata(archive_path(&p)).expect("stat archive");
+    assert!(
+        archive.len() > 16,
+        "the rejected op's bytes must be sealed at shutdown, not held; archive is {} bytes",
+        archive.len()
+    );
+}
+
+/// Exec output arrives already cut down: capsem-process caps it at the vsock
+/// boundary and sends the true size beside it. The index row has to report
+/// the size the output was cut from, or a reader is told a 5 MB build log was
+/// 1 KB long and nothing anywhere says otherwise.
+#[tokio::test]
+async fn exec_output_rows_report_the_size_the_output_was_cut_from() {
+    let p = temp_db_path("bodies-exec-true-size");
+    let db = DbHandle::open(&p).expect("open handle");
+    let excerpt = "x".repeat(1024);
+
+    db.write(WriteOp::ExecEvent(ExecEvent {
+        event_id: Some("0123456789c2".into()),
+        timestamp: SystemTime::now(),
+        exec_id: 90_210,
+        command: "build everything".into(),
+        source: "api".into(),
+        trace_id: None,
+        process_name: Some("bash".into()),
+        credential_ref: None,
+    }))
+    .await
+    .expect("write exec start");
+    db.write(WriteOp::ExecEventComplete(ExecEventComplete {
+        exec_id: 90_210,
+        exit_code: 0,
+        duration_ms: 1,
+        stdout_preview: Some(excerpt.clone()),
+        stderr_preview: None,
+        stdout_bytes: 5_000_000,
+        stderr_bytes: 0,
+        pid: Some(11),
+    }))
+    .await
+    .expect("write exec completion");
+    db.flush().await.expect("flush");
+
+    let row = query_json(
+        &db.query(
+            "SELECT original_bytes, stored_bytes, truncated FROM event_body_blobs
+             WHERE event_id = ? AND direction = 'stdout'",
+            &[json!("0123456789c2")],
+        )
+        .await
+        .expect("read the exec index row"),
+    );
+    assert_eq!(row["rows"][0][0], json!(5_000_000), "original_bytes is what ran");
+    assert_eq!(row["rows"][0][1], json!(1024), "stored_bytes is what arrived");
+    assert_eq!(row["rows"][0][2], json!(1), "and the row says so");
+
+    let stored = db
+        .read_body("0123456789c2", BodyDirection::Stdout)
+        .await
+        .expect("read exec stdout")
+        .expect("the excerpt is archived");
+    assert_eq!(stored.bytes, excerpt.as_bytes());
+    assert!(stored.truncated);
+    assert_eq!(stored.original_bytes, 5_000_000);
 }

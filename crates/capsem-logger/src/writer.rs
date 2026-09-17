@@ -56,6 +56,10 @@ pub const DB_WRITE_BATCH_CAPACITY: &str = "db.write_batch_capacity";
 pub const DB_WRITE_BATCH_ROWS_PER_SEC: &str = "db.write_batch_rows_per_sec";
 pub const DB_WRITE_OPS_TOTAL: &str = "db.write_ops_total";
 pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
+/// Bodies the session archive gave up on, by the step that gave up. A
+/// poisoned archive is invisible in every other ledger row, so this counter
+/// is where it surfaces anywhere but a log line.
+pub const DB_ARCHIVE_BODIES_DROPPED_TOTAL: &str = "db.archive_bodies_dropped_total";
 
 static IN_MEMORY_WRITER_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -849,25 +853,31 @@ fn flush_dirty_tables_to_disk(
     db_path: Option<&Path>,
     bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
-    if dirty_tables.is_empty() && !bodies.has_uncommitted_rows() {
+    if dirty_tables.is_empty() && !bodies.has_work() {
         return Ok(());
     }
     // Bytes before index: the block reaches the archive file here, and the
     // rows that name it are inserted in the transaction below. A crash in
     // between costs one unreferenced block, never a row pointing past EOF.
     bodies.seal_pending();
+    let tables: Vec<&'static str> = dirty_tables.iter().copied().collect();
+    let tx = conn.unchecked_transaction()?;
+    bodies.commit_index_rows(&tx)?;
+    // Injected where a real flush failure lands: inside the transaction, with
+    // the archive's index rows already written into it. Everything here rolls
+    // back together, and the retry has to bring the bodies back with the rows.
     if take_disk_flush_failure_for_tests(db_path) {
         return Err(rusqlite::Error::InvalidParameterName(
             "injected disk flush failure before copy".to_string(),
         ));
     }
-    let tables: Vec<&'static str> = dirty_tables.iter().copied().collect();
-    let tx = conn.unchecked_transaction()?;
-    bodies.commit_index_rows(&tx)?;
     let advanced_watermarks = schema::with_memory_schema_lock(|| {
         schema::flush_memory_tables_to_disk(&tx, tables.iter().copied(), flush_watermarks)
     })?;
     tx.commit()?;
+    // Only now are the appended blocks indexed: anything above this line rolls
+    // the transaction back, and the next flush retries both halves together.
+    bodies.index_rows_committed();
     flush_watermarks.extend(advanced_watermarks);
     if let Some(path) = db_path {
         schema::record_sqlite_mmap_telemetry(conn, path, "writer", "flush");

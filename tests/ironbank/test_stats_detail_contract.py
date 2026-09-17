@@ -33,8 +33,10 @@ CRED_EVENT_ID = "abc123def456"
 SEC_EVENT_ID = "123abc456def"
 CREDENTIAL_REF = "credential:blake3:" + "1" * 64
 BLAKE3_HASH = "blake3:" + "2" * 64
-# The first block of an archive starts right after its 16-byte file header.
-ARCHIVE_FIRST_BLOCK_OFFSET = 16
+# `capsem_archive::FILE_HEADER_BYTES`: the archive's file header, which every
+# block follows. The first block therefore starts at exactly this offset.
+ARCHIVE_FILE_HEADER_BYTES = 16
+ARCHIVE_FIRST_BLOCK_OFFSET = ARCHIVE_FILE_HEADER_BYTES
 
 
 def index_rows_for_one_block(bodies: list[tuple]) -> list[tuple]:
@@ -60,6 +62,8 @@ def index_rows_for_one_block(bodies: list[tuple]) -> list[tuple]:
         )
         offset += len(body)
     return rows
+
+
 EXPECTED_REQUEST_BODY = {"prompt": "write the ledger poem", "nonce": "stats-detail"}
 EXPECTED_REQUEST_BODY_TEXT = json.dumps(EXPECTED_REQUEST_BODY)
 EXPECTED_MODEL_RESPONSE = "Thought for 2s.\nCreated /root/poeme.md with a ledger poem."

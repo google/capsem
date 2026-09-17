@@ -69,6 +69,7 @@ pub(super) fn insert_net_event(
             .request_body_full
             .as_deref()
             .or(event.request_body_preview.as_deref()),
+        original_bytes: None,
         trace_id: event.trace_id.as_deref(),
         turn_id: event.trace_id.as_deref(),
     });
@@ -82,6 +83,7 @@ pub(super) fn insert_net_event(
             .response_body_full
             .as_deref()
             .or(event.response_body_preview.as_deref()),
+        original_bytes: None,
         trace_id: event.trace_id.as_deref(),
         turn_id: event.trace_id.as_deref(),
     });
@@ -178,6 +180,7 @@ pub(super) fn insert_mcp_call(
             direction: "request",
             content_type: Some("application/json"),
             body: call.request_preview.as_deref(),
+            original_bytes: None,
             trace_id: call.trace_id.as_deref(),
             turn_id: call.trace_id.as_deref(),
         });
@@ -188,6 +191,7 @@ pub(super) fn insert_mcp_call(
             direction: "response",
             content_type: Some("application/json"),
             body: call.response_preview.as_deref(),
+            original_bytes: None,
             trace_id: call.trace_id.as_deref(),
             turn_id: call.trace_id.as_deref(),
         });
@@ -246,10 +250,12 @@ pub(super) fn update_exec_event(
     // what the archive rows are keyed on, so the output is reachable from
     // the same id the timeline shows.
     //
-    // What arrives here is whatever the producer sent: capsem-process caps
-    // guest output at 1 KiB before it crosses the vsock boundary
-    // (`vsock/exec_completion.rs`), so for guest commands the archive holds
-    // that much and no more. It is still the only full copy the ledger has.
+    // The archive holds at most the 1 KiB of output the vsock payload
+    // carries: capsem-process truncates there (`vsock/exec_completion.rs`)
+    // and the rest never reaches this process. `stdout_bytes`/`stderr_bytes`
+    // are the true totals, so the index row reports them as `original_bytes`
+    // and marks itself truncated rather than claiming the excerpt is all
+    // there was.
     let started: Option<(String, Option<String>)> = conn
         .prepare_cached(&format!(
             "SELECT event_id, trace_id FROM {} WHERE exec_id = ?1",
@@ -257,22 +263,33 @@ pub(super) fn update_exec_event(
         ))?
         .query_row(params![complete.exec_id as i64], |row| Ok((row.get(0)?, row.get(1)?)))
         .optional()?;
-    if let Some((event_id, trace_id)) = &started {
-        for (direction, body) in [
-            ("stdout", complete.stdout_preview.as_deref()),
-            ("stderr", complete.stderr_preview.as_deref()),
-        ] {
-            bodies.stage(EventBodyBlob {
-                event_id,
-                event_type: "process.exec_complete",
-                source_table: "exec_events",
-                direction,
-                content_type: Some("text/plain"),
-                body,
-                trace_id: trace_id.as_deref(),
-                turn_id: trace_id.as_deref(),
-            });
+    match &started {
+        Some((event_id, trace_id)) => {
+            for (direction, body, produced) in [
+                ("stdout", complete.stdout_preview.as_deref(), complete.stdout_bytes),
+                ("stderr", complete.stderr_preview.as_deref(), complete.stderr_bytes),
+            ] {
+                bodies.stage(EventBodyBlob {
+                    event_id,
+                    event_type: "process.exec_complete",
+                    source_table: "exec_events",
+                    direction,
+                    content_type: Some("text/plain"),
+                    body,
+                    original_bytes: Some(produced),
+                    trace_id: trace_id.as_deref(),
+                    turn_id: trace_id.as_deref(),
+                });
+            }
         }
+        // The completion arrived without its start row, so there is no
+        // event_id to key the output on and it is not archived. Loud, because
+        // it means a producer sent a completion for an exec this ledger never
+        // saw begin.
+        None => warn!(
+            exec_id = complete.exec_id,
+            "exec completion has no start row; its output is not archived"
+        ),
     }
     execute_cached(
         conn,

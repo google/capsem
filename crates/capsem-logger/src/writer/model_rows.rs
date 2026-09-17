@@ -72,6 +72,7 @@ pub(super) fn insert_model_call(
             .request_body_full
             .as_deref()
             .or(call.request_body_preview.as_deref()),
+        original_bytes: None,
         trace_id: call.trace_id.as_deref(),
         turn_id: call.trace_id.as_deref(),
     });
@@ -82,6 +83,7 @@ pub(super) fn insert_model_call(
         direction: "response",
         content_type: None,
         body: call.response_body_full.as_deref().or(call.text_content.as_deref()),
+        original_bytes: None,
         trace_id: call.trace_id.as_deref(),
         turn_id: call.trace_id.as_deref(),
     });
@@ -140,6 +142,7 @@ pub(super) fn insert_model_call(
             direction: "response",
             content_type: None,
             body: tr.content_preview.as_deref(),
+            original_bytes: None,
             trace_id: tr_trace.as_deref(),
             turn_id: call.trace_id.as_deref(),
         });

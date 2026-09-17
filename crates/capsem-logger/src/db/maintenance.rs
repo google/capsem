@@ -60,11 +60,11 @@ pub fn snapshot_session_ledger(src_dir: &Path, dst_dir: &Path) -> anyhow::Result
     let dst = dst_dir.join(SESSION_DB_FILE);
     snapshot_session_db(&src, &dst)?;
 
-    let src_archive = src_dir.join(SESSION_ARCHIVE_FILE);
+    let src_archive = crate::writer::archive_path_for_db(&src);
     if !src_archive.exists() {
         return Ok(());
     }
-    let dst_archive = dst_dir.join(SESSION_ARCHIVE_FILE);
+    let dst_archive = crate::writer::archive_path_for_db(&dst);
     std::fs::copy(&src_archive, &dst_archive).map_err(|error| {
         tracing::error!(
             src_archive_path = %src_archive.display(),
@@ -79,10 +79,6 @@ pub fn snapshot_session_ledger(src_dir: &Path, dst_dir: &Path) -> anyhow::Result
 }
 
 const SESSION_DB_FILE: &str = "session.db";
-/// The body archive beside it. `capsem-logger` derives this name from the
-/// database path everywhere else; a snapshot is the one caller that starts
-/// from the directory.
-const SESSION_ARCHIVE_FILE: &str = "session.bodies";
 
 fn snapshot_session_db(src: &Path, dst: &Path) -> anyhow::Result<()> {
     let src_conn = rusqlite::Connection::open_with_flags(
