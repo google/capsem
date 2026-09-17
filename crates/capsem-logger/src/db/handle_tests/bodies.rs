@@ -7,7 +7,7 @@
 use super::*;
 use crate::db::BodyDirection;
 use crate::events::{ExecEvent, ExecEventComplete};
-use crate::writer::{MAX_BODY_BLOB_BYTES, PREVIEW_BYTES};
+use crate::writer::PREVIEW_BYTES;
 
 fn archive_path(db_path: &std::path::Path) -> std::path::PathBuf {
     db_path.with_extension("bodies")
@@ -266,7 +266,6 @@ async fn pending_body_bytes_are_bounded_after_flush() {
     // nothing at all, let alone the 50 MB of raw bodies that went in.
     let pending = db.pending_body_bytes_for_tests().await;
     assert_eq!(pending, 0, "a flush leaves no body bytes in the writer");
-    assert!(pending <= MAX_BODY_BLOB_BYTES as u64);
 
     let longest = count(
         &db,
@@ -670,4 +669,95 @@ async fn exec_output_rows_report_the_size_the_output_was_cut_from() {
     assert_eq!(stored.bytes, excerpt.as_bytes());
     assert!(stored.truncated);
     assert_eq!(stored.original_bytes, 5_000_000);
+}
+
+/// The archive's own hash covers a whole block, so an index row edited to
+/// name a different span of the same valid block still resolves -- to someone
+/// else's body. The row's hash is over the bytes it claims, and the read
+/// checks it, so that edit surfaces as an error naming the event instead of
+/// as a body served under the wrong id.
+#[tokio::test]
+async fn a_body_that_does_not_match_its_index_hash_fails_the_read() {
+    let p = temp_db_path("bodies-hash-mismatch");
+    let db = DbHandle::open(&p).expect("open handle");
+    for (event_id, body) in [
+        ("0123456789d0", "the first body, which is one length"),
+        ("0123456789d1", "the second body, quite another length entirely"),
+    ] {
+        db.write(WriteOp::NetEvent(net_event_with_response(
+            event_id,
+            "mismatch.example",
+            body,
+        )))
+        .await
+        .expect("write event");
+    }
+    db.flush().await.expect("flush");
+    drop(db);
+
+    // Point the first event's row at the second event's bytes: same block,
+    // real offsets, a body that is simply not the one the row names.
+    let conn = rusqlite::Connection::open(&p).expect("open disk verifier");
+    conn.execute(
+        "UPDATE event_body_blobs
+         SET body_offset = (SELECT body_offset FROM event_body_blobs WHERE event_id = ?2),
+             body_len = (SELECT body_len FROM event_body_blobs WHERE event_id = ?2),
+             stored_bytes = (SELECT stored_bytes FROM event_body_blobs WHERE event_id = ?2),
+             original_bytes = (SELECT original_bytes FROM event_body_blobs WHERE event_id = ?2)
+         WHERE event_id = ?1",
+        rusqlite::params!["0123456789d0", "0123456789d1"],
+    )
+    .expect("repoint the index row");
+    drop(conn);
+
+    let reader = DbHandle::open_external_reader(&p).expect("reopen the ledger");
+    let error = reader
+        .read_body("0123456789d0", BodyDirection::Response)
+        .await
+        .expect_err("bytes that do not match the row must not be served as the row's body");
+    assert!(
+        error.contains("0123456789d0") && error.contains("hash"),
+        "the failure must name the event and say what was checked: {error}"
+    );
+}
+
+/// The retry after a rolled-back flush re-inserts a block row that is already
+/// there. Written as a REPLACE that is a delete and an insert, which takes
+/// every index row referencing the block with it the moment foreign keys are
+/// enforced. This runs the retry with them on.
+#[tokio::test]
+async fn the_retry_survives_enforced_foreign_keys() {
+    let _guard = DB_FLUSH_FAILURE_TEST_LOCK.lock().await;
+    crate::writer::fail_disk_flushes_for_tests(0);
+
+    let p = temp_db_path("bodies-foreign-keys");
+    let db = DbHandle::open(&p).expect("open handle");
+    let body = "a body indexed twice by a retried flush ".repeat(16);
+    db.write(WriteOp::NetEvent(net_event_with_response(
+        "0123456789d2",
+        "foreign-keys.example",
+        &body,
+    )))
+    .await
+    .expect("write event");
+
+    crate::writer::fail_disk_flushes_for_path_for_tests(&p, 1);
+    db.flush().await.expect_err("the injected failure is reported");
+    db.flush().await.expect("the retry succeeds");
+    crate::writer::fail_disk_flushes_for_tests(0);
+
+    let conn = rusqlite::Connection::open(&p).expect("open disk verifier");
+    conn.execute_batch("PRAGMA foreign_keys = ON").expect("enforce keys");
+    let violations: i64 = conn
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| row.get(0))
+        .expect("check keys");
+    assert_eq!(violations, 0, "no index row may be left naming a deleted block");
+    drop(conn);
+
+    let stored = db
+        .read_body("0123456789d2", BodyDirection::Response)
+        .await
+        .expect("read body")
+        .expect("the retried body is still indexed");
+    assert_eq!(stored.bytes, body.as_bytes());
 }

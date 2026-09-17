@@ -124,9 +124,13 @@ impl EncodedBlock {
 impl Drop for BodyLogWriter {
     fn drop(&mut self) {
         // Not while unwinding: a panic that happens to leave a block pending
-        // would abort the process instead of surfacing its own cause.
+        // would abort the process instead of surfacing its own cause. And not
+        // when poisoned: `take_pending` hands out nothing once the file's end
+        // is in doubt, so sealing first is not something the owner could have
+        // done. Asking for it would make dropping a poisoned writer -- the
+        // correct response to poisoning -- the assertion's only caller.
         debug_assert!(
-            std::thread::panicking() || self.pending.is_empty(),
+            std::thread::panicking() || self.poisoned || self.pending.is_empty(),
             "BodyLogWriter dropped with {} bytes of unsealed bodies; seal before dropping",
             self.pending.len()
         );

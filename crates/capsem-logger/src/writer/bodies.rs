@@ -78,6 +78,17 @@ pub(super) struct BodyArchive {
     steps: Vec<&'static str>,
 }
 
+/// Whether a staging error is about this body or about the writer.
+///
+/// `Poisoned` is the writer saying it can no longer place bytes at all, so
+/// everything staged against it is unplaceable too. `BodyTooLarge` is a
+/// refusal of one body -- unreachable at the logger's 10 MiB cap, and if the
+/// cap ever moves it must skip that body rather than end the session's
+/// archive. Everything else is treated as a writer that can still be used.
+pub(super) fn takes_the_archive_out_of_service(error: &ArchiveError) -> bool {
+    matches!(error, ArchiveError::Poisoned)
+}
+
 /// Where a session's archive lives: `session.bodies` beside `session.db`.
 pub(crate) fn archive_path_for_db(db_path: &Path) -> PathBuf {
     db_path.with_extension("bodies")
@@ -123,9 +134,10 @@ impl BodyArchive {
         // What the producer sent may already be an excerpt -- guest exec
         // output is capped at the vsock boundary -- and then the row must
         // report the size it was cut from, not the size that arrived. A
-        // producer that reports less than it sent is not believed: the
-        // schema requires stored <= original, and the bytes are the evidence.
-        let original_bytes = blob.original_bytes.unwrap_or(bytes.len() as u64).max(stored_len as u64);
+        // producer that reports less than it sent is not believed: the floor
+        // is what actually arrived, so under-reporting cannot also erase the
+        // truncation this writer did on top of it.
+        let original_bytes = blob.original_bytes.unwrap_or(0).max(bytes.len() as u64);
         let Some(reference) = self.stage_bytes(&bytes[..stored_len]) else {
             return;
         };
@@ -141,7 +153,11 @@ impl BodyArchive {
             original_bytes: original_bytes as i64,
             stored_bytes: stored_len as i64,
             truncated: original_bytes > stored_len as u64,
-            body_hash: blake3_bytes_ref(bytes),
+            // Over the stored bytes, not the buffer they were cut from: a
+            // hash of something the archive does not hold cannot be checked
+            // against anything, and a reader that verifies what it read is
+            // how a corrupted index row stops being a body.
+            body_hash: blake3_bytes_ref(&bytes[..stored_len]),
             body_offset: i64::from(reference.offset),
             trace_id: blob.trace_id.map(str::to_string),
             turn_id: blob.turn_id.map(str::to_string),
@@ -159,15 +175,20 @@ impl BodyArchive {
     /// the retry is the last step and not a loop.
     ///
     /// Every other error skips the body and logs. `BodyTooLarge` cannot
-    /// happen at this cap, and a poisoned writer has already warned once; in
-    /// neither case may a body take down the writer thread that owns the
-    /// whole session ledger.
+    /// happen at this cap; a poisoned writer takes the archive out of service
+    /// here, because its pending block can no longer be placed and the rows
+    /// staged beside it would name offsets in a file that never received
+    /// them. In neither case may a body take down the writer thread that owns
+    /// the whole session ledger.
     fn stage_bytes(&mut self, bytes: &[u8]) -> Option<BodyRef> {
         match self.writer.as_mut()?.stage(bytes) {
             Ok(reference) => return Some(reference),
             Err(ArchiveError::BlockFull) => {}
             Err(error) => {
                 warn!(error = %error, body_bytes = bytes.len(), "body not archived");
+                if takes_the_archive_out_of_service(&error) {
+                    self.give_up("stage");
+                }
                 self.drop_bodies(1, "stage");
                 return None;
             }
@@ -177,10 +198,30 @@ impl BodyArchive {
             Ok(reference) => Some(reference),
             Err(error) => {
                 warn!(error = %error, body_bytes = bytes.len(), "body not archived after seal");
+                if takes_the_archive_out_of_service(&error) {
+                    self.give_up("stage_after_seal");
+                }
                 self.drop_bodies(1, "stage_after_seal");
                 None
             }
         }
+    }
+
+    /// Take the archive out of service, dropping the rows it can no longer
+    /// place.
+    ///
+    /// A poisoned writer refuses every later call, so the rows staged against
+    /// its pending block will never have bytes to point at. Keeping them would
+    /// leave the next flush inserting index rows for bytes no file received,
+    /// which is the one outcome the whole split exists to prevent.
+    pub(super) fn give_up(&mut self, reason: &'static str) {
+        // Seal first so a writer that could still place bytes is not dropped
+        // holding a block. A poisoned one hands out nothing here, which is
+        // the case this exists for; anything else leaves the file tidy and
+        // the bytes merely unreferenced.
+        self.seal_pending();
+        self.abandon_uncommitted(reason);
+        self.writer = None;
     }
 
     /// The sequence number the next staged row will take: a transaction's
@@ -290,9 +331,14 @@ impl BodyArchive {
         #[cfg(test)]
         self.steps.push("commit");
         for (block, rows) in &self.appended {
+            // IGNORE, not REPLACE: a block row is immutable once written, and
+            // a replace is a delete followed by an insert, which would take
+            // the index rows referencing it with it the day foreign keys are
+            // switched on. The retry after a rolled-back flush is the case
+            // that meets an existing row, and it is writing the same values.
             execute_cached(
                 conn,
-                "INSERT OR REPLACE INTO body_blocks (block_offset, raw_len, comp_len, sealed_at)
+                "INSERT OR IGNORE INTO body_blocks (block_offset, raw_len, comp_len, sealed_at)
                  VALUES (?1, ?2, ?3, ?4)",
                 params![
                     block.block_offset as i64,
@@ -348,9 +394,7 @@ impl BodyArchive {
             // up -- so these blocks will never be vouched for. Dropping them
             // is the same fail-closed answer, and keeping them would leave
             // every later flush opening a transaction to do nothing with.
-            let dropped: usize = self.appended.iter().map(|(_, rows)| rows.len()).sum();
-            self.appended.clear();
-            self.drop_bodies(dropped, "poisoned");
+            self.abandon_uncommitted("poisoned");
             return false;
         };
         if let Err(error) = writer.sync() {
@@ -359,9 +403,7 @@ impl BodyArchive {
                 dropped_blocks = self.appended.len(),
                 "session body archive could not be flushed; no further bodies will be stored"
             );
-            let dropped: usize = self.appended.iter().map(|(_, rows)| rows.len()).sum();
-            self.appended.clear();
-            self.drop_bodies(dropped, "sync");
+            self.abandon_uncommitted("sync");
             self.writer = None;
             return false;
         }
@@ -384,6 +426,17 @@ impl BodyArchive {
                 warn!(error = %error, "session body archive sync failed");
             }
         }
+    }
+
+    /// Give up on every body this archive is still holding a row for, counting
+    /// them under `reason`. Both halves go: a block waiting to be indexed and
+    /// a pending block's rows are equally unreachable once the archive stops
+    /// vouching for its own file.
+    pub(super) fn abandon_uncommitted(&mut self, reason: &'static str) {
+        let dropped: usize = self.appended.iter().map(|(_, rows)| rows.len()).sum::<usize>() + self.staged.len();
+        self.appended.clear();
+        self.staged.clear();
+        self.drop_bodies(dropped, reason);
     }
 
     /// Count bodies the archive gave up on. A session whose archive poisoned

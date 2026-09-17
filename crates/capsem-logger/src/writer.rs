@@ -581,6 +581,11 @@ fn writer_loop(
         &mut bodies,
     ) {
         warn!(error = %error, "db shutdown dirty table flush failed");
+        // There is no next flush to retry into, so the bodies still waiting
+        // for an index row are lost here. Counted, so the drop counter closes
+        // over the session rather than ending on a number that is short by
+        // however much the last flush was carrying.
+        bodies.abandon_uncommitted("shutdown");
     }
     bodies.sync();
     pending_body_bytes.store(bodies.pending_bytes() as u64, Ordering::Release);

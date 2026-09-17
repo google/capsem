@@ -94,6 +94,9 @@ pub const CREATE_SCHEMA: &str = "
         original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
         stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0 AND stored_bytes <= original_bytes),
         truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
+        -- blake3 of the ARCHIVED bytes, not of whatever they were cut from:
+        -- a read verifies what it got against this, so a corrupted or
+        -- edited index row is caught instead of served as a body.
         body_hash TEXT NOT NULL CHECK (length(body_hash) = 71 AND body_hash GLOB 'blake3:[0-9a-f]*'),
         block_offset INTEGER NOT NULL REFERENCES body_blocks(block_offset),
         body_offset INTEGER NOT NULL CHECK (body_offset >= 0),

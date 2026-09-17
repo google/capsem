@@ -4,7 +4,10 @@
 //! display columns keep a preview, the index accounts for the original bytes,
 //! and the archive holds exactly what the index says it holds.
 
+use capsem_archive::ArchiveError;
+
 use super::*;
+use crate::writer::bodies::takes_the_archive_out_of_service;
 
 #[test]
 fn net_event_stores_bounded_body_blobs_and_small_previews() {
@@ -16,7 +19,10 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     let request_preview = "{\"prompt\":\"short\"}".to_string();
     let response_body = format!("event: message\ndata: {}\n\n", "s".repeat(MAX_BODY_BLOB_BYTES + 128));
     let response_preview = "event: message\ndata: short\n\n".to_string();
-    let response_hash = blake3_bytes_ref(response_body.as_bytes());
+    // The hash covers what the archive stores, which for this oversized body
+    // is its first MAX_BODY_BLOB_BYTES and not the whole thing: a hash of
+    // bytes nobody kept could never be checked against anything.
+    let response_hash = blake3_bytes_ref(&response_body.as_bytes()[..MAX_BODY_BLOB_BYTES]);
 
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
@@ -133,6 +139,11 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     assert_eq!(response.stored_bytes, MAX_BODY_BLOB_BYTES as i64);
     assert_eq!(response.truncated, 1);
     assert_eq!(response.body_hash, response_hash);
+    assert_ne!(
+        response.body_hash,
+        blake3_bytes_ref(response_body.as_bytes()),
+        "the row must not carry a hash of bytes the archive did not keep"
+    );
     assert_eq!(response.body.len(), MAX_BODY_BLOB_BYTES);
     assert_eq!(&response.body, &response_body.as_bytes()[..MAX_BODY_BLOB_BYTES]);
     assert_eq!(response.trace_id, trace_id);
@@ -263,4 +274,47 @@ fn a_poisoned_archive_drops_its_uncommitted_blocks_instead_of_retrying_forever()
         .query_row("SELECT COUNT(*) FROM event_body_blobs", [], |row| row.get(0))
         .unwrap();
     assert_eq!(rows, 0, "and no row claims bytes the archive cannot stand behind");
+}
+
+/// A poisoned writer cannot place bytes any more, so rows staged against its
+/// pending block are unplaceable too and must not survive to be inserted.
+/// This is the half of that rule that decides; the half that acts is below.
+#[test]
+fn only_a_poisoned_writer_takes_the_archive_out_of_service() {
+    assert!(takes_the_archive_out_of_service(&ArchiveError::Poisoned));
+    assert!(
+        !takes_the_archive_out_of_service(&ArchiveError::BodyTooLarge { len: 1, max: 0 }),
+        "one body too large for a block is a refusal of that body, not of the archive"
+    );
+    assert!(
+        !takes_the_archive_out_of_service(&ArchiveError::RefOutOfRange),
+        "a writer that can still place bytes stays in service"
+    );
+}
+
+/// And the half that acts: everything staged goes, the writer goes with it,
+/// and nothing staged afterwards is accepted -- so no later flush can insert
+/// a row naming bytes the file never received.
+#[test]
+fn giving_up_drops_the_rows_that_can_no_longer_be_placed() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("give-up.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    crate::schema::create_tables(&conn).unwrap();
+
+    let mut archive = BodyArchive::open(Some(&db_path));
+    archive.stage(body_blob("0c0c0c0c0c0c", "a body staged before the writer died"));
+    assert!(archive.has_work(), "the row and its bytes are pending");
+
+    archive.give_up("stage");
+
+    assert!(!archive.has_work(), "nothing may be left for a flush to insert or seal");
+    archive.stage(body_blob("0d0d0d0d0d0d", "a body staged after"));
+    assert!(!archive.has_work(), "and nothing new is accepted either");
+
+    archive.commit_index_rows(&conn).unwrap();
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM event_body_blobs", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 0);
 }

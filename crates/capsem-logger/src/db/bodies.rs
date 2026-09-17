@@ -189,6 +189,20 @@ fn read_one(reader: &BodyLogReader, row: IndexRow) -> DbResult<StoredBody> {
             row.event_id
         )
     })?;
+    // The archive verifies its own block; this verifies the span of it the
+    // index row picked out. A block's hash cannot notice an index row that
+    // was edited to name a different offset inside the same valid block, and
+    // that row would otherwise be served as this event's body.
+    let hash = format!("blake3:{}", blake3::hash(&bytes).to_hex());
+    if hash != row.body_hash {
+        return Err(format!(
+            "session body archive returned the wrong bytes for {}/{} of event {}: index says {}, bytes hash to {hash}",
+            row.source_table,
+            row.direction.as_str(),
+            row.event_id,
+            row.body_hash
+        ));
+    }
     Ok(StoredBody {
         event_id: row.event_id,
         source_table: row.source_table,
