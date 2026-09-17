@@ -282,8 +282,8 @@ impl Networks<'_> {
 }
 
 impl<'a> Profiles<'a> {
-    pub async fn list(&self) -> Result<models::ProfilesListResponse> {
-        api::list_profiles(&self.0.transport, self.0.options).await
+    pub async fn list(&self) -> Result<Vec<models::ProfileSummary>> {
+        Ok(api::list_profiles(&self.0.transport, self.0.options).await?.profiles)
     }
 
     pub fn mcp(&self, profile_id: &str) -> ProfileMcp<'a> {

@@ -1,13 +1,14 @@
-import type {HistoryLayerFilter, HostLogSource, NetworkInfo, RegistryAccess, TimelineLayer} from './models/index.js';
+import type {HistoryLayerFilter, HostLogSource, NetworkInfo, ProfileSummary, RegistryAccess, TimelineLayer} from './models/index.js';
 import type {CallOptions} from './transport.js';
 
 export type VmSelector = {id: string; name?: never} | {name: string; id?: never};
 export interface CreateOptions extends CallOptions {
-  name?: string; cpus?: number; memory?: number; env?: Record<string, string>; networks?: readonly NetworkInfo[];
+  profile?: ProfileSummary; name?: string; cpus?: number; memory?: number;
+  env?: Record<string, string>; networks?: readonly NetworkInfo[];
   image?: string; command?: readonly string[]; registry?: RegistryAccess; attach?: boolean;
 }
 export interface RunOptions extends CallOptions {
-  profile?: string; timeout_secs?: number; cpus?: number; memory?: number; env?: Record<string, string>;
+  profile?: ProfileSummary; timeout_secs?: number; cpus?: number; memory?: number; env?: Record<string, string>;
 }
 export interface DiagnosticOptions extends CallOptions {since?: string; limit?: number}
 export interface TriageOptions extends DiagnosticOptions {vm_id?: string}

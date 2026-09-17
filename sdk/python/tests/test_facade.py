@@ -35,9 +35,11 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
             assert isinstance(await hv.info(), models.HypervisorInfo)
             assert isinstance(await hv.list(), models.ListResponse)
+            profiles = await hv.profiles.list()
+            assert profiles and isinstance(profiles[0], models.ProfileSummary)
             network = await hv.networks.create("team")
             vm = await hv.create(
-                profile="code", name="new", cpus=4, memory=8,
+                profile=profiles[0], name="new", cpus=4, memory=8,
                 env={"LANG": "C"}, networks=[network],
             )
             assert vm.id == "created-id" and vm.name == "new"
@@ -51,16 +53,15 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             with pytest.raises(RuntimeError, match="closed"):
                 async with vm:
                     pass
-            temporary = await hv.create("code")
+            temporary = await hv.create()
             body = json.loads(state.requests[-1][2])
             assert body["persistent"] is False and body["name"] is None
             assert body["cpus"] is None and body["ram_mb"] is None
             assert isinstance(await hv.log(models.HostLogSource.SERVICE, grep="boot", tail=3, max_bytes=1024), models.HostLogsResponse)
-            assert isinstance(await hv.run("printf ok", profile="code", timeout_secs=4), ExecResult)
+            assert isinstance(await hv.run("printf ok", timeout_secs=4), ExecResult)
             assert isinstance(await hv.panics(since="5m", limit=3), models.PanicsResponse)
             assert isinstance(await hv.triage(vm_id="vm-0", since="1h", limit=2), models.TriageResponse)
             assert isinstance(await hv.purge(all=True), models.PurgeResponse)
-            assert isinstance(await hv.profiles.list(), models.ProfilesListResponse)
             mcp = hv.profiles.mcp("code")
             assert isinstance(await mcp.info(), models.ProfileMcpInfoResponse)
             assert isinstance(await mcp.servers(), list)
@@ -156,7 +157,7 @@ def test_container_create_is_ready_and_status_is_read_only() -> None:
     async def run() -> None:
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
             vm = await hv.create(
-                "code", image="docker://busybox:latest", command=[], env={"MODE": "preview"},
+                image="docker://busybox:latest", command=[], env={"MODE": "preview"},
             )
             body = json.loads(state.requests[-1][2])
             assert body["env"] is None
@@ -172,14 +173,14 @@ def test_container_options_without_an_image_are_rejected_before_http() -> None:
     async def run() -> None:
         async with gateway() as (url, _), Hypervisor(url, "token") as hv:
             with pytest.raises(ValueError, match="image"):
-                await hv.create("code", command=["true"])
+                await hv.create(command=["true"])
     asyncio.run(run())
 
 
 def test_ports_hide_wire_exposures_and_infer_the_container_target() -> None:
     async def run() -> None:
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
-            vm = await hv.create("code", image="nginx:alpine")
+            vm = await hv.create(image="nginx:alpine")
             plain = await vm.ports.open(8080)
             assert isinstance(plain, Port)
             assert plain.guest == 8080 and plain.authenticate is False
@@ -221,7 +222,7 @@ def test_invalid_memory_is_rejected_before_network(memory: Any) -> None:
     async def run() -> None:
         async with Hypervisor("http://127.0.0.1:1", "token") as hv:
             with pytest.raises(ValueError, match="memory"):
-                await hv.create("code", memory=memory)
+                await hv.create(memory=memory)
     asyncio.run(run())
 
 
@@ -229,7 +230,7 @@ def test_invalid_memory_is_rejected_before_network(memory: Any) -> None:
 def test_memory_is_measured_in_gibibytes(memory: int, expected: int) -> None:
     async def run() -> None:
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
-            await hv.create("code", memory=memory)
+            await hv.create(memory=memory)
             assert json.loads(state.requests[-1][2])["ram_mb"] == expected
     asyncio.run(run())
 
@@ -238,7 +239,7 @@ def test_zero_cpus_is_rejected_before_network() -> None:
     async def run() -> None:
         async with Hypervisor("http://127.0.0.1:1", "token") as hv:
             with pytest.raises(ValueError, match="cpus"):
-                await hv.create("code", cpus=0)
+                await hv.create(cpus=0)
     asyncio.run(run())
 
 

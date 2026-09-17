@@ -9,7 +9,7 @@ const serverId = z.string().min(1);
 export function registerProfileTools(server: McpServer, hypervisor: Hypervisor): void {
   server.registerTool('capsem_profiles', {
     description: 'List profiles and their availability through the gateway catalog.',
-  }, () => toolCall(() => hypervisor.profiles.list()));
+  }, () => toolCall(async () => ({profiles: await hypervisor.profiles.list()})));
   server.registerTool('capsem_mcp_info', {
     description: 'Read profile MCP configuration, readiness, and discovery summary.',
     inputSchema: {profile: profileId},

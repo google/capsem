@@ -16,6 +16,24 @@ pub fn reply(operation: &str) -> Value {
     if operation == "listVms" {
         value["sandboxes"] = json!([reply("getVmInfo")]);
     }
+    if operation == "listProfiles" {
+        value["profiles"] = json!([{
+            "id": "code",
+            "name": "Code",
+            "description": "Code profile",
+            "availability": {"web": true, "shell": true, "mobile": false},
+            "source": "builtin",
+            "rule_count": 0,
+            "default_rule_count": 0,
+            "plugin_count": 0,
+            "mcp_server_count": 0,
+            "update_semantics": {
+                "new_sessions": "use_current_profile_catalog",
+                "existing_vms": "pinned_until_recreate",
+                "upgrade_action": "recreate_vm"
+            }
+        }]);
+    }
     value
 }
 

@@ -15,6 +15,15 @@ const provision = {
   available_actions: ['pause', 'stop', 'fork', 'delete'], id: 'vm-1', name: 'demo',
   profile_id: 'code', status: 'Running',
 };
+const customProfile = {
+  availability: {web: true, shell: true, mobile: false},
+  default_rule_count: 0, description: 'Custom profile', id: 'co-work', mcp_server_count: 0,
+  name: 'Co-work', plugin_count: 0, rule_count: 0, source: 'builtin',
+  update_semantics: {
+    new_sessions: 'use_current_profile_catalog', existing_vms: 'pinned_until_recreate',
+    upgrade_action: 'recreate_vm',
+  },
+};
 
 async function body(request: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -51,6 +60,7 @@ describe('host-tools', () => {
       if (record.authorization !== 'Bearer gateway-secret') return json(response, {error: 'denied'}, 401);
       const path = new URL(record.url, 'http://gateway.test').pathname;
       if (path === '/vms/list') return json(response, {sandboxes: [sandbox]});
+      if (path === '/profiles/list') return json(response, {profiles: [customProfile]});
       if (path === '/vms/create') return json(response, provision);
       if (path === '/networks/net-1') return json(response, {
         id: 'net-1', name: 'private', subnet: '10.0.0.0/24', created_unix_ms: 1, members: [],
@@ -170,14 +180,15 @@ describe('host-tools', () => {
   it('passes typed create resources and environment through the SDK without echoing secrets', async () => {
     const result = await client.callTool({
       name: 'capsem_create',
-      arguments: {profile: 'code', name: 'demo', cpus: 2, memory: 2, env: {API_KEY: 'guest-secret'}, network_ids: ['net-1']},
+      arguments: {profile: 'co-work', name: 'demo', cpus: 2, memory: 2, env: {API_KEY: 'guest-secret'}, network_ids: ['net-1']},
     });
     expect(structured(result)).toEqual({id: 'vm-1', name: 'demo'});
     expect(JSON.stringify(result)).not.toContain('guest-secret');
     expect(JSON.parse(requests.at(-1)?.body.toString() ?? '')).toEqual({
-      profile_id: 'code', name: 'demo', persistent: true, cpus: 2, ram_mb: 2048,
+      profile_id: 'co-work', name: 'demo', persistent: true, cpus: 2, ram_mb: 2048,
       env: {API_KEY: 'guest-secret'}, networks: ['private'],
     });
+    expect(requests.some(request => request.url === '/profiles/list')).toBe(true);
   });
 
   it('creates and inspects containers and manages ports through SDK resources', async () => {

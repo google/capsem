@@ -19,7 +19,7 @@ const vm = new VM(url, token, {name: 'route-workspace'});
 try {
   assert((await hv.info()).gateway_version.length > 0);
   const profiles = await hv.profiles.list();
-  const [profile] = profiles.profiles;
+  const [profile] = profiles;
   assert(profile, 'SDK acceptance fixture must expose at least one profile');
   assert.equal((await hv.profiles.mcp(profile.id).info()).profile_id, profile.id);
   assert(Array.isArray((await hv.panics({limit: 2})).panics));

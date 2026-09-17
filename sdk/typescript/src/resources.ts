@@ -146,8 +146,8 @@ export class ProfileMcp {
 
 export class Profiles {
   constructor(private readonly transport: Transport) {}
-  async list(options: CallOptions = {}): Promise<models.ProfilesListResponse> {
-    return api.listProfiles(this.transport, options);
+  async list(options: CallOptions = {}): Promise<models.ProfileSummary[]> {
+    return (await api.listProfiles(this.transport, options)).profiles;
   }
   mcp(profileId: string): ProfileMcp {return new ProfileMcp(this.transport, profileId);}
 }

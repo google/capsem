@@ -32,7 +32,7 @@ export class Hypervisor extends Client {
   vm(selector: VmSelector): VM {
     return new VM(this.transport, selector);
   }
-  async create(profile: string, options: CreateOptions = {}): Promise<VM> {
+  async create(options: CreateOptions = {}): Promise<VM> {
     if (options.cpus !== undefined && (!Number.isSafeInteger(options.cpus) || options.cpus < 1)) {
       throw new TypeError('cpus must be positive');
     }
@@ -50,7 +50,7 @@ export class Hypervisor extends Client {
       attach: options.attach ?? false,
     };
     const response = await api.createVm(this.transport, {body: {
-      profile_id: profile, name: options.name || null, persistent: Boolean(options.name),
+      profile_id: options.profile?.id ?? 'code', name: options.name || null, persistent: Boolean(options.name),
       cpus: options.cpus ?? null, ram_mb: memoryMb(options.memory),
       env: container === undefined ? options.env ?? null : null,
       networks: (options.networks ?? []).map(network => network.name),
@@ -63,7 +63,7 @@ export class Hypervisor extends Client {
   }
   async run(command: string, options: RunOptions = {}): Promise<models.ExecResponse> {
     return api.runVm(this.transport, {body: {
-      command, profile_id: options.profile ?? 'code', timeout_secs: options.timeout_secs ?? null,
+      command, profile_id: options.profile?.id ?? 'code', timeout_secs: options.timeout_secs ?? null,
       cpus: options.cpus ?? null, ram_mb: memoryMb(options.memory), env: options.env ?? null,
     }}, options);
   }

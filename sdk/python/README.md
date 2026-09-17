@@ -12,7 +12,6 @@ async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     overview = await hv.info()  # health, versions, profiles, updates
     network = await hv.networks.create("private")
     vm = await hv.create(
-        profile="code",
         name="workspace",
         cpus=4,
         memory=8,
@@ -46,8 +45,10 @@ async with VM("http://127.0.0.1:19222", token, name="workspace") as vm:
 ```
 
 Named VMs are persistent; an omitted name creates an ephemeral VM. Omitting
-`cpus` or `memory` uses the selected profile's defaults. Memory is a positive
-integer in GiB.
+`profile` selects Capsem's standard `code` profile. To select another profile,
+pass an object returned by `await hv.profiles.list()` to `create(profile=...)`
+or `run(profile=...)`. Omitting `cpus` or `memory` uses the selected profile's
+defaults. Memory is a positive integer in GiB.
 
 `hv.list()` returns a typed VM inventory. `hv.update()` applies the configured
 update. VM lifecycle methods are `start`, `stop`, `pause`, `resume`, `delete`

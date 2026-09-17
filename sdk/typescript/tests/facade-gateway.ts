@@ -20,6 +20,9 @@ export class FacadeGateway {
     if (operation.operationId === 'listVms') value = {
       sandboxes: this.names.map(name => ({...sample(schemas.SandboxInfo ?? {}) as object, id: 'vm-0', name})),
     };
+    if (operation.operationId === 'listProfiles') value = {
+      profiles: [{...sample(schemas.ProfileSummary ?? {}) as object, id: 'code', name: 'Code'}],
+    };
     if (operation.operationId === 'createVm' || operation.operationId === 'forkVm') {
       const body = JSON.parse(request.body.toString()) as {name: string};
       value = {...value as object, id: operation.operationId === 'createVm' ? 'vm-0' : 'fork-0', name: body.name ?? 'generated'};

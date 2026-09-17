@@ -21,6 +21,14 @@ def _memory_mb(memory: int | None) -> int | None:
     return memory * 1024
 
 
+def _profile_id(profile: models.ProfileSummary | None) -> str:
+    if profile is None:
+        return "code"
+    if not isinstance(profile, models.ProfileSummary):
+        raise TypeError("profile must be an object returned by capsem.profiles.list()")
+    return profile.id
+
+
 class Hypervisor(Client):
     def __init__(self, url: str, token: str, *, timeout: float = 30) -> None:
         super().__init__(url, token, timeout=timeout)
@@ -33,7 +41,8 @@ class Hypervisor(Client):
     async def list(self) -> models.ListResponse:
         return await api.list_vms(self._transport)
 
-    async def create(self, profile: str, *, name: str = "", cpus: int | None = None,
+    async def create(self, *, profile: models.ProfileSummary | None = None,
+                     name: str = "", cpus: int | None = None,
                      memory: int | None = None, env: dict[str, str] | None = None,
                      networks: Sequence[models.NetworkInfo] = (), image: str | None = None,
                      command: Sequence[str] = (), registry: models.RegistryAccess | None = None,
@@ -57,7 +66,8 @@ class Hypervisor(Client):
                 image=image, args=list(command), env=env or {}, registry=registry, attach=attach,
             )
         request = models.ProvisionRequest(
-            profile_id=profile, name=name or None, persistent=bool(name),
+            profile_id=_profile_id(profile),
+            name=name or None, persistent=bool(name),
             cpus=cpus, ram_mb=_memory_mb(memory),
             env=env if image is None else None, networks=network_names,
         )
@@ -71,11 +81,13 @@ class Hypervisor(Client):
                   max_bytes: int | None = None) -> models.HostLogsResponse:
         return await api.get_hypervisor_logs(self._transport, name=source, grep=grep, tail=tail, max_bytes=max_bytes)
 
-    async def run(self, command: str, *, profile: str = "code", timeout_secs: int | None = None,
+    async def run(self, command: str, *, profile: models.ProfileSummary | None = None,
+                  timeout_secs: int | None = None,
                   cpus: int | None = None, memory: int | None = None,
                   env: dict[str, str] | None = None) -> ExecResult:
         response = await api.run_vm(self._transport, body=models.RunRequest(
-            command=command, profile_id=profile, timeout_secs=timeout_secs,
+            command=command, profile_id=_profile_id(profile),
+            timeout_secs=timeout_secs,
             cpus=cpus, ram_mb=_memory_mb(memory), env=env,
         ))
         return ExecResult.from_wire(response)

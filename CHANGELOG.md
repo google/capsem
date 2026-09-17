@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- SDK creation and one-shot execution now default to the standard profile.
+  Explicit profile selection accepts typed catalog objects returned directly by
+  `profiles.list()` instead of raw profile IDs.
+
 - SDK creation now accepts typed network objects and top-level container
   workload settings. Ports use `open/list/close`, infer their workload target,
   and enable browser authentication with `authenticate=true`; Python execution

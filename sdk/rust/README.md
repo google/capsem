@@ -13,7 +13,7 @@ async fn example(url: &str, token: &str) -> Result<()> {
     let hv = Hypervisor::new(url, token)?.with_timeout(Duration::from_secs(120))?;
     println!("{:?}", hv.info().await?); // health, version, profiles, updates
     let network = hv.networks().create("private").await?;
-    let vm = hv.create("code", CreateOptions {
+    let vm = hv.create(CreateOptions {
         name: Some("work".into()), cpus: Some(4), memory: Some(8),
         networks: vec![network.clone()],
         env: Some(HashMap::from([("MODE".into(), "preview".into())])),
@@ -52,9 +52,11 @@ Clones, created VMs and forks share the HTTP connection pool. Dropping a handle
 does not invalidate other handles. Dropping a request future cancels its HTTP
 request; the gateway may already have accepted a mutation.
 
-Omitted CPU and memory values retain the profile defaults. Names create
-persistent VMs; omitted or empty names create ephemeral VMs. Memory is measured
-in GiB.
+Omitted CPU and memory values retain the profile defaults. Omit `profile` for
+Capsem's standard `code` profile; select another by assigning a
+`ProfileSummary` returned by `hv.profiles().list().await?` to the options. Names
+create persistent VMs; omitted or empty names create ephemeral VMs. Memory is
+measured in GiB.
 
 VM controls are `start`, `stop`, `pause`, `resume`, `delete`, and
 `fork(name, description)`. Queries include `log(LogOptions)`,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import builtins
+
 from . import _operations as api
 from . import models
 from ._transport import Transport
@@ -47,8 +49,8 @@ class Profiles:
     def __init__(self, transport: Transport) -> None:
         self._transport = transport
 
-    async def list(self) -> models.ProfilesListResponse:
-        return await api.list_profiles(self._transport)
+    async def list(self) -> builtins.list[models.ProfileSummary]:
+        return (await api.list_profiles(self._transport)).profiles
 
     def mcp(self, profile_id: str) -> ProfileMcp:
         return ProfileMcp(self._transport, profile_id)

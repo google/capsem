@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::models::{HistoryLayerFilter, NetworkInfo, RegistryAccess, TimelineLayer};
+use crate::models::{HistoryLayerFilter, NetworkInfo, ProfileSummary, RegistryAccess, TimelineLayer};
 
 /// Exactly one way to select a VM; names resolve once through the gateway.
 #[derive(Debug, Clone)]
@@ -12,6 +12,7 @@ pub enum VmSelector {
 /// Omitted CPU and memory values retain the selected profile's defaults.
 #[derive(Debug, Clone, Default)]
 pub struct CreateOptions {
+    pub profile: Option<ProfileSummary>,
     pub name: Option<String>,
     pub cpus: Option<u32>,
     /// Guest memory in GiB.
@@ -26,7 +27,7 @@ pub struct CreateOptions {
 
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
-    pub profile: Option<String>,
+    pub profile: Option<ProfileSummary>,
     pub timeout_secs: Option<u64>,
     pub cpus: Option<u32>,
     /// Guest memory in GiB.

@@ -11,7 +11,12 @@ assert(url && token, 'Fixture gateway URL and token are required');
 const hv = new Hypervisor(url, token, {timeoutMs: 120_000});
 const name = `sdk-ts-${randomUUID().slice(0, 8)}`;
 try {
-  const vm = await hv.create(process.env.CAPSEM_TEST_PROFILE ?? 'code', {name, cpus: 2, memory: 2});
+  const requestedProfile = process.env.CAPSEM_TEST_PROFILE;
+  const profile = requestedProfile === undefined
+    ? undefined
+    : (await hv.profiles.list()).find(item => item.id === requestedProfile);
+  assert(requestedProfile === undefined || profile !== undefined, `missing profile ${requestedProfile}`);
+  const vm = await hv.create({name, cpus: 2, memory: 2, ...(profile === undefined ? {} : {profile})});
   assert.equal((await vm.exec('printf SDK_EXEC_READY')).stdout.data, 'SDK_EXEC_READY');
   const info = await vm.info();
   assert.equal(info.id, vm.id);

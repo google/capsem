@@ -43,6 +43,8 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
         if request.path == "/vms/list":
             return web.json_response({"sandboxes": [response_model("SandboxInfo", id=f"vm-{index}", name=name)
                                                     for index, name in enumerate(state.names)]})
+        if request.path == "/profiles/list":
+            return web.json_response({"profiles": [response_model("ProfileSummary", id="code", name="Code")]})
         if request.path == "/vms/create":
             payload = json.loads(body)
             return web.json_response(response_model("ProvisionResponse", id="created-id", name=payload["name"] or "temporary"))

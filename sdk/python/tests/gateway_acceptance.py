@@ -21,9 +21,9 @@ async def main() -> None:
     async with Hypervisor(url, token) as hv, VM(url, token, name="route-workspace") as vm:
         assert isinstance(await hv.info(), models.HypervisorInfo)
         profiles = await hv.profiles.list()
-        assert profiles.profiles
-        mcp = hv.profiles.mcp(profiles.profiles[0].id)
-        assert (await mcp.info()).profile_id == profiles.profiles[0].id
+        assert profiles
+        mcp = hv.profiles.mcp(profiles[0].id)
+        assert (await mcp.info()).profile_id == profiles[0].id
         assert isinstance(await hv.panics(limit=2), models.PanicsResponse)
         assert isinstance(await hv.triage(since="1h", limit=2), models.TriageResponse)
         inventory = await hv.list()

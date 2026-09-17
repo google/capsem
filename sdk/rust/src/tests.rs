@@ -18,15 +18,14 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
     request(&mut server, "/status").await;
     assert_eq!(hv.list().await.unwrap().sandboxes[0].id, "vm-1");
     request(&mut server, "/vms/list").await;
+    let mut profile = hv.profiles().list().await.unwrap().remove(0);
+    request(&mut server, "/profiles/list").await;
     for name in [None, Some(String::new())] {
         let vm = hv
-            .create(
-                "code",
-                CreateOptions {
-                    name,
-                    ..Default::default()
-                },
-            )
+            .create(CreateOptions {
+                name,
+                ..Default::default()
+            })
             .await
             .unwrap();
         assert_eq!(vm.id(), Some("vm-1"));
@@ -41,18 +40,17 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
     }
     let network = hv.networks().create("team").await.unwrap();
     request(&mut server, "/networks").await;
+    profile.id = "co-work".into();
     let vm = hv
-        .create(
-            "co-work",
-            CreateOptions {
-                name: Some("work".into()),
-                cpus: Some(4),
-                memory: Some(8),
-                env: Some([("EDITOR".into(), "vim".into())].into()),
-                networks: vec![network.clone()],
-                ..Default::default()
-            },
-        )
+        .create(CreateOptions {
+            profile: Some(profile),
+            name: Some("work".into()),
+            cpus: Some(4),
+            memory: Some(8),
+            env: Some([("EDITOR".into(), "vim".into())].into()),
+            networks: vec![network.clone()],
+            ..Default::default()
+        })
         .await
         .unwrap();
     let body = request(&mut server, "/vms/create").await;
@@ -122,14 +120,11 @@ async fn container_and_port_resources_hide_wire_exposure_details() {
     let mut server = gateway().await;
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
     let vm = hv
-        .create(
-            "code",
-            CreateOptions {
-                env: Some([("MODE".into(), "preview".into())].into()),
-                image: Some("docker://busybox:latest".into()),
-                ..Default::default()
-            },
-        )
+        .create(CreateOptions {
+            env: Some([("MODE".into(), "preview".into())].into()),
+            image: Some("docker://busybox:latest".into()),
+            ..Default::default()
+        })
         .await
         .unwrap();
     let create = request(&mut server, "/vms/create").await;
@@ -287,7 +282,7 @@ async fn invalid_create_or_selector_is_rejected_before_http() {
             ..Default::default()
         },
     ] {
-        assert!(matches!(hv.create("code", options).await, Err(Error::InvalidInput(_))));
+        assert!(matches!(hv.create(options).await, Err(Error::InvalidInput(_))));
     }
     for selector in [VmSelector::Id(String::new()), VmSelector::Name(String::new())] {
         assert!(hv.vm(selector.clone()).is_err());
@@ -338,10 +333,13 @@ async fn network_resource_uses_typed_routes_put_and_cursor_logs() {
 async fn diagnostics_persistence_and_profile_mcp_use_typed_routes() {
     let mut server = gateway().await;
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    let mut profile = hv.profiles().list().await.unwrap().remove(0);
+    request(&mut server, "/profiles/list").await;
+    profile.id = "co-work".into();
     hv.run(
         "printf hello",
         RunOptions {
-            profile: Some("co-work".into()),
+            profile: Some(profile),
             timeout_secs: Some(4),
             cpus: Some(2),
             memory: Some(1),

@@ -63,7 +63,7 @@ impl Hypervisor {
         Profiles(&self.client)
     }
 
-    pub async fn create(&self, profile: &str, options: CreateOptions) -> Result<VM> {
+    pub async fn create(&self, options: CreateOptions) -> Result<VM> {
         if options.cpus == Some(0) {
             return Err(Error::InvalidInput("cpus must be positive"));
         }
@@ -89,7 +89,7 @@ impl Hypervisor {
             None => (options.env, None),
         };
         let body = models::ProvisionRequest {
-            profile_id: profile.to_owned(),
+            profile_id: options.profile.map_or_else(|| "code".into(), |profile| profile.id),
             persistent: name.is_some(),
             name,
             cpus: options.cpus,
@@ -127,7 +127,7 @@ impl Hypervisor {
             &api::RunVmParams {
                 body: models::RunRequest {
                     command: command.into(),
-                    profile_id: options.profile.unwrap_or_else(|| "code".into()),
+                    profile_id: options.profile.map_or_else(|| "code".into(), |profile| profile.id),
                     timeout_secs: options.timeout_secs,
                     ram_mb: Self::memory_mb(options.memory)?,
                     cpus: options.cpus,

@@ -1,4 +1,4 @@
-import {HostLogSource, TimelineLayer, type Hypervisor, type VM} from '@capsem/sdk';
+import {HostLogSource, TimelineLayer, type Hypervisor, type ProfileSummary, type VM} from '@capsem/sdk';
 import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
 import {toolCall} from './results.js';
@@ -32,6 +32,15 @@ function defined<T extends object>(input: T): {[K in keyof T]?: Exclude<T[K], un
   };
 }
 
+async function profileOption(hypervisor: Hypervisor, profileId: string | undefined): Promise<{
+  profile: ProfileSummary
+} | undefined> {
+  if (profileId === undefined || profileId === 'code') return undefined;
+  const profile = (await hypervisor.profiles.list()).find(candidate => candidate.id === profileId);
+  if (profile === undefined) throw new Error(`Unknown profile ${profileId}`);
+  return {profile};
+}
+
 export function registerHostTools(server: McpServer, hypervisor: Hypervisor): void {
   server.registerTool('capsem_list', {
     description: 'List VMs with identity, lifecycle, resources, and telemetry.',
@@ -53,8 +62,8 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
     },
   }, ({profile, network_ids, registry: access, ...options}) => toolCall(async () => {
     const networks = await Promise.all((network_ids ?? []).map(id => hypervisor.networks.inspect(id)));
-    const created = await hypervisor.create(profile, {
-      ...defined(options), networks,
+    const created = await hypervisor.create({
+      ...defined(options), ...(await profileOption(hypervisor, profile) ?? {}), networks,
       ...(access === undefined ? {} : {registry: defined(access)}),
     });
     return {id: created.id, name: created.name};
@@ -78,7 +87,9 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
       memory: positiveInt.optional().describe('Guest memory in GiB'),
       env: z.record(z.string(), z.string()).optional(),
     },
-  }, ({command, ...options}) => toolCall(() => hypervisor.run(command, defined(options))));
+  }, ({command, profile, ...options}) => toolCall(async () => hypervisor.run(command, {
+    ...defined(options), ...(await profileOption(hypervisor, profile) ?? {}),
+  })));
 
   server.registerTool('capsem_start', {
     description: 'Start a stopped VM.', inputSchema: {vm_id: vmId},

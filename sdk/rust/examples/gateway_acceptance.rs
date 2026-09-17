@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hv = Hypervisor::new(&url, &token)?;
     assert!(!hv.info().await?.gateway_version.is_empty());
     let profiles = hv.profiles().list().await?;
-    let profile = profiles.profiles.first().expect("fixture profile");
+    let profile = profiles.first().expect("fixture profile");
     assert_eq!(hv.profiles().mcp(&profile.id).info().await?.profile_id, profile.id);
     hv.panics(DiagnosticOptions {
         limit: Some(2),
