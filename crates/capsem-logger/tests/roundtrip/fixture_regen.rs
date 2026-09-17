@@ -845,4 +845,48 @@ fn regenerate_session_fixture() {
             std::fs::remove_file(&sidecar).unwrap();
         }
     }
+
+    assert_recorded_digests(&fixture, &fixture_bodies);
+}
+
+/// Fail unless what was just written is what `fixture_ownership.toml` records.
+///
+/// `tests/citadel/test_fixture_ownership.py` compares the same two digests, so
+/// a stale entry is caught either way. What it cannot do is catch it *here*,
+/// at the moment the bytes change, with the digests to record printed in the
+/// failure. Without that, forgetting the toml is a green regeneration followed
+/// by a red citadel run in a different suite, and the person who has to
+/// connect the two is whoever runs the gate next rather than whoever moved
+/// the fixture.
+///
+/// It is also the standing proof that regeneration is reproducible: a run
+/// against an unchanged tree rewrites the fixture and must arrive back at the
+/// digests already on record.
+fn assert_recorded_digests(fixture: &std::path::Path, bodies: &std::path::Path) {
+    use sha2::{Digest, Sha256};
+
+    let ownership = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/citadel/fixture_ownership.toml")
+        .canonicalize()
+        .expect("fixture_ownership.toml must exist beside the fixture it records");
+    let recorded = std::fs::read_to_string(&ownership).expect("read fixture_ownership.toml");
+
+    let mut stale = Vec::new();
+    for path in [fixture, bodies] {
+        if !path.exists() {
+            continue;
+        }
+        let digest = format!("{:x}", Sha256::digest(std::fs::read(path).expect("read fixture")));
+        let name = path.file_name().expect("fixture name").to_string_lossy();
+        if !recorded.contains(&digest) {
+            stale.push(format!("  {name}: sha256 = \"{digest}\""));
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "the regenerated fixture does not match the digests in {}.\n\
+         Record these in the same commit as the new bytes:\n{}",
+        ownership.display(),
+        stale.join("\n")
+    );
 }
