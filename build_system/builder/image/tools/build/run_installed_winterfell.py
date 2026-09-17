@@ -42,6 +42,8 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(arguments: Sequence[str] | None = None) -> int:
     args = parse_args(arguments)
+    args.evidence_out.parent.mkdir(parents=True, exist_ok=True)
+    pytest_cache = args.evidence_out.parent / ".pytest_cache"
     overrides = {
         WINTERFELL_ROOT_ENV["binary_dir"]: str(args.bin_dir),
         WINTERFELL_ROOT_ENV["assets_dir"]: str(args.assets_dir),
@@ -61,8 +63,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         os.fspath(Path(sys.executable)),
         "-m",
         "pytest",
-        "-p",
-        "no:cacheprovider",
+        "-o",
+        f"cache_dir={pytest_cache}",
         "-c",
         "build_system/pyproject.toml",
         "--rootdir",
@@ -80,7 +82,6 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "profiles": str(roots.profiles_dir),
         },
     }
-    args.evidence_out.parent.mkdir(parents=True, exist_ok=True)
     args.evidence_out.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",

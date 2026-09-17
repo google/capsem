@@ -146,6 +146,20 @@ def test_installed_winterfell_roots_accept_one_complete_installed_cohort(
     assert roots.profiles_dir == profiles_dir
 
 
+def test_installed_profiles_are_not_compared_to_an_ambient_runtime_selector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bin_dir, assets_dir, profiles_dir = _installed_roots(tmp_path)
+    monkeypatch.setattr(service, "PROFILES_DIR", profiles_dir)
+
+    roots = service.resolve_winterfell_artifact_roots(
+        _environment(bin_dir, assets_dir, profiles_dir)
+    )
+
+    assert roots.installed is True
+    assert roots.profiles_dir == profiles_dir
+
+
 @pytest.mark.parametrize(
     ("bin_dir", "assets_dir", "profiles_dir"),
     [
@@ -195,7 +209,6 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
     evidence = tmp_path / "winterfell.json"
     captured: dict[str, object] = {}
     run_process = subprocess.run
-    monkeypatch.setenv("PYTEST_ADDOPTS", f"-o cache_dir={tmp_path / 'pytest-cache'}")
     # This nested process only collects tests against fake installed roots;
     # it is not the outer CI lane that must prove real build artifacts.
     monkeypatch.delenv("CAPSEM_REQUIRE_ARTIFACTS", raising=False)
@@ -238,6 +251,8 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
         os.fspath(Path(module.sys.executable)),
         "-m",
         "pytest",
+        "-o",
+        f"cache_dir={tmp_path / '.pytest_cache'}",
         "-c",
         "build_system/pyproject.toml",
         "--rootdir",

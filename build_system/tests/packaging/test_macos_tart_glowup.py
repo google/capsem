@@ -801,7 +801,7 @@ def test_installed_winterfell_does_not_write_pytest_state_to_source(
             str(tmp_path / "evidence.json"),
         ]
     ) == 0
-    assert commands[0][3:5] == ["-p", "no:cacheprovider"]
+    assert commands[0][3:5] == ["-o", f"cache_dir={tmp_path / '.pytest_cache'}"]
 
 
 def test_tart_harness_promotes_guest_evidence_to_a_durable_report() -> None:
