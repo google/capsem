@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Streaming exec and terminal sessions no longer end with "VM owner closed"
+  when client input arrives while a large output frame is half read: the
+  VM-owner IPC receiver now resumes a partially read frame after cancellation.
+
 - Guest exec now drains stdout and stderr before waking a blocked stdin reader,
   preventing AF_VSOCK shutdown from turning successful command output into an
   empty HTTP result.

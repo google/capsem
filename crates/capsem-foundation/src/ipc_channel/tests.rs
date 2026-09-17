@@ -36,6 +36,12 @@ async fn oversized_frame_is_rejected_before_payload_allocation() {
     let error = rx.recv().await.unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     assert!(error.to_string().contains("frame too large"), "{error}");
+    let error = rx.recv().await.unwrap_err();
+    assert_eq!(
+        error.kind(),
+        io::ErrorKind::InvalidData,
+        "a rejected length stays fatal"
+    );
 }
 
 #[tokio::test]
@@ -118,5 +124,32 @@ async fn churned_channels_keep_delivering() {
         for client in clients {
             client.await.unwrap();
         }
+    }
+}
+
+/// `recv` is raced against client input in `tokio::select!`; a losing branch
+/// is dropped mid-frame. The bytes it already consumed must not be lost, or the
+/// next call reads payload bytes as a length.
+#[tokio::test]
+async fn cancelled_recv_resumes_a_partially_read_frame() {
+    let (channel, mut peer) = UnixStream::pair().unwrap();
+    let (_tx, rx) = channel_from_std::<String, String>(channel).unwrap();
+    // Small enough that the blocking peer writes fit the socket buffer on the
+    // current-thread runtime; large enough that the split lands mid-payload.
+    let message = "x".repeat(3 * 1024);
+    let payload = rmp_serde::to_vec_named(&message).unwrap();
+    let mut frame = (payload.len() as u32).to_be_bytes().to_vec();
+    frame.extend_from_slice(&payload);
+
+    for split in [2, 4, 4 + payload.len() / 2] {
+        peer.write_all(&frame[..split]).unwrap();
+        let cancelled = tokio::time::timeout(Duration::from_millis(50), rx.recv()).await;
+        assert!(cancelled.is_err(), "a partial frame must not complete");
+        peer.write_all(&frame[split..]).unwrap();
+        let received = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("resumed frame")
+            .expect("resumed frame decodes");
+        assert_eq!(received, message, "split at {split}");
     }
 }
