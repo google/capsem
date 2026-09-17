@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `vm.resources.retention_days` is now enforced, having been a setting nothing
+  read. Failed-session directories older than it are removed when the service
+  starts -- they were culled only by count, and only when a *new* failure
+  landed, so a machine that stopped failing kept its last 32 post-mortems
+  forever. A persistent VM trims archived request and response bodies past the
+  period when it stops; its session directory survives every stop, so its body
+  archive previously only ever grew. Ephemeral sessions are deleted whole and
+  are unaffected. The setting's description now says what it does.
 - `capsem run --image IMAGE --network NAME` joins the container's VM to a named
   network at creation, like `capsem create --network`.
 - Members of a network have names: `<vm>.<network>.capsem.internal` (and

@@ -287,6 +287,14 @@ pub(super) async fn run_service() -> Result<()> {
     });
     hydrate_startup_route_caches(&state).map_err(|AppError(_, message)| anyhow!("{message}"))?;
     state.hydrate_session_db_handles();
+    // The count cap only ran when a new failure landed, so a machine that
+    // stopped failing kept its last 32 post-mortems forever. Start is the one
+    // moment the service knows nothing is writing them.
+    match state.cull_failed_sessions() {
+        Ok(0) => {}
+        Ok(culled) => info!(culled, "culled failed session dirs past the retention period"),
+        Err(error) => warn!(error = %error, "failed to cull old failed session dirs at startup"),
+    }
     state.reconcile_persistent_defunct_from_logs();
 
     asset_background::start_startup_ensure(Arc::clone(&state));

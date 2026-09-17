@@ -30,4 +30,4 @@ pub use session_types::{
     epoch_to_iso, generate_session_id, is_valid_session_id, now_iso, GlobalStats, McpToolSummary, ProviderSummary,
     SessionRecord, ToolSummary,
 };
-pub use writer::{DbWriter, WriteOp};
+pub use writer::{format_ledger_timestamp, DbWriter, RetainOutcome, WriteOp};

@@ -98,6 +98,19 @@ fn new_event_id() -> String {
 }
 
 fn format_timestamp(timestamp: SystemTime) -> String {
+    format_ledger_timestamp(timestamp)
+}
+
+/// How every ledger timestamp is spelled: RFC 3339, UTC, fixed-width to the
+/// microsecond.
+///
+/// Public because a caller that compares against one -- a retention cutoff
+/// against `body_blocks.sealed_at` -- is comparing strings, and the ordering
+/// only holds while both have the same shape. `12:00:00Z` sorts *after*
+/// `12:00:00.000001Z`, so a cutoff formatted without the fraction would keep
+/// exactly the blocks it meant to drop.
+#[must_use]
+pub fn format_ledger_timestamp(timestamp: SystemTime) -> String {
     humantime::format_rfc3339_micros(timestamp).to_string()
 }
 

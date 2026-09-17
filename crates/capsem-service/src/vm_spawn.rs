@@ -187,6 +187,14 @@ impl ServiceState {
             boot_mode = "provision",
             status = tracing::field::Empty,
         );
+        // Only a persistent VM's ledger outlives its process, so only it needs
+        // its archived bodies trimmed on stop. An ephemeral session directory
+        // is deleted whole.
+        if persistent {
+            child_cmd
+                .arg("--retention-days")
+                .arg(session_housekeeping::retention_days().to_string());
+        }
         let mut child = match process_spawn_span.in_scope(|| {
             child_cmd
                 .env(
@@ -499,6 +507,10 @@ impl ServiceState {
                 .arg(&entry.asset_pins.rootfs.hash)
                 .arg("--session-dir")
                 .arg(&entry.session_dir)
+                // A persistent VM by definition: its session directory, and
+                // its body archive, survive every stop.
+                .arg("--retention-days")
+                .arg(session_housekeeping::retention_days().to_string())
                 .arg("--active-profile")
                 .arg(&active_profile_path)
                 .arg("--cpus")

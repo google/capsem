@@ -589,7 +589,7 @@
         },
         "retention_days": {
           "name": "Session retention",
-          "description": "Number of days to retain session data.",
+          "description": "Days of body evidence a persistent VM keeps; failed-session directories older than this are removed at service start.",
           "type": "number",
           "default": 30,
           "meta": {

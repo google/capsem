@@ -712,6 +712,7 @@ mod network_routes;
 mod persist_purge;
 mod profile_mutations;
 mod profile_routes;
+mod session_housekeeping;
 mod session_identity;
 mod settings_files;
 mod system_contracts;
