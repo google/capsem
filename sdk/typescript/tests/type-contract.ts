@@ -3,6 +3,7 @@ import {
   type ExecRequest, type FileListEntry, type TimelineStatus, type UpdateApplyRequest,
   type VmStatsDetailResponse,
 } from '../src/models/index.js';
+import type {Networks} from '../src/resources.js';
 
 const request: UpdateApplyRequest = {};
 const status: TimelineStatus = ToolDecision.DENIED;
@@ -13,6 +14,7 @@ const leaf: FileListEntry = {
 };
 const tree: FileListEntry = { ...leaf, type: FileEntryType.DIRECTORY, children: [leaf] };
 const bodies: VmStatsDetailResponse['body_blobs'] = { event: [] };
+declare const networks: Networks;
 
 // @ts-expect-error An optional boolean cannot be explicit null.
 request.confirmed = null;
@@ -28,6 +30,10 @@ tree.children = [1];
 const incomplete: ExecRequest = {};
 // @ts-expect-error Counters cannot become strings.
 leaf.size = '4294967296';
+// @ts-expect-error Network deletion requires an object returned by the SDK.
+void networks.delete('net-1');
+// @ts-expect-error Network audit requires an object returned by the SDK.
+void networks.logs('net-1');
 
 if (numeric !== 403 || status !== ToolDecision.DENIED || !Array.isArray(bodies.event)) {
   throw new Error('Generated type usage failed');

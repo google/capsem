@@ -22,7 +22,7 @@ async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     )
     port = await vm.ports.open(80, authenticate=True)
     print(port.url)
-    await hv.networks.logs(network.id, vm=vm.id)
+    await hv.networks.logs(network, vm=vm.id)
     result = await vm.exec("echo hello", timeout_secs=60)
     print(result)
     await vm.files.write("/hello.txt", b"hello\n")

@@ -21,13 +21,16 @@ export function registerNetworkTools(server: McpServer, hypervisor: Hypervisor):
   }, ({name}) => toolCall(() => hypervisor.networks.create(name)));
   server.registerTool('capsem_network_list', {
     description: 'List private VM networks and their current members.',
-  }, () => toolCall(() => hypervisor.networks.list()));
+  }, () => toolCall(async () => ({networks: await hypervisor.networks.list()})));
   server.registerTool('capsem_network_inspect', {
     description: 'Inspect a private network by immutable ID.', inputSchema: {network_id: networkId},
   }, ({network_id}) => toolCall(() => hypervisor.networks.inspect(network_id)));
   server.registerTool('capsem_network_delete', {
     description: 'Retire a private network by immutable ID.', inputSchema: {network_id: networkId},
-  }, ({network_id}) => toolCall(() => hypervisor.networks.delete(network_id)));
+  }, ({network_id}) => toolCall(async () => {
+    const network = await hypervisor.networks.inspect(network_id);
+    return hypervisor.networks.delete(network);
+  }));
   server.registerTool('capsem_network_attach', {
     description: 'Attach a VM to a private network and return actual membership state.',
     inputSchema: {network_id: networkId, vm_id: vmId},
@@ -55,9 +58,11 @@ export function registerNetworkTools(server: McpServer, hypervisor: Hypervisor):
       since_unix_ms: unixMs.optional(),
       until_unix_ms: unixMs.optional(),
     },
-  }, ({network_id, vm_id, connection_id, event_type, since_unix_ms, until_unix_ms, ...options}) => toolCall(() =>
-    hypervisor.networks.logs(network_id, defined({
+  }, ({network_id, vm_id, connection_id, event_type, since_unix_ms, until_unix_ms, ...options}) => toolCall(async () => {
+    const network = await hypervisor.networks.inspect(network_id);
+    return hypervisor.networks.logs(network, defined({
       ...options, vm: vm_id, connection: connection_id, type: event_type,
       since: since_unix_ms, until: until_unix_ms,
-    }))));
+    }));
+  }));
 }

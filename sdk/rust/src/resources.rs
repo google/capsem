@@ -236,8 +236,8 @@ impl Networks<'_> {
         .await
     }
 
-    pub async fn list(&self) -> Result<models::NetworkListResponse> {
-        api::list_networks(&self.0.transport, self.0.options).await
+    pub async fn list(&self) -> Result<Vec<models::NetworkInfo>> {
+        Ok(api::list_networks(&self.0.transport, self.0.options).await?.networks)
     }
 
     pub async fn inspect(&self, network_id: &str) -> Result<models::NetworkInfo> {
@@ -249,20 +249,24 @@ impl Networks<'_> {
         .await
     }
 
-    pub async fn delete(&self, network_id: &str) -> Result<models::VmActionResponse> {
+    pub async fn delete(&self, network: &models::NetworkInfo) -> Result<models::VmActionResponse> {
         api::delete_network(
             &self.0.transport,
-            &api::DeleteNetworkParams { id: network_id.into() },
+            &api::DeleteNetworkParams { id: network.id.clone() },
             self.0.options,
         )
         .await
     }
 
-    pub async fn logs(&self, network_id: &str, options: NetworkLogOptions) -> Result<models::NetworkLogsResponse> {
+    pub async fn logs(
+        &self,
+        network: &models::NetworkInfo,
+        options: NetworkLogOptions,
+    ) -> Result<models::NetworkLogsResponse> {
         api::get_network_logs(
             &self.0.transport,
             &api::GetNetworkLogsParams {
-                id: network_id.into(),
+                id: network.id.clone(),
                 cursor: options.cursor,
                 limit: options.limit,
                 vm: options.vm,

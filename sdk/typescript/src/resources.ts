@@ -108,17 +108,17 @@ export class Networks {
   async create(name: string, options: CallOptions = {}): Promise<models.NetworkInfo> {
     return api.createNetwork(this.transport, {body: {name}}, options);
   }
-  async list(options: CallOptions = {}): Promise<models.NetworkListResponse> {
-    return api.listNetworks(this.transport, options);
+  async list(options: CallOptions = {}): Promise<models.NetworkInfo[]> {
+    return (await api.listNetworks(this.transport, options)).networks;
   }
   async inspect(networkId: string, options: CallOptions = {}): Promise<models.NetworkInfo> {
     return api.getNetwork(this.transport, {id: networkId}, options);
   }
-  async delete(networkId: string, options: CallOptions = {}): Promise<models.VmActionResponse> {
-    return api.deleteNetwork(this.transport, {id: networkId}, options);
+  async delete(network: models.NetworkInfo, options: CallOptions = {}): Promise<models.VmActionResponse> {
+    return api.deleteNetwork(this.transport, {id: network.id}, options);
   }
-  async logs(networkId: string, options: NetworkLogOptions = {}): Promise<models.NetworkLogsResponse> {
-    return api.getNetworkLogs(this.transport, {...options, id: networkId}, options);
+  async logs(network: models.NetworkInfo, options: NetworkLogOptions = {}): Promise<models.NetworkLogsResponse> {
+    return api.getNetworkLogs(this.transport, {...options, id: network.id}, options);
   }
 }
 

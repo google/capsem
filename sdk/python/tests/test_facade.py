@@ -255,14 +255,21 @@ def test_network_resource_maps_typed_lifecycle_and_cursor_logs() -> None:
     async def run() -> None:
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
             created = await hv.networks.create("team")
-            await hv.networks.list()
+            assert [network.id for network in await hv.networks.list()] == ["net-1"]
             await hv.networks.inspect(created.id)
             async with VM(url, "token", id="vm-0") as vm:
                 assert [network.id for network in await vm.networks.list()] == ["net-1"]
                 await vm.networks.attach(created)
                 await vm.networks.detach(created)
-            await hv.networks.logs(created.id, cursor="next", limit=4, event_type="network.connect")
-            await hv.networks.delete(created.id)
+            raw_id: Any = created.id
+            request_count = len(state.requests)
+            with pytest.raises(TypeError, match="network must be an object"):
+                await hv.networks.logs(raw_id)
+            with pytest.raises(TypeError, match="network must be an object"):
+                await hv.networks.delete(raw_id)
+            assert len(state.requests) == request_count
+            await hv.networks.logs(created, cursor="next", limit=4, event_type="network.connect")
+            await hv.networks.delete(created)
             assert [(method, path.split("?")[0]) for method, path, _ in state.requests] == [
                 ("POST", "/networks"),
                 ("GET", "/networks"),

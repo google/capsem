@@ -23,7 +23,7 @@ async fn example(url: &str, token: &str) -> Result<()> {
     }).await?;
     let port = vm.ports().open_with(80, PortOptions { host: 0, authenticate: true }).await?;
     println!("submit the bootstrap token by POST to {}", port.url.as_deref().unwrap_or(""));
-    hv.networks().logs(&network.id, Default::default()).await?;
+    hv.networks().logs(&network, Default::default()).await?;
     let result = vm.exec("echo hello", Some(60)).await?;
     println!("{} (exit {})", result.stdout.data, result.exit_code);
     vm.files().write("/hello.txt", b"hello\n".to_vec()).await?;

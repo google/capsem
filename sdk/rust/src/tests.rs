@@ -310,7 +310,7 @@ async fn network_resource_uses_typed_routes_put_and_cursor_logs() {
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
     let created = hv.networks().create("team").await.unwrap();
     request(&mut server, "/networks").await;
-    hv.networks().list().await.unwrap();
+    assert_eq!(hv.networks().list().await.unwrap()[0].id, "net-1");
     request(&mut server, "/networks").await;
     hv.networks().inspect(&created.id).await.unwrap();
     request(&mut server, &format!("/networks/{}", created.id)).await;
@@ -326,7 +326,7 @@ async fn network_resource_uses_typed_routes_put_and_cursor_logs() {
     assert_eq!(parts.method, "DELETE");
     hv.networks()
         .logs(
-            &created.id,
+            &created,
             NetworkLogOptions {
                 cursor: Some("next".into()),
                 limit: Some(4),
@@ -338,7 +338,7 @@ async fn network_resource_uses_typed_routes_put_and_cursor_logs() {
         .unwrap();
     let (parts, _) = server.received.recv().await.unwrap();
     assert_eq!(parts.uri.query(), Some("cursor=next&limit=4&type=network.connect"));
-    hv.networks().delete(&created.id).await.unwrap();
+    hv.networks().delete(&created).await.unwrap();
     let (parts, _) = server.received.recv().await.unwrap();
     assert_eq!(parts.method, "DELETE");
 }

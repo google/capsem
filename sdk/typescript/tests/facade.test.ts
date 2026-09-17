@@ -216,14 +216,14 @@ it('maps the typed network resource including PUT membership and cursor logs', a
     const hv = new Hypervisor(url, 'secret');
     try {
       const created = await hv.networks.create('team');
-      await hv.networks.list();
+      expect((await hv.networks.list()).map(network => network.id)).toEqual(['net-1']);
       await hv.networks.inspect(created.id);
       const vm = hv.vm({id: 'vm-0'});
       expect((await vm.networks.list()).map(network => network.id)).toEqual(['net-1']);
       await vm.networks.attach(created);
       await vm.networks.detach(created);
-      await hv.networks.logs(created.id, {cursor: 'next', limit: 4, type: 'network.connect'});
-      await hv.networks.delete(created.id);
+      await hv.networks.logs(created, {cursor: 'next', limit: 4, type: 'network.connect'});
+      await hv.networks.delete(created);
       expect(received.map(request => [request.method, request.url.split('?')[0]])).toEqual([
         ['POST', '/networks'], ['GET', '/networks'], ['GET', `/networks/${created.id}`],
         ['GET', '/networks'],

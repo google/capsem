@@ -22,18 +22,20 @@ class Networks:
             self._transport, body=models.CreateNetworkRequest(name=name),
         )
 
-    async def list(self) -> models.NetworkListResponse:
-        return await api.list_networks(self._transport)
+    async def list(self) -> builtins.list[models.NetworkInfo]:
+        return (await api.list_networks(self._transport)).networks
 
     async def inspect(self, network_id: str) -> models.NetworkInfo:
         return await api.get_network(self._transport, id=network_id)
 
-    async def delete(self, network_id: str) -> models.VmActionResponse:
-        return await api.delete_network(self._transport, id=network_id)
+    async def delete(self, network: models.NetworkInfo) -> models.VmActionResponse:
+        if not isinstance(network, models.NetworkInfo):
+            raise TypeError("network must be an object returned by capsem.networks")
+        return await api.delete_network(self._transport, id=network.id)
 
     async def logs(
         self,
-        network_id: str,
+        network: models.NetworkInfo,
         *,
         cursor: str | None = None,
         limit: int | None = None,
@@ -44,9 +46,11 @@ class Networks:
         since: int | None = None,
         until: int | None = None,
     ) -> models.NetworkLogsResponse:
+        if not isinstance(network, models.NetworkInfo):
+            raise TypeError("network must be an object returned by capsem.networks")
         return await api.get_network_logs(
             self._transport,
-            id=network_id,
+            id=network.id,
             cursor=cursor,
             limit=limit,
             vm=vm,

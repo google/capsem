@@ -17,7 +17,7 @@ try {
   });
   const port = await vm.ports.open(80, {authenticate: true});
   console.log(port.url);
-  await hv.networks.logs(network.id, {vm: vm.id});
+  await hv.networks.logs(network, {vm: vm.id});
   const result = await vm.exec('uname -a', {timeout_secs: 60});
   console.log(result.stdout.data, result.exit_code);
   await vm.files.write('/hello.txt', new TextEncoder().encode('hello'));

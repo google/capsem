@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Global network resources now return and accept typed network objects for
+  list, delete, and audit operations; immutable IDs remain the explicit lookup
+  boundary.
+
 - Host panic and triage diagnostics now live under the explicit `debug`
   namespace instead of the normal hypervisor lifecycle surface.
 
