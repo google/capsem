@@ -11,6 +11,7 @@ export const ProfileCatalogStatusSchema: z.ZodType<ProfileCatalogStatus> = z.obj
   "bytes_done": z.int().min(0).nullable().exactOptional(),
   "bytes_total": z.int().min(0).nullable().exactOptional(),
   "current_asset": z.string().nullable().exactOptional(),
+  "default_profile_id": z.string().nullable().exactOptional(),
   "downloaded": z.int().min(0).nullable().exactOptional(),
   "profile_count": z.int().min(0),
   "profiles": z.array(z.lazy(() => ProfileReadinessSchema)),

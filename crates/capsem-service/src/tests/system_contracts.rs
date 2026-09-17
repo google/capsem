@@ -122,6 +122,9 @@ async fn system_status_route_returns_exact_installed_documents_in_one_response()
     let profiles: capsem_api::ProfileCatalogStatus = serde_json::from_value(body["profiles"].clone())
         .expect("the real profile status response must satisfy the generated SDK contract");
     assert!(profiles.profiles.iter().any(|profile| profile.id == "code"));
+    // Clients ask the catalog which profile to use when they name none,
+    // instead of compiling a profile name into every SDK.
+    assert_eq!(profiles.default_profile_id.as_deref(), Some("code"));
     let code = body["profiles"]["profiles"]
         .as_array()
         .unwrap()

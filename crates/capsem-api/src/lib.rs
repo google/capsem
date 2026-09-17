@@ -2,7 +2,7 @@
 //! No runtime, filesystem, or service dependencies belong here.
 
 mod document;
-pub use document::openapi;
+pub use document::{openapi, CONTRACT_VERSION};
 mod hypervisor;
 pub use hypervisor::*;
 mod vm_info;

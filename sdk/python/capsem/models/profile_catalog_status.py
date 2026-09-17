@@ -17,6 +17,7 @@ class ProfileCatalogStatus(Model):
     bytes_done: Annotated[StrictInt, Field(ge=0)] | None = None
     bytes_total: Annotated[StrictInt, Field(ge=0)] | None = None
     current_asset: StrictStr | None = None
+    default_profile_id: StrictStr | None = None
     downloaded: Annotated[StrictInt, Field(ge=0)] | None = None
     profile_count: Annotated[StrictInt, Field(ge=0)]
     profiles: list[ProfileReadiness]

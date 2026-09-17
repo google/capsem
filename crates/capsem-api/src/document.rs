@@ -66,6 +66,13 @@ struct Document {
     components: ComponentsBuilder,
 }
 
+/// The gateway HTTP contract's own version. It does not track the binary
+/// version: a patch release must not invalidate a checked-in specification or
+/// force every generated SDK to be regenerated, and an SDK built against the
+/// contract keeps working across binary releases. Raise it when the contract
+/// changes in a way clients must notice.
+pub const CONTRACT_VERSION: &str = "1.0.0";
+
 impl Document {
     fn schema<T: ToSchema>(&mut self) -> Ref {
         let mut nested = Vec::new();
@@ -297,10 +304,7 @@ impl Document {
     }
 
     fn finish(self) -> OpenApi {
-        let mut api = OpenApi::new(
-            Info::new("Capsem Gateway", env!("CARGO_PKG_VERSION")),
-            self.paths.build(),
-        );
+        let mut api = OpenApi::new(Info::new("Capsem Gateway", CONTRACT_VERSION), self.paths.build());
         api.components = Some(
             self.components
                 .security_scheme("bearerAuth", SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)))

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Capsem Gateway",
-    "version": "0.6.3"
+    "version": "1.0.0"
   },
   "paths": {
     "/host-logs/{name}": {
@@ -5202,6 +5202,13 @@
               "string",
               "null"
             ]
+          },
+          "default_profile_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The profile a client gets when it names none, when the catalog has\none. Clients read it here instead of compiling a profile name in."
           },
           "downloaded": {
             "type": [

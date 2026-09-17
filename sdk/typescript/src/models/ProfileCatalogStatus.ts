@@ -9,6 +9,7 @@ export interface ProfileCatalogStatus {
   "bytes_done"?: number | null;
   "bytes_total"?: number | null;
   "current_asset"?: string | null;
+  "default_profile_id"?: string | null;
   "downloaded"?: number | null;
   "profile_count": number;
   "profiles": Array<ProfileReadiness>;

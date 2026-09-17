@@ -111,6 +111,19 @@ fn management_categories_are_closed_enums() {
     );
 }
 
+/// The contract version is the SDK's, not the binary's. While it was
+/// `CARGO_PKG_VERSION` every version bump changed the checked-in
+/// specification, so the next release turned the fast phase red for a
+/// contract that had not changed at all.
+#[test]
+fn the_contract_version_is_independent_of_the_binary_version() {
+    assert_eq!(crate::openapi().info.version, crate::CONTRACT_VERSION);
+    assert!(
+        !include_str!("document.rs").contains("CARGO_PKG_VERSION"),
+        "the published contract version must not track the crate version"
+    );
+}
+
 #[test]
 fn checked_in_openapi_matches_the_rust_contract() {
     let exported: serde_json::Value =

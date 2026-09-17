@@ -939,7 +939,7 @@ pub(super) fn build_profile_status_cache(
         .filter(|profile| profile["ready"].as_bool().unwrap_or(false))
         .count();
     let catalog_status = json!({
-        "source": profile_catalog_source_label(catalog.source()),
+        "source": profile_catalog_source_label(catalog.source()), "default_profile_id": catalog.default_profile_id(),
         "asset_manifest": asset_manifest_status_value(state),
         "profile_count": profiles.len(),
         "ready_count": ready_count,
