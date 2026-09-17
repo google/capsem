@@ -41,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- SDK `exec`/`run` calls no longer abort after 30 seconds while the command
+  keeps running server-side: the Python, TypeScript and Rust clients stretch
+  each call's HTTP deadline to the service's command timeout plus the
+  gateway's request budget. The desktop app waits as long as the gateway does
+  for fork, update and image create, and reports a client-side timeout as an
+  error saying the operation may still be running.
+
 - A VM create that fails after the VM is registered (a refused or failed
   container image, or a failed network attach) now removes the VM instead of
   leaving it running with its name taken, so a retry no longer gets 409.
