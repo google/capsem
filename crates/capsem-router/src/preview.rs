@@ -132,11 +132,14 @@ pub(super) async fn relay(
     let wait_upgrades = upgrades.wait();
     tokio::pin!(wait_upgrades);
     tokio::select! {
-        () = &mut wait_upgrades => local_stop.cancel(),
+        // Preserve an already-observed guest EOF instead of relabeling the
+        // completed transfer as cooperative cancellation.
+        biased;
         outcome = &mut copy => {
             client.abort();
             return outcome;
         }
+        () = &mut wait_upgrades => local_stop.cancel(),
     }
     let outcome = copy.await;
     client.abort();
