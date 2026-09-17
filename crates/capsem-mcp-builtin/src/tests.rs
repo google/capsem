@@ -471,3 +471,42 @@ async fn builtin_http_client_does_not_follow_redirects() {
         "redirects must not be followed -- a 3xx to another host would bypass the domain policy check"
     );
 }
+
+// -- Startup: the session ledger is required --
+
+/// Unset is a startup error that names the variable.
+///
+/// The builtin server used to fall back to an in-memory writer here, so a
+/// missing `CAPSEM_SESSION_DB` produced a server that ran normally and
+/// recorded nothing.
+#[test]
+fn startup_without_a_session_ledger_refuses_and_names_the_variable() {
+    let Err(error) = open_session_ledger(None) else {
+        panic!("a builtin server with nowhere to record must refuse");
+    };
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(SESSION_DB_ENV),
+        "the refusal must name what is missing: {message}"
+    );
+}
+
+/// A configured path that cannot be opened is a startup error naming the path.
+#[test]
+fn startup_with_an_unopenable_ledger_refuses_and_names_the_path() {
+    let dir = tempfile::tempdir().unwrap();
+    // A regular file where a directory would have to be: the ledger path is
+    // unopenable for a reason no retry can clear.
+    let blocker = dir.path().join("not-a-directory");
+    std::fs::write(&blocker, b"").unwrap();
+    let ledger = blocker.join("session.db");
+
+    let Err(error) = open_session_ledger(Some(ledger.display().to_string())) else {
+        panic!("an unopenable ledger must refuse, not degrade to memory");
+    };
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(&ledger.display().to_string()),
+        "the refusal must name the path it could not open: {message}"
+    );
+}

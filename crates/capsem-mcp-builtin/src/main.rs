@@ -434,6 +434,35 @@ fn extract_text(resp: JsonRpcResponse) -> Result<String, String> {
 
 // -- Main --
 
+/// The environment variable naming the session ledger this server records to.
+const SESSION_DB_ENV: &str = "CAPSEM_SESSION_DB";
+
+/// Open the session ledger, or refuse to start.
+///
+/// This used to fall back to `DbWriter::open_in_memory` when the variable was
+/// unset or the file could not be opened. An in-memory writer accepts every
+/// row and keeps none, so a misconfigured builtin server answered tool calls
+/// normally and recorded nothing -- a session ledger showing no builtin tool
+/// calls, indistinguishable from a session that made none. The only sign was
+/// one warn line in a stderr nobody reads.
+///
+/// Recording is part of this server's job, so having nowhere to record it is a
+/// startup failure that names what is missing.
+///
+/// Takes the configured value rather than reading the environment itself, so
+/// both refusals are testable without a process-global mutation.
+fn open_session_ledger(configured: Option<String>) -> Result<DbWriter> {
+    let path = configured.ok_or_else(|| {
+        anyhow::anyhow!(
+            "{SESSION_DB_ENV} is required: capsem-mcp-builtin records every tool call to the \
+             session ledger and will not run without one"
+        )
+    })?;
+    DbWriter::open(std::path::Path::new(&path), 256)
+        .map_err(anyhow::Error::new)
+        .with_context(|| format!("open session ledger {path}"))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     if std::env::args().skip(1).any(|arg| arg == "--version" || arg == "-V") {
@@ -500,17 +529,8 @@ async fn main() -> Result<()> {
     let security_rules = Arc::new(active_profile.compile_security_rule_set().map_err(anyhow::Error::msg)?);
     let plugin_policy = Arc::new(active_profile.plugins.clone());
 
-    // Session DB writer (optional).
-    let db = match std::env::var("CAPSEM_SESSION_DB") {
-        Ok(path) => match DbWriter::open(std::path::Path::new(&path), 256) {
-            Ok(writer) => Arc::new(writer),
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to open session DB, telemetry disabled");
-                Arc::new(DbWriter::open_in_memory(1).expect("in-memory DB"))
-            }
-        },
-        Err(_) => Arc::new(DbWriter::open_in_memory(1).expect("in-memory DB")),
-    };
+    // Session DB writer. Required, not optional: see `open_session_ledger`.
+    let db = Arc::new(open_session_ledger(std::env::var(SESSION_DB_ENV).ok())?);
 
     // Snapshot scheduler (optional, requires CAPSEM_SESSION_DIR).
     let (scheduler, workspace_dir) = match std::env::var("CAPSEM_SESSION_DIR") {
