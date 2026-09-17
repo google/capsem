@@ -19,6 +19,7 @@ from pathlib import Path
 
 import blake3
 import pytest
+from helpers.body_archive import security_payload
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -561,7 +562,7 @@ def _assert_openai_embeddings_and_image_ledger(model_client_env: ModelClientEnv)
             "event_ids": event_ids,
             "security_rows": [dict(row) for row in security_rows],
         }
-        assert all(json.loads(row["event_json"]) for row in security_rows)
+        assert all(security_payload(conn, row["event_id"]) for row in security_rows)
         assert all(json.loads(row["rule_json"]) for row in security_rows)
 
         substitution_rows = _eventually(
@@ -847,7 +848,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             row["detection_level"] in {"none", "informational", "low", "medium", "high", "critical"}
             for row in rule_rows
         )
-        assert all(json.loads(row["event_json"]) for row in rule_rows)
+        assert all(security_payload(conn, row["event_id"]) for row in rule_rows)
         assert all(json.loads(row["rule_json"]) for row in rule_rows)
 
         detail = model_client_env.client.get(
@@ -1026,8 +1027,10 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             assert route_row["rule_id"] == db_row["rule_id"]
             assert route_row["rule_action"] == db_row["rule_action"]
             assert route_row["detection_level"] == db_row["detection_level"]
-            assert json.loads(route_row["event_json"]) == json.loads(db_row["event_json"])
             assert json.loads(route_row["rule_json"]) == json.loads(db_row["rule_json"])
+            # The matched event payload is archive-backed, so the route no
+            # longer carries it; what it must not do is invent one.
+            assert "event_json" not in route_row
     for log_path in model_client_env.log_paths:
         if log_path.exists():
             assert raw_secret not in log_path.read_text(encoding="utf-8", errors="replace"), (

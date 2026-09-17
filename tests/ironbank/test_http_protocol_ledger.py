@@ -13,6 +13,7 @@ from contextlib import closing, suppress
 from pathlib import Path
 
 import pytest
+from helpers.body_archive import security_payload
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -81,7 +82,6 @@ EXPECTED_SECURITY_COLUMNS = {
     "rule_action",
     "detection_level",
     "rule_json",
-    "event_json",
     "trace_id",
     "turn_id",
     "credential_ref",
@@ -372,7 +372,7 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
             assert default_rule["rule_action"] == "allow"
             assert default_rule["detection_level"] == "none"
             assert default_rule["trace_id"] == net["trace_id"]
-            event_json = json.loads(default_rule["event_json"])
+            event_json = security_payload(conn, default_rule["event_id"])
             assert event_json["event_type"] == "http.request"
             assert event_json["http"]["host"] == "127.0.0.1"
             assert event_json["http"]["method"] == "POST"
@@ -729,7 +729,7 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
                 assert body_rule["rule_action"] == "allow"
                 assert body_rule["detection_level"] == "informational"
                 assert body_rule["trace_id"] == net["trace_id"]
-                event_json = json.loads(body_rule["event_json"])
+                event_json = security_payload(conn, body_rule["event_id"])
                 assert event_json["event_type"] == "http.request"
                 assert event_json["http"]["host"] == expected_host
                 assert event_json["http"]["method"] == "GET"
@@ -1183,7 +1183,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
                 assert rewrite_rule["rule_action"] == "allow"
                 assert rewrite_rule["detection_level"] == "informational"
                 assert rewrite_rule["trace_id"] == net["trace_id"]
-                event_json = json.loads(rewrite_rule["event_json"])
+                event_json = security_payload(conn, rewrite_rule["event_id"])
                 assert event_json["event_type"] == "http.request"
                 assert event_json["http"]["host"] == "127.0.0.1"
                 assert event_json["http"]["path"] == "/echo"
@@ -1546,7 +1546,7 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
             assert block_rule["rule_action"] == "block"
             assert block_rule["detection_level"] == "high"
             assert block_rule["trace_id"] == net["trace_id"]
-            event_json = json.loads(block_rule["event_json"])
+            event_json = security_payload(conn, block_rule["event_id"])
             assert event_json["event_type"] == "http.request"
             assert event_json["http"]["host"] == "127.0.0.1"
             assert event_json["http"]["method"] == "POST"
@@ -1805,7 +1805,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
             assert ask_rule["rule_action"] == "ask"
             assert ask_rule["detection_level"] == "medium"
             assert ask_rule["trace_id"] == net["trace_id"]
-            event_json = json.loads(ask_rule["event_json"])
+            event_json = security_payload(conn, ask_rule["event_id"])
             assert event_json["event_type"] == "http.request"
             assert event_json["http"]["host"] == "127.0.0.1"
             assert event_json["http"]["method"] == "POST"

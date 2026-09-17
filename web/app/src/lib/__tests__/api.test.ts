@@ -447,7 +447,6 @@ describe('api', () => {
           rule_action: 'allow',
           detection_level: 'none',
           rule_json: '{}',
-          event_json: '{}',
           trace_id: null,
         },
       ]));

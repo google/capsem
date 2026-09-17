@@ -840,7 +840,7 @@ fn insert_batch_ops(
             WriteOp::AuditEvent(a) => insert_audit_event(tx, a, WriteTarget::Memory)?,
             WriteOp::DnsEvent(d) => insert_dns_event(tx, d, WriteTarget::Memory)?,
             WriteOp::SubstitutionEvent(s) => insert_substitution_event(tx, s, WriteTarget::Memory)?,
-            WriteOp::SecurityRuleEvent(e) => insert_security_rule_event(tx, e, WriteTarget::Memory)?,
+            WriteOp::SecurityRuleEvent(e) => insert_security_rule_event(tx, e, WriteTarget::Memory, bodies)?,
             WriteOp::SecurityAskEvent(e) => insert_security_ask_event(tx, e, WriteTarget::Memory)?,
             WriteOp::SecurityDecisionEvent(e) => insert_security_decision_event(tx, e, WriteTarget::Memory)?,
             WriteOp::ProfileMutationEvent(e) => insert_profile_mutation_event(tx, e, WriteTarget::Memory)?,

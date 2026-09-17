@@ -16,8 +16,8 @@ pub use events::{
     FileAction, FileEvent, FileKind, McpCall, MembershipState, ModelCall, NetEvent, NetworkMembership, NetworkRecord,
     NetworkState, ProfileMutationEvent, ProfileMutationStatus, SecurityAskEvent, SecurityAskPending, SecurityAskStatus,
     SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage, SecurityDetectionLevel, SecurityRuleAction,
-    SecurityRuleEvent, SubstitutionEvent, ToolCallEntry, ToolResponseEntry, TransportEvent, TransportEventKind,
-    CREDENTIAL_REF_PREFIX,
+    SecurityRuleEvent, SecurityRuleMatch, SubstitutionEvent, ToolCallEntry, ToolResponseEntry, TransportEvent,
+    TransportEventKind, CREDENTIAL_REF_PREFIX,
 };
 pub use reader::{
     validate_select_only, BrokeredCredentialStat, DbReader, DomainCount, FileEventStats, HistoryCounts, HistoryEntry,

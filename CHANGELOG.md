@@ -93,6 +93,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The forensic payload of a security rule match is stored compressed in the
+  session body archive instead of inside every row of `security_rule_events`.
+  It averaged a kilobyte and peaked at 297 KB in a real session, on a table the
+  service also mirrors in memory. The security, detection and enforcement views
+  list the rule metadata as before -- rule, action, detection level, actor,
+  trace -- and show the payload's size and hash; the payload itself is fetched
+  on demand once the body route lands.
+
 - Request and response bodies are no longer stored inside `session.db`. They
   live compressed in `session.bodies` beside it, grouped into blocks that
   share their compression, and the database keeps the index that finds them:

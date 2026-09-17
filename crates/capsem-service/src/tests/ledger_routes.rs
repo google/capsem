@@ -39,7 +39,7 @@ async fn security_routes_read_security_ledger_from_session_db() {
     .await
     .expect("security latest reads session ledger");
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let events: Vec<capsem_logger::SecurityRuleEvent> = serde_json::from_slice(&bytes).unwrap();
+    let events: Vec<capsem_logger::SecurityRuleMatch> = serde_json::from_slice(&bytes).unwrap();
 
     assert_eq!(events.len(), 1);
     let event = &events[0];
@@ -52,8 +52,18 @@ async fn security_routes_read_security_ledger_from_session_db() {
         capsem_logger::SecurityDetectionLevel::Informational
     );
     assert!(event.rule_json.contains("ollama_model_api_observed"));
-    assert!(event.event_json.contains(r#""provider":"ollama""#));
     assert_eq!(event.trace_id.as_deref(), Some("trace_ollama"));
+    // The route returns the row; the matched event's payload is archived and
+    // is read by event id, not carried by every row of a list view.
+    let payload = capsem_logger::DbHandle::open_external_reader(&db_path)
+        .unwrap()
+        .read_body("abcdef123456", capsem_logger::BodyDirection::Payload)
+        .await
+        .unwrap()
+        .expect("the matched event payload is archived");
+    assert!(String::from_utf8(payload.bytes)
+        .unwrap()
+        .contains(r#""provider":"ollama""#));
 
     let response = handle_security_info(State(state), Path("vm-ledger".to_string()))
         .await

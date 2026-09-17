@@ -84,7 +84,7 @@ async fn an_external_reader_can_upgrade_a_retained_session_without_booting_its_v
         .find("    CREATE TABLE IF NOT EXISTS net_events")
         .unwrap()..];
     conn.execute_batch(legacy).unwrap();
-    conn.execute("INSERT INTO security_rule_events(timestamp_unix_ms,event_id,event_type,rule_id,rule_action,rule_json,event_json) VALUES(1,'abcdef123456','http.request','retained','allow','{}','{}')", []).unwrap();
+    conn.execute("INSERT INTO security_rule_events(timestamp_unix_ms,event_id,event_type,rule_id,rule_action,rule_json) VALUES(1,'abcdef123456','http.request','retained','allow','{}')", []).unwrap();
     drop(conn);
     let reader = crate::DbHandle::open_external_reader(&path).unwrap();
     reader.ready().await.unwrap();

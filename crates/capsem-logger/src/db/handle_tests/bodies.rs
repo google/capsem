@@ -9,6 +9,98 @@ use crate::db::BodyDirection;
 use crate::events::{ExecEvent, ExecEventComplete};
 use crate::writer::PREVIEW_BYTES;
 
+use super::correctness::{make_correctness_security_event, make_correctness_tool_response_model_call};
+
+/// A rule match's forensic payload averaged a kilobyte and peaked at 297 KB in
+/// one real session, and every one of those bytes sat in the RAM mirror as
+/// well as on disk. The row keeps what routes filter on; the payload is a body
+/// like any other and belongs in the archive, fetched when someone asks.
+#[tokio::test]
+async fn security_rule_payload_is_archived_not_inlined() {
+    let p = temp_db_path("security-rule-payload");
+    let db = DbHandle::open(&p).expect("open handle");
+    let mut event = make_correctness_security_event(&credential_reference("test", "not-a-real-secret"));
+    event.event_id = "0123456789ab".into();
+    event.event_json = r#"{"rule":"x"}"#.repeat(200);
+
+    db.write(WriteOp::SecurityRuleEvent(event))
+        .await
+        .expect("write security rule event");
+    db.flush().await.expect("flush");
+
+    let columns = query_json(
+        &db.query(
+            "SELECT name FROM pragma_table_info('security_rule_events') ORDER BY name",
+            &[],
+        )
+        .await
+        .expect("read security_rule_events columns"),
+    );
+    let names: Vec<String> = columns["rows"]
+        .as_array()
+        .expect("column rows")
+        .iter()
+        .map(|row| row[0].as_str().expect("column name").to_string())
+        .collect();
+    assert!(
+        !names.iter().any(|name| name == "event_json"),
+        "the payload must leave SQLite, not sit in every row and every RAM mirror: {names:?}"
+    );
+
+    let body = db
+        .read_body("0123456789ab", BodyDirection::Payload)
+        .await
+        .expect("read the archived payload")
+        .expect("a rule match's payload is archived");
+    assert_eq!(body.source_table, "security_rule_events");
+    assert_eq!(body.content_type.as_deref(), Some("application/json"));
+    assert!(
+        body.bytes.starts_with(br#"{"rule""#),
+        "the archived payload must be the payload that was written"
+    );
+    assert_eq!(body.bytes.len(), 2400, "and all of it, not a preview");
+}
+
+/// A route with a page of rules in hand needs a payload per row. Asking event
+/// by event is a query and a blocking task each, and inflates the block that
+/// holds them once per body; one call reads the page in archive order.
+#[tokio::test]
+async fn recent_bodies_reads_a_page_of_payloads_in_one_pass() {
+    let p = temp_db_path("security-rule-payload-page");
+    let db = DbHandle::open(&p).expect("open handle");
+    let credential_ref = credential_reference("test", "not-a-real-secret");
+    for index in 0..5 {
+        let mut event = make_correctness_security_event(&credential_ref);
+        event.event_id = format!("{index:012x}");
+        event.event_json = format!(r#"{{"match":{index}}}"#);
+        db.write(WriteOp::SecurityRuleEvent(event))
+            .await
+            .expect("write security rule event");
+    }
+    db.flush().await.expect("flush");
+
+    let payloads = db
+        .read_recent_bodies("security_rule_events", BodyDirection::Payload, 3)
+        .await
+        .expect("read the newest payloads");
+    let mut seen: Vec<String> = payloads
+        .iter()
+        .map(|body| String::from_utf8(body.bytes.clone()).expect("payloads are JSON text"))
+        .collect();
+    seen.sort();
+    assert_eq!(
+        seen,
+        vec![r#"{"match":2}"#, r#"{"match":3}"#, r#"{"match":4}"#],
+        "the limit must take the newest matches, not the oldest"
+    );
+    assert!(payloads.iter().all(|body| body.source_table == "security_rule_events"));
+    assert_eq!(
+        db.archive_blocks_inflated_for_tests(),
+        1,
+        "a page of payloads that share a block must cost one inflate"
+    );
+}
+
 fn archive_path(db_path: &std::path::Path) -> std::path::PathBuf {
     db_path.with_extension("bodies")
 }

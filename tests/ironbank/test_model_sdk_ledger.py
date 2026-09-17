@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from helpers.body_archive import security_payload
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -66,7 +67,6 @@ EXPECTED_SECURITY_LATEST_FIELDS = {
     "rule_action",
     "detection_level",
     "rule_json",
-    "event_json",
     "trace_id",
     "turn_id",
     "credential_ref",
@@ -986,7 +986,6 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert all(row["rule_action"] in {"allow", "ask", "block", "preprocess", "rewrite", "postprocess"} for row in security_latest)
         assert all(row["detection_level"] in {"none", "informational", "low", "medium", "high", "critical"} for row in security_latest)
         assert all(json.loads(row["rule_json"]) for row in security_latest)
-        assert all(json.loads(row["event_json"]) for row in security_latest)
 
         conn = _connect_session_db(service, vm_id)
         try:
@@ -1439,7 +1438,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 lambda rows: len(rows) >= 1,
             )[0]
             _assert_event_id(observed_tool_list_security["event_id"])
-            list_event = json.loads(observed_tool_list_security["event_json"])
+            list_event = security_payload(conn, observed_tool_list_security["event_id"])
             assert list_event["mcp"]["server_name"] == observed_mcp_server
             assert list_event["mcp"]["method"] == "tools/list"
             assert "fixture_lookup" in list_event["mcp"]["tool_list"]
@@ -1517,7 +1516,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 row["event_type"] for row in security_rows
             }
             assert all(json.loads(row["rule_json"]) for row in security_rows)
-            assert all(json.loads(row["event_json"]) for row in security_rows)
+            assert all(security_payload(conn, row["event_id"]) for row in security_rows)
             security_by_event: dict[str, list[sqlite3.Row]] = {}
             for row in security_rows:
                 security_by_event.setdefault(row["event_id"], []).append(row)
@@ -1567,7 +1566,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert uds_shape_latest[0]["event_type"] == "model.call"
             assert uds_shape_latest[0]["rule_action"] == "allow"
             assert uds_shape_latest[0]["detection_level"] == "informational"
-            uds_shape_event = json.loads(uds_shape_latest[0]["event_json"])
+            uds_shape_event = security_payload(conn, uds_shape_latest[0]["event_id"])
             assert uds_shape_event["event_type"] == "model.call"
             assert uds_shape_event["model"]["provider"] == "unknown"
             assert uds_shape_event["model"]["name"] == "gpt-4.1"
@@ -1611,7 +1610,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 and item["rule_action"] in {"allow", "ask"}
                 for item in mcp_list_security_rows
             )
-            security_payloads = [json.loads(row["event_json"]) for row in security_rows]
+            security_payloads = [security_payload(conn, row["event_id"]) for row in security_rows]
             plugin_executions = [
                 execution
                 for payload in security_payloads
@@ -1899,7 +1898,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 rows = security_by_real_client_event[row["event_id"]]
                 assert rows
                 assert all(json.loads(item["rule_json"]) for item in rows)
-                assert all(json.loads(item["event_json"]) for item in rows)
+                assert all(security_payload(conn, item["event_id"]) for item in rows)
                 assert "allow" in {item["rule_action"] for item in rows}
                 assert "profiles.rules.default_model" in {item["rule_id"] for item in rows}
 
@@ -2321,7 +2320,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             for row in security_rows:
                 by_event.setdefault(row["event_id"], []).append(row)
                 assert json.loads(row["rule_json"])
-                assert json.loads(row["event_json"])
+                assert security_payload(conn, row["event_id"])
             assert "profiles.rules.default_model" in {
                 row["rule_id"] for row in by_event[codex_model["event_id"]]
             }

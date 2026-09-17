@@ -71,8 +71,7 @@
     const enriched: Row = { ...row };
     for (const bodyRow of bodyRows) {
       const direction = text(bodyRow.direction);
-      if (direction !== 'request' && direction !== 'response') continue;
-      enriched[`${direction}_body`] = bodyRow.body;
+      if (direction !== 'request' && direction !== 'response' && direction !== 'payload') continue;
       enriched[`${direction}_body_content_type`] = bodyRow.content_type;
       enriched[`${direction}_body_original_bytes`] = bodyRow.original_bytes;
       enriched[`${direction}_body_stored_bytes`] = bodyRow.stored_bytes;
@@ -524,7 +523,14 @@
           </div>
           <div>
             <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Matched Event</div>
-            <div class="detail-shiki rounded overflow-auto max-h-80 bg-background-1">{@html formatAndHighlight(compactJsonForDisplay(detail.data.event_json), 'json')}</div>
+            <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-muted-foreground-1">
+              {#each payloadSectionMeta({ key: 'payload_body' }, detail.data) as row}
+                <div class="min-w-0">
+                  <span class="uppercase tracking-wider">{row.label}</span>
+                  <span class="detail-value ms-1 font-mono text-foreground">{row.value}</span>
+                </div>
+              {/each}
+            </div>
           </div>
         {/if}
       </div>

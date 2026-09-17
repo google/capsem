@@ -152,7 +152,6 @@ pub(super) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "rule_action",
             "detection_level",
             "rule_json",
-            "event_json",
             "credential_ref",
         ],
     ),

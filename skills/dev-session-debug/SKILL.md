@@ -289,9 +289,12 @@ CREATE TABLE tool_responses (
 the tool result back to the model. The same `call_id` must match a
 `tool_calls.call_id` in the same trace.
 
-MCP initialize/list/resource protocol evidence is available through
-`security_rule_events.event_json`. Use `tool_calls` for product/user/security
-tool activity.
+MCP initialize/list/resource protocol evidence is in the forensic payload of
+the matching `security_rule_events` row. That payload is archive-backed, not a
+column: read it with `DbHandle::read_body(event_id, BodyDirection::Payload)`,
+or join `event_body_blobs` on `source_table = 'security_rule_events'` and
+`direction = 'payload'` to see what is stored. Use `tool_calls` for
+product/user/security tool activity.
 
 Full HTTP/model/MCP request and response bodies live in `event_body_blobs`,
 keyed by `event_id`, `source_table`, and `direction`. When debugging payload

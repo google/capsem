@@ -1,5 +1,7 @@
 use super::*;
 
+mod db_boundary;
+
 #[test]
 fn tempdir_test_states_use_distinct_session_index_databases() {
     let (first, first_dir) = make_test_state_with_tempdir();
@@ -1755,62 +1757,6 @@ async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
         size_flag,
         Some(expected_size.as_str()),
         "resume must preserve the profile-owned system overlay size; argv={args:?}"
-    );
-}
-
-#[tokio::test]
-async fn db_boundary_route_contract_db_handle_route_rewire() {
-    let state = make_test_state();
-    let app = build_service_router(Arc::clone(&state));
-    let dir = tempfile::tempdir().unwrap();
-    let session_dir = dir.path().join("sessions").join("db-handle-route-vm");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(&state, "db-handle-route-vm", std::process::id(), session_dir.clone());
-
-    assert!(
-        state.session_db_handle("db-handle-route-vm").is_none(),
-        "session handles are registered lazily after capsem-process creates session.db"
-    );
-    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
-    writer
-        .write(capsem_logger::WriteOp::SecurityRuleEvent(
-            capsem_logger::SecurityRuleEvent::new(
-                1_789_111_000_000,
-                "abcdef123456",
-                "http.request",
-                "profiles.rules.default_http",
-                r#"{"name":"default_http"}"#,
-                r#"{"event_type":"http.request"}"#,
-            )
-            .with_rule_action(capsem_logger::SecurityRuleAction::Allow),
-        ))
-        .await;
-    writer.shutdown_blocking();
-
-    let (status, stats_detail) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/vms/db-handle-route-vm/stats/detail",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{stats_detail}");
-    assert_eq!(stats_detail["model_stats"], json!([]));
-    assert_eq!(stats_detail["body_blobs"], json!({}));
-
-    let (status, security_status) = route_request(
-        app,
-        axum::http::Method::GET,
-        "/vms/db-handle-route-vm/security/status",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{security_status}");
-    assert_eq!(security_status["total"], 1);
-    assert_eq!(security_status["by_action"][0]["rule_action"], "allow");
-    assert!(
-        state.session_db_handle("db-handle-route-vm").is_some(),
-        "first ledger route registers the external DB reader once session.db exists"
     );
 }
 

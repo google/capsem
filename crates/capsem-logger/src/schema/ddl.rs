@@ -348,7 +348,11 @@ pub const CREATE_SCHEMA: &str = "
         rule_action TEXT NOT NULL CHECK (rule_action IN ('allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess')),
         detection_level TEXT NOT NULL DEFAULT 'none' CHECK (detection_level IN ('none', 'informational', 'low', 'medium', 'high', 'critical')),
         rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
-        event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+        -- The matched event's payload is NOT here: it is a body like any
+        -- other and lives in `session.bodies`, indexed by `event_body_blobs`
+        -- with direction 'payload'. It averaged a kilobyte and peaked at
+        -- 297 KB in one real session, and every row of this table is mirrored
+        -- in RAM.
         trace_id TEXT,
         turn_id TEXT,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))

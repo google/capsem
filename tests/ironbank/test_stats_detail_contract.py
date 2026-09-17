@@ -347,7 +347,6 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             rule_action TEXT NOT NULL,
             detection_level TEXT NOT NULL DEFAULT 'none',
             rule_json TEXT NOT NULL,
-            event_json TEXT NOT NULL,
             trace_id TEXT
         );
         CREATE TABLE security_decision_events (
@@ -525,6 +524,21 @@ def _seed_session_db(db_path: Path) -> None:
                     mcp_response.encode(),
                     TRACE_ID,
                     "2026-06-17T20:11:20Z",
+                ),
+                # A rule match's forensic payload is a body like any other.
+                (
+                    SEC_EVENT_ID,
+                    "security.rule",
+                    "security_rule_events",
+                    "payload",
+                    "application/json",
+                    len(event_json.encode()),
+                    len(event_json.encode()),
+                    0,
+                    BLAKE3_HASH,
+                    event_json.encode(),
+                    TRACE_ID,
+                    "2026-06-17T20:11:21Z",
                 ),
             ]
         )
@@ -764,8 +778,8 @@ def _seed_session_db(db_path: Path) -> None:
             """
             INSERT INTO security_rule_events (
                 timestamp_unix_ms, event_id, event_type, rule_id, rule_action,
-                detection_level, rule_json, event_json, trace_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                detection_level, rule_json, trace_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -776,7 +790,6 @@ def _seed_session_db(db_path: Path) -> None:
                     "allow",
                     "informational",
                     rule_json,
-                    event_json,
                     TRACE_ID,
                 ),
                 (
@@ -1009,9 +1022,10 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         assert latest[1]["rule_id"] == "profiles.rules.ai_google_http_googleapis"
         assert latest[1]["rule_action"] == "allow"
         assert latest[1]["detection_level"] == "informational"
-        assert json.loads(latest[1]["event_json"])["http"]["host"] == (
-            "daily-cloudcode-pa.googleapis.com"
-        )
+        # The matched event's payload left the row for the archive, so the
+        # latest route carries the row and the stats detail carries the index
+        # metadata that says where the payload is.
+        assert "event_json" not in latest[1]
 
         security = client.get(f"/vms/{SESSION_ID}/security/status", timeout=30)
         assert security["total"] == 2
@@ -1064,5 +1078,13 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
             "bodies route"
         )
         assert route_model_response["truncated"] == 0
+
+        # The rule match's payload rides the same metadata channel as every
+        # other body, which is how the security views will fetch it.
+        route_security_blobs = detail["body_blobs"][SEC_EVENT_ID]
+        assert [row["direction"] for row in route_security_blobs] == ["payload"]
+        assert route_security_blobs[0]["source_table"] == "security_rule_events"
+        assert route_security_blobs[0]["content_type"] == "application/json"
+        assert "body" not in route_security_blobs[0]
     finally:
         service.stop()

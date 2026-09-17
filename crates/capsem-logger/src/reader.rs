@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::events::{
     AuditEvent, Decision, ExecEvent, FileAction, FileEvent, FileKind, ModelCall, NetEvent, SecurityAskEvent,
-    SecurityAskStatus, SecurityDetectionLevel, SecurityRuleAction, SecurityRuleEvent, ToolCallEntry, ToolResponseEntry,
+    SecurityAskStatus, SecurityDetectionLevel, SecurityRuleAction, SecurityRuleMatch, ToolCallEntry, ToolResponseEntry,
 };
 use crate::schema;
 mod open;
@@ -483,15 +483,14 @@ impl DbReader {
         rows.collect()
     }
 
-    /// Query recent stored security rule matches, newest first.
-    ///
-    /// This returns the full forensic row, including the rule snapshot and
-    /// normalized event payload as stored at match time. Runtime endpoints may
-    /// expose a smaller projection, but must not consult live rules for truth.
-    pub fn recent_security_rule_events(&self, limit: usize) -> rusqlite::Result<Vec<SecurityRuleEvent>> {
+    /// Query recent stored security rule matches, newest first: the row, with
+    /// the rule snapshot as it was at match time. The matched event's payload
+    /// is archive-backed, read by event id with `BodyDirection::Payload`.
+    /// Endpoints may project less, but must not consult live rules for truth.
+    pub fn recent_security_rule_events(&self, limit: usize) -> rusqlite::Result<Vec<SecurityRuleMatch>> {
         let mut stmt = self.conn.prepare(
             "SELECT timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json, trace_id,
+                    rule_action, detection_level, rule_json, trace_id,
                     turn_id, credential_ref
              FROM security_rule_events
              ORDER BY timestamp_unix_ms DESC, id DESC

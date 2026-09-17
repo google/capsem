@@ -424,11 +424,18 @@ ledger, but 1.3 does not expose fake `credential.*` or `snapshot.*` rule roots.
 | `rule_action` | TEXT | `allow`, `ask`, `block`, `preprocess`, `rewrite`, or `postprocess` |
 | `detection_level` | TEXT | `none`, `informational`, `low`, `medium`, `high`, or `critical` |
 | `rule_json` | TEXT | JSON rule snapshot at match time |
-| `event_json` | TEXT | JSON normalized `SecurityEvent` payload matched by the rule |
 | `trace_id` | TEXT | Cross-table correlation ID |
 
 This table is the forensic rule ledger. Runtime `/latest` and `/status` views
 must be regeneratable from these rows and the primary event tables.
+
+The normalized `SecurityEvent` payload the rule matched is **not** a column
+here. It is a body like any other: stored in the `session.bodies` archive and
+indexed by `event_body_blobs` with `source_table = 'security_rule_events'` and
+`direction = 'payload'`. It averaged a kilobyte and peaked at 297 KB in one
+real session, and every row of this table is also mirrored in RAM, so the row
+keeps what the views filter and group on and the payload is fetched by event id
+when someone actually wants it.
 
 ### security_ask_events
 

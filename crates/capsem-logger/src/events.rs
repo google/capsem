@@ -184,6 +184,36 @@ pub struct SecurityRuleEvent {
     pub credential_ref: Option<String>,
 }
 
+/// A stored security rule match as the ledger holds it, which is the write
+/// type minus the payload.
+///
+/// `SecurityRuleEvent` is what a producer sends: the row *and* the normalized
+/// event payload that the rule matched. Only the row reaches
+/// `security_rule_events`. The payload is a body like any other and is stored
+/// in the session archive, read back by event id with
+/// `BodyDirection::Payload` -- it averaged a kilobyte and peaked at 297 KB in
+/// one real session, which is not something to carry in every scan of a table
+/// that is also mirrored in RAM.
+///
+/// Reading a match therefore gives the columns routes filter, group and
+/// correlate on; whoever actually wants the payload asks for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecurityRuleMatch {
+    pub timestamp_unix_ms: i64,
+    pub event_id: String,
+    pub event_type: String,
+    pub rule_id: String,
+    pub rule_action: SecurityRuleAction,
+    pub detection_level: SecurityDetectionLevel,
+    pub rule_json: String,
+    #[serde(default)]
+    pub trace_id: Option<String>,
+    #[serde(default)]
+    pub turn_id: Option<String>,
+    #[serde(default)]
+    pub credential_ref: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileMutationEvent {
     pub timestamp_unix_ms: i64,

@@ -1,6 +1,20 @@
 use super::*;
 use crate::security_engine::forensics::SecurityRuleTraceLabels;
 
+/// The forensic payload a rule match stored, read back out of the session
+/// archive. It is a body now rather than a column, so this is what "the
+/// ledger kept it" means: the archive gives back the bytes the index names,
+/// verified against the hash the writer recorded.
+async fn archived_payload(db_path: &std::path::Path, event_id: &str) -> String {
+    let body = capsem_logger::DbHandle::open_external_reader(db_path)
+        .unwrap()
+        .read_body(event_id, capsem_logger::BodyDirection::Payload)
+        .await
+        .unwrap()
+        .unwrap_or_else(|| panic!("the payload of {event_id} must be archived"));
+    String::from_utf8(body.bytes).expect("a forensic payload is JSON text")
+}
+
 #[tokio::test]
 async fn network_decision_ledger_preserves_owner_facts_and_sanitizes_before_storage() {
     let dir = tempfile::tempdir().unwrap();
@@ -66,7 +80,8 @@ match = 'network.destination.vm_name == "redis"'
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].event_type, "network.connect");
     assert_eq!(rows[0].event_id, "abcdef123456");
-    let json: serde_json::Value = serde_json::from_str(&rows[0].event_json).unwrap();
+    let payload = archived_payload(&path, "abcdef123456").await;
+    let json: serde_json::Value = serde_json::from_str(&payload).unwrap();
     assert_eq!(json["network"]["source"]["vm"]["id"], "client");
     assert_eq!(json["network"]["source"]["vm"]["generation"], "9");
     assert_eq!(json["network"]["destination"]["address"], "10.128.0.3:6379");
@@ -76,7 +91,7 @@ match = 'network.destination.vm_name == "redis"'
         .unwrap()
         .iter()
         .any(|execution| execution["plugin_id"] == "log_sanitizer" && execution["applied"] == true));
-    assert!(!rows[0].event_json.contains("sk-must-not-reach-network-ledger"));
+    assert!(!payload.contains("sk-must-not-reach-network-ledger"));
     assert!(json["credential_observations"].as_array().unwrap().is_empty());
 }
 
@@ -150,16 +165,17 @@ reason = "corp block"
     assert_eq!(row.rule_action, capsem_logger::SecurityRuleAction::Block);
     assert_eq!(row.detection_level, capsem_logger::SecurityDetectionLevel::Critical);
     assert!(row.rule_json.contains("openai_api_block"));
-    assert!(row.event_json.contains("api.openai.com"));
-    let event_json: serde_json::Value = serde_json::from_str(&row.event_json).unwrap();
+    let payload = archived_payload(&db_path, "abcdef123456").await;
+    assert!(payload.contains("api.openai.com"));
+    let event_json: serde_json::Value = serde_json::from_str(&payload).unwrap();
     assert_eq!(event_json["event_type"], "http.request");
     assert_eq!(event_json["http"]["host"], "api.openai.com");
     assert_eq!(event_json["ip"]["value"], "203.0.113.10");
     assert_eq!(event_json["ip"]["version"], "4");
     assert_eq!(event_json["tcp"]["port"], "443");
-    assert!(row.event_json.contains("credential:blake3:"));
+    assert!(payload.contains("credential:blake3:"));
     assert!(
-        !row.event_json.contains("sk-live-should-not-appear"),
+        !payload.contains("sk-live-should-not-appear"),
         "forensic event payload must not store raw credential observations"
     );
 }
@@ -902,7 +918,8 @@ match = 'http.host == "api.openai.com"'
     assert_eq!(postprocess_rule["rule_action"], "postprocess");
     assert_eq!(postprocess_rule["detection_level"], "informational");
     assert!(postprocess_rule.get("plugin").is_none());
-    let postprocess_event: serde_json::Value = serde_json::from_str(&postprocess_row.event_json).unwrap();
+    let postprocess_payload = archived_payload(&db_path, github_event_id.as_str()).await;
+    let postprocess_event: serde_json::Value = serde_json::from_str(&postprocess_payload).unwrap();
     assert_eq!(postprocess_event["event_type"], "http.request");
     assert_eq!(postprocess_event["http"]["host"], "github.com");
 

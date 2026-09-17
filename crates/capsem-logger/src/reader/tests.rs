@@ -244,18 +244,18 @@ fn recent_net_events_respects_limit() {
 }
 
 #[test]
-fn recent_security_rule_events_orders_newest_first_and_keeps_payloads() {
+fn recent_security_rule_events_orders_newest_first_and_keeps_the_rule_snapshot() {
     let r = DbReader::open_in_memory().unwrap();
     r.conn
         .execute_batch(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json
+                    rule_action, detection_level, rule_json
                  ) VALUES
                     (1789000000000, '111111111111', 'http.request', 'allow_github',
-                     'allow', 'none', '{\"name\":\"allow_github\"}', '{\"http\":{\"host\":\"api.github.com\"}}'),
+                     'allow', 'none', '{\"name\":\"allow_github\"}'),
                     (1789000000001, '222222222222', 'model.call', 'block_openai',
-                     'block', 'critical', '{\"name\":\"block_openai\"}', '{\"model\":{\"provider\":\"openai\"}}')",
+                     'block', 'critical', '{\"name\":\"block_openai\"}')",
         )
         .unwrap();
 
@@ -266,7 +266,6 @@ fn recent_security_rule_events_orders_newest_first_and_keeps_payloads() {
     assert_eq!(latest[0].rule_action, SecurityRuleAction::Block);
     assert_eq!(latest[0].detection_level, SecurityDetectionLevel::Critical);
     assert!(latest[0].rule_json.contains("block_openai"));
-    assert!(latest[0].event_json.contains("openai"));
 }
 
 #[test]
@@ -276,14 +275,14 @@ fn security_rule_stats_are_db_only() {
         .execute_batch(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json
+                    rule_action, detection_level, rule_json
                  ) VALUES
                     (1789000000000, '111111111111', 'model.call', 'block_openai',
-                     'block', 'critical', '{}', '{}'),
+                     'block', 'critical', '{}'),
                     (1789000000001, '222222222222', 'model.call', 'block_openai',
-                     'block', 'critical', '{}', '{}'),
+                     'block', 'critical', '{}'),
                     (1789000000002, '333333333333', 'http.request', 'allow_github',
-                     'allow', 'none', '{}', '{}')",
+                     'allow', 'none', '{}')",
         )
         .unwrap();
 

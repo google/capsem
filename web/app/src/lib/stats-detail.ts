@@ -15,7 +15,6 @@ const DETAIL_PAYLOAD_KEYS = new Set([
 
 const DETAIL_STRUCTURED_KEYS = new Set([
   'rule_json',
-  'event_json',
 ]);
 
 const DETAIL_BODY_METADATA_KEYS = new Set([
@@ -29,6 +28,11 @@ const DETAIL_BODY_METADATA_KEYS = new Set([
   'response_body_stored_bytes',
   'response_body_truncated',
   'response_body_hash',
+  'payload_body_content_type',
+  'payload_body_original_bytes',
+  'payload_body_stored_bytes',
+  'payload_body_truncated',
+  'payload_body_hash',
 ]);
 
 const DETAIL_HIDDEN_KEYS = new Set([

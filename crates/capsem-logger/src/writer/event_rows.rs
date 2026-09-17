@@ -111,19 +111,25 @@ pub(super) fn insert_substitution_event(
     Ok(())
 }
 
+/// The row keeps what routes filter and group on; the matched event's payload
+/// goes to the archive as this event's one body. It is the same forensic JSON
+/// it always was -- it simply stops being carried by every scan of this table
+/// and every byte of its RAM mirror, and is read back by event id with
+/// `BodyDirection::Payload`.
 pub(super) fn insert_security_rule_event(
     conn: &Connection,
     event: &SecurityRuleEvent,
     target: WriteTarget,
+    bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
     execute_cached(
         conn,
         &format!(
             "INSERT INTO {} (
             timestamp_unix_ms, event_id, event_type, rule_id,
-            rule_action, detection_level, rule_json, event_json, trace_id, turn_id, credential_ref
+            rule_action, detection_level, rule_json, trace_id, turn_id, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             target.table("security_rule_events")
         ),
         params![
@@ -134,12 +140,22 @@ pub(super) fn insert_security_rule_event(
             event.rule_action.as_str(),
             event.detection_level.as_str(),
             event.rule_json,
-            event.event_json,
             event.trace_id,
             event.turn_id,
             event.credential_ref,
         ],
     )?;
+    bodies.stage(EventBodyBlob {
+        event_id: &event.event_id,
+        event_type: "security.rule",
+        source_table: "security_rule_events",
+        direction: "payload",
+        content_type: Some("application/json"),
+        body: Some(&event.event_json),
+        original_bytes: None,
+        trace_id: event.trace_id.as_deref(),
+        turn_id: event.turn_id.as_deref(),
+    });
     Ok(())
 }
 

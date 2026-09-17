@@ -256,7 +256,7 @@ match = 'file.read.path.contains("skills/") && file.read.ext == "md" && file.rea
     assert_eq!(actions, vec!["import", "export", "read"]);
 
     let rules = conn
-        .prepare("SELECT rule_id, event_type, event_json FROM security_rule_events ORDER BY id")
+        .prepare("SELECT rule_id, event_type, event_id FROM security_rule_events ORDER BY id")
         .unwrap()
         .query_map([], |row| {
             Ok((
@@ -268,6 +268,7 @@ match = 'file.read.path.contains("skills/") && file.read.ext == "md" && file.rea
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
+    drop(conn);
     assert_eq!(
         rules.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
         vec![
@@ -279,9 +280,22 @@ match = 'file.read.path.contains("skills/") && file.read.ext == "md" && file.rea
     assert_eq!(rules[0].1, "file.import");
     assert_eq!(rules[1].1, "file.export");
     assert_eq!(rules[2].1, "file.event");
-    assert!(rules[0].2.contains(r#""import_content":"incoming""#));
-    assert!(rules[1].2.contains(r#""export_mime_type":"application/json""#));
-    assert!(rules[2].2.contains(r#""read_content":"Development Sprint""#));
+
+    // The forensic payloads are bodies now: the rows name them, the archive
+    // holds them, and this is what the boundary actually recorded.
+    let db = capsem_logger::DbHandle::open_external_reader(&db_path).unwrap();
+    let mut payloads = Vec::new();
+    for rule in &rules {
+        let body = db
+            .read_body(&rule.2, capsem_logger::BodyDirection::Payload)
+            .await
+            .unwrap()
+            .unwrap_or_else(|| panic!("the payload of {} must be archived", rule.0));
+        payloads.push(String::from_utf8(body.bytes).unwrap());
+    }
+    assert!(payloads[0].contains(r#""import_content":"incoming""#));
+    assert!(payloads[1].contains(r#""export_mime_type":"application/json""#));
+    assert!(payloads[2].contains(r#""read_content":"Development Sprint""#));
 }
 
 #[tokio::test]

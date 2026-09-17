@@ -22,9 +22,15 @@ from pathlib import Path
 
 import blake3
 import pytest
+from helpers.body_archive import security_payload
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.mock_server import start_mock_server, stop_process
-from helpers.service import PROFILES_DIR, ServiceInstance, vm_session_db_path, wait_exec_ready
+from helpers.service import (
+    PROFILES_DIR,
+    ServiceInstance,
+    vm_session_db_path,
+    wait_exec_ready,
+)
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 CLI_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem"
@@ -262,7 +268,7 @@ def _query_mcp_event_rows(db_path: Path):
     try:
         rows = conn.execute(
             """
-            SELECT event_type, rule_action, rule_id, event_json
+            SELECT event_id, event_type, rule_action, rule_id
             FROM security_rule_events
             WHERE event_type LIKE 'mcp.%'
             ORDER BY id
@@ -270,7 +276,8 @@ def _query_mcp_event_rows(db_path: Path):
         ).fetchall()
         out = []
         for row in rows:
-            event = json.loads(row["event_json"])
+            # The matched event's payload is archive-backed, not a column.
+            event = security_payload(conn, row["event_id"])
             mcp = event.get("mcp") or {}
             request = mcp.get("request") or {}
             response = mcp.get("response") or {}

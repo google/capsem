@@ -100,6 +100,41 @@ impl DbHandle {
         self.read_archived(rows).await
     }
 
+    /// Read the newest archived bodies of one source table and direction.
+    ///
+    /// The per-event reads above answer "show me this exchange". This answers
+    /// "I have a page of rows and I need the body of each" -- asking event by
+    /// event would cost an index query and a blocking task per row, and would
+    /// inflate the same block once for every body that sits in it. Here it is
+    /// one query and one pass, in archive order.
+    ///
+    /// # Errors
+    ///
+    /// The same as the per-event reads: a row whose bytes the archive cannot
+    /// produce, or does not produce intact, is a broken ledger and fails.
+    pub async fn read_recent_bodies(
+        &self,
+        source_table: &str,
+        direction: BodyDirection,
+        limit: usize,
+    ) -> DbResult<Vec<StoredBody>> {
+        let sql = format!(
+            "SELECT {INDEX_COLUMNS} FROM (
+                 SELECT {INDEX_COLUMNS}, block_offset AS block_order, body_offset AS body_order
+                 FROM event_body_blobs
+                 WHERE source_table = ?1 AND direction = ?2
+                 ORDER BY id DESC LIMIT ?3
+             ) ORDER BY block_order, body_order"
+        );
+        let rows = self
+            .body_index_rows(
+                &sql,
+                &[source_table.into(), direction.as_str().into(), (limit as u64).into()],
+            )
+            .await?;
+        self.read_archived(rows).await
+    }
+
     async fn body_index_rows(&self, sql: &str, params: &[Value]) -> DbResult<Vec<IndexRow>> {
         let raw = self.query(sql, params).await?;
         let value: Value =

@@ -185,10 +185,16 @@ describe('StatsView detail drawer contract', () => {
 
   it('renders compact structured snapshots instead of null-heavy security projections', () => {
     expect(source).toContain('compactJsonForDisplay(detail.data.rule_json)');
-    expect(source).toContain('compactJsonForDisplay(detail.data.event_json)');
     expect(detailSource).toContain('stripEmptyDetailValues');
-    expect(source).not.toContain("formatAndHighlight(detail.data.event_json, 'json')");
     expect(source).not.toContain("formatAndHighlight(detail.data.rule_json, 'json')");
+  });
+
+  it('shows the matched event as archive metadata, never as an inlined payload', () => {
+    // The forensic payload left SQLite for the body archive. Until the body
+    // route lands, the detail pane says what is stored and how big it is; it
+    // must not pretend to hold bytes the route never sent.
+    expect(source).not.toContain('detail.data.event_json');
+    expect(source).toContain("payloadSectionMeta({ key: 'payload_body' }, detail.data)");
   });
 
   it('gives detail fields enough room to wrap without overlapping values', () => {

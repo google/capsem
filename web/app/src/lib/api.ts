@@ -315,6 +315,9 @@ export interface SecurityRuleStats {
   by_rule: SecurityRuleStatsByRule[];
 }
 
+// The matched event's forensic payload is not here: it is archive-backed and
+// is fetched by event id, like the other bodies. The row is what the security
+// views list and filter on.
 export interface SecurityRuleEvent {
   timestamp_unix_ms: number;
   event_id: string;
@@ -323,8 +326,9 @@ export interface SecurityRuleEvent {
   rule_action: SecurityRuleAction;
   detection_level: RuntimeSecurityRuleDetectionLevel;
   rule_json: string;
-  event_json: string;
   trace_id?: string | null;
+  turn_id?: string | null;
+  credential_ref?: string | null;
 }
 
 // -- Initialization --

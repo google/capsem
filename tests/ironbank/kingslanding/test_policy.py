@@ -1,10 +1,11 @@
 """Real expose authorization: deny before Redis accepts a TCP connection."""
 
-import json
 import socket
 
 import pytest
+from helpers.body_archive import security_payload_at
 from helpers.constants import CODE_PROFILE_ID
+from helpers.service import vm_session_db_path
 
 from tests.ironbank.kingslanding.test_publish import redis
 from tests.ironbank.kingslanding.test_run import service, wait_for
@@ -102,11 +103,14 @@ def test_expose_security_prevents_redis_accept_and_retains_trusted_facts(redis, 
         assert _redis_command(stream, "PING") == b"PONG"
 
         rows = []
+        # The matched event's payload is archive-backed: the route hands back
+        # the row, and the network facts are read from the session archive.
+        session_db = vm_session_db_path(service.tmp_dir, client, vm_id)
 
         def audited():
             rows[:] = client.get(f"/vms/{vm_id}/security/latest?limit=2000")
             seen = {
-                json.loads(row["event_json"])["network"]["source"]["address"]
+                security_payload_at(session_db, row["event_id"])["network"]["source"]["address"]
                 for row in rows
                 if row["event_type"] == "network.connect"
             }
@@ -116,7 +120,7 @@ def test_expose_security_prevents_redis_accept_and_retains_trusted_facts(redis, 
         for row in rows:
             if row["event_type"] != "network.connect":
                 continue
-            event = json.loads(row["event_json"])
+            event = security_payload_at(session_db, row["event_id"])
             facts = event["network"]
             if facts["source"]["address"] not in denied_peers:
                 continue

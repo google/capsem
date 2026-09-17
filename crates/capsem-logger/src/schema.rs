@@ -653,7 +653,6 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             rule_action TEXT NOT NULL {RULE_ACTION_CHECK},
             detection_level TEXT NOT NULL DEFAULT 'none' {DETECTION_LEVEL_CHECK},
             rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
-            event_json TEXT NOT NULL CHECK (json_valid(event_json)),
             trace_id TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_security_rule_events_timestamp
@@ -692,10 +691,6 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     ));
     let _ = conn.execute(
         "ALTER TABLE security_rule_events ADD COLUMN rule_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(rule_json))",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE security_rule_events ADD COLUMN event_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(event_json))",
         [],
     );
     let _ = conn.execute(

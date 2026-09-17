@@ -4,7 +4,7 @@ use rusqlite::Connection;
 const NETWORK_TYPES: &str = ", 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result'";
 
 fn insert_rule(conn: &Connection, event_type: &str) -> rusqlite::Result<usize> {
-    conn.execute("INSERT INTO security_rule_events(timestamp_unix_ms,event_id,event_type,rule_id,rule_action,rule_json,event_json) VALUES (1,'abcdef123456',?1,'fixture','allow','{}','{}')", [event_type])
+    conn.execute("INSERT INTO security_rule_events(timestamp_unix_ms,event_id,event_type,rule_id,rule_action,rule_json) VALUES (1,'abcdef123456',?1,'fixture','allow','{}')", [event_type])
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn an_existing_memory_ledger_upgrades_constraints_without_losing_pending_rows() 
     conn.execute_batch(&CREATE_SCHEMA.replace(NETWORK_TYPES, "")).unwrap();
     let uri = crate::schema::memory_uri_for_path(&path);
     crate::schema::create_memory_tables(&conn, &uri).unwrap();
-    conn.execute("INSERT INTO mem.security_rule_events(timestamp_unix_ms,event_id,event_type,rule_id,rule_action,rule_json,event_json) VALUES(1,'abcdef123456','http.request','pending','allow','{}','{}')", []).unwrap();
+    conn.execute("INSERT INTO mem.security_rule_events(timestamp_unix_ms,event_id,event_type,rule_id,rule_action,rule_json) VALUES(1,'abcdef123456','http.request','pending','allow','{}')", []).unwrap();
     conn.execute(
         "UPDATE mem.sqlite_sequence SET seq=40 WHERE name='security_rule_events'",
         [],
@@ -102,7 +102,7 @@ fn an_existing_memory_ledger_upgrades_constraints_without_losing_pending_rows() 
     migrate(&writer).unwrap();
     crate::schema::create_memory_tables(&conn, &uri).unwrap();
     crate::schema::create_memory_read_views(&conn).unwrap();
-    conn.execute("INSERT INTO mem.security_rule_events(timestamp_unix_ms,event_id,event_type,rule_id,rule_action,rule_json,event_json) VALUES(1,'abcdef123456','network.connect','new','allow','{}','{}')", []).unwrap();
+    conn.execute("INSERT INTO mem.security_rule_events(timestamp_unix_ms,event_id,event_type,rule_id,rule_action,rule_json) VALUES(1,'abcdef123456','network.connect','new','allow','{}')", []).unwrap();
     let rows: Vec<String> = conn
         .prepare("SELECT rule_id FROM mem.security_rule_events ORDER BY id")
         .unwrap()

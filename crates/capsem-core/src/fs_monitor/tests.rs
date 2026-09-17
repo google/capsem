@@ -434,14 +434,28 @@ match = 'file.create.path == "openai-two.txt"'
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
-    let (rule_trace_id, event_credential_ref): (String, Option<String>) = conn
+    let (rule_event_id, rule_trace_id): (String, String) = conn
         .query_row(
-            "SELECT trace_id, json_extract(event_json, '$.credential_ref') FROM security_rule_events
+            "SELECT event_id, trace_id FROM security_rule_events
              WHERE event_id = (SELECT event_id FROM fs_events WHERE path = 'openai-two.txt')",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
+    drop(conn);
+    // The matched event's payload is archive-backed, so the credential
+    // reference inside it is read from the archive rather than from the row.
+    let payload = capsem_logger::DbHandle::open_external_reader(&db_path)
+        .unwrap()
+        .read_body(&rule_event_id, capsem_logger::BodyDirection::Payload)
+        .await
+        .unwrap()
+        .expect("the matched event payload is archived");
+    let payload: serde_json::Value = serde_json::from_slice(&payload.bytes).unwrap();
+    let event_credential_ref = payload
+        .get("credential_ref")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
     assert_eq!(trace_id, "trace-model");
     assert_eq!(rule_trace_id, "trace-model");
     assert_eq!(credential_ref, None);

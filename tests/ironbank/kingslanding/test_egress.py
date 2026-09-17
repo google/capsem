@@ -9,8 +9,9 @@ import textwrap
 import uuid
 
 import pytest
+from helpers.body_archive import security_payload_at
 from helpers.mock_server import start_mock_server, stop_process
-from helpers.service import ServiceInstance
+from helpers.service import ServiceInstance, vm_session_db_path
 
 from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_run import (
@@ -124,7 +125,6 @@ def test_container_egress_is_intercepted_policed_and_audited(egress, tmp_path):
             capture_output=True,
             text=True,
             timeout=300,
-            check=False,
         )
     (tmp_path / "stderr").write_text(created.stderr)
     print(f"EGRESS EVIDENCE: {tmp_path}")
@@ -149,12 +149,15 @@ def test_container_egress_is_intercepted_policed_and_audited(egress, tmp_path):
     for probe in ("escape_gateway", "escape_vm", "escape_dns"):
         assert results.get(probe) == "1", f"{probe}: container reached a VM service directly"
     # One row per matched rule; the row's rule_id/rule_action are the decision
-    # of record (event_json.decision is not applied on HTTP/DNS rows, #203).
+    # of record (the payload's decision is not applied on HTTP/DNS rows, #203).
+    # The payload itself is archive-backed, read here beside the row it belongs
+    # to rather than carried by every row of the latest route.
     latest = client.get(f"/vms/{vm_id}/security/latest?limit=2000")
+    session_db = vm_session_db_path(service.tmp_dir, client, vm_id)
     http = []
     dns = []
     for row in latest:
-        event = json.loads(row["event_json"])
+        event = security_payload_at(session_db, row["event_id"])
         if row["event_type"] == "http.request":
             http.append((event["http"]["host"], event["http"]["path"], row["rule_id"], row["rule_action"]))
         elif row["event_type"] == "dns.query":

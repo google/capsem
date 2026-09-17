@@ -599,12 +599,11 @@ fn create_tables_includes_security_rule_events_contract() {
     conn.execute(
         "INSERT INTO security_rule_events (
                 timestamp_unix_ms, event_id, event_type, rule_id,
-                rule_action, detection_level, rule_json, event_json
+                rule_action, detection_level, rule_json
              ) VALUES (
                 1789000000000, 'abcdef123456', 'model.call',
                 'openai_api_block', 'block', 'critical',
-                '{\"name\":\"openai_api_block\",\"match\":\"model.provider == \\\"openai\\\"\"}',
-                '{\"common\":{\"event_type\":\"model.call\"},\"model\":{\"provider\":\"openai\"}}'
+                '{\"name\":\"openai_api_block\",\"match\":\"model.provider == \\\"openai\\\"\"}'
              )",
         [],
     )
@@ -670,10 +669,10 @@ fn security_rule_events_reject_unknown_rule_action() {
         .execute(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, rule_json, event_json
+                    rule_action, rule_json
                  ) VALUES (
                     1789000000000, 'abcdef123456', 'model.call',
-                    'old_detect', 'detect', '{}', '{}'
+                    'old_detect', 'detect', '{}'
                  )",
             [],
         )
@@ -692,10 +691,10 @@ fn security_rule_events_accept_rewrite_rule_action() {
     conn.execute(
         "INSERT INTO security_rule_events (
                 timestamp_unix_ms, event_id, event_type, rule_id,
-                rule_action, rule_json, event_json
+                rule_action, rule_json
              ) VALUES (
                 1789000000000, 'abcdef123456', 'model.call',
-                'profiles.rules.redact_model', 'rewrite', '{}', '{}'
+                'profiles.rules.redact_model', 'rewrite', '{}'
              )",
         [],
     )
@@ -767,10 +766,10 @@ fn security_rule_events_reject_non_hex_event_id() {
         .execute(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, rule_json, event_json
+                    rule_action, rule_json
                  ) VALUES (
                     1789000000000, 'evt_abc123', 'model.call',
-                    'bad_event_id', 'allow', '{}', '{}'
+                    'bad_event_id', 'allow', '{}'
                  )",
             [],
         )
@@ -791,10 +790,10 @@ fn security_rule_events_reject_unknown_event_type() {
             .execute(
                 "INSERT INTO security_rule_events (
                         timestamp_unix_ms, event_id, event_type, rule_id,
-                        rule_action, rule_json, event_json
+                        rule_action, rule_json
                      ) VALUES (
                         1789000000000, 'abcdef123456', ?1,
-                        'stale_event_type', 'allow', '{}', '{}'
+                        'stale_event_type', 'allow', '{}'
                      )",
                 [event_type],
             )
@@ -839,10 +838,10 @@ fn security_rule_events_reject_unknown_detection_level() {
         .execute(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json
+                    rule_action, detection_level, rule_json
                  ) VALUES (
                     1789000000000, 'abcdef123456', 'model.call',
-                    'bad_level', 'allow', 'info', '{}', '{}'
+                    'bad_level', 'allow', 'info', '{}'
                  )",
             [],
         )
@@ -862,10 +861,10 @@ fn security_rule_events_reject_null_detection_level() {
         .execute(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json
+                    rule_action, detection_level, rule_json
                  ) VALUES (
                     1789000000000, 'abcdef123456', 'model.call',
-                    'ambiguous_level', 'allow', NULL, '{}', '{}'
+                    'ambiguous_level', 'allow', NULL, '{}'
                  )",
             [],
         )
@@ -885,10 +884,10 @@ fn security_rule_events_reject_non_json_forensic_payloads() {
         .execute(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, rule_json, event_json
+                    rule_action, rule_json
                  ) VALUES (
                     1789000000000, 'abcdef123456', 'model.call',
-                    'bad_payload', 'allow', 'not json', '{}'
+                    'bad_payload', 'allow', 'not json'
                  )",
             [],
         )
