@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The desktop app no longer reports the gateway offline on macOS 14.0-14.3:
+  the TypeScript SDK links request cancellation by hand where
+  `AbortSignal.any` is missing. `@capsem/sdk` and `@capsem/mcp` now declare
+  Node 20 as their minimum engine.
+
 - Streaming exec and terminal sessions no longer end with "VM owner closed"
   when client input arrives while a large output frame is half read: the
   VM-owner IPC receiver now resumes a partially read frame after cancellation.

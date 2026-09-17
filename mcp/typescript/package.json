@@ -3,6 +3,7 @@
   "version": "0.6.3",
   "description": "Capsem MCP server over the authenticated gateway SDK",
   "type": "module",
+  "engines": {"node": ">=20"},
   "bin": {"capsem-mcp": "./dist/cli.js"},
   "files": ["dist", "README.md"],
   "scripts": {

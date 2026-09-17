@@ -27,6 +27,22 @@ export class NetworkError extends Error {
   }
 }
 
+/**
+ * `AbortSignal.any` where it exists; WKWebView before macOS 14.4 (the desktop
+ * app supports 14.0) and older runtimes need the linking done by hand.
+ */
+function anySignal(signals: AbortSignal[]): AbortSignal {
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any(signals);
+  const linked = new AbortController();
+  const unlink = (): void => {for (const signal of signals) signal.removeEventListener('abort', abort);};
+  function abort(this: AbortSignal): void {unlink(); linked.abort(this.reason);}
+  for (const signal of signals) {
+    if (signal.aborted) {linked.abort(signal.reason); return linked.signal;}
+  }
+  for (const signal of signals) signal.addEventListener('abort', abort, {once: true});
+  return linked.signal;
+}
+
 export class Transport {
   readonly #url: string;
   readonly #token: string;
@@ -67,7 +83,7 @@ export class Transport {
     if (options.body !== undefined) headers.set('Content-Type', options.contentType ?? MediaType.JSON);
     const signals = [this.#closed.signal, AbortSignal.timeout(this.#timeoutMs)];
     if (options.signal) signals.push(options.signal);
-    const signal = AbortSignal.any(signals);
+    const signal = anySignal(signals);
     let response: Response;
     let payload: Uint8Array;
     try {

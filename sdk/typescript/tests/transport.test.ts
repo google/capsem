@@ -119,3 +119,38 @@ it.each(['', '.', '..'])('refuses path identifiers that fetch would normalize: %
   await expect(transport.request(Method.GET, '/vms/{id}', {parameters: {id}})).rejects.toThrow('identifier');
   transport.close();
 });
+
+// WKWebView before macOS 14.4 and Node before 20.3 have no AbortSignal.any;
+// the desktop app supports macOS 14.0, so every call must still work there.
+it('links cancellation without AbortSignal.any', async () => {
+  vi.stubGlobal('AbortSignal', Object.assign(Object.create(AbortSignal) as typeof AbortSignal, {any: undefined}));
+  const seen: AbortSignal[] = [];
+  vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>((_, init) => {
+    const signal = init?.signal;
+    if (!signal) throw new Error('missing signal');
+    seen.push(signal);
+    return new Promise((resolve, reject) => {
+      const fail = (): void => {reject(signal.reason instanceof Error ? signal.reason : new Error('aborted'));};
+      if (seen.length === 1) resolve(new Response('ok'));
+      else if (signal.aborted) fail();
+      else signal.addEventListener('abort', fail, {once: true});
+    });
+  }));
+  const transport = new Transport('http://localhost', 'secret');
+  expect(new TextDecoder().decode(await transport.request(Method.GET, '/'))).toBe('ok');
+
+  const controller = new AbortController();
+  const reason = new Error('caller cancelled');
+  const cancelled = transport.request(Method.GET, '/', {signal: controller.signal});
+  controller.abort(reason);
+  await expect(cancelled).rejects.toBe(reason);
+
+  const early = new AbortController();
+  early.abort(reason);
+  await expect(transport.request(Method.GET, '/', {signal: early.signal})).rejects.toBe(reason);
+
+  const closing = transport.request(Method.GET, '/');
+  transport.close();
+  await expect(closing).rejects.toBeDefined();
+  expect(seen.at(-1)?.aborted).toBe(true);
+});
