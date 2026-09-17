@@ -120,48 +120,7 @@ pub(crate) async fn handle_provision(
     .await;
 
     match result {
-        Ok(Ok(_)) => {
-            let response = provision_response_for_running(&state, id.clone())?;
-            network_routes::attach_provisioned(&state, &id, &networks).await?;
-            if let Some(spec) = payload.container {
-                container_setup::start(&state, id.clone(), spec);
-                let status = container_setup::wait_for_create(&state, &id).await.map_err(|timed_out| {
-                    warn!(vm_id = id, attempts = timed_out.attempts, "container create readiness timed out");
-                    AppError(
-                        StatusCode::GATEWAY_TIMEOUT,
-                        format!(
-                            "container workload for VM {id} did not become ready before the HTTP deadline; setup continues under service ownership"
-                        ),
-                    )
-                })?;
-                match status.state {
-                    api::ContainerState::Running | api::ContainerState::Staged => {}
-                    api::ContainerState::Exited | api::ContainerState::Failed => {
-                        error!(
-                            vm_id = id,
-                            state = ?status.state,
-                            exit_code = status.exit_code,
-                            "container create reached a terminal failure"
-                        );
-                        return Err(AppError(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            format!(
-                                "container workload for VM {id} reached {:?}: {}",
-                                status.state,
-                                status.error.unwrap_or_else(|| status
-                                    .exit_code
-                                    .map(|code| format!("exit code {code}"))
-                                    .unwrap_or_else(|| "no failure detail".into()))
-                            ),
-                        ));
-                    }
-                    api::ContainerState::Pulling | api::ContainerState::Staging | api::ContainerState::Starting => {
-                        unreachable!("container readiness returned a pending state")
-                    }
-                }
-            }
-            Ok(Json(response))
-        }
+        Ok(Ok(_)) => finish_create(&state, &id, &networks, payload.container).await.map(Json),
         Ok(Err(app_err)) => Err(app_err),
         Err(timed_out) => {
             // Exhausted retries on launchd transient. Surface the most
@@ -185,3 +144,78 @@ pub(crate) async fn handle_provision(
         }
     }
 }
+
+/// Everything `POST /vms/create` does once the VM is registered and running.
+/// A create that fails here must leave nothing behind: the caller never
+/// learns the VM's id, and a named VM would keep its name. A readiness
+/// timeout is the exception -- setup continues under service ownership and
+/// the 504 names the VM.
+pub(crate) async fn finish_create(
+    state: &Arc<ServiceState>,
+    id: &str,
+    networks: &[uuid::Uuid],
+    container: Option<api::ContainerSpec>,
+) -> Result<ProvisionResponse, AppError> {
+    let created = complete_create(state, id, networks, container).await;
+    if matches!(&created, Err(error) if error.0 != StatusCode::GATEWAY_TIMEOUT) {
+        discard_failed_create(state, id).await;
+    }
+    created
+}
+
+async fn complete_create(
+    state: &Arc<ServiceState>,
+    id: &str,
+    networks: &[uuid::Uuid],
+    container: Option<api::ContainerSpec>,
+) -> Result<ProvisionResponse, AppError> {
+    let response = provision_response_for_running(state, id.to_owned())?;
+    network_routes::attach_provisioned(state, id, networks).await?;
+    if let Some(spec) = container {
+        container_setup::start(state, id.to_owned(), spec);
+        let status = container_setup::wait_for_create(state, id).await.map_err(|timed_out| {
+            warn!(vm_id = id, attempts = timed_out.attempts, "container create readiness timed out");
+            AppError(
+                StatusCode::GATEWAY_TIMEOUT,
+                format!(
+                    "container workload for VM {id} did not become ready before the HTTP deadline; setup continues under service ownership"
+                ),
+            )
+        })?;
+        match status.state {
+            api::ContainerState::Running | api::ContainerState::Staged => {}
+            api::ContainerState::Exited | api::ContainerState::Failed => {
+                error!(
+                    vm_id = id,
+                    state = ?status.state,
+                    exit_code = status.exit_code,
+                    "container create reached a terminal failure"
+                );
+                return Err(AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!(
+                        "container workload for VM {id} reached {:?}: {}",
+                        status.state,
+                        status.error.unwrap_or_else(|| status
+                            .exit_code
+                            .map(|code| format!("exit code {code}"))
+                            .unwrap_or_else(|| "no failure detail".into()))
+                    ),
+                ));
+            }
+            api::ContainerState::Pulling | api::ContainerState::Staging | api::ContainerState::Starting => {
+                unreachable!("container readiness returned a pending state")
+            }
+        }
+    }
+    Ok(response)
+}
+
+async fn discard_failed_create(state: &Arc<ServiceState>, id: &str) {
+    if let Err(error) = handle_delete(State(Arc::clone(state)), Path(id.to_owned())).await {
+        error!(vm_id = id, error = %error.1, "failed create was not discarded");
+    }
+}
+
+#[cfg(test)]
+mod tests;

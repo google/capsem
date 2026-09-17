@@ -429,7 +429,7 @@ fn install_test_profile_catalog(state: &ServiceState, profile: &ProfileConfigFil
     super::set_test_profile_dir_override(Some(config_root.join("profiles")));
 }
 
-fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
+pub(crate) fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
     PersistentVmEntry {
         id: new_persistent_vm_id(),
         name: name.into(),

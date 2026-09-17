@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A VM create that fails after the VM is registered (a refused or failed
+  container image, or a failed network attach) now removes the VM instead of
+  leaving it running with its name taken, so a retry no longer gets 409.
+
 - Detached container creation (`POST /vms/create` with a container,
   `capsem create --image`, SDK `create(image=...)`) returns once the guest
   reports the workload running instead of waiting out the 110-second
