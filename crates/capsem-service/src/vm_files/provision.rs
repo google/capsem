@@ -125,7 +125,7 @@ pub(crate) async fn handle_provision(
             network_routes::attach_provisioned(&state, &id, &networks).await?;
             if let Some(spec) = payload.container {
                 container_setup::start(&state, id.clone(), spec);
-                let status = state.containers.wait_for_create(&id).await.map_err(|timed_out| {
+                let status = container_setup::wait_for_create(&state, &id).await.map_err(|timed_out| {
                     warn!(vm_id = id, attempts = timed_out.attempts, "container create readiness timed out");
                     AppError(
                         StatusCode::GATEWAY_TIMEOUT,

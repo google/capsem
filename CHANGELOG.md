@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Detached container creation (`POST /vms/create` with a container,
+  `capsem create --image`, SDK `create(image=...)`) returns once the guest
+  reports the workload running instead of waiting out the 110-second
+  deadline and answering 504 while the workload was already up.
+
 - `capsem-mcp` now registers the documented `capsem_panics` and
   `capsem_triage` diagnostics tools, and the MCP tools page lists
   `capsem_file_history` (the workspace-changes tool) instead of a

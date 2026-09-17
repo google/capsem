@@ -89,36 +89,6 @@ impl ContainerSetups {
         self.records.lock().unwrap().get(id).map(|record| record.status.clone())
     }
 
-    /// Wait for the workload state owned by `POST /vms/create` to settle.
-    /// The shared poll primitive provides a deadline and exponential backoff;
-    /// callers never retry the mutation that created the VM.
-    pub(crate) async fn wait_for_create(
-        &self,
-        id: &str,
-    ) -> Result<ContainerStatusResponse, capsem_proto::poll::TimedOut> {
-        self.wait_with_options(
-            id,
-            capsem_foundation::poll::PollOpts::new("container-create-ready", CREATE_READY_TIMEOUT),
-        )
-        .await
-    }
-
-    async fn wait_with_options(
-        &self,
-        id: &str,
-        options: capsem_foundation::poll::PollOpts,
-    ) -> Result<ContainerStatusResponse, capsem_proto::poll::TimedOut> {
-        capsem_foundation::poll::poll_until(options, || async {
-            self.status(id).filter(|status| {
-                !matches!(
-                    status.state,
-                    ContainerState::Pulling | ContainerState::Staging | ContainerState::Starting
-                )
-            })
-        })
-        .await
-    }
-
     /// Stop an in-flight setup and forget the VM's workload. A setup that
     /// finishes afterwards finds its generation gone and changes nothing.
     pub(crate) fn cancel(&self, id: &str) {
@@ -335,6 +305,45 @@ const LAUNCH_RECORD: &str = "container.json";
 struct LaunchRecord {
     image: String,
     digest: String,
+}
+
+/// Wait for the workload `POST /vms/create` started to settle. A detached
+/// launcher runs in the background, so readiness is read the way the status
+/// route reads it -- through the guest's ready marker -- not only from the
+/// live record, which stays `starting` for a detached workload. The shared
+/// poll primitive provides the deadline and backoff; callers never retry the
+/// mutation that created the VM.
+pub(crate) async fn wait_for_create(
+    state: &Arc<ServiceState>,
+    id: &str,
+) -> Result<ContainerStatusResponse, capsem_proto::poll::TimedOut> {
+    wait_observed(
+        state,
+        id,
+        capsem_foundation::poll::PollOpts::new("container-create-ready", CREATE_READY_TIMEOUT),
+    )
+    .await
+}
+
+async fn wait_observed(
+    state: &Arc<ServiceState>,
+    id: &str,
+    options: capsem_foundation::poll::PollOpts,
+) -> Result<ContainerStatusResponse, capsem_proto::poll::TimedOut> {
+    capsem_foundation::poll::poll_until(options, || async {
+        let live = state.containers.status(id);
+        let id = id.to_owned();
+        let observed = state.off_worker(move |state| observe(&state, &id, live)).await;
+        let Ok(Ok(Some(status))) = observed else {
+            return None;
+        };
+        (!matches!(
+            status.state,
+            ContainerState::Pulling | ContainerState::Staging | ContainerState::Starting
+        ))
+        .then_some(status)
+    })
+    .await
 }
 
 pub(crate) fn record_launched(state: &ServiceState, id: &str) -> Result<(), String> {

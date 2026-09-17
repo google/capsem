@@ -117,20 +117,18 @@ async fn create_wait_uses_shared_exponential_polling_until_running() {
             .containers
             .advance("box", generation, |status| status.state = ContainerState::Running);
     });
-    let status = fx
-        .state
-        .containers
-        .wait_with_options(
-            "box",
-            capsem_foundation::poll::PollOpts {
-                label: "container-create-test",
-                timeout: std::time::Duration::from_secs(1),
-                initial_delay: std::time::Duration::from_millis(1),
-                max_delay: std::time::Duration::from_millis(4),
-            },
-        )
-        .await
-        .unwrap();
+    let status = wait_observed(
+        &fx.state,
+        "box",
+        capsem_foundation::poll::PollOpts {
+            label: "container-create-test",
+            timeout: std::time::Duration::from_secs(1),
+            initial_delay: std::time::Duration::from_millis(1),
+            max_delay: std::time::Duration::from_millis(4),
+        },
+    )
+    .await
+    .unwrap();
     update.await.unwrap();
     assert_eq!(status.state, ContainerState::Running);
 }
@@ -143,17 +141,37 @@ async fn create_wait_returns_terminal_failure_without_retrying_setup() {
         status.state = ContainerState::Failed;
         status.error = Some("pull refused".into());
     });
-    let status = fx
-        .state
-        .containers
-        .wait_with_options(
-            "box",
-            capsem_foundation::poll::PollOpts::new("container-create-test", std::time::Duration::from_secs(1)),
-        )
-        .await
-        .unwrap();
+    let status = wait_observed(
+        &fx.state,
+        "box",
+        capsem_foundation::poll::PollOpts::new("container-create-test", std::time::Duration::from_secs(1)),
+    )
+    .await
+    .unwrap();
     assert_eq!(status.state, ContainerState::Failed);
     assert_eq!(status.error.as_deref(), Some("pull refused"));
+}
+
+/// `POST /vms/create` waits on this for a detached workload. The launcher runs
+/// in the background, so only the guest's ready marker says it is running; a
+/// wait that ignores it spins until the HTTP deadline and returns 504.
+#[tokio::test]
+async fn create_wait_reports_a_detached_workload_running_once_the_guest_marks_ready() {
+    let fx = fixture(images());
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
+    start(&fx.state, "box".into(), spec(None));
+    owner.await.unwrap();
+    wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
+    std::fs::write(fx.workspace.join(".capsem-image/ready"), b"1\n").unwrap();
+    let status = wait_observed(
+        &fx.state,
+        "box",
+        capsem_foundation::poll::PollOpts::new("container-create-test", std::time::Duration::from_secs(2)),
+    )
+    .await
+    .expect("a guest-ready detached workload settles the create wait");
+    assert_eq!(status.state, ContainerState::Running);
+    assert_eq!(status.digest.as_deref(), Some("sha256:fixture"));
 }
 
 fn owner_accepting_stage_and_launch(
