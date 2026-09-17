@@ -21,13 +21,25 @@ pub enum ValidationStatus {
     FetchError,
 }
 
+/// The catalog's default profile for each runtime. They are answered
+/// separately because they diverge: a container image carries its own
+/// userland, so the profile that boots a VM workstation is not what a
+/// container should get by default.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ProfileDefaults {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ProfileCatalogStatus {
     pub source: ProfileCatalogSource,
-    /// The profile a client gets when it names none, when the catalog has
-    /// one. Clients read it here instead of compiling a profile name in.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_profile_id: Option<String>,
+    /// The profile a client gets when it names none. Clients read it here
+    /// instead of compiling a profile name in.
+    #[serde(default)]
+    pub defaults: ProfileDefaults,
     pub profile_count: usize,
     pub ready_count: usize,
     pub profiles: Vec<ProfileReadiness>,

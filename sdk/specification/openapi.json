@@ -5203,12 +5203,9 @@
               "null"
             ]
           },
-          "default_profile_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The profile a client gets when it names none, when the catalog has\none. Clients read it here instead of compiling a profile name in."
+          "defaults": {
+            "$ref": "#/components/schemas/ProfileDefaults",
+            "description": "The profile a client gets when it names none. Clients read it here\ninstead of compiling a profile name in."
           },
           "downloaded": {
             "type": [
@@ -5239,6 +5236,24 @@
           },
           "source": {
             "$ref": "#/components/schemas/ProfileCatalogSource"
+          }
+        }
+      },
+      "ProfileDefaults": {
+        "type": "object",
+        "description": "The catalog's default profile for each runtime. They are answered\nseparately because they diverge: a container image carries its own\nuserland, so the profile that boots a VM workstation is not what a\ncontainer should get by default.",
+        "properties": {
+          "container": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "vm": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
