@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   STREAM_SUBPROTOCOL,
+  MAX_STREAM_FRAME_BYTES,
   decodeServerFrame,
   encodeControl,
   encodeStdin,
@@ -55,4 +56,18 @@ describe('stream URL', () => {
     expect(STREAM_SUBPROTOCOL).toBe('capsem.stream.v1');
     expect(streamUrl('ws://127.0.0.1:19222', 'vm 1', 't/k')).toBe('ws://127.0.0.1:19222/vms/vm%201/stream?token=t%2Fk');
   });
+});
+
+// The service bounds what it sends; a client that trusts an unbounded frame
+// would render whatever a non-stock guest chose to emit.
+it('refuses a frame past the protocol ceiling', () => {
+  const oversized = new Uint8Array(MAX_STREAM_FRAME_BYTES + 1);
+  oversized[0] = 1;
+  expect(decodeServerFrame(oversized.buffer)).toEqual({
+    kind: 'invalid',
+    reason: `stream frame of ${MAX_STREAM_FRAME_BYTES + 1} bytes exceeds ${MAX_STREAM_FRAME_BYTES}`,
+  });
+  const largest = new Uint8Array(MAX_STREAM_FRAME_BYTES);
+  largest[0] = 1;
+  expect(decodeServerFrame(largest.buffer).kind).toBe('output');
 });

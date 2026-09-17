@@ -4,6 +4,9 @@
 
 export const STREAM_SUBPROTOCOL = 'capsem.stream.v1';
 
+/** Largest frame the protocol carries, as capsem-api's stream module bounds it. */
+export const MAX_STREAM_FRAME_BYTES = 256 * 1024;
+
 const STDIN = 0;
 const STDOUT = 1;
 const STDERR = 2;
@@ -59,6 +62,9 @@ function isStatus(value: unknown): value is StreamStatus {
 export function decodeServerFrame(data: ArrayBuffer): ServerFrame {
   const frame = new Uint8Array(data);
   if (frame.length === 0) return { kind: 'invalid', reason: 'empty stream frame' };
+  if (frame.length > MAX_STREAM_FRAME_BYTES) {
+    return { kind: 'invalid', reason: `stream frame of ${frame.length} bytes exceeds ${MAX_STREAM_FRAME_BYTES}` };
+  }
   const payload = frame.subarray(1);
   switch (frame[0]) {
     case STDOUT:

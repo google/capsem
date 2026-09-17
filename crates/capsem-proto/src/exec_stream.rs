@@ -4,7 +4,12 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
 /// Largest stdin or output chunk carried by one exec frame.
-pub const MAX_EXEC_DATA_BYTES: usize = 256 * 1024;
+///
+/// One byte below the stream frame ceiling: the service relays a data frame
+/// with a one-byte channel prefix, so a chunk of exactly that ceiling became a
+/// frame the CLI and TUI decoders refused as too large, ending the stream with
+/// no exit status. `capsem_api::stream` asserts the relationship.
+pub const MAX_EXEC_DATA_BYTES: usize = 256 * 1024 - 1;
 /// Stdin frames (data or EOF) one streaming exec may have in flight between
 /// the service and the guest. The VM owner queues at most this many and
 /// reports each one it hands to the guest with

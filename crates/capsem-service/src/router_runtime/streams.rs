@@ -8,6 +8,13 @@ use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use capsem_api::stream::{self, ClientFrame, StreamChannel, StreamControl, StreamKind, StreamStatus};
 use futures::{SinkExt, StreamExt};
 
+/// A guest exec chunk becomes one data frame plus its channel byte, so the
+/// largest chunk the guest may send has to fit inside a stream frame. When
+/// the two ceilings were equal, a full-size chunk from a non-stock guest
+/// became a frame the CLI and TUI decoders refused, ending the stream with no
+/// exit status.
+const _: () = assert!(capsem_proto::MAX_EXEC_DATA_BYTES + 1 <= stream::MAX_STREAM_FRAME_BYTES);
+
 /// How long a client may take to send its `start` control message.
 const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// How often an exec waiting for stdin credit pings the client it is not
