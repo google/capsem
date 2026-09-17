@@ -16,6 +16,7 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
+from helpers.body_archive import FILE_HEADER_BYTES
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, materialize_test_profiles
 
@@ -33,10 +34,11 @@ CRED_EVENT_ID = "abc123def456"
 SEC_EVENT_ID = "123abc456def"
 CREDENTIAL_REF = "credential:blake3:" + "1" * 64
 BLAKE3_HASH = "blake3:" + "2" * 64
-# `capsem_archive::FILE_HEADER_BYTES`: the archive's file header, which every
-# block follows. The first block therefore starts at exactly this offset.
-ARCHIVE_FILE_HEADER_BYTES = 16
-ARCHIVE_FIRST_BLOCK_OFFSET = ARCHIVE_FILE_HEADER_BYTES
+# Every block follows the archive's file header, so the first one starts at
+# exactly its length. The number is not repeated here: `helpers.body_archive`
+# is the one place outside capsem-archive allowed to restate the format, and
+# `test_body_archive_format_is_one_place.py` is what keeps it the only one.
+ARCHIVE_FIRST_BLOCK_OFFSET = FILE_HEADER_BYTES
 
 
 def index_rows_for_one_block(bodies: list[tuple]) -> list[tuple]:

@@ -1,9 +1,15 @@
-"""Citadel guard: runtime crates link no native compression or storage engine.
+"""Citadel guard: runtime crates link no native codec, and keep two write rails.
 
 The one C library the runtime ships is SQLite through bundled rusqlite. The
 ledger is parsed from attacker-influenced bytes, so every additional native
 decoder is attack surface the Rust type system does not cover. Pure-Rust
 codecs (miniz_oxide, lz4_flex, ruzstd) are allowed; their *-sys twins are not.
+
+The second rule here is about storage rather than parsing, and it catches what
+the first cannot: sled, redb and fjall are pure Rust, so nothing about them
+looks wrong. The runtime has two write rails -- SQLite for the ledger,
+capsem-archive for the append-only body file -- and a third is a durability
+model, not a dependency. Extend capsem-archive instead.
 """
 
 from __future__ import annotations
@@ -65,6 +71,32 @@ FORBIDDEN = {
 
 # Tooling crates that never ship in the runtime and may use native codecs.
 TOOLING_CRATES = {"capsem-admin", "capsem-bench", "capsem-mock-server"}
+
+# Pure-Rust embedded stores. Nothing native about them, and that is exactly why
+# they would get in: the guard above would not object, and neither would a
+# reviewer looking for a `-sys` crate.
+PURE_RUST_STORES = {"sled", "redb", "fjall"}
+
+SECOND_STORE_RATIONALE = """\
+A second embedded store in a runtime crate.
+
+sled, redb and fjall are pure Rust, so nothing above objects to them -- which
+is the problem. The runtime already has two write rails and they are enough:
+SQLite owns the ledger, and capsem-archive owns the append-only body file that
+exists because SQLite is the wrong shape for multi-megabyte blobs.
+
+A third rail is not a dependency, it is a durability model. It brings its own
+crash semantics, its own fsync story, its own corruption modes and its own
+retention question, and every ledger invariant that reads across rails has to
+be restated over one more of them. It also has to be recovered by whoever is
+holding the incident.
+
+Extend capsem-archive. Its format is one file, crates/capsem-archive/src/
+format.rs, and adding a block kind to it is a smaller change than any of the
+above. If the archive genuinely cannot express what is needed, that is a
+decision to make deliberately and write down, not one to make by adding a
+dependency.
+"""
 
 
 def _lock_packages(lock_text: str) -> dict[str, set[str]]:
@@ -155,6 +187,41 @@ def test_every_workspace_member_resolves_to_a_lockfile_package() -> None:
     packages = _lock_packages(LOCKFILE.read_text())
     missing = sorted(name for name in member_names if name not in packages)
     assert not missing, RESOLUTION_RATIONALE + f"\nUnresolved members: {missing}"
+
+
+def second_store_offenders(lock_text: str, member_names: Iterable[str]) -> list[str]:
+    """Pure predicate: runtime crates whose closure reaches a second store."""
+    packages = _lock_packages(lock_text)
+    result: list[str] = []
+    for name in member_names:
+        if name in TOOLING_CRATES:
+            continue
+        hit = sorted(PURE_RUST_STORES & _closure(packages, name))
+        if hit:
+            result.append(f"{name}: {', '.join(hit)}")
+    return result
+
+
+def test_no_second_pure_rust_store_without_a_decision() -> None:
+    member_names = _member_package_names(WORKSPACE.read_text()).values()
+    found = second_store_offenders(LOCKFILE.read_text(), member_names)
+    assert not found, "\n".join(found) + "\n" + SECOND_STORE_RATIONALE
+
+
+def test_second_store_predicate_flags_a_synthetic_store() -> None:
+    """Adversarial: no runtime crate uses one today, so the predicate is shown
+    against an injected edge rather than against an absence."""
+    lock_text = LOCKFILE.read_text()
+    injected = _inject_dependency(lock_text, "capsem-logger", "sled 0.34.7")
+    found = second_store_offenders(injected, ["capsem-logger"])
+    assert found == ["capsem-logger: sled"], found
+
+
+def test_a_tooling_crate_may_hold_a_store() -> None:
+    """The exemption is the same one the native guard uses, for the same
+    reason: capsem-admin is not in the runtime and is not recovered at 3am."""
+    lock_text = _inject_dependency(LOCKFILE.read_text(), "capsem-logger", "redb 2.0.0")
+    assert second_store_offenders(lock_text, ["capsem-admin"]) == []
 
 
 def test_offenders_flags_a_synthetic_native_dependency() -> None:
