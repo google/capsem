@@ -16,7 +16,7 @@ async fn a_stalled_request_head_parks_instead_of_spinning() {
     let server = accepted.await.unwrap();
 
     PEEK_ROUNDS.store(0, Ordering::Relaxed);
-    let head = tokio::spawn(async move { peek_head(&server).await });
+    let head = tokio::spawn(async move { Box::pin(peek_head(&server)).await });
     client
         .write_all(b"GET / HTTP/1.1\r\nHost: preview.localhost:1")
         .await

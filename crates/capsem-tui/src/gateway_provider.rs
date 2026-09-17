@@ -79,6 +79,7 @@ impl GatewayProvider {
         let hypervisor = Hypervisor::new(&self.base_url, token)?;
         let transport = Transport::new(&self.base_url, token, Duration::from_secs(30))?;
         *cached = Some((token.to_string(), hypervisor.clone(), transport.clone()));
+        drop(cached);
         Ok((hypervisor, transport))
     }
 
