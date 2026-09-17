@@ -22,86 +22,10 @@ use crate::{paths, service_install};
 // Request / Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct ProvisionRequest {
-    pub name: Option<String>,
-    pub profile_id: String,
-    /// Absent: the profile's RAM.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ram_mb: Option<u64>,
-    /// Absent: the profile's CPU count.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpus: Option<u32>,
-    #[serde(default)]
-    pub persistent: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub env: Option<HashMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub from: Option<String>,
-    /// Named networks to join at create.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub networks: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub container: Option<capsem_api::ContainerSpec>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ProvisionResponse {
-    pub id: String,
-    pub name: String,
-    pub profile_id: String,
-    pub status: VmLifecycleState,
-    #[serde(default)]
-    pub persistent: bool,
-    #[serde(default)]
-    pub can_resume: bool,
-    pub available_actions: Vec<VmAction>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ForkRequest {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ForkResponse {
-    pub name: String,
-    pub size_bytes: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VmLifecycleState {
-    Running,
-    Stopped,
-    Suspended,
-    Defunct,
-    Incompatible,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum VmAction {
-    Pause,
-    Stop,
-    Start,
-    Resume,
-    Fork,
-    Delete,
-}
-
-impl std::fmt::Display for VmLifecycleState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Running => f.write_str("Running"),
-            Self::Stopped => f.write_str("Stopped"),
-            Self::Suspended => f.write_str("Suspended"),
-            Self::Defunct => f.write_str("Defunct"),
-            Self::Incompatible => f.write_str("Incompatible"),
-        }
-    }
-}
+/// The wire contract is `capsem-api`'s. The CLI used to mirror these types by
+/// hand, which is how `ForkResponse` lost its `id` and `env`/`from` lost their
+/// serde defaults.
+pub use capsem_api::{ForkRequest, ForkResponse, ProvisionRequest, ProvisionResponse, VmAction, VmLifecycleState};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SessionInfo {

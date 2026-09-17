@@ -15,7 +15,7 @@ pub struct StopResponse {
     pub persistent: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, ToSchema)]
 pub struct ProvisionRequest {
     pub name: Option<String>,
     pub profile_id: String,
@@ -79,6 +79,18 @@ pub enum VmLifecycleState {
     Suspended,
     Defunct,
     Incompatible,
+}
+
+impl std::fmt::Display for VmLifecycleState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Running => "Running",
+            Self::Stopped => "Stopped",
+            Self::Suspended => "Suspended",
+            Self::Defunct => "Defunct",
+            Self::Incompatible => "Incompatible",
+        })
+    }
 }
 
 impl VmLifecycleState {
