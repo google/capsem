@@ -456,3 +456,52 @@ fn port_debug_never_prints_the_preview_bootstrap_token() {
     };
     assert!(format!("{plain:?}").contains("<none>"));
 }
+
+/// `open_with(authenticate)` creates the exposure before the session. When the
+/// session fails the caller gets no `Port` to close, so the SDK must.
+#[tokio::test]
+async fn authenticated_port_closes_its_exposure_when_the_session_fails() {
+    let mut server = Server::respond(|parts| {
+        let (status, body) = match (parts.method.as_str(), parts.uri.path()) {
+            ("GET", "/vms/vm-1/container") => (404, b"no container".to_vec()),
+            ("POST", "/vms/vm-1/exposures") => (200, serde_json::to_vec(&reply("createVmExposure")).unwrap()),
+            (_, "/vms/vm-1/exposures/vm-1/preview-session") => (503, b"preview session refused".to_vec()),
+            ("DELETE", "/vms/vm-1/exposures/vm-1") => (200, serde_json::to_vec(&reply("deleteVmExposure")).unwrap()),
+            _ => (500, b"unexpected".to_vec()),
+        };
+        axum::http::Response::builder()
+            .status(status)
+            .body(axum::body::Body::from(body))
+            .unwrap()
+    })
+    .await;
+    let vm = VM::new(&server.url, "private-token", VmSelector::Id("vm-1".into())).unwrap();
+    let ports = vm.ports();
+    let open = ports.open_with(
+        3000,
+        PortOptions {
+            host: 0,
+            authenticate: true,
+        },
+    );
+    let error = tokio::time::timeout(Duration::from_secs(5), open)
+        .await
+        .expect("open_with settles")
+        .unwrap_err();
+    assert!(matches!(error, Error::Http { status: 503, .. }), "{error:?}");
+    for path in [
+        "/vms/vm-1/container",
+        "/vms/vm-1/exposures",
+        "/vms/vm-1/exposures/vm-1/preview-session",
+    ] {
+        request(&mut server, path).await;
+    }
+    let (parts, _) = tokio::time::timeout(Duration::from_secs(2), server.received.recv())
+        .await
+        .expect("the orphaned exposure is deleted")
+        .unwrap();
+    assert_eq!(
+        (parts.method.as_str(), parts.uri.path()),
+        ("DELETE", "/vms/vm-1/exposures/vm-1")
+    );
+}

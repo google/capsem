@@ -219,12 +219,29 @@ impl Ports<'_> {
             let session = api::create_vm_preview_session(
                 &self.0.client.transport,
                 &api::CreateVmPreviewSessionParams {
-                    id,
+                    id: id.clone(),
                     exposure_id: port.id.clone(),
                 },
                 self.0.client.options,
             )
-            .await?;
+            .await;
+            let session = match session {
+                Ok(session) => session,
+                Err(error) => {
+                    // The caller never receives a Port to close, so remove the
+                    // exposure best-effort and report the session failure.
+                    let _ = api::delete_vm_exposure(
+                        &self.0.client.transport,
+                        &api::DeleteVmExposureParams {
+                            id,
+                            exposure_id: port.id,
+                        },
+                        self.0.client.options,
+                    )
+                    .await;
+                    return Err(error);
+                }
+            };
             port.host = None;
             port.url = Some(session.url);
             port.bootstrap_token = Some(session.bootstrap_token);
