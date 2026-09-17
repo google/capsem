@@ -3,10 +3,12 @@ import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
 import {toolCall} from './results.js';
 
-const profileId = z.string().min(1).default('code');
+/** Omitted means the catalog's default profile, which the gateway names. */
+const profileId = z.string().min(1).optional();
 const serverId = z.string().min(1);
 
-async function profileMcp(hypervisor: Hypervisor, id: string, signal: AbortSignal) {
+async function profileMcp(hypervisor: Hypervisor, requested: string | undefined, signal: AbortSignal) {
+  const id = requested ?? await hypervisor.defaultProfileId({signal});
   const matches = (await hypervisor.profiles.list({signal})).filter(profile => profile.id === id);
   const profile = matches[0];
   if (profile === undefined || matches.length !== 1) {

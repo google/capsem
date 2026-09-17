@@ -21,6 +21,12 @@ describe('contracts', () => {
       requests.push(record);
       const path = new URL(record.url, 'http://gateway.test').pathname;
       const fixtures: Record<string, unknown> = {
+        '/status': {
+          service: 'running', gateway_version: '0.6.3', vm_count: 0, vms: [],
+          profiles: {
+            source: 'built_in', profile_count: 1, ready_count: 1, profiles: [], default_profile_id: 'code',
+          },
+        },
         '/profiles/list': {profiles: [{
           availability: {web: true, shell: true, mobile: false}, default_rule_count: 0,
           description: 'Code profile', id: 'code', mcp_server_count: 1, name: 'Code',
@@ -90,8 +96,10 @@ describe('contracts', () => {
       }},
     ];
     for (const call of calls) expect((await client.callTool(call)).isError, call.name).not.toBe(true);
+    // 13 reads: the profile-less capsem_mcp_info asks the gateway which
+    // profile is the default before reading that profile's MCP state.
     expect(requests.map(request => request.method)).toEqual([
-      ...Array.from({length: 12}, () => 'GET'), 'POST', 'GET', 'GET', 'POST',
+      ...Array.from({length: 13}, () => 'GET'), 'POST', 'GET', 'GET', 'POST',
     ]);
     expect(JSON.parse(requests.at(-1)?.body.toString() ?? '')).toEqual({path: '/tmp/x'});
   });

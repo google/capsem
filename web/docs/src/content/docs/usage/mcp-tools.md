@@ -60,7 +60,7 @@ All VM-scoped tools take the immutable `vm_id` returned by `capsem_create` or
 | --- | --- | --- |
 | `capsem_status` | — | Read gateway and service status. |
 | `capsem_list` | — | List VMs and their typed lifecycle state. |
-| `capsem_create` | `profile`, `name?`, `cpus?`, `memory?`, `env?`, `network_ids?`, `image?`, `command?`, `registry?`, `attach?` | Create a detached workload. Memory is GiB; an image selects OCI execution. |
+| `capsem_create` | `profile?`, `name?`, `cpus?`, `memory?`, `env?`, `network_ids?`, `image?`, `command?`, `registry?`, `attach?` | Create a detached workload; an omitted profile uses the catalog default. Memory is GiB; an image selects OCI execution. |
 | `capsem_info` | `vm_id` | Read VM identity, resources, network, files, and telemetry. |
 | `capsem_exec` | `vm_id`, `command`, `timeout_secs?` | Execute in an existing VM. |
 | `capsem_run` | `command`, `profile?`, `cpus?`, `memory?`, `env?`, `timeout_secs?` | Execute once in a temporary VM. |

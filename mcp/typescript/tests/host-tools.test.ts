@@ -4,7 +4,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {createServer} from '../src/server.js';
-import {customProfile, provision, routeFixtures, sandbox} from './host-fixtures.js';
+import {codeProfile, customProfile, hypervisorInfo, provision, routeFixtures, sandbox} from './host-fixtures.js';
 
 interface RequestRecord {method: string; url: string; authorization?: string; body: Buffer}
 
@@ -42,8 +42,9 @@ describe('host-tools', () => {
       requests.push(record);
       if (record.authorization !== 'Bearer gateway-secret') return json(response, {error: 'denied'}, 401);
       const path = new URL(record.url, 'http://gateway.test').pathname;
+      if (path === '/status') return json(response, hypervisorInfo);
       if (path === '/vms/list') return json(response, {sandboxes: [sandbox]});
-      if (path === '/profiles/list') return json(response, {profiles: [customProfile]});
+      if (path === '/profiles/list') return json(response, {profiles: [customProfile, codeProfile]});
       if (path === '/vms/create') return json(response, provision);
       if (path === '/networks/net-1') return json(response, {
         id: 'net-1', name: 'private', subnet: '10.0.0.0/24', created_unix_ms: 1, members: [],
@@ -201,6 +202,15 @@ describe('host-tools', () => {
   });
 
   // A name the catalog does not have is the caller's mistake, not ours.
+  // No profile means the catalog default the gateway names, not a literal.
+  it('creates with the catalog default when no profile is named', async () => {
+    const created = await client.callTool({name: 'capsem_create', arguments: {}});
+    expect(created.isError).not.toBe(true);
+    const body = requests.find(request => request.url === '/vms/create')?.body.toString() ?? '';
+    expect(JSON.parse(body)).toMatchObject({profile_id: 'code'});
+    expect(requests.some(request => request.url === '/status')).toBe(true);
+  });
+
   it('reports an unknown profile as invalid input', async () => {
     const result = await client.callTool({
       name: 'capsem_create', arguments: {profile: 'ghost'},
@@ -272,7 +282,8 @@ describe('host-tools', () => {
       {name: 'capsem_triage', arguments: {vm_id: 'vm-1', since: '5m', limit: 2}},
     ];
     for (const call of calls) {
-      expect((await client.callTool(call)).isError, call.name).not.toBe(true);
+      const result = await client.callTool(call);
+      expect(result.isError, `${call.name}: ${JSON.stringify(result.content)}`).not.toBe(true);
     }
     expect(requests.some(request => request.url.includes('layers=exec%2Cnet'))).toBe(true);
     expect(requests.some(request => request.url === '/panics?since=1h&limit=4')).toBe(true);

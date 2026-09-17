@@ -18,6 +18,15 @@ export const customProfile = {
   },
 };
 
+/** The catalog's default profile, which `capsem_create` uses when none is named. */
+export const codeProfile = {...customProfile, id: 'code', name: 'Code', description: 'Code profile'};
+
+/** The gateway's status, whose catalog names the default profile. */
+export const hypervisorInfo = {
+  service: 'running', gateway_version: '0.6.3', vm_count: 0, vms: [],
+  profiles: {source: 'built_in', profile_count: 1, ready_count: 1, profiles: [], default_profile_id: 'code'},
+};
+
 /** Canned JSON replies keyed by `METHOD /path`. */
 export const routeFixtures: Record<string, object> = {
   'POST /vms/vm-1/start': provision,

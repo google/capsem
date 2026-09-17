@@ -37,7 +37,9 @@ function defined<T extends object>(input: T): {[K in keyof T]?: Exclude<T[K], un
 async function profileOption(hypervisor: Hypervisor, profileId: string | undefined, signal: AbortSignal): Promise<{
   profile: ProfileSummary
 } | undefined> {
-  if (profileId === undefined || profileId === 'code') return undefined;
+  // No name means the catalog default, which the SDK resolves from the
+  // gateway; a named profile is validated against the catalog, whatever it is.
+  if (profileId === undefined) return undefined;
   const profile = (await hypervisor.profiles.list({signal})).find(candidate => candidate.id === profileId);
   if (profile === undefined) throw new TypeError(`Unknown profile ${JSON.stringify(profileId)}`);
   return {profile};
@@ -51,7 +53,7 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
   server.registerTool('capsem_create', {
     description: 'Create a detached profile-owned VM and return its immutable ID.',
     inputSchema: {
-      profile: z.string().min(1).default('code'),
+      profile: z.string().min(1).optional(),
       name: z.string().min(1).optional(),
       cpus: positiveInt.optional(),
       memory: positiveInt.optional().describe('Guest memory in GiB'),
