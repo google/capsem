@@ -5640,6 +5640,32 @@ def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> No
     assert "CHANNEL: ${{ inputs.channel }}" in reusable_channel
 
 
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "sdk/python/capsem/hypervisor.py",
+        "sdk/typescript/src/hypervisor.ts",
+        "sdk/rust/src/hypervisor.rs",
+        "mcp/typescript/src/profile-tools.ts",
+    ],
+)
+def test_sdk_surfaces_may_not_compile_in_a_profile_name(surface: str, tmp_path: Path) -> None:
+    """Which profile a client gets when it names none is the gateway catalog's
+    answer. An SDK that spells a profile name is one more place to change when
+    the catalog changes, and one that cannot be corrected by an installation."""
+    source = tmp_path / surface
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text('profile_id = "code"\n', encoding="utf-8")
+
+    label, pattern, paths = next(
+        guard for guard in release_selections.MATCH_GUARDS if "SDK or MCP surface" in guard[0]
+    )
+    assert release_selections.reject_matches(tmp_path, label, pattern, paths), surface
+
+    source.write_text("profile_id = resolve_default()\n", encoding="utf-8")
+    assert not release_selections.reject_matches(tmp_path, label, pattern, paths), surface
+
+
 def test_release_selection_match_guard_is_directly_unit_testable(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
