@@ -18,32 +18,38 @@ export function registerNetworkTools(server: McpServer, hypervisor: Hypervisor):
   server.registerTool('capsem_network_create', {
     description: 'Create a private VM network and return its immutable ID and assigned subnet.',
     inputSchema: {name: z.string().min(1)},
-  }, ({name}) => toolCall(() => hypervisor.networks.create(name)));
+  }, ({name}, extra) => toolCall(() => hypervisor.networks.create(name, {signal: extra.signal})));
   server.registerTool('capsem_network_list', {
     description: 'List private VM networks and their current members.',
-  }, () => toolCall(async () => ({networks: await hypervisor.networks.list()})));
+  }, extra => toolCall(async () => ({
+    networks: await hypervisor.networks.list({signal: extra.signal}),
+  })));
   server.registerTool('capsem_network_inspect', {
     description: 'Inspect a private network by immutable ID.', inputSchema: {network_id: networkId},
-  }, ({network_id}) => toolCall(() => hypervisor.networks.inspect(network_id)));
+  }, ({network_id}, extra) => toolCall(() =>
+    hypervisor.networks.inspect(network_id, {signal: extra.signal})));
   server.registerTool('capsem_network_delete', {
     description: 'Retire a private network by immutable ID.', inputSchema: {network_id: networkId},
-  }, ({network_id}) => toolCall(async () => {
-    const network = await hypervisor.networks.inspect(network_id);
-    return hypervisor.networks.delete(network);
+  }, ({network_id}, extra) => toolCall(async () => {
+    const options = {signal: extra.signal};
+    const network = await hypervisor.networks.inspect(network_id, options);
+    return hypervisor.networks.delete(network, options);
   }));
   server.registerTool('capsem_network_attach', {
     description: 'Attach a VM to a private network and return actual membership state.',
     inputSchema: {network_id: networkId, vm_id: vmId},
-  }, ({network_id, vm_id}) => toolCall(async () => {
-    const network = await hypervisor.networks.inspect(network_id);
-    return hypervisor.vm({id: vm_id}).networks.attach(network);
+  }, ({network_id, vm_id}, extra) => toolCall(async () => {
+    const options = {signal: extra.signal};
+    const network = await hypervisor.networks.inspect(network_id, options);
+    return hypervisor.vm({id: vm_id}).networks.attach(network, options);
   }));
   server.registerTool('capsem_network_detach', {
     description: 'Detach a VM from a private network and return actual membership state.',
     inputSchema: {network_id: networkId, vm_id: vmId},
-  }, ({network_id, vm_id}) => toolCall(async () => {
-    const network = await hypervisor.networks.inspect(network_id);
-    return hypervisor.vm({id: vm_id}).networks.detach(network);
+  }, ({network_id, vm_id}, extra) => toolCall(async () => {
+    const options = {signal: extra.signal};
+    const network = await hypervisor.networks.inspect(network_id, options);
+    return hypervisor.vm({id: vm_id}).networks.detach(network, options);
   }));
   server.registerTool('capsem_network_logs', {
     description: 'Read a cursor-based private-network audit stream with optional correlation filters.',
@@ -58,11 +64,11 @@ export function registerNetworkTools(server: McpServer, hypervisor: Hypervisor):
       since_unix_ms: unixMs.optional(),
       until_unix_ms: unixMs.optional(),
     },
-  }, ({network_id, vm_id, connection_id, event_type, since_unix_ms, until_unix_ms, ...options}) => toolCall(async () => {
-    const network = await hypervisor.networks.inspect(network_id);
+  }, ({network_id, vm_id, connection_id, event_type, since_unix_ms, until_unix_ms, ...options}, extra) => toolCall(async () => {
+    const network = await hypervisor.networks.inspect(network_id, {signal: extra.signal});
     return hypervisor.networks.logs(network, defined({
       ...options, vm: vm_id, connection: connection_id, type: event_type,
-      since: since_unix_ms, until: until_unix_ms,
+      since: since_unix_ms, until: until_unix_ms, signal: extra.signal,
     }));
   }));
 }

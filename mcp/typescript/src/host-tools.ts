@@ -32,11 +32,11 @@ function defined<T extends object>(input: T): {[K in keyof T]?: Exclude<T[K], un
   };
 }
 
-async function profileOption(hypervisor: Hypervisor, profileId: string | undefined): Promise<{
+async function profileOption(hypervisor: Hypervisor, profileId: string | undefined, signal: AbortSignal): Promise<{
   profile: ProfileSummary
 } | undefined> {
   if (profileId === undefined || profileId === 'code') return undefined;
-  const profile = (await hypervisor.profiles.list()).find(candidate => candidate.id === profileId);
+  const profile = (await hypervisor.profiles.list({signal})).find(candidate => candidate.id === profileId);
   if (profile === undefined) throw new Error(`Unknown profile ${profileId}`);
   return {profile};
 }
@@ -44,7 +44,7 @@ async function profileOption(hypervisor: Hypervisor, profileId: string | undefin
 export function registerHostTools(server: McpServer, hypervisor: Hypervisor): void {
   server.registerTool('capsem_list', {
     description: 'List VMs with identity, lifecycle, resources, and telemetry.',
-  }, () => toolCall(() => hypervisor.list()));
+  }, extra => toolCall(() => hypervisor.list({signal: extra.signal})));
 
   server.registerTool('capsem_create', {
     description: 'Create a detached profile-owned VM and return its immutable ID.',
@@ -59,11 +59,12 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
       command: z.array(z.string()).optional(),
       registry: registry.optional(),
     },
-  }, ({profile, network_ids, registry: access, ...options}) => toolCall(async () => {
-    const networks = await Promise.all((network_ids ?? []).map(id => hypervisor.networks.inspect(id)));
+  }, ({profile, network_ids, registry: access, ...options}, extra) => toolCall(async () => {
+    const networks = await Promise.all((network_ids ?? []).map(id =>
+      hypervisor.networks.inspect(id, {signal: extra.signal})));
     const created = await hypervisor.create({
-      ...defined(options), ...(await profileOption(hypervisor, profile) ?? {}), networks,
-      ...(access === undefined ? {} : {registry: defined(access)}),
+      ...defined(options), ...(await profileOption(hypervisor, profile, extra.signal) ?? {}), networks,
+      ...(access === undefined ? {} : {registry: defined(access)}), signal: extra.signal,
     });
     return {id: created.id, name: created.name};
   }));
@@ -71,12 +72,13 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
   server.registerTool('capsem_info', {
     description: 'Read lifecycle, resource, storage, network, and telemetry details for a VM.',
     inputSchema: {vm_id: vmId},
-  }, ({vm_id}) => toolCall(() => vm(hypervisor, vm_id).info()));
+  }, ({vm_id}, extra) => toolCall(() => vm(hypervisor, vm_id).info({signal: extra.signal})));
 
   server.registerTool('capsem_exec', {
     description: 'Run a shell command in an existing VM and return stdout, stderr, and exit code.',
     inputSchema: {vm_id: vmId, command: z.string().min(1), timeout_secs: positiveInt.optional()},
-  }, ({vm_id, command, timeout_secs}) => toolCall(() => vm(hypervisor, vm_id).exec(command, defined({timeout_secs}))));
+  }, ({vm_id, command, timeout_secs}, extra) => toolCall(() =>
+    vm(hypervisor, vm_id).exec(command, {...defined({timeout_secs}), signal: extra.signal})));
 
   server.registerTool('capsem_run', {
     description: 'Run a command in a fresh service-managed VM and return stdout, stderr, and exit code.',
@@ -86,51 +88,52 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
       memory: positiveInt.optional().describe('Guest memory in GiB'),
       env: z.record(z.string(), z.string()).optional(),
     },
-  }, ({command, profile, ...options}) => toolCall(async () => hypervisor.run(command, {
-    ...defined(options), ...(await profileOption(hypervisor, profile) ?? {}),
+  }, ({command, profile, ...options}, extra) => toolCall(async () => hypervisor.run(command, {
+    ...defined(options), ...(await profileOption(hypervisor, profile, extra.signal) ?? {}), signal: extra.signal,
   })));
 
   server.registerTool('capsem_start', {
     description: 'Start a stopped VM.', inputSchema: {vm_id: vmId},
-  }, ({vm_id}) => toolCall(() => vm(hypervisor, vm_id).start()));
+  }, ({vm_id}, extra) => toolCall(() => vm(hypervisor, vm_id).start({signal: extra.signal})));
   server.registerTool('capsem_stop', {
     description: 'Stop a VM.', inputSchema: {vm_id: vmId},
-  }, ({vm_id}) => toolCall(() => vm(hypervisor, vm_id).stop()));
+  }, ({vm_id}, extra) => toolCall(() => vm(hypervisor, vm_id).stop({signal: extra.signal})));
   server.registerTool('capsem_pause', {
     description: 'Pause a running VM.', inputSchema: {vm_id: vmId},
-  }, ({vm_id}) => toolCall(() => vm(hypervisor, vm_id).pause()));
+  }, ({vm_id}, extra) => toolCall(() => vm(hypervisor, vm_id).pause({signal: extra.signal})));
   server.registerTool('capsem_resume', {
     description: 'Resume a stopped or paused VM.', inputSchema: {vm_id: vmId},
-  }, ({vm_id}) => toolCall(() => vm(hypervisor, vm_id).resume()));
+  }, ({vm_id}, extra) => toolCall(() => vm(hypervisor, vm_id).resume({signal: extra.signal})));
   server.registerTool('capsem_delete', {
     description: 'Delete a VM and destroy its owned state.', inputSchema: {vm_id: vmId},
-  }, ({vm_id}) => toolCall(() => vm(hypervisor, vm_id).delete()));
+  }, ({vm_id}, extra) => toolCall(() => vm(hypervisor, vm_id).delete({signal: extra.signal})));
 
   server.registerTool('capsem_fork', {
     description: 'Fork a VM into a new stopped VM.',
     inputSchema: {vm_id: vmId, name: z.string().min(1), description: z.string().optional()},
-  }, ({vm_id, name, description}) => toolCall(async () => {
-    const fork = await vm(hypervisor, vm_id).fork(name, defined({description}));
+  }, ({vm_id, name, description}, extra) => toolCall(async () => {
+    const fork = await vm(hypervisor, vm_id).fork(name, {...defined({description}), signal: extra.signal});
     return {id: fork.id, name: fork.name};
   }));
   server.registerTool('capsem_persist', {
     description: 'Persist an ephemeral VM under a stable name.',
     inputSchema: {vm_id: vmId, name: z.string().min(1)},
-  }, ({vm_id, name}) => toolCall(() => vm(hypervisor, vm_id).persist(name)));
+  }, ({vm_id, name}, extra) => toolCall(() => vm(hypervisor, vm_id).persist(name, {signal: extra.signal})));
   server.registerTool('capsem_purge', {
     description: 'Purge VMs that the service reports as purgeable.',
     inputSchema: {all: z.boolean().optional()},
-  }, args => toolCall(() => hypervisor.purge(defined(args))));
+  }, (args, extra) => toolCall(() => hypervisor.purge({...defined(args), signal: extra.signal})));
 
   server.registerTool('capsem_list_files', {
     description: 'List files in a VM using the gateway file API.',
     inputSchema: {vm_id: vmId, path: z.string().default('/'), depth: positiveInt.optional()},
-  }, ({vm_id, path, depth}) => toolCall(() => vm(hypervisor, vm_id).files.list(path, defined({depth}))));
+  }, ({vm_id, path, depth}, extra) => toolCall(() =>
+    vm(hypervisor, vm_id).files.list(path, {...defined({depth}), signal: extra.signal})));
   server.registerTool('capsem_read_file', {
     description: 'Read a VM file as UTF-8 text or base64 through the gateway file API.',
     inputSchema: {vm_id: vmId, path: z.string().min(1), encoding: z.enum(['utf8', 'base64']).default('utf8')},
-  }, ({vm_id, path, encoding}) => toolCall(async () => {
-    const data = await vm(hypervisor, vm_id).files.read(path);
+  }, ({vm_id, path, encoding}, extra) => toolCall(async () => {
+    const data = await vm(hypervisor, vm_id).files.read(path, {signal: extra.signal});
     return {path, encoding, size: data.byteLength, content: Buffer.from(data).toString(encoding)};
   }));
   server.registerTool('capsem_write_file', {
@@ -138,50 +141,55 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
     inputSchema: {
       vm_id: vmId, path: z.string().min(1), content: z.string(), encoding: z.enum(['utf8', 'base64']).default('utf8'),
     },
-  }, ({vm_id, path, content, encoding}) => toolCall(() => vm(hypervisor, vm_id).files.write(path, bytes(content, encoding))));
+  }, ({vm_id, path, content, encoding}, extra) => toolCall(() =>
+    vm(hypervisor, vm_id).files.write(path, bytes(content, encoding), {signal: extra.signal})));
 
   server.registerTool('capsem_vm_logs', {
     description: 'Read serial and process logs for a VM.',
     inputSchema: {vm_id: vmId, ...logFilters},
-  }, ({vm_id, ...options}) => toolCall(() => vm(hypervisor, vm_id).log(defined(options))));
+  }, ({vm_id, ...options}, extra) => toolCall(() =>
+    vm(hypervisor, vm_id).log({...defined(options), signal: extra.signal})));
   server.registerTool('capsem_host_logs', {
     description: 'Read an allowlisted host log through the authenticated gateway.',
     inputSchema: {source: z.nativeEnum(HostLogSource).default(HostLogSource.SERVICE), ...logFilters},
-  }, options => toolCall(() => hypervisor.log(defined(options))));
+  }, (options, extra) => toolCall(() => hypervisor.log({...defined(options), signal: extra.signal})));
   server.registerTool('capsem_panics', {
     description: 'Read structured recent host panics before widening an investigation.',
     inputSchema: {since: z.string().optional(), limit: positiveInt.optional()},
-  }, options => toolCall(() => hypervisor.debug.panics(defined(options))));
+  }, (options, extra) => toolCall(() => hypervisor.debug.panics({...defined(options), signal: extra.signal})));
   server.registerTool('capsem_triage', {
     description: 'Read ranked host diagnostics and optional VM ledger correlation.',
     inputSchema: {since: z.string().optional(), limit: positiveInt.optional(), vm_id: vmId.optional()},
-  }, options => toolCall(() => hypervisor.debug.triage(defined(options))));
+  }, (options, extra) => toolCall(() => hypervisor.debug.triage({...defined(options), signal: extra.signal})));
   server.registerTool('capsem_timeline', {
     description: 'Read the correlated exec, tool, network, file, and model timeline for a VM.',
     inputSchema: {
       vm_id: vmId, trace_id: z.string().optional(), since: z.string().optional(), limit: positiveInt.optional(),
       layers: z.array(z.nativeEnum(TimelineLayer)).optional(),
     },
-  }, ({vm_id, ...options}) => toolCall(() => vm(hypervisor, vm_id).timeline(defined(options))));
+  }, ({vm_id, ...options}, extra) => toolCall(() =>
+    vm(hypervisor, vm_id).timeline({...defined(options), signal: extra.signal})));
   server.registerTool('capsem_history', {
     description: 'Read paginated command and audit history for a VM.',
     inputSchema: {vm_id: vmId, ...page, search: z.string().optional()},
-  }, ({vm_id, ...options}) => toolCall(() => vm(hypervisor, vm_id).history(defined(options))));
+  }, ({vm_id, ...options}, extra) => toolCall(() =>
+    vm(hypervisor, vm_id).history({...defined(options), signal: extra.signal})));
   server.registerTool('capsem_stats', {
     description: 'Read aggregate telemetry statistics for a VM.', inputSchema: {vm_id: vmId},
-  }, ({vm_id}) => toolCall(() => vm(hypervisor, vm_id).stats.summary()));
+  }, ({vm_id}, extra) => toolCall(() => vm(hypervisor, vm_id).stats.summary({signal: extra.signal})));
   server.registerTool('capsem_stats_detail', {
     description: 'Read typed security, network, file, process, tool, and model events for a VM.',
     inputSchema: {vm_id: vmId},
-  }, ({vm_id}) => toolCall(() => vm(hypervisor, vm_id).stats.details()));
+  }, ({vm_id}, extra) => toolCall(() => vm(hypervisor, vm_id).stats.details({signal: extra.signal})));
   server.registerTool('capsem_snapshots', {
     description: 'List VM filesystem snapshots.', inputSchema: {vm_id: vmId},
-  }, ({vm_id}) => toolCall(() => vm(hypervisor, vm_id).snapshots.list()));
+  }, ({vm_id}, extra) => toolCall(() => vm(hypervisor, vm_id).snapshots.list({signal: extra.signal})));
   server.registerTool('capsem_snapshot_status', {
     description: 'Read VM filesystem snapshot readiness.', inputSchema: {vm_id: vmId},
-  }, ({vm_id}) => toolCall(() => vm(hypervisor, vm_id).snapshots.status()));
+  }, ({vm_id}, extra) => toolCall(() => vm(hypervisor, vm_id).snapshots.status({signal: extra.signal})));
   server.registerTool('capsem_file_history', {
     description: 'Read paginated filesystem changes since a snapshot checkpoint.',
     inputSchema: {vm_id: vmId, checkpoint: z.string().min(1), ...page},
-  }, ({vm_id, checkpoint, ...options}) => toolCall(() => vm(hypervisor, vm_id).files.history(checkpoint, defined(options))));
+  }, ({vm_id, checkpoint, ...options}, extra) => toolCall(() =>
+    vm(hypervisor, vm_id).files.history(checkpoint, {...defined(options), signal: extra.signal})));
 }

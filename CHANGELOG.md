@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The npm MCP now propagates client cancellation through every SDK-backed
+  lifecycle, file, diagnostic, network, profile, container, and port request.
+
 - Profile MCP access now starts from a typed profile and resolves a scoped
   server handle before listing, calling, or refreshing its tools.
 

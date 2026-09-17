@@ -69,6 +69,10 @@ describe('packed-package', () => {
     const slowClosed = new Promise<void>(resolve => {slowRequestClosed = resolve;});
     let slowRequestStarted: (() => void) | undefined;
     const slowStarted = new Promise<void>(resolve => {slowRequestStarted = resolve;});
+    let listRequestClosed: (() => void) | undefined;
+    const listClosed = new Promise<void>(resolve => {listRequestClosed = resolve;});
+    let listRequestStarted: (() => void) | undefined;
+    const listStarted = new Promise<void>(resolve => {listRequestStarted = resolve;});
     const gateway = createHttpServer((request, response) => {
       authorizations.push(request.headers.authorization ?? '');
       const path = new URL(request.url ?? '/', 'http://gateway.test').pathname;
@@ -81,6 +85,12 @@ describe('packed-package', () => {
         slowRequestStarted?.();
         request.on('close', () => slowRequestClosed?.());
         response.on('close', () => slowRequestClosed?.());
+        return;
+      }
+      if (path === '/vms/list') {
+        listRequestStarted?.();
+        request.on('close', () => listRequestClosed?.());
+        response.on('close', () => listRequestClosed?.());
         return;
       }
       response.writeHead(404).end();
@@ -115,6 +125,18 @@ describe('packed-package', () => {
     controller.abort();
     await expect(pending).rejects.toThrow(/AbortError/);
     await slowClosed;
+
+    const listController = new AbortController();
+    const pendingList = first.client.callTool(
+      {name: 'capsem_list', arguments: {}}, undefined, {signal: listController.signal},
+    );
+    await listStarted;
+    listController.abort();
+    await expect(pendingList).rejects.toThrow(/AbortError/);
+    await Promise.race([
+      listClosed,
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('cancelled tool kept its gateway request open')), 500)),
+    ]);
     expect(first.stderr.join('')).toBe('');
     expect(second.stderr.join('')).toBe('');
   }, 15_000);
