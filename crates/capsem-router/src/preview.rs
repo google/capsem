@@ -5,6 +5,7 @@
 //! strips Capsem control credentials, preserves workload-owned cookies, and
 //! relays upgrades.
 
+use capsem_proto::PreviewAdmissionKind;
 use http_body_util::{combinators::BoxBody, BodyExt, Empty};
 use hyper::header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, SET_COOKIE};
 use hyper::service::service_fn;
@@ -55,6 +56,7 @@ impl Upgrades {
 pub(super) async fn relay(
     source: &mut UnixStream,
     destination: &mut UnixStream,
+    admission: PreviewAdmissionKind,
     stop: impl Future<Output = ()>,
 ) -> capsem_foundation::unix::router_stream::Outcome {
     use capsem_foundation::unix::router_stream::{self, Framing, Framings, Limits};
@@ -110,7 +112,8 @@ pub(super) async fn relay(
         drained: Notify::new(),
     });
     let service_upgrades = Arc::clone(&upgrades);
-    let service = service_fn(move |request| forward(request, Arc::clone(&sender), Arc::clone(&service_upgrades)));
+    let service =
+        service_fn(move |request| forward(request, admission, Arc::clone(&sender), Arc::clone(&service_upgrades)));
     let server = hyper::server::conn::http1::Builder::new()
         .serve_connection(TokioIo::new(browser), service)
         .with_upgrades();
@@ -148,10 +151,26 @@ pub(super) async fn relay(
 
 async fn forward(
     mut request: Request<hyper::body::Incoming>,
+    admission: PreviewAdmissionKind,
     sender: Arc<Mutex<hyper::client::conn::http1::SendRequest<hyper::body::Incoming>>>,
     upgrades: Arc<Upgrades>,
 ) -> Result<Response<BoxBody<bytes::Bytes, hyper::Error>>, Infallible> {
-    let downstream = is_websocket(&request).then(|| hyper::upgrade::on(&mut request));
+    let websocket = is_websocket(&request);
+    // The gateway's policy admitted this connection from its first request
+    // head. Keep-alive must not let a later request take the other shape.
+    if websocket != (admission == PreviewAdmissionKind::WebsocketUpgrade) {
+        tracing::debug!(
+            ?admission,
+            websocket,
+            "preview request outside its admitted kind refused"
+        );
+        return Ok(Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .header(hyper::header::CONNECTION, "close")
+            .body(empty_body())
+            .expect("static response"));
+    }
+    let downstream = websocket.then(|| hyper::upgrade::on(&mut request));
     strip_control_headers(request.headers_mut());
     let response = sender.lock().await.send_request(request).await;
     let mut response = match response {

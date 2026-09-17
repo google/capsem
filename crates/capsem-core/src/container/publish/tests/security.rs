@@ -155,7 +155,7 @@ async fn preview_denial_never_opens_a_guest_destination() {
             audit,
             port: 8080,
             target: capsem_proto::PublicationTarget::Container,
-            preview: true,
+            preview: Some(capsem_proto::PreviewAdmissionKind::Request),
         })
         .await
         .unwrap();

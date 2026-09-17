@@ -25,7 +25,10 @@ mod preview;
 pub const MAX_CONNECTIONS: usize = 128;
 /// The default ceiling on a relay's pairs and on a switch's ports.
 pub const CONNECTION_LIMIT: usize = 64;
-const VERSION: u8 = 6;
+const VERSION: u8 = 7;
+/// Preview grant kinds: the admitted request shape is part of the grant.
+const PREVIEW_REQUEST: u8 = 3;
+const PREVIEW_UPGRADE: u8 = 4;
 
 pub enum Grant<Socket = OwnedFd> {
     Hello,
@@ -38,8 +41,11 @@ pub enum Grant<Socket = OwnedFd> {
     },
     /// An authenticated browser socket and its guest leg. HTTP parsing and
     /// control-header filtering happen inside this confined process.
+    /// `admission` is the request shape the parent's policy admitted; the
+    /// router refuses any other shape on the same connection.
     Preview {
         id: u64,
+        admission: capsem_proto::PreviewAdmissionKind,
         source: Socket,
         destination: Socket,
     },
@@ -143,11 +149,16 @@ impl Grant {
                 })
             }
             ((2, id), 0) if id != 0 => Ok(Self::Abort { id }),
-            ((3, id), 2) if id != 0 => {
+            ((kind @ (PREVIEW_REQUEST | PREVIEW_UPGRADE), id), 2) if id != 0 => {
                 let destination = frame.fds.pop().unwrap();
                 let source = frame.fds.pop().unwrap();
                 Ok(Self::Preview {
                     id,
+                    admission: if kind == PREVIEW_UPGRADE {
+                        capsem_proto::PreviewAdmissionKind::WebsocketUpgrade
+                    } else {
+                        capsem_proto::PreviewAdmissionKind::Request
+                    },
                     source,
                     destination,
                 })
@@ -176,11 +187,16 @@ pub async fn send_grant(sender: &Sender, grant: Grant<BorrowedFd<'_>>) -> io::Re
         Grant::Abort { id } => sender.send(&encode(2, id), &[]).await?,
         Grant::Preview {
             id,
+            admission,
             source,
             destination,
         } => {
+            let kind = match admission {
+                capsem_proto::PreviewAdmissionKind::Request => PREVIEW_REQUEST,
+                capsem_proto::PreviewAdmissionKind::WebsocketUpgrade => PREVIEW_UPGRADE,
+            };
             sender
-                .send(&encode(3, id), &[source.as_raw_fd(), destination.as_raw_fd()])
+                .send(&encode(kind, id), &[source.as_raw_fd(), destination.as_raw_fd()])
                 .await?
         }
         Grant::Plug { port, socket } => sender.send(&encode(5, port), &[socket.as_raw_fd()]).await?,
@@ -354,9 +370,9 @@ pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionL
             tokio::select! {
                 message = messages.recv() => match message.ok_or_else(|| invalid("router grant channel closed"))?? {
                     grant @ (Grant::Connected { .. } | Grant::Preview { .. }) => {
-                        let (id, source, destination, is_preview) = match grant {
-                            Grant::Connected { id, source, destination } => (id, source, destination, false),
-                            Grant::Preview { id, source, destination } => (id, source, destination, true),
+                        let (id, source, destination, preview) = match grant {
+                            Grant::Connected { id, source, destination } => (id, source, destination, None),
+                            Grant::Preview { id, admission, source, destination } => (id, source, destination, Some(admission)),
                             _ => unreachable!(),
                         };
                         if id <= last_id { return Err(invalid("reused router connection id")); }
@@ -388,8 +404,8 @@ pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionL
                         };
                         jobs.spawn(async move {
                             let _permit = permit;
-                            let result = if is_preview {
-                                preview::relay(&mut source.socket, &mut destination.socket, async {
+                            let result = if let Some(admission) = preview {
+                                preview::relay(&mut source.socket, &mut destination.socket, admission, async {
                                     let _ = stopped.await;
                                 })
                                 .await

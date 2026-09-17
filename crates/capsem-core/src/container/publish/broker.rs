@@ -17,7 +17,7 @@ struct Active {
     acknowledgement: Option<Instant>,
     accepted: bool,
     close_deadline: Option<Instant>,
-    preview: bool,
+    preview: Option<capsem_proto::PreviewAdmissionKind>,
 }
 impl Drop for Active {
     fn drop(&mut self) {

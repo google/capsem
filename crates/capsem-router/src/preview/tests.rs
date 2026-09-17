@@ -73,7 +73,15 @@ async fn write_frame(stream: &mut UnixStream, bytes: &[u8]) {
 async fn confined_preview_streams_http_and_filters_both_control_directions() {
     let (mut browser, mut source) = UnixStream::pair().unwrap();
     let (mut destination, mut guest) = UnixStream::pair().unwrap();
-    let relay = tokio::spawn(async move { relay(&mut source, &mut destination, std::future::pending()).await });
+    let relay = tokio::spawn(async move {
+        relay(
+            &mut source,
+            &mut destination,
+            PreviewAdmissionKind::Request,
+            std::future::pending(),
+        )
+        .await
+    });
     let guest_task = tokio::spawn(async move {
         let request = read_framed_http(&mut guest).await;
         let request = String::from_utf8(request).unwrap();
@@ -131,7 +139,15 @@ async fn confined_preview_streams_http_and_filters_both_control_directions() {
 async fn confined_preview_carries_websocket_upgrades_after_filtering_credentials() {
     let (mut browser, mut source) = UnixStream::pair().unwrap();
     let (mut destination, mut guest) = UnixStream::pair().unwrap();
-    let relay = tokio::spawn(async move { relay(&mut source, &mut destination, std::future::pending()).await });
+    let relay = tokio::spawn(async move {
+        relay(
+            &mut source,
+            &mut destination,
+            PreviewAdmissionKind::WebsocketUpgrade,
+            std::future::pending(),
+        )
+        .await
+    });
     let guest_task = tokio::spawn(async move {
         let request = String::from_utf8(read_framed_http(&mut guest).await).unwrap();
         assert!(request.starts_with("GET /live HTTP/1.1\r\n"), "{request}");
@@ -179,6 +195,104 @@ async fn confined_preview_carries_websocket_upgrades_after_filtering_credentials
     drop(browser);
     guest_task.await.unwrap();
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), relay)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+const UPGRADE_REQUEST: &[u8] = b"GET /live HTTP/1.1\r\nHost: preview.localhost\r\nConnection: upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+
+/// Nothing past `request` reached the guest: its leg is idle, ended, or closed.
+async fn assert_guest_sees_no_further_request(guest: &mut UnixStream) {
+    match tokio::time::timeout(std::time::Duration::from_millis(300), guest.read_u32()).await {
+        Err(_) | Ok(Ok(0)) | Ok(Err(_)) => {}
+        Ok(Ok(length)) => {
+            let mut payload = vec![0; length as usize];
+            let _ = guest.read_exact(&mut payload).await;
+            panic!(
+                "a request outside the admitted kind reached the guest: {}",
+                String::from_utf8_lossy(&payload)
+            );
+        }
+    }
+}
+
+async fn read_response_head(browser: &mut UnixStream) -> String {
+    let mut response = Vec::new();
+    while !response.ends_with(b"\r\n\r\n") {
+        let byte = tokio::time::timeout(std::time::Duration::from_secs(2), browser.read_u8())
+            .await
+            .expect("response head")
+            .expect("response head byte");
+        response.push(byte);
+    }
+    String::from_utf8(response).unwrap()
+}
+
+/// Admission is decided from the first request head. A keep-alive connection
+/// admitted for plain requests must not smuggle a WebSocket upgrade past a
+/// policy that denies `preview_upgrade`.
+#[tokio::test]
+async fn a_request_admitted_connection_refuses_a_later_upgrade() {
+    let (mut browser, mut source) = UnixStream::pair().unwrap();
+    let (mut destination, mut guest) = UnixStream::pair().unwrap();
+    let relay = tokio::spawn(async move {
+        relay(
+            &mut source,
+            &mut destination,
+            PreviewAdmissionKind::Request,
+            std::future::pending(),
+        )
+        .await
+    });
+    browser
+        .write_all(b"GET / HTTP/1.1\r\nHost: preview.localhost\r\n\r\n")
+        .await
+        .unwrap();
+    let first = String::from_utf8(read_framed_http(&mut guest).await).unwrap();
+    assert!(first.starts_with("GET / HTTP/1.1\r\n"), "{first}");
+    write_frame(&mut guest, b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").await;
+    let head = read_response_head(&mut browser).await;
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "{head}");
+    let mut body = [0; 2];
+    browser.read_exact(&mut body).await.unwrap();
+
+    browser.write_all(UPGRADE_REQUEST).await.unwrap();
+    let refused = read_response_head(&mut browser).await;
+    assert!(refused.starts_with("HTTP/1.1 403 Forbidden\r\n"), "{refused}");
+    assert!(refused.contains("connection: close\r\n"), "{refused}");
+    assert_guest_sees_no_further_request(&mut guest).await;
+    drop(browser);
+    drop(guest);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), relay)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn an_upgrade_admitted_connection_refuses_plain_requests() {
+    let (mut browser, mut source) = UnixStream::pair().unwrap();
+    let (mut destination, mut guest) = UnixStream::pair().unwrap();
+    let relay = tokio::spawn(async move {
+        relay(
+            &mut source,
+            &mut destination,
+            PreviewAdmissionKind::WebsocketUpgrade,
+            std::future::pending(),
+        )
+        .await
+    });
+    browser
+        .write_all(b"GET /secret HTTP/1.1\r\nHost: preview.localhost\r\n\r\n")
+        .await
+        .unwrap();
+    let refused = read_response_head(&mut browser).await;
+    assert!(refused.starts_with("HTTP/1.1 403 Forbidden\r\n"), "{refused}");
+    assert_guest_sees_no_further_request(&mut guest).await;
+    drop(browser);
+    drop(guest);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), relay)
         .await
         .unwrap()
         .unwrap();

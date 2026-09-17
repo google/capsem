@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- A browser preview connection is now held to the request shape its policy
+  admitted: a keep-alive connection admitted for plain requests can no longer
+  upgrade to a WebSocket (bypassing a `preview_upgrade` denial and mislabeling
+  the ledger), and an upgrade-admitted connection refuses plain requests.
+
 - Browser previews use exposure-specific localhost origins, single-use POST
   bootstrap tokens, scoped HttpOnly cookies, owner-generation admission, and
   the existing confined router. Capsem credentials are removed before guest

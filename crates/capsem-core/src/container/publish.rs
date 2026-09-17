@@ -91,7 +91,9 @@ pub struct Incoming {
     pub audit: security::AuditFlow,
     pub port: u16,
     pub target: capsem_proto::PublicationTarget,
-    pub preview: bool,
+    /// The request shape a preview connection was admitted for; `None` for a
+    /// published host port.
+    pub preview: Option<capsem_proto::PreviewAdmissionKind>,
 }
 
 struct GuestFlow {
@@ -736,7 +738,7 @@ impl Publisher {
                 audit,
                 port: guest_port,
                 target,
-                preview: true,
+                preview: Some(kind),
             })
             .await
             .context("preview broker closed")
@@ -791,7 +793,7 @@ impl Publisher {
                     audit,
                     port: guest_port,
                     target,
-                    preview: false,
+                    preview: None,
                 };
                 if feed.send(arrival).await.is_err() {
                     return;
