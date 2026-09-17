@@ -471,6 +471,7 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert "ARG HOST_PACKAGES" in dockerfile
     assert "COPY sdk/rust/Cargo.toml /prefetch/sdk/rust/Cargo.toml" in dockerfile
     assert ": > /prefetch/sdk/rust/src/lib.rs" in dockerfile
+    assert "sdk/rust/Cargo.toml" in builder.identity_inputs
     assert "pnpm fetch --frozen-lockfile" in dockerfile
     assert "web/app/pnpm-workspace.yaml" in builder.identity_inputs
     assert "web/app/pnpm-workspace.yaml" in dockerfile
