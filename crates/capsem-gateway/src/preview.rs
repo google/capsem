@@ -27,7 +27,11 @@ const MAX_BOOTSTRAP_BODY_BYTES: usize = 256;
 const SERVICE_RESPONSE_BYTES: usize = 64 * 1024;
 const HEADER_DEADLINE: Duration = Duration::from_secs(5);
 const HANDOFF_DEADLINE: Duration = Duration::from_secs(5);
-const PREVIEW_COOKIE: &str = "capsem_preview";
+/// Connections admitted at once. Each one costs a task, a peek buffer and a
+/// service round trip before it becomes the VM owner's problem, so a local
+/// process opening sockets and stalling cannot grow the gateway without bound.
+const MAX_ADMITTING_CONNECTIONS: usize = 64;
+use capsem_proto::{PREVIEW_COOKIE, PREVIEW_SESSION_LIFETIME_SECS};
 
 #[derive(Clone)]
 struct Scope {
@@ -73,7 +77,8 @@ pub async fn create_session(
     if material.exposure.id != exposure_id || material.exposure.host_port.is_some() {
         return StatusCode::BAD_GATEWAY.into_response();
     }
-    let lifetime = Duration::from_secs(15 * 60 + u64::from(material.expires_in_seconds));
+    let lifetime =
+        Duration::from_secs(u64::from(PREVIEW_SESSION_LIFETIME_SECS) + u64::from(material.expires_in_seconds));
     state.previews.scopes.lock().unwrap().insert(
         exposure_id.clone(),
         Scope {
@@ -96,6 +101,7 @@ pub async fn create_session(
 }
 
 pub async fn serve(listener: tokio::net::TcpListener, state: Arc<AppState>) {
+    let admitting = Arc::new(tokio::sync::Semaphore::new(MAX_ADMITTING_CONNECTIONS));
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -107,13 +113,46 @@ pub async fn serve(listener: tokio::net::TcpListener, state: Arc<AppState>) {
         if !peer.ip().is_loopback() {
             continue;
         }
+        let Ok(permit) = Arc::clone(&admitting).try_acquire_owned() else {
+            tracing::warn!("preview admission capacity reached; connection refused");
+            continue;
+        };
         let state = Arc::clone(&state);
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(error) = Box::pin(handle_connection(stream, state)).await {
                 tracing::debug!(%error, "preview connection refused");
             }
         });
     }
+}
+
+/// What a refused browser is told. Without a response the socket is simply
+/// dropped, which a browser shows as ERR_EMPTY_RESPONSE rather than as an
+/// expired preview session.
+struct Refusal {
+    status: &'static str,
+    message: &'static str,
+    error: anyhow::Error,
+}
+
+fn refuse(status: &'static str, message: &'static str, error: impl Into<anyhow::Error>) -> Refusal {
+    Refusal {
+        status,
+        message,
+        error: error.into(),
+    }
+}
+
+async fn write_refusal(stream: &mut tokio::net::TcpStream, refusal: &Refusal) {
+    let body = refusal.message;
+    let response = format!(
+        "HTTP/1.1 {}\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+        refusal.status,
+        body.len()
+    );
+    let _ = stream.write_all(response.as_bytes()).await;
+    let _ = stream.shutdown().await;
 }
 
 struct Head {
@@ -129,18 +168,58 @@ struct Head {
 }
 
 async fn handle_connection(mut stream: tokio::net::TcpStream, state: Arc<AppState>) -> anyhow::Result<()> {
-    let head = Box::pin(tokio::time::timeout(HEADER_DEADLINE, peek_head(&stream)))
-        .await
-        .map_err(|_| anyhow::anyhow!("preview headers timed out"))??;
-    validate_origin_port(&head, state.previews.port)?;
-    let scope = state
-        .previews
-        .scope(&head.label)
-        .ok_or_else(|| anyhow::anyhow!("unknown or expired preview origin"))?;
-    if head.method == "POST" && head.path == "/_capsem/bootstrap" {
-        return exchange_bootstrap(&mut stream, &state, &scope, &head).await;
+    match admit(&mut stream, &state).await {
+        Ok(None) => Ok(()),
+        Ok(Some(admitted)) => handoff(stream, admitted).await,
+        Err(refusal) => {
+            write_refusal(&mut stream, &refusal).await;
+            Err(refusal.error)
+        }
     }
-    let session_token = head.cookie.context("preview session cookie missing")?;
+}
+
+/// Admit one browser connection, or say why not. `Ok(None)` means the
+/// connection was answered here, as the bootstrap exchange is.
+async fn admit(
+    stream: &mut tokio::net::TcpStream,
+    state: &Arc<AppState>,
+) -> Result<Option<PreviewConnectionAdmissionResponse>, Refusal> {
+    const MALFORMED: &str = "This is a Capsem preview origin and did not receive a valid HTTP request.";
+    const UNKNOWN: &str = "This preview is no longer available. Reopen it from Capsem.";
+    const EXPIRED: &str = "This preview session has expired. Reopen the preview from Capsem.";
+    const DENIED: &str = "This preview connection was refused by the VM's policy.";
+
+    let head = Box::pin(tokio::time::timeout(HEADER_DEADLINE, peek_head(stream)))
+        .await
+        .map_err(|_| {
+            refuse(
+                "408 Request Timeout",
+                MALFORMED,
+                anyhow::anyhow!("preview headers timed out"),
+            )
+        })?
+        .map_err(|error| refuse("400 Bad Request", MALFORMED, error))?;
+    validate_origin_port(&head, state.previews.port).map_err(|error| refuse("400 Bad Request", MALFORMED, error))?;
+    let scope = state.previews.scope(&head.label).ok_or_else(|| {
+        refuse(
+            "404 Not Found",
+            UNKNOWN,
+            anyhow::anyhow!("unknown or expired preview origin"),
+        )
+    })?;
+    if head.method == "POST" && head.path == "/_capsem/bootstrap" {
+        return exchange_bootstrap(stream, state, &scope, &head)
+            .await
+            .map(|()| None)
+            .map_err(|error| refuse("400 Bad Request", EXPIRED, error));
+    }
+    let session_token = head.cookie.ok_or_else(|| {
+        refuse(
+            "401 Unauthorized",
+            EXPIRED,
+            anyhow::anyhow!("preview session cookie missing"),
+        )
+    })?;
     let kind = if head.websocket {
         PreviewAdmissionKind::WebsocketUpgrade
     } else {
@@ -150,18 +229,23 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, state: Arc<AppStat
         "/internal/vms/{}/exposures/{}/preview-admission",
         scope.vm_id, scope.exposure_id
     );
-    let admitted: PreviewConnectionAdmissionResponse = service_json(
-        &state,
-        &path,
-        serde_json::to_value(PreviewConnectionAdmissionRequest { session_token, kind })?,
-    )
-    .await
-    .map_err(|response| anyhow::anyhow!("preview admission refused with {}", response.status()))?;
-    anyhow::ensure!(
-        admitted.owner_generation == scope.owner_generation,
-        "preview owner generation changed"
-    );
-    handoff(stream, admitted).await
+    let body = serde_json::to_value(PreviewConnectionAdmissionRequest { session_token, kind })
+        .map_err(|error| refuse("500 Internal Server Error", DENIED, error))?;
+    let admitted: PreviewConnectionAdmissionResponse = service_json(state, &path, body).await.map_err(|response| {
+        refuse(
+            "403 Forbidden",
+            DENIED,
+            anyhow::anyhow!("preview admission refused with {}", response.status()),
+        )
+    })?;
+    if admitted.owner_generation != scope.owner_generation {
+        return Err(refuse(
+            "409 Conflict",
+            UNKNOWN,
+            anyhow::anyhow!("preview owner generation changed"),
+        ));
+    }
+    Ok(Some(admitted))
 }
 
 async fn exchange_bootstrap(
@@ -187,7 +271,7 @@ async fn exchange_bootstrap(
     .await
     .map_err(|response| anyhow::anyhow!("preview bootstrap refused with {}", response.status()))?;
     let response = format!(
-        "HTTP/1.1 303 See Other\r\nLocation: /\r\nSet-Cookie: {PREVIEW_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+        "HTTP/1.1 303 See Other\r\nLocation: /\r\nSet-Cookie: {PREVIEW_COOKIE}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
         exchanged.session_token, exchanged.expires_in_seconds
     );
     stream.write_all(response.as_bytes()).await?;
@@ -239,8 +323,21 @@ async fn handoff(stream: tokio::net::TcpStream, admitted: PreviewConnectionAdmis
     Ok(())
 }
 
+/// How many times `peek_head` looked at a socket, so a test can tell parking
+/// from spinning.
+#[cfg(test)]
+pub(super) static PEEK_ROUNDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Read the request head without consuming it, so the connected socket can be
+/// handed to the VM owner's router exactly as the browser sent it.
+///
+/// A successful `peek` leaves the socket readable, so waiting on readability
+/// again returns at once. Readiness is therefore cleared whenever a peek found
+/// no new bytes, which parks this task until the browser actually sends more
+/// instead of spinning a core until the header deadline.
 async fn peek_head(stream: &tokio::net::TcpStream) -> anyhow::Result<Head> {
     let mut bytes = [0; MAX_HEADER_BYTES];
+    let mut seen = 0;
     loop {
         stream.readable().await?;
         let count = stream.peek(&mut bytes).await?;
@@ -249,7 +346,15 @@ async fn peek_head(stream: &tokio::net::TcpStream) -> anyhow::Result<Head> {
             return parse_head(&bytes[..end + 4]);
         }
         anyhow::ensure!(count < bytes.len(), "preview headers too large");
-        tokio::task::yield_now().await;
+        #[cfg(test)]
+        PEEK_ROUNDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if count == seen {
+            // No new bytes: clear readiness so the next wait is an event.
+            let _ = stream.try_io(tokio::io::Interest::READABLE, || {
+                Err::<(), _>(std::io::ErrorKind::WouldBlock.into())
+            });
+        }
+        seen = count;
     }
 }
 

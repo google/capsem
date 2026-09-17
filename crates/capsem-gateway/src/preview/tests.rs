@@ -1,4 +1,6 @@
 use super::*;
+
+mod admission;
 use crate::{auth::AuthFailureTracker, service_client::ServiceClient, status::StatusCache};
 use axum::body::{to_bytes, Body};
 use axum::routing::post;
@@ -189,7 +191,7 @@ async fn bootstrap_is_posted_once_on_its_scoped_origin_and_becomes_an_http_only_
     let response = exchange(EXPOSURE).await;
     assert!(response.starts_with("HTTP/1.1 303 See Other\r\n"), "{response}");
     assert!(
-        response.contains("Set-Cookie: capsem_preview=scoped-session; Path=/; HttpOnly; SameSite=Strict; Max-Age=900"),
+        response.contains("Set-Cookie: capsem_preview=scoped-session; Path=/; HttpOnly; SameSite=Lax; Max-Age=900"),
         "{response}"
     );
     assert!(exchange(EXPOSURE).await.is_empty(), "bootstrap replay must fail closed");
