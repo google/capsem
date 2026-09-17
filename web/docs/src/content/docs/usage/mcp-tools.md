@@ -20,18 +20,17 @@ npm install --global @capsem/mcp
 
 The native installer does not install Node.js or download npm packages. Pass an
 explicit gateway URL, bearer token, and transport timeout when registering the
-server. For example:
+server. The token is read from `CAPSEM_GATEWAY_TOKEN` or `--token-file`;
+`--token` is refused because argv is visible to every local process. For
+example:
 
 ```json
 {
   "mcpServers": {
     "capsem": {
       "command": "capsem-mcp",
-      "args": [
-        "--gateway-url", "http://127.0.0.1:19222",
-        "--token", "${CAPSEM_GATEWAY_TOKEN}",
-        "--timeout-ms", "30000"
-      ]
+      "args": ["--gateway-url", "http://127.0.0.1:19222", "--timeout-ms", "30000"],
+      "env": {"CAPSEM_GATEWAY_TOKEN": "${CAPSEM_GATEWAY_TOKEN}"}
     }
   }
 }

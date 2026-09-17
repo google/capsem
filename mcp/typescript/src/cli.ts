@@ -9,8 +9,10 @@ async function main(): Promise<void> {
   await server.connect(new StdioServerTransport());
 }
 
-main().catch(() => {
-  // stdout is reserved for MCP frames. Never include token-bearing arguments.
-  process.stderr.write('capsem-mcp: failed to start\n');
+main().catch((error: unknown) => {
+  // stdout is reserved for MCP frames. Configuration errors are TypeErrors
+  // that name options but never their values; anything else stays generic.
+  const reason = error instanceof TypeError ? error.message : 'failed to start';
+  process.stderr.write(`capsem-mcp: ${reason}\n`);
   process.exitCode = 1;
 });

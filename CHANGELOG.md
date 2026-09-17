@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `capsem-mcp` no longer accepts the gateway bearer token on the command line,
+  where any local process could read it from the process list. It reads
+  `CAPSEM_GATEWAY_TOKEN` or `--token-file <path>`; `--token` is refused.
+  Startup failures now say which option is wrong without echoing values.
+
 - A browser preview connection is now held to the request shape its policy
   admitted: a keep-alive connection admitted for plain requests can no longer
   upgrade to a WebSocket (bypassing a `preview_upgrade` denial and mislabeling

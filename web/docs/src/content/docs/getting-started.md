@@ -158,11 +158,13 @@ AI agents can control sandboxes programmatically via the MCP server:
 
 ```sh
 npm install --global @capsem/mcp
-capsem-mcp --gateway-url http://127.0.0.1:19222 \
-  --token "$CAPSEM_GATEWAY_TOKEN" --timeout-ms 30000
+CAPSEM_GATEWAY_TOKEN="$(cat ~/.capsem/run/gateway.token)" \
+  capsem-mcp --gateway-url http://127.0.0.1:19222 --timeout-ms 30000
 ```
 
-Register that command with your MCP client using its secret expansion support.
+The token comes from `CAPSEM_GATEWAY_TOKEN` or `--token-file`, never from the
+command line. Register the command with your MCP client and pass the token
+through its environment block.
 The package gives agents typed lifecycle, execution, file, diagnostics, network,
 and profile MCP tools through authenticated gateway HTTP.
 

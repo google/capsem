@@ -12,29 +12,31 @@ Node.js is an explicit prerequisite; native Capsem installation does not install
 Node or download this package.
 
 ```sh
-capsem-mcp --gateway-url http://127.0.0.1:19222 --token "$CAPSEM_TOKEN" --timeout-ms 30000
+CAPSEM_GATEWAY_TOKEN="$(cat ~/.capsem/run/gateway.token)" \
+  capsem-mcp --gateway-url http://127.0.0.1:19222 --timeout-ms 30000
 ```
 
-An MCP client configuration can pass the same explicit settings. Use the
-client's secret expansion support for the token:
+The bearer token is read from `CAPSEM_GATEWAY_TOKEN`, or from the file named by
+`--token-file <path>`. It is never accepted as a command-line argument, where
+any local process could read it from the process list; `--token` is refused.
+
+An MCP client configuration passes the token through its environment block,
+using the client's secret expansion support:
 
 ```json
 {
   "mcpServers": {
     "capsem": {
       "command": "capsem-mcp",
-      "args": [
-        "--gateway-url", "http://127.0.0.1:19222",
-        "--token", "${CAPSEM_GATEWAY_TOKEN}",
-        "--timeout-ms", "30000"
-      ]
+      "args": ["--gateway-url", "http://127.0.0.1:19222", "--timeout-ms", "30000"],
+      "env": {"CAPSEM_GATEWAY_TOKEN": "${CAPSEM_GATEWAY_TOKEN}"}
     }
   }
 }
 ```
 
-stdout is reserved for MCP protocol messages. Startup diagnostics are sanitized
-and written to stderr.
+stdout is reserved for MCP protocol messages. Startup diagnostics name the
+offending option, never its value, and are written to stderr.
 
 The server exposes typed tools for VM and OCI-container creation, lifecycle
 actions, container status, port lifecycle, command execution, file

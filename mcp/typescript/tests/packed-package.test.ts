@@ -47,7 +47,8 @@ describe('packed-package', () => {
   async function connect(cli: string, gatewayUrl: string, token: string): Promise<PackedClient> {
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: [cli, '--gateway-url', gatewayUrl, '--token', token, '--timeout-ms', '5000'],
+      args: [cli, '--gateway-url', gatewayUrl, '--timeout-ms', '5000'],
+      env: {PATH: process.env.PATH ?? '', CAPSEM_GATEWAY_TOKEN: token},
       stderr: 'pipe',
     });
     const stderr: string[] = [];

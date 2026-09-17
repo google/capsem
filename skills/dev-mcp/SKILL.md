@@ -21,11 +21,12 @@ transport timeout:
 
 ```sh
 npm install --global @capsem/mcp
-capsem-mcp --gateway-url http://127.0.0.1:19222 \
-  --token "$CAPSEM_GATEWAY_TOKEN" --timeout-ms 30000
+CAPSEM_GATEWAY_TOKEN="$(cat ~/.capsem/run/gateway.token)" \
+  capsem-mcp --gateway-url http://127.0.0.1:19222 --timeout-ms 30000
 ```
 
-Use the MCP client's secret expansion support. The bearer token belongs only to
+The token comes from `CAPSEM_GATEWAY_TOKEN` or `--token-file`; `--token` is
+refused because argv is world-readable. The bearer token belongs only to
 the host MCP process; never copy it into a VM, container, guest tool argument,
 or workload. stdout is protocol-only and sanitized diagnostics use stderr.
 
