@@ -5,10 +5,12 @@
 use super::*;
 
 /// Tables that live on disk only and never mirror into the memory schema:
-/// body blobs are too large to keep hot, the schema markers are not data, and
+/// the body index and its block table are written straight to disk beside the
+/// archive file they point into, the schema markers are not data, and
 /// the network registry tables (`network_db`) are small state, not a ledger.
 const DISK_ONLY_TABLES: &[&str] = &[
     "event_body_blobs",
+    "body_blocks",
     "transport_schema",
     "network",
     "network_members",

@@ -2,6 +2,7 @@
 
 use super::*;
 
+mod bodies;
 mod producer;
 
 #[test]
@@ -108,130 +109,6 @@ fn cap_preview_caps_to_exactly_preview_bytes() {
     let result = cap_preview(&s).unwrap();
     assert_eq!(result.len(), PREVIEW_BYTES);
     assert_eq!(PREVIEW_BYTES, 2048);
-}
-
-#[test]
-fn net_event_stores_bounded_body_blobs_and_small_previews() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("body-blobs.db");
-    let event_id = "abc123def456".to_string();
-    let trace_id = "trace-body-blob".to_string();
-    let request_body = format!("{{\"prompt\":\"{}\"}}", "r".repeat(MAX_FIELD_BYTES + 1024));
-    let request_preview = "{\"prompt\":\"short\"}".to_string();
-    let response_body = format!("event: message\ndata: {}\n\n", "s".repeat(MAX_BODY_BLOB_BYTES + 128));
-    let response_preview = "event: message\ndata: short\n\n".to_string();
-    let response_hash = blake3_bytes_ref(response_body.as_bytes());
-
-    {
-        let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        rt.block_on(async {
-            writer
-                .write(WriteOp::NetEvent(crate::events::NetEvent {
-                    event_id: Some(event_id.clone()),
-                    timestamp: std::time::SystemTime::now(),
-                    domain: "daily-cloudcode-pa.googleapis.com".into(),
-                    port: 443,
-                    decision: crate::events::Decision::Allowed,
-                    process_name: Some("agy".into()),
-                    pid: Some(1234),
-                    method: Some("POST".into()),
-                    path: Some("/v1internal:streamGenerateContent".into()),
-                    query: None,
-                    status_code: Some(200),
-                    bytes_sent: request_body.len() as u64,
-                    bytes_received: response_body.len() as u64,
-                    duration_ms: 42,
-                    matched_rule: Some("profiles.rules.ai_google_http_googleapis".into()),
-                    request_headers: Some("content-type: application/json".into()),
-                    response_headers: Some("content-type: text/event-stream".into()),
-                    request_body_preview: Some(request_preview.clone()),
-                    response_body_preview: Some(response_preview.clone()),
-                    request_body_full: Some(request_body.clone()),
-                    response_body_full: Some(response_body.clone()),
-                    conn_type: Some("https-mitm".into()),
-                    policy_mode: None,
-                    policy_action: Some("allow".into()),
-                    policy_rule: Some("profiles.rules.ai_google_http_googleapis".into()),
-                    policy_reason: None,
-                    trace_id: Some(trace_id.clone()),
-                    credential_ref: None,
-                }))
-                .await;
-            writer.flush().await;
-        });
-    }
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let (stored_request_preview, stored_response_preview): (String, String) = conn
-        .query_row(
-            "SELECT request_body_preview, response_body_preview FROM net_events WHERE event_id = ?1",
-            [&event_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(stored_request_preview, request_preview);
-    assert_eq!(stored_response_preview, response_preview);
-
-    struct StoredBlob {
-        direction: String,
-        event_type: String,
-        content_type: String,
-        original_bytes: i64,
-        stored_bytes: i64,
-        truncated: i64,
-        body_hash: String,
-        body: Vec<u8>,
-        trace_id: String,
-    }
-
-    let blobs: Vec<StoredBlob> = conn
-        .prepare(
-            "SELECT direction, event_type, content_type, original_bytes, stored_bytes,
-                    truncated, body_hash, body, trace_id
-             FROM event_body_blobs
-             WHERE event_id = ?1
-             ORDER BY direction",
-        )
-        .unwrap()
-        .query_map([&event_id], |row| {
-            Ok(StoredBlob {
-                direction: row.get(0)?,
-                event_type: row.get(1)?,
-                content_type: row.get(2)?,
-                original_bytes: row.get(3)?,
-                stored_bytes: row.get(4)?,
-                truncated: row.get(5)?,
-                body_hash: row.get(6)?,
-                body: row.get(7)?,
-                trace_id: row.get(8)?,
-            })
-        })
-        .unwrap()
-        .collect::<Result<_, _>>()
-        .unwrap();
-    assert_eq!(blobs.len(), 2);
-
-    let request = blobs.iter().find(|blob| blob.direction == "request").unwrap();
-    assert_eq!(request.event_type, "http.request");
-    assert_eq!(request.content_type, "application/json");
-    assert_eq!(request.original_bytes, request_body.len() as i64);
-    assert_eq!(request.stored_bytes, request_body.len() as i64);
-    assert_eq!(request.truncated, 0);
-    assert_eq!(request.body_hash, blake3_bytes_ref(request_body.as_bytes()));
-    assert_eq!(request.body, request_body.as_bytes());
-    assert_eq!(request.trace_id, trace_id);
-
-    let response = blobs.iter().find(|blob| blob.direction == "response").unwrap();
-    assert_eq!(response.event_type, "http.request");
-    assert_eq!(response.content_type, "text/event-stream");
-    assert_eq!(response.original_bytes, response_body.len() as i64);
-    assert_eq!(response.stored_bytes, MAX_BODY_BLOB_BYTES as i64);
-    assert_eq!(response.truncated, 1);
-    assert_eq!(response.body_hash, response_hash);
-    assert_eq!(response.body.len(), MAX_BODY_BLOB_BYTES);
-    assert_eq!(&response.body, &response_body.as_bytes()[..MAX_BODY_BLOB_BYTES]);
-    assert_eq!(response.trace_id, trace_id);
 }
 
 #[test]
@@ -1073,7 +950,8 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     crate::schema::migrate(&conn).unwrap();
     crate::schema::create_memory_tables(&conn, &crate::schema::memory_uri_for_name("writer-metrics-test")).unwrap();
 
-    metrics::with_local_recorder(&recorder, || writer_loop(conn, rx, None, 16));
+    let pending_body_bytes = AtomicU64::new(0);
+    metrics::with_local_recorder(&recorder, || writer_loop(conn, rx, None, 16, &pending_body_bytes));
 
     let snapshot = snapshotter.snapshot().into_vec();
     assert!(snapshot
@@ -1505,7 +1383,10 @@ fn mcp_protocol_only_event_does_not_claim_tool_storage() {
         credential_ref: None,
     });
 
-    let outcome = metrics::with_local_recorder(&recorder, || execute_memory_batch(&conn, &[event]).unwrap());
+    let mut bodies = BodyArchive::open(None);
+    let outcome = metrics::with_local_recorder(&recorder, || {
+        execute_memory_batch(&conn, &[event], &mut bodies).unwrap()
+    });
     let snapshot = snapshotter.snapshot().into_vec();
 
     assert!(

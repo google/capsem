@@ -354,55 +354,39 @@ fn migrate_tool_calls_allows_orphan_mcp_origin_rows() {
     assert_eq!(row.2, "Status: 200 OK");
 }
 
+/// A ledger written before bodies moved into the archive still has a `body`
+/// column and no `block_offset`. Nothing migrates it -- Capsem has published
+/// no release, so there is no such file in the wild to rescue -- and the one
+/// thing that must not happen is a silent adoption of it: the open fails,
+/// naming the column the table lacks.
 #[test]
-fn migrate_event_body_blobs_accepts_tool_calls_source() {
+fn a_pre_archive_body_table_fails_to_open_by_name() {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(
         "CREATE TABLE event_body_blobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id TEXT NOT NULL CHECK (length(event_id) = 12),
-                event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call')),
-                source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls')),
-                direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
+                event_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                source_table TEXT NOT NULL,
+                direction TEXT NOT NULL,
                 content_type TEXT,
-                original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
-                stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0 AND stored_bytes <= original_bytes),
-                truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
-                body_hash TEXT NOT NULL CHECK (length(body_hash) = 71),
+                original_bytes INTEGER NOT NULL,
+                stored_bytes INTEGER NOT NULL,
+                truncated INTEGER NOT NULL,
+                body_hash TEXT NOT NULL,
                 body BLOB NOT NULL,
                 trace_id TEXT,
-                created_at TEXT NOT NULL,
-                UNIQUE(event_id, source_table, direction)
+                created_at TEXT NOT NULL
             );",
     )
     .unwrap();
 
-    migrate(&conn).unwrap();
-    migrate(&conn).unwrap();
-
-    conn.execute(
-        "INSERT INTO event_body_blobs (
-                event_id, event_type, source_table, direction, content_type,
-                original_bytes, stored_bytes, truncated, body_hash, body,
-                trace_id, created_at
-             ) VALUES (
-                '012345abcdef', 'mcp.tool_call', 'tool_calls', 'request',
-                'application/json', 2, 2, 0,
-                'blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-                '{}', 'trace-1', '2026-01-01T00:00:00Z'
-             )",
-        [],
-    )
-    .unwrap();
-
-    let source: String = conn
-        .query_row(
-            "SELECT source_table FROM event_body_blobs WHERE event_id = '012345abcdef'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(source, "tool_calls");
+    let error = create_tables(&conn).expect_err("a pre-archive ledger cannot be opened");
+    let error = error.to_string();
+    assert!(
+        error.contains("block_offset"),
+        "opening a pre-archive ledger must name the column it lacks: {error}"
+    );
 }
 
 #[test]

@@ -76,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Request and response bodies are no longer stored inside `session.db`. They
+  live compressed in `session.bodies` beside it, grouped into blocks that
+  share their compression, and the database keeps the index that finds them:
+  typically 6-11x smaller on disk for the same bodies, with the same bytes
+  returned. Forking a session copies both files, as does anything that
+  snapshots a session ledger.
+
 - The service no longer holds a copy of each session's telemetry and security
   ledger in memory, and no longer refreshes that copy before answering a
   request. It reads the ledger file directly through SQLite's write-ahead log,

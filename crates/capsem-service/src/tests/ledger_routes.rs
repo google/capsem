@@ -723,9 +723,11 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
     assert_eq!(detail["model_events"][0]["input_tokens"], 9, "{detail}");
     assert_eq!(detail["tool_events"][0]["call_id"], "tool-winterfell", "{detail}");
     assert_eq!(detail["tool_events"][0]["tool_name"], "Write", "{detail}");
+    // Body bytes are archive-backed now; the stats payload names them.
+    assert_eq!(detail["body_blobs"]["abcdef123453"][0]["direction"], "request");
     assert_eq!(
-        detail["body_blobs"]["abcdef123453"][0]["body"],
-        r#"{"input":"write winterfell"}"#
+        detail["body_blobs"]["abcdef123453"][0]["stored_bytes"],
+        r#"{"input":"write winterfell"}"#.len()
     );
 
     let (status, security) = route_request(

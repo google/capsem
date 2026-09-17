@@ -973,6 +973,7 @@ version = "0.6.3"
 dependencies = [
  "anyhow",
  "blake3",
+ "capsem-archive",
  "capsem-foundation",
  "capsem-proto",
  "criterion",

@@ -1,12 +1,15 @@
 use rusqlite::{params, Connection};
 
-use super::{
-    blake3_ref, cap_field, cap_preview, format_timestamp, insert_event_body_blob, new_event_id, EventBodyBlob,
-    WriteTarget,
-};
+use super::bodies::{BodyArchive, EventBodyBlob};
+use super::{blake3_ref, cap_field, cap_preview, format_timestamp, new_event_id, WriteTarget};
 use crate::events::ModelCall;
 
-pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: WriteTarget) -> rusqlite::Result<()> {
+pub(super) fn insert_model_call(
+    conn: &Connection,
+    call: &ModelCall,
+    target: WriteTarget,
+    bodies: &mut BodyArchive,
+) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(call.timestamp);
     let req_body = cap_preview(&call.request_body_preview);
     let text_content = cap_field(&call.text_content);
@@ -59,35 +62,29 @@ pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: Wri
         ],
     )?;
     let model_call_id = conn.last_insert_rowid();
-    insert_event_body_blob(
-        conn,
-        EventBodyBlob {
-            event_id: &event_id,
-            event_type: "model.call",
-            source_table: "model_calls",
-            direction: "request",
-            content_type: Some("application/json"),
-            body: call
-                .request_body_full
-                .as_deref()
-                .or(call.request_body_preview.as_deref()),
-            trace_id: call.trace_id.as_deref(),
-            turn_id: call.trace_id.as_deref(),
-        },
-    )?;
-    insert_event_body_blob(
-        conn,
-        EventBodyBlob {
-            event_id: &event_id,
-            event_type: "model.call",
-            source_table: "model_calls",
-            direction: "response",
-            content_type: None,
-            body: call.response_body_full.as_deref().or(call.text_content.as_deref()),
-            trace_id: call.trace_id.as_deref(),
-            turn_id: call.trace_id.as_deref(),
-        },
-    )?;
+    bodies.stage(EventBodyBlob {
+        event_id: &event_id,
+        event_type: "model.call",
+        source_table: "model_calls",
+        direction: "request",
+        content_type: Some("application/json"),
+        body: call
+            .request_body_full
+            .as_deref()
+            .or(call.request_body_preview.as_deref()),
+        trace_id: call.trace_id.as_deref(),
+        turn_id: call.trace_id.as_deref(),
+    });
+    bodies.stage(EventBodyBlob {
+        event_id: &event_id,
+        event_type: "model.call",
+        source_table: "model_calls",
+        direction: "response",
+        content_type: None,
+        body: call.response_body_full.as_deref().or(call.text_content.as_deref()),
+        trace_id: call.trace_id.as_deref(),
+        turn_id: call.trace_id.as_deref(),
+    });
     insert_model_items(conn, model_call_id, call, &timestamp, target)?;
 
     for tc in &call.tool_calls {
@@ -130,18 +127,31 @@ pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: Wri
     for tr in &call.tool_responses {
         let tr_trace = tr.trace_id.clone().or_else(|| call.trace_id.clone());
         let tr_credential_ref = tr.credential_ref.clone().or_else(|| call.credential_ref.clone());
-        // No blob-backed copy yet; the archive task moves this.
-        // event_body_blobs.source_table's CHECK has no 'tool_responses'
-        // entry, so this would be the only copy of the tool response body.
-        let tr_content_preview = cap_field(&tr.content_preview);
+        // The full content is archived below; this column is the display
+        // excerpt, reached from the same event_id the archive row carries.
+        let tr_content_preview = cap_preview(&tr.content_preview);
+        let tr_event_id = new_event_id();
+        bodies.stage(EventBodyBlob {
+            event_id: &tr_event_id,
+            // A tool result is part of the model exchange it continues;
+            // `source_table` is what distinguishes it from the call body.
+            event_type: "model.call",
+            source_table: "tool_responses",
+            direction: "response",
+            content_type: None,
+            body: tr.content_preview.as_deref(),
+            trace_id: tr_trace.as_deref(),
+            turn_id: call.trace_id.as_deref(),
+        });
         super::execute_cached(
             conn,
             &format!(
-                "INSERT INTO {} (model_call_id, call_id, content_preview, is_error, trace_id, turn_id, credential_ref)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO {} (event_id, model_call_id, call_id, content_preview, is_error, trace_id, turn_id, credential_ref)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 target.table("tool_responses")
             ),
             params![
+                tr_event_id,
                 model_call_id,
                 tr.call_id,
                 tr_content_preview,
@@ -187,9 +197,15 @@ fn insert_model_items(
         })
         .to_string();
         let content_hash = blake3_ref(&hash_material);
-        // model_items.content is the canonical ordered item ledger, not a
-        // preview -- no blob-backed copy yet; the archive task moves this.
-        let content = cap_field(&content);
+        // A tool_response item's full content is in the archive, reachable
+        // from the tool_responses row with the same call_id, so this column
+        // keeps a display excerpt. The other kinds have no archive row of
+        // their own and stay at the full field cap.
+        let content = if kind == "tool_response" {
+            cap_preview(&content)
+        } else {
+            cap_field(&content)
+        };
         super::execute_cached(
             conn,
             &format!(

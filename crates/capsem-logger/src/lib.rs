@@ -7,7 +7,10 @@ pub mod session_index;
 pub mod session_types;
 pub mod writer;
 
-pub use db::{checkpoint_and_vacuum_session_db, snapshot_session_db, DbHandle, ReadCacheDomain, SessionDb};
+pub use db::{
+    checkpoint_and_vacuum_session_db, snapshot_session_ledger, BodyDirection, DbHandle, ReadCacheDomain, SessionDb,
+    StoredBody,
+};
 pub use events::{
     credential_reference, is_credential_reference, AuditEvent, Decision, DnsEvent, ExecEvent, ExecEventComplete,
     FileAction, FileEvent, McpCall, MembershipState, ModelCall, NetEvent, NetworkMembership, NetworkRecord,

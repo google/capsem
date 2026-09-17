@@ -100,18 +100,32 @@ pub const CREATE_SCHEMA: &str = "
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
+    -- One sealed block of `session.bodies`. The bytes live in the archive
+    -- file; SQLite records where each block landed so a reader never scans.
+    CREATE TABLE IF NOT EXISTS body_blocks (
+        block_offset INTEGER PRIMARY KEY,
+        raw_len INTEGER NOT NULL CHECK (raw_len > 0),
+        comp_len INTEGER NOT NULL CHECK (comp_len > 0),
+        sealed_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_body_blocks_sealed_at ON body_blocks(sealed_at);
+
+    -- The index into `session.bodies`: one row per archived body, naming the
+    -- block it sits in and its span inside that block's inflated bytes.
     CREATE TABLE IF NOT EXISTS event_body_blobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
-        source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls')),
-        direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
+        source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls', 'tool_responses', 'exec_events', 'security_rule_events')),
+        direction TEXT NOT NULL CHECK (direction IN ('request', 'response', 'payload', 'stdout', 'stderr')),
         content_type TEXT,
         original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
         stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0 AND stored_bytes <= original_bytes),
         truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
         body_hash TEXT NOT NULL CHECK (length(body_hash) = 71 AND body_hash GLOB 'blake3:[0-9a-f]*'),
-        body BLOB NOT NULL,
+        block_offset INTEGER NOT NULL REFERENCES body_blocks(block_offset),
+        body_offset INTEGER NOT NULL CHECK (body_offset >= 0),
+        body_len INTEGER NOT NULL CHECK (body_len = stored_bytes),
         trace_id TEXT,
         turn_id TEXT,
         created_at TEXT NOT NULL,
@@ -123,6 +137,8 @@ pub const CREATE_SCHEMA: &str = "
         ON event_body_blobs(trace_id);
     CREATE INDEX IF NOT EXISTS idx_event_body_blobs_hash
         ON event_body_blobs(body_hash);
+    CREATE INDEX IF NOT EXISTS idx_event_body_blobs_block
+        ON event_body_blobs(block_offset);
 
     CREATE TABLE IF NOT EXISTS tool_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +175,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS tool_responses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         model_call_id INTEGER NOT NULL,
         call_id TEXT NOT NULL,
         content_preview TEXT,
@@ -625,17 +642,6 @@ fn validate_table_columns(
     Ok(())
 }
 
-fn table_sql(conn: &Connection, table: &str) -> Option<String> {
-    conn.query_row(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
-        [table],
-        |row| row.get::<_, String>(0),
-    )
-    .optional()
-    .ok()
-    .flatten()
-}
-
 fn column_is_not_null(conn: &Connection, table: &str, column: &str) -> bool {
     let mut stmt = match conn.prepare(&format!("PRAGMA table_info({table})")) {
         Ok(stmt) => stmt,
@@ -712,45 +718,6 @@ fn rebuild_tool_calls_nullable_model_call(conn: &Connection) {
         FROM tool_calls;
         DROP TABLE tool_calls;
         ALTER TABLE tool_calls_new RENAME TO tool_calls;",
-    );
-}
-
-fn rebuild_event_body_blobs_source_check(conn: &Connection) {
-    let Some(sql) = table_sql(conn, "event_body_blobs") else {
-        return;
-    };
-    if sql.contains("'tool_calls'") {
-        return;
-    }
-    let _ = conn.execute_batch(
-        "DROP TABLE IF EXISTS event_body_blobs_new;
-        CREATE TABLE event_body_blobs_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-            event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
-            source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls')),
-            direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
-            content_type TEXT,
-            original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
-            stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0 AND stored_bytes <= original_bytes),
-            truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
-            body_hash TEXT NOT NULL CHECK (length(body_hash) = 71 AND body_hash GLOB 'blake3:[0-9a-f]*'),
-            body BLOB NOT NULL,
-            trace_id TEXT,
-            turn_id TEXT,
-            created_at TEXT NOT NULL,
-            UNIQUE(event_id, source_table, direction)
-        );
-        INSERT INTO event_body_blobs_new (
-            id, event_id, event_type, source_table, direction, content_type,
-            original_bytes, stored_bytes, truncated, body_hash, body, trace_id, turn_id, created_at
-        )
-        SELECT
-            id, event_id, event_type, source_table, direction, content_type,
-            original_bytes, stored_bytes, truncated, body_hash, body, trace_id, turn_id, created_at
-        FROM event_body_blobs;
-        DROP TABLE event_body_blobs;
-        ALTER TABLE event_body_blobs_new RENAME TO event_body_blobs;",
     );
 }
 
@@ -887,27 +854,36 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_model_items_provider_path_model ON model_items(provider, path, model);",
     );
     let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS event_body_blobs (
+        "CREATE TABLE IF NOT EXISTS body_blocks (
+            block_offset INTEGER PRIMARY KEY,
+            raw_len INTEGER NOT NULL CHECK (raw_len > 0),
+            comp_len INTEGER NOT NULL CHECK (comp_len > 0),
+            sealed_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_body_blocks_sealed_at ON body_blocks(sealed_at);
+        CREATE TABLE IF NOT EXISTS event_body_blobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
             event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
-            source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls')),
-            direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
+            source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls', 'tool_responses', 'exec_events', 'security_rule_events')),
+            direction TEXT NOT NULL CHECK (direction IN ('request', 'response', 'payload', 'stdout', 'stderr')),
             content_type TEXT,
             original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
             stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0 AND stored_bytes <= original_bytes),
             truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
             body_hash TEXT NOT NULL CHECK (length(body_hash) = 71 AND body_hash GLOB 'blake3:[0-9a-f]*'),
-            body BLOB NOT NULL,
+            block_offset INTEGER NOT NULL REFERENCES body_blocks(block_offset),
+            body_offset INTEGER NOT NULL CHECK (body_offset >= 0),
+            body_len INTEGER NOT NULL CHECK (body_len = stored_bytes),
             trace_id TEXT,
             created_at TEXT NOT NULL,
             UNIQUE(event_id, source_table, direction)
         );
         CREATE INDEX IF NOT EXISTS idx_event_body_blobs_event_id ON event_body_blobs(event_id);
         CREATE INDEX IF NOT EXISTS idx_event_body_blobs_trace_id ON event_body_blobs(trace_id);
-        CREATE INDEX IF NOT EXISTS idx_event_body_blobs_hash ON event_body_blobs(body_hash);",
+        CREATE INDEX IF NOT EXISTS idx_event_body_blobs_hash ON event_body_blobs(body_hash);
+        CREATE INDEX IF NOT EXISTS idx_event_body_blobs_block ON event_body_blobs(block_offset);",
     );
-    rebuild_event_body_blobs_source_check(conn);
     // Add fs_events table if not present (for DBs created before this feature).
     let _ = conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS fs_events (

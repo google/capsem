@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
-use rusqlite::{params, Connection, ErrorCode, OpenFlags};
+use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension};
 use tracing::{error, warn};
 use uuid::Uuid;
 
@@ -15,9 +15,12 @@ use crate::events::{
 };
 use crate::schema;
 
+mod bodies;
 mod flush_faults;
 mod model_rows;
 mod producer;
+pub(crate) use bodies::archive_path_for_db;
+use bodies::{BodyArchive, EventBodyBlob};
 use flush_faults::take_disk_flush_failure_for_tests;
 #[cfg(test)]
 pub(crate) use flush_faults::{fail_disk_flushes_for_path_for_tests, fail_disk_flushes_for_tests};
@@ -29,12 +32,12 @@ use model_rows::insert_model_call;
 /// storage.
 const MAX_FIELD_BYTES: usize = 256 * 1024;
 
-/// Display previews are a UI convenience; the forensic copy is the body
-/// blob. 2 KB shows the first screen of any JSON or SSE body. A 10-day
+/// Display previews are a UI convenience; the forensic copy is the archived
+/// body. 2 KB shows the first screen of any JSON or SSE body. A 10-day
 /// session once carried 75 MB of "previews" averaging 28 KB, mirrored into
-/// RAM by two processes on top of the identical bytes in the blob table.
+/// RAM by two processes on top of the identical bytes stored beside them.
 pub(crate) const PREVIEW_BYTES: usize = 2 * 1024;
-const MAX_BODY_BLOB_BYTES: usize = 10 * 1024 * 1024;
+pub(crate) const MAX_BODY_BLOB_BYTES: usize = 10 * 1024 * 1024;
 const DEFAULT_BATCH_CAPACITY: usize = 10_000;
 const DISK_FLUSH_THRESHOLD_OPS: usize = 1_000_000;
 const DISK_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
@@ -87,8 +90,8 @@ fn cap_field(s: &Option<String>) -> Option<String> {
 }
 
 /// Truncate an optional display-preview field to PREVIEW_BYTES. The full
-/// body, when one exists, lives in `event_body_blobs`; this only bounds the
-/// compact copy shown in a UI list.
+/// body, when one exists, is in the archive and `event_body_blobs` says
+/// where; this only bounds the compact copy shown in a UI list.
 pub(crate) fn cap_preview(s: &Option<String>) -> Option<String> {
     cap_bytes(s, PREVIEW_BYTES)
 }
@@ -185,6 +188,10 @@ pub struct DbWriter {
     tx: std::sync::Mutex<Option<WriterSender>>,
     join_handle: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
     db_path: PathBuf,
+    /// Raw bytes the writer thread is holding in the archive's pending block.
+    /// Published by the writer thread after every batch so a test can prove
+    /// the bound without a second view of the thread's state.
+    pending_body_bytes: Arc<AtomicU64>,
 }
 
 impl DbWriter {
@@ -239,16 +246,19 @@ impl DbWriter {
         let (tx, rx) = writer_channel(batch_capacity);
         let db_path = path.to_path_buf();
         let writer_loop_db_path = Some(db_path.clone());
+        let pending_body_bytes = Arc::new(AtomicU64::new(0));
+        let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
 
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx, writer_loop_db_path, batch_capacity))
+            .spawn(move || writer_loop(conn, rx, writer_loop_db_path, batch_capacity, &loop_pending_body_bytes))
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
             tx: std::sync::Mutex::new(Some(tx)),
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path,
+            pending_body_bytes,
         })
     }
 
@@ -276,15 +286,18 @@ impl DbWriter {
             capacity
         };
         let (tx, rx) = writer_channel(batch_capacity);
+        let pending_body_bytes = Arc::new(AtomicU64::new(0));
+        let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx, None, batch_capacity))
+            .spawn(move || writer_loop(conn, rx, None, batch_capacity, &loop_pending_body_bytes))
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
             tx: std::sync::Mutex::new(Some(tx)),
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path: PathBuf::from(":memory:"),
+            pending_body_bytes,
         })
     }
 
@@ -351,6 +364,13 @@ impl DbWriter {
     pub fn path(&self) -> &Path {
         &self.db_path
     }
+
+    /// Raw body bytes the writer thread is holding in the archive's unsealed
+    /// block. They reach `session.bodies` when the block fills or the next
+    /// disk flush runs, so this is the backlog a crash would lose.
+    pub fn pending_body_bytes(&self) -> u64 {
+        self.pending_body_bytes.load(Ordering::Acquire)
+    }
 }
 
 impl Drop for DbWriter {
@@ -401,7 +421,13 @@ async fn send_with_backpressure(tx: &WriterSender, mut message: WriterMessage) -
 }
 
 /// The writer thread loop: block-then-drain batching.
-fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Option<PathBuf>, batch_capacity: usize) {
+fn writer_loop(
+    conn: Connection,
+    rx: mpsc::Receiver<WriterMessage>,
+    db_path: Option<PathBuf>,
+    batch_capacity: usize,
+    pending_body_bytes: &AtomicU64,
+) {
     let mut flush_watermarks =
         schema::with_memory_schema_lock(|| schema::initial_memory_flush_watermarks(&conn, schema::hot_ledger_tables()))
             .unwrap_or_else(|error| {
@@ -411,6 +437,10 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
     let mut dirty_tables = BTreeSet::new();
     let mut dirty_ops = 0_usize;
     let mut last_disk_flush = Instant::now();
+    // The writer thread owns the archive for as long as it owns the
+    // connection: bodies are staged here and their index rows commit in the
+    // same transaction that moves the memory tables to disk.
+    let mut bodies = BodyArchive::open(db_path.as_deref());
 
     // 1. Block until at least one op arrives. Returns None when all
     //    Senders are dropped (clean shutdown) and ends the loop.
@@ -421,9 +451,13 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
             match rx.recv_timeout(DISK_FLUSH_INTERVAL) {
                 Ok(message) => Some(message),
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if let Err(error) =
-                        flush_dirty_tables_to_disk(&conn, &mut dirty_tables, &mut flush_watermarks, db_path.as_deref())
-                    {
+                    if let Err(error) = flush_dirty_tables_to_disk(
+                        &conn,
+                        &mut dirty_tables,
+                        &mut flush_watermarks,
+                        db_path.as_deref(),
+                        &mut bodies,
+                    ) {
                         warn!(error = %error, "db interval flush failed");
                     } else {
                         dirty_ops = 0;
@@ -473,7 +507,7 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
         if batch.is_empty() {
             record_batch(started, batch_size, batch_capacity, batch_bucket, "ok", &span);
         } else {
-            match span.in_scope(|| execute_memory_batch(&conn, &batch)) {
+            match span.in_scope(|| execute_memory_batch(&conn, &batch, &mut bodies)) {
                 Ok(outcome) => {
                     dirty_tables.extend(outcome.tables);
                     dirty_ops += outcome.written;
@@ -486,21 +520,33 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
                         count = batch.len(),
                         "db memory write batch failed; retrying its ops individually"
                     );
-                    let salvaged = span.in_scope(|| retry_batch_ops_individually(&conn, &batch));
+                    let salvaged = span.in_scope(|| retry_batch_ops_individually(&conn, &batch, &mut bodies));
                     dirty_tables.extend(salvaged.tables);
                     dirty_ops += salvaged.written;
                 }
             }
         }
+        // A burst of large bodies must not sit in RAM until the interval
+        // expires, so a full block seals as soon as the batch ends. Its index
+        // rows wait for the next transaction; its bytes are already on disk.
+        bodies.seal_if_full();
+        pending_body_bytes.store(bodies.pending_bytes() as u64, Ordering::Release);
         let disk_flush_due = dirty_ops >= DISK_FLUSH_THRESHOLD_OPS
             || last_disk_flush.elapsed() >= DISK_FLUSH_INTERVAL
             || !flush_barriers.is_empty();
         let mut barrier_outcome: FlushOutcome = Ok(());
         if disk_flush_due {
-            match flush_dirty_tables_to_disk(&conn, &mut dirty_tables, &mut flush_watermarks, db_path.as_deref()) {
+            match flush_dirty_tables_to_disk(
+                &conn,
+                &mut dirty_tables,
+                &mut flush_watermarks,
+                db_path.as_deref(),
+                &mut bodies,
+            ) {
                 Ok(()) => {
                     dirty_ops = 0;
                     last_disk_flush = Instant::now();
+                    pending_body_bytes.store(bodies.pending_bytes() as u64, Ordering::Release);
                 }
                 Err(error) => {
                     warn!(error = %error, "db dirty table flush failed");
@@ -523,10 +569,17 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
         }
     }
 
-    if let Err(error) = flush_dirty_tables_to_disk(&conn, &mut dirty_tables, &mut flush_watermarks, db_path.as_deref())
-    {
+    if let Err(error) = flush_dirty_tables_to_disk(
+        &conn,
+        &mut dirty_tables,
+        &mut flush_watermarks,
+        db_path.as_deref(),
+        &mut bodies,
+    ) {
         warn!(error = %error, "db shutdown dirty table flush failed");
     }
+    bodies.sync();
+    pending_body_bytes.store(bodies.pending_bytes() as u64, Ordering::Release);
 
     // All senders dropped -- checkpoint WAL before closing connection.
     let span = tracing::debug_span!(
@@ -677,7 +730,7 @@ fn write_op_affects_storage(op: &WriteOp) -> bool {
 /// arbitrary window of unrelated events, so the batch failure path pays for a
 /// second pass. Nothing here runs when the batch commits.
 ///
-fn retry_batch_ops_individually(conn: &Connection, batch: &[WriteOp]) -> BatchWriteOutcome {
+fn retry_batch_ops_individually(conn: &Connection, batch: &[WriteOp], bodies: &mut BodyArchive) -> BatchWriteOutcome {
     let expected_writes = batch.iter().filter(|op| write_op_affects_storage(op)).count();
     let mut salvaged = BatchWriteOutcome {
         tables: BTreeSet::new(),
@@ -688,7 +741,7 @@ fn retry_batch_ops_individually(conn: &Connection, batch: &[WriteOp]) -> BatchWr
             continue;
         }
         let op_kind = op.kind();
-        match execute_memory_batch(conn, std::slice::from_ref(op)) {
+        match execute_memory_batch(conn, std::slice::from_ref(op), bodies) {
             Ok(outcome) => {
                 salvaged.tables.extend(outcome.tables);
                 salvaged.written += outcome.written;
@@ -717,7 +770,11 @@ fn retry_batch_ops_individually(conn: &Connection, batch: &[WriteOp]) -> BatchWr
     salvaged
 }
 
-fn execute_memory_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Result<BatchWriteOutcome> {
+fn execute_memory_batch(
+    conn: &Connection,
+    batch: &[WriteOp],
+    bodies: &mut BodyArchive,
+) -> rusqlite::Result<BatchWriteOutcome> {
     let stored_ops = batch.iter().filter(|op| write_op_affects_storage(op)).count();
     if stored_ops == 0 {
         return Ok(BatchWriteOutcome {
@@ -727,41 +784,62 @@ fn execute_memory_batch(conn: &Connection, batch: &[WriteOp]) -> rusqlite::Resul
     }
 
     let tx = conn.unchecked_transaction()?;
+    // Bodies staged by a transaction that rolls back must not leave index
+    // rows behind: their event's row is gone, and the retry pass stages them
+    // again. Their bytes stay in the pending block, unreferenced.
+    let staged_mark = bodies.staged_mark();
     let mut affected_tables = BTreeSet::new();
     let mut op_counts = std::collections::BTreeMap::<&'static str, usize>::new();
+    let outcome = insert_batch_ops(&tx, batch, bodies, &mut affected_tables, &mut op_counts)
+        .and_then(|()| tx.commit())
+        .map(|()| BatchWriteOutcome {
+            tables: affected_tables,
+            written: stored_ops,
+        });
+    let Ok(outcome) = outcome else {
+        bodies.rollback_staged(staged_mark);
+        return outcome;
+    };
+    for (kind, count) in op_counts {
+        ::metrics::counter!(DB_WRITE_OPS_TOTAL, "insert_type" => kind).increment(count as u64);
+    }
+    Ok(outcome)
+}
+
+fn insert_batch_ops(
+    tx: &rusqlite::Transaction<'_>,
+    batch: &[WriteOp],
+    bodies: &mut BodyArchive,
+    affected_tables: &mut BTreeSet<&'static str>,
+    op_counts: &mut std::collections::BTreeMap<&'static str, usize>,
+) -> rusqlite::Result<()> {
     for op in batch {
         if !write_op_affects_storage(op) {
             continue;
         }
         *op_counts.entry(op.kind()).or_default() += 1;
-        affected_memory_tables(op, &mut affected_tables);
+        affected_memory_tables(op, affected_tables);
+        bodies.seal_if_full();
         match op {
-            WriteOp::TransportEvent(e) => event_rows::insert_transport_event(&tx, e, WriteTarget::Memory)?,
-            WriteOp::NetEvent(e) => insert_net_event(&tx, e, WriteTarget::Memory)?,
-            WriteOp::ModelCall(m) => insert_model_call(&tx, m, WriteTarget::Memory)?,
-            WriteOp::McpCall(c) => insert_mcp_call(&tx, c, WriteTarget::Memory)?,
-            WriteOp::FileEvent(f) => insert_file_event(&tx, f, WriteTarget::Memory)?,
-            WriteOp::ExecEvent(e) => insert_exec_event(&tx, e, WriteTarget::Memory)?,
-            WriteOp::ExecEventComplete(c) => update_exec_event(&tx, c, WriteTarget::Memory)?,
-            WriteOp::AuditEvent(a) => insert_audit_event(&tx, a, WriteTarget::Memory)?,
-            WriteOp::DnsEvent(d) => insert_dns_event(&tx, d, WriteTarget::Memory)?,
-            WriteOp::SubstitutionEvent(s) => insert_substitution_event(&tx, s, WriteTarget::Memory)?,
-            WriteOp::SecurityRuleEvent(e) => insert_security_rule_event(&tx, e, WriteTarget::Memory)?,
-            WriteOp::SecurityAskEvent(e) => insert_security_ask_event(&tx, e, WriteTarget::Memory)?,
-            WriteOp::SecurityDecisionEvent(e) => insert_security_decision_event(&tx, e, WriteTarget::Memory)?,
-            WriteOp::ProfileMutationEvent(e) => insert_profile_mutation_event(&tx, e, WriteTarget::Memory)?,
-            WriteOp::Network(n) => event_rows::upsert_network(&tx, n, WriteTarget::Memory)?,
-            WriteOp::NetworkMembership(m) => event_rows::upsert_network_membership(&tx, m, WriteTarget::Memory)?,
+            WriteOp::TransportEvent(e) => event_rows::insert_transport_event(tx, e, WriteTarget::Memory)?,
+            WriteOp::NetEvent(e) => insert_net_event(tx, e, WriteTarget::Memory, bodies)?,
+            WriteOp::ModelCall(m) => insert_model_call(tx, m, WriteTarget::Memory, bodies)?,
+            WriteOp::McpCall(c) => insert_mcp_call(tx, c, WriteTarget::Memory, bodies)?,
+            WriteOp::FileEvent(f) => insert_file_event(tx, f, WriteTarget::Memory)?,
+            WriteOp::ExecEvent(e) => insert_exec_event(tx, e, WriteTarget::Memory)?,
+            WriteOp::ExecEventComplete(c) => update_exec_event(tx, c, WriteTarget::Memory, bodies)?,
+            WriteOp::AuditEvent(a) => insert_audit_event(tx, a, WriteTarget::Memory)?,
+            WriteOp::DnsEvent(d) => insert_dns_event(tx, d, WriteTarget::Memory)?,
+            WriteOp::SubstitutionEvent(s) => insert_substitution_event(tx, s, WriteTarget::Memory)?,
+            WriteOp::SecurityRuleEvent(e) => insert_security_rule_event(tx, e, WriteTarget::Memory)?,
+            WriteOp::SecurityAskEvent(e) => insert_security_ask_event(tx, e, WriteTarget::Memory)?,
+            WriteOp::SecurityDecisionEvent(e) => insert_security_decision_event(tx, e, WriteTarget::Memory)?,
+            WriteOp::ProfileMutationEvent(e) => insert_profile_mutation_event(tx, e, WriteTarget::Memory)?,
+            WriteOp::Network(n) => event_rows::upsert_network(tx, n, WriteTarget::Memory)?,
+            WriteOp::NetworkMembership(m) => event_rows::upsert_network_membership(tx, m, WriteTarget::Memory)?,
         }
     }
-    tx.commit()?;
-    for (kind, count) in op_counts {
-        ::metrics::counter!(DB_WRITE_OPS_TOTAL, "insert_type" => kind).increment(count as u64);
-    }
-    Ok(BatchWriteOutcome {
-        tables: affected_tables,
-        written: stored_ops,
-    })
+    Ok(())
 }
 
 fn flush_dirty_tables_to_disk(
@@ -769,10 +847,15 @@ fn flush_dirty_tables_to_disk(
     dirty_tables: &mut BTreeSet<&'static str>,
     flush_watermarks: &mut schema::MemoryFlushWatermarks,
     db_path: Option<&Path>,
+    bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
-    if dirty_tables.is_empty() {
+    if dirty_tables.is_empty() && !bodies.has_uncommitted_rows() {
         return Ok(());
     }
+    // Bytes before index: the block reaches the archive file here, and the
+    // rows that name it are inserted in the transaction below. A crash in
+    // between costs one unreferenced block, never a row pointing past EOF.
+    bodies.seal_pending();
     if take_disk_flush_failure_for_tests(db_path) {
         return Err(rusqlite::Error::InvalidParameterName(
             "injected disk flush failure before copy".to_string(),
@@ -780,6 +863,7 @@ fn flush_dirty_tables_to_disk(
     }
     let tables: Vec<&'static str> = dirty_tables.iter().copied().collect();
     let tx = conn.unchecked_transaction()?;
+    bodies.commit_index_rows(&tx)?;
     let advanced_watermarks = schema::with_memory_schema_lock(|| {
         schema::flush_memory_tables_to_disk(&tx, tables.iter().copied(), flush_watermarks)
     })?;
@@ -802,325 +886,13 @@ fn execute_cached(conn: &Connection, sql: &str, params: impl rusqlite::Params) -
     conn.prepare_cached(sql)?.execute(params)
 }
 
-fn insert_net_event(conn: &Connection, event: &NetEvent, target: WriteTarget) -> rusqlite::Result<()> {
-    let timestamp = format_timestamp(event.timestamp);
-    let req_body = cap_preview(&event.request_body_preview);
-    let resp_body = cap_preview(&event.response_body_preview);
-    let req_headers = cap_field(&event.request_headers);
-    let resp_headers = cap_field(&event.response_headers);
-    let event_id = event.event_id.clone().unwrap_or_else(new_event_id);
-    execute_cached(
-        conn,
-        &format!("INSERT INTO {} (
-            event_id, timestamp, domain, port, decision, process_name, pid,
-            method, path, query, status_code,
-            bytes_sent, bytes_received, duration_ms, matched_rule,
-            request_headers, response_headers,
-            request_body_preview, response_body_preview, conn_type,
-            policy_mode, policy_action, policy_rule, policy_reason,
-            trace_id, turn_id, credential_ref
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)", target.table("net_events")),
-        params![
-            event_id,
-            timestamp,
-            event.domain,
-            i64::from(event.port),
-            event.decision.as_str(),
-            event.process_name,
-            event.pid.map(i64::from),
-            event.method,
-            event.path,
-            event.query,
-            event.status_code.map(i64::from),
-            event.bytes_sent as i64,
-            event.bytes_received as i64,
-            event.duration_ms as i64,
-            event.matched_rule,
-            req_headers,
-            resp_headers,
-            req_body,
-            resp_body,
-            event.conn_type,
-            event.policy_mode,
-            event.policy_action,
-            event.policy_rule,
-            event.policy_reason,
-            event.trace_id,
-            event.trace_id,
-            event.credential_ref,
-        ],
-    )?;
-    insert_event_body_blob(
-        conn,
-        EventBodyBlob {
-            event_id: &event_id,
-            event_type: "http.request",
-            source_table: "net_events",
-            direction: "request",
-            content_type: event.request_headers.as_deref().and_then(content_type_from_headers),
-            body: event
-                .request_body_full
-                .as_deref()
-                .or(event.request_body_preview.as_deref()),
-            trace_id: event.trace_id.as_deref(),
-            turn_id: event.trace_id.as_deref(),
-        },
-    )?;
-    insert_event_body_blob(
-        conn,
-        EventBodyBlob {
-            event_id: &event_id,
-            event_type: "http.request",
-            source_table: "net_events",
-            direction: "response",
-            content_type: event.response_headers.as_deref().and_then(content_type_from_headers),
-            body: event
-                .response_body_full
-                .as_deref()
-                .or(event.response_body_preview.as_deref()),
-            trace_id: event.trace_id.as_deref(),
-            turn_id: event.trace_id.as_deref(),
-        },
-    )?;
-    Ok(())
-}
-
-fn insert_file_event(conn: &Connection, event: &FileEvent, target: WriteTarget) -> rusqlite::Result<()> {
-    let timestamp = format_timestamp(event.timestamp);
-    let (directory, name) = split_event_path(&event.path);
-    execute_cached(
-        conn,
-        &format!("INSERT INTO {} (event_id, timestamp, action, path, directory, name, size, trace_id, turn_id, credential_ref)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)", target.table("fs_events")),
-        params![
-            event.event_id.clone().unwrap_or_else(new_event_id),
-            timestamp,
-            event.action.as_str(),
-            event.path,
-            directory,
-            name,
-            event.size.map(|s| s as i64),
-            event.trace_id,
-            event.trace_id,
-            event.credential_ref,
-        ],
-    )?;
-    Ok(())
-}
-
-fn split_event_path(path: &str) -> (String, String) {
-    let normalized = path.trim_end_matches('/');
-    if normalized.is_empty() {
-        return (".".to_string(), String::new());
-    }
-    match normalized.rsplit_once('/') {
-        Some(("", name)) => ("/".to_string(), name.to_string()),
-        Some((dir, name)) if !name.is_empty() => (dir.to_string(), name.to_string()),
-        _ => (".".to_string(), normalized.to_string()),
-    }
-}
-
-fn insert_mcp_call(conn: &Connection, call: &McpCall, target: WriteTarget) -> rusqlite::Result<()> {
-    let timestamp = format_timestamp(call.timestamp);
-    let req_preview = cap_preview(&call.request_preview);
-    let resp_preview = cap_preview(&call.response_preview);
-    let event_id = call.event_id.clone().unwrap_or_else(new_event_id);
-    if call.method == "tools/call" {
-        let tool_name = call.tool_name.as_deref().unwrap_or("");
-        execute_cached(
-        conn,
-            &format!("INSERT INTO {} (
-                event_id, timestamp, model_call_id, provider, status, call_index, call_id,
-                tool_name, arguments, response_preview, origin, transport, server_name, method, request_id,
-                decision, duration_ms, error_message, process_name, bytes_sent, bytes_received,
-                policy_mode, policy_action, policy_rule, policy_reason, trace_id, turn_id, credential_ref
-            )
-             VALUES (?1, ?2, NULL, '', ?3, 0, ?4, ?5, ?6, ?7, 'mcp', ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)", target.table("tool_calls")),
-            params![
-                &event_id,
-                &timestamp,
-                if call.error_message.is_some() { "error" } else { "responded" },
-                call.request_id.as_deref().unwrap_or(&event_id),
-                tool_name,
-                req_preview.as_deref(),
-                resp_preview.as_deref(),
-                &call.transport,
-                &call.server_name,
-                &call.method,
-                call.request_id.as_deref(),
-                &call.decision,
-                call.duration_ms as i64,
-                call.error_message.as_deref(),
-                call.process_name.as_deref(),
-                call.bytes_sent as i64,
-                call.bytes_received as i64,
-                call.policy_mode.as_deref(),
-                call.policy_action.as_deref(),
-                call.policy_rule.as_deref(),
-                call.policy_reason.as_deref(),
-                call.trace_id.as_deref(),
-                call.trace_id.as_deref(),
-                call.credential_ref.as_deref(),
-            ],
-        )?;
-        insert_event_body_blob(
-            conn,
-            EventBodyBlob {
-                event_id: &event_id,
-                event_type: "mcp.tool_call",
-                source_table: "tool_calls",
-                direction: "request",
-                content_type: Some("application/json"),
-                body: call.request_preview.as_deref(),
-                trace_id: call.trace_id.as_deref(),
-                turn_id: call.trace_id.as_deref(),
-            },
-        )?;
-        insert_event_body_blob(
-            conn,
-            EventBodyBlob {
-                event_id: &event_id,
-                event_type: "mcp.tool_call",
-                source_table: "tool_calls",
-                direction: "response",
-                content_type: Some("application/json"),
-                body: call.response_preview.as_deref(),
-                trace_id: call.trace_id.as_deref(),
-                turn_id: call.trace_id.as_deref(),
-            },
-        )?;
-        return Ok(());
-    }
-    let _ = (event_id, timestamp, req_preview, resp_preview);
-    Ok(())
-}
-
-fn content_type_from_headers(headers: &str) -> Option<&str> {
-    headers.lines().find_map(|line| {
-        let (name, value) = line.split_once(':')?;
-        if name.trim().eq_ignore_ascii_case("content-type") {
-            Some(value.trim())
-        } else {
-            None
-        }
-    })
-}
-
-struct EventBodyBlob<'a> {
-    event_id: &'a str,
-    event_type: &'a str,
-    source_table: &'a str,
-    direction: &'a str,
-    content_type: Option<&'a str>,
-    body: Option<&'a str>,
-    trace_id: Option<&'a str>,
-    turn_id: Option<&'a str>,
-}
-
-fn insert_event_body_blob(conn: &Connection, blob: EventBodyBlob<'_>) -> rusqlite::Result<()> {
-    let Some(body) = blob.body else {
-        return Ok(());
-    };
-    if body.is_empty() {
-        return Ok(());
-    }
-    let bytes = body.as_bytes();
-    let stored_len = bytes.len().min(MAX_BODY_BLOB_BYTES);
-    let stored = &bytes[..stored_len];
-    let created_at = format_timestamp(SystemTime::now());
-    execute_cached(
-        conn,
-        "INSERT OR REPLACE INTO event_body_blobs (
-            event_id, event_type, source_table, direction, content_type,
-            original_bytes, stored_bytes, truncated, body_hash, body,
-            trace_id, turn_id, created_at
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        params![
-            blob.event_id,
-            blob.event_type,
-            blob.source_table,
-            blob.direction,
-            blob.content_type,
-            bytes.len() as i64,
-            stored_len as i64,
-            i64::from(bytes.len() > stored_len),
-            blake3_bytes_ref(bytes),
-            stored,
-            blob.trace_id,
-            blob.turn_id,
-            created_at,
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_exec_event(conn: &Connection, event: &ExecEvent, target: WriteTarget) -> rusqlite::Result<()> {
-    let timestamp = format_timestamp(event.timestamp);
-    execute_cached(
-        conn,
-        &format!(
-            "INSERT INTO {} (
-            event_id, timestamp, exec_id, command, source, trace_id, turn_id, process_name, credential_ref
-         )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            target.table("exec_events")
-        ),
-        params![
-            event.event_id.clone().unwrap_or_else(new_event_id),
-            timestamp,
-            event.exec_id as i64,
-            event.command,
-            event.source,
-            event.trace_id,
-            event.trace_id,
-            event.process_name,
-            event.credential_ref,
-        ],
-    )?;
-    Ok(())
-}
-
-fn update_exec_event(conn: &Connection, complete: &ExecEventComplete, target: WriteTarget) -> rusqlite::Result<()> {
-    // No blob-backed copy yet; the archive task moves this. Capping to
-    // PREVIEW_BYTES here would be the only copy of exec output, so this
-    // stays at MAX_FIELD_BYTES via cap_field until a body-blob backs it.
-    let stdout_preview = cap_field(&complete.stdout_preview);
-    let stderr_preview = cap_field(&complete.stderr_preview);
-    execute_cached(
-        conn,
-        &format!(
-            "UPDATE {} SET
-            exit_code = ?1,
-            duration_ms = ?2,
-            stdout_preview = ?3,
-            stderr_preview = ?4,
-            stdout_bytes = ?5,
-            stderr_bytes = ?6,
-            pid = ?7
-         WHERE exec_id = ?8",
-            target.table("exec_events")
-        ),
-        params![
-            i64::from(complete.exit_code),
-            complete.duration_ms as i64,
-            stdout_preview,
-            stderr_preview,
-            complete.stdout_bytes as i64,
-            complete.stderr_bytes as i64,
-            complete.pid.map(i64::from),
-            complete.exec_id as i64,
-        ],
-    )?;
-    Ok(())
-}
-
 mod event_rows;
+mod traffic_rows;
 use event_rows::{
     insert_audit_event, insert_dns_event, insert_profile_mutation_event, insert_security_ask_event,
     insert_security_decision_event, insert_security_rule_event, insert_substitution_event,
 };
+use traffic_rows::{insert_exec_event, insert_file_event, insert_mcp_call, insert_net_event, update_exec_event};
 
 #[cfg(test)]
 mod tests;

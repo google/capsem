@@ -1002,9 +1002,9 @@ ORDER BY id DESC
 LIMIT 100
 "#;
 
+// Metadata only: bodies are archive-backed, read through the DB handle.
 const STATS_DETAIL_BODY_BLOBS_SQL: &str = r#"
-SELECT event_id, direction, content_type, original_bytes,
-       stored_bytes, truncated, body_hash, CAST(body AS TEXT) AS body
+SELECT event_id, source_table, direction, content_type, original_bytes, stored_bytes, truncated, body_hash
 FROM event_body_blobs
 WHERE event_id IN (
     SELECT event_id FROM net_events WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200

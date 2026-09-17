@@ -54,6 +54,7 @@ pub(super) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
     (
         "tool_responses",
         &[
+            "event_id",
             "model_call_id",
             "call_id",
             "content_preview",
@@ -70,11 +71,14 @@ pub(super) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "source_table",
             "direction",
             "body_hash",
-            "body",
+            "block_offset",
+            "body_offset",
+            "body_len",
             "trace_id",
             "turn_id",
         ],
     ),
+    ("body_blocks", &["block_offset", "raw_len", "comp_len", "sealed_at"]),
     (
         "fs_events",
         &[

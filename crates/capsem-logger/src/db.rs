@@ -190,6 +190,10 @@ struct DbHandleInner {
     reader_join: Mutex<Option<JoinHandle<()>>>,
     writer: Option<Arc<DbWriter>>,
     ready_cache: Mutex<Option<DbResult<()>>>,
+    /// The session's body archive, opened on the first body read and kept for
+    /// its one-block cache. `BodyLogReader` is not `Sync`, and one reader per
+    /// handle is also what makes "one inflate for one exchange" true.
+    archive_reader: Mutex<Option<capsem_archive::BodyLogReader>>,
     query_many_cache: Mutex<DbQueryManyCache>,
     read_cache_epoch: AtomicU64,
     session_summary_cache_epoch: AtomicU64,
@@ -267,6 +271,7 @@ impl DbHandle {
                 reader_join: Mutex::new(Some(reader_join)),
                 writer: None,
                 ready_cache: Mutex::new(None),
+                archive_reader: Mutex::new(None),
                 query_many_cache: Mutex::new(None),
                 read_cache_epoch: AtomicU64::new(0),
                 session_summary_cache_epoch: AtomicU64::new(0),
@@ -687,6 +692,15 @@ impl DbHandle {
         let _ = self.flush().await;
     }
 
+    /// Raw body bytes the writer thread is holding in its unsealed block.
+    #[cfg(test)]
+    pub(crate) async fn pending_body_bytes_for_tests(&self) -> u64 {
+        self.inner
+            .writer
+            .as_ref()
+            .map_or(0, |writer| writer.pending_body_bytes())
+    }
+
     /// Transitional blocking readiness bridge for legacy synchronous callers.
     ///
     /// New async route code should use `ready().await`. This method exists only
@@ -779,10 +793,12 @@ impl SessionDb {
     }
 }
 
+mod bodies;
 mod maintenance;
 mod reader_worker;
 
-pub use maintenance::{checkpoint_and_vacuum_session_db, snapshot_session_db};
+pub use bodies::{BodyDirection, StoredBody};
+pub use maintenance::{checkpoint_and_vacuum_session_db, snapshot_session_ledger};
 use reader_worker::reader_loop;
 
 #[cfg(test)]

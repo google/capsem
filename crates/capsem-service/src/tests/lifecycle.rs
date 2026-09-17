@@ -1491,29 +1491,21 @@ async fn stats_detail_route_reads_session_db_ledger() {
     assert_eq!(body["http_events"][0]["domain"], "generativelanguage.googleapis.com");
     assert!(body["http_events"][0].get("request_body_preview").is_none());
     assert!(body["http_events"][0].get("response_body_preview").is_none());
+    // The route carries what each body is; the bytes come from the archive
+    // through the DB handle, and the bodies route that serves them is its own
+    // change. Metadata is what this payload still owes the UI.
     assert_eq!(body["body_blobs"]["abc123abc123"][0]["direction"], "request");
-    assert_eq!(
-        body["body_blobs"]["abc123abc123"][0]["body"],
-        r#"{"contents":[{"text":"write full bounded body"}]}"#
-    );
+    assert_eq!(body["body_blobs"]["abc123abc123"][0]["source_table"], "model_calls");
     assert_eq!(body["body_blobs"]["abc123abc123"][1]["direction"], "response");
-    assert_eq!(
-        body["body_blobs"]["abc123abc123"][1]["body"],
-        r#"{"candidates":[{"content":{"parts":[{"text":"created poem.md"}]}}]}"#
-    );
     assert_eq!(body["body_blobs"]["def456def456"][0]["direction"], "request");
-    assert_eq!(
-        body["body_blobs"]["def456def456"][0]["body"],
-        r#"{"model":"gemini-3.5-flash","contents":[{"text":"write full body"}]}"#
-    );
     assert_eq!(
         body["body_blobs"]["def456def456"][0]["stored_bytes"],
         r#"{"model":"gemini-3.5-flash","contents":[{"text":"write full body"}]}"#.len()
     );
     assert_eq!(body["body_blobs"]["def456def456"][1]["direction"], "response");
-    assert_eq!(
-        body["body_blobs"]["def456def456"][1]["body"],
-        r#"{"ok":true,"body":"full response body from gateway"}"#
+    assert!(
+        body["body_blobs"]["def456def456"][1].get("body").is_none(),
+        "the stats payload must not carry body bytes inline"
     );
 
     let (status, summary) = route_request(

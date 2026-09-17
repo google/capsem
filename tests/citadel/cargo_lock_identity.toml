@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "c8554ed79deacda3a219536d7c517eda9d6297b3b0be8fdbe66bd2052373cce8"
-reason = "new workspace member capsem-archive, the block-compressed body log for session ledgers; it resolves entirely to packages the lock already carried (blake3, capsem-foundation, miniz_oxide, thiserror, tempfile), so the entry is one [[package]] block and no third-party version moved. miniz_oxide is added as a workspace dependency for it: pure-Rust deflate, because tests/citadel/test_runtime_native_dependencies.py refuses a native codec in front of attacker-influenced ledger bytes"
+sha256 = "a8cac33e9601392559be1b1ebeb5de864f9f1616ef5ea8cc2ba653b306edcc2c"
+reason = "capsem-logger now depends on the in-tree capsem-archive crate: session bodies live in the block archive and SQLite keeps only the index. One line changed -- capsem-archive joins capsem-logger's dependency list -- and no third-party package or version moved"

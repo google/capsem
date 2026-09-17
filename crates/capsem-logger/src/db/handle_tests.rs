@@ -15,6 +15,7 @@ use crate::WriteOp;
 const DB_BOUNDARY_RATIONALE: &str = "DB boundary contract: capsem-logger owns DB execution/storage; callers own query intent only. See AGENTS.md and skills/dev-testing/SKILL.md.";
 static DB_FLUSH_FAILURE_TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
+mod bodies;
 mod external_reader;
 mod query;
 
@@ -36,9 +37,9 @@ fn db_handle_contract_names_db_ownership_and_schema_failures() {
 
 pub(super) fn temp_db_path(name: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!("capsem-test-db-handle-{name}-{}.db", std::process::id()));
-    let _ = std::fs::remove_file(&p);
-    let _ = std::fs::remove_file(p.with_extension("db-wal"));
-    let _ = std::fs::remove_file(p.with_extension("db-shm"));
+    for extension in ["db", "db-wal", "db-shm", "bodies"] {
+        let _ = std::fs::remove_file(p.with_extension(extension));
+    }
     p
 }
 
@@ -1408,61 +1409,4 @@ async fn db_handle_flush_reports_a_failed_disk_flush() {
     db.flush().await.expect("the next flush succeeds");
     assert_eq!(disk_net_event_count(&p, "flush-reported.example"), 1);
     crate::writer::fail_disk_flushes_for_tests(0);
-}
-
-// net_events.request_body_preview / response_body_preview are documented as
-// "compact display field only" (writer.rs), yet were capped at 256 KB and in
-// a real 10-day session averaged 28 KB per row -- duplicating bytes already
-// stored in full in event_body_blobs. This proves the writer now caps the
-// display preview at PREVIEW_BYTES while the blob table still holds the
-// exact original body.
-#[tokio::test]
-async fn previews_are_capped_but_blobs_keep_the_full_body() {
-    let p = temp_db_path("previews-capped-blobs-full");
-    let db = DbHandle::open(&p).expect("open handle");
-
-    let big = "x".repeat(64 * 1024);
-    let mut event = make_net_event("preview-cap.example", Decision::Allowed);
-    event.event_id = Some("0123456789ab".into());
-    event.response_body_preview = Some(big.clone());
-    event.response_body_full = Some(big.clone());
-    db.write(WriteOp::NetEvent(event)).await.expect("write event");
-    db.flush().await.expect("flush");
-
-    let preview_rows = query_json(
-        &db.query(
-            "SELECT length(response_body_preview) FROM net_events WHERE event_id = ?",
-            &[json!("0123456789ab")],
-        )
-        .await
-        .expect("query preview length"),
-    );
-    let n = preview_rows["rows"][0][0].as_i64().expect("preview length column");
-    // The input is plain ASCII 'x' bytes, so the cap is exact, not just an
-    // upper bound.
-    assert_eq!(
-        n,
-        crate::writer::PREVIEW_BYTES as i64,
-        "preview must be capped to exactly PREVIEW_BYTES ({})",
-        crate::writer::PREVIEW_BYTES
-    );
-
-    let blob_rows = query_json(
-        &db.query(
-            "SELECT original_bytes, stored_bytes FROM event_body_blobs WHERE event_id = ? AND direction = 'response'",
-            &[json!("0123456789ab")],
-        )
-        .await
-        .expect("query blob sizes"),
-    );
-    assert_eq!(
-        blob_rows["rows"][0][0],
-        json!(64 * 1024),
-        "original_bytes must be the full body size"
-    );
-    assert_eq!(
-        blob_rows["rows"][0][1],
-        json!(64 * 1024),
-        "stored_bytes must be the full body size, not the capped preview"
-    );
 }
