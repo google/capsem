@@ -5,6 +5,21 @@ fn session_response_cache_key(vm_id: &str, route_key: &str) -> String {
     format!("{vm_id}:{route_key}")
 }
 
+/// Forget every cached response for one VM.
+///
+/// Keys carry the caller's `limit`, so one VM can hold an entry per limit a
+/// client ever asked for. Nothing released them, so the map grew across VM
+/// churn for the lifetime of the service; a VM whose ledger handle is gone
+/// cannot serve a hit anyway.
+pub(super) fn forget_session_responses(state: &ServiceState, vm_id: &str) {
+    let prefix = format!("{vm_id}:");
+    state
+        .stats_detail_response_cache
+        .lock()
+        .unwrap()
+        .retain(|key, _| !key.starts_with(&prefix));
+}
+
 /// Outcome of looking up a cached session-ledger route response.
 pub(crate) enum SessionResponseCache {
     Hit(Bytes),

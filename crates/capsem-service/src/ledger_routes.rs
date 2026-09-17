@@ -1,6 +1,6 @@
 use super::*;
 mod response_cache;
-pub(super) use response_cache::{session_response_cache_lookup, SessionResponseCache};
+pub(super) use response_cache::{forget_session_responses, session_response_cache_lookup, SessionResponseCache};
 mod stats_detail;
 pub(super) use stats_detail::read_stats_detail_payload_from_session_db;
 use stats_detail::STATS_DETAIL_MODEL_STATS_SQL;

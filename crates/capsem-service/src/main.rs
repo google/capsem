@@ -290,9 +290,9 @@ struct ServiceState {
     /// `main.db` query. The typed session-summary epoch invalidates it for
     /// session/usage writes without coupling it to profile-mutation ledger rows.
     stats_response_cache: Mutex<Option<CachedLedgerResponse>>,
-    /// Final stats/detail bytes for inactive sessions. Running sessions keep
-    /// reading live DB state; stopped/seeded sessions can reuse bytes until
-    /// their session.db metadata changes.
+    /// Session-ledger route bytes (security/detection latest, security status,
+    /// history processes/counts) keyed by VM id, route and paging, pinned to
+    /// the logger read-cache epoch, released when the VM's handle unregisters.
     stats_detail_response_cache: Mutex<HashMap<String, CachedLedgerResponse>>,
     /// Container workloads being set up or running, by VM id.
     containers: container_setup::ContainerSetups,

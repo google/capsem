@@ -152,6 +152,39 @@ async fn stats_detail_has_typed_nullable_events_and_captured_bodies() {
     );
 }
 
+/// Cached ledger responses are keyed by VM id, route and the caller's paging,
+/// and nothing released them: the map grew for the service's lifetime across
+/// VM churn. A VM whose ledger handle is gone cannot serve a hit anyway.
+#[tokio::test]
+async fn unregistering_a_session_releases_its_cached_ledger_responses() {
+    let state = crate::tests::make_test_state();
+    {
+        let mut cache = state.stats_detail_response_cache.lock().unwrap();
+        for key in [
+            "box:security/latest:50",
+            "box:history/counts",
+            "other:security/latest:50",
+        ] {
+            cache.insert(
+                key.to_string(),
+                CachedLedgerResponse {
+                    db_epoch: 1,
+                    bytes: vec![b'{'],
+                },
+            );
+        }
+    }
+
+    state.unregister_session_db_handle("box");
+
+    let cache = state.stats_detail_response_cache.lock().unwrap();
+    assert_eq!(
+        cache.keys().collect::<Vec<_>>(),
+        vec!["other:security/latest:50"],
+        "only the unregistered VM's responses are released"
+    );
+}
+
 #[tokio::test]
 async fn stats_detail_rejects_invalid_event_categories_and_negative_counts() {
     for sql in [
