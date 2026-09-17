@@ -88,6 +88,10 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/schema/transport.rs"),
     Path("crates/capsem-logger/src/session_index.rs"),
     Path("crates/capsem-logger/src/writer.rs"),
+    # The writer thread's own modules. They run on the thread that owns the
+    # connection and are handed it as an argument; they do not open one.
+    Path("crates/capsem-logger/src/writer/barriers.rs"),
+    Path("crates/capsem-logger/src/writer/retention.rs"),
     Path("crates/capsem-logger/src/writer/tests.rs"),
 }
 

@@ -60,6 +60,10 @@ struct BodyIndexRow {
 
 /// The writer thread's archive: one `session.bodies` beside `session.db`.
 pub(super) struct BodyArchive {
+    /// Where the archive file is, or `None` for an in-memory database. Kept
+    /// even when the writer is gone, because retention rewrites the file by
+    /// path and then reopens the writer on it.
+    path: Option<PathBuf>,
     /// `None` for an in-memory database, which has no file to put an archive
     /// beside, and after an append failure, which makes every later offset
     /// unprovable. Both stage nothing rather than writing an index nobody can
@@ -103,23 +107,29 @@ pub(crate) fn archive_path_for_db(db_path: &Path) -> PathBuf {
     db_path.with_extension("bodies")
 }
 
+/// Open the archive writer, or warn and store no bodies. Shared by `open` and
+/// by the reopen retention needs: a compacted file has a new end, and a writer
+/// still holding the old one would append over a kept block.
+fn open_writer(archive_path: &Path) -> Option<BodyLogWriter> {
+    match BodyLogWriter::open(archive_path) {
+        Ok(writer) => Some(writer),
+        Err(error) => {
+            warn!(
+                archive_path = %archive_path.display(),
+                error = %error,
+                "session body archive could not be opened; bodies will not be stored"
+            );
+            None
+        }
+    }
+}
+
 impl BodyArchive {
     pub(super) fn open(db_path: Option<&Path>, now: LedgerClock) -> Self {
-        let writer = db_path.and_then(|path| {
-            let archive_path = archive_path_for_db(path);
-            match BodyLogWriter::open(&archive_path) {
-                Ok(writer) => Some(writer),
-                Err(error) => {
-                    warn!(
-                        archive_path = %archive_path.display(),
-                        error = %error,
-                        "session body archive could not be opened; bodies will not be stored"
-                    );
-                    None
-                }
-            }
-        });
+        let path = db_path.map(archive_path_for_db);
+        let writer = path.as_deref().and_then(open_writer);
         Self {
+            path,
             writer,
             now,
             staged: Vec::new(),
@@ -242,6 +252,34 @@ impl BodyArchive {
         self.seal_pending();
         self.abandon_uncommitted(reason);
         self.writer = None;
+    }
+
+    /// The archive file this session writes, when it has one and the writer
+    /// is still in service. `None` is retention's cue that there is nothing
+    /// it may rewrite: an in-memory ledger has no file, and an archive that
+    /// gave up must not have its file compacted underneath index rows it can
+    /// no longer vouch for.
+    pub(super) fn path_in_service(&self) -> Option<&Path> {
+        self.writer.as_ref().and(self.path.as_deref())
+    }
+
+    /// Reopen the writer after retention rewrote the file.
+    ///
+    /// The old writer's `end` is the old file's length, so appending through
+    /// it would write past -- or, after a compaction, on top of -- blocks the
+    /// index still names. The reopened writer reads the compacted length back
+    /// from the file, which is the only place it is now true.
+    ///
+    /// Callable only with nothing in hand: retention flushes first, so a block
+    /// waiting for its index row would mean the sequence was not followed.
+    pub(super) fn reopen_after_retention(&mut self) {
+        debug_assert!(
+            !self.has_work(),
+            "retention reopened the archive with {} blocks and {} rows still in hand",
+            self.appended.len(),
+            self.staged.len()
+        );
+        self.writer = self.path.as_deref().and_then(open_writer);
     }
 
     /// The sequence number the next staged row will take: a transaction's

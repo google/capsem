@@ -190,33 +190,39 @@ pub enum WriteOp {
 /// (an external reader syncing from disk) is not told the rows are there.
 type FlushOutcome = Result<(), String>;
 
+/// What one retention request reports back.
+type RetainReply = tokio::sync::oneshot::Sender<Result<RetainOutcome, String>>;
+
+/// What the writer thread is asked to do. An enum rather than a pair of
+/// options: every payload combination it can hold is now one the loop has to
+/// name, which is how a third kind of request arrives without an
+/// `unreachable!` standing between it and the code that runs it.
+// A ledger event is 568 bytes and a barrier is a handful. Boxing the write to
+// even them out would put a heap allocation and a copy on the path every
+// telemetry event takes, to save moving bytes that the old `Option<WriteOp>`
+// field moved anyway.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
-struct WriterMessage {
-    write: Option<WriteOp>,
-    flush_reply: Option<tokio::sync::oneshot::Sender<FlushOutcome>>,
+enum WriterMessage {
+    Write(WriteOp),
+    /// Commit everything queued before this and report whether the disk flush
+    /// happened.
+    Flush(tokio::sync::oneshot::Sender<FlushOutcome>),
+    /// Drop archived bodies sealed before this RFC 3339 cutoff. A barrier
+    /// like `Flush`, because it needs the queue committed before it runs.
+    Retain {
+        cutoff: String,
+        reply: RetainReply,
+    },
 }
 
 impl WriterMessage {
     fn write(op: WriteOp) -> Self {
-        Self {
-            write: Some(op),
-            flush_reply: None,
-        }
+        Self::Write(op)
     }
 
     fn flush(reply: tokio::sync::oneshot::Sender<FlushOutcome>) -> Self {
-        Self {
-            write: None,
-            flush_reply: Some(reply),
-        }
-    }
-
-    fn into_write_or_flush(self) -> Result<WriteOp, tokio::sync::oneshot::Sender<FlushOutcome>> {
-        match (self.write, self.flush_reply) {
-            (Some(op), None) => Ok(op),
-            (None, Some(reply)) => Err(reply),
-            _ => unreachable!("writer messages have exactly one payload"),
-        }
+        Self::Flush(reply)
     }
 }
 
@@ -226,7 +232,14 @@ fn writer_channel(capacity: usize) -> (WriterSender, mpsc::Receiver<WriterMessag
     mpsc::sync_channel(capacity.max(1))
 }
 
+mod barriers;
 mod operation;
+mod recording;
+mod retention;
+
+use barriers::Barriers;
+use recording::{batch_size_bucket, record_batch, record_enqueue};
+pub use retention::RetainOutcome;
 
 /// A dedicated writer thread that owns the SQLite connection.
 ///
@@ -409,6 +422,34 @@ impl DbWriter {
             .map_err(|e| format!("db writer flush barrier dropped before ack: {e}"))?
     }
 
+    /// Drop archived bodies whose blocks sealed before `cutoff` (RFC 3339).
+    ///
+    /// A barrier, like `flush_checked`: everything queued before this call is
+    /// committed first, so a body written a moment ago is either indexed and
+    /// judged by the cutoff or not yet written at all -- never dropped
+    /// because its index row had not landed.
+    ///
+    /// The work happens on the writer thread because that thread owns both
+    /// halves of the ledger. A caller that holds no writer holds no right to
+    /// rewrite either one.
+    pub async fn retain_bodies_since(&self, cutoff: &str) -> Result<RetainOutcome, String> {
+        let Some(tx) = self.clone_sender() else {
+            return Err("db writer is shut down; nothing was retained".to_string());
+        };
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        send_with_backpressure(
+            &tx,
+            WriterMessage::Retain {
+                cutoff: cutoff.to_string(),
+                reply,
+            },
+        )
+        .await
+        .map_err(|error| format!("db writer channel closed, dropping retention request: {error}"))?;
+        rx.await
+            .map_err(|error| format!("db writer dropped the retention request before answering: {error}"))?
+    }
+
     /// Wait for short-lived producers to enqueue their final rows, then flush
     /// the writer queue. Use at external command boundaries where the guest
     /// process can exit a few milliseconds before host-side socket closeout
@@ -557,22 +598,13 @@ fn writer_loop(
         };
 
         let mut batch = Vec::with_capacity(batch_capacity);
-        let mut flush_barriers = Vec::new();
-        match first_message.into_write_or_flush() {
-            Ok(op) => batch.push(op),
-            Err(reply) => flush_barriers.push(reply),
-        }
+        let mut barriers = Barriers::default();
+        let mut at_barrier = barriers.accept(first_message, &mut batch);
 
         // 2. Drain any ops already queued (non-blocking).
-        while flush_barriers.is_empty() && batch.len() < batch_capacity {
+        while !at_barrier && batch.len() < batch_capacity {
             match rx.try_recv() {
-                Ok(message) => match message.into_write_or_flush() {
-                    Ok(op) => batch.push(op),
-                    Err(reply) => {
-                        flush_barriers.push(reply);
-                        break;
-                    }
-                },
+                Ok(message) => at_barrier = barriers.accept(message, &mut batch),
                 Err(_) => break,
             }
         }
@@ -617,7 +649,7 @@ fn writer_loop(
         pending_body_bytes.store(bodies.pending_bytes() as u64, Ordering::Release);
         let disk_flush_due = dirty_ops >= DISK_FLUSH_THRESHOLD_OPS
             || last_disk_flush.elapsed() >= DISK_FLUSH_INTERVAL
-            || !flush_barriers.is_empty();
+            || barriers.waiting();
         let mut barrier_outcome: FlushOutcome = Ok(());
         if disk_flush_due {
             match flush_dirty_tables_to_disk(
@@ -638,9 +670,7 @@ fn writer_loop(
                 }
             }
         }
-        for reply in flush_barriers {
-            let _ = reply.send(barrier_outcome.clone());
-        }
+        barriers.answer(&conn, &mut bodies, &barrier_outcome);
     }
 
     // Test hook: lets `test_wal_absent_after_clean_shutdown`-style tests
@@ -682,58 +712,6 @@ fn writer_loop(
     let status = if result.is_ok() { "ok" } else { "error" };
     ::metrics::histogram!(DB_SHUTDOWN_FLUSH_MS, "status" => status).record(elapsed_ms);
     span.record("status", status);
-}
-
-fn record_enqueue(started: Instant, queue_result: &'static str, span: &tracing::Span) {
-    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    ::metrics::counter!(DB_ENQUEUE_TOTAL, "queue_result" => queue_result).increment(1);
-    ::metrics::histogram!(DB_ENQUEUE_WAIT_MS, "queue_result" => queue_result).record(elapsed_ms);
-    span.record("status", if queue_result == "queued" { "ok" } else { "error" });
-    span.record("queue_result", queue_result);
-}
-
-fn record_batch(
-    started: Instant,
-    batch_size: usize,
-    batch_capacity: usize,
-    batch_size_bucket: &'static str,
-    status: &'static str,
-    span: &tracing::Span,
-) {
-    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    let rows_per_sec = if elapsed_ms > 0.0 {
-        batch_size as f64 / (elapsed_ms / 1000.0)
-    } else {
-        0.0
-    };
-    ::metrics::counter!(DB_WRITE_BATCH_TOTAL,
-        "batch_size_bucket" => batch_size_bucket,
-        "status" => status)
-    .increment(1);
-    ::metrics::histogram!(DB_WRITE_BATCH_DURATION_MS,
-        "batch_size_bucket" => batch_size_bucket,
-        "status" => status)
-    .record(elapsed_ms);
-    ::metrics::histogram!(DB_WRITE_BATCH_SIZE,
-        "batch_size_bucket" => batch_size_bucket)
-    .record(batch_size as f64);
-    ::metrics::gauge!(DB_WRITE_BATCH_CAPACITY).set(batch_capacity as f64);
-    ::metrics::histogram!(DB_WRITE_BATCH_ROWS_PER_SEC,
-        "batch_size_bucket" => batch_size_bucket,
-        "status" => status)
-    .record(rows_per_sec);
-    span.record("status", status);
-}
-
-fn batch_size_bucket(size: usize) -> &'static str {
-    match size {
-        0 => "0",
-        1 => "1",
-        2..=8 => "2_8",
-        9..=32 => "9_32",
-        33..=128 => "33_128",
-        _ => "gt_128",
-    }
 }
 
 #[derive(Clone, Copy)]

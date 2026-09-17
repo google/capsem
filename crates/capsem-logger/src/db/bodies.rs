@@ -12,6 +12,7 @@ use capsem_archive::{BodyLogReader, BodyRef};
 use serde_json::Value;
 
 use super::{DbHandle, DbResult};
+use crate::writer::RetainOutcome;
 
 /// Which side of an exchange a stored body is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,6 +186,33 @@ impl DbHandle {
         Ok(archived)
     }
 
+    /// Drop every archived body whose block sealed before `cutoff` (RFC 3339),
+    /// compacting `session.bodies` and rewriting the index rows that name it.
+    ///
+    /// Writer-owning handles only. `capsem-process` owns every write to a
+    /// session ledger, retention included; the service's handles are external
+    /// disk readers and get the same refusal `write` gives them, because a
+    /// second process rewriting the archive under the writer is exactly the
+    /// thing the single-writer rule exists to prevent.
+    pub async fn retain_bodies_since(&self, cutoff: &str) -> DbResult<RetainOutcome> {
+        let Some(writer) = &self.inner.writer else {
+            let error =
+                "db handle is read-only; session body retention must use the owning process DB handle".to_string();
+            tracing::error!(
+                db_path = %self.inner.path.display(),
+                operation = "retain_bodies_since",
+                error = %error,
+                "session db handle operation failed"
+            );
+            return Err(error);
+        };
+        let outcome = writer.retain_bodies_since(cutoff).await?;
+        // Every surviving block moved, and this handle's reader is holding a
+        // descriptor on the file that no longer exists plus a block from it.
+        self.archive_reader_reset();
+        Ok(outcome)
+    }
+
     async fn body_index_rows(&self, sql: &str, params: &[Value]) -> DbResult<Vec<IndexRow>> {
         let raw = self.query(sql, params).await?;
         let value: Value =
@@ -241,10 +269,13 @@ impl DbHandle {
             .unwrap_or_else(|error| error.into_inner()) = Some(reader);
     }
 
-    /// Drop the cached archive reader. The archive is append-only, so nothing
-    /// in the product rewrites it today; a reader that has seen a rewritten
-    /// file would be holding a stale block, and this is how it is discarded.
-    #[cfg(test)]
+    /// Drop the cached archive reader.
+    ///
+    /// Retention is the one thing that rewrites the archive, and it moves
+    /// every surviving block. A reader that opened the file before then holds
+    /// a descriptor on the replaced inode and a cached block from it, so both
+    /// go: the next read reopens the compacted file. `retain_bodies_since`
+    /// calls this, which is why it is not a test-only seam.
     pub(crate) fn archive_reader_reset(&self) {
         *self
             .inner
