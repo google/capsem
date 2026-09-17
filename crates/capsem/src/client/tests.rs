@@ -1,6 +1,7 @@
 //! Tests for `client` (extracted from inline `mod tests`).
 
 use super::*;
+use capsem_api::VmAction;
 
 /// Shared with every command's tests that talk to the service.
 pub(crate) mod fake_service;

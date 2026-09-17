@@ -25,7 +25,7 @@ use crate::{paths, service_install};
 /// The wire contract is `capsem-api`'s. The CLI used to mirror these types by
 /// hand, which is how `ForkResponse` lost its `id` and `env`/`from` lost their
 /// serde defaults.
-pub use capsem_api::{ForkRequest, ForkResponse, ProvisionRequest, ProvisionResponse, VmAction, VmLifecycleState};
+pub use capsem_api::{ForkRequest, ForkResponse, ProvisionRequest, ProvisionResponse, VmLifecycleState};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SessionInfo {
