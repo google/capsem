@@ -90,3 +90,17 @@ symbols = [
   "test_file_events_fixture_search",
   "test_file_events_in_fixture",
 ]
+# A binary fixture is bytes nobody can read in a diff, so its identity is
+# recorded here and checked. The fixture was once kept current by an in-place
+# `ALTER TABLE` on the blob -- a schema change hidden inside an opaque file.
+# Regenerate it with the replay instead, which rebuilds the same recorded
+# session through today's writer:
+#   cargo test -p capsem-logger --test roundtrip -- --ignored regenerate_session_fixture
+# then update these digests in the same commit.
+sha256 = "4d44771cc948eeeff82625cf8effb60ba8c5eb8237a0ef51a02d65801392d111"
+
+# The ledger's bodies live beside it. The index in test.db points into this
+# archive, so the two are one fixture and move together.
+[[fixture.companion]]
+path = "tests/fixtures/session/test.bodies"
+sha256 = "9570df8681c71211e519896e6d018296c29c3acf6b804efbbebae6f04aec5c59"

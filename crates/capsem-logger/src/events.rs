@@ -475,6 +475,14 @@ pub enum FileAction {
     Read,
     Imported,
     Exported,
+    /// Not a change to a path: the marker a watcher writes when it could not
+    /// record every change it saw in one window.
+    ///
+    /// A gap in the file rail is itself forensic evidence and has to be in the
+    /// ledger, not only in a log line nobody keeps. The row carries an empty
+    /// `path` and the number of events it stands for in `size`, so a reader
+    /// scanning the rail in time order sees exactly where the record thins.
+    Overflow,
 }
 
 impl FileAction {
@@ -487,6 +495,7 @@ impl FileAction {
             FileAction::Read => "read",
             FileAction::Imported => "import",
             FileAction::Exported => "export",
+            FileAction::Overflow => "overflow",
         }
     }
 
@@ -499,6 +508,7 @@ impl FileAction {
             "read" => FileAction::Read,
             "import" => FileAction::Imported,
             "export" => FileAction::Exported,
+            "overflow" => FileAction::Overflow,
             other => {
                 tracing::warn!(value = other, "unknown file action string in DB, treating as Modified");
                 FileAction::Modified

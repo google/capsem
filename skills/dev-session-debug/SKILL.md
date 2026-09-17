@@ -307,12 +307,18 @@ not the forensic source of truth.
 CREATE TABLE fs_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp TEXT NOT NULL,
-    action TEXT NOT NULL,              -- "created", "modified", "deleted"
+    action TEXT NOT NULL,              -- "created", "modified", "deleted", "overflow"
     path TEXT NOT NULL,                -- relative to workspace root
     size INTEGER,                      -- bytes (NULL for deletes and dirs)
     kind TEXT NOT NULL DEFAULT 'file'  -- "file", "dir", "symlink", "other"
 );
 ```
+
+An `overflow` row names no path: it is the marker the monitor writes when one
+scan produced more changes than it emits in a single window. The events it
+stands for are not lost -- the baseline is rewound so the next scan derives
+them again -- and `size` carries how many were held back. A gap in the record
+is evidence, so it is a row rather than a log line.
 
 Every path under the workspace is recorded, directories included. There is no
 exclusion list: `.git/hooks`, `.git/config`, `node_modules`, `.venv` and

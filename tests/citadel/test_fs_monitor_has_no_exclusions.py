@@ -59,6 +59,9 @@ FORBIDDEN_IDENTIFIERS: tuple[tuple[str, str], ...] = (
     ("is_noisy", "an exclusion predicate wearing a cost argument"),
     ("filter_entry(", "a pruned snapshot walk"),
     ("filter_entry (", "a pruned snapshot walk, spaced past the check above"),
+    ("follow_links(true", "a walk that descends a guest symlink"),
+    ("follow_links (true", "a walk that descends a guest symlink, spaced"),
+    ("PollWatcher", "notify's poller, which follows links and cannot be told not to"),
 )
 
 # Path literals whose only use in the monitor was to name what not to record.
@@ -70,6 +73,11 @@ FORBIDDEN_IDENTIFIERS: tuple[tuple[str, str], ...] = (
 # -- spell them in backticks or bare, as the module doc does -- or this guard
 # will read the comment as the list coming back. That is the right trade: a
 # guard that cannot be explained is a guard nobody keeps.
+#
+# The identifiers above are matched bare, so the same discipline is stricter
+# for them: the monitor's own prose must not spell `PollWatcher` or the
+# link-following setting even to explain why they are refused. The module doc
+# says so and points here.
 FORBIDDEN_LITERALS: tuple[tuple[str, str], ...] = (
     ('"node_modules"', "a hardcoded supply-chain path"),
     ('".git"', "a hardcoded persistence path"),
@@ -125,6 +133,9 @@ def test_the_predicate_catches_the_shapes_the_review_found() -> None:
     fn is_noisy(path: &Path) -> bool { true }
     fn walk() { WalkDir::new(dir).into_iter().filter_entry(|e| true); }
     fn spaced() { WalkDir::new(dir).into_iter().filter_entry (|e| true); }
+    fn follows() { WalkDir::new(dir).follow_links(true).into_iter(); }
+    fn follows_spaced() { WalkDir::new(dir).follow_links (true).into_iter(); }
+    fn delegated() { let w = PollWatcher::new(cb, config)?; }
     """
     findings = fs_monitor_findings("adversarial.rs", adversarial)
     assert len(findings) == len(FORBIDDEN_IDENTIFIERS) + len(FORBIDDEN_LITERALS), findings
@@ -135,6 +146,8 @@ def test_the_predicate_allows_an_honest_monitor() -> None:
     honest = """
     const POLL_INTERVAL_MIN_MS: u64 = 500;
     fn poll_interval_for_scan(scan: Duration) -> Duration { scan * 10 }
-    fn workspace_snapshot(dir: &Path) { WalkDir::new(dir).min_depth(1).into_iter(); }
+    fn workspace_snapshot(dir: &Path) {
+        WalkDir::new(dir).min_depth(1).follow_links(false).into_iter();
+    }
     """
     assert fs_monitor_findings("honest.rs", honest) == []

@@ -5,13 +5,16 @@
 //! the tree with `walkdir` and `follow_links(false)`, diffs the walk against
 //! the previous one, and emits the difference.
 //!
-//! Owning the loop is a security property, not a preference. `notify`'s
-//! `PollWatcher` walks with `follow_links(true)` hardcoded and ignores
-//! `configure`, so one guest `ln -s / workspace/evil` turned every scan into a
-//! walk of the host's entire filesystem. Nothing here follows a link: a
-//! symlink is recorded as a symlink and never descended, and the one place
-//! that reads bytes (`.env` credential brokering) opens with `O_NOFOLLOW` and
-//! refuses anything that is not a regular file.
+//! Owning the loop is a security property, not a preference. The `notify`
+//! crate's polling watcher walks with link-following hardcoded on and ignores
+//! the configuration that claims to turn it off, so one guest `ln -s /
+//! workspace/evil` turned every scan into a walk of the host's entire
+//! filesystem. Nothing here follows a link: a symlink is recorded as a symlink
+//! and never descended, and the one place that reads bytes (`.env` credential
+//! brokering) opens with `O_NOFOLLOW` and refuses anything that is not a
+//! regular file. `tests/citadel/test_fs_monitor_has_no_exclusions.py` refuses
+//! that watcher and that setting by name, which is why this paragraph spells
+//! neither.
 //!
 //! Owning the loop also means the cadence tracks the real cost: each scan
 //! times itself and sets the next sleep, so a workspace that starts empty and
@@ -20,6 +23,7 @@
 
 use std::collections::HashMap;
 use std::io::Read;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -100,11 +104,20 @@ struct QueuedEvent {
     size: Option<u64>,
 }
 
+/// What one scan saw of one path, and the whole of what "unchanged" means.
+///
+/// `mtime` alone is guest-controlled and cheap to forge: rewrite a file in
+/// place to the same length, then `touch -r` it back, and a monitor comparing
+/// (kind, len, mtime) sees nothing. `ctime` moves on any inode update and
+/// cannot be set by `utimes`, and `ino` catches a replacement that reuses the
+/// path. Both come out of the stat the walk already did.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SnapshotEntry {
     kind: FileKind,
     len: u64,
     modified: Option<(u64, u32)>,
+    changed: (i64, i64),
+    ino: u64,
 }
 
 impl SnapshotEntry {
@@ -128,6 +141,10 @@ fn workspace_snapshot(watch_dir: &Path, strip_prefix: &Path) -> HashMap<String, 
         .filter_map(Result::ok)
     {
         let fs_path = entry.path();
+        // A non-UTF8 filename is recorded lossily rather than skipped: a name
+        // the ledger cannot spell exactly is still a change that happened, and
+        // dropping it would be one more way to write a file the record does
+        // not mention.
         let rel = fs_path
             .strip_prefix(strip_prefix)
             .unwrap_or(fs_path)
@@ -152,6 +169,8 @@ fn workspace_snapshot(watch_dir: &Path, strip_prefix: &Path) -> HashMap<String, 
                 kind: kind_of(metadata.file_type()),
                 len: metadata.len(),
                 modified,
+                changed: (metadata.ctime(), metadata.ctime_nsec()),
+                ino: metadata.ino(),
             },
         );
     }
@@ -200,11 +219,56 @@ fn reconciliation_events(
         .collect()
 }
 
-/// Bound one scan's emission, reporting how many events were dropped.
-fn cap_batch(batch: &mut Vec<QueuedEvent>) -> usize {
-    let dropped = batch.len().saturating_sub(MAX_QUEUE_SIZE);
-    batch.truncate(MAX_QUEUE_SIZE);
-    dropped
+/// Bound one scan's emission and rewind the baseline for what it defers.
+///
+/// Truncating used to be permanent: the overflow was logged, `current` became
+/// the baseline, and the difference was never derived again. That is a hole an
+/// attacker can steer, because events come out ordered by path -- 100k files
+/// named `!...` push `.git/hooks/pre-commit` out of the window, and nothing in
+/// the ledger says so.
+///
+/// Rewinding each deferred path to what `previous` held (or removing it, if
+/// `previous` had never seen it) makes the loss temporary: the next scan
+/// computes the same difference for that path and emits it. The order is a
+/// delay, not a filter.
+fn defer_overflow(
+    batch: &mut Vec<QueuedEvent>,
+    previous: &HashMap<String, SnapshotEntry>,
+    current: &mut HashMap<String, SnapshotEntry>,
+    max_batch: usize,
+) -> usize {
+    if batch.len() <= max_batch {
+        return 0;
+    }
+    let deferred = batch.split_off(max_batch);
+    for event in &deferred {
+        match previous.get(&event.path) {
+            Some(entry) => current.insert(event.path.clone(), entry.clone()),
+            None => current.remove(&event.path),
+        };
+    }
+    deferred.len()
+}
+
+/// The marker row for a window the monitor could not record in full.
+fn overflow_event(deferred: usize) -> QueuedEvent {
+    QueuedEvent {
+        path: String::new(),
+        action: FileAction::Overflow,
+        kind: FileKind::Other,
+        size: Some(deferred as u64),
+    }
+}
+
+/// Everything the scan loop needs about the tree it watches.
+struct ScanConfig {
+    watch_dir: PathBuf,
+    strip_prefix: PathBuf,
+    /// Cadence for the next scan; re-derived from each scan's own cost.
+    interval: Duration,
+    /// Events emitted from one scan before the rest is deferred to the next.
+    /// Only the tests lower it; production is `MAX_QUEUE_SIZE`.
+    max_batch: usize,
 }
 
 /// What every emission needs, bundled so the signature stays readable.
@@ -229,6 +293,10 @@ pub struct FsMonitor {
     /// this, the pending-event flush at shutdown raced with the WAL
     /// checkpoint -- the signal-driven explicit-cleanup pattern in
     /// capsem-process relies on fs events landing before the checkpoint.
+    ///
+    /// The wait it imposes is bounded: at most two scans and two emissions.
+    /// A shutdown noticed mid-emission costs one extra cycle, to reconcile
+    /// what was written while that batch was persisting, and never more.
     join_handle: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
@@ -265,10 +333,13 @@ impl FsMonitor {
                     .expect("fs_monitor runtime");
                 rt.block_on(Self::scan_loop(
                     shutdown_rx,
-                    watch_dir,
-                    strip_prefix,
+                    ScanConfig {
+                        watch_dir,
+                        strip_prefix,
+                        interval: poll_interval,
+                        max_batch: MAX_QUEUE_SIZE,
+                    },
                     snapshot,
-                    poll_interval,
                     db,
                     security_rules,
                     trace_state,
@@ -298,13 +369,10 @@ impl FsMonitor {
     /// Shutdown is one more scan and emission -- the same code path as any
     /// other cycle -- so the last writes before teardown land in the ledger
     /// without a second reconciliation mechanism to keep in step.
-    #[allow(clippy::too_many_arguments)]
     async fn scan_loop(
         mut shutdown_rx: mpsc::Receiver<()>,
-        watch_dir: PathBuf,
-        strip_prefix: PathBuf,
+        config: ScanConfig,
         mut snapshot: HashMap<String, SnapshotEntry>,
-        mut interval: Duration,
         db: Arc<DbWriter>,
         security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
         trace_state: Arc<std::sync::Mutex<TraceState>>,
@@ -313,8 +381,9 @@ impl FsMonitor {
             db: &db,
             security_rules: &security_rules,
             trace_state: &trace_state,
-            strip_prefix: &strip_prefix,
+            strip_prefix: &config.strip_prefix,
         };
+        let mut interval = config.interval;
         let mut stopping = false;
 
         loop {
@@ -326,13 +395,19 @@ impl FsMonitor {
             }
 
             let scan_started = Instant::now();
-            let current = workspace_snapshot(&watch_dir, &strip_prefix);
+            let mut current = workspace_snapshot(&config.watch_dir, &config.strip_prefix);
             let scan_duration = scan_started.elapsed();
             let mut batch = reconciliation_events(&snapshot, &current);
             let raw = batch.len();
-            let dropped = cap_batch(&mut batch);
-            if dropped > 0 {
-                warn!(count = dropped, "fs-monitor scan overflow, events dropped");
+            let deferred = defer_overflow(&mut batch, &snapshot, &mut current, config.max_batch);
+            if deferred > 0 {
+                warn!(
+                    count = deferred,
+                    "fs-monitor scan overflow, events deferred to next scan"
+                );
+                // The marker goes in the same batch as the window it describes,
+                // so the gap is read in place rather than inferred from a log.
+                batch.push(overflow_event(deferred));
             }
             snapshot = current;
             let saw_shutdown = Self::emit_batch(&ctx, &batch, &mut shutdown_rx).await;

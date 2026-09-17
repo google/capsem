@@ -261,9 +261,8 @@ pub const fn runtime_file_event_type(action: FileAction) -> RuntimeSecurityEvent
     match action {
         FileAction::Imported => RuntimeSecurityEventType::FileImport,
         FileAction::Exported => RuntimeSecurityEventType::FileExport,
-        FileAction::Created | FileAction::Modified | FileAction::Deleted | FileAction::Restored | FileAction::Read => {
-            RuntimeSecurityEventType::FileEvent
-        }
+        FileAction::Created | FileAction::Modified | FileAction::Deleted => RuntimeSecurityEventType::FileEvent,
+        FileAction::Restored | FileAction::Read | FileAction::Overflow => RuntimeSecurityEventType::FileEvent,
     }
 }
 

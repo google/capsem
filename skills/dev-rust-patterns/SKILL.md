@@ -195,14 +195,14 @@ When NOT to reach for it:
 
 ### Signal-driven explicit cleanup for background-thread owners
 
-Any long-running Rust process that owns background threads (SQLite writer, notify PollWatcher, MCP aggregator subprocess, vsock relay) and runs under a bounded SIGTERM-to-SIGKILL budget must NOT rely on `Drop` + tokio-runtime-drop ordering to finish cleanup. On SIGTERM, hand owned resources to the signal handler and drain them synchronously BEFORE letting the main run loop return.
+Any long-running Rust process that owns background threads (SQLite writer, the fs-monitor scan loop, MCP aggregator subprocess, vsock relay) and runs under a bounded SIGTERM-to-SIGKILL budget must NOT rely on `Drop` + tokio-runtime-drop ordering to finish cleanup. On SIGTERM, hand owned resources to the signal handler and drain them synchronously BEFORE letting the main run loop return.
 
 Symptom when this is missing: under concurrent teardowns on one host, the service SIGKILLs a child mid-checkpoint or mid-flush. Visible as `session.db-wal` left non-empty, missing `fs_events` rows, dangling aggregator subprocesses. Works solo, fails under `-n 4`.
 
 Concrete primitives in this tree:
 
 - **`DbWriter::shutdown_blocking(&self)`** — takes the stored mpsc sender, joins the writer thread, runs the final `PRAGMA wal_checkpoint(TRUNCATE)`. Arc-safe: other `Arc<DbWriter>` clones remain valid but their writes become no-ops. Idempotent. Drop delegates to it.
-- **`FsMonitor::shutdown_and_join(&self)`** — sends on the shutdown channel so the event loop runs its final flush, then joins the thread. Must run BEFORE DbWriter shutdown, because fs_events fan into DbWriter.
+- **`FsMonitor::shutdown_and_join(&self)`** — sends on the shutdown channel so the scan loop runs one final scan and emission, then joins the thread. Bounded at two scans and two emissions. Must run BEFORE DbWriter shutdown, because fs_events fan into DbWriter.
 - **`CAPSEM_TEST_SLOW_CHECKPOINT_MS`** — test-only env var in `writer_loop` that inserts a sleep before the final checkpoint. Use in tests that need to distinguish explicit cleanup from implicit runtime-drop ordering.
 
 Canonical wiring in `crates/capsem-process/src/main.rs`:
@@ -327,7 +327,7 @@ looked for, with nothing wrong at either site.
 
 9. **Readiness gates must reflect actual state**: `handle_ipc_connection` responded to Ping with Pong the moment the UDS socket existed -- before vsock connections, boot handshake, or command handler spawn. `wait_for_vm_ready` treated Pong as "ready", so exec commands were sent to a process that couldn't handle them yet, blocking silently in a channel until `setup_vsock` finished. Tests masked this with `wait_exec_ready()` client-side retry loops, creating a double-wait: 30 client retries x 30s server wait each. Fix: `Arc<AtomicBool>` (`vm_ready`) gated by `setup_vsock` after BootReady; IPC handler only sends Pong when the flag is set. One wait, one place -- the server waits; the client calls once. When adding any new IPC readiness check, never respond "ready" based on socket existence alone; check actual process state via a shared flag or state enum.
 
-10. **VirtioFS and FSEvents**: Apple VZ VirtioFS guest writes bypass macOS FSEvents (the kernel's file notification subsystem). If you need to monitor a host directory that is mounted into a guest via VirtioFS, `notify::RecommendedWatcher` will silently drop guest-originated events. You MUST use `notify::poll::PollWatcher` to detect guest file modifications reliably.
+10. **VirtioFS and FSEvents**: Apple VZ VirtioFS guest writes bypass macOS FSEvents (the kernel's file notification subsystem), so `notify::RecommendedWatcher` silently drops guest-originated events and a host directory shared into a guest has to be polled. Do **not** reach for `notify::poll::PollWatcher` to do it: it walks with `follow_links(true)` hardcoded (`notify-7.0.0/src/poll.rs`) and its `configure` is a no-op, so one guest `ln -s / workspace/evil` turns every scan into a walk of the host's entire filesystem. Own the loop instead, as `crates/capsem-core/src/fs_monitor.rs` does: a `walkdir` walk with `follow_links(false)`, a snapshot of `(kind, len, mtime, ctime, ino)` per entry, and the difference between two walks as the events. Owning it also lets the cadence track the measured scan cost rather than a constant, and lets a symlink be recorded as a symlink instead of being descended.
 
 11. **Process sandbox: env_clear() on child spawn**: When spawning a child process (e.g., capsem-process from service), always call `env_clear()` then re-add only the minimal env vars needed (`HOME`, `PATH`, `USER`, `TMPDIR`, `RUST_LOG`). The service's shell environment may contain API keys, tokens, or secrets that the child process has no business seeing. The guest's `--env` args are a separate injection path and are already validated.
 

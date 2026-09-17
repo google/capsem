@@ -144,6 +144,8 @@ mod analytics;
 mod event_roundtrips;
 #[path = "roundtrip/file_events.rs"]
 mod file_events;
+#[path = "roundtrip/fixture_regen.rs"]
+mod fixture_regen;
 #[path = "roundtrip/mcp_calls.rs"]
 mod mcp_calls;
 #[path = "roundtrip/reader_queries.rs"]

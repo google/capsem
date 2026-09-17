@@ -183,21 +183,58 @@ fn env_candidate_matches_dotenv_files_only() {
     assert!(!is_env_candidate("project/not.env"));
 }
 
-/// The scan's emission bound: a 100k-file install must not be truncated
-/// silently, and anything past the bound is counted, not ignored.
+/// Overflow must be a delay, not a filter: a truncated window is rewound so
+/// the next scan derives it again.
 #[test]
-fn cap_batch_drops_the_overflow_and_reports_it() {
-    let mut batch = (0..MAX_QUEUE_SIZE + 3)
-        .map(|i| QueuedEvent {
-            path: format!("file_{i}.txt"),
-            action: FileAction::Modified,
-            kind: FileKind::File,
-            size: Some(1),
-        })
-        .collect::<Vec<_>>();
+fn defer_overflow_rewinds_the_baseline_for_everything_it_holds_back() {
+    let entry = |ino| SnapshotEntry {
+        kind: FileKind::File,
+        len: 1,
+        modified: Some((1, 0)),
+        changed: (1, 0),
+        ino,
+    };
+    // A creation, a modification and a deletion, one of each, so every arm of
+    // the rewind is exercised.
+    let previous = HashMap::from([
+        ("modified.txt".to_string(), entry(2)),
+        ("deleted.txt".to_string(), entry(3)),
+    ]);
+    let mut current = HashMap::from([
+        ("created.txt".to_string(), entry(1)),
+        ("modified.txt".to_string(), entry(4)),
+    ]);
+    // What the tree actually looks like, which the next scan will see again.
+    let truth = current.clone();
+    let mut batch = reconciliation_events(&previous, &current);
+    assert_eq!(batch.len(), 3);
 
-    assert_eq!(cap_batch(&mut batch), 3);
-    assert_eq!(batch.len(), MAX_QUEUE_SIZE);
+    assert_eq!(defer_overflow(&mut batch, &previous, &mut current, 1), 2);
+    assert_eq!(
+        batch.iter().map(|e| (e.path.as_str(), e.action)).collect::<Vec<_>>(),
+        vec![("created.txt", FileAction::Created)]
+    );
+
+    // The rewound baseline must produce exactly the events that were held
+    // back, and nothing else, on the next scan.
+    let next = reconciliation_events(&current, &truth);
+    assert_eq!(
+        next.iter().map(|e| (e.path.as_str(), e.action)).collect::<Vec<_>>(),
+        vec![
+            ("deleted.txt", FileAction::Deleted),
+            ("modified.txt", FileAction::Modified)
+        ]
+    );
+}
+
+/// The marker is a ledger row, not a log line: a reader must see that a
+/// window was truncated, and by how much.
+#[test]
+fn the_overflow_marker_names_no_path_and_counts_what_it_stands_for() {
+    let marker = overflow_event(4_096);
+    assert_eq!(marker.action, FileAction::Overflow);
+    assert_eq!(marker.path, "");
+    assert_eq!(marker.size, Some(4_096));
 }
 
 #[test]
@@ -656,4 +693,147 @@ async fn a_hook_write_is_recorded_after_one_poll_cycle_without_shutdown() {
 
     let recorded = recorded.expect("a poll cycle must record the hook write without a shutdown");
     assert_eq!((recorded.0.as_str(), recorded.1.as_str()), ("created", "file"));
+}
+
+/// Pin a path's mtime to a fixed instant, so two scans can differ in every
+/// way *except* the timestamp a guest can forge with `touch -r`.
+fn pin_mtime(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let pinned = libc::timespec {
+        tv_sec: 1_700_000_000,
+        tv_nsec: 123_456_789,
+    };
+    let times = [pinned, pinned];
+    let rc = unsafe { libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0) };
+    assert_eq!(rc, 0, "utimensat: {}", std::io::Error::last_os_error());
+}
+
+/// The forgery this guards: rewrite a file in place to the same length, then
+/// put its mtime back. Size and mtime say nothing happened; ctime does.
+#[test]
+fn an_in_place_rewrite_with_a_restored_mtime_is_still_a_modification() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("payload.bin");
+    std::fs::write(&path, b"aaaaa").unwrap();
+    pin_mtime(&path);
+    let before = workspace_snapshot(root.path(), root.path());
+
+    std::fs::write(&path, b"bbbbb").unwrap();
+    pin_mtime(&path);
+    let after = workspace_snapshot(root.path(), root.path());
+
+    assert_eq!(
+        before["payload.bin"].modified, after["payload.bin"].modified,
+        "the test is only meaningful while mtime and size are unchanged"
+    );
+    assert_eq!(before["payload.bin"].len, after["payload.bin"].len);
+    let events = reconciliation_events(&before, &after);
+    assert_eq!(
+        events.iter().map(|e| (e.path.as_str(), e.action)).collect::<Vec<_>>(),
+        vec![("payload.bin", FileAction::Modified)]
+    );
+}
+
+/// A link to a directory is one entry, not a subtree: descending it is how a
+/// guest `ln -s /` turned a workspace scan into a walk of the host.
+#[test]
+fn a_symlink_to_a_directory_is_not_descended() {
+    let root = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::fs::write(elsewhere.path().join("child.txt"), "not ours").unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), root.path().join("link")).unwrap();
+
+    let snapshot = workspace_snapshot(root.path(), root.path());
+
+    assert_eq!(snapshot["link"].kind, FileKind::Symlink);
+    assert_eq!(
+        snapshot.keys().collect::<Vec<_>>(),
+        vec!["link"],
+        "the walk must stop at the link, not enumerate what it points at"
+    );
+}
+
+/// Overflow is a delay, not a filter. Events past the bound are held back by
+/// rewinding the baseline, so the next scan emits them, and the window that
+/// was truncated is itself a ledger row.
+#[tokio::test]
+async fn overflow_defers_events_to_the_next_scan_and_records_a_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 64).unwrap());
+    for i in 0..5 {
+        std::fs::write(workspace.join(format!("f{i}.txt")), "x").unwrap();
+    }
+
+    let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
+    let scan = tokio::spawn(FsMonitor::scan_loop(
+        shutdown_rx,
+        ScanConfig {
+            watch_dir: workspace.clone(),
+            strip_prefix: workspace.clone(),
+            interval: Duration::from_millis(20),
+            max_batch: 2,
+        },
+        HashMap::new(),
+        Arc::clone(&db),
+        empty_security_rules(),
+        empty_trace_state(),
+    ));
+
+    // Three cycles at most: 2 emitted, 2 emitted, 1 emitted.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        db.flush().await;
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let recorded: i64 = conn
+            .query_row("SELECT COUNT(*) FROM fs_events WHERE action = 'created'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        if recorded == 5 || std::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    shutdown_tx.send(()).await.unwrap();
+    scan.await.unwrap();
+    let teardown_db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || teardown_db.shutdown_blocking())
+        .await
+        .unwrap();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT path FROM fs_events WHERE action = 'created' ORDER BY path")
+        .unwrap();
+    let created: Vec<String> = stmt
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        created,
+        vec!["f0.txt", "f1.txt", "f2.txt", "f3.txt", "f4.txt"],
+        "every deferred path must arrive on a later scan"
+    );
+
+    let (markers, deferred): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM fs_events WHERE action = 'overflow'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((markers, deferred), (2, 4), "each truncated window is its own row");
+    let marker_paths: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM fs_events WHERE action = 'overflow' AND path != ''",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(marker_paths, 0, "an overflow marker names no path");
 }

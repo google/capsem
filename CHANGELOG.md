@@ -87,7 +87,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer reports the directory inode's size. Watching everything costs more to
   poll, so each scan now times itself and the next rescan is ten scan-durations
   later, between 500ms and 10s -- a workspace that grows into a large install
-  re-adapts on the next cycle.
+  re-adapts on the next cycle. A change is detected by inode change time and
+  inode number as well as size and mtime, so rewriting a file in place and
+  putting its timestamp back no longer hides the write. If a single scan sees
+  more changes than one window emits, the rest are held for the next scan
+  rather than dropped, and the truncated window is itself an `fs_events` row
+  (action `overflow`, with the count in `size`).
 - rustls moves to 0.23.45 for RUSTSEC-2026-0285: TLS 1.3 handshake messages
   were accepted across encryption level boundaries on the host's TLS paths.
 

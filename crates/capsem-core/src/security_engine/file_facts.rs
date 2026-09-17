@@ -30,6 +30,12 @@ impl FileSecurityEvent {
     /// explicit boundary rail must not drift into different notions of which
     /// action writes which facts.
     pub(crate) fn set_action_facts(&mut self, action: FileAction, facts: FileActionFacts) {
+        // An overflow marker names no path, so it fills no slot group: a rule
+        // written about a path must not match the row that says a window of
+        // paths went unrecorded.
+        if action == FileAction::Overflow {
+            return;
+        }
         let (path, name, ext, mime_type, content) = match action {
             FileAction::Created => (
                 &mut self.create_path,
@@ -73,6 +79,8 @@ impl FileSecurityEvent {
                 &mut self.export_mime_type,
                 &mut self.export_content,
             ),
+            // Returned above, before any slot was chosen.
+            FileAction::Overflow => return,
         };
         *path = facts.path;
         *name = facts.name;
