@@ -13,7 +13,7 @@ use futures::{SinkExt, StreamExt};
 /// the two ceilings were equal, a full-size chunk from a non-stock guest
 /// became a frame the CLI and TUI decoders refused, ending the stream with no
 /// exit status.
-const _: () = assert!(capsem_proto::MAX_EXEC_DATA_BYTES + 1 <= stream::MAX_STREAM_FRAME_BYTES);
+const _: () = assert!(capsem_proto::MAX_EXEC_DATA_BYTES < stream::MAX_STREAM_FRAME_BYTES);
 
 /// How long a client may take to send its `start` control message.
 const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);

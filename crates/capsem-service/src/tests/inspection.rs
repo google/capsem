@@ -177,9 +177,12 @@ async fn unregistering_a_session_releases_its_cached_ledger_responses() {
 
     state.unregister_session_db_handle("box");
 
-    let cache = state.stats_detail_response_cache.lock().unwrap();
+    let keys: Vec<String> = {
+        let cache = state.stats_detail_response_cache.lock().unwrap();
+        cache.keys().cloned().collect()
+    };
     assert_eq!(
-        cache.keys().collect::<Vec<_>>(),
+        keys,
         vec!["other:security/latest:50"],
         "only the unregistered VM's responses are released"
     );
