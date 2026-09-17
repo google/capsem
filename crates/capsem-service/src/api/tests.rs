@@ -53,6 +53,7 @@ fn provision_request_env_omitted() {
         persistent: false,
         env: None,
         from: None,
+        auto_snapshot: None,
         networks: Vec::new(),
     };
     let json = serde_json::to_string(&r).unwrap();

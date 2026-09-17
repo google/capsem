@@ -688,6 +688,9 @@ pub struct ProvisionOptions<'a> {
     pub env: Option<std::collections::HashMap<String, String>>,
     pub from: Option<String>,
     pub description: Option<String>,
+    pub auto_snapshot_max: usize,
+    pub manual_snapshot_max: usize,
+    pub auto_snapshot_interval: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -695,17 +698,29 @@ struct ResolvedVmResources {
     ram_mb: u64,
     cpus: u32,
     scratch_disk_size_gb: u32,
+    auto_snapshot_max: usize,
+    manual_snapshot_max: usize,
+    auto_snapshot_interval: u64,
 }
 
 fn resolve_profile_vm_resources(
     profile: &ProfileConfigFile,
     requested_ram_mb: Option<u64>,
     requested_cpus: Option<u32>,
+    requested_auto_snapshot: Option<bool>,
 ) -> ResolvedVmResources {
+    let auto_snapshot_max = match requested_auto_snapshot {
+        Some(false) => 0,
+        Some(true) => profile.vm.snapshots.auto_max.max(1),
+        None => profile.vm.snapshots.auto_max,
+    };
     ResolvedVmResources {
         ram_mb: requested_ram_mb.unwrap_or(u64::from(profile.vm.ram_gb) * 1024),
         cpus: requested_cpus.unwrap_or(profile.vm.cpu_count),
         scratch_disk_size_gb: profile.vm.scratch_disk_size_gb,
+        auto_snapshot_max,
+        manual_snapshot_max: profile.vm.snapshots.manual_max,
+        auto_snapshot_interval: profile.vm.snapshots.auto_interval,
     }
 }
 

@@ -153,6 +153,7 @@ async fn handle_fork_from_persistent_registry() {
         reg.data.vms.insert(
             "pers-vm".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 id: vm_id.clone(),
                 created_at: "2026-01-01T00:00:00Z".into(),
                 ..test_persistent_entry("pers-vm", session_dir.clone())
@@ -242,6 +243,7 @@ fn resume_rejects_profile_revision_drift() {
         reg.data.vms.insert(
             "revision-drift".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 id: vm_id.clone(),
                 name: "revision-drift".into(),
                 profile_id: "code".into(),
@@ -385,6 +387,7 @@ fn resume_rejects_profile_payload_hash_drift() {
         reg.data.vms.insert(
             "payload-hash-drift".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 id: vm_id.clone(),
                 name: "payload-hash-drift".into(),
                 profile_id: "code".into(),
@@ -430,6 +433,7 @@ async fn handle_fork_rejects_asset_pin_drift() {
         reg.data.vms.insert(
             "pin-drift".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 id: vm_id.clone(),
                 name: "pin-drift".into(),
                 profile_id: "code".into(),
@@ -485,6 +489,9 @@ fn provision_rejects_nonexistent_source_sandbox() {
         env: None,
         from: Some("ghost-sandbox".into()),
         description: None,
+        auto_snapshot_max: 10,
+        manual_snapshot_max: 12,
+        auto_snapshot_interval: 300,
     });
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -499,6 +506,7 @@ fn provision_rejects_source_with_different_profile() {
         reg.data.vms.insert(
             "other-profile-source".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 profile_id: "other-profile".into(),
                 ..test_persistent_entry("other-profile-source", PathBuf::from("/tmp/other-profile-source"))
             },
@@ -516,6 +524,9 @@ fn provision_rejects_source_with_different_profile() {
         env: None,
         from: Some("other-profile-source".into()),
         description: None,
+        auto_snapshot_max: 10,
+        manual_snapshot_max: 12,
+        auto_snapshot_interval: 300,
     });
     let err = result.unwrap_err().to_string();
     assert!(
@@ -541,6 +552,7 @@ async fn handle_list_shows_suspended_status() {
         reg.data.vms.insert(
             "susp-vm".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 suspended: true,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
                 ..test_persistent_entry("susp-vm", suspended_dir)
@@ -554,6 +566,7 @@ async fn handle_list_shows_suspended_status() {
         reg.data.vms.insert(
             "stop-vm".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 ram_mb: 1024,
                 cpus: 1,
                 ..test_persistent_entry("stop-vm", stopped_dir)
@@ -601,6 +614,7 @@ async fn handle_info_shows_suspended_status() {
         reg.data.vms.insert(
             "info-susp".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 id: vm_id.clone(),
                 name: "info-susp".into(),
                 profile_id: "code".into(),
@@ -691,6 +705,7 @@ async fn handle_list_marks_profile_payload_drift_incompatible() {
         reg.data.vms.insert(
             "payload-drift".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 profile_payload_hash: "blake3:0000000000000000000000000000000000000000000000000000000000000000".into(),
                 ..test_persistent_entry("payload-drift", state.run_dir.join("persistent/payload-drift"))
             },
@@ -723,6 +738,7 @@ async fn handle_info_marks_profile_payload_drift_incompatible() {
         reg.data.vms.insert(
             "payload-drift-info".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 id: vm_id.clone(),
                 profile_payload_hash: "blake3:0000000000000000000000000000000000000000000000000000000000000000".into(),
                 ..test_persistent_entry(
@@ -754,6 +770,7 @@ async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
         reg.data.vms.insert(
             "rootfs-size-drift".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 id: new_persistent_vm_id(),
                 name: "rootfs-size-drift".into(),
                 profile_id: "code".into(),
@@ -894,6 +911,7 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
         reg.data.vms.insert(
             "resume-vm".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 id: vm_id.clone(),
                 suspended: true,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
@@ -978,6 +996,7 @@ fn existing_resume_checkpoint_requires_completion_marker() {
         reg.data.vms.insert(
             "resume-vm".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 id: vm_id.clone(),
                 name: "resume-vm".into(),
                 profile_id: "code".into(),
@@ -1027,6 +1046,7 @@ fn clear_resume_checkpoint_removes_completion_marker() {
         reg.data.vms.insert(
             "resume-vm".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 id: vm_id.clone(),
                 name: "resume-vm".into(),
                 profile_id: "code".into(),
@@ -1248,14 +1268,20 @@ fn sandbox_info_rejects_missing_profile_id() {
 fn profile_vm_resources_drive_new_session_defaults() {
     let profile = ProfileConfigFile::builtin_primary();
 
-    let default_resources = resolve_profile_vm_resources(&profile, None, None);
+    let default_resources = resolve_profile_vm_resources(&profile, None, None, None);
     assert_eq!(default_resources.cpus, profile.vm.cpu_count);
     assert_eq!(default_resources.ram_mb, u64::from(profile.vm.ram_gb) * 1024);
     assert_eq!(default_resources.scratch_disk_size_gb, profile.vm.scratch_disk_size_gb);
+    assert_eq!(default_resources.auto_snapshot_max, profile.vm.snapshots.auto_max);
+    assert_eq!(
+        default_resources.auto_snapshot_interval,
+        profile.vm.snapshots.auto_interval
+    );
 
-    let customized_resources = resolve_profile_vm_resources(&profile, Some(3072), Some(2));
+    let customized_resources = resolve_profile_vm_resources(&profile, Some(3072), Some(2), Some(false));
     assert_eq!(customized_resources.cpus, 2);
     assert_eq!(customized_resources.ram_mb, 3072);
+    assert_eq!(customized_resources.auto_snapshot_max, 0);
     assert_eq!(
         customized_resources.scratch_disk_size_gb, profile.vm.scratch_disk_size_gb,
         "scratch image size is profile-owned and must not fall back to hidden service defaults"

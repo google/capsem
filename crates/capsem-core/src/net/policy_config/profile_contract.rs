@@ -157,6 +157,24 @@ pub struct ProfileFileDescriptor {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProfileVmSnapshots {
+    pub auto_max: usize,
+    pub manual_max: usize,
+    pub auto_interval: u64,
+}
+
+impl Default for ProfileVmSnapshots {
+    fn default() -> Self {
+        Self {
+            auto_max: 10,
+            manual_max: 12,
+            auto_interval: 300,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileVmDefaults {
     #[serde(default = "default_cpu_count")]
@@ -165,6 +183,8 @@ pub struct ProfileVmDefaults {
     pub ram_gb: u32,
     #[serde(default = "default_scratch_disk_size_gb")]
     pub scratch_disk_size_gb: u32,
+    #[serde(default)]
+    pub snapshots: ProfileVmSnapshots,
 }
 
 impl Default for ProfileVmDefaults {
@@ -173,6 +193,7 @@ impl Default for ProfileVmDefaults {
             cpu_count: default_cpu_count(),
             ram_gb: default_ram_gb(),
             scratch_disk_size_gb: default_scratch_disk_size_gb(),
+            snapshots: ProfileVmSnapshots::default(),
         }
     }
 }

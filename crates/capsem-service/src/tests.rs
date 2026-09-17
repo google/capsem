@@ -414,6 +414,7 @@ fn install_test_profile_catalog(state: &ServiceState, profile: &ProfileConfigFil
 
 fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
     PersistentVmEntry {
+        auto_snapshot_max: None,
         id: new_persistent_vm_id(),
         name: name.into(),
         profile_id: "code".into(),

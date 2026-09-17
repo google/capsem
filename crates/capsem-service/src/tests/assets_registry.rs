@@ -302,6 +302,7 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
     registry.data.vms.insert(
         "saved-vm".into(),
         PersistentVmEntry {
+            auto_snapshot_max: None,
             asset_pins: pins,
             ..test_persistent_entry("saved-vm", base.join("persistent/saved-vm"))
         },
@@ -348,6 +349,7 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
     registry.data.vms.insert(
         "saved-vm".into(),
         PersistentVmEntry {
+            auto_snapshot_max: None,
             asset_pins: pins,
             ..test_persistent_entry("saved-vm", base.join("persistent/saved-vm"))
         },
@@ -1373,6 +1375,9 @@ fn provision_accepts_name_just_under_uds_limit() {
         env: None,
         from: None,
         description: None,
+        auto_snapshot_max: 10,
+        manual_snapshot_max: 12,
+        auto_snapshot_interval: 300,
     });
     // Will fail later (missing rootfs), but NOT for path length
     if let Err(e) = &result {
@@ -1399,6 +1404,9 @@ fn provision_short_name_passes_path_check() {
         env: None,
         from: None,
         description: None,
+        auto_snapshot_max: 10,
+        manual_snapshot_max: 12,
+        auto_snapshot_interval: 300,
     });
     // Fails for missing assets, not path length
     if let Err(e) = &result {
@@ -1425,6 +1433,9 @@ fn provision_rejects_unknown_profile_before_boot() {
         env: None,
         from: None,
         description: None,
+        auto_snapshot_max: 10,
+        manual_snapshot_max: 12,
+        auto_snapshot_interval: 300,
     });
     let err = result.unwrap_err().to_string();
     assert!(
@@ -1450,6 +1461,7 @@ fn provision_persistent_rejects_duplicate_name() {
         reg.data.vms.insert(
             "taken".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 ..test_persistent_entry("taken", PathBuf::from("/tmp/taken"))
             },
         );
@@ -1466,6 +1478,9 @@ fn provision_persistent_rejects_duplicate_name() {
         env: None,
         from: None,
         description: None,
+        auto_snapshot_max: 10,
+        manual_snapshot_max: 12,
+        auto_snapshot_interval: 300,
     });
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -1489,6 +1504,7 @@ async fn purge_default_removes_defunct_persistent_and_keeps_healthy_stopped() {
         reg.data.vms.insert(
             "defunct-vm".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 defunct: true,
                 last_error: Some("boot failed".into()),
                 ..test_persistent_entry("defunct-vm", defunct_dir.clone())
@@ -1497,6 +1513,7 @@ async fn purge_default_removes_defunct_persistent_and_keeps_healthy_stopped() {
         reg.data.vms.insert(
             "healthy-vm".into(),
             PersistentVmEntry {
+                auto_snapshot_max: None,
                 ..test_persistent_entry("healthy-vm", healthy_dir.clone())
             },
         );

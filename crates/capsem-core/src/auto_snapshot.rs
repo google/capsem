@@ -60,16 +60,19 @@ pub struct AutoSnapshotScheduler {
     max_manual: usize,
     interval: Duration,
     next_auto_slot: usize,
+    supports_reflink: bool,
 }
 
 impl AutoSnapshotScheduler {
     pub fn new(session_dir: PathBuf, max_auto: usize, max_manual: usize, interval: Duration) -> Self {
+        let supports_reflink = filesystem_supports_reflink(&session_dir);
         Self {
             session_dir,
             max_auto,
             max_manual,
             interval,
             next_auto_slot: 0,
+            supports_reflink,
         }
     }
 
@@ -166,6 +169,7 @@ impl AutoSnapshotScheduler {
 
     /// Take an automatic snapshot (auto pool, ring buffer).
     pub fn take_snapshot(&mut self) -> anyhow::Result<SnapshotSlot> {
+        anyhow::ensure!(self.max_auto > 0, "auto-snapshots are disabled (max_auto is 0)");
         let slot = self.auto_slot(self.next_auto_slot);
         let result = self.snapshot_into_slot(slot, SnapshotOrigin::Auto, None)?;
         self.next_auto_slot = (self.next_auto_slot + 1) % self.max_auto;
@@ -229,10 +233,12 @@ impl AutoSnapshotScheduler {
             .filter(|e| e.file_type().is_file() || e.file_type().is_symlink())
             .count();
 
-        // Clone system image.
+        // Clone system image. Skip copying system/rootfs.img for auto-snapshots on
+        // filesystems without reflink support (e.g. ext4) to avoid physical copy overhead.
+        let clone_sys = origin == SnapshotOrigin::Manual || self.supports_reflink;
         let sys_src = self.system_dir();
         let sys_dst = slot_dir.join("system");
-        if sys_src.exists() {
+        if clone_sys && sys_src.exists() {
             // Same rule as clone_sandbox_state: flush rootfs.img before a
             // metadata-only clone or the snapshot captures stale guest writes.
             fsync_rootfs_before_clone(&sys_src)?;
@@ -830,6 +836,40 @@ pub fn default_snapshot_backend() -> Box<dyn SnapshotBackend> {
     #[cfg(target_os = "linux")]
     {
         Box::new(ReflinkSnapshot)
+    }
+}
+
+/// Returns true if `dir` resides on a filesystem that supports copy-on-write
+/// reflinks (`clonefile` on macOS, `ioctl(FICLONE)` on Linux).
+pub fn filesystem_supports_reflink(dir: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = dir;
+        true
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut probe_dir = dir;
+        while !probe_dir.exists() {
+            match probe_dir.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => probe_dir = parent,
+                _ => break,
+            }
+        }
+        let id = uuid::Uuid::new_v4();
+        let src = probe_dir.join(format!(".capsem_reflink_probe_src_{id}"));
+        let dst = probe_dir.join(format!(".capsem_reflink_probe_dst_{id}"));
+        let res = std::fs::write(&src, b"probe")
+            .and_then(|()| ReflinkSnapshot::try_reflink(&src, &dst))
+            .unwrap_or(false);
+        let _ = std::fs::remove_file(&src);
+        let _ = std::fs::remove_file(&dst);
+        res
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = dir;
+        false
     }
 }
 

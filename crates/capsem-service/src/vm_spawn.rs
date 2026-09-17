@@ -19,6 +19,9 @@ impl ServiceState {
             env,
             from,
             description,
+            auto_snapshot_max,
+            manual_snapshot_max,
+            auto_snapshot_interval,
         } = options;
         validate_profile_route_id(profile_id.clone()).map_err(|error| anyhow!("invalid profile_id: {}", error.1))?;
 
@@ -222,6 +225,12 @@ impl ServiceState {
                 .arg(ram_mb.to_string())
                 .arg("--scratch-disk-size-gb")
                 .arg(scratch_disk_size_gb.to_string())
+                .arg("--auto-snapshot-max")
+                .arg(auto_snapshot_max.to_string())
+                .arg("--manual-snapshot-max")
+                .arg(manual_snapshot_max.to_string())
+                .arg("--auto-snapshot-interval")
+                .arg(auto_snapshot_interval.to_string())
                 .arg("--uds-path")
                 .arg(&uds_path)
                 // Explicitly, because `uds_path` may have been shortened out
@@ -262,6 +271,7 @@ impl ServiceState {
 
         if persistent {
             let registration = self.persistent_registry.lock().unwrap().register(PersistentVmEntry {
+                auto_snapshot_max: Some(auto_snapshot_max),
                 id: id.to_string(),
                 name: name.to_string(),
                 profile_id: profile_id.clone(),
@@ -507,6 +517,32 @@ impl ServiceState {
                 .arg(ram_mb.to_string())
                 .arg("--scratch-disk-size-gb")
                 .arg(scratch_disk_size_gb.to_string())
+                .arg("--auto-snapshot-max")
+                .arg(
+                    entry
+                        .auto_snapshot_max
+                        .or_else(|| {
+                            self.cached_profile_config(&entry.profile_id)
+                                .map(|p| p.vm.snapshots.auto_max)
+                                .ok()
+                        })
+                        .unwrap_or(10)
+                        .to_string(),
+                )
+                .arg("--manual-snapshot-max")
+                .arg(
+                    self.cached_profile_config(&entry.profile_id)
+                        .map(|p| p.vm.snapshots.manual_max)
+                        .unwrap_or(12)
+                        .to_string(),
+                )
+                .arg("--auto-snapshot-interval")
+                .arg(
+                    self.cached_profile_config(&entry.profile_id)
+                        .map(|p| p.vm.snapshots.auto_interval)
+                        .unwrap_or(300)
+                        .to_string(),
+                )
                 .arg("--uds-path")
                 .arg(&uds_path)
                 // Explicitly, because `uds_path` may have been shortened out

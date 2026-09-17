@@ -41,6 +41,9 @@ pub struct ProvisionRequest {
     /// When true, the VM is persistent (named VMs). Ephemeral VMs are destroyed on stop.
     #[serde(default)]
     pub persistent: bool,
+    /// When false, disables automatic rolling snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_snapshot: Option<bool>,
     /// Environment variables to inject into the guest at boot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,

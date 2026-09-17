@@ -655,6 +655,7 @@ pub(super) async fn handle_persist(
     // moves under persistent/ once the process has exited (see
     // `settle_persistent_session_dir`); a running process holds it by path.
     let entry = PersistentVmEntry {
+        auto_snapshot_max: None,
         id: id.clone(),
         name: name.clone(),
         profile_id: profile_id.clone(),
@@ -817,10 +818,14 @@ pub(super) async fn handle_run(
     let profile = state
         .profile_config(&profile_id)
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
-    let resources = resolve_profile_vm_resources(&profile, payload.ram_mb, payload.cpus);
+    // Disable auto-snapshots for one-shot VMs (destroyed on exit).
+    let resources = resolve_profile_vm_resources(&profile, payload.ram_mb, payload.cpus, Some(false));
     let ram_mb = resources.ram_mb;
     let cpus = resources.cpus;
     let scratch_disk_size_gb = resources.scratch_disk_size_gb;
+    let auto_snapshot_max = resources.auto_snapshot_max;
+    let manual_snapshot_max = resources.manual_snapshot_max;
+    let auto_snapshot_interval = resources.auto_snapshot_interval;
 
     // 1. Provision ephemeral VM. `provision_sandbox` is synchronous and
     // does heavy I/O (APFS clonefile, rootfs.img fsync, child spawn);
@@ -847,6 +852,9 @@ pub(super) async fn handle_run(
                 env,
                 from: None,
                 description: None,
+                auto_snapshot_max,
+                manual_snapshot_max,
+                auto_snapshot_interval,
             })
         })
         .await

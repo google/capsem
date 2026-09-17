@@ -954,9 +954,14 @@ fn snapshot_scheduler_uses_clone_directory() {
         "important"
     );
 
-    // System dir should also be snapshotted
+    // Named manual snapshots always snapshot system/
+    let manual_slot = s.take_named_snapshot("manual-1").unwrap();
+    let system_manual_snap = session.join(format!("auto_snapshots/{}/system", manual_slot.slot));
+    assert!(system_manual_snap.exists());
+
+    // Auto snapshots snapshot system/ only if the filesystem supports reflinks
     let system_snap = session.join(format!("auto_snapshots/{}/system", slot.slot));
-    assert!(system_snap.exists());
+    assert_eq!(system_snap.exists(), filesystem_supports_reflink(&session));
 }
 
 // -------------------------------------------------------------------

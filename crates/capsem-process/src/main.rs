@@ -140,6 +140,15 @@ struct Args {
     service_socket: Option<PathBuf>,
     #[arg(long)]
     checkpoint_path: Option<PathBuf>,
+    /// Maximum number of automatic rolling snapshots (0 disables auto-snapshots).
+    #[arg(long, default_value = "10")]
+    auto_snapshot_max: usize,
+    /// Maximum number of retained manual snapshots.
+    #[arg(long, default_value = "12")]
+    manual_snapshot_max: usize,
+    /// Interval in seconds between automatic snapshots (0 disables auto-snapshots).
+    #[arg(long, default_value = "300")]
+    auto_snapshot_interval: u64,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
     #[arg(long = "env")]
     env: Vec<String>,
@@ -493,9 +502,16 @@ async fn run_async_main_loop(
         runtime_config.active_profile_path.to_string_lossy().to_string(),
     );
     let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env.clone());
-    let snap_auto_max = 10usize;
-    let snap_manual_max = 12usize;
-    let snap_interval = 300u64;
+    let snap_auto_max = args.auto_snapshot_max;
+    let snap_manual_max = args.manual_snapshot_max;
+    let snap_interval = args.auto_snapshot_interval;
+    // Treat auto_interval = 0 as disabled (tokio::time::interval panics on zero).
+    let auto_snapshots_enabled = snap_auto_max > 0 && snap_interval > 0;
+    if snap_auto_max > 0 && snap_interval == 0 {
+        tracing::warn!(
+            "auto-snapshot interval is 0; disabling auto-snapshots (set --auto-snapshot-interval > 0 to enable)"
+        );
+    }
 
     let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
         session_dir.clone(),
@@ -506,7 +522,7 @@ async fn run_async_main_loop(
     let scheduler = Arc::new(tokio::sync::Mutex::new(scheduler));
 
     // Defer initial snapshot to background -- workspace is empty at boot, no need to block.
-    {
+    if auto_snapshots_enabled {
         let sched = Arc::clone(&scheduler);
         tokio::spawn(async move {
             let mut s = sched.lock().await;
@@ -625,35 +641,37 @@ async fn run_async_main_loop(
         .with_private_names(private_names),
     );
 
-    let sched_clone = Arc::clone(&scheduler);
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(snap_interval));
-        tick.tick().await;
-        loop {
+    if auto_snapshots_enabled {
+        let sched_clone = Arc::clone(&scheduler);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(snap_interval));
             tick.tick().await;
-            let sched = Arc::clone(&sched_clone);
-            let result = tokio::task::spawn_blocking(move || {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(async {
-                    let mut s = sched.lock().await;
-                    s.take_snapshot()
+            loop {
+                tick.tick().await;
+                let sched = Arc::clone(&sched_clone);
+                let result = tokio::task::spawn_blocking(move || {
+                    let rt = tokio::runtime::Handle::current();
+                    rt.block_on(async {
+                        let mut s = sched.lock().await;
+                        s.take_snapshot()
+                    })
                 })
-            })
-            .await;
-            match result {
-                Ok(Ok(slot)) => {
-                    info!(
-                        slot = slot.slot,
-                        files_count = slot.files_count,
-                        origin = "auto",
-                        "auto snapshot captured"
-                    );
+                .await;
+                match result {
+                    Ok(Ok(slot)) => {
+                        info!(
+                            slot = slot.slot,
+                            files_count = slot.files_count,
+                            origin = "auto",
+                            "auto snapshot captured"
+                        );
+                    }
+                    Ok(Err(e)) => tracing::warn!(error = %e, "auto-snapshot failed"),
+                    Err(e) => tracing::warn!(error = %e, "auto-snapshot task panicked"),
                 }
-                Ok(Err(e)) => tracing::warn!(error = %e, "auto-snapshot failed"),
-                Err(e) => tracing::warn!(error = %e, "auto-snapshot task panicked"),
             }
-        }
-    });
+        });
+    }
 
     let ipc_tx_clone = ipc_tx.clone();
     let job_store_clone = Arc::clone(&job_store);
