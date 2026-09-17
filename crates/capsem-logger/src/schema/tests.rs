@@ -310,23 +310,17 @@ fn migrate_tool_calls_origin_idempotent() {
     assert_eq!(origin, "mcp");
 }
 
+/// An MCP tool call has no model call to hang from, and the table says so.
+///
+/// This was a `migrate` test: the old `tool_calls` had `model_call_id NOT
+/// NULL`, and `rebuild_tool_calls_nullable_model_call` copied the table into
+/// a nullable one. The declaration in `schema/ddl.rs` is nullable outright,
+/// so what is left to hold is the invariant itself -- a tool call the agent
+/// made directly through MCP is a real row, not an orphan to reject.
 #[test]
-fn migrate_tool_calls_allows_orphan_mcp_origin_rows() {
+fn an_mcp_tool_call_needs_no_model_call_to_belong_to() {
     let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        "CREATE TABLE tool_calls (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                model_call_id INTEGER NOT NULL,
-                call_index INTEGER NOT NULL,
-                call_id TEXT NOT NULL,
-                tool_name TEXT NOT NULL,
-                arguments TEXT
-            );",
-    )
-    .unwrap();
-
-    migrate(&conn).unwrap();
-    migrate(&conn).unwrap();
+    create_tables(&conn).unwrap();
 
     conn.execute(
         "INSERT INTO tool_calls (

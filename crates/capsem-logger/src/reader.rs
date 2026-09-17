@@ -275,6 +275,21 @@ pub struct BrokeredCredentialStat {
     pub last_seen: Option<String>,
 }
 
+/// The net_events column list, in the order `NetEvent` is read from.
+///
+/// `credential_ref` and `event_id` used to be selected through
+/// `optional_column_expr`, which substituted `NULL AS credential_ref` on a
+/// ledger that lacked the column: an older file then read as a current one in
+/// which nothing was ever brokered. Both are declared in `schema/ddl.rs` and
+/// selected outright, so a file that lacks one says so.
+const NET_EVENT_COLUMNS: &str = "timestamp, domain, port, decision, process_name, pid,
+     method, path, query, status_code,
+     bytes_sent, bytes_received, duration_ms, matched_rule,
+     request_headers, response_headers,
+     request_body_preview, response_body_preview, conn_type,
+     policy_mode, policy_action, policy_rule, policy_reason,
+     trace_id, credential_ref, event_id";
+
 /// Shared SQL column tail for model_calls SELECT queries after provider/protocol.
 const MODEL_CALL_COLUMNS_TAIL: &str = "model, process_name, pid,
      method, path, stream,
@@ -388,51 +403,20 @@ pub struct DbReader {
 }
 
 impl DbReader {
-    fn has_column(&self, table: &str, column: &str) -> bool {
-        let Ok(mut stmt) = self.conn.prepare(&format!("PRAGMA table_info({table})")) else {
-            return false;
-        };
-        let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(1)) else {
-            return false;
-        };
-        for name in rows.filter_map(Result::ok) {
-            if name == column {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn optional_column_expr(&self, table: &str, column: &str) -> String {
-        if self.has_column(table, column) {
-            column.to_string()
-        } else {
-            format!("NULL AS {column}")
-        }
-    }
-
+    /// The model_calls column list, in the order `read_model_call_row` reads.
+    ///
+    /// Every column is required. `protocol`, `credential_ref` and `event_id`
+    /// used to go through `optional_column_expr`, which quietly substituted
+    /// `NULL AS protocol` on a ledger that lacked the column, so an older
+    /// file read as a current one with the fields blank.
     fn model_call_columns(&self) -> String {
-        format!(
-            "id, timestamp, provider, {}, {}, {}, usage_details, {}",
-            self.optional_column_expr("model_calls", "protocol"),
-            MODEL_CALL_COLUMNS_TAIL,
-            self.optional_column_expr("model_calls", "credential_ref"),
-            self.optional_column_expr("model_calls", "event_id")
-        )
+        format!("id, timestamp, provider, protocol, {MODEL_CALL_COLUMNS_TAIL}, credential_ref, usage_details, event_id")
     }
 
     /// Query the most recent N network events, ordered newest first.
     pub fn recent_net_events(&self, limit: usize) -> rusqlite::Result<Vec<NetEvent>> {
-        let credential_ref_col = self.optional_column_expr("net_events", "credential_ref");
-        let event_id_col = self.optional_column_expr("net_events", "event_id");
         let sql = format!(
-            "SELECT timestamp, domain, port, decision, process_name, pid,
-                    method, path, query, status_code,
-                    bytes_sent, bytes_received, duration_ms, matched_rule,
-                    request_headers, response_headers,
-                    request_body_preview, response_body_preview, conn_type,
-                    policy_mode, policy_action, policy_rule, policy_reason,
-                    trace_id, {credential_ref_col}, {event_id_col}
+            "SELECT {NET_EVENT_COLUMNS}
              FROM net_events
              ORDER BY id DESC
              LIMIT ?1"
@@ -694,12 +678,10 @@ impl DbReader {
 
     /// Get tool responses for a given model_call_id.
     pub fn tool_responses_for(&self, model_call_id: i64) -> rusqlite::Result<Vec<ToolResponseEntry>> {
-        let credential_ref_col = self.optional_column_expr("tool_responses", "credential_ref");
-        let sql = format!(
-            "SELECT call_id, content_preview, is_error, {credential_ref_col}, event_id
+        let mut stmt = self.conn.prepare(
+            "SELECT call_id, content_preview, is_error, credential_ref, event_id
              FROM tool_responses WHERE model_call_id = ?1",
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
+        )?;
         let rows = stmt.query_map(params![model_call_id], |row| {
             Ok(ToolResponseEntry {
                 event_id: row.get(4)?,
@@ -883,16 +865,8 @@ impl DbReader {
     /// Search net events by domain, path, method, or matched_rule substring.
     pub fn search_net_events(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<NetEvent>> {
         let pattern = format!("%{query}%");
-        let credential_ref_col = self.optional_column_expr("net_events", "credential_ref");
-        let event_id_col = self.optional_column_expr("net_events", "event_id");
         let sql = format!(
-            "SELECT timestamp, domain, port, decision, process_name, pid,
-                    method, path, query, status_code,
-                    bytes_sent, bytes_received, duration_ms, matched_rule,
-                    request_headers, response_headers,
-                    request_body_preview, response_body_preview, conn_type,
-                    policy_mode, policy_action, policy_rule, policy_reason,
-                    trace_id, {credential_ref_col}, {event_id_col}
+            "SELECT {NET_EVENT_COLUMNS}
              FROM net_events
              WHERE domain LIKE ?1
                 OR path LIKE ?1
@@ -1174,18 +1148,12 @@ impl DbReader {
         })?;
 
         // Fetch all tool responses for this trace in one batch.
-        let tool_response_credential_ref_col = if self.has_column("tool_responses", "credential_ref") {
-            "tr.credential_ref".to_string()
-        } else {
-            "NULL AS credential_ref".to_string()
-        };
-        let tool_response_sql = format!(
-            "SELECT tr.model_call_id, tr.call_id, tr.content_preview, tr.is_error, {tool_response_credential_ref_col}, tr.event_id
+        let mut tool_resps_stmt = self.conn.prepare(
+            "SELECT tr.model_call_id, tr.call_id, tr.content_preview, tr.is_error, tr.credential_ref, tr.event_id
              FROM tool_responses tr
              JOIN model_calls mc ON tr.model_call_id = mc.id
-             WHERE mc.trace_id = ?1"
-        );
-        let mut tool_resps_stmt = self.conn.prepare(&tool_response_sql)?;
+             WHERE mc.trace_id = ?1",
+        )?;
         let all_tool_resps = tool_resps_stmt.query_map(params![trace_id], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
@@ -1440,14 +1408,11 @@ impl DbReader {
 
     /// Recent exec events (for Layer 1 queries).
     pub fn recent_exec_events(&self, limit: usize) -> rusqlite::Result<Vec<ExecEvent>> {
-        let credential_ref_col = self.optional_column_expr("exec_events", "credential_ref");
-        let event_id_col = self.optional_column_expr("exec_events", "event_id");
-        let sql = format!(
+        let mut stmt = self.conn.prepare(
             "SELECT timestamp, exec_id, command, source, trace_id, process_name,
-                    {credential_ref_col}, {event_id_col}
-             FROM exec_events ORDER BY timestamp DESC LIMIT ?1"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
+                    credential_ref, event_id
+             FROM exec_events ORDER BY timestamp DESC LIMIT ?1",
+        )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             let ts_str: String = row.get(0)?;
             let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
@@ -1467,16 +1432,12 @@ impl DbReader {
 
     /// Recent audit events (for Layer 3 queries).
     pub fn recent_audit_events(&self, limit: usize) -> rusqlite::Result<Vec<AuditEvent>> {
-        let trace_id_col = self.optional_column_expr("audit_events", "trace_id");
-        let credential_ref_col = self.optional_column_expr("audit_events", "credential_ref");
-        let event_id_col = self.optional_column_expr("audit_events", "event_id");
-        let sql = format!(
+        let mut stmt = self.conn.prepare(
             "SELECT timestamp, pid, ppid, uid, exe, comm, argv, cwd,
                     tty, session_id, audit_id, exec_event_id, parent_exe,
-                    {trace_id_col}, {credential_ref_col}, {event_id_col}
-             FROM audit_events ORDER BY timestamp DESC LIMIT ?1"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
+                    trace_id, credential_ref, event_id
+             FROM audit_events ORDER BY timestamp DESC LIMIT ?1",
+        )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             let ts_str: String = row.get(0)?;
             let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);

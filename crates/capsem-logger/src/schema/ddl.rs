@@ -2,10 +2,15 @@
 //!
 //! Every table and index a fresh session database is created with, as one
 //! executable statement batch. It lives apart from `schema.rs` because that
-//! module is behavior -- creation, migration, the memory mirror -- and this is
-//! the contract those behaviors operate on. `migrate` exists only for databases
-//! created before a column here did; a fresh database always gets the final
-//! shape from this batch.
+//! module is behavior -- creation, the memory mirror -- and this is the
+//! contract those behaviors operate on.
+//!
+//! It is the only place a session table is defined. `schema::migrate` used to
+//! be a second one: seventy `let _ = conn.execute("ALTER TABLE ... ADD COLUMN
+//! ...")` statements whose results were discarded, which on an older file
+//! produced a third shape belonging to neither build. `session.db` is created
+//! per session and never carried across builds, so a file an older build wrote
+//! fails here, naming what it lacks.
 
 pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS net_events (
@@ -443,4 +448,80 @@ pub const CREATE_SCHEMA: &str = "
         ON profile_mutation_events(profile_id);
     CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_target
         ON profile_mutation_events(category, target_kind, target_key);
+
+
+    -- Correlation indexes: one per table that carries the column.
+    CREATE INDEX IF NOT EXISTS idx_net_events_turn_id ON net_events(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_model_calls_turn_id ON model_calls(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_model_items_turn_id ON model_items(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_turn_id ON tool_calls(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_responses_turn_id ON tool_responses(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_event_body_blobs_turn_id ON event_body_blobs(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_fs_events_turn_id ON fs_events(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_exec_events_turn_id ON exec_events(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_dns_events_turn_id ON dns_events(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_events_turn_id ON audit_events(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_substitution_events_turn_id ON substitution_events(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_security_rule_events_turn_id ON security_rule_events(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_security_decision_events_turn_id ON security_decision_events(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_security_ask_events_turn_id ON security_ask_events(turn_id);
+    CREATE INDEX IF NOT EXISTS idx_security_rule_events_credential_ref ON security_rule_events(credential_ref);
+    CREATE INDEX IF NOT EXISTS idx_security_decision_events_credential_ref ON security_decision_events(credential_ref);
+    CREATE INDEX IF NOT EXISTS idx_net_events_credential_ref ON net_events(credential_ref);
+    CREATE INDEX IF NOT EXISTS idx_model_calls_credential_ref ON model_calls(credential_ref);
+    CREATE INDEX IF NOT EXISTS idx_fs_events_credential_ref ON fs_events(credential_ref);
+    CREATE INDEX IF NOT EXISTS idx_exec_events_credential_ref ON exec_events(credential_ref);
+    CREATE INDEX IF NOT EXISTS idx_tool_responses_credential_ref ON tool_responses(credential_ref);
+    CREATE INDEX IF NOT EXISTS idx_dns_events_credential_ref ON dns_events(credential_ref);
+    CREATE INDEX IF NOT EXISTS idx_audit_events_credential_ref ON audit_events(credential_ref);
+    CREATE INDEX IF NOT EXISTS idx_net_events_trace_id ON net_events(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_fs_events_trace_id ON fs_events(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_trace_id ON tool_calls(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_responses_trace_id ON tool_responses(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_events_trace_id ON audit_events(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_net_events_event_id ON net_events(event_id);
+    CREATE INDEX IF NOT EXISTS idx_model_calls_event_id ON model_calls(event_id);
+    CREATE INDEX IF NOT EXISTS idx_fs_events_event_id ON fs_events(event_id);
+    CREATE INDEX IF NOT EXISTS idx_exec_events_event_id ON exec_events(event_id);
+    CREATE INDEX IF NOT EXISTS idx_dns_events_event_id ON dns_events(event_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_events_event_id ON audit_events(event_id);
+    CREATE INDEX IF NOT EXISTS idx_substitution_events_event_id ON substitution_events(event_id);
+";
+
+/// The transport ledger, created once and thereafter only asserted.
+///
+/// It is apart from `CREATE_SCHEMA` because `CREATE TABLE IF NOT EXISTS`
+/// silently recreates a table that is gone, and for this ledger that would be
+/// the wrong answer: `transport_events` is the record of which connections
+/// were allowed and which were blocked, so a file that has lost it must read
+/// as corrupt, not as a session that never touched the network.
+/// `create_tables` applies this batch only when the marker is absent, which
+/// is to say only on a ledger that has never had it, and `assert_current`
+/// speaks for every open after that.
+pub(super) const CREATE_TRANSPORT: &str = "
+    CREATE TABLE IF NOT EXISTS transport_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL UNIQUE CHECK(length(event_id)=12 AND event_id NOT GLOB '*[^0-9a-f]*'),
+        timestamp_unix_ms INTEGER NOT NULL CHECK(timestamp_unix_ms >= 0),
+        event_type TEXT NOT NULL CHECK(event_type IN ('network.connect','network.connect_result','network.close','network.lifecycle','network.probe','network.probe_result')),
+        network_id TEXT,
+        connection_id TEXT,
+        event_json TEXT NOT NULL CHECK(length(CAST(event_json AS BLOB)) <= 65536 AND json_valid(event_json))
+    );
+    CREATE INDEX IF NOT EXISTS idx_transport_events_network ON transport_events(network_id,id);
+    CREATE INDEX IF NOT EXISTS idx_transport_events_connection ON transport_events(connection_id,id);
+    CREATE INDEX IF NOT EXISTS idx_transport_events_timestamp ON transport_events(timestamp_unix_ms,id);
+    -- The transport ledger's own version marker. `user_version` belongs to
+    -- SessionIndex in the shared main.db, so this one is logger-owned and
+    -- disk-only; `transport::assert_current` refuses a version it does not
+    -- know rather than upgrading the file. The gate that keeps a deleted
+    -- marker from coming back is the TABLE's absence, checked in
+    -- `create_tables`, not the row's: `OR IGNORE` here is for two writers
+    -- opening the same fresh ledger at once, where the loser must no-op
+    -- rather than fail on the primary key.
+    CREATE TABLE IF NOT EXISTS transport_schema (
+        id INTEGER PRIMARY KEY CHECK(id=1),
+        version INTEGER NOT NULL
+    );
+    INSERT OR IGNORE INTO transport_schema(id,version) VALUES(1,1);
 ";

@@ -20,6 +20,7 @@ pub(super) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "protocol",
             "method",
             "path",
+            "usage_details",
             "trace_id",
             "turn_id",
             "credential_ref",

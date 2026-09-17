@@ -789,19 +789,26 @@ async fn external_reader_recovers_when_writer_finishes_schema_after_registration
     assert_eq!(value["rows"], json!([[0]]));
 }
 
+/// A ledger an older build wrote must fail, naming what it lacks.
+///
+/// The fixture is a current database with one table put back to a shape it
+/// had before `event_id`: `CREATE TABLE IF NOT EXISTS` cannot repair a table
+/// that is present but wrong, and nothing migrates it any more, so readiness
+/// is where it is caught and readiness has to say which column is gone.
 #[tokio::test]
 async fn db_handle_ready_rejects_broken_schema() {
     let p = temp_db_path("ready-broken-schema");
     {
         let conn = rusqlite::Connection::open(&p).expect("open broken fixture");
-        conn.execute(
-            "CREATE TABLE net_events (
+        crate::schema::create_tables(&conn).expect("current schema");
+        conn.execute_batch(
+            "DROP TABLE net_events;
+             CREATE TABLE net_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL
-            )",
-            [],
+             );",
         )
-        .expect("create intentionally broken net_events table");
+        .expect("put net_events back to a pre-event_id shape");
     }
 
     let db = DbHandle::open_existing_for_tests(&p).expect("open existing broken handle");
@@ -815,13 +822,23 @@ async fn db_handle_ready_rejects_broken_schema() {
     );
 }
 
+/// The pre-`turn_id` `tool_calls` shape is refused, not silently upgraded.
+///
+/// `schema::migrate` used to grow this table one discarded `ALTER TABLE` at a
+/// time, so a file from an older build opened as a current one with the new
+/// columns blank. It is declared once in `schema/ddl.rs` now, and the
+/// correlation index over `tool_calls(turn_id)` is what catches the older
+/// shape: `CREATE INDEX` cannot name a column that is not there, so the open
+/// itself fails and says which column it wanted.
 #[tokio::test]
-async fn db_handle_ready_preserves_turn_id_through_tool_call_migration() {
+async fn db_handle_ready_rejects_a_pre_turn_id_tool_calls_shape() {
     let p = temp_db_path("ready-tool-calls-turn-id-migration");
     {
         let conn = rusqlite::Connection::open(&p).expect("open migration fixture");
-        conn.execute(
-            "CREATE TABLE tool_calls (
+        crate::schema::create_tables(&conn).expect("current schema");
+        conn.execute_batch(
+            "DROP TABLE tool_calls;
+             CREATE TABLE tool_calls (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 model_call_id INTEGER NOT NULL,
                 provider TEXT NOT NULL,
@@ -829,10 +846,9 @@ async fn db_handle_ready_preserves_turn_id_through_tool_call_migration() {
                 call_id TEXT NOT NULL,
                 tool_name TEXT NOT NULL,
                 arguments TEXT
-            )",
-            [],
+             );",
         )
-        .expect("create old tool_calls shape");
+        .expect("put tool_calls back to its pre-turn_id shape");
         conn.execute(
             "INSERT INTO tool_calls (
                 model_call_id, provider, call_index, call_id, tool_name, arguments
@@ -842,18 +858,14 @@ async fn db_handle_ready_preserves_turn_id_through_tool_call_migration() {
         .expect("seed old tool call row");
     }
 
-    let db = DbHandle::open(&p).expect("open and migrate handle");
-    db.ready().await.expect("migrated schema must satisfy readiness");
-    let raw = db
-        .query("SELECT model_call_id, call_id, tool_name, turn_id FROM tool_calls", &[])
-        .await
-        .expect("query migrated tool call");
-    let value: serde_json::Value = serde_json::from_str(&raw).expect("query JSON");
-    assert_eq!(
-        value["columns"],
-        json!(["model_call_id", "call_id", "tool_name", "turn_id"])
+    let error = DbHandle::open(&p)
+        .err()
+        .expect("a pre-turn_id tool_calls shape must not open as a current ledger")
+        .to_string();
+    assert!(
+        error.contains("turn_id"),
+        "the refusal must name the column an older build lacked: {error}. {DB_BOUNDARY_RATIONALE}"
     );
-    assert_eq!(value["rows"], json!([[7, "call_1", "write_file", null]]));
 }
 
 #[tokio::test]

@@ -29,7 +29,7 @@ impl DbReader {
     fn open_with(path: &Path, memory_mirror: bool) -> rusqlite::Result<Self> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI;
         let conn = Connection::open_with_flags(path, flags)?;
-        schema::transport::upgrade_legacy(&conn)?;
+        schema::transport::assert_current(&conn)?;
         if memory_mirror {
             let memory_uri = schema::memory_uri_for_path(path);
             schema::with_memory_schema_lock(|| {

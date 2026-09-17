@@ -600,22 +600,32 @@ fn tool_responses_for_returns_by_model_call_id() {
     assert!(rs[1].is_error);
 }
 
+/// A `tool_responses` without `credential_ref` is broken schema, not a row
+/// whose credential happens to be unknown.
+///
+/// The read used to go through `optional_column_expr`, which substituted
+/// `NULL AS credential_ref` when the column was absent. That made a ledger an
+/// older build wrote indistinguishable from a current one in which nothing
+/// was ever brokered -- the reader answered "no credential" for a question it
+/// could not see the answer to. The column is declared in `schema/ddl.rs` and
+/// selected outright, so its absence is now an error that names it.
 #[test]
-fn tool_responses_for_tolerates_old_schema_without_credential_ref() {
+fn tool_responses_for_fails_loudly_without_credential_ref() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("old-session.db");
     {
         let conn = Connection::open(&path).unwrap();
-        conn.execute(
-            "CREATE TABLE tool_responses (
+        crate::schema::create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "DROP TABLE tool_responses;
+             CREATE TABLE tool_responses (
                     id INTEGER PRIMARY KEY,
                     model_call_id INTEGER NOT NULL,
                     call_id TEXT NOT NULL,
                     content_preview TEXT,
                     is_error INTEGER NOT NULL DEFAULT 0,
                     event_id TEXT
-                )",
-            [],
+             );",
         )
         .unwrap();
         conn.execute(
@@ -626,12 +636,14 @@ fn tool_responses_for_tolerates_old_schema_without_credential_ref() {
         .unwrap();
     }
 
-    let reader = DbReader::open(&path).unwrap();
-    let responses = reader.tool_responses_for(1).unwrap();
-    assert_eq!(responses.len(), 1);
-    assert_eq!(responses[0].call_id, "old-call");
-    assert_eq!(responses[0].content_preview.as_deref(), Some("old-ok"));
-    assert_eq!(responses[0].credential_ref, None);
+    let error = DbReader::open(&path)
+        .and_then(|reader| reader.tool_responses_for(1).map(|_| ()))
+        .expect_err("a tool_responses without credential_ref must not read as a current ledger")
+        .to_string();
+    assert!(
+        error.contains("credential_ref"),
+        "the failure must name the column the ledger lacks: {error}"
+    );
 }
 
 // -----------------------------------------------------------------------

@@ -490,47 +490,44 @@ async fn test_file_event_concurrent_writes() {
     assert_eq!(stats.total, 500); // 10 threads x 50 events
 }
 
-/// Schema migration: a DB created without fs_events should gain the table on migrate.
+/// An `fs_events` an older build wrote is refused by name, not adopted.
+///
+/// This test used to assert that opening a database without `fs_events` made
+/// the table appear, which was true of `schema::migrate` and is the behaviour
+/// the ledger no longer has. The harder case is the one left here: a table
+/// that is *present* in an older shape, which `CREATE TABLE IF NOT EXISTS`
+/// cannot repair and nothing rewrites. Readiness has to name the column,
+/// because the alternative is a file-event history that silently reads as
+/// having no `kind` and nothing to correlate.
 #[tokio::test]
-async fn test_file_event_schema_migration() {
+async fn test_a_legacy_fs_events_shape_fails_readiness_by_name() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("fs-migrate.db");
+    let path = dir.path().join("fs-legacy.db");
 
-    // Create a minimal DB with only net_events (simulating an old schema).
     {
         let conn = rusqlite::Connection::open(&path).unwrap();
+        capsem_logger::schema::create_tables(&conn).unwrap();
         conn.execute_batch(
-            "
-            CREATE TABLE net_events (
+            "DROP TABLE fs_events;
+             CREATE TABLE fs_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
-                domain TEXT NOT NULL,
-                port INTEGER NOT NULL,
-                decision TEXT NOT NULL,
-                bytes_sent INTEGER NOT NULL DEFAULT 0,
-                bytes_received INTEGER NOT NULL DEFAULT 0,
-                duration_ms INTEGER NOT NULL DEFAULT 0
-            );
-        ",
+                action TEXT NOT NULL,
+                path TEXT NOT NULL,
+                size INTEGER
+             );",
         )
         .unwrap();
     }
 
-    // Opening with DbWriter triggers migration, which should add fs_events.
-    let writer = DbWriter::open(&path, 64).unwrap();
-    writer
-        .write(WriteOp::FileEvent(sample_file_event(
-            "migrated.rs",
-            FileAction::Created,
-            Some(42),
-        )))
-        .await;
-    drop(writer);
-
-    let reader = DbReader::open(&path).unwrap();
-    let events = reader.recent_file_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].path, "migrated.rs");
+    let error = DbReader::open(&path)
+        .unwrap()
+        .ready()
+        .expect_err("a pre-kind fs_events must not read as a current ledger");
+    assert!(
+        error.contains("fs_events"),
+        "readiness must name the table an older build wrote: {error}"
+    );
 }
 
 /// Deleted events should have size=None and round-trip correctly.
