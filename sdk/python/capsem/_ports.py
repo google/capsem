@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import contextlib
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -76,9 +77,17 @@ class Ports:
         port = self._port(exposure)
         if not authenticate:
             return port
-        session = await api.create_vm_preview_session(
-            self._vm._transport, id=vm_id, exposure_id=exposure.id,
-        )
+        try:
+            session = await api.create_vm_preview_session(
+                self._vm._transport, id=vm_id, exposure_id=exposure.id,
+            )
+        except BaseException:
+            # The caller never receives a Port to close, so the exposure would
+            # outlive the failure. Remove it best-effort; the session error is
+            # what the caller needs to see.
+            with contextlib.suppress(Exception):
+                await api.delete_vm_exposure(self._vm._transport, id=vm_id, exposure_id=exposure.id)
+            raise
         return Port(
             id=port.id,
             guest=port.guest,

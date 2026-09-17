@@ -24,6 +24,7 @@ class GatewayState:
     exec_release: asyncio.Event = field(default_factory=asyncio.Event)
     wait_for_exec: bool = False
     container_states: list[str] = field(default_factory=lambda: ["running"])
+    preview_session_status: int | None = None
 
 
 def response_model(schema_name: str, **fields: Any) -> dict[str, Any]:
@@ -78,6 +79,8 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
                 "ExposureInfo", **payload,
                 id="preview-id" if preview else "49152",
             ))
+        if request.path.endswith("/preview-session") and state.preview_session_status is not None:
+            return web.Response(status=state.preview_session_status, text="preview session refused")
         if request.path.endswith("/files/content"):
             path = request.query["path"]
             if request.method == "GET":

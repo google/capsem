@@ -223,6 +223,22 @@ def test_ports_hide_wire_exposures_and_infer_the_container_target() -> None:
     asyncio.run(run())
 
 
+def test_authenticated_port_closes_its_exposure_when_the_session_fails() -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), Hypervisor(url, "token") as hv:
+            vm = await hv.create(image="nginx:alpine")
+            state.preview_session_status = 503
+            with pytest.raises(HttpError) as raised:
+                await vm.ports.open(3000, authenticate=True)
+            assert raised.value.status == 503
+            assert [(method, path) for method, path, _ in state.requests[1:]] == [
+                ("POST", "/vms/created-id/exposures"),
+                ("POST", "/vms/created-id/exposures/preview-id/preview-session"),
+                ("DELETE", "/vms/created-id/exposures/preview-id"),
+            ]
+    asyncio.run(run())
+
+
 def test_port_repr_never_prints_the_preview_bootstrap_token() -> None:
     port = Port(
         id="preview-id", guest=3000, host=None, authenticate=True,
