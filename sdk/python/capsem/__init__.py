@@ -7,5 +7,6 @@ from ._profiles import ProfileMcp as ProfileMcp
 from ._transport import HttpError as HttpError
 from .execution import ExecResult as ExecResult
 from .hypervisor import Hypervisor as Hypervisor
+from .hypervisor import Runtime as Runtime
 from .registry import Registry as Registry
 from .vm import VM as VM

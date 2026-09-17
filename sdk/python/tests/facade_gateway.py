@@ -26,7 +26,8 @@ class GatewayState:
     container_states: list[str] = field(default_factory=lambda: ["running"])
     preview_session_status: int | None = None
     delays: dict[str, float] = field(default_factory=dict)
-    default_profile_id: str | None = "code"
+    default_vm_profile_id: str | None = "code"
+    default_container_profile_id: str | None = "code"
 
 
 def response_model(schema_name: str, **fields: Any) -> dict[str, Any]:
@@ -50,9 +51,9 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
                                                     for index, name in enumerate(state.names)]})
         if request.path == "/status":
             catalog = response_model("ProfileCatalogStatus", profiles=[])
-            catalog.pop("default_profile_id", None)
-            if state.default_profile_id is not None:
-                catalog["default_profile_id"] = state.default_profile_id
+            catalog["defaults"] = {runtime: profile_id for runtime, profile_id in
+                                   (("vm", state.default_vm_profile_id),
+                                    ("container", state.default_container_profile_id)) if profile_id is not None}
             return web.json_response(response_model("HypervisorInfo", profiles=catalog, vms=[], vm_count=0))
         if request.path == "/profiles/list":
             return web.json_response({"profiles": [response_model("ProfileSummary", id="code", name="Code")]})

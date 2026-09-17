@@ -9,15 +9,17 @@ from pydantic import Field, StrictInt, StrictStr
 from .asset_manifest_status import AssetManifestStatus
 from .model_base import Model
 from .profile_catalog_source import ProfileCatalogSource
+from .profile_defaults import ProfileDefaults
 from .profile_readiness import ProfileReadiness
 
 
 class ProfileCatalogStatus(Model):
+    nonnullable_optional = frozenset(['defaults'])
     asset_manifest: AssetManifestStatus | None = None
     bytes_done: Annotated[StrictInt, Field(ge=0)] | None = None
     bytes_total: Annotated[StrictInt, Field(ge=0)] | None = None
     current_asset: StrictStr | None = None
-    default_profile_id: StrictStr | None = None
+    defaults: ProfileDefaults | None = None
     downloaded: Annotated[StrictInt, Field(ge=0)] | None = None
     profile_count: Annotated[StrictInt, Field(ge=0)]
     profiles: list[ProfileReadiness]

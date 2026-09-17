@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal
 
 from . import _operations as api
 from . import models
@@ -13,6 +14,11 @@ from ._profiles import Profiles
 from .execution import ExecResult, command_deadline
 from .registry import Registry
 from .vm import VM
+
+
+#: What a created sandbox runs. A container brings its own userland, so the
+#: catalog answers its default profile apart from a VM's.
+Runtime = Literal["vm", "container"]
 
 
 def _memory_mb(memory: int | None) -> int | None:
@@ -37,27 +43,30 @@ class Hypervisor(Client):
         self.networks = Networks(self._transport)
         self.profiles = Profiles(self._transport)
         self.debug = Debug(self._transport)
-        self._default_profile_id: str | None = None
+        self._defaults: models.ProfileDefaults | None = None
 
     async def info(self) -> models.HypervisorInfo:
         return await api.get_hypervisor_info(self._transport)
 
-    async def default_profile_id(self) -> str:
-        """The profile the gateway's catalog uses when a call names none.
+    async def default_profile_id(self, runtime: Runtime = "vm") -> str:
+        """The profile the catalog uses for `runtime` when a call names none.
 
         Resolved from `GET /status` on first use and cached for this client,
-        so no profile name is compiled into the SDK.
+        so no profile name is compiled into the SDK. A container's default is
+        the catalog's own answer: it is free to differ from a VM's.
         """
-        if self._default_profile_id is None:
+        if runtime not in ("vm", "container"):
+            raise ValueError("runtime must be 'vm' or 'container'")
+        if self._defaults is None:
             catalog = (await self.info()).profiles
-            default = catalog.default_profile_id if catalog is not None else None
-            if not default:
-                raise RuntimeError(
-                    "the gateway profile catalog names no default profile; "
-                    "pass profile=... from capsem.profiles.list()",
-                )
-            self._default_profile_id = default
-        return self._default_profile_id
+            self._defaults = catalog.defaults if catalog is not None else models.ProfileDefaults()
+        default = self._defaults.vm if runtime == "vm" else self._defaults.container
+        if not default:
+            raise RuntimeError(
+                f"the gateway profile catalog names no default {runtime} profile; "
+                "pass profile=... from capsem.profiles.list()",
+            )
+        return default
 
     async def list(self) -> models.ListResponse:
         return await api.list_vms(self._transport)
@@ -90,7 +99,9 @@ class Hypervisor(Client):
         # Every local check first: an invalid argument must be refused before
         # the client asks the gateway anything.
         ram_mb = _memory_mb(memory)
-        profile_id = _named_profile_id(profile) or await self.default_profile_id()
+        profile_id = _named_profile_id(profile) or await self.default_profile_id(
+            "container" if image is not None else "vm",
+        )
         request = models.ProvisionRequest(
             profile_id=profile_id,
             name=name or None, persistent=bool(name),

@@ -108,6 +108,7 @@ from .profile_availability_summary import (
 )
 from .profile_catalog_source import ProfileCatalogSource as ProfileCatalogSource
 from .profile_catalog_status import ProfileCatalogStatus as ProfileCatalogStatus
+from .profile_defaults import ProfileDefaults as ProfileDefaults
 from .profile_existing_vm_update_semantics import (
     ProfileExistingVmUpdateSemantics as ProfileExistingVmUpdateSemantics,
 )
