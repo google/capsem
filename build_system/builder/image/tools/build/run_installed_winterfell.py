@@ -57,6 +57,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "CAPSEM_RELEASE_BIN_DIR": str(args.bin_dir),
             "CAPSEM_ASSETS_DIR": str(args.assets_dir),
             "CAPSEM_PROFILES_DIR": str(args.profiles_dir),
+            "CAPSEM_TEST_ARTIFACTS_ROOT": str(args.evidence_out.parent / "failure-artifacts"),
         }
     )
     command = [

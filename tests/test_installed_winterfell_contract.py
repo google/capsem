@@ -267,6 +267,9 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
     assert child_environment["CAPSEM_RELEASE_BIN_DIR"] == str(bin_dir)
     assert child_environment["CAPSEM_ASSETS_DIR"] == str(assets_dir)
     assert child_environment["CAPSEM_PROFILES_DIR"] == str(profiles_dir)
+    assert child_environment["CAPSEM_TEST_ARTIFACTS_ROOT"] == str(
+        tmp_path / "failure-artifacts"
+    )
     assert captured["cwd"] == PROJECT_ROOT
     report = json.loads(evidence.read_text())
     assert report == {

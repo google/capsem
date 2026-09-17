@@ -130,6 +130,20 @@ def test_logs_and_session_db_are_preserved(artifact_env, tmp_path):
         )
 
 
+def test_configured_artifact_root_overrides_source_tree(
+    artifact_env, tmp_path, monkeypatch
+):
+    configured = tmp_path / "installed-winterfell-evidence"
+    monkeypatch.setenv("CAPSEM_TEST_ARTIFACTS_ROOT", str(configured))
+    src = _seed_tmp_dir(tmp_path)
+
+    svc_mod.preserve_tmp_dir_on_failure(src)
+
+    copied = _copied_files(configured)
+    assert any(path.endswith("service.log") for path in copied)
+    assert not artifact_env.exists()
+
+
 def test_service_client_preserves_failure_evidence_before_delete(tmp_path, monkeypatch):
     """A cleanup DELETE in an exception handler must not erase the evidence
     before the test harness can archive it.

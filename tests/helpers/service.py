@@ -316,6 +316,7 @@ def preserve_tmp_dir_on_failure(
         from conftest import ARTIFACTS_ROOT, FAILED_NODEIDS
     except ImportError:
         return
+    artifacts_root = Path(os.environ.get("CAPSEM_TEST_ARTIFACTS_ROOT", ARTIFACTS_ROOT))
     tmp_dir = Path(tmp_dir)
     if not tmp_dir.exists():
         return
@@ -347,7 +348,7 @@ def preserve_tmp_dir_on_failure(
     else:
         tag = "no-failures-on-this-worker"
     ts = time.strftime("%Y%m%d-%H%M%S")
-    dest = ARTIFACTS_ROOT / f"{ts}-{worker}-{tag}" / tmp_dir.name
+    dest = artifacts_root / f"{ts}-{worker}-{tag}" / tmp_dir.name
 
     copied = 0
     skipped_name = 0
@@ -420,7 +421,7 @@ def preserve_tmp_dir_on_failure(
         for err in errors[:10]:
             print(f"  ! {err}", file=sys.stderr)
         _rotate_artifacts(
-            ARTIFACTS_ROOT,
+            artifacts_root,
             keep=ARTIFACT_MAX_KEPT_DIRS,
             minimum=ARTIFACT_MIN_KEPT_DIRS,
             maximum_age_s=ARTIFACT_MAX_AGE_S,
