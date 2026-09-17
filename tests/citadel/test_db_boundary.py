@@ -7,6 +7,7 @@ route cache, direct SQLite open, or compatibility fallback can ship green.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -83,6 +84,7 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/reader.rs"),
     Path("crates/capsem-logger/src/reader/open.rs"),
     Path("crates/capsem-logger/src/schema.rs"),
+    Path("crates/capsem-logger/src/schema/memory_sync.rs"),
     Path("crates/capsem-logger/src/schema/pragmas.rs"),
     Path("crates/capsem-logger/src/schema/security_event_types.rs"),
     Path("crates/capsem-logger/src/schema/transport.rs"),
@@ -91,9 +93,34 @@ LOGGER_DB_INTERNALS = {
     # The writer thread's own modules. They run on the thread that owns the
     # connection and are handed it as an argument; they do not open one.
     Path("crates/capsem-logger/src/writer/barriers.rs"),
+    Path("crates/capsem-logger/src/writer/bodies.rs"),
+    Path("crates/capsem-logger/src/writer/event_rows.rs"),
+    Path("crates/capsem-logger/src/writer/model_rows.rs"),
     Path("crates/capsem-logger/src/writer/retention.rs"),
+    Path("crates/capsem-logger/src/writer/traffic_rows.rs"),
     Path("crates/capsem-logger/src/writer/tests.rs"),
 }
+
+
+BRACED_IMPORT = re.compile(r"rusqlite::\{([^{}]*)\}", re.S)
+
+
+def named_paths(source: str) -> str:
+    """The source, plus every braced `rusqlite::{...}` import written out.
+
+    `use rusqlite::{params, Connection}` names `rusqlite::Connection` as surely
+    as spelling it out does, and it is how Rust imports are ordinarily written
+    once a module needs two things from a crate. Matching the literal string
+    alone let four of capsem-logger's own writer modules hold a connection
+    without ever being listed as owners of one -- not because anyone decided
+    they could, but because of how their `use` line was formatted. A guard that
+    a rustfmt-idiomatic import walks past is not guarding anything.
+    """
+    expanded = BRACED_IMPORT.sub(
+        lambda match: " ".join(f"rusqlite::{name.strip()}" for name in match.group(1).split(",") if name.strip()),
+        source,
+    )
+    return f"{source}\n{expanded}"
 
 
 def rust_sources() -> list[Path]:
@@ -124,7 +151,7 @@ def test_logger_is_the_only_database_execution_boundary() -> None:
     for path in rust_sources():
         if is_test_source(path) or is_logger_db_internal(path):
             continue
-        source = path.read_text()
+        source = named_paths(path.read_text())
         for needle, reason in FORBIDDEN_PATTERNS:
             if needle in source:
                 violations.append(f"{relative(path)} contains `{needle}` ({reason})")
