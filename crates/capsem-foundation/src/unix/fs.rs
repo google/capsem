@@ -169,7 +169,16 @@ pub fn atomic_write_private(path: &Path, data: &[u8]) -> io::Result<()> {
     write_result.map_err(|error| context(error, "atomically write private file", path))
 }
 
-fn create_private_sibling(path: &Path) -> io::Result<(File, PathBuf)> {
+/// Create a unique, owner-only, write-only sibling of `path`, ready to be
+/// renamed over it.
+///
+/// Public so that callers who rewrite a large file cannot be forced to hold
+/// its whole contents in memory to get `atomic_write_private`'s guarantees:
+/// they stream into this handle and rename it themselves. The name is
+/// dot-prefixed and carries the pid and a process-unique sequence, and the
+/// open is `O_EXCL | O_NOFOLLOW`, so two concurrent writers never share one.
+/// The caller owns the temporary from here: it must remove it on any error.
+pub fn create_private_sibling(path: &Path) -> io::Result<(File, PathBuf)> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())

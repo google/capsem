@@ -22,6 +22,7 @@ pub mod writer;
 
 pub use format::{BodyRef, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES, TARGET_BLOCK_BYTES};
 pub use reader::BodyLogReader;
+pub use retain::retain_blocks;
 pub use writer::{BodyLogWriter, EncodedBlock, PendingBlock, SealedBlock};
 
 #[derive(Debug, thiserror::Error)]
