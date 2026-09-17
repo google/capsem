@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use capsem_logger::{
-    credential_reference, validate_select_only, DbReader, DbWriter, Decision, FileAction, FileEvent, McpCall,
+    credential_reference, validate_select_only, DbReader, DbWriter, Decision, FileAction, FileEvent, FileKind, McpCall,
     ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry, WriteOp,
 };
 

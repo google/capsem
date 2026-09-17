@@ -8,8 +8,8 @@ use rusqlite::{params, Connection, OpenFlags, Row};
 use serde::{Deserialize, Serialize};
 
 use crate::events::{
-    AuditEvent, Decision, ExecEvent, FileAction, FileEvent, ModelCall, NetEvent, SecurityAskEvent, SecurityAskStatus,
-    SecurityDetectionLevel, SecurityRuleAction, SecurityRuleEvent, ToolCallEntry, ToolResponseEntry,
+    AuditEvent, Decision, ExecEvent, FileAction, FileEvent, FileKind, ModelCall, NetEvent, SecurityAskEvent,
+    SecurityAskStatus, SecurityDetectionLevel, SecurityRuleAction, SecurityRuleEvent, ToolCallEntry, ToolResponseEntry,
 };
 use crate::schema;
 mod open;
@@ -1222,16 +1222,22 @@ impl DbReader {
 
     // ── File event queries ────────────────────────────────────────────
 
+    /// The fs_events column list, in the order `read_file_event_row` expects.
+    fn file_event_columns(&self) -> String {
+        format!(
+            "timestamp, action, path, size, {}, {}, {}, {}",
+            self.optional_column_expr("fs_events", "trace_id"),
+            self.optional_column_expr("fs_events", "credential_ref"),
+            self.optional_column_expr("fs_events", "event_id"),
+            self.optional_column_expr("fs_events", "kind"),
+        )
+    }
+
     /// Query the most recent N file events, ordered newest first.
     pub fn recent_file_events(&self, limit: usize) -> rusqlite::Result<Vec<FileEvent>> {
-        let trace_id_col = self.optional_column_expr("fs_events", "trace_id");
-        let credential_ref_col = self.optional_column_expr("fs_events", "credential_ref");
-        let event_id_col = self.optional_column_expr("fs_events", "event_id");
         let sql = format!(
-            "SELECT timestamp, action, path, size, {trace_id_col}, {credential_ref_col}, {event_id_col}
-             FROM fs_events
-             ORDER BY id DESC
-             LIMIT ?1"
+            "SELECT {} FROM fs_events ORDER BY id DESC LIMIT ?1",
+            self.file_event_columns()
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![limit as i64], read_file_event_row)?;
@@ -1241,15 +1247,9 @@ impl DbReader {
     /// Search file events by path substring.
     pub fn search_file_events(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<FileEvent>> {
         let pattern = format!("%{query}%");
-        let trace_id_col = self.optional_column_expr("fs_events", "trace_id");
-        let credential_ref_col = self.optional_column_expr("fs_events", "credential_ref");
-        let event_id_col = self.optional_column_expr("fs_events", "event_id");
         let sql = format!(
-            "SELECT timestamp, action, path, size, {trace_id_col}, {credential_ref_col}, {event_id_col}
-             FROM fs_events
-             WHERE path LIKE ?1
-             ORDER BY id DESC
-             LIMIT ?2"
+            "SELECT {} FROM fs_events WHERE path LIKE ?1 ORDER BY id DESC LIMIT ?2",
+            self.file_event_columns()
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![pattern, limit as i64], read_file_event_row)?;

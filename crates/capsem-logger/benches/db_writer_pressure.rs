@@ -10,6 +10,7 @@ fn file_event(idx: usize) -> WriteOp {
         action: FileAction::Read,
         path: format!("/root/bench/file-{idx}.txt"),
         size: Some(128),
+        kind: capsem_logger::FileKind::File,
         trace_id: Some(format!("{idx:016x}")),
         credential_ref: None,
     })

@@ -13,7 +13,7 @@ pub use db::{
 };
 pub use events::{
     credential_reference, is_credential_reference, AuditEvent, Decision, DnsEvent, ExecEvent, ExecEventComplete,
-    FileAction, FileEvent, McpCall, MembershipState, ModelCall, NetEvent, NetworkMembership, NetworkRecord,
+    FileAction, FileEvent, FileKind, McpCall, MembershipState, ModelCall, NetEvent, NetworkMembership, NetworkRecord,
     NetworkState, ProfileMutationEvent, ProfileMutationStatus, SecurityAskEvent, SecurityAskPending, SecurityAskStatus,
     SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage, SecurityDetectionLevel, SecurityRuleAction,
     SecurityRuleEvent, SubstitutionEvent, ToolCallEntry, ToolResponseEntry, TransportEvent, TransportEventKind,

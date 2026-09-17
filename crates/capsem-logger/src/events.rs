@@ -477,6 +477,45 @@ impl FileAction {
     }
 }
 
+/// What the path named by a file event actually is.
+///
+/// Without this a `mkdir` is an anonymous path carrying the directory inode's
+/// size, which no reader can tell from a small file write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileKind {
+    /// The default keeps payloads written before this field existed readable.
+    #[default]
+    File,
+    Dir,
+    Symlink,
+    Other,
+}
+
+impl FileKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FileKind::File => "file",
+            FileKind::Dir => "dir",
+            FileKind::Symlink => "symlink",
+            FileKind::Other => "other",
+        }
+    }
+
+    pub fn parse_str(s: &str) -> Self {
+        match s {
+            "file" => FileKind::File,
+            "dir" => FileKind::Dir,
+            "symlink" => FileKind::Symlink,
+            "other" => FileKind::Other,
+            other => {
+                tracing::warn!(value = other, "unknown file kind string in DB, treating as File");
+                FileKind::File
+            }
+        }
+    }
+}
+
 /// A single filesystem event from the in-VM inotify watcher.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEvent {
@@ -486,7 +525,10 @@ pub struct FileEvent {
     pub timestamp: SystemTime,
     pub action: FileAction,
     pub path: String,
+    /// `None` for directories and for deletions.
     pub size: Option<u64>,
+    #[serde(default)]
+    pub kind: FileKind,
     /// W6: ambient trace_id for the operation that triggered this event
     /// (lower 16 hex of the W3C trace_id). None when no trace context.
     #[serde(default)]

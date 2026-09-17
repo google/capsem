@@ -1140,19 +1140,19 @@ async fn vm_list_and_info_are_in_memory_only() {
     let (state, _dir) = make_test_state_with_tempdir();
     let session_dir = state.run_dir.join("sessions/list-hot-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
-    let file_event = capsem_logger::FileEvent {
-        event_id: Some("abcdef123456".into()),
-        timestamp: std::time::SystemTime::now(),
-        action: capsem_logger::FileAction::Created,
-        path: "/root/list-hot-proof.txt".into(),
-        size: Some(12),
-        trace_id: Some("tracelisthot".into()),
-        credential_ref: None,
-    };
     let db_path = session_dir.join("session.db");
     tokio::task::spawn_blocking(move || {
         let writer = capsem_logger::DbWriter::open(&db_path, 8).unwrap();
-        writer.write_blocking(capsem_logger::WriteOp::FileEvent(file_event));
+        writer.write_blocking(capsem_logger::WriteOp::FileEvent(capsem_logger::FileEvent {
+            event_id: Some("abcdef123456".into()),
+            timestamp: std::time::SystemTime::now(),
+            action: capsem_logger::FileAction::Created,
+            path: "/root/list-hot-proof.txt".into(),
+            size: Some(12),
+            kind: capsem_logger::FileKind::File,
+            trace_id: Some("tracelisthot".into()),
+            credential_ref: None,
+        }));
         writer.shutdown_blocking();
     })
     .await

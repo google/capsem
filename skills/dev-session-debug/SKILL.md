@@ -306,9 +306,19 @@ CREATE TABLE fs_events (
     timestamp TEXT NOT NULL,
     action TEXT NOT NULL,              -- "created", "modified", "deleted"
     path TEXT NOT NULL,                -- relative to workspace root
-    size INTEGER                       -- bytes (NULL for deletes)
+    size INTEGER,                      -- bytes (NULL for deletes and dirs)
+    kind TEXT NOT NULL DEFAULT 'file'  -- "file", "dir", "symlink", "other"
 );
 ```
+
+Every path under the workspace is recorded, directories included. There is no
+exclusion list: `.git/hooks`, `.git/config`, `node_modules`, `.venv` and
+`target` are where a compromise persists, so a ledger that omitted them read as
+a clean session for a backdoored workspace. Cost is paid by the monitor's
+adaptive poll interval (`poll_interval_for_scan` in
+`crates/capsem-core/src/fs_monitor.rs`: ten scan-durations, floored at 500ms and
+capped at 10s), never by dropping events. `tests/citadel/test_fs_monitor_has_no_exclusions.py`
+holds the rule.
 
 ## Main database (main.db)
 

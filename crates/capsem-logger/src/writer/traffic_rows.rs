@@ -95,8 +95,8 @@ pub(super) fn insert_file_event(conn: &Connection, event: &FileEvent, target: Wr
     let (directory, name) = split_event_path(&event.path);
     execute_cached(
         conn,
-        &format!("INSERT INTO {} (event_id, timestamp, action, path, directory, name, size, trace_id, turn_id, credential_ref)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)", target.table("fs_events")),
+        &format!("INSERT INTO {} (event_id, timestamp, action, path, directory, name, size, kind, trace_id, turn_id, credential_ref)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", target.table("fs_events")),
         params![
             event.event_id.clone().unwrap_or_else(new_event_id),
             timestamp,
@@ -105,6 +105,7 @@ pub(super) fn insert_file_event(conn: &Connection, event: &FileEvent, target: Wr
             directory,
             name,
             event.size.map(|s| s as i64),
+            event.kind.as_str(),
             event.trace_id,
             event.trace_id,
             event.credential_ref,

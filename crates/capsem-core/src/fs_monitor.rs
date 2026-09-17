@@ -18,45 +18,58 @@ use notify::{Config, Event, EventKind, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use capsem_logger::{DbWriter, FileAction, FileEvent};
+use capsem_logger::{DbWriter, FileAction, FileEvent, FileKind};
 
 use crate::credential_broker::{broker_and_log_observations, parse_env_credentials};
 use crate::net::ai_traffic::TraceState;
 use crate::net::policy_config::SecurityRuleSet;
 
-/// Directories excluded from monitoring.
-const EXCLUDED_DIRS: &[&str] = &[
-    ".git",
-    "node_modules",
-    "__pycache__",
-    ".cache",
-    "target",
-    ".venv",
-    ".swapfile",
-];
-
 /// How often the queue is drained and events are emitted (ms).
 const FLUSH_INTERVAL_MS: u64 = 100;
 
-/// How often the PollWatcher rescans the directory tree (ms).
+/// Floor and ceiling for the PollWatcher rescan cadence (ms).
 /// Apple VZ VirtioFS writes bypass FSEvents, so we must poll.
-const POLL_INTERVAL_MS: u64 = 500;
+const POLL_INTERVAL_MIN_MS: u64 = 500;
+const POLL_INTERVAL_MAX_MS: u64 = 10_000;
+
+/// Scans per interval. One scan stats every entry of the workspace, and the
+/// monitor watches every path -- including `node_modules` and `target`, which
+/// is the whole point -- so the cost is real and proportional to the tree.
+/// Spending at most a tenth of the wall clock on it keeps the monitor from
+/// competing with the workload it is watching, whatever the tree's size.
+const POLL_SCAN_DUTY_CYCLE: u32 = 10;
+
+/// Poll cadence for a tree whose full stat walk took `scan`.
+///
+/// Ten scans per interval, floored at 500ms so a small workspace still reacts
+/// promptly, capped at 10s so a very large one is still watched. Cost is
+/// answered here, never by deciding in advance which paths are not worth
+/// recording: `.git/hooks`, `node_modules` and `target` are precisely where a
+/// compromise persists.
+fn poll_interval_for_scan(scan: Duration) -> Duration {
+    (scan * POLL_SCAN_DUTY_CYCLE).clamp(
+        Duration::from_millis(POLL_INTERVAL_MIN_MS),
+        Duration::from_millis(POLL_INTERVAL_MAX_MS),
+    )
+}
 
 /// Maximum number of raw events buffered before dropping.
-const MAX_QUEUE_SIZE: usize = 10_000;
+///
+/// A 100k-file install between two 100ms flushes must not lose events; a
+/// queued row is ~150 bytes, so the bound is ~15MB transient.
+const MAX_QUEUE_SIZE: usize = 100_000;
 
-/// Check if any path component matches an excluded directory.
-fn should_exclude(path: &Path) -> bool {
-    for component in path.components() {
-        if let std::path::Component::Normal(name) = component {
-            if let Some(s) = name.to_str() {
-                if EXCLUDED_DIRS.contains(&s) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+fn path_kind(fs_path: &Path) -> Option<FileKind> {
+    let file_type = std::fs::symlink_metadata(fs_path).ok()?.file_type();
+    Some(if file_type.is_symlink() {
+        FileKind::Symlink
+    } else if file_type.is_dir() {
+        FileKind::Dir
+    } else if file_type.is_file() {
+        FileKind::File
+    } else {
+        FileKind::Other
+    })
 }
 
 /// Map a notify EventKind to a FileAction.
@@ -69,7 +82,7 @@ fn event_to_action(kind: &EventKind) -> Option<FileAction> {
     }
 }
 
-/// A raw queued event (path already relativized, exclusions already applied).
+/// A raw queued event (path already relativized; nothing is filtered out).
 struct QueuedEvent {
     path: String,
     fs_path: PathBuf,
@@ -79,7 +92,7 @@ struct QueuedEvent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SnapshotEntry {
     fs_path: PathBuf,
-    is_dir: bool,
+    kind: FileKind,
     len: u64,
     modified: Option<(u64, u32)>,
 }
@@ -99,19 +112,20 @@ fn snapshot_entry(fs_path: &Path) -> Option<SnapshotEntry> {
         .map(|value| (value.as_secs(), value.subsec_nanos()));
     Some(SnapshotEntry {
         fs_path: fs_path.to_path_buf(),
-        is_dir: metadata.is_dir(),
+        kind: path_kind(fs_path)?,
         len: metadata.len(),
         modified,
     })
 }
 
 fn workspace_snapshot(watch_dir: &Path, strip_prefix: &Path) -> HashMap<String, SnapshotEntry> {
+    // Every entry, with nothing pruned: a walk that skips a directory is a
+    // ledger that lies about it.
     let mut snapshot = HashMap::new();
     for entry in walkdir::WalkDir::new(watch_dir)
         .min_depth(1)
         .follow_links(false)
         .into_iter()
-        .filter_entry(|entry| !should_exclude(entry.path()))
         .filter_map(Result::ok)
     {
         let fs_path = entry.path();
@@ -128,6 +142,18 @@ fn workspace_snapshot(watch_dir: &Path, strip_prefix: &Path) -> HashMap<String, 
         }
     }
     snapshot
+}
+
+/// What the event's path is, as of the moment it is emitted.
+///
+/// A deletion has nothing left to stat, so the last snapshot entry is the only
+/// remaining witness to whether a directory or a file disappeared.
+fn resolve_kind(snapshot: &HashMap<String, SnapshotEntry>, path: &str, fs_path: &Path, action: FileAction) -> FileKind {
+    let remembered = || snapshot.get(path).map(|entry| entry.kind);
+    if action == FileAction::Deleted {
+        return remembered().unwrap_or_default();
+    }
+    path_kind(fs_path).or_else(remembered).unwrap_or_default()
 }
 
 fn reconciliation_events(
@@ -193,7 +219,12 @@ impl FsMonitor {
         // PollWatcher discovers changes asynchronously. Keep an owner-local
         // baseline so shutdown can reconcile changes that exist on disk but
         // have not reached the notify callback yet.
+        // The baseline walk stats exactly what each poll scan will stat, so it
+        // is also the measurement that sets the cadence.
+        let scan_started = std::time::Instant::now();
         let initial_snapshot = workspace_snapshot(&watch_dir, &strip_prefix);
+        let scan_duration = scan_started.elapsed();
+        let poll_interval = poll_interval_for_scan(scan_duration);
         let workspace_state = WorkspaceState {
             watch_dir: watch_dir.clone(),
             strip_prefix,
@@ -202,7 +233,8 @@ impl FsMonitor {
         let (event_tx, event_rx) = mpsc::channel::<Event>(1024);
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
-        let config = Config::default().with_poll_interval(Duration::from_millis(POLL_INTERVAL_MS));
+        let entries = workspace_state.snapshot.len();
+        let config = Config::default().with_poll_interval(poll_interval);
         let mut watcher = PollWatcher::new(
             move |res: Result<Event, _>| {
                 if let Ok(event) = res {
@@ -213,7 +245,8 @@ impl FsMonitor {
         )?;
 
         watcher.watch(&watch_dir, RecursiveMode::Recursive)?;
-        info!(dir = %watch_dir.display(), poll_ms = POLL_INTERVAL_MS,
+        info!(dir = %watch_dir.display(), entries, scan_ms = scan_duration.as_millis(),
+              poll_ms = poll_interval.as_millis(),
               "host fs-monitor started (poll mode, FSEvents unreliable for VirtioFS)");
 
         let join_handle = std::thread::Builder::new()
@@ -298,9 +331,6 @@ impl FsMonitor {
                     let Some(action) = event_to_action(&event.kind) else { continue };
 
                     for path in &event.paths {
-                        if should_exclude(path) {
-                            continue;
-                        }
                         let rel = path
                             .strip_prefix(&workspace.strip_prefix)
                             .unwrap_or(path)
@@ -365,7 +395,17 @@ impl FsMonitor {
                     let (old_action, old_fs_path) = pending
                         .insert(event.path.clone(), (event.action, event.fs_path.clone()))
                         .unwrap();
-                    Self::emit(db, security_rules, trace_state, &event.path, &old_fs_path, old_action).await;
+                    let kind = resolve_kind(snapshot, &event.path, &old_fs_path, old_action);
+                    Self::emit(
+                        db,
+                        security_rules,
+                        trace_state,
+                        &event.path,
+                        &old_fs_path,
+                        old_action,
+                        kind,
+                    )
+                    .await;
                     Self::update_snapshot(snapshot, &event.path, &old_fs_path, old_action);
                     emitted += 1;
                 }
@@ -377,7 +417,8 @@ impl FsMonitor {
 
         // Emit all remaining pending entries
         for (path, (action, fs_path)) in pending {
-            Self::emit(db, security_rules, trace_state, &path, &fs_path, action).await;
+            let kind = resolve_kind(snapshot, &path, &fs_path, action);
+            Self::emit(db, security_rules, trace_state, &path, &fs_path, action, kind).await;
             Self::update_snapshot(snapshot, &path, &fs_path, action);
             emitted += 1;
         }
@@ -395,6 +436,7 @@ impl FsMonitor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn emit(
         db: &DbWriter,
         security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
@@ -402,8 +444,12 @@ impl FsMonitor {
         path: &str,
         fs_path: &Path,
         action: FileAction,
+        kind: FileKind,
     ) {
-        let size = if action != FileAction::Deleted {
+        // A directory's inode size says nothing about what changed inside it,
+        // and reporting it as the event's size is what made `mkdir` read like
+        // a small file write.
+        let size = if action != FileAction::Deleted && kind != FileKind::Dir {
             std::fs::metadata(fs_path).ok().map(|m| m.len())
         } else {
             None
@@ -428,6 +474,7 @@ impl FsMonitor {
                 action,
                 path: path.to_string(),
                 size,
+                kind,
                 trace_id,
                 credential_ref,
             },

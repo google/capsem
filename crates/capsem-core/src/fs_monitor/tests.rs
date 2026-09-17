@@ -43,28 +43,126 @@ fn empty_security_rules() -> Arc<std::sync::RwLock<Arc<SecurityRuleSet>>> {
     Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new()))))
 }
 
-#[test]
-fn should_exclude_git() {
-    assert!(should_exclude(Path::new(".git")));
-    assert!(should_exclude(Path::new("project/.git/objects")));
+/// Start a monitor over a fresh workspace and hand back the workspace, the
+/// DB path and the running monitor.
+fn monitor_over_new_workspace(dir: &std::path::Path) -> (PathBuf, PathBuf, Arc<DbWriter>, FsMonitor) {
+    let workspace = dir.join("workspace");
+    if !workspace.exists() {
+        std::fs::create_dir(&workspace).unwrap();
+    }
+    let db_path = dir.join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 64).unwrap());
+    let monitor = FsMonitor::start(
+        workspace.clone(),
+        workspace.clone(),
+        Arc::clone(&db),
+        empty_security_rules(),
+        empty_trace_state(),
+    )
+    .unwrap();
+    (workspace, db_path, db, monitor)
 }
 
-#[test]
-fn should_exclude_node_modules() {
-    assert!(should_exclude(Path::new("node_modules")));
-    assert!(should_exclude(Path::new("project/node_modules/express")));
+fn recorded_event(db_path: &Path, path: &str) -> Option<(String, String, Option<i64>)> {
+    let conn = rusqlite::Connection::open(db_path).unwrap();
+    conn.query_row(
+        "SELECT action, kind, size FROM fs_events WHERE path = ?1",
+        [path],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .ok()
 }
 
+/// `.git/hooks/*` is how a compromised session persists. An exclusion list
+/// that hid it made the ledger report a clean session for a backdoored repo.
 #[test]
-fn should_not_exclude_normal_paths() {
-    assert!(!should_exclude(Path::new("project/src/app.js")));
-    assert!(!should_exclude(Path::new("README.md")));
+fn events_under_dot_git_hooks_are_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let (workspace, db_path, db, monitor) = monitor_over_new_workspace(dir.path());
+
+    let hooks = workspace.join(".git/hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    std::fs::write(hooks.join("pre-commit"), "#!/bin/sh\nexfiltrate\n").unwrap();
+    monitor.shutdown_and_join();
+    db.shutdown_blocking();
+
+    let hook = recorded_event(&db_path, ".git/hooks/pre-commit").expect("the hook write must be a ledger row");
+    assert_eq!((hook.0.as_str(), hook.1.as_str()), ("created", "file"));
 }
 
+/// `node_modules/<pkg>/package.json` is how a supply-chain attack lands an
+/// install script. Same finding, same rule.
 #[test]
-fn should_not_exclude_partial_name() {
-    assert!(!should_exclude(Path::new(".github/workflows")));
-    assert!(!should_exclude(Path::new("targets/debug")));
+fn events_under_node_modules_are_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let (workspace, db_path, db, monitor) = monitor_over_new_workspace(dir.path());
+
+    let package = workspace.join("node_modules/evil");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(package.join("package.json"), r#"{"scripts":{"postinstall":"sh -c x"}}"#).unwrap();
+    monitor.shutdown_and_join();
+    db.shutdown_blocking();
+
+    let manifest =
+        recorded_event(&db_path, "node_modules/evil/package.json").expect("the install script must be a ledger row");
+    assert_eq!((manifest.0.as_str(), manifest.1.as_str()), ("created", "file"));
+}
+
+/// A directory event must say it is a directory. Recording `mkdir` as an
+/// anonymous path carrying the directory inode's size told a reader nothing.
+#[test]
+fn mkdir_and_rmdir_are_recorded_as_dir_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let (workspace, db_path, db, monitor) = monitor_over_new_workspace(dir.path());
+    std::fs::create_dir(workspace.join("payload")).unwrap();
+    monitor.shutdown_and_join();
+
+    // A second monitor starts with the directory in its snapshot, so the
+    // removal resolves its kind from that snapshot rather than from a path
+    // that no longer exists.
+    let monitor = FsMonitor::start(
+        workspace.clone(),
+        workspace.clone(),
+        Arc::clone(&db),
+        empty_security_rules(),
+        empty_trace_state(),
+    )
+    .unwrap();
+    std::fs::remove_dir(workspace.join("payload")).unwrap();
+    monitor.shutdown_and_join();
+    db.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT action, kind, size FROM fs_events WHERE path = 'payload' ORDER BY id")
+        .unwrap();
+    let rows: Vec<(String, String, Option<i64>)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("created".to_string(), "dir".to_string(), None),
+            ("deleted".to_string(), "dir".to_string(), None),
+        ]
+    );
+}
+
+/// Watching every path costs a full stat walk per scan, so the scan pays for
+/// itself: the interval is ten scans long, floored and capped.
+#[test]
+fn poll_interval_scales_with_scan_cost() {
+    assert_eq!(
+        poll_interval_for_scan(Duration::from_millis(1)),
+        Duration::from_millis(500)
+    );
+    assert_eq!(
+        poll_interval_for_scan(Duration::from_millis(200)),
+        Duration::from_secs(2)
+    );
+    assert_eq!(poll_interval_for_scan(Duration::from_secs(5)), Duration::from_secs(10));
 }
 
 #[test]
@@ -319,6 +417,7 @@ async fn emit_brokers_env_credentials_and_persists_reference() {
         ".env",
         &env_path,
         FileAction::Modified,
+        FileKind::File,
     )
     .await;
     db.shutdown_blocking();
@@ -370,6 +469,7 @@ match = 'file.create.name == "skill.md" && file.create.ext == "md"'
         "skill.md",
         &file_path,
         FileAction::Created,
+        FileKind::File,
     )
     .await;
     db.shutdown_blocking();
@@ -419,6 +519,7 @@ match = 'file.create.path == "openai-two.txt"'
         "openai-two.txt",
         &file_path,
         FileAction::Created,
+        FileKind::File,
     )
     .await;
     db.shutdown_blocking();
@@ -472,6 +573,7 @@ match = 'file.write.path == "blocked.txt"'
         "blocked.txt",
         &file_path,
         FileAction::Modified,
+        FileKind::File,
     )
     .await;
     db.shutdown_blocking();

@@ -255,6 +255,7 @@ fn file_write_with_action(action: FileAction, credential_ref: Option<&str>) -> W
         action,
         path: "/tmp/example".to_string(),
         size: Some(1),
+        kind: capsem_logger::FileKind::File,
         trace_id: Some("trace".to_string()),
         credential_ref: credential_ref.map(str::to_string),
     })

@@ -5,6 +5,24 @@ use super::*;
 mod bodies;
 mod producer;
 
+/// A well-formed file event for the writer tests that only need *a* row.
+fn file_event(
+    path: impl Into<String>,
+    action: crate::events::FileAction,
+    size: Option<u64>,
+) -> crate::events::FileEvent {
+    crate::events::FileEvent {
+        event_id: None,
+        timestamp: std::time::SystemTime::now(),
+        action,
+        path: path.into(),
+        size,
+        kind: crate::events::FileKind::File,
+        trace_id: None,
+        credential_ref: None,
+    }
+}
+
 #[test]
 fn cap_field_none_returns_none() {
     assert!(cap_field(&None).is_none());
@@ -297,15 +315,11 @@ fn db_writer_checkpoints_wal_on_drop() {
         let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             writer
-                .write(WriteOp::FileEvent(crate::events::FileEvent {
-                    event_id: None,
-                    timestamp: std::time::SystemTime::now(),
-                    action: crate::events::FileAction::Created,
-                    path: "/tmp/test".to_string(),
-                    size: Some(42),
-                    trace_id: None,
-                    credential_ref: None,
-                }))
+                .write(WriteOp::FileEvent(file_event(
+                    "/tmp/test".to_string(),
+                    crate::events::FileAction::Created,
+                    Some(42),
+                )))
                 .await;
         });
         // DbWriter::drop runs here -- should checkpoint WAL.
@@ -336,15 +350,11 @@ fn writer_generates_twelve_hex_event_id_for_primary_events() {
         let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             writer
-                .write(WriteOp::FileEvent(crate::events::FileEvent {
-                    event_id: None,
-                    timestamp: std::time::SystemTime::now(),
-                    action: crate::events::FileAction::Created,
-                    path: "/tmp/event-id".to_string(),
-                    size: Some(42),
-                    trace_id: None,
-                    credential_ref: None,
-                }))
+                .write(WriteOp::FileEvent(file_event(
+                    "/tmp/event-id".to_string(),
+                    crate::events::FileAction::Created,
+                    Some(42),
+                )))
                 .await;
         });
     }
@@ -371,12 +381,7 @@ fn writer_preserves_supplied_primary_event_id() {
             writer
                 .write(WriteOp::FileEvent(crate::events::FileEvent {
                     event_id: Some("abcdef123456".to_string()),
-                    timestamp: std::time::SystemTime::now(),
-                    action: crate::events::FileAction::Created,
-                    path: "/tmp/event-id".to_string(),
-                    size: Some(42),
-                    trace_id: None,
-                    credential_ref: None,
+                    ..file_event("/tmp/event-id", crate::events::FileAction::Created, Some(42))
                 }))
                 .await;
         });
@@ -401,40 +406,28 @@ fn snapshot_fs_events_cross_reference() {
             // Write some fs_events first.
             for i in 0..5 {
                 writer
-                    .write(WriteOp::FileEvent(crate::events::FileEvent {
-                        event_id: None,
-                        timestamp: std::time::SystemTime::now(),
-                        action: crate::events::FileAction::Created,
-                        path: format!("file_{i}.txt"),
-                        size: Some(100),
-                        trace_id: None,
-                        credential_ref: None,
-                    }))
+                    .write(WriteOp::FileEvent(file_event(
+                        format!("file_{i}.txt"),
+                        crate::events::FileAction::Created,
+                        Some(100),
+                    )))
                     .await;
             }
             for i in 5..8 {
                 writer
-                    .write(WriteOp::FileEvent(crate::events::FileEvent {
-                        event_id: None,
-                        timestamp: std::time::SystemTime::now(),
-                        action: crate::events::FileAction::Modified,
-                        path: format!("file_{i}.txt"),
-                        size: Some(200),
-                        trace_id: None,
-                        credential_ref: None,
-                    }))
+                    .write(WriteOp::FileEvent(file_event(
+                        format!("file_{i}.txt"),
+                        crate::events::FileAction::Modified,
+                        Some(200),
+                    )))
                     .await;
             }
             writer
-                .write(WriteOp::FileEvent(crate::events::FileEvent {
-                    event_id: None,
-                    timestamp: std::time::SystemTime::now(),
-                    action: crate::events::FileAction::Deleted,
-                    path: "old.txt".to_string(),
-                    size: None,
-                    trace_id: None,
-                    credential_ref: None,
-                }))
+                .write(WriteOp::FileEvent(file_event(
+                    "old.txt".to_string(),
+                    crate::events::FileAction::Deleted,
+                    None,
+                )))
                 .await;
         });
     }
@@ -489,15 +482,11 @@ fn shutdown_blocking_through_arc_flushes_wal() {
     let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
     rt.block_on(async {
         writer
-            .write(WriteOp::FileEvent(crate::events::FileEvent {
-                event_id: None,
-                timestamp: std::time::SystemTime::now(),
-                action: crate::events::FileAction::Created,
-                path: "/x".into(),
-                size: Some(1),
-                trace_id: None,
-                credential_ref: None,
-            }))
+            .write(WriteOp::FileEvent(file_event(
+                "/x",
+                crate::events::FileAction::Created,
+                Some(1),
+            )))
             .await;
     });
 
@@ -536,15 +525,11 @@ fn write_after_shutdown_is_noop() {
     let dir = tempfile::tempdir().unwrap();
     let writer = DbWriter::open(&dir.path().join("no.db"), 16).unwrap();
     writer.shutdown_blocking();
-    assert!(!writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: crate::events::FileAction::Created,
-        path: "/after".into(),
-        size: None,
-        trace_id: None,
-        credential_ref: None,
-    })));
+    assert!(!writer.try_write(WriteOp::FileEvent(file_event(
+        "/after",
+        crate::events::FileAction::Created,
+        None
+    ))));
 }
 
 #[tokio::test]
@@ -899,15 +884,11 @@ fn slow_checkpoint_hook_delays_shutdown() {
 fn try_write_on_open_writer_succeeds() {
     let dir = tempfile::tempdir().unwrap();
     let writer = DbWriter::open(&dir.path().join("t.db"), 64).unwrap();
-    let accepted = writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: crate::events::FileAction::Created,
-        path: "/x".into(),
-        size: None,
-        trace_id: None,
-        credential_ref: None,
-    }));
+    let accepted = writer.try_write(WriteOp::FileEvent(file_event(
+        "/x",
+        crate::events::FileAction::Created,
+        None,
+    )));
     assert!(accepted);
 }
 
@@ -930,17 +911,11 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     let recorder = DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
     let (tx, rx) = writer_channel(16);
-    tx.send(super::WriterMessage::write(WriteOp::FileEvent(
-        crate::events::FileEvent {
-            event_id: None,
-            timestamp: std::time::SystemTime::now(),
-            action: crate::events::FileAction::Created,
-            path: "/metrics".into(),
-            size: None,
-            trace_id: None,
-            credential_ref: None,
-        },
-    )))
+    tx.send(super::WriterMessage::write(WriteOp::FileEvent(file_event(
+        "/metrics",
+        crate::events::FileAction::Created,
+        None,
+    ))))
     .unwrap();
     drop(tx);
 
@@ -987,15 +962,11 @@ fn db_writer_records_enqueue_metrics() {
 
     let dir = tempfile::tempdir().unwrap();
     let writer = DbWriter::open(&dir.path().join("enqueue.db"), 1).unwrap();
-    let accepted = writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: crate::events::FileAction::Created,
-        path: "/enqueue".into(),
-        size: None,
-        trace_id: None,
-        credential_ref: None,
-    }));
+    let accepted = writer.try_write(WriteOp::FileEvent(file_event(
+        "/enqueue",
+        crate::events::FileAction::Created,
+        None,
+    )));
     assert!(accepted);
     writer.shutdown_blocking();
 
@@ -1656,6 +1627,7 @@ fn file_event_with_credential(path: &str, credential_ref: Option<&str>) -> Write
         action: crate::events::FileAction::Created,
         path: path.to_string(),
         size: Some(1),
+        kind: crate::events::FileKind::File,
         trace_id: None,
         credential_ref: credential_ref.map(str::to_string),
     })

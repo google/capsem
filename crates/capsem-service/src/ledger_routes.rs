@@ -969,7 +969,7 @@ LIMIT 200
 "#;
 
 const STATS_DETAIL_FILE_EVENTS_SQL: &str = r#"
-SELECT event_id, timestamp, action, path, size, trace_id, credential_ref
+SELECT event_id, timestamp, action, path, size, kind, trace_id, credential_ref
 FROM fs_events
 ORDER BY id DESC
 LIMIT 200

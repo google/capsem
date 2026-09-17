@@ -88,6 +88,7 @@ pub(super) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "path",
             "directory",
             "name",
+            "kind",
             "trace_id",
             "turn_id",
             "credential_ref",

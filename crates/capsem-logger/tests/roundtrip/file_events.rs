@@ -7,9 +7,55 @@ fn sample_file_event(path: &str, action: FileAction, size: Option<u64>) -> FileE
         action,
         path: path.to_string(),
         size,
+        kind: FileKind::File,
         trace_id: None,
         credential_ref: None,
     }
+}
+
+/// A directory event must stay a directory event all the way to the reader.
+/// Before `kind`, a `mkdir` landed as an anonymous path carrying the directory
+/// inode's size, indistinguishable from a small file write.
+#[tokio::test]
+async fn directory_file_event_round_trips_as_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-dir-kind.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer
+        .write(WriteOp::FileEvent(FileEvent {
+            kind: FileKind::Dir,
+            ..sample_file_event("project/.git/hooks", FileAction::Created, None)
+        }))
+        .await;
+    drop(writer);
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let stored: (String, Option<i64>) = conn
+        .query_row(
+            "SELECT kind, size FROM fs_events WHERE path = 'project/.git/hooks'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(stored, ("dir".to_string(), None));
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].kind, FileKind::Dir);
+    assert!(events[0].size.is_none());
+}
+
+/// Guest-side importers and exporters build FileEvents too, and they ship on
+/// their own cadence. A payload serialized before `kind` existed must still
+/// parse, as an ordinary file.
+#[test]
+fn legacy_file_event_json_without_kind_reads_as_file() {
+    let legacy = r#"{"timestamp":1700000000.0,"action":"created","path":"a.txt","size":12}"#;
+    let event: FileEvent = serde_json::from_str(legacy).expect("legacy payload must still parse");
+    assert_eq!(event.kind, FileKind::File);
+    assert_eq!(event.path, "a.txt");
 }
 
 #[tokio::test]

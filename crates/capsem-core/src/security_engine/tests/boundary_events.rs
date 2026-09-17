@@ -65,6 +65,7 @@ match = 'file.create.path == "/workspace/skills/foo.md" && file.create.name == "
             action: FileAction::Created,
             path: "/workspace/skills/foo.md".to_string(),
             size: Some(12),
+            kind: capsem_logger::FileKind::File,
             trace_id: Some("trace_file_create".to_string()),
             credential_ref: None,
         },
@@ -85,6 +86,98 @@ match = 'file.create.path == "/workspace/skills/foo.md" && file.create.name == "
     assert_eq!(fs_event_id, event_id.as_str());
     assert_eq!(rule_row.0, event_id.as_str());
     assert_eq!(rule_row.1, "profiles.rules.file_create_seen");
+}
+
+/// The finding this rail exists for: a rule watching `.git/hooks/` must see
+/// the hook write, and must be able to tell the hook from the directory it
+/// landed in.
+#[tokio::test]
+async fn file_rule_matches_a_git_hook_write_and_its_kind() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.git_hook_written]
+name = "git_hook_written"
+action = "ask"
+detection_level = "high"
+match = 'file.write.path.startsWith(".git/hooks/") && file.kind == "file"'
+
+[profiles.rules.git_hook_dir_created]
+name = "git_hook_dir_created"
+action = "allow"
+detection_level = "informational"
+match = 'file.create.path == ".git/hooks" && file.kind == "dir"'
+"#,
+    )
+    .unwrap();
+    let rules =
+        crate::net::policy_config::SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+
+    emit_file_security_write_and_rules(
+        &writer,
+        &rules,
+        FileEvent {
+            event_id: None,
+            timestamp: SystemTime::now(),
+            action: FileAction::Created,
+            path: ".git/hooks".to_string(),
+            size: None,
+            kind: capsem_logger::FileKind::Dir,
+            trace_id: None,
+            credential_ref: None,
+        },
+    )
+    .await
+    .expect("directory event must receive id");
+    emit_file_security_write_and_rules(
+        &writer,
+        &rules,
+        FileEvent {
+            event_id: None,
+            timestamp: SystemTime::now(),
+            action: FileAction::Modified,
+            path: ".git/hooks/pre-commit".to_string(),
+            size: Some(31),
+            kind: capsem_logger::FileKind::File,
+            trace_id: None,
+            credential_ref: None,
+        },
+    )
+    .await
+    .expect("hook write must receive id");
+    writer.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT security_rule_events.rule_id, fs_events.path, fs_events.kind
+             FROM security_rule_events
+             JOIN fs_events ON fs_events.event_id = security_rule_events.event_id
+             ORDER BY fs_events.id",
+        )
+        .unwrap();
+    let matched: Vec<(String, String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        matched,
+        vec![
+            (
+                "profiles.rules.git_hook_dir_created".to_string(),
+                ".git/hooks".to_string(),
+                "dir".to_string()
+            ),
+            (
+                "profiles.rules.git_hook_written".to_string(),
+                ".git/hooks/pre-commit".to_string(),
+                "file".to_string()
+            ),
+        ]
+    );
 }
 
 #[tokio::test]

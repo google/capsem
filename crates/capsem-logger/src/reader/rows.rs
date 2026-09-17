@@ -67,6 +67,11 @@ pub(super) fn read_file_event_row(row: &Row<'_>) -> rusqlite::Result<FileEvent> 
         action: FileAction::parse_str(&action_str),
         path: row.get(2)?,
         size: row.get::<_, Option<i64>>(3)?.map(|s| s as u64),
+        kind: row
+            .get::<_, Option<String>>(7)
+            .ok()
+            .flatten()
+            .map_or(FileKind::File, |kind| FileKind::parse_str(&kind)),
         trace_id: row.get::<_, Option<String>>(4).ok().flatten(),
         credential_ref: row.get::<_, Option<String>>(5).ok().flatten(),
     })

@@ -248,6 +248,7 @@ fn file_write() -> WriteOp {
         action: FileAction::Read,
         path: "/workspace/security/SKILL.md".to_string(),
         size: Some(4096),
+        kind: capsem_logger::FileKind::File,
         trace_id: Some("bench-trace".to_string()),
         credential_ref: None,
     })

@@ -77,6 +77,22 @@ export interface SupplyChainEvidence {
   attestations: SupplyChainReference[];
 }
 
+/**
+ * One row of the stats-detail `file_events` list, as the ledger route selects
+ * it. `kind` says what the path is, so a directory event is not read as a file
+ * write; `size` is null for directories and deletions.
+ */
+export interface FileEventRow {
+  event_id: string;
+  timestamp: string;
+  action: 'created' | 'modified' | 'deleted' | 'restored' | 'read' | 'import' | 'export';
+  path: string;
+  size: number | null;
+  kind: 'file' | 'dir' | 'symlink' | 'other';
+  trace_id: string | null;
+  credential_ref: string | null;
+}
+
 export interface SupplyChainManifestEvidence {
   origin?: string | null;
   source?: string | null;

@@ -71,6 +71,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The session ledger now records every filesystem change under the workspace.
+  The host monitor used to drop any path containing `.git`, `node_modules`,
+  `__pycache__`, `.cache`, `target`, `.venv` or `.swapfile`, which is exactly
+  where a compromise persists: `.git/hooks/*` and `.git/config`, npm install
+  scripts, `.venv/bin/activate`, build scripts under `target/`. Those changes
+  are now ledger rows and are evaluated by the profile's file security rules
+  like any other. Directory events are marked as such: `fs_events` carries a
+  `kind` column (`file`, `dir`, `symlink`, `other`), rules can read
+  `file.kind`, and a directory event no longer reports the directory inode's
+  size. Watching everything costs more to poll, so the monitor now measures
+  its own workspace scan and picks a rescan interval of ten scan-durations,
+  between 500ms and 10s.
 - rustls moves to 0.23.45 for RUSTSEC-2026-0285: TLS 1.3 handshake messages
   were accepted across encryption level boundaries on the host's TLS paths.
 
