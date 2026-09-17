@@ -72,6 +72,11 @@ pub(super) struct BodyArchive {
     next_seq: u64,
     /// Blocks whose bytes are on disk, waiting for their index rows to commit.
     appended: Vec<(SealedBlock, Vec<BodyIndexRow>)>,
+    /// Test builds only: make the next append fail the way a full disk does.
+    /// Injected at this seam rather than inside the archive writer because
+    /// what is under test is what *this* type does once the writer is gone.
+    #[cfg(test)]
+    fail_next_append: bool,
     /// "sync" and "commit" in the order they happened, so a test can prove
     /// the archive is flushed before the rows that name it are written.
     #[cfg(test)]
@@ -115,6 +120,8 @@ impl BodyArchive {
             staged: Vec::new(),
             next_seq: 0,
             appended: Vec::new(),
+            #[cfg(test)]
+            fail_next_append: false,
             #[cfg(test)]
             steps: Vec::new(),
         }
@@ -194,7 +201,16 @@ impl BodyArchive {
             }
         }
         self.seal_pending();
-        match self.writer.as_mut()?.stage(bytes) {
+        let Some(writer) = self.writer.as_mut() else {
+            // `seal_pending` failed its append and retired the writer. The
+            // count it took covered the rows it was holding; this body has no
+            // row yet, so it was not among them. Without this line it is the
+            // one body the counter never sees.
+            warn!(body_bytes = bytes.len(), "body not archived after seal");
+            self.drop_bodies(1, "stage_after_seal");
+            return None;
+        };
+        match writer.stage(bytes) {
             Ok(reference) => Some(reference),
             Err(error) => {
                 warn!(error = %error, body_bytes = bytes.len(), "body not archived after seal");
@@ -271,6 +287,9 @@ impl BodyArchive {
     /// Deflate the pending block and append it to the archive file. Its index
     /// rows move with it and wait for the next transaction.
     pub(super) fn seal_pending(&mut self) {
+        // Taken before the writer is borrowed, and only in test builds.
+        #[cfg(test)]
+        let injected_append_failure = std::mem::take(&mut self.fail_next_append);
         let Some(writer) = self.writer.as_mut() else {
             return;
         };
@@ -278,7 +297,15 @@ impl BodyArchive {
             return;
         };
         let rows = std::mem::take(&mut self.staged);
-        match writer.append(pending.encode()) {
+        #[cfg(test)]
+        let appended = if injected_append_failure {
+            Err(ArchiveError::Io(std::io::Error::other("injected append failure")))
+        } else {
+            writer.append(pending.encode())
+        };
+        #[cfg(not(test))]
+        let appended = writer.append(pending.encode());
+        match appended {
             Ok(sealed) => self.appended.push((sealed, rows)),
             Err(error) => {
                 // The file's end is no longer provably where the writer
@@ -331,11 +358,14 @@ impl BodyArchive {
         #[cfg(test)]
         self.steps.push("commit");
         for (block, rows) in &self.appended {
-            // IGNORE, not REPLACE: a block row is immutable once written, and
-            // a replace is a delete followed by an insert, which would take
-            // the index rows referencing it with it the day foreign keys are
-            // switched on. The retry after a rolled-back flush is the case
-            // that meets an existing row, and it is writing the same values.
+            // IGNORE, not REPLACE, and defensive rather than load-bearing: no
+            // path known today reaches this insert with the row already there,
+            // because the retry after a rolled-back flush re-inserts a row the
+            // rollback took away. It is IGNORE because a block row is
+            // immutable once written, so the only correct answer to finding
+            // one is to leave it alone -- and because REPLACE is a delete
+            // followed by an insert, which would take every index row
+            // referencing the block with it under enforced foreign keys.
             execute_cached(
                 conn,
                 "INSERT OR IGNORE INTO body_blocks (block_offset, raw_len, comp_len, sealed_at)
@@ -454,6 +484,12 @@ impl BodyArchive {
     #[cfg(test)]
     pub(super) fn poison_writer_for_tests(&mut self) {
         self.writer = None;
+    }
+
+    /// Make the next `seal_pending` fail its append, as a full disk would.
+    #[cfg(test)]
+    pub(super) fn fail_next_append_for_tests(&mut self) {
+        self.fail_next_append = true;
     }
 
     /// Blocks appended but not yet indexed.

@@ -318,3 +318,58 @@ fn giving_up_drops_the_rows_that_can_no_longer_be_placed() {
         .unwrap();
     assert_eq!(rows, 0);
 }
+
+/// The body in hand when `seal_pending` fails its append has no index row yet,
+/// so the count that seal takes cannot include it. It used to fall through the
+/// `?` on the retry and disappear: no row, no bytes, and no counter anywhere
+/// saying a body was lost. That counter is the only sign a session's archive
+/// gave up, so a body it cannot see is a body nobody can notice.
+#[test]
+fn the_body_lost_to_a_failed_seal_is_counted() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("seal-failure.db");
+    // Two bodies at the logger's cap overflow a 16 MiB block, which is the
+    // only thing that makes `stage` seal and retry.
+    let body = "b".repeat(MAX_BODY_BLOB_BYTES);
+
+    metrics::with_local_recorder(&recorder, || {
+        let mut archive = BodyArchive::open(Some(&db_path));
+        archive.stage(body_blob("0e0e0e0e0e0e", &body));
+        archive.fail_next_append_for_tests();
+        archive.stage(body_blob("0f0f0f0f0f0f", &body));
+    });
+
+    let dropped: Vec<(String, u64)> = snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .filter(|(key, _, _, _)| key.key().name() == DB_ARCHIVE_BODIES_DROPPED_TOTAL)
+        .map(|(key, _, _, value)| {
+            let reason = key
+                .key()
+                .labels()
+                .find(|label| label.key() == "reason")
+                .expect("every drop names a reason")
+                .value()
+                .to_string();
+            let DebugValue::Counter(count) = value else {
+                panic!("dropped bodies are a counter, not {value:?}");
+            };
+            (reason, count)
+        })
+        .collect();
+
+    assert!(
+        dropped.contains(&("append".to_string(), 1)),
+        "the sealed block's own row is counted where the append failed: {dropped:?}"
+    );
+    assert!(
+        dropped.contains(&("stage_after_seal".to_string(), 1)),
+        "and the body being staged when it failed is counted too: {dropped:?}"
+    );
+}

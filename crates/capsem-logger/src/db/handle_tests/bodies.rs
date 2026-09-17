@@ -721,10 +721,12 @@ async fn a_body_that_does_not_match_its_index_hash_fails_the_read() {
     );
 }
 
-/// The retry after a rolled-back flush re-inserts a block row that is already
-/// there. Written as a REPLACE that is a delete and an insert, which takes
-/// every index row referencing the block with it the moment foreign keys are
-/// enforced. This runs the retry with them on.
+/// A flush that fails rolls back its block row and its index rows together,
+/// and the next flush writes both again. What this holds is that the pair
+/// survives the round trip intact: the retried index row still names a block
+/// row that exists, which is what `pragma_foreign_key_check` answers -- and it
+/// is the check, not the `PRAGMA foreign_keys` setting, that decides, so this
+/// is proof and not a setting the writer happened to run under.
 #[tokio::test]
 async fn the_retry_survives_enforced_foreign_keys() {
     let _guard = DB_FLUSH_FAILURE_TEST_LOCK.lock().await;
@@ -747,7 +749,6 @@ async fn the_retry_survives_enforced_foreign_keys() {
     crate::writer::fail_disk_flushes_for_tests(0);
 
     let conn = rusqlite::Connection::open(&p).expect("open disk verifier");
-    conn.execute_batch("PRAGMA foreign_keys = ON").expect("enforce keys");
     let violations: i64 = conn
         .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| row.get(0))
         .expect("check keys");

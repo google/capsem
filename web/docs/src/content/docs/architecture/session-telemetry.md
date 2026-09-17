@@ -323,9 +323,12 @@ AI provider API calls with parsed response metadata.
 
 ### event_body_blobs
 
-Full captured request and response bodies for HTTP, model, and tool events. The
-primary protocol tables keep compact display fields for table scans; forensic
-body truth lives here and joins by `event_id` plus `direction`.
+The index into `session.bodies`, the compressed block archive that holds full
+captured request and response bodies for HTTP, model, and tool events. The bytes
+are not in SQLite: each row names the block they sit in and their span inside
+it. The primary protocol tables keep compact display fields for table scans;
+forensic body truth lives in the archive and joins by `event_id` plus
+`direction`.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -336,16 +339,18 @@ body truth lives here and joins by `event_id` plus `direction`.
 | `direction` | TEXT | `request` or `response` |
 | `content_type` | TEXT | MIME type or protocol content type, when known |
 | `original_bytes` | INTEGER | Full body byte count observed at the boundary |
-| `stored_bytes` | INTEGER | Bytes persisted in `body` |
+| `stored_bytes` | INTEGER | Bytes actually archived, after the 10 MB per-direction cap |
 | `truncated` | INTEGER | `1` when the persisted body hit the capture limit |
-| `body_hash` | TEXT | `blake3:*` hash of the observed body bytes |
-| `body` | BLOB | Captured body bytes, currently bounded to 10 MB per direction |
+| `body_hash` | TEXT | `blake3:*` hash of the **archived** bytes, so a read can verify what it got against the row that named it |
+| `block_offset` | INTEGER | Offset of the `session.bodies` block holding this body, keyed to `body_blocks` |
+| `body_offset` | INTEGER | Offset of this body inside that block's inflated bytes |
+| `body_len` | INTEGER | Length of this body inside that block, always equal to `stored_bytes` |
 | `trace_id` | TEXT | Cross-table correlation ID |
 | `created_at` | TEXT | Insert timestamp |
 
 The UI and debug routes may render parsed JSON, text, or binary summaries from
-this table, but they must not invent a second body source. If a compact preview
-and a blob disagree, the blob table is the ledger.
+the archived bytes, but they must not invent a second body source. If a compact
+preview and an archived body disagree, the archive is the ledger.
 
 ### tool_calls
 
