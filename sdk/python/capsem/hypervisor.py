@@ -15,7 +15,6 @@ from .execution import ExecResult, command_deadline
 from .registry import Registry
 from .vm import VM
 
-
 #: What a created sandbox runs. A container brings its own userland, so the
 #: catalog answers its default profile apart from a VM's.
 Runtime = Literal["vm", "container"]
