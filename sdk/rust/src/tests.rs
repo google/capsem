@@ -433,3 +433,26 @@ async fn facade_deadlines_are_forwarded_and_http_errors_stay_typed() {
     let vm = VM::new(&server.url, "private-token", VmSelector::Id("vm-1".into())).unwrap();
     assert!(matches!(vm.info().await, Err(Error::Http { status: 401, body }) if body == b"denied"));
 }
+
+#[test]
+fn port_debug_never_prints_the_preview_bootstrap_token() {
+    let port = crate::Port {
+        id: "preview-id".into(),
+        guest: 3000,
+        host: None,
+        authenticate: true,
+        url: Some("http://preview-id.localhost:19223/_capsem/bootstrap".into()),
+        bootstrap_token: Some("bootstrap-secret".into()),
+        expires_in_seconds: Some(30),
+    };
+    for text in [format!("{port:?}"), format!("{port:#?}")] {
+        assert!(!text.contains("bootstrap-secret"), "{text}");
+        assert!(text.contains("<redacted>"), "{text}");
+        assert!(text.contains("preview-id"), "{text}");
+    }
+    let plain = crate::Port {
+        bootstrap_token: None,
+        ..port
+    };
+    assert!(format!("{plain:?}").contains("<none>"));
+}

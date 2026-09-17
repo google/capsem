@@ -125,7 +125,7 @@ impl Container<'_> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Port {
     pub id: String,
     pub guest: u16,
@@ -134,6 +134,30 @@ pub struct Port {
     pub url: Option<String>,
     pub bootstrap_token: Option<String>,
     pub expires_in_seconds: Option<u16>,
+}
+
+/// The bootstrap token opens a browser session on the workload, so it is
+/// redacted the way [`crate::Registry`] redacts its credentials.
+impl std::fmt::Debug for Port {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Port")
+            .field("id", &self.id)
+            .field("guest", &self.guest)
+            .field("host", &self.host)
+            .field("authenticate", &self.authenticate)
+            .field("url", &self.url)
+            .field(
+                "bootstrap_token",
+                &if self.bootstrap_token.is_some() {
+                    "<redacted>"
+                } else {
+                    "<none>"
+                },
+            )
+            .field("expires_in_seconds", &self.expires_in_seconds)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
