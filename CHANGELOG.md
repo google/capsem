@@ -143,6 +143,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The profile catalog names its own default: a profile ledger claims it with
+  `is_default`, `GET /status` publishes it as `profiles.default_profile_id`,
+  and the Python, TypeScript and Rust SDKs plus the npm MCP server resolve it
+  from the gateway (once per client) when a call names no profile, instead of
+  compiling a profile name into each client. A catalog without a default asks
+  the caller to pass one.
+
 - Typed Rust, Python, and TypeScript port resources open plain loopback ports by
   default and can opt into the authenticated browser flow. That flow supports
   request bodies, redirects, workload cookies, and WebSocket upgrades without
