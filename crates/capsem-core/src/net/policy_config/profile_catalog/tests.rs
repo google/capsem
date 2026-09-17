@@ -52,39 +52,66 @@ fn profile_catalog_rejects_flat_only_profile_files() {
 }
 
 /// Which profile a client gets when it names none is the catalog's answer,
-/// not a string compiled into every SDK. Exactly one profile may claim it.
+/// not a string compiled into every SDK, and it is asked per runtime: one
+/// profile may claim the VM default and another the container default.
 #[test]
-fn the_catalog_names_one_default_profile() {
+fn the_catalog_names_one_default_profile_per_runtime() {
     let builtin = ProfileCatalog::builtin();
-    assert_eq!(builtin.default_profile_id(), Some("code"));
+    assert_eq!(builtin.default_profile_id(ProfileRuntime::Vm), Some("code"));
+    assert_eq!(builtin.default_profile_id(ProfileRuntime::Container), Some("code"));
 
     let dir = tempfile::tempdir().unwrap();
     let code = include_str!("../../../../../../config/profiles/code/profile.toml");
     let cowork = include_str!("../../../../../../config/profiles/co-work/profile.toml");
     std::fs::create_dir(dir.path().join("code")).unwrap();
     std::fs::write(dir.path().join("code/profile.toml"), code).unwrap();
-    assert_eq!(
-        ProfileCatalog::load_from_dir(dir.path()).unwrap().default_profile_id(),
-        Some("code")
-    );
+    let catalog = ProfileCatalog::load_from_dir(dir.path()).unwrap();
+    assert_eq!(catalog.default_profile_id(ProfileRuntime::Vm), Some("code"));
+    assert_eq!(catalog.default_profile_id(ProfileRuntime::Container), Some("code"));
 
+    // A second claimant for one runtime is refused, and the message names the
+    // runtime: two profiles may legitimately hold the two claims.
     std::fs::create_dir(dir.path().join("co-work")).unwrap();
     std::fs::write(
         dir.path().join("co-work/profile.toml"),
-        cowork.replace("id = \"co-work\"", "id = \"co-work\"\nis_default = true"),
+        cowork.replace("id = \"co-work\"", "id = \"co-work\"\ndefault_for = [\"container\"]"),
     )
     .unwrap();
     let error = ProfileCatalog::load_from_dir(dir.path()).unwrap_err();
-    assert!(error.contains("more than one default profile"), "{error}");
+    assert!(error.contains("more than one default container profile"), "{error}");
+    assert!(!error.contains("default vm profile"), "only the contested runtime is named: {error}");
+
+    // The two claims may part: the VM keeps code, the container takes co-work.
+    std::fs::write(
+        dir.path().join("code/profile.toml"),
+        code.replace("default_for = [\"vm\", \"container\"]", "default_for = [\"vm\"]"),
+    )
+    .unwrap();
+    let catalog = ProfileCatalog::load_from_dir(dir.path()).expect("one claimant per runtime loads");
+    assert_eq!(catalog.default_profile_id(ProfileRuntime::Vm), Some("code"));
+    assert_eq!(catalog.default_profile_id(ProfileRuntime::Container), Some("co-work"));
+    // What the status route publishes: both claims, never just the VM's.
+    assert_eq!(
+        catalog.default_profile_ids(),
+        [("vm", "code"), ("container", "co-work")].into_iter().collect()
+    );
 
     std::fs::write(dir.path().join("co-work/profile.toml"), cowork).unwrap();
     std::fs::write(
         dir.path().join("code/profile.toml"),
-        code.replace("is_default = true\n", ""),
+        code.replace("default_for = [\"vm\", \"container\"]\n", ""),
     )
     .unwrap();
     let catalog = ProfileCatalog::load_from_dir(dir.path()).expect("a catalog without a default still loads");
-    assert_eq!(catalog.default_profile_id(), None, "no profile claims the default");
+    assert!(catalog.default_profile_ids().is_empty());
+    for runtime in ProfileRuntime::ALL {
+        assert_eq!(
+            catalog.default_profile_id(runtime),
+            None,
+            "no profile claims {}",
+            runtime.as_str()
+        );
+    }
 }
 
 #[test]

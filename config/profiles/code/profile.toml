@@ -10,9 +10,10 @@ description = "Optimized for coding and long-running agents."
 icon_svg = "<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M5.5 3 1.5 8l4 5 1.2-1-3.2-4 3.2-4L5.5 3Zm5 0-1.2 1 3.2 4-3.2 4 1.2 1 4-5-4-5Z\"/></svg>"
 revision = "0.6.2"
 refresh_policy = "24h"
-# The profile a client gets when it names none; the gateway publishes it in
-# GET /status so no client compiles a profile name into itself.
-is_default = true
+# The runtimes this profile is the default for; the gateway publishes both in
+# GET /status so no client compiles a profile name into itself. Today one
+# profile answers for both, but a container's default is free to move.
+default_for = ["vm", "container"]
 
 [availability]
 web = true

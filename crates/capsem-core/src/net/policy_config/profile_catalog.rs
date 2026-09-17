@@ -5,6 +5,7 @@
 //! the set: loading a directory of ledgers, overlaying installed release
 //! assets, and answering the catalog-level questions.
 
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,27 @@ use super::profile_contract::{builtin_profile_configs, ProfileConfigFile, Profil
 pub struct ProfileCatalog {
     profiles: BTreeMap<String, ProfileConfigFile>,
     source: ProfileCatalogSource,
+}
+
+/// What a profile is the default for. Kept apart because the two diverge: a
+/// container image brings its own userland, so the profile that boots a full
+/// VM workstation is not the profile a container should get by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileRuntime {
+    Vm,
+    Container,
+}
+
+impl ProfileRuntime {
+    pub const ALL: [Self; 2] = [Self::Vm, Self::Container];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Vm => "vm",
+            Self::Container => "container",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,12 +57,24 @@ impl ProfileCatalog {
         }
     }
 
-    /// The profile a client gets when it names none, if the catalog has one.
-    pub fn default_profile_id(&self) -> Option<&str> {
+    /// The profile a client gets when it names none for that runtime, if the
+    /// catalog has one. A container and a VM claim separately: the image a
+    /// container runs is not the workstation a VM boots, and the profile that
+    /// suits one will not stay the right answer for the other.
+    pub fn default_profile_id(&self, runtime: ProfileRuntime) -> Option<&str> {
         self.profiles
             .values()
-            .find(|profile| profile.is_default)
+            .find(|profile| profile.default_for.contains(&runtime))
             .map(|profile| profile.id.as_str())
+    }
+
+    /// Every runtime's default in one answer, keyed by runtime name, so a
+    /// caller cannot publish the VM's default and forget the container's.
+    pub fn default_profile_ids(&self) -> BTreeMap<&'static str, &str> {
+        ProfileRuntime::ALL
+            .into_iter()
+            .filter_map(|runtime| self.default_profile_id(runtime).map(|id| (runtime.as_str(), id)))
+            .collect()
     }
 
     pub fn load_from_dir(path: &Path) -> Result<Self, String> {
@@ -80,13 +114,19 @@ impl ProfileCatalog {
             if profiles.insert(profile.id.clone(), profile).is_some() {
                 return Err(format!("duplicate profile id {dir_name}"));
             }
-            let defaults: Vec<&str> = profiles
-                .values()
-                .filter(|profile| profile.is_default)
-                .map(|profile| profile.id.as_str())
-                .collect();
-            if defaults.len() > 1 {
-                return Err(format!("more than one default profile: {}", defaults.join(", ")));
+            for runtime in ProfileRuntime::ALL {
+                let defaults: Vec<&str> = profiles
+                    .values()
+                    .filter(|profile| profile.default_for.contains(&runtime))
+                    .map(|profile| profile.id.as_str())
+                    .collect();
+                if defaults.len() > 1 {
+                    return Err(format!(
+                        "more than one default {} profile: {}",
+                        runtime.as_str(),
+                        defaults.join(", ")
+                    ));
+                }
             }
         }
         if profiles.is_empty() {

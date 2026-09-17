@@ -25,10 +25,9 @@ pub struct ProfileConfigFile {
     pub icon_svg: Option<String>,
     pub revision: String,
     pub refresh_policy: String,
-    /// This profile is what a client gets when it names none. Exactly one
-    /// profile in a catalog may claim it.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub is_default: bool,
+    /// The runtimes this profile is the default for, one claimant each.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub default_for: std::collections::BTreeSet<super::profile_catalog::ProfileRuntime>,
     #[serde(default)]
     pub availability: ProfileAvailability,
     pub assets: ProfileAssetConfig,
