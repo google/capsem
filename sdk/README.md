@@ -76,9 +76,10 @@ Port objects can be listed and closed without exposing wire request enums.
 
 Private network operations use authenticated gateway HTTP and immutable network
 IDs; VM creation accepts typed objects returned by the network resource.
-Creation uses the standard profile when `profile` is omitted. Explicit profile
-selection accepts a typed object returned by `profiles.list`, rather than a raw
-profile ID.
+Creation uses the gateway catalog's default profile when `profile` is omitted:
+the client reads `default_profile_id` from `GET /status` once and caches it, so
+no profile name is compiled into an SDK. Explicit profile selection accepts a
+typed object returned by `profiles.list`, rather than a raw profile ID.
 Snapshot creation/restoration and mounts remain deferred.
 
 The separately installed [`@capsem/mcp`](../mcp/typescript/README.md) package

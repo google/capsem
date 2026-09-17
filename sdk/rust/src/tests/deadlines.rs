@@ -38,11 +38,15 @@ async fn slow_gateway(delay: Duration) -> (String, tokio::sync::mpsc::UnboundedR
                 let mut body = vec![0; length];
                 socket.read_exact(&mut body).await.unwrap();
                 let _ = seen.send(path.clone());
-                tokio::time::sleep(delay).await;
-                let operation = if path == "/vms/vm-1/info" {
-                    "getVmInfo"
-                } else {
-                    "execVm"
+                // Only the command routes are slow; resolving the catalog
+                // default is an ordinary call under the ordinary deadline.
+                if path != "/status" {
+                    tokio::time::sleep(delay).await;
+                }
+                let operation = match path.as_str() {
+                    "/vms/vm-1/info" => "getVmInfo",
+                    "/status" => "getHypervisorInfo",
+                    _ => "execVm",
                 };
                 let payload = serde_json::to_vec(&reply(operation)).unwrap();
                 let response = format!(
@@ -76,6 +80,8 @@ async fn exec_and_run_outlive_the_default_deadline_without_replaying() {
         .await
         .expect("run outlives the default deadline");
     assert_eq!(requests.recv().await.unwrap(), "/vms/vm-1/exec");
+    // `run` without a profile resolves the catalog default first.
+    assert_eq!(requests.recv().await.unwrap(), "/status");
     assert_eq!(requests.recv().await.unwrap(), "/run");
 
     let result = vm.info().await;

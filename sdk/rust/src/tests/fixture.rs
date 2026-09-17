@@ -13,6 +13,15 @@ pub fn reply(operation: &str) -> Value {
     if value.get("name").is_some() || operation == "getVmInfo" {
         value["name"] = json!("work");
     }
+    if operation == "getHypervisorInfo" {
+        value["profiles"] = json!({
+            "source": "built_in",
+            "profile_count": 1,
+            "ready_count": 1,
+            "profiles": [],
+            "default_profile_id": "code",
+        });
+    }
     if operation == "listVms" {
         value["sandboxes"] = json!([reply("getVmInfo")]);
     }

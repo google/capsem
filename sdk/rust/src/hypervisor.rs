@@ -11,6 +11,8 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Hypervisor {
     client: Client,
+    /// The catalog default, resolved once per handle.
+    default_profile: tokio::sync::OnceCell<String>,
 }
 
 impl Hypervisor {
@@ -29,6 +31,7 @@ impl Hypervisor {
     pub fn new(url: &str, token: &str) -> Result<Self> {
         Ok(Self {
             client: Client::new(url, token)?,
+            default_profile: tokio::sync::OnceCell::new(),
         })
     }
 
@@ -40,6 +43,31 @@ impl Hypervisor {
 
     pub async fn info(&self) -> Result<models::HypervisorInfo> {
         api::get_hypervisor_info(&self.client.transport, self.client.options).await
+    }
+
+    /// The profile the gateway's catalog uses when a call names none, read
+    /// from `GET /status` on first use and cached for this handle, so no
+    /// profile name is compiled into the SDK.
+    pub async fn default_profile_id(&self) -> Result<String> {
+        self.default_profile
+            .get_or_try_init(|| async {
+                let catalog = self.info().await?.profiles;
+                catalog
+                    .and_then(|catalog| catalog.default_profile_id)
+                    .filter(|id| !id.is_empty())
+                    .ok_or(Error::InvalidInput(
+                        "the gateway profile catalog names no default profile; pass a profile from profiles().list()",
+                    ))
+            })
+            .await
+            .cloned()
+    }
+
+    async fn profile_id(&self, profile: Option<models::ProfileSummary>) -> Result<String> {
+        match profile {
+            Some(profile) => Ok(profile.id),
+            None => self.default_profile_id().await,
+        }
     }
 
     /// Restart an idle managed service. Reconnect with a fresh gateway token.
@@ -90,12 +118,15 @@ impl Hypervisor {
             Some(_) => return Err(Error::InvalidInput("image must be a nonempty string")),
             None => (options.env, None),
         };
+        // Every local check first: an invalid argument must be refused before
+        // the client asks the gateway anything.
+        let ram_mb = Self::memory_mb(options.memory)?;
         let body = models::ProvisionRequest {
-            profile_id: options.profile.map_or_else(|| "code".into(), |profile| profile.id),
+            profile_id: self.profile_id(options.profile).await?,
             persistent: name.is_some(),
             name,
             cpus: options.cpus,
-            ram_mb: Self::memory_mb(options.memory)?,
+            ram_mb,
             env,
             from: None,
             networks: options.networks.into_iter().map(|network| network.name).collect(),
@@ -125,14 +156,16 @@ impl Hypervisor {
             return Err(Error::InvalidInput("cpus must be positive"));
         }
         let call = self.client.command_options(options.timeout_secs);
+        let ram_mb = Self::memory_mb(options.memory)?;
+        let profile_id = self.profile_id(options.profile).await?;
         api::run_vm(
             &self.client.transport,
             &api::RunVmParams {
                 body: models::RunRequest {
                     command: command.into(),
-                    profile_id: options.profile.map_or_else(|| "code".into(), |profile| profile.id),
+                    profile_id,
                     timeout_secs: options.timeout_secs,
-                    ram_mb: Self::memory_mb(options.memory)?,
+                    ram_mb,
                     cpus: options.cpus,
                     env: options.env,
                 },

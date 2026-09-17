@@ -54,8 +54,9 @@ Clones, created VMs and forks share the HTTP connection pool. Dropping a handle
 does not invalidate other handles. Dropping a request future cancels its HTTP
 request; the gateway may already have accepted a mutation.
 
-Omitted CPU and memory values retain the profile defaults. Omit `profile` for
-Capsem's standard `code` profile; select another by assigning a
+Omitted CPU and memory values retain the profile defaults. Omit `profile` for the
+profile the gateway's catalog names as its default (read once from
+`GET /status` and cached on the handle); select another by assigning a
 `ProfileSummary` returned by `hv.profiles().list().await?` to the options. Names
 create persistent VMs; omitted or empty names create ephemeral VMs. Memory is
 measured in GiB.

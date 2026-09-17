@@ -19,6 +19,7 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
     request(&mut server, "/status").await;
     assert_eq!(hv.list().await.unwrap().sandboxes[0].id, "vm-1");
     request(&mut server, "/vms/list").await;
+    let mut first_create = true;
     let mut profile = hv.profiles().list().await.unwrap().remove(0);
     request(&mut server, "/profiles/list").await;
     for name in [None, Some(String::new())] {
@@ -31,6 +32,12 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
             .unwrap();
         assert_eq!(vm.id(), Some("vm-1"));
         assert_eq!(vm.name(), Some("work"));
+        if first_create {
+            // A profile-less create asks the catalog which profile is the
+            // default; the handle caches the answer.
+            request(&mut server, "/status").await;
+            first_create = false;
+        }
         let body = request(&mut server, "/vms/create").await;
         assert_eq!(body["name"], json!(null));
         assert_eq!(body["profile_id"], "code");
@@ -135,6 +142,8 @@ async fn container_and_port_resources_hide_wire_exposure_details() {
         })
         .await
         .unwrap();
+    // The profile-less create resolves the catalog default first.
+    request(&mut server, "/status").await;
     let create = request(&mut server, "/vms/create").await;
     assert_eq!(create["env"], serde_json::Value::Null);
     assert_eq!(create["container"]["image"], "docker://busybox:latest");
