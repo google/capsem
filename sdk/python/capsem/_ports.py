@@ -83,8 +83,9 @@ class Ports:
         response = await api.list_vm_exposures(self._vm._transport, id=await self._vm._resolve())
         return [self._port(exposure) for exposure in response.exposures]
 
-    async def close(self, port: Port | str) -> models.VmActionResponse:
-        exposure_id = port.id if isinstance(port, Port) else port
+    async def close(self, port: Port) -> models.VmActionResponse:
+        if not isinstance(port, Port):
+            raise TypeError("port must be an object returned by vm.ports")
         return await api.delete_vm_exposure(
-            self._vm._transport, id=await self._vm._resolve(), exposure_id=exposure_id,
+            self._vm._transport, id=await self._vm._resolve(), exposure_id=port.id,
         )

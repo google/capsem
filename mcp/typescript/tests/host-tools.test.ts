@@ -218,15 +218,21 @@ describe('host-tools', () => {
     }))).toMatchObject({id: '49152', host: 49152, authenticate: false});
     expect(structured(await client.callTool({name: 'capsem_port_list', arguments: {vm_id: 'vm-1'}})))
       .toEqual({ports: [{id: '49152', guest: 8080, host: 49152, authenticate: false}]});
+    const missingPort = await client.callTool({
+      name: 'capsem_port_close', arguments: {vm_id: 'vm-1', port_id: 'missing'},
+    });
+    expect(missingPort.isError).toBe(true);
+    expect(missingPort.structuredContent).toEqual({error: {kind: 'invalid_input'}});
     expect(structured(await client.callTool({
       name: 'capsem_port_close', arguments: {vm_id: 'vm-1', port_id: '49152'},
     }))).toEqual({success: true});
-    expect(JSON.parse(requests.at(-3)?.body.toString() ?? '')).toEqual({
+    expect(JSON.parse(requests.at(-5)?.body.toString() ?? '')).toEqual({
       target: 'container', access: 'loopback_tcp', guest_port: 8080, host_port: 0,
     });
-    expect(requests.slice(-6).map(request => `${request.method} ${new URL(request.url, 'http://x').pathname}`)).toEqual([
+    expect(requests.slice(-8).map(request => `${request.method} ${new URL(request.url, 'http://x').pathname}`)).toEqual([
       'POST /vms/create', 'GET /vms/vm-1/container', 'GET /vms/vm-1/container', 'POST /vms/vm-1/exposures',
-      'GET /vms/vm-1/exposures', 'DELETE /vms/vm-1/exposures/49152',
+      'GET /vms/vm-1/exposures', 'GET /vms/vm-1/exposures', 'GET /vms/vm-1/exposures',
+      'DELETE /vms/vm-1/exposures/49152',
     ]);
   });
 

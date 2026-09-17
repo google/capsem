@@ -197,6 +197,9 @@ it('opens typed ports and hides exposure targets and preview sessions', async ()
       expect(authenticated.authenticate).toBe(true);
       expect(authenticated.url).toBeDefined();
       await vm.ports.list();
+      const requestCount = received.length;
+      await expect(vm.ports.close('exp-1' as never)).rejects.toThrow('Port must be an object');
+      expect(received).toHaveLength(requestCount);
       await vm.ports.close(plain);
       expect(received.map(request => [request.method, request.url])).toEqual([
         ['POST', '/vms/create'],

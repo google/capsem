@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Python and TypeScript port closure now require the typed `Port` returned by
+  `open` or `list`, matching Rust and preventing raw exposure IDs from leaking
+  into the public SDK facade.
+
 - Global network resources now return and accept typed network objects for
   list, delete, and audit operations; immutable IDs remain the explicit lookup
   boundary.

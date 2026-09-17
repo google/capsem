@@ -196,6 +196,11 @@ def test_ports_hide_wire_exposures_and_infer_the_container_target() -> None:
             assert authenticated.authenticate is True
             assert authenticated.url is not None and authenticated.bootstrap_token is not None
             assert await vm.ports.list() == []
+            request_count = len(state.requests)
+            raw_id: Any = plain.id
+            with pytest.raises(TypeError, match="port must be an object"):
+                await vm.ports.close(raw_id)
+            assert len(state.requests) == request_count
             assert isinstance(await vm.ports.close(plain), models.VmActionResponse)
             create_bodies = [json.loads(body) for method, path, body in state.requests
                              if method == "POST" and path.endswith("/exposures")]

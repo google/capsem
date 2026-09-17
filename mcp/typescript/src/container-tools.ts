@@ -36,6 +36,10 @@ export function registerContainerTools(server: McpServer, hypervisor: Hypervisor
   server.registerTool('capsem_port_close', {
     description: 'Close a live workload port.',
     inputSchema: {vm_id: vmId, port_id: z.string().min(1)},
-  }, ({vm_id, port_id}, extra) => toolCall(() =>
-    hypervisor.vm({id: vm_id}).ports.close(port_id, {signal: extra.signal})));
+  }, ({vm_id, port_id}, extra) => toolCall(async () => {
+    const ports = hypervisor.vm({id: vm_id}).ports;
+    const opened = (await ports.list({signal: extra.signal})).find(candidate => candidate.id === port_id);
+    if (opened === undefined) throw new TypeError(`No open port has ID ${port_id}`);
+    return ports.close(opened, {signal: extra.signal});
+  }));
 }

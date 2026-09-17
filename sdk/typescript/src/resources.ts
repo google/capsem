@@ -96,10 +96,12 @@ export class Ports extends Resource {
     const response = await api.listVmExposures(transport, {id}, options);
     return response.exposures.map(port);
   }
-  async close(opened: Port | string, options: CallOptions = {}): Promise<models.VmActionResponse> {
+  async close(opened: Port, options: CallOptions = {}): Promise<models.VmActionResponse> {
+    if (typeof opened !== 'object' || opened === null || typeof opened.id !== 'string') {
+      throw new TypeError('Port must be an object returned by vm.ports');
+    }
     const {transport, id} = await this.context(options);
-    const exposureId = typeof opened === 'string' ? opened : opened.id;
-    return api.deleteVmExposure(transport, {id, exposure_id: exposureId}, options);
+    return api.deleteVmExposure(transport, {id, exposure_id: opened.id}, options);
   }
 }
 

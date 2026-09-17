@@ -3,7 +3,7 @@ import {
   type ExecRequest, type FileListEntry, type TimelineStatus, type UpdateApplyRequest,
   type VmStatsDetailResponse,
 } from '../src/models/index.js';
-import type {Networks} from '../src/resources.js';
+import type {Networks, Ports} from '../src/resources.js';
 
 const request: UpdateApplyRequest = {};
 const status: TimelineStatus = ToolDecision.DENIED;
@@ -15,6 +15,7 @@ const leaf: FileListEntry = {
 const tree: FileListEntry = { ...leaf, type: FileEntryType.DIRECTORY, children: [leaf] };
 const bodies: VmStatsDetailResponse['body_blobs'] = { event: [] };
 declare const networks: Networks;
+declare const ports: Ports;
 
 // @ts-expect-error An optional boolean cannot be explicit null.
 request.confirmed = null;
@@ -34,6 +35,8 @@ leaf.size = '4294967296';
 void networks.delete('net-1');
 // @ts-expect-error Network audit requires an object returned by the SDK.
 void networks.logs('net-1');
+// @ts-expect-error Port closure requires an object returned by the SDK.
+void ports.close('exp-1');
 
 if (numeric !== 403 || status !== ToolDecision.DENIED || !Array.isArray(bodies.event)) {
   throw new Error('Generated type usage failed');
