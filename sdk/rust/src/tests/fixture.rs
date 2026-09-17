@@ -34,6 +34,13 @@ pub fn reply(operation: &str) -> Value {
             }
         }]);
     }
+    if operation == "listProfileMcpServers" {
+        value = json!([{
+            "name": "filesystem", "url": "stdio://filesystem", "enabled": true,
+            "source": "profile", "running": true, "is_stdio": true,
+            "tool_count": 1, "has_auth_credential": false, "custom_header_count": 0
+        }]);
+    }
     if operation == "listNetworks" {
         value["networks"] = json!([{
             "id": "net-1",

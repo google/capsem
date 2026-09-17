@@ -15,6 +15,16 @@ pub struct ProfileMcp<'a> {
     client: &'a Client,
     profile_id: String,
 }
+pub struct ProfileMcpServer<'a> {
+    client: &'a Client,
+    profile_id: String,
+    pub info: models::McpServerInfoResponse,
+}
+pub struct McpTools<'a> {
+    client: &'a Client,
+    profile_id: String,
+    server_id: String,
+}
 
 impl Files<'_> {
     pub async fn read(&self, path: &str) -> Result<Vec<u8>> {
@@ -351,15 +361,15 @@ impl<'a> Profiles<'a> {
         Ok(api::list_profiles(&self.0.transport, self.0.options).await?.profiles)
     }
 
-    pub fn mcp(&self, profile_id: &str) -> ProfileMcp<'a> {
+    pub fn mcp(&self, profile: &models::ProfileSummary) -> ProfileMcp<'a> {
         ProfileMcp {
             client: self.0,
-            profile_id: profile_id.into(),
+            profile_id: profile.id.clone(),
         }
     }
 }
 
-impl ProfileMcp<'_> {
+impl<'a> ProfileMcp<'a> {
     pub async fn info(&self) -> Result<models::ProfileMcpInfoResponse> {
         api::get_profile_mcp_info(
             &self.client.transport,
@@ -393,37 +403,67 @@ impl ProfileMcp<'_> {
         .await
     }
 
-    pub async fn tools(&self, server_id: &str) -> Result<models::McpToolsListResponse> {
-        api::list_profile_mcp_tools(
-            &self.client.transport,
-            &api::ListProfileMcpToolsParams {
-                profile_id: self.profile_id.clone(),
-                server_id: server_id.into(),
-            },
-            self.client.options,
-        )
-        .await
+    pub async fn get(&self, name: &str) -> Result<ProfileMcpServer<'a>> {
+        let matches = self
+            .servers()
+            .await?
+            .0
+            .into_iter()
+            .filter(|server| server.name == name)
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Err(crate::Error::InvalidInput("MCP server name must resolve exactly once"));
+        }
+        Ok(ProfileMcpServer {
+            client: self.client,
+            profile_id: self.profile_id.clone(),
+            info: matches.into_iter().next().expect("one MCP server matched"),
+        })
+    }
+}
+
+impl<'a> ProfileMcpServer<'a> {
+    pub fn tools(&self) -> McpTools<'a> {
+        McpTools {
+            client: self.client,
+            profile_id: self.profile_id.clone(),
+            server_id: self.info.name.clone(),
+        }
     }
 
-    pub async fn refresh(&self, server_id: &str) -> Result<models::McpRefreshResponse> {
+    pub async fn refresh(&self) -> Result<models::McpRefreshResponse> {
         api::refresh_profile_mcp_server(
             &self.client.transport,
             &api::RefreshProfileMcpServerParams {
                 profile_id: self.profile_id.clone(),
-                server_id: server_id.into(),
+                server_id: self.info.name.clone(),
+            },
+            self.client.options,
+        )
+        .await
+    }
+}
+
+impl McpTools<'_> {
+    pub async fn list(&self) -> Result<models::McpToolsListResponse> {
+        api::list_profile_mcp_tools(
+            &self.client.transport,
+            &api::ListProfileMcpToolsParams {
+                profile_id: self.profile_id.clone(),
+                server_id: self.server_id.clone(),
             },
             self.client.options,
         )
         .await
     }
 
-    pub async fn call(&self, server_id: &str, tool_id: &str, arguments: models::Value) -> Result<models::Value> {
+    pub async fn call(&self, name: &str, arguments: models::Value) -> Result<models::Value> {
         api::call_profile_mcp_tool(
             &self.client.transport,
             &api::CallProfileMcpToolParams {
                 profile_id: self.profile_id.clone(),
-                server_id: server_id.into(),
-                tool_id: tool_id.into(),
+                server_id: self.server_id.clone(),
+                tool_id: name.into(),
                 body: arguments,
             },
             self.client.options,

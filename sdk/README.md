@@ -11,7 +11,7 @@ the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
 | Hypervisor | `info`, `list`, `create`, `run`, `purge`, `log`, `update`, `restart` |
 | Agent debugging | `debug.panics/triage` |
 | Private networks | `networks.create/list/inspect/delete/logs` |
-| Profiles and MCP | `profiles.list`, `profiles.mcp(...).info/servers/default_permission/tools/refresh/call` |
+| Profiles and MCP | `profiles.list`, `profiles.mcp(profile).info/servers/default_permission/get`; scoped `server.tools.list/call`, `server.refresh` |
 | VM | `info`, `exec`, `persist`, `start`, `stop`, `pause`, `resume`, `delete`, `fork` |
 | VM inspection | `log`, `history`, `timeline` |
 | VM files | `files.list/read/write/history` |

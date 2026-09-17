@@ -83,10 +83,11 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       await hv.debug.panics({since: '5m', limit: 3});
       await hv.debug.triage({vm_id: 'vm-0', since: '1h', limit: 2});
       await hv.purge({all: true});
-      const mcp = hv.profiles.mcp('code');
+      const mcp = hv.profiles.mcp(profile);
       await mcp.info(); await mcp.servers(); await mcp.defaultPermission();
-      await mcp.tools('local'); await mcp.refresh('local');
-      await mcp.call('local', 'read_file', {path: '/tmp/x'});
+      const server = await mcp.get('local');
+      await server.tools.list(); await server.refresh();
+      await server.tools.call('read_file', {path: '/tmp/x'});
       await hv.update();
       expect(received.at(-1)?.url).toBe('/update/apply');
       expect(JSON.parse(received.at(-1)?.body.toString() ?? '')).toEqual({confirmed: true});

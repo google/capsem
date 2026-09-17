@@ -12,6 +12,7 @@ use std::time::Duration;
 async fn example(url: &str, token: &str) -> Result<()> {
     let hv = Hypervisor::new(url, token)?.with_timeout(Duration::from_secs(120))?;
     println!("{:?}", hv.info().await?); // health, version, profiles, updates
+    let profile = hv.profiles().list().await?.remove(0);
     let network = hv.networks().create("private").await?;
     let vm = hv.create(CreateOptions {
         name: Some("work".into()), cpus: Some(4), memory: Some(8),
@@ -34,7 +35,8 @@ async fn example(url: &str, token: &str) -> Result<()> {
     vm.stats().details().await?;
     vm.persist("saved-workspace").await?;
     hv.debug().triage(TriageOptions { vm_id: vm.id().map(str::to_owned), since: Some("1h".into()), ..Default::default() }).await?;
-    hv.profiles().mcp("code").tools("filesystem").await?;
+    let server = hv.profiles().mcp(&profile).get("filesystem").await?;
+    server.tools().list().await?;
     hv.log(HostLogSource::Service, LogOptions { tail: Some(100), ..Default::default() }).await?;
     vm.ports().close(&port).await?;
     vm.stop().await?;

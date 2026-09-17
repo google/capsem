@@ -21,9 +21,19 @@ describe('contracts', () => {
       requests.push(record);
       const path = new URL(record.url, 'http://gateway.test').pathname;
       const fixtures: Record<string, unknown> = {
-        '/profiles/list': {profiles: []},
+        '/profiles/list': {profiles: [{
+          availability: {web: true, shell: true, mobile: false}, default_rule_count: 0,
+          description: 'Code profile', id: 'code', mcp_server_count: 1, name: 'Code',
+          plugin_count: 0, rule_count: 0, source: 'builtin', update_semantics: {
+            new_sessions: 'use_current_profile_catalog', existing_vms: 'pinned_until_recreate',
+            upgrade_action: 'recreate_vm',
+          },
+        }]},
         '/profiles/code/mcp/info': {builtin_local_enabled: true, manual_server_count: 1, profile_id: 'code', server_count: 1},
-        '/profiles/code/mcp/servers/list': [],
+        '/profiles/code/mcp/servers/list': [{
+          name: 'local', url: 'stdio://local', enabled: true, source: 'profile', running: true,
+          is_stdio: true, tool_count: 1, has_auth_credential: false, custom_header_count: 0,
+        }],
         '/profiles/code/mcp/default/info': {action: 'allow', source: 'profile'},
         '/profiles/code/mcp/servers/local/tools/list': [],
         '/profiles/code/mcp/servers/local/refresh': {instances: 1, server_id: 'local', success: true},
@@ -80,7 +90,9 @@ describe('contracts', () => {
       }},
     ];
     for (const call of calls) expect((await client.callTool(call)).isError, call.name).not.toBe(true);
-    expect(requests.map(request => request.method)).toEqual(['GET', 'GET', 'GET', 'GET', 'GET', 'POST', 'POST']);
+    expect(requests.map(request => request.method)).toEqual([
+      ...Array.from({length: 12}, () => 'GET'), 'POST', 'GET', 'GET', 'POST',
+    ]);
     expect(JSON.parse(requests.at(-1)?.body.toString() ?? '')).toEqual({path: '/tmp/x'});
   });
 });

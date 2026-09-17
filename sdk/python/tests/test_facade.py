@@ -63,13 +63,17 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             assert isinstance(await hv.debug.panics(since="5m", limit=3), models.PanicsResponse)
             assert isinstance(await hv.debug.triage(vm_id="vm-0", since="1h", limit=2), models.TriageResponse)
             assert isinstance(await hv.purge(all=True), models.PurgeResponse)
-            mcp = hv.profiles.mcp("code")
+            raw_profile: Any = "code"
+            with pytest.raises(TypeError, match="profile must be an object"):
+                hv.profiles.mcp(raw_profile)
+            mcp = hv.profiles.mcp(profiles[0])
             assert isinstance(await mcp.info(), models.ProfileMcpInfoResponse)
             assert isinstance(await mcp.servers(), list)
             assert isinstance(await mcp.default_permission(), models.McpDefaultPermissionResponse)
-            assert isinstance(await mcp.tools("local"), list)
-            assert isinstance(await mcp.refresh("local"), models.McpRefreshResponse)
-            assert await mcp.call("local", "read_file", {"path": "/tmp/x"}) is not None
+            server = await mcp.get("filesystem")
+            assert isinstance(await server.tools.list(), list)
+            assert isinstance(await server.refresh(), models.McpRefreshResponse)
+            assert await server.tools.call("read_file", {"path": "/tmp/x"}) is not None
             assert isinstance(await hv.update(), models.UpdateActionResponse)
             assert json.loads(state.requests[-1][2]) == {"confirmed": True}
             restarted = await hv.restart()

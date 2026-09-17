@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Profile MCP access now starts from a typed profile and resolves a scoped
+  server handle before listing, calling, or refreshing its tools.
+
 - Python and TypeScript port closure now require the typed `Port` returned by
   `open` or `list`, matching Rust and preventing raw exposure IDs from leaking
   into the public SDK facade.

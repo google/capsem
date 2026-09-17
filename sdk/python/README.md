@@ -10,6 +10,7 @@ from capsem.models import HostLogSource, TimelineLayer
 
 async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     overview = await hv.info()  # health, versions, profiles, updates
+    profile = (await hv.profiles.list())[0]
     network = await hv.networks.create("private")
     vm = await hv.create(
         name="workspace",
@@ -34,7 +35,8 @@ async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     timeline = await vm.timeline(layers=[TimelineLayer.EXEC, TimelineLayer.MODEL])
     await vm.persist("saved-workspace")
     triage = await hv.debug.triage(vm_id=vm.id, since="1h")
-    tools = await hv.profiles.mcp("code").tools("filesystem")
+    server = await hv.profiles.mcp(profile).get("filesystem")
+    tools = await server.tools.list()
     logs = await hv.log(HostLogSource.SERVICE, tail=100)
     await vm.ports.close(port)
     await vm.stop()

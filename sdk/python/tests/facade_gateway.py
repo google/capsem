@@ -56,6 +56,8 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
                     "vm_id": "vm-0", "address": "10.0.0.2", "state": "ready", "updated_unix_ms": 1,
                 }],
             )]})
+        if request.path.endswith("/mcp/servers/list"):
+            return web.json_response([response_model("McpServerInfoResponse", name="filesystem")])
         if request.path.endswith("/fork"):
             return web.json_response(response_model("ForkResponse", id="forked-id", name=json.loads(body)["name"]))
         if request.path.endswith("/exec"):

@@ -9,6 +9,8 @@ import {Hypervisor, HostLogSource, VM} from '@capsem/sdk';
 const hv = new Hypervisor(url, token, {timeoutMs: 120_000});
 try {
   const status = await hv.info(); // health, version, profiles and updates
+  const [profile] = await hv.profiles.list();
+  if (profile === undefined) throw new Error('No Capsem profile is available');
   const network = await hv.networks.create('private');
   const vm = await hv.create({
     name: 'work', cpus: 4, memory: 8, networks: [network],
@@ -19,14 +21,15 @@ try {
   console.log(port.url);
   await hv.networks.logs(network, {vm: vm.id});
   const result = await vm.exec('uname -a', {timeout_secs: 60});
-  console.log(result.stdout.data, result.exit_code);
+  console.log(result);
   await vm.files.write('/hello.txt', new TextEncoder().encode('hello'));
   const bytes = await vm.files.read('/hello.txt');
   const info = await vm.info(); // includes AI, network and files
   const stats = await vm.stats.details();
   await vm.persist('saved-workspace');
   const triage = await hv.debug.triage({vm_id: vm.id, since: '1h'});
-  const tools = await hv.profiles.mcp('code').tools('filesystem');
+  const server = await hv.profiles.mcp(profile).get('filesystem');
+  const tools = await server.tools.list();
   const logs = await hv.log({source: HostLogSource.GATEWAY, tail: 100});
   await vm.ports.close(port);
 } finally {

@@ -392,20 +392,22 @@ async fn diagnostics_persistence_and_profile_mcp_use_typed_routes() {
     vm.persist("saved").await.unwrap();
     assert_eq!(request(&mut server, "/vms/vm-1/save").await, json!({"name":"saved"}));
 
-    hv.profiles().list().await.unwrap();
+    let profile = hv.profiles().list().await.unwrap().remove(0);
     request(&mut server, "/profiles/list").await;
-    let mcp = hv.profiles().mcp("code");
+    let mcp = hv.profiles().mcp(&profile);
     mcp.info().await.unwrap();
     request(&mut server, "/profiles/code/mcp/info").await;
     mcp.servers().await.unwrap();
     request(&mut server, "/profiles/code/mcp/servers/list").await;
     mcp.default_permission().await.unwrap();
     request(&mut server, "/profiles/code/mcp/default/info").await;
-    mcp.tools("filesystem").await.unwrap();
+    let mcp_server = mcp.get("filesystem").await.unwrap();
+    request(&mut server, "/profiles/code/mcp/servers/list").await;
+    mcp_server.tools().list().await.unwrap();
     request(&mut server, "/profiles/code/mcp/servers/filesystem/tools/list").await;
-    mcp.refresh("filesystem").await.unwrap();
+    mcp_server.refresh().await.unwrap();
     request(&mut server, "/profiles/code/mcp/servers/filesystem/refresh").await;
-    mcp.call("filesystem", "read", json!({"path":"/tmp/a"})).await.unwrap();
+    mcp_server.tools().call("read", json!({"path":"/tmp/a"})).await.unwrap();
     assert_eq!(
         request(&mut server, "/profiles/code/mcp/servers/filesystem/tools/read/call").await,
         json!({"path":"/tmp/a"})

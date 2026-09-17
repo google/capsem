@@ -140,27 +140,47 @@ export class VmNetworks extends Resource {
   }
 }
 
+export class McpTools {
+  constructor(private readonly transport: Transport, private readonly profileId: string,
+              private readonly serverId: string) {}
+  async list(options: CallOptions = {}): Promise<models.McpToolsListResponse> {
+    return api.listProfileMcpTools(this.transport, {profile_id: this.profileId, server_id: this.serverId}, options);
+  }
+  async call(name: string, arguments_: models.Value, options: CallOptions = {}): Promise<models.Value> {
+    return api.callProfileMcpTool(this.transport, {
+      profile_id: this.profileId, server_id: this.serverId, tool_id: name, body: arguments_,
+    }, options);
+  }
+}
+
+export class ProfileMcpServer {
+  readonly tools: McpTools;
+  constructor(private readonly transport: Transport, private readonly profileId: string,
+              readonly info: models.McpServerInfoResponse) {
+    this.tools = new McpTools(transport, profileId, info.name);
+  }
+  async refresh(options: CallOptions = {}): Promise<models.McpRefreshResponse> {
+    return api.refreshProfileMcpServer(this.transport, {
+      profile_id: this.profileId, server_id: this.info.name,
+    }, options);
+  }
+}
+
 export class ProfileMcp {
-  constructor(private readonly transport: Transport, private readonly profileId: string) {}
+  constructor(private readonly transport: Transport, private readonly profile: models.ProfileSummary) {}
   async info(options: CallOptions = {}): Promise<models.ProfileMcpInfoResponse> {
-    return api.getProfileMcpInfo(this.transport, {profile_id: this.profileId}, options);
+    return api.getProfileMcpInfo(this.transport, {profile_id: this.profile.id}, options);
   }
   async servers(options: CallOptions = {}): Promise<models.McpServersListResponse> {
-    return api.listProfileMcpServers(this.transport, {profile_id: this.profileId}, options);
+    return api.listProfileMcpServers(this.transport, {profile_id: this.profile.id}, options);
   }
   async defaultPermission(options: CallOptions = {}): Promise<models.McpDefaultPermissionResponse> {
-    return api.getProfileMcpDefault(this.transport, {profile_id: this.profileId}, options);
+    return api.getProfileMcpDefault(this.transport, {profile_id: this.profile.id}, options);
   }
-  async tools(serverId: string, options: CallOptions = {}): Promise<models.McpToolsListResponse> {
-    return api.listProfileMcpTools(this.transport, {profile_id: this.profileId, server_id: serverId}, options);
-  }
-  async refresh(serverId: string, options: CallOptions = {}): Promise<models.McpRefreshResponse> {
-    return api.refreshProfileMcpServer(this.transport, {profile_id: this.profileId, server_id: serverId}, options);
-  }
-  async call(serverId: string, toolId: string, arguments_: models.Value, options: CallOptions = {}): Promise<models.Value> {
-    return api.callProfileMcpTool(this.transport, {
-      profile_id: this.profileId, server_id: serverId, tool_id: toolId, body: arguments_,
-    }, options);
+  async get(name: string, options: CallOptions = {}): Promise<ProfileMcpServer> {
+    const matches = (await this.servers(options)).filter(server => server.name === name);
+    if (matches.length !== 1) throw new TypeError(`Expected one MCP server named ${JSON.stringify(name)}, found ${matches.length}`);
+    return new ProfileMcpServer(this.transport, this.profile.id, matches[0] as models.McpServerInfoResponse);
   }
 }
 
@@ -169,5 +189,10 @@ export class Profiles {
   async list(options: CallOptions = {}): Promise<models.ProfileSummary[]> {
     return (await api.listProfiles(this.transport, options)).profiles;
   }
-  mcp(profileId: string): ProfileMcp {return new ProfileMcp(this.transport, profileId);}
+  mcp(profile: models.ProfileSummary): ProfileMcp {
+    if (typeof profile !== 'object' || profile === null || typeof profile.id !== 'string') {
+      throw new TypeError('Profile must be an object returned by hypervisor.profiles');
+    }
+    return new ProfileMcp(this.transport, profile);
+  }
 }

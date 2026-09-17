@@ -15,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!hv.info().await?.gateway_version.is_empty());
     let profiles = hv.profiles().list().await?;
     let profile = profiles.first().expect("fixture profile");
-    assert_eq!(hv.profiles().mcp(&profile.id).info().await?.profile_id, profile.id);
+    assert_eq!(hv.profiles().mcp(profile).info().await?.profile_id, profile.id);
     hv.debug()
         .panics(DiagnosticOptions {
             limit: Some(2),

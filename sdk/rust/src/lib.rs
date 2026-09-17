@@ -15,7 +15,7 @@ pub use options::{
     CreateOptions, DiagnosticOptions, HistoryOptions, LogOptions, NetworkLogOptions, PageOptions, Registry, RunOptions,
     TimelineOptions, TriageOptions, VmSelector,
 };
-pub use resources::{Debug, Files, Port, PortOptions, VmNetworks};
+pub use resources::{Debug, Files, McpTools, Port, PortOptions, ProfileMcpServer, VmNetworks};
 pub use vm::VM;
 
 #[cfg(test)]

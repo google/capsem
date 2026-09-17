@@ -22,7 +22,7 @@ async def main() -> None:
         assert isinstance(await hv.info(), models.HypervisorInfo)
         profiles = await hv.profiles.list()
         assert profiles
-        mcp = hv.profiles.mcp(profiles[0].id)
+        mcp = hv.profiles.mcp(profiles[0])
         assert (await mcp.info()).profile_id == profiles[0].id
         assert isinstance(await hv.debug.panics(limit=2), models.PanicsResponse)
         assert isinstance(await hv.debug.triage(since="1h", limit=2), models.TriageResponse)

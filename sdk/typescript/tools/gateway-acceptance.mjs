@@ -21,7 +21,7 @@ try {
   const profiles = await hv.profiles.list();
   const [profile] = profiles;
   assert(profile, 'SDK acceptance fixture must expose at least one profile');
-  assert.equal((await hv.profiles.mcp(profile.id).info()).profile_id, profile.id);
+  assert.equal((await hv.profiles.mcp(profile).info()).profile_id, profile.id);
   assert(Array.isArray((await hv.debug.panics({limit: 2})).panics));
   assert.equal(typeof (await hv.debug.triage({since: '1h', limit: 2})).session, 'object');
   assert((await hv.list()).sandboxes.some(entry => entry.id === id));
