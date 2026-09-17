@@ -219,9 +219,17 @@ def test_second_store_predicate_flags_a_synthetic_store() -> None:
 
 def test_a_tooling_crate_may_hold_a_store() -> None:
     """The exemption is the same one the native guard uses, for the same
-    reason: capsem-admin is not in the runtime and is not recovered at 3am."""
-    lock_text = _inject_dependency(LOCKFILE.read_text(), "capsem-logger", "redb 2.0.0")
+    reason: capsem-admin is not in the runtime and is not recovered at 3am.
+
+    The store is injected into the tooling crate itself, so the exemption is
+    what makes this pass. Injecting elsewhere and asserting about capsem-admin
+    would pass whether or not the exemption existed.
+    """
+    lock_text = _inject_dependency(LOCKFILE.read_text(), "capsem-admin", "redb 2.0.0")
     assert second_store_offenders(lock_text, ["capsem-admin"]) == []
+    # Same lock, same edge, a runtime crate: the difference is the exemption.
+    runtime = _inject_dependency(LOCKFILE.read_text(), "capsem-logger", "redb 2.0.0")
+    assert second_store_offenders(runtime, ["capsem-logger"]) == ["capsem-logger: redb"]
 
 
 def test_offenders_flags_a_synthetic_native_dependency() -> None:

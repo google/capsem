@@ -19,7 +19,21 @@ loud, not empty, and not repaired behind the operator's back. A session ledger
 belongs to the writer that created it; a file an old build wrote is that
 build's, and a new one says so rather than editing it.
 
-The same rule covers `CREATE TABLE`: nothing on the read path defines schema.
+The same rule covers `CREATE TABLE`, with one exception that is worth stating
+rather than quietly allowing: `reader/open.rs` calls `create_memory_tables`,
+which issues `CREATE TABLE` into the `mem` schema. That is not the ledger. The
+memory mirror is a process-private in-RAM database, derived from
+`main.sqlite_master` on every open and thrown away with the connection, so
+building it decides nothing about the file and survives nothing. The call is
+allowed because `schema/memory_sync.rs` owns the statements; a `CREATE TABLE`
+written out in the reader itself is not, whichever schema it names, which is
+what the predicate below checks.
+
+The forbidden spellings cover the idiomatic forms as well as the one that was
+there. `Transaction::new` was how `upgrade_legacy` did it, but
+`conn.transaction()` and `conn.unchecked_transaction()` are what someone would
+reach for next, and SQL keywords are matched case-insensitively -- the burn is
+about what the code does, not how it was typed.
 
 See CLAUDE.md 'Logger DB Boundary' and skills/dev-session-debug.
 """
@@ -42,8 +56,14 @@ READ_PATH_DIR = "crates/capsem-logger/src/reader/"
 FORBIDDEN: tuple[tuple[str, str], ...] = (
     ("ALTER TABLE", "a reader changing the schema it reads"),
     ("CREATE TABLE", "a reader authoring schema beside ddl.rs"),
+    ("DROP TABLE", "a reader removing a table it reads"),
+    # The spelling that was there, and the three anyone would reach for next.
     ("Transaction::new", "a reader taking a write transaction"),
     ("TransactionBehavior::Immediate", "a reader taking a write lock"),
+    (".transaction(", "a reader opening a transaction"),
+    ("unchecked_transaction(", "a reader opening a transaction"),
+    ("transaction_with_behavior", "a reader choosing a lock mode"),
+    ("BEGIN IMMEDIATE", "a reader taking a write lock in SQL"),
 )
 
 READERS_NEVER_MIGRATE_RATIONALE = """\
@@ -64,6 +84,13 @@ def code_of(line: str) -> str:
     return line.split("//", 1)[0]
 
 
+def matches(needle: str, line: str) -> bool:
+    """SQL is matched however it was typed; Rust paths are matched exactly."""
+    if needle.upper() == needle and " " in needle:
+        return needle.lower() in line.lower()
+    return needle in line
+
+
 def read_path_violations(path: str, text: str) -> list[str]:
     """Pure predicate over (path, text): DDL or write locks on the read path."""
     if path not in READ_PATH and not path.startswith(READ_PATH_DIR):
@@ -74,7 +101,7 @@ def read_path_violations(path: str, text: str) -> list[str]:
         f"{path}:{number} contains `{needle}` ({reason})"
         for number, line in enumerate(text.splitlines(), start=1)
         for needle, reason in FORBIDDEN
-        if needle in code_of(line)
+        if matches(needle, code_of(line))
     ]
 
 
@@ -118,6 +145,42 @@ pub(crate) fn upgrade_legacy(conn: &Connection) -> rusqlite::Result<()> {
     # The same code somewhere off the read path is this guard's business only
     # through its own rule; here it is simply out of scope.
     assert read_path_violations("crates/capsem-logger/src/writer.rs", revived) == []
+
+
+def test_the_predicate_flags_the_idiomatic_spellings() -> None:
+    """The burn is about what the code does, not how someone typed it."""
+    for line, expected in (
+        ("    let tx = conn.transaction()?;", ".transaction("),
+        ("    let tx = conn.unchecked_transaction()?;", "unchecked_transaction("),
+        ("    let tx = conn.transaction_with_behavior(Immediate)?;", "transaction_with_behavior"),
+        ('    conn.execute_batch("begin immediate")?;', "BEGIN IMMEDIATE"),
+        ('    conn.execute_batch("alter table t add column c TEXT")?;', "ALTER TABLE"),
+        ('    conn.execute_batch("create table if not exists t (id INTEGER)")?;', "CREATE TABLE"),
+    ):
+        found = read_path_violations("crates/capsem-logger/src/reader.rs", line)
+        assert any(expected in item for item in found), (line, found)
+
+
+def test_the_memory_mirror_is_built_by_the_module_that_owns_it() -> None:
+    """The stated exception, asserted rather than assumed.
+
+    `reader/open.rs` may ask for the memory mirror; it may not write the DDL.
+    If the statements ever move into the reader, the exception's reason -- that
+    `schema/memory_sync.rs` owns them -- has stopped being true.
+    """
+    opener = PROJECT_ROOT / "crates/capsem-logger/src/reader/open.rs"
+    assert opener.is_file(), f"{opener} is missing; this guard is vacuous"
+    text = opener.read_text()
+    assert "create_memory_tables" in text, (
+        "reader/open.rs no longer builds the memory mirror; drop this exception"
+    )
+    assert not read_path_violations("crates/capsem-logger/src/reader/open.rs", text), (
+        "the reader must call for the mirror, not author it"
+    )
+    owner = PROJECT_ROOT / "crates/capsem-logger/src/schema/memory_sync.rs"
+    assert "CREATE TABLE" in owner.read_text(), (
+        "memory_sync.rs no longer owns the mirror's DDL; the exception names the wrong file"
+    )
 
 
 def test_the_predicate_allows_an_assertion() -> None:
