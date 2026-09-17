@@ -736,7 +736,7 @@ mod maintenance;
 mod reader_worker;
 
 pub use bodies::{ArchivedBodies, BodyDirection, StoredBody};
-pub use maintenance::{checkpoint_and_vacuum_session_db, snapshot_session_ledger};
+pub use maintenance::snapshot_session_ledger;
 use reader_worker::reader_loop;
 
 #[cfg(test)]

@@ -5,47 +5,6 @@
 
 use std::path::Path;
 
-/// Checkpoint and vacuum a session ledger.
-///
-/// The logger crate owns SQLite execution. Core/session code may decide when a
-/// ledger needs compaction, but the actual SQLite work stays behind this
-/// boundary.
-pub fn checkpoint_and_vacuum_session_db(path: &Path) -> anyhow::Result<()> {
-    let conn = rusqlite::Connection::open(path).map_err(|error| {
-        tracing::error!(
-            db_path = %path.display(),
-            operation = "checkpoint_vacuum_open",
-            error = %error,
-            "session db maintenance failed"
-        );
-        error
-    })?;
-    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").map_err(|error| {
-        tracing::error!(
-            db_path = %path.display(),
-            operation = "wal_checkpoint_truncate",
-            error = %error,
-            "session db maintenance failed"
-        );
-        error
-    })?;
-    conn.execute_batch("VACUUM").map_err(|error| {
-        tracing::error!(
-            db_path = %path.display(),
-            operation = "vacuum",
-            error = %error,
-            "session db maintenance failed"
-        );
-        error
-    })?;
-    tracing::debug!(
-        db_path = %path.display(),
-        operation = "checkpoint_and_vacuum",
-        "session db maintenance completed"
-    );
-    Ok(())
-}
-
 /// Clone a whole session ledger -- `session.db` and `session.bodies` -- from
 /// one session directory into another.
 ///

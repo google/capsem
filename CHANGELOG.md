@@ -96,6 +96,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - rustls moves to 0.23.45 for RUSTSEC-2026-0285: TLS 1.3 handshake messages
   were accepted across encryption level boundaries on the host's TLS paths.
 
+### Removed
+
+- The `vacuumed` session state, with the `vacuumed_at` and
+  `compressed_size_bytes` columns `main.db` recorded it in. A stopped session
+  was supposed to have its ledger checkpointed, VACUUMed and gzipped, and the
+  result recorded here; nothing ever ran it, so no session ever reached the
+  state, while every retention query and the doctor's session listing still
+  carried it. It cannot come back as written either: bodies now live in an
+  append-only `session.bodies` that the ledger indexes by block offset, so
+  rewriting or removing `session.db` orphans the archive beside it. `main.db`
+  upgrades itself, rewriting any `vacuumed` row to `stopped`.
+
 ### Changed
 
 - The forensic payload of a security rule match is stored compressed in the

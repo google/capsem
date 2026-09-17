@@ -918,8 +918,6 @@ SELECT json_object(
             'total_estimated_cost', total_estimated_cost,
             'total_tool_calls', total_tool_calls,
             'total_file_events', total_file_events,
-            'compressed_size_bytes', compressed_size_bytes,
-            'vacuumed_at', vacuumed_at,
             'storage_mode', storage_mode,
             'rootfs_hash', rootfs_hash,
             'rootfs_version', rootfs_version,
@@ -933,7 +931,7 @@ SELECT json_object(
                    scratch_disk_size_gb, ram_bytes, total_requests, allowed_requests,
                    denied_requests, total_input_tokens, total_output_tokens,
                    total_estimated_cost, total_tool_calls, total_file_events,
-                   compressed_size_bytes, vacuumed_at, storage_mode, rootfs_hash,
+                   storage_mode, rootfs_hash,
                    rootfs_version, forked_from, persistent, exec_count, audit_event_count
             FROM sessions
             ORDER BY created_at DESC

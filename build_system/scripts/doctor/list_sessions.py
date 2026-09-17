@@ -34,7 +34,6 @@ def fmt_duration(created_at, stopped_at, status):
 def main():
     parser = argparse.ArgumentParser(description="List recent Capsem sessions")
     parser.add_argument("-n", type=int, default=10, help="Number of sessions (default: 10)")
-    parser.add_argument("--all", action="store_true", help="Include vacuumed sessions")
     parser.add_argument("--with-db", action="store_true", help="Only sessions with session.db on disk")
     parser.add_argument("--with-model", action="store_true", help="Only sessions with model calls (tokens > 0)")
     parser.add_argument("--with-net", action="store_true", help="Only sessions with network events")
@@ -50,8 +49,6 @@ def main():
     conn.row_factory = sqlite3.Row
 
     conditions = []
-    if not args.all:
-        conditions.append("status != 'vacuumed'")
     if args.with_model:
         conditions.append("(total_input_tokens + total_output_tokens) > 0")
     if args.with_net:

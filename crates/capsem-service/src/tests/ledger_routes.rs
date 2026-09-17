@@ -549,8 +549,6 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
         total_estimated_cost: 0.0,
         total_tool_calls: 0,
         total_file_events: 0,
-        compressed_size_bytes: None,
-        vacuumed_at: None,
         storage_mode: "virtiofs".to_string(),
         rootfs_hash: None,
         rootfs_version: None,

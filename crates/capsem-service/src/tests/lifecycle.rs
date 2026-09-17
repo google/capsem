@@ -1337,8 +1337,6 @@ async fn db_boundary_route_contract_handle_stats_returns_global_data() {
         total_estimated_cost: 0.42,
         total_tool_calls: 25,
         total_file_events: 100,
-        compressed_size_bytes: None,
-        vacuumed_at: None,
         storage_mode: "virtiofs".into(),
         rootfs_hash: None,
         rootfs_version: None,
