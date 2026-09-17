@@ -16,17 +16,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let profiles = hv.profiles().list().await?;
     let profile = profiles.first().expect("fixture profile");
     assert_eq!(hv.profiles().mcp(&profile.id).info().await?.profile_id, profile.id);
-    hv.panics(DiagnosticOptions {
-        limit: Some(2),
-        ..Default::default()
-    })
-    .await?;
-    hv.triage(TriageOptions {
-        since: Some("1h".into()),
-        limit: Some(2),
-        ..Default::default()
-    })
-    .await?;
+    hv.debug()
+        .panics(DiagnosticOptions {
+            limit: Some(2),
+            ..Default::default()
+        })
+        .await?;
+    hv.debug()
+        .triage(TriageOptions {
+            since: Some("1h".into()),
+            limit: Some(2),
+            ..Default::default()
+        })
+        .await?;
     assert!(hv.list().await?.sandboxes.iter().any(|vm| vm.id == id));
     let vm = hv.vm(VmSelector::Name("route-workspace".into()))?;
     assert!(vm

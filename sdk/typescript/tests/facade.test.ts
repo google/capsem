@@ -80,8 +80,8 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       const [profile] = await hv.profiles.list();
       if (profile === undefined) throw new Error('fixture profile missing');
       await hv.run('printf ok', {profile, timeout_secs: 4});
-      await hv.panics({since: '5m', limit: 3});
-      await hv.triage({vm_id: 'vm-0', since: '1h', limit: 2});
+      await hv.debug.panics({since: '5m', limit: 3});
+      await hv.debug.triage({vm_id: 'vm-0', since: '1h', limit: 2});
       await hv.purge({all: true});
       const mcp = hv.profiles.mcp('code');
       await mcp.info(); await mcp.servers(); await mcp.defaultPermission();

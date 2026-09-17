@@ -33,7 +33,7 @@ async fn example(url: &str, token: &str) -> Result<()> {
     vm.snapshots().list().await?;
     vm.stats().details().await?;
     vm.persist("saved-workspace").await?;
-    hv.triage(TriageOptions { vm_id: vm.id().map(str::to_owned), since: Some("1h".into()), ..Default::default() }).await?;
+    hv.debug().triage(TriageOptions { vm_id: vm.id().map(str::to_owned), since: Some("1h".into()), ..Default::default() }).await?;
     hv.profiles().mcp("code").tools("filesystem").await?;
     hv.log(HostLogSource::Service, LogOptions { tail: Some(100), ..Default::default() }).await?;
     vm.ports().close(&port).await?;
@@ -92,7 +92,7 @@ opens a plain loopback port by default and uses browser authentication when
 requested. The SDK infers the VM or container target. Typed ports can be listed
 and closed without exposing wire request enums.
 
-`hv.run(command, options)` executes once in a temporary VM. `hv.panics()`,
-`hv.triage()` and `hv.purge()` expose diagnostics and cleanup. `hv.profiles()`
+`hv.run(command, options)` executes once in a temporary VM. `hv.debug().panics()`,
+`hv.debug().triage()` and `hv.purge()` expose diagnostics and cleanup. `hv.profiles()`
 provides typed profile and MCP discovery, refresh, permissions and tool calls;
 tool arguments and results retain their native JSON shape.

@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from . import _operations as api
 from . import models
 from ._client import Client
+from ._debug import Debug
 from ._networks import Networks
 from ._profiles import Profiles
 from .execution import ExecResult
@@ -35,6 +36,7 @@ class Hypervisor(Client):
         super().__init__(url, token, timeout=timeout)
         self.networks = Networks(self._transport)
         self.profiles = Profiles(self._transport)
+        self.debug = Debug(self._transport)
 
     async def info(self) -> models.HypervisorInfo:
         return await api.get_hypervisor_info(self._transport)
@@ -96,14 +98,6 @@ class Hypervisor(Client):
 
     async def purge(self, *, all: bool = False) -> models.PurgeResponse:
         return await api.purge_vms(self._transport, body=models.PurgeRequest(all=all))
-
-    async def panics(self, *, since: str | None = None,
-                     limit: int | None = None) -> models.PanicsResponse:
-        return await api.get_panics(self._transport, since=since, limit=limit)
-
-    async def triage(self, *, vm_id: str | None = None, since: str | None = None,
-                     limit: int | None = None) -> models.TriageResponse:
-        return await api.get_triage(self._transport, id=vm_id, since=since, limit=limit)
 
     async def update(self) -> models.UpdateActionResponse:
         return await api.update_hypervisor(self._transport, body=models.UpdateApplyRequest(confirmed=True))

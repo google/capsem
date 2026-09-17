@@ -1,7 +1,8 @@
 import {Client} from './client.js';
+import {Debug} from './debug.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
-import type {CreateOptions, DiagnosticOptions, HostLogOptions, RunOptions, TriageOptions, VmSelector} from './options.js';
+import type {CreateOptions, HostLogOptions, RunOptions, VmSelector} from './options.js';
 import {Transport, type CallOptions, type TransportOptions} from './transport.js';
 import {Networks, Profiles} from './resources.js';
 import {VM} from './vm.js';
@@ -17,11 +18,13 @@ function memoryMb(memory: number | undefined): number | null {
 export class Hypervisor extends Client {
   readonly networks: Networks;
   readonly profiles: Profiles;
+  readonly debug: Debug;
   constructor(url: string, token: string, options: TransportOptions = {}) {
     const transport = new Transport(url, token, options);
     super(transport);
     this.networks = new Networks(transport);
     this.profiles = new Profiles(transport);
+    this.debug = new Debug(transport);
   }
   async info(options: CallOptions = {}): Promise<models.HypervisorInfo> {
     return api.getHypervisorInfo(this.transport, options);
@@ -69,14 +72,6 @@ export class Hypervisor extends Client {
   }
   async purge(options: CallOptions & {all?: boolean} = {}): Promise<models.PurgeResponse> {
     return api.purgeVms(this.transport, {body: {all: options.all ?? false}}, options);
-  }
-  async panics(options: DiagnosticOptions = {}): Promise<models.PanicsResponse> {
-    return api.getPanics(this.transport, options, options);
-  }
-  async triage(options: TriageOptions = {}): Promise<models.TriageResponse> {
-    return api.getTriage(this.transport, {
-      since: options.since ?? null, limit: options.limit ?? null, id: options.vm_id ?? null,
-    }, options);
   }
   async update(options: CallOptions = {}): Promise<models.UpdateActionResponse> {
     return api.updateHypervisor(this.transport, {body: {confirmed: true}}, options);

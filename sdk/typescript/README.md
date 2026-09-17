@@ -25,7 +25,7 @@ try {
   const info = await vm.info(); // includes AI, network and files
   const stats = await vm.stats.details();
   await vm.persist('saved-workspace');
-  const triage = await hv.triage({vm_id: vm.id, since: '1h'});
+  const triage = await hv.debug.triage({vm_id: vm.id, since: '1h'});
   const tools = await hv.profiles.mcp('code').tools('filesystem');
   const logs = await hv.log({source: HostLogSource.GATEWAY, tail: 100});
   await vm.ports.close(port);
@@ -88,7 +88,7 @@ the workload target is the container or VM. `list` and `close` manage the same
 typed port objects.
 Snapshot create/restore and mounts remain pending.
 
-`hv.run(command)` executes once in a temporary VM. `hv.panics()`, `hv.triage()`
+`hv.run(command)` executes once in a temporary VM. `hv.debug.panics()`, `hv.debug.triage()`
 and `hv.purge()` expose diagnostics and cleanup. `hv.profiles` provides typed
 profile and MCP discovery, refresh, permissions and tool calls; tool arguments
 and results retain their native JSON shape.

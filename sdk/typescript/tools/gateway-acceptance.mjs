@@ -22,8 +22,8 @@ try {
   const [profile] = profiles;
   assert(profile, 'SDK acceptance fixture must expose at least one profile');
   assert.equal((await hv.profiles.mcp(profile.id).info()).profile_id, profile.id);
-  assert(Array.isArray((await hv.panics({limit: 2})).panics));
-  assert.equal(typeof (await hv.triage({since: '1h', limit: 2})).session, 'object');
+  assert(Array.isArray((await hv.debug.panics({limit: 2})).panics));
+  assert.equal(typeof (await hv.debug.triage({since: '1h', limit: 2})).session, 'object');
   assert((await hv.list()).sandboxes.some(entry => entry.id === id));
   const files = await vm.files.list('/');
   assert.equal(vm.id, id);

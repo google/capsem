@@ -366,21 +366,23 @@ async fn diagnostics_persistence_and_profile_mcp_use_typed_routes() {
         request(&mut server, "/run").await,
         json!({"command":"printf hello","profile_id":"co-work","timeout_secs":4,"ram_mb":1024,"cpus":2,"env":{"EDITOR":"vim"}})
     );
-    hv.panics(DiagnosticOptions {
-        since: Some("1h".into()),
-        limit: Some(4),
-    })
-    .await
-    .unwrap();
+    hv.debug()
+        .panics(DiagnosticOptions {
+            since: Some("1h".into()),
+            limit: Some(4),
+        })
+        .await
+        .unwrap();
     let (parts, _) = server.received.recv().await.unwrap();
     assert_eq!(parts.uri.to_string(), "/panics?since=1h&limit=4");
-    hv.triage(TriageOptions {
-        since: Some("30m".into()),
-        limit: Some(2),
-        vm_id: Some("vm-1".into()),
-    })
-    .await
-    .unwrap();
+    hv.debug()
+        .triage(TriageOptions {
+            since: Some("30m".into()),
+            limit: Some(2),
+            vm_id: Some("vm-1".into()),
+        })
+        .await
+        .unwrap();
     let (parts, _) = server.received.recv().await.unwrap();
     assert_eq!(parts.uri.to_string(), "/triage?since=30m&limit=2&id=vm-1");
     hv.purge(true).await.unwrap();

@@ -1,6 +1,6 @@
 use crate::client::Client;
 
-use crate::{models, operations as api, NetworkLogOptions, PageOptions, Result, VM};
+use crate::{models, operations as api, DiagnosticOptions, NetworkLogOptions, PageOptions, Result, TriageOptions, VM};
 
 pub struct Files<'a>(pub(crate) &'a VM);
 pub struct Snapshots<'a>(pub(crate) &'a VM);
@@ -9,6 +9,7 @@ pub struct Container<'a>(pub(crate) &'a VM);
 pub struct Ports<'a>(pub(crate) &'a VM);
 pub struct VmNetworks<'a>(pub(crate) &'a VM);
 pub struct Networks<'a>(pub(crate) &'a Client);
+pub struct Debug<'a>(pub(crate) &'a Client);
 pub struct Profiles<'a>(pub(crate) &'a Client);
 pub struct ProfileMcp<'a> {
     client: &'a Client,
@@ -308,6 +309,34 @@ impl VmNetworks<'_> {
                 vm_id: self.0.resolve().await?,
             },
             self.0.client.options,
+        )
+        .await
+    }
+}
+
+impl Debug<'_> {
+    pub async fn panics(&self, options: DiagnosticOptions) -> Result<models::PanicsResponse> {
+        api::get_panics(
+            &self.0.transport,
+            &api::GetPanicsParams {
+                since: options.since,
+                limit: options.limit,
+                id: None,
+            },
+            self.0.options,
+        )
+        .await
+    }
+
+    pub async fn triage(&self, options: TriageOptions) -> Result<models::TriageResponse> {
+        api::get_triage(
+            &self.0.transport,
+            &api::GetTriageParams {
+                since: options.since,
+                limit: options.limit,
+                id: options.vm_id,
+            },
+            self.0.options,
         )
         .await
     }

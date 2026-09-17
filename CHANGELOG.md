@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Host panic and triage diagnostics now live under the explicit `debug`
+  namespace instead of the normal hypervisor lifecycle surface.
+
 - Private-network membership now lives under `vm.networks`; list, attach, and
   detach use typed network objects while global network resources retain
   create, inspect, delete, and audit operations.

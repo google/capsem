@@ -33,7 +33,7 @@ async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     history = await vm.history()
     timeline = await vm.timeline(layers=[TimelineLayer.EXEC, TimelineLayer.MODEL])
     await vm.persist("saved-workspace")
-    triage = await hv.triage(vm_id=vm.id, since="1h")
+    triage = await hv.debug.triage(vm_id=vm.id, since="1h")
     tools = await hv.profiles.mcp("code").tools("filesystem")
     logs = await hv.log(HostLogSource.SERVICE, tail=100)
     await vm.ports.close(port)
@@ -92,7 +92,7 @@ its URL and bootstrap material. The SDK selects the container namespace for
 container workloads and the VM namespace otherwise.
 Snapshot creation/restoration and mounts remain pending.
 
-`hv.run(command)` executes once in a temporary VM. `hv.panics()` and
-`hv.triage()` expose host and optional VM-ledger diagnostics, and `hv.purge()`
+`hv.run(command)` executes once in a temporary VM. `hv.debug.panics()` and
+`hv.debug.triage()` expose host and optional VM-ledger diagnostics, and `hv.purge()`
 cleans stopped VMs. `hv.profiles` lists profiles and provides typed MCP server,
 permission and tool discovery; MCP calls retain native JSON arguments/results.

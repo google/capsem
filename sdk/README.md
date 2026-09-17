@@ -8,7 +8,8 @@ the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
 
 | Interface | Methods |
 | --- | --- |
-| Hypervisor | `info`, `list`, `create`, `run`, `purge`, `panics`, `triage`, `log`, `update`, `restart` |
+| Hypervisor | `info`, `list`, `create`, `run`, `purge`, `log`, `update`, `restart` |
+| Agent debugging | `debug.panics/triage` |
 | Private networks | `networks.create/list/inspect/delete/logs` |
 | Profiles and MCP | `profiles.list`, `profiles.mcp(...).info/servers/default_permission/tools/refresh/call` |
 | VM | `info`, `exec`, `persist`, `start`, `stop`, `pause`, `resume`, `delete`, `fork` |
@@ -60,8 +61,8 @@ File access requires a running VM's security ledger. A restart acknowledgement
 requires explicit reconnection with new credentials. No mutation is retried.
 
 `run` executes a command in a temporary VM and accepts its own profile, CPU,
-memory, environment and guest deadline. `panics` and `triage` provide typed host
-diagnostics, while `triage` can include one VM's session ledger. Profile MCP
+memory, environment and guest deadline. `debug.panics` and `debug.triage`
+provide typed host diagnostics; triage can include one VM's session ledger. Profile MCP
 calls preserve arbitrary JSON arguments and results while discovery and
 permissions remain typed.
 

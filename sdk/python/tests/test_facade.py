@@ -60,8 +60,8 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             assert body["cpus"] is None and body["ram_mb"] is None
             assert isinstance(await hv.log(models.HostLogSource.SERVICE, grep="boot", tail=3, max_bytes=1024), models.HostLogsResponse)
             assert isinstance(await hv.run("printf ok", timeout_secs=4), ExecResult)
-            assert isinstance(await hv.panics(since="5m", limit=3), models.PanicsResponse)
-            assert isinstance(await hv.triage(vm_id="vm-0", since="1h", limit=2), models.TriageResponse)
+            assert isinstance(await hv.debug.panics(since="5m", limit=3), models.PanicsResponse)
+            assert isinstance(await hv.debug.triage(vm_id="vm-0", since="1h", limit=2), models.TriageResponse)
             assert isinstance(await hv.purge(all=True), models.PurgeResponse)
             mcp = hv.profiles.mcp("code")
             assert isinstance(await mcp.info(), models.ProfileMcpInfoResponse)

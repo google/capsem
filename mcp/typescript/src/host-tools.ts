@@ -151,11 +151,11 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
   server.registerTool('capsem_panics', {
     description: 'Read structured recent host panics before widening an investigation.',
     inputSchema: {since: z.string().optional(), limit: positiveInt.optional()},
-  }, options => toolCall(() => hypervisor.panics(defined(options))));
+  }, options => toolCall(() => hypervisor.debug.panics(defined(options))));
   server.registerTool('capsem_triage', {
     description: 'Read ranked host diagnostics and optional VM ledger correlation.',
     inputSchema: {since: z.string().optional(), limit: positiveInt.optional(), vm_id: vmId.optional()},
-  }, options => toolCall(() => hypervisor.triage(defined(options))));
+  }, options => toolCall(() => hypervisor.debug.triage(defined(options))));
   server.registerTool('capsem_timeline', {
     description: 'Read the correlated exec, tool, network, file, and model timeline for a VM.',
     inputSchema: {

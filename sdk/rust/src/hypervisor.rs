@@ -3,8 +3,8 @@ use std::time::Duration;
 use crate::client::Client;
 use crate::{
     models, operations as api,
-    resources::{Networks, Profiles},
-    CreateOptions, DiagnosticOptions, Error, LogOptions, Result, RunOptions, TriageOptions, VmSelector, VM,
+    resources::{Debug, Networks, Profiles},
+    CreateOptions, Error, LogOptions, Result, RunOptions, VmSelector, VM,
 };
 
 /// A gateway connection. Clones and VM handles share the HTTP connection pool.
@@ -61,6 +61,10 @@ impl Hypervisor {
 
     pub fn profiles(&self) -> Profiles<'_> {
         Profiles(&self.client)
+    }
+
+    pub fn debug(&self) -> Debug<'_> {
+        Debug(&self.client)
     }
 
     pub async fn create(&self, options: CreateOptions) -> Result<VM> {
@@ -142,32 +146,6 @@ impl Hypervisor {
             &self.client.transport,
             &api::PurgeVmsParams {
                 body: models::PurgeRequest { all },
-            },
-            self.client.options,
-        )
-        .await
-    }
-
-    pub async fn panics(&self, options: DiagnosticOptions) -> Result<models::PanicsResponse> {
-        api::get_panics(
-            &self.client.transport,
-            &api::GetPanicsParams {
-                since: options.since,
-                limit: options.limit,
-                id: None,
-            },
-            self.client.options,
-        )
-        .await
-    }
-
-    pub async fn triage(&self, options: TriageOptions) -> Result<models::TriageResponse> {
-        api::get_triage(
-            &self.client.transport,
-            &api::GetTriageParams {
-                since: options.since,
-                limit: options.limit,
-                id: options.vm_id,
             },
             self.client.options,
         )

@@ -24,8 +24,8 @@ async def main() -> None:
         assert profiles
         mcp = hv.profiles.mcp(profiles[0].id)
         assert (await mcp.info()).profile_id == profiles[0].id
-        assert isinstance(await hv.panics(limit=2), models.PanicsResponse)
-        assert isinstance(await hv.triage(since="1h", limit=2), models.TriageResponse)
+        assert isinstance(await hv.debug.panics(limit=2), models.PanicsResponse)
+        assert isinstance(await hv.debug.triage(since="1h", limit=2), models.TriageResponse)
         inventory = await hv.list()
         assert any(entry.id == expected_id for entry in inventory.sandboxes)
         files = await vm.files.list("/")
