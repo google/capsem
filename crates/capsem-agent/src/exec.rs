@@ -311,19 +311,7 @@ pub(super) fn run_exec_on_fds_with_cancel(
     let status = child.wait();
     cancellation.complete();
 
-    // A child may exit without consuming all input. Wake the input reader so
-    // the exec socket closes before ExecDone is published.
-    let _ = shutdown(output.lock().unwrap().as_fd(), SocketShutdown::Read);
-
-    if let Some(t) = stderr_thread {
-        let _ = t.join();
-    }
-    if let Some(t) = stdout_thread {
-        let _ = t.join();
-    }
-    if let Some(t) = stdin_thread {
-        let _ = t.join();
-    }
+    finish_exec_io(&output, stderr_thread, stdout_thread, stdin_thread);
 
     let exit_code = match status {
         Ok(status) => status.code().unwrap_or_else(|| 128 + status.signal().unwrap_or(1)),
@@ -336,6 +324,28 @@ pub(super) fn run_exec_on_fds_with_cancel(
     eprintln!("[capsem-agent] exec[{id}] done: exit_code={exit_code}");
     let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code });
     exit_code
+}
+
+fn finish_exec_io(
+    output: &std::sync::Arc<std::sync::Mutex<std::fs::File>>,
+    stderr_thread: Option<std::thread::JoinHandle<()>>,
+    stdout_thread: Option<std::thread::JoinHandle<()>>,
+    stdin_thread: Option<std::thread::JoinHandle<()>>,
+) {
+    // AF_VSOCK does not provide a portable half-close. Shutting down reads
+    // while an output worker is still writing can make the host observe EOF
+    // before the final frames. Drain both output pipes first, then wake a
+    // blocked input reader after no more guest output remains to publish.
+    if let Some(thread) = stderr_thread {
+        let _ = thread.join();
+    }
+    if let Some(thread) = stdout_thread {
+        let _ = thread.join();
+    }
+    let _ = shutdown(output.lock().unwrap().as_fd(), SocketShutdown::Read);
+    if let Some(thread) = stdin_thread {
+        let _ = thread.join();
+    }
 }
 
 pub(super) fn default_exec_cwd() -> &'static str {

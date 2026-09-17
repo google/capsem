@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Guest exec now drains stdout and stderr before waking a blocked stdin reader,
+  preventing AF_VSOCK shutdown from turning successful command output into an
+  empty HTTP result.
+
 - The npm MCP now keeps panic and triage diagnostics behind the SDK `debug`
   namespace and exposes the reviewed container, file-history, and port tools.
 

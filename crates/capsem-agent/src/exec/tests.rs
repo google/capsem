@@ -86,6 +86,42 @@ fn exec_echo_captures_output_and_exit_code() {
 }
 
 #[test]
+fn exec_finishes_output_before_waking_the_input_reader() {
+    use std::io::Read as _;
+    use std::os::unix::io::{FromRawFd as _, IntoRawFd as _};
+    use std::os::unix::net::UnixStream;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let (_host, guest) = UnixStream::pair().unwrap();
+    let output = std::sync::Arc::new(std::sync::Mutex::new(unsafe {
+        std::fs::File::from_raw_fd(guest.into_raw_fd())
+    }));
+    let mut input = output.lock().unwrap().try_clone().unwrap();
+    let output_done = std::sync::Arc::new(AtomicBool::new(false));
+    let input_saw_output_done = std::sync::Arc::new(AtomicBool::new(false));
+
+    let done_for_output = std::sync::Arc::clone(&output_done);
+    let stdout_thread = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        done_for_output.store(true, Ordering::Release);
+    });
+    let done_for_input = std::sync::Arc::clone(&output_done);
+    let saw_for_input = std::sync::Arc::clone(&input_saw_output_done);
+    let stdin_thread = std::thread::spawn(move || {
+        let mut byte = [0_u8; 1];
+        let _ = input.read(&mut byte);
+        saw_for_input.store(done_for_input.load(Ordering::Acquire), Ordering::Release);
+    });
+
+    finish_exec_io(&output, None, Some(stdout_thread), Some(stdin_thread));
+
+    assert!(
+        input_saw_output_done.load(Ordering::Acquire),
+        "the VSOCK read shutdown must not race ahead of pending stdout"
+    );
+}
+
+#[test]
 fn exec_nonzero_exit_code() {
     use std::os::unix::io::IntoRawFd;
     use std::os::unix::net::UnixStream;
