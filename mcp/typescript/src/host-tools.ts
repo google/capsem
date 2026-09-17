@@ -5,6 +5,8 @@ import {toolCall} from './results.js';
 
 const vmId = z.string().min(1).describe('Immutable VM ID returned by capsem_list or capsem_create');
 const positiveInt = z.number().int().positive();
+/** Largest file window one tool call returns; the transfer itself is whole-file. */
+const MAX_READ_BYTES = 256 * 1024;
 const page = {
   limit: positiveInt.optional(),
   offset: z.number().int().nonnegative().optional(),
@@ -37,7 +39,7 @@ async function profileOption(hypervisor: Hypervisor, profileId: string | undefin
 } | undefined> {
   if (profileId === undefined || profileId === 'code') return undefined;
   const profile = (await hypervisor.profiles.list({signal})).find(candidate => candidate.id === profileId);
-  if (profile === undefined) throw new Error(`Unknown profile ${profileId}`);
+  if (profile === undefined) throw new TypeError(`Unknown profile ${JSON.stringify(profileId)}`);
   return {profile};
 }
 
@@ -130,11 +132,20 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
   }, ({vm_id, path, depth}, extra) => toolCall(() =>
     vm(hypervisor, vm_id).files.list(path, {...defined({depth}), signal: extra.signal})));
   server.registerTool('capsem_read_file', {
-    description: 'Read a VM file as UTF-8 text or base64 through the gateway file API.',
-    inputSchema: {vm_id: vmId, path: z.string().min(1), encoding: z.enum(['utf8', 'base64']).default('utf8')},
-  }, ({vm_id, path, encoding}, extra) => toolCall(async () => {
+    description: 'Read a bounded window of a VM file as UTF-8 text or base64 through the gateway file API.',
+    inputSchema: {
+      vm_id: vmId, path: z.string().min(1), encoding: z.enum(['utf8', 'base64']).default('utf8'),
+      offset: z.number().int().nonnegative().default(0),
+      max_bytes: positiveInt.max(MAX_READ_BYTES).default(MAX_READ_BYTES),
+    },
+  }, ({vm_id, path, encoding, offset, max_bytes}, extra) => toolCall(async () => {
     const data = await vm(hypervisor, vm_id).files.read(path, {signal: extra.signal});
-    return {path, encoding, size: data.byteLength, content: Buffer.from(data).toString(encoding)};
+    const window = Buffer.from(data).subarray(offset, offset + max_bytes);
+    return {
+      path, encoding, size: data.byteLength, offset,
+      content: window.toString(encoding),
+      truncated: offset + window.byteLength < data.byteLength,
+    };
   }));
   server.registerTool('capsem_write_file', {
     description: 'Write UTF-8 text or base64 bytes to a VM through the gateway file API.',

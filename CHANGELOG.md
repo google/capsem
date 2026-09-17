@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem_read_file` takes `offset` and `max_bytes` and reports `size` and
+  `truncated`, so one call can no longer pull an unbounded file into an
+  agent's context, and large structured results are no longer mirrored into
+  the tool result's text. An unknown profile is reported as invalid input
+  rather than an internal error.
+
 - SDK `exec`/`run` calls no longer abort after 30 seconds while the command
   keeps running server-side: the Python, TypeScript and Rust clients stretch
   each call's HTTP deadline to the service's command timeout plus the

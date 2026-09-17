@@ -200,11 +200,36 @@ describe('host-tools', () => {
     });
   });
 
+  // A name the catalog does not have is the caller's mistake, not ours.
+  it('reports an unknown profile as invalid input', async () => {
+    const result = await client.callTool({
+      name: 'capsem_create', arguments: {profile: 'ghost'},
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({error: {kind: 'invalid_input'}});
+    expect(JSON.stringify(result)).toContain('ghost');
+  });
+
+  it('bounds a file read and reports what it returned', async () => {
+    const whole = structured(await client.callTool({
+      name: 'capsem_read_file', arguments: {vm_id: 'vm-1', path: '/workspace/a.txt'},
+    }));
+    expect(whole).toEqual({path: '/workspace/a.txt', encoding: 'utf8', size: 5, offset: 0, content: 'hello', truncated: false});
+    const bounded = structured(await client.callTool({
+      name: 'capsem_read_file', arguments: {vm_id: 'vm-1', path: '/workspace/a.txt', offset: 1, max_bytes: 2},
+    }));
+    expect(bounded).toEqual({path: '/workspace/a.txt', encoding: 'utf8', size: 5, offset: 1, content: 'el', truncated: true});
+    const past = structured(await client.callTool({
+      name: 'capsem_read_file', arguments: {vm_id: 'vm-1', path: '/workspace/a.txt', offset: 99},
+    }));
+    expect(past).toMatchObject({content: '', offset: 99, size: 5, truncated: false});
+  });
+
   it('transfers text and binary file content through the SDK byte APIs', async () => {
     const read = await client.callTool({
       name: 'capsem_read_file', arguments: {vm_id: 'vm-1', path: '/workspace/a.txt'},
     });
-    expect(structured(read)).toEqual({path: '/workspace/a.txt', encoding: 'utf8', size: 5, content: 'hello'});
+    expect(structured(read)).toMatchObject({path: '/workspace/a.txt', encoding: 'utf8', size: 5, content: 'hello'});
     const write = await client.callTool({
       name: 'capsem_write_file',
       arguments: {vm_id: 'vm-1', path: '/workspace/b.bin', encoding: 'base64', content: 'AAEC'},

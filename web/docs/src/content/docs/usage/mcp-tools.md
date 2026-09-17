@@ -71,7 +71,7 @@ All VM-scoped tools take the immutable `vm_id` returned by `capsem_create` or
 | `capsem_persist` | `vm_id`, `name` | Retain an ephemeral VM under a stable name. |
 | `capsem_purge` | `all?` | Purge service-reported disposable state. |
 | `capsem_list_files` | `vm_id`, `path?`, `depth?` | List workspace files. |
-| `capsem_read_file` | `vm_id`, `path`, `encoding?` | Read UTF-8 or base64 file content. |
+| `capsem_read_file` | `vm_id`, `path`, `encoding?`, `offset?`, `max_bytes?` | Read a bounded window of file content as UTF-8 or base64. |
 | `capsem_write_file` | `vm_id`, `path`, `content`, `encoding?` | Write UTF-8 or base64 bytes. |
 | `capsem_container_status` | `vm_id` | Read workload diagnostics; creation already waits for readiness. |
 | `capsem_port_open` | `vm_id`, `guest_port`, `host_port?`, `authenticate?` | Open a workload port; target selection is automatic. |
