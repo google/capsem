@@ -16,6 +16,7 @@ from helpers.constants import (
 from helpers.gateway import TcpHttpClient
 from helpers.service import (
     ServiceInstance,
+    exec_output_text,
     resolve_winterfell_artifact_roots,
     vm_record,
     wait_exec_ready,
@@ -75,7 +76,7 @@ def test_installed_gateway_persists_exec_state() -> None:
         status, result = gateway.call_json(
             "POST", f"/vms/{vm_id}/exec", {"command": "cat /root/stark_words.txt"}
         )
-        assert status == 200 and result["stdout"] == "the north remembers"
+        assert status == 200 and exec_output_text(result) == "the north remembers"
     finally:
         if vm_id is not None:
             with suppress(Exception):
