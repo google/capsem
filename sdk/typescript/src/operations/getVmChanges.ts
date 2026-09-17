@@ -22,7 +22,7 @@ export async function getVmChanges(
   "limit": z.int().min(0).exactOptional(),
 }).parse(parameters);
   const payload = await transport.request(Method.GET, "/vms/{id}/changes", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
     query: {"checkpoint": input["checkpoint"], "offset": input["offset"], "limit": input["limit"]},
   });

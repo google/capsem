@@ -12,10 +12,12 @@ async def pause_vm(
     transport: Transport,
     *,
     id: StrictStr,
+    request_timeout: float | None = None,
 ) -> VmActionResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     payload = await transport.request(
         Method.POST, '/vms/{id}/pause',
         path_parameters={'id': id},
+        timeout=request_timeout,
     )
     return TypeAdapter(VmActionResponse).validate_json(payload)

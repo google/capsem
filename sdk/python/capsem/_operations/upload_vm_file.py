@@ -14,6 +14,7 @@ async def upload_vm_file(
     id: StrictStr,
     path: StrictStr,
     body: bytes,
+    request_timeout: float | None = None,
 ) -> UploadResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     path = TypeAdapter(StrictStr).validate_python(path)
@@ -22,5 +23,6 @@ async def upload_vm_file(
         path_parameters={'id': id},
         query={'path': path},
         body=body,
+        timeout=request_timeout,
     )
     return TypeAdapter(UploadResponse).validate_json(payload)

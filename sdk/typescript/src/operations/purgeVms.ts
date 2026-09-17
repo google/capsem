@@ -18,7 +18,7 @@ export async function purgeVms(
   "body": z.lazy(() => PurgeRequestSchema),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/purge", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     body: JSON.stringify(input.body), contentType: MediaType.JSON,
   });
   return z.lazy(() => PurgeResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

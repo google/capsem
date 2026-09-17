@@ -22,7 +22,7 @@ export async function callProfileMcpTool(
   "body": z.lazy(() => ValueSchema),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"profile_id": input["profile_id"], "server_id": input["server_id"], "tool_id": input["tool_id"]},
     body: JSON.stringify(input.body), contentType: MediaType.JSON,
   });

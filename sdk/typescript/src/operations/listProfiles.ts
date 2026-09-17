@@ -10,7 +10,7 @@ export async function listProfiles(
   options: CallOptions = {},
 ): Promise<ProfilesListResponse> {
   const payload = await transport.request(Method.GET, "/profiles/list", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
   });
   return z.lazy(() => ProfilesListResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));
 }

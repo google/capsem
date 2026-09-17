@@ -10,7 +10,7 @@ export async function getUpdateStatus(
   options: CallOptions = {},
 ): Promise<UpdateStatusResponse> {
   const payload = await transport.request(Method.GET, "/update/status", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
   });
   return z.lazy(() => UpdateStatusResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));
 }

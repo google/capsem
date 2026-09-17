@@ -12,10 +12,12 @@ async def get_network(
     transport: Transport,
     *,
     id: StrictStr,
+    request_timeout: float | None = None,
 ) -> NetworkInfo:
     id = TypeAdapter(StrictStr).validate_python(id)
     payload = await transport.request(
         Method.GET, '/networks/{id}',
         path_parameters={'id': id},
+        timeout=request_timeout,
     )
     return TypeAdapter(NetworkInfo).validate_json(payload)

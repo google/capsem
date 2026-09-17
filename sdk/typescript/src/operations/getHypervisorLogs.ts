@@ -24,7 +24,7 @@ export async function getHypervisorLogs(
   "max_bytes": z.int().min(0).exactOptional(),
 }).parse(parameters);
   const payload = await transport.request(Method.GET, "/host-logs/{name}", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"name": input["name"]},
     query: {"grep": input["grep"], "tail": input["tail"], "max_bytes": input["max_bytes"]},
   });

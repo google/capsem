@@ -26,7 +26,7 @@ export async function getVmHistory(
   "layer": z.lazy(() => HistoryLayerFilterSchema).exactOptional(),
 }).parse(parameters);
   const payload = await transport.request(Method.GET, "/vms/{id}/history", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
     query: {"limit": input["limit"], "offset": input["offset"], "search": input["search"], "layer": input["layer"]},
   });

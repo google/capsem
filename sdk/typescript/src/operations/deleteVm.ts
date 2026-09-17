@@ -16,7 +16,7 @@ export async function deleteVm(
   "id": z.string(),
 }).parse(parameters);
   const payload = await transport.request(Method.DELETE, "/vms/{id}/delete", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
   });
   return z.lazy(() => VmActionResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

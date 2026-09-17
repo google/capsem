@@ -18,7 +18,7 @@ export async function deleteVmExposure(
   "exposure_id": z.string(),
 }).parse(parameters);
   const payload = await transport.request(Method.DELETE, "/vms/{id}/exposures/{exposure_id}", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"], "exposure_id": input["exposure_id"]},
   });
   return z.lazy(() => VmActionResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

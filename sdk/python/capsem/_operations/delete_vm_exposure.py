@@ -13,11 +13,13 @@ async def delete_vm_exposure(
     *,
     id: StrictStr,
     exposure_id: StrictStr,
+    request_timeout: float | None = None,
 ) -> VmActionResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     exposure_id = TypeAdapter(StrictStr).validate_python(exposure_id)
     payload = await transport.request(
         Method.DELETE, '/vms/{id}/exposures/{exposure_id}',
         path_parameters={'id': id, 'exposure_id': exposure_id},
+        timeout=request_timeout,
     )
     return TypeAdapter(VmActionResponse).validate_json(payload)

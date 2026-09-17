@@ -15,6 +15,7 @@ from capsem import (
     Registry,
     models,
 )
+from capsem.execution import command_deadline
 
 from .facade_gateway import gateway
 
@@ -188,15 +189,36 @@ def test_container_options_without_an_image_are_rejected_before_http() -> None:
     asyncio.run(run())
 
 
-def test_http_deadline_bounds_execution_without_replaying_it() -> None:
+def test_exec_outlives_the_default_deadline_without_replaying_it() -> None:
     async def run() -> None:
         async with gateway() as (url, state), VM(url, "token", id="vm-0", timeout=0.05) as vm:
-            state.wait_for_exec = True
+            state.delays["/vms/vm-0/exec"] = 0.3
+            await vm.exec("slow build", timeout_secs=600)
+            state.delays["/run"] = 0.3
+            async with Hypervisor(url, "token", timeout=0.05) as hv:
+                await hv.run("slow build")
+            assert [path for _, path, _ in state.requests] == ["/vms/vm-0/exec", "/run"]
+    asyncio.run(run())
+
+
+def test_ordinary_calls_keep_the_default_deadline() -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), VM(url, "token", id="vm-0", timeout=0.05) as vm:
+            state.delays["/vms/vm-0/info"] = 0.3
             with pytest.raises(TimeoutError):
-                await vm.exec("waiting")
-            assert state.exec_entered.is_set()
+                await vm.info()
             assert len(state.requests) == 1
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("default", "timeout_secs", "expected"),
+    [(30, None, 3600 + 120), (30, 600, 600 + 120), (5000, 10, 5000)],
+)
+def test_command_deadline_covers_the_service_timeout_and_gateway_budget(
+    default: float, timeout_secs: int | None, expected: float,
+) -> None:
+    assert command_deadline(default, timeout_secs) == expected
 
 
 @pytest.mark.parametrize("memory", [0, -1, True, 1.5, "8G"])

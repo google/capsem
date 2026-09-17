@@ -32,7 +32,7 @@ export async function getNetworkLogs(
   "until": z.int().nullable().exactOptional(),
 }).parse(parameters);
   const payload = await transport.request(Method.GET, "/networks/{id}/logs", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
     query: {"cursor": input["cursor"], "limit": input["limit"], "vm": input["vm"], "connection": input["connection"], "type": input["type"], "decision": input["decision"], "since": input["since"], "until": input["until"]},
   });

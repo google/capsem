@@ -3,7 +3,11 @@ export enum Method {GET = 'GET', POST = 'POST', PUT = 'PUT', DELETE = 'DELETE'}
 export enum MediaType {JSON = 'application/json', BINARY = 'application/octet-stream'}
 
 type QueryValue = string | number | boolean | readonly (string | number | boolean)[] | null | undefined;
-export interface CallOptions {signal?: AbortSignal | undefined}
+export interface CallOptions {
+  signal?: AbortSignal | undefined;
+  /** Replaces the transport's default deadline for this call. */
+  timeoutMs?: number | undefined;
+}
 export interface TransportOptions {timeoutMs?: number}
 interface RequestOptions extends CallOptions {
   parameters?: Record<string, string>;
@@ -31,6 +35,13 @@ export class NetworkError extends Error {
  * `AbortSignal.any` where it exists; WKWebView before macOS 14.4 (the desktop
  * app supports 14.0) and older runtimes need the linking done by hand.
  */
+function checkedTimeout(timeout: number): number {
+  if (!Number.isInteger(timeout) || timeout <= 0 || timeout > 2 ** 31 - 1) {
+    throw new TypeError('Timeout must be a positive integer no larger than 2147483647 milliseconds');
+  }
+  return timeout;
+}
+
 function anySignal(signals: AbortSignal[]): AbortSignal {
   if (typeof AbortSignal.any === 'function') return AbortSignal.any(signals);
   const linked = new AbortController();
@@ -55,14 +66,14 @@ export class Transport {
       throw new TypeError('Gateway URL must be HTTP(S), without credentials, query or fragment');
     }
     if (!token || /[\r\n]/.test(token)) throw new TypeError('Gateway bearer token is required without line breaks');
-    const timeout = options.timeoutMs ?? 30_000;
-    if (!Number.isInteger(timeout) || timeout <= 0 || timeout > 2 ** 31 - 1) {
-      throw new TypeError('Timeout must be a positive integer no larger than 2147483647 milliseconds');
-    }
+    const timeout = checkedTimeout(options.timeoutMs ?? 30_000);
     this.#url = parsed.href.replace(/\/$/, '');
     this.#token = token;
     this.#timeoutMs = timeout;
   }
+
+  /** The default per-request deadline, in milliseconds. */
+  get timeoutMs(): number {return this.#timeoutMs;}
 
   close(): void {this.#closed.abort();}
 
@@ -81,7 +92,8 @@ export class Transport {
     }
     const headers = new Headers({Authorization: `Bearer ${this.#token}`, Accept: options.accept ?? MediaType.JSON});
     if (options.body !== undefined) headers.set('Content-Type', options.contentType ?? MediaType.JSON);
-    const signals = [this.#closed.signal, AbortSignal.timeout(this.#timeoutMs)];
+    const deadline = options.timeoutMs === undefined ? this.#timeoutMs : checkedTimeout(options.timeoutMs);
+    const signals = [this.#closed.signal, AbortSignal.timeout(deadline)];
     if (options.signal) signals.push(options.signal);
     const signal = anySignal(signals);
     let response: Response;

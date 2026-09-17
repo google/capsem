@@ -17,6 +17,7 @@ async def get_vm_logs(
     grep: StrictStr | None = None,
     tail: Annotated[StrictInt, Field(ge=0)] | None = None,
     max_bytes: Annotated[StrictInt, Field(ge=0)] | None = None,
+    request_timeout: float | None = None,
 ) -> LogsResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     grep = TypeAdapter(StrictStr | None).validate_python(grep)
@@ -26,5 +27,6 @@ async def get_vm_logs(
         Method.GET, '/vms/{id}/logs',
         path_parameters={'id': id},
         query={'grep': grep, 'tail': tail, 'max_bytes': max_bytes},
+        timeout=request_timeout,
     )
     return TypeAdapter(LogsResponse).validate_json(payload)

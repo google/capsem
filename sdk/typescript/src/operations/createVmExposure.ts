@@ -20,7 +20,7 @@ export async function createVmExposure(
   "body": z.lazy(() => ExposureRequestSchema),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/vms/{id}/exposures", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
     body: JSON.stringify(input.body), contentType: MediaType.JSON,
   });

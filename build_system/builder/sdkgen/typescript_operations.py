@@ -48,7 +48,7 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
             validator = expression(Schema(type="object", properties=properties, required=required))
             lines.append(f"  const input = {validator}.parse(parameters);")
         lines += [f"  {'return' if binary else 'const payload ='} await transport.request(Method.{route.method.name}, {json.dumps(route.path)}, {{",
-                  f"    signal: options.signal, accept: MediaType.{'BINARY' if binary else 'JSON'},"]
+                  f"    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.{'BINARY' if binary else 'JSON'},"]
         for location, keyword in (("path", "parameters"), ("query", "query")):
             fields = [f"{json.dumps(p.name)}: input[{json.dumps(p.name)}]"
                       for p in operation.parameters if p.location == location]

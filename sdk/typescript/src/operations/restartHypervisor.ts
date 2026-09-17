@@ -10,7 +10,7 @@ export async function restartHypervisor(
   options: CallOptions = {},
 ): Promise<RestartResponse> {
   const payload = await transport.request(Method.POST, "/restart", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
   });
   return z.lazy(() => RestartResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));
 }

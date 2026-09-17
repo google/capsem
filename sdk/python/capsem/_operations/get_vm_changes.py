@@ -17,6 +17,7 @@ async def get_vm_changes(
     checkpoint: StrictStr,
     offset: Annotated[StrictInt, Field(ge=0)] | None = None,
     limit: Annotated[StrictInt, Field(ge=0)] | None = None,
+    request_timeout: float | None = None,
 ) -> ChangesResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     checkpoint = TypeAdapter(StrictStr).validate_python(checkpoint)
@@ -26,5 +27,6 @@ async def get_vm_changes(
         Method.GET, '/vms/{id}/changes',
         path_parameters={'id': id},
         query={'checkpoint': checkpoint, 'offset': offset, 'limit': limit},
+        timeout=request_timeout,
     )
     return TypeAdapter(ChangesResponse).validate_json(payload)

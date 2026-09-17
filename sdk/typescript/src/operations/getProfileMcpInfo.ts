@@ -16,7 +16,7 @@ export async function getProfileMcpInfo(
   "profile_id": z.string(),
 }).parse(parameters);
   const payload = await transport.request(Method.GET, "/profiles/{profile_id}/mcp/info", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"profile_id": input["profile_id"]},
   });
   return z.lazy(() => ProfileMcpInfoResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

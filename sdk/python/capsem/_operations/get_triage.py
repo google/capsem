@@ -16,6 +16,7 @@ async def get_triage(
     since: StrictStr | None = None,
     limit: Annotated[StrictInt, Field(ge=0)] | None = None,
     id: StrictStr | None = None,
+    request_timeout: float | None = None,
 ) -> TriageResponse:
     since = TypeAdapter(StrictStr | None).validate_python(since)
     limit = TypeAdapter(Annotated[StrictInt, Field(ge=0)] | None).validate_python(limit)
@@ -23,5 +24,6 @@ async def get_triage(
     payload = await transport.request(
         Method.GET, '/triage',
         query={'since': since, 'limit': limit, 'id': id},
+        timeout=request_timeout,
     )
     return TypeAdapter(TriageResponse).validate_json(payload)

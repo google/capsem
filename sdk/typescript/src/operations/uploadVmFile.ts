@@ -20,7 +20,7 @@ export async function uploadVmFile(
   "body": z.instanceof(Uint8Array),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/vms/{id}/files/content", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
     query: {"path": input["path"]},
     body: input.body, contentType: MediaType.BINARY,

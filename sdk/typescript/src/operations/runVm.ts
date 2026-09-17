@@ -18,7 +18,7 @@ export async function runVm(
   "body": z.lazy(() => RunRequestSchema),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/run", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     body: JSON.stringify(input.body), contentType: MediaType.JSON,
   });
   return z.lazy(() => ExecResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

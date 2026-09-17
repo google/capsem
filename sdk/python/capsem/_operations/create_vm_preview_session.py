@@ -13,11 +13,13 @@ async def create_vm_preview_session(
     *,
     id: StrictStr,
     exposure_id: StrictStr,
+    request_timeout: float | None = None,
 ) -> PreviewSessionResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     exposure_id = TypeAdapter(StrictStr).validate_python(exposure_id)
     payload = await transport.request(
         Method.POST, '/vms/{id}/exposures/{exposure_id}/preview-session',
         path_parameters={'id': id, 'exposure_id': exposure_id},
+        timeout=request_timeout,
     )
     return TypeAdapter(PreviewSessionResponse).validate_json(payload)

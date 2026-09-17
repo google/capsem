@@ -22,6 +22,7 @@ async def get_network_logs(
     decision: StrictStr | None = None,
     since: StrictInt | None = None,
     until: StrictInt | None = None,
+    request_timeout: float | None = None,
 ) -> NetworkLogsResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     cursor = TypeAdapter(StrictStr | None).validate_python(cursor)
@@ -36,5 +37,6 @@ async def get_network_logs(
         Method.GET, '/networks/{id}/logs',
         path_parameters={'id': id},
         query={'cursor': cursor, 'limit': limit, 'vm': vm, 'connection': connection, 'type': type, 'decision': decision, 'since': since, 'until': until},
+        timeout=request_timeout,
     )
     return TypeAdapter(NetworkLogsResponse).validate_json(payload)

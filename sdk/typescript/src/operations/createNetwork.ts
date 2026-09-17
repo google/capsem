@@ -18,7 +18,7 @@ export async function createNetwork(
   "body": z.lazy(() => CreateNetworkRequestSchema),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/networks", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     body: JSON.stringify(input.body), contentType: MediaType.JSON,
   });
   return z.lazy(() => NetworkInfoSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

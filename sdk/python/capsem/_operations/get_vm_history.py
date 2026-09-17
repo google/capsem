@@ -19,6 +19,7 @@ async def get_vm_history(
     offset: Annotated[StrictInt, Field(ge=0)] | None = None,
     search: StrictStr | None = None,
     layer: HistoryLayerFilter | None = None,
+    request_timeout: float | None = None,
 ) -> HistoryResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     limit = TypeAdapter(Annotated[StrictInt, Field(ge=0)] | None).validate_python(limit)
@@ -29,5 +30,6 @@ async def get_vm_history(
         Method.GET, '/vms/{id}/history',
         path_parameters={'id': id},
         query={'limit': limit, 'offset': offset, 'search': search, 'layer': layer},
+        timeout=request_timeout,
     )
     return TypeAdapter(HistoryResponse).validate_json(payload)

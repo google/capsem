@@ -18,7 +18,7 @@ export async function createVmPreviewSession(
   "exposure_id": z.string(),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/vms/{id}/exposures/{exposure_id}/preview-session", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"], "exposure_id": input["exposure_id"]},
   });
   return z.lazy(() => PreviewSessionResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

@@ -16,7 +16,7 @@ export async function getVmStatus(
   "id": z.string(),
 }).parse(parameters);
   const payload = await transport.request(Method.GET, "/vms/{id}/status", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
   });
   return z.lazy(() => VmStatusResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

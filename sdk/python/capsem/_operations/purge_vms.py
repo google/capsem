@@ -13,10 +13,12 @@ async def purge_vms(
     transport: Transport,
     *,
     body: PurgeRequest,
+    request_timeout: float | None = None,
 ) -> PurgeResponse:
     payload = await transport.request(
         Method.POST, '/purge',
         body=body,
         json_body=True,
+        timeout=request_timeout,
     )
     return TypeAdapter(PurgeResponse).validate_json(payload)

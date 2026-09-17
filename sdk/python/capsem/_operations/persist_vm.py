@@ -14,6 +14,7 @@ async def persist_vm(
     *,
     id: StrictStr,
     body: PersistRequest,
+    request_timeout: float | None = None,
 ) -> PersistResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     payload = await transport.request(
@@ -21,5 +22,6 @@ async def persist_vm(
         path_parameters={'id': id},
         body=body,
         json_body=True,
+        timeout=request_timeout,
     )
     return TypeAdapter(PersistResponse).validate_json(payload)

@@ -10,7 +10,7 @@ export async function listVms(
   options: CallOptions = {},
 ): Promise<ListResponse> {
   const payload = await transport.request(Method.GET, "/vms/list", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
   });
   return z.lazy(() => ListResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));
 }

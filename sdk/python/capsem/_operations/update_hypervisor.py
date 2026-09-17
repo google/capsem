@@ -13,10 +13,12 @@ async def update_hypervisor(
     transport: Transport,
     *,
     body: UpdateApplyRequest,
+    request_timeout: float | None = None,
 ) -> UpdateActionResponse:
     payload = await transport.request(
         Method.POST, '/update/apply',
         body=body,
         json_body=True,
+        timeout=request_timeout,
     )
     return TypeAdapter(UpdateActionResponse).validate_json(payload)

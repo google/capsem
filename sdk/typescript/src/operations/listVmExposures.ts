@@ -16,7 +16,7 @@ export async function listVmExposures(
   "id": z.string(),
 }).parse(parameters);
   const payload = await transport.request(Method.GET, "/vms/{id}/exposures", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
   });
   return z.lazy(() => ExposureListResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

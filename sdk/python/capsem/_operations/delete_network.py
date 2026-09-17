@@ -12,10 +12,12 @@ async def delete_network(
     transport: Transport,
     *,
     id: StrictStr,
+    request_timeout: float | None = None,
 ) -> VmActionResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     payload = await transport.request(
         Method.DELETE, '/networks/{id}',
         path_parameters={'id': id},
+        timeout=request_timeout,
     )
     return TypeAdapter(VmActionResponse).validate_json(payload)

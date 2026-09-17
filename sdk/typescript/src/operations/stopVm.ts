@@ -16,7 +16,7 @@ export async function stopVm(
   "id": z.string(),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/vms/{id}/stop", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
   });
   return z.lazy(() => StopResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

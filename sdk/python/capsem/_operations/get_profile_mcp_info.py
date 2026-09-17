@@ -12,10 +12,12 @@ async def get_profile_mcp_info(
     transport: Transport,
     *,
     profile_id: StrictStr,
+    request_timeout: float | None = None,
 ) -> ProfileMcpInfoResponse:
     profile_id = TypeAdapter(StrictStr).validate_python(profile_id)
     payload = await transport.request(
         Method.GET, '/profiles/{profile_id}/mcp/info',
         path_parameters={'profile_id': profile_id},
+        timeout=request_timeout,
     )
     return TypeAdapter(ProfileMcpInfoResponse).validate_json(payload)

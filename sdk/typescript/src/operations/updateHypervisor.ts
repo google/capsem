@@ -18,7 +18,7 @@ export async function updateHypervisor(
   "body": z.lazy(() => UpdateApplyRequestSchema),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/update/apply", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     body: JSON.stringify(input.body), contentType: MediaType.JSON,
   });
   return z.lazy(() => UpdateActionResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

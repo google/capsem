@@ -10,8 +10,11 @@ from ..models.profiles_list_response import ProfilesListResponse
 
 async def list_profiles(
     transport: Transport,
+    *,
+    request_timeout: float | None = None,
 ) -> ProfilesListResponse:
     payload = await transport.request(
         Method.GET, '/profiles/list',
+        timeout=request_timeout,
     )
     return TypeAdapter(ProfilesListResponse).validate_json(payload)

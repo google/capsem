@@ -20,7 +20,7 @@ export async function getTriage(
   "id": z.string().nullable().exactOptional(),
 }).parse(parameters);
   const payload = await transport.request(Method.GET, "/triage", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     query: {"since": input["since"], "limit": input["limit"], "id": input["id"]},
   });
   return z.lazy(() => TriageResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

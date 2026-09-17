@@ -13,10 +13,12 @@ async def create_vm(
     transport: Transport,
     *,
     body: ProvisionRequest,
+    request_timeout: float | None = None,
 ) -> ProvisionResponse:
     payload = await transport.request(
         Method.POST, '/vms/create',
         body=body,
         json_body=True,
+        timeout=request_timeout,
     )
     return TypeAdapter(ProvisionResponse).validate_json(payload)

@@ -14,6 +14,7 @@ async def list_vm_files(
     id: StrictStr,
     path: StrictStr | None = None,
     depth: StrictInt | None = None,
+    request_timeout: float | None = None,
 ) -> FileListResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     path = TypeAdapter(StrictStr | None).validate_python(path)
@@ -22,5 +23,6 @@ async def list_vm_files(
         Method.GET, '/vms/{id}/files/list',
         path_parameters={'id': id},
         query={'path': path, 'depth': depth},
+        timeout=request_timeout,
     )
     return TypeAdapter(FileListResponse).validate_json(payload)

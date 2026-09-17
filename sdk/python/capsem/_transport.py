@@ -59,6 +59,11 @@ class Transport:
         self._session: aiohttp.ClientSession | None = None
         self._closed = False
 
+    @property
+    def timeout(self) -> float:
+        """The default per-request deadline, in seconds."""
+        return self._timeout
+
     async def __aenter__(self) -> Self:
         return self
 
@@ -77,9 +82,13 @@ class Transport:
         body: BaseModel | JsonValue | bytes | None = None,
         json_body: bool = False,
         accept: MediaType = MediaType.JSON,
+        timeout: float | None = None,
     ) -> bytes:
+        """Send one request. `timeout` replaces the default deadline for it."""
         if self._closed:
             raise RuntimeError("SDK client is closed")
+        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("timeout must be positive and finite")
         if not path.startswith("/") or "?" in path or "#" in path:
             raise ValueError("operation path must be absolute without query or fragment")
         for name, value in (path_parameters or {}).items():
@@ -112,6 +121,7 @@ class Transport:
             self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._timeout))
         async with self._session.request(
             method.value, URL(target, encoded=True), headers=headers, data=data, allow_redirects=False,
+            timeout=aiohttp.ClientTimeout(total=self._timeout if timeout is None else timeout),
         ) as response:
             payload = await response.read()
             if not 200 <= response.status < 300:

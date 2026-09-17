@@ -18,7 +18,7 @@ export async function attachNetworkMember(
   "vm_id": z.string(),
 }).parse(parameters);
   const payload = await transport.request(Method.PUT, "/networks/{id}/members/{vm_id}", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"], "vm_id": input["vm_id"]},
   });
   return z.lazy(() => NetworkInfoSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

@@ -20,7 +20,7 @@ export async function persistVm(
   "body": z.lazy(() => PersistRequestSchema),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/vms/{id}/save", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
     body: JSON.stringify(input.body), contentType: MediaType.JSON,
   });

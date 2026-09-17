@@ -14,7 +14,7 @@ from ._networks import VmNetworks
 from ._ports import Ports
 from ._resources import Files, Snapshots, Stats
 from ._transport import HttpError, Transport
-from .execution import ExecResult
+from .execution import ExecResult, command_deadline
 
 
 class VM(Client):
@@ -79,9 +79,11 @@ class VM(Client):
         return await api.get_vm_info(self._transport, id=await self._resolve())
 
     async def exec(self, command: str, *, timeout_secs: int | None = None) -> ExecResult:
-        response = await api.exec_vm(self._transport, id=await self._resolve(), body=models.ExecRequest(
-            command=command, timeout_secs=timeout_secs,
-        ))
+        response = await api.exec_vm(
+            self._transport, id=await self._resolve(),
+            body=models.ExecRequest(command=command, timeout_secs=timeout_secs),
+            request_timeout=command_deadline(self._transport.timeout, timeout_secs),
+        )
         return ExecResult.from_wire(response)
 
     async def start(self) -> models.ProvisionResponse:

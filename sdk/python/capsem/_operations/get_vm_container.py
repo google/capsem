@@ -12,10 +12,12 @@ async def get_vm_container(
     transport: Transport,
     *,
     id: StrictStr,
+    request_timeout: float | None = None,
 ) -> ContainerStatusResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     payload = await transport.request(
         Method.GET, '/vms/{id}/container',
         path_parameters={'id': id},
+        timeout=request_timeout,
     )
     return TypeAdapter(ContainerStatusResponse).validate_json(payload)

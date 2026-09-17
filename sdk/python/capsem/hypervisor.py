@@ -10,7 +10,7 @@ from ._client import Client
 from ._debug import Debug
 from ._networks import Networks
 from ._profiles import Profiles
-from .execution import ExecResult
+from .execution import ExecResult, command_deadline
 from .registry import Registry
 from .vm import VM
 
@@ -93,7 +93,7 @@ class Hypervisor(Client):
             command=command, profile_id=_profile_id(profile),
             timeout_secs=timeout_secs,
             cpus=cpus, ram_mb=_memory_mb(memory), env=env,
-        ))
+        ), request_timeout=command_deadline(self._transport.timeout, timeout_secs))
         return ExecResult.from_wire(response)
 
     async def purge(self, *, all: bool = False) -> models.PurgeResponse:

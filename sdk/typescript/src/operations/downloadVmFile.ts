@@ -16,7 +16,7 @@ export async function downloadVmFile(
   "path": z.string(),
 }).parse(parameters);
   return await transport.request(Method.GET, "/vms/{id}/files/content", {
-    signal: options.signal, accept: MediaType.BINARY,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.BINARY,
     parameters: {"id": input["id"]},
     query: {"path": input["path"]},
   });

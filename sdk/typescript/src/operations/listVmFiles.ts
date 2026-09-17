@@ -20,7 +20,7 @@ export async function listVmFiles(
   "depth": z.int().exactOptional(),
 }).parse(parameters);
   const payload = await transport.request(Method.GET, "/vms/{id}/files/list", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
     query: {"path": input["path"], "depth": input["depth"]},
   });

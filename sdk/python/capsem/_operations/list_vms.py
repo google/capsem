@@ -10,8 +10,11 @@ from ..models.list_response import ListResponse
 
 async def list_vms(
     transport: Transport,
+    *,
+    request_timeout: float | None = None,
 ) -> ListResponse:
     payload = await transport.request(
         Method.GET, '/vms/list',
+        timeout=request_timeout,
     )
     return TypeAdapter(ListResponse).validate_json(payload)

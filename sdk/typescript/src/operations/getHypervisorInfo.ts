@@ -10,7 +10,7 @@ export async function getHypervisorInfo(
   options: CallOptions = {},
 ): Promise<HypervisorInfo> {
   const payload = await transport.request(Method.GET, "/status", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
   });
   return z.lazy(() => HypervisorInfoSchema).parse(JSON.parse(new TextDecoder().decode(payload)));
 }

@@ -25,7 +25,7 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         parameters: dict[str, list[str]] = {"path": [], "query": []}
         for parameter in operation.parameters:
             attr = parameter.name + ("_" if keyword.iskeyword(parameter.name) else "")
-            if not attr.isidentifier() or attr in {"transport", "body", "payload"}:
+            if not attr.isidentifier() or attr in {"transport", "body", "payload", "request_timeout"}:
                 raise ValueError(f"unsupported operation parameter: {attr}")
             annotation = type_name(parameter.schema_)
             default = ""
@@ -39,9 +39,9 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         if operation.request_body is not None:
             schemas.append(operation.request_body.schema)
             arguments.append(f"    body: {type_name(operation.request_body.schema)},")
-        signature = [f"async def {name}(", "    transport: Transport,"]
-        if arguments:
-            signature += ["    *,", *arguments]
+        # A per-call deadline in seconds; None keeps the transport default.
+        arguments.append("    request_timeout: float | None = None,")
+        signature = [f"async def {name}(", "    transport: Transport,", "    *,", *arguments]
         lines = [*signature, f") -> {type_name(response.schema)}:", *validation]
         lines += [f"    {'return' if binary else 'payload ='} await transport.request(", f"        Method.{route.method.name}, {route.path!r},"]
         for location, keyword_arg in (("path", "path_parameters"), ("query", "query")):
@@ -53,6 +53,7 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
                 lines.append("        json_body=True,")
         if binary:
             lines.append("        accept=MediaType.BINARY,")
+        lines.append("        timeout=request_timeout,")
         lines.append("    )")
         if not binary:
             lines.append(f"    return TypeAdapter({type_name(response.schema)}).validate_json(payload)")

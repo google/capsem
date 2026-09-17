@@ -18,7 +18,7 @@ export async function refreshProfileMcpServer(
   "server_id": z.string(),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/profiles/{profile_id}/mcp/servers/{server_id}/refresh", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"profile_id": input["profile_id"], "server_id": input["server_id"]},
   });
   return z.lazy(() => McpRefreshResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

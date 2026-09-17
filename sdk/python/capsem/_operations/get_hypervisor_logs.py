@@ -18,6 +18,7 @@ async def get_hypervisor_logs(
     grep: StrictStr | None = None,
     tail: Annotated[StrictInt, Field(ge=0)] | None = None,
     max_bytes: Annotated[StrictInt, Field(ge=0)] | None = None,
+    request_timeout: float | None = None,
 ) -> HostLogsResponse:
     name = TypeAdapter(HostLogSource).validate_python(name)
     grep = TypeAdapter(StrictStr | None).validate_python(grep)
@@ -27,5 +28,6 @@ async def get_hypervisor_logs(
         Method.GET, '/host-logs/{name}',
         path_parameters={'name': name},
         query={'grep': grep, 'tail': tail, 'max_bytes': max_bytes},
+        timeout=request_timeout,
     )
     return TypeAdapter(HostLogsResponse).validate_json(payload)

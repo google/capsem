@@ -13,10 +13,12 @@ async def run_vm(
     transport: Transport,
     *,
     body: RunRequest,
+    request_timeout: float | None = None,
 ) -> ExecResponse:
     payload = await transport.request(
         Method.POST, '/run',
         body=body,
         json_body=True,
+        timeout=request_timeout,
     )
     return TypeAdapter(ExecResponse).validate_json(payload)

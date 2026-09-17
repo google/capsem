@@ -12,10 +12,12 @@ async def get_vm_status(
     transport: Transport,
     *,
     id: StrictStr,
+    request_timeout: float | None = None,
 ) -> VmStatusResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     payload = await transport.request(
         Method.GET, '/vms/{id}/status',
         path_parameters={'id': id},
+        timeout=request_timeout,
     )
     return TypeAdapter(VmStatusResponse).validate_json(payload)

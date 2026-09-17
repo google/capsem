@@ -14,6 +14,7 @@ async def create_vm_exposure(
     *,
     id: StrictStr,
     body: ExposureRequest,
+    request_timeout: float | None = None,
 ) -> ExposureInfo:
     id = TypeAdapter(StrictStr).validate_python(id)
     payload = await transport.request(
@@ -21,5 +22,6 @@ async def create_vm_exposure(
         path_parameters={'id': id},
         body=body,
         json_body=True,
+        timeout=request_timeout,
     )
     return TypeAdapter(ExposureInfo).validate_json(payload)

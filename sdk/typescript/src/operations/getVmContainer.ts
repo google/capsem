@@ -16,7 +16,7 @@ export async function getVmContainer(
   "id": z.string(),
 }).parse(parameters);
   const payload = await transport.request(Method.GET, "/vms/{id}/container", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
   });
   return z.lazy(() => ContainerStatusResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

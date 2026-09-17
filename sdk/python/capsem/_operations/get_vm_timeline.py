@@ -19,6 +19,7 @@ async def get_vm_timeline(
     since: StrictStr | None = None,
     limit: Annotated[StrictInt, Field(ge=0)] | None = None,
     layers: list[TimelineLayer] | None = None,
+    request_timeout: float | None = None,
 ) -> TimelineResponse:
     id = TypeAdapter(StrictStr).validate_python(id)
     trace_id = TypeAdapter(StrictStr | None).validate_python(trace_id)
@@ -29,5 +30,6 @@ async def get_vm_timeline(
         Method.GET, '/vms/{id}/timeline',
         path_parameters={'id': id},
         query={'trace_id': trace_id, 'since': since, 'limit': limit, 'layers': layers},
+        timeout=request_timeout,
     )
     return TypeAdapter(TimelineResponse).validate_json(payload)

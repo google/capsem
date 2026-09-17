@@ -13,10 +13,12 @@ async def create_network(
     transport: Transport,
     *,
     body: CreateNetworkRequest,
+    request_timeout: float | None = None,
 ) -> NetworkInfo:
     payload = await transport.request(
         Method.POST, '/networks',
         body=body,
         json_body=True,
+        timeout=request_timeout,
     )
     return TypeAdapter(NetworkInfo).validate_json(payload)

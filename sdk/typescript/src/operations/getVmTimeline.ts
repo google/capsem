@@ -26,7 +26,7 @@ export async function getVmTimeline(
   "layers": z.array(z.lazy(() => TimelineLayerSchema)).exactOptional(),
 }).parse(parameters);
   const payload = await transport.request(Method.GET, "/vms/{id}/timeline", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
     query: {"trace_id": input["trace_id"], "since": input["since"], "limit": input["limit"], "layers": input["layers"]},
   });

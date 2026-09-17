@@ -25,6 +25,7 @@ class GatewayState:
     wait_for_exec: bool = False
     container_states: list[str] = field(default_factory=lambda: ["running"])
     preview_session_status: int | None = None
+    delays: dict[str, float] = field(default_factory=dict)
 
 
 def response_model(schema_name: str, **fields: Any) -> dict[str, Any]:
@@ -41,6 +42,8 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
         body = await request.read()
         state.requests.append((request.method, request.raw_path, body))
         assert request.headers["Authorization"] == "Bearer token"
+        if request.path in state.delays:
+            await asyncio.sleep(state.delays[request.path])
         if request.path == "/vms/list":
             return web.json_response({"sandboxes": [response_model("SandboxInfo", id=f"vm-{index}", name=name)
                                                     for index, name in enumerate(state.names)]})

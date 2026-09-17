@@ -10,7 +10,7 @@ export async function listNetworks(
   options: CallOptions = {},
 ): Promise<NetworkListResponse> {
   const payload = await transport.request(Method.GET, "/networks", {
-    signal: options.signal, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
   });
   return z.lazy(() => NetworkListResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));
 }

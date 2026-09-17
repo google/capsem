@@ -12,6 +12,7 @@ async def download_vm_file(
     *,
     id: StrictStr,
     path: StrictStr,
+    request_timeout: float | None = None,
 ) -> bytes:
     id = TypeAdapter(StrictStr).validate_python(id)
     path = TypeAdapter(StrictStr).validate_python(path)
@@ -20,4 +21,5 @@ async def download_vm_file(
         path_parameters={'id': id},
         query={'path': path},
         accept=MediaType.BINARY,
+        timeout=request_timeout,
     )

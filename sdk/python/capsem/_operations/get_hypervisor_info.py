@@ -10,8 +10,11 @@ from ..models.hypervisor_info import HypervisorInfo
 
 async def get_hypervisor_info(
     transport: Transport,
+    *,
+    request_timeout: float | None = None,
 ) -> HypervisorInfo:
     payload = await transport.request(
         Method.GET, '/status',
+        timeout=request_timeout,
     )
     return TypeAdapter(HypervisorInfo).validate_json(payload)
