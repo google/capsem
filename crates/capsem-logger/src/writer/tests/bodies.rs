@@ -137,3 +137,89 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     assert_eq!(&response.body, &response_body.as_bytes()[..MAX_BODY_BLOB_BYTES]);
     assert_eq!(response.trace_id, trace_id);
 }
+
+fn body_blob<'a>(event_id: &'a str, body: &'a str) -> EventBodyBlob<'a> {
+    EventBodyBlob {
+        event_id,
+        event_type: "http.request",
+        source_table: "net_events",
+        direction: "request",
+        content_type: None,
+        body: Some(body),
+        trace_id: None,
+        turn_id: None,
+    }
+}
+
+/// The archive is flushed to the device before the index rows that name its
+/// blocks are inserted. A crash between the two must cost bodies, never
+/// produce rows pointing at bytes the disk never received.
+#[test]
+fn appended_blocks_are_flushed_before_their_index_rows_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("flush-order.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    crate::schema::create_tables(&conn).unwrap();
+
+    let mut archive = BodyArchive::open(Some(&db_path));
+    archive.stage(body_blob("0f1f2f3f4f5f", "a body worth flushing"));
+    archive.seal_pending();
+    archive.commit_index_rows(&conn).unwrap();
+
+    assert_eq!(
+        archive.steps_for_tests(),
+        ["sync", "commit"],
+        "the blocks reach the device before the rows that name them"
+    );
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM event_body_blobs", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 1);
+    archive.sync();
+}
+
+/// A body that cannot fit beside what is already pending seals the block and
+/// retries, rather than failing or panicking. Two 10 MiB bodies cannot share
+/// a 16 MiB block, so they land in two.
+#[test]
+fn a_body_that_does_not_fit_the_pending_block_seals_and_retries() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("seal-and-retry.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    crate::schema::create_tables(&conn).unwrap();
+
+    let big = "z".repeat(MAX_BODY_BLOB_BYTES);
+    let mut archive = BodyArchive::open(Some(&db_path));
+    archive.stage(body_blob("aaaaaaaaaaa1", &big));
+    archive.stage(body_blob("aaaaaaaaaaa2", &big));
+    archive.seal_pending();
+    archive.commit_index_rows(&conn).unwrap();
+    archive.sync();
+
+    let blocks: i64 = conn
+        .query_row("SELECT COUNT(*) FROM body_blocks", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(blocks, 2, "10 MiB twice cannot share one 16 MiB block");
+
+    // Both bodies come back whole, which is what seal-and-retry has to
+    // preserve: the retry restarts the offsets in a new block.
+    let reader = capsem_archive::BodyLogReader::open(&archive_path_for_db(&db_path)).unwrap();
+    let mut statement = conn
+        .prepare("SELECT block_offset, body_offset, body_len FROM event_body_blobs ORDER BY event_id")
+        .unwrap();
+    let bodies: Vec<Vec<u8>> = statement
+        .query_map([], |row| {
+            Ok(capsem_archive::BodyRef {
+                block_offset: row.get::<_, i64>(0)? as u64,
+                offset: row.get::<_, i64>(1)? as u32,
+                len: row.get::<_, i64>(2)? as u32,
+            })
+        })
+        .unwrap()
+        .map(|reference| reader.read(reference.unwrap()).unwrap())
+        .collect();
+    assert_eq!(bodies.len(), 2);
+    for body in bodies {
+        assert_eq!(body, big.as_bytes());
+    }
+}

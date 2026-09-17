@@ -11,13 +11,16 @@
 //! crate must not add a second in front of attacker-influenced bytes.
 //! `tests/citadel/test_runtime_native_dependencies.py` holds it.
 
+#[cfg(not(unix))]
+compile_error!("capsem-archive relies on O_NOFOLLOW and mode 0600");
+
 pub mod format;
 pub mod reader;
 pub mod retain;
 pub mod warc;
 pub mod writer;
 
-pub use format::{BodyRef, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, TARGET_BLOCK_BYTES};
+pub use format::{BodyRef, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES, TARGET_BLOCK_BYTES};
 pub use reader::BodyLogReader;
 pub use writer::{BodyLogWriter, EncodedBlock, PendingBlock, SealedBlock};
 
@@ -35,8 +38,24 @@ pub enum ArchiveError {
     Integrity(u64),
     #[error("block at offset {0} did not inflate: {1}")]
     Inflate(u64, String),
+    #[error("block at offset {0} is truncated: the file ends inside its payload")]
+    TruncatedBlock(u64),
     #[error("body reference out of range for its block")]
     RefOutOfRange,
+    /// A write failed part-way through a block, so the file's end is no
+    /// longer where the writer believes it is. Every later offset would be a
+    /// guess, so the writer refuses all further work instead of handing out
+    /// references nobody can resolve.
+    #[error("archive writer is poisoned by an earlier partial write")]
+    Poisoned,
+    #[error("body of {len} bytes exceeds the {max}-byte block ceiling")]
+    BodyTooLarge { len: usize, max: usize },
+    /// The pending block cannot hold this body. Seal and stage it again; the
+    /// body is guaranteed to fit a block of its own.
+    #[error("pending block is full; seal it and stage this body again")]
+    BlockFull,
+    #[error("block {got} appended out of order; expected {expected}")]
+    OutOfOrderBlock { expected: u64, got: u64 },
 }
 
 pub type Result<T> = std::result::Result<T, ArchiveError>;

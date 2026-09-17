@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 /// it. Every reader test starts from a valid archive and then damages it.
 fn write_block(path: &Path, bodies: &[&[u8]]) -> (SealedBlock, Vec<BodyRef>) {
     let mut writer = BodyLogWriter::open(path).unwrap();
-    let staged: Vec<BodyRef> = bodies.iter().map(|body| writer.stage(body)).collect();
+    let staged: Vec<BodyRef> = bodies.iter().map(|body| writer.stage(body).unwrap()).collect();
     let sealed = writer.seal().unwrap().expect("bodies were staged");
     writer.sync().unwrap();
     let refs = staged
@@ -163,6 +163,100 @@ fn reader_rejects_a_ref_whose_len_overflows() {
     assert!(matches!(reader.read(overflowing), Err(ArchiveError::RefOutOfRange)));
 }
 
+/// Two reads of *different* blocks from one reader: the second replaces the
+/// cached block while the first read is long finished. `read` returns owned
+/// bytes precisely so this cannot become a borrow panic.
+#[test]
+fn two_reads_of_different_blocks_do_not_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = archive(&dir);
+    let mut writer = BodyLogWriter::open(&path).unwrap();
+
+    let first = writer.stage(b"a body in the first block").unwrap();
+    let first_block = writer.seal().unwrap().unwrap();
+    let second = writer.stage(b"a body in the second block").unwrap();
+    let second_block = writer.seal().unwrap().unwrap();
+    writer.sync().unwrap();
+
+    let reader = BodyLogReader::open(&path).unwrap();
+    let first = BodyRef {
+        block_offset: first_block.block_offset,
+        ..first
+    };
+    let second = BodyRef {
+        block_offset: second_block.block_offset,
+        ..second
+    };
+    assert_eq!(reader.read(first).unwrap(), b"a body in the first block");
+    assert_eq!(reader.read(second).unwrap(), b"a body in the second block");
+    assert_eq!(reader.read(first).unwrap(), b"a body in the first block");
+    assert_eq!(reader.blocks_inflated(), 3, "alternating reads miss the cache");
+}
+
+/// Integrity is per block, not per body. A reference that names a valid but
+/// wrong span of a valid block returns those bytes, with no error -- the
+/// index row is the claim about which bytes are which, and SQLite is what
+/// protects it. This is documented behavior, locked in so a later change
+/// cannot quietly promise more than the format delivers.
+#[test]
+fn reader_returns_the_wrong_body_for_a_wrong_but_in_range_ref() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = archive(&dir);
+    let (sealed, refs) = write_block(&path, &[b"first body", b"second body"]);
+
+    let reader = BodyLogReader::open(&path).unwrap();
+    assert_eq!(reader.read(refs[0]).unwrap(), b"first body");
+
+    let shifted = BodyRef {
+        block_offset: sealed.block_offset,
+        offset: refs[0].offset + 1,
+        len: refs[0].len,
+    };
+    assert_eq!(
+        reader.read(shifted).unwrap(),
+        b"irst bodys",
+        "a valid span of a valid block, and not the body the row named"
+    );
+}
+
+#[test]
+fn reader_rejects_a_block_whose_payload_is_cut_short() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = archive(&dir);
+    let (sealed, refs) = write_block(&path, &[b"a body long enough to have a tail".repeat(40).as_slice()]);
+
+    // The header survives, the payload does not: that is TruncatedBlock, and
+    // not the BadBlockHeader a short header would give.
+    let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+    let len = file.metadata().unwrap().len();
+    file.set_len(len - 5).unwrap();
+    drop(file);
+
+    let reader = BodyLogReader::open(&path).unwrap();
+    assert!(matches!(
+        reader.read(refs[0]),
+        Err(ArchiveError::TruncatedBlock(offset)) if offset == sealed.block_offset
+    ));
+}
+
+#[test]
+fn reader_open_refuses_an_empty_file_a_missing_path_and_a_directory() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let empty = dir.path().join("empty.bodies");
+    std::fs::write(&empty, b"").unwrap();
+    assert!(matches!(BodyLogReader::open(&empty), Err(ArchiveError::BadFileHeader)));
+
+    let missing = dir.path().join("not-here.bodies");
+    assert!(matches!(BodyLogReader::open(&missing), Err(ArchiveError::Io(_))));
+
+    let Err(error) = BodyLogReader::open(dir.path()) else {
+        panic!("a directory is not an archive");
+    };
+    assert!(matches!(error, ArchiveError::Io(_)), "unexpected error: {error:?}");
+}
+
+#[cfg(unix)]
 #[test]
 fn reader_open_refuses_a_symlink() {
     let dir = tempfile::tempdir().unwrap();

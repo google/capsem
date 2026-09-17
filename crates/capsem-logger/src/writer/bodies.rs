@@ -17,7 +17,7 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use capsem_archive::{BodyLogWriter, SealedBlock};
+use capsem_archive::{ArchiveError, BodyLogWriter, BodyRef, SealedBlock};
 use rusqlite::{params, Connection};
 use tracing::warn;
 
@@ -69,6 +69,10 @@ pub(super) struct BodyArchive {
     next_seq: u64,
     /// Blocks whose bytes are on disk, waiting for their index rows to commit.
     appended: Vec<(SealedBlock, Vec<BodyIndexRow>)>,
+    /// "sync" and "commit" in the order they happened, so a test can prove
+    /// the archive is flushed before the rows that name it are written.
+    #[cfg(test)]
+    steps: Vec<&'static str>,
 }
 
 /// Where a session's archive lives: `session.bodies` beside `session.db`.
@@ -97,21 +101,25 @@ impl BodyArchive {
             staged: Vec::new(),
             next_seq: 0,
             appended: Vec::new(),
+            #[cfg(test)]
+            steps: Vec::new(),
         }
     }
 
     /// Stage one body: its bytes into the pending block, its index row beside
     /// them. Empty and absent bodies produce neither.
     pub(super) fn stage(&mut self, blob: EventBodyBlob<'_>) {
-        let Some(writer) = self.writer.as_mut() else {
+        if self.writer.is_none() {
             return;
-        };
+        }
         let Some(body) = blob.body.filter(|body| !body.is_empty()) else {
             return;
         };
         let bytes = body.as_bytes();
         let stored_len = bytes.len().min(MAX_BODY_BLOB_BYTES);
-        let reference = writer.stage(&bytes[..stored_len]);
+        let Some(reference) = self.stage_bytes(&bytes[..stored_len]) else {
+            return;
+        };
         let seq = self.next_seq;
         self.next_seq += 1;
         self.staged.push(BodyIndexRow {
@@ -130,6 +138,38 @@ impl BodyArchive {
             turn_id: blob.turn_id.map(str::to_string),
             created_at: format_timestamp(SystemTime::now()),
         });
+    }
+
+    /// Stage bytes into the pending block, sealing first if that block cannot
+    /// hold them.
+    ///
+    /// `BlockFull` is the archive's seal-and-retry contract, not a failure:
+    /// the pending block is within 16 MiB of its ceiling and this body does
+    /// not fit beside what is already there. Sealing empties it, and a body
+    /// capped at `MAX_BODY_BLOB_BYTES` (10 MiB) always fits an empty one, so
+    /// the retry is the last step and not a loop.
+    ///
+    /// Every other error skips the body and logs. `BodyTooLarge` cannot
+    /// happen at this cap, and a poisoned writer has already warned once; in
+    /// neither case may a body take down the writer thread that owns the
+    /// whole session ledger.
+    fn stage_bytes(&mut self, bytes: &[u8]) -> Option<BodyRef> {
+        match self.writer.as_mut()?.stage(bytes) {
+            Ok(reference) => return Some(reference),
+            Err(ArchiveError::BlockFull) => {}
+            Err(error) => {
+                warn!(error = %error, body_bytes = bytes.len(), "body not archived");
+                return None;
+            }
+        }
+        self.seal_pending();
+        match self.writer.as_mut()?.stage(bytes) {
+            Ok(reference) => Some(reference),
+            Err(error) => {
+                warn!(error = %error, body_bytes = bytes.len(), "body not archived after seal");
+                None
+            }
+        }
     }
 
     /// The sequence number the next staged row will take: a transaction's
@@ -202,7 +242,25 @@ impl BodyArchive {
     ///
     /// Runs inside the caller's transaction, after `seal_pending` put the
     /// bytes on disk. Nothing here can make a row visible before its bytes.
+    ///
+    /// The archive is flushed to the device first. `append` only wrote
+    /// through the page cache, so without this a power loss could leave
+    /// SQLite's durably-committed index rows naming blocks that never reached
+    /// the disk -- a ledger that points past its own file, which is the one
+    /// failure this ordering exists to prevent. The cost is one `fdatasync`
+    /// per sealed block: once per 256 KiB of bodies, or once per flush
+    /// interval, not once per body.
+    ///
+    /// A failed flush means those bytes may not be there, so their rows are
+    /// dropped and archiving stops, exactly as a failed append does. Losing
+    /// bodies is recoverable; an index that lies is not.
     pub(super) fn commit_index_rows(&mut self, conn: &Connection) -> rusqlite::Result<()> {
+        if self.appended.is_empty() {
+            return Ok(());
+        }
+        if !self.sync_appended_blocks() {
+            return Ok(());
+        }
         for (block, rows) in std::mem::take(&mut self.appended) {
             execute_cached(
                 conn,
@@ -248,6 +306,29 @@ impl BodyArchive {
         Ok(())
     }
 
+    /// Flush the appended blocks to the device before their rows commit.
+    /// `false` when the flush failed and the rows must not be written.
+    fn sync_appended_blocks(&mut self) -> bool {
+        #[cfg(test)]
+        self.steps.push("sync");
+        let Some(writer) = self.writer.as_mut() else {
+            return false;
+        };
+        if let Err(error) = writer.sync() {
+            warn!(
+                error = %error,
+                dropped_blocks = self.appended.len(),
+                "session body archive could not be flushed; no further bodies will be stored"
+            );
+            self.appended.clear();
+            self.writer = None;
+            return false;
+        }
+        #[cfg(test)]
+        self.steps.push("commit");
+        true
+    }
+
     /// Durability barrier for session close.
     pub(super) fn sync(&mut self) {
         if let Some(writer) = self.writer.as_mut() {
@@ -255,5 +336,11 @@ impl BodyArchive {
                 warn!(error = %error, "session body archive sync failed");
             }
         }
+    }
+
+    /// The flush/commit steps this archive has taken, in order.
+    #[cfg(test)]
+    pub(super) fn steps_for_tests(&self) -> &[&'static str] {
+        &self.steps
     }
 }

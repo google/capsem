@@ -25,6 +25,13 @@ pub const TARGET_BLOCK_BYTES: usize = 256 * 1024;
 /// Hard ceiling on one block's raw size, so a hostile `raw_len` cannot
 /// make a reader allocate without bound. One body may be up to 10 MiB
 /// (`MAX_BODY_BLOB_BYTES` in capsem-logger), so a block holds at least one.
+///
+/// This is also the reader's memory bound. Inflating a block holds the
+/// compressed payload and the inflated bytes at once -- about twice this
+/// ceiling transiently -- and retains one inflated block, about this ceiling,
+/// in the one-block cache. In practice blocks seal at `TARGET_BLOCK_BYTES`,
+/// two orders of magnitude below, and only a forged header or a body near the
+/// 10 MiB cap approaches it.
 pub const MAX_BLOCK_RAW_BYTES: usize = 16 * 1024 * 1024;
 /// Deflate never expands 16 MiB by more than a few KiB; anything beyond
 /// this is a forged header, refused before any allocation.

@@ -4,8 +4,19 @@
 //! never scans the file. It seeks to the offset an index row names, bounds
 //! every length in the header it finds there before allocating, and verifies
 //! blake3 over the inflated bytes before returning any of them.
+//!
+//! **Integrity here is per block, not per body.** The hash proves that a
+//! block's bytes are the bytes that were written; it says nothing about which
+//! span of them a given body is. An index row whose `offset` and `len` were
+//! edited selects a different, still-valid span of the same block and this
+//! reader returns it without complaint -- see
+//! `reader_returns_the_wrong_body_for_a_wrong_but_in_range_ref`, which locks
+//! that in deliberately. The row is the claim, the block is the evidence, and
+//! SQLite is where the claim is protected. A ledger whose index rows an
+//! attacker can rewrite is already lost, and a per-body hash would not save
+//! it: the same edit would move the hash.
 
-use std::cell::{Cell, Ref, RefCell};
+use std::cell::{Cell, RefCell};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -16,6 +27,12 @@ use crate::format::{self, BodyRef, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES};
 use crate::writer::refuse_symlink;
 use crate::{ArchiveError, Result};
 
+/// Reads bodies back out of one `session.bodies`.
+///
+/// One per thread: the file handle and the one-block cache live behind
+/// `RefCell`, so this is `Send` but not `Sync`. Sharing one across threads
+/// does not compile; the logger keeps a reader in a mutex slot and takes it
+/// out for the duration of a read.
 pub struct BodyLogReader {
     file: RefCell<File>,
     /// The last inflated block. Bodies from one exchange land in one block,
@@ -38,8 +55,16 @@ impl BodyLogReader {
         })
     }
 
+    /// Resolve one body reference to owned bytes.
+    ///
+    /// Owned, not borrowed: handing out a view into the one-block cache would
+    /// make the next `read` -- which may replace that block -- a runtime
+    /// borrow panic in whichever caller happened to hold the view. A body is
+    /// kilobytes and the copy is not worth an API that can panic.
     pub fn read(&self, reference: BodyRef) -> Result<Vec<u8>> {
-        let block = self.block(reference.block_offset)?;
+        self.ensure_block(reference.block_offset)?;
+        let cached = self.last.borrow();
+        let block = &cached.as_ref().expect("the block was just inflated").1;
         let start = reference.offset as usize;
         let end = start
             .checked_add(reference.len as usize)
@@ -50,8 +75,9 @@ impl BodyLogReader {
             .ok_or(ArchiveError::RefOutOfRange)
     }
 
-    /// Inflate the whole block at `block_offset` (cached for the last one).
-    pub fn block(&self, block_offset: u64) -> Result<Ref<'_, [u8]>> {
+    /// Inflate the block at `block_offset` into the cache, unless it is
+    /// already the cached one.
+    fn ensure_block(&self, block_offset: u64) -> Result<()> {
         let cached = self
             .last
             .borrow()
@@ -61,9 +87,7 @@ impl BodyLogReader {
             let raw = self.inflate(block_offset)?;
             *self.last.borrow_mut() = Some((block_offset, raw));
         }
-        Ok(Ref::map(self.last.borrow(), |slot| {
-            slot.as_ref().expect("the block was just inflated").1.as_slice()
-        }))
+        Ok(())
     }
 
     /// Read and verify one block. Every length used to size an allocation
@@ -79,7 +103,7 @@ impl BodyLogReader {
             let header = format::parse_block_header(&head, block_offset)?;
             let mut comp = vec![0u8; header.comp_len as usize];
             file.read_exact(&mut comp)
-                .map_err(|_| ArchiveError::BadBlockHeader(block_offset))?;
+                .map_err(|_| ArchiveError::TruncatedBlock(block_offset))?;
             (header, comp)
         };
         self.inflated.set(self.inflated.get() + 1);
