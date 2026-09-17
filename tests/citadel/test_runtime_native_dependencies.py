@@ -114,8 +114,16 @@ def _inject_dependency(lock_text: str, package: str, dependency: str) -> str:
     """
     marker = f'name = "{package}"'
     start = lock_text.index(marker)
+    try:
+        end = lock_text.index("\n[[package]]", start)
+    except ValueError:
+        end = len(lock_text)
     deps_marker = "dependencies = [\n"
     deps_start = lock_text.index(deps_marker, start)
+    assert start < deps_start < end, (
+        f"{package} has no dependencies block within its own package block; "
+        "the synthetic injection would land in the next package instead"
+    )
     insertion_point = deps_start + len(deps_marker)
     return (
         lock_text[:insertion_point]
