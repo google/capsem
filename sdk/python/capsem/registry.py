@@ -20,7 +20,9 @@ class Registry:
                 raise TypeError(f"{name} must be a string")
 
     def __repr__(self) -> str:
-        present = lambda value: "<redacted>" if value is not None else "<none>"
+        def present(value: str | None) -> str:
+            return "<redacted>" if value is not None else "<none>"
+
         return (
             "Registry("
             f"username={present(self.username)}, "
