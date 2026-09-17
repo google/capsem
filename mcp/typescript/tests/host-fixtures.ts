@@ -24,7 +24,8 @@ export const codeProfile = {...customProfile, id: 'code', name: 'Code', descript
 /** The gateway's status, whose catalog names the default profile. */
 export const hypervisorInfo = {
   service: 'running', gateway_version: '0.6.3', vm_count: 0, vms: [],
-  profiles: {source: 'built_in', profile_count: 1, ready_count: 1, profiles: [], default_profile_id: 'code'},
+  profiles: {source: 'built_in', profile_count: 1, ready_count: 1, profiles: [],
+    defaults: {vm: 'code', container: 'code'}},
 };
 
 /** Canned JSON replies keyed by `METHOD /path`. */

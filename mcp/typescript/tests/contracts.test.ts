@@ -24,7 +24,7 @@ describe('contracts', () => {
         '/status': {
           service: 'running', gateway_version: '0.6.3', vm_count: 0, vms: [],
           profiles: {
-            source: 'built_in', profile_count: 1, ready_count: 1, profiles: [], default_profile_id: 'code',
+            source: 'built_in', profile_count: 1, ready_count: 1, profiles: [], defaults: {vm: 'code', container: 'code'},
           },
         },
         '/profiles/list': {profiles: [{

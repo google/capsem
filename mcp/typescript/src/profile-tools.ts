@@ -8,7 +8,7 @@ const profileId = z.string().min(1).optional();
 const serverId = z.string().min(1);
 
 async function profileMcp(hypervisor: Hypervisor, requested: string | undefined, signal: AbortSignal) {
-  const id = requested ?? await hypervisor.defaultProfileId({signal});
+  const id = requested ?? await hypervisor.defaultProfileId('vm', {signal});
   const matches = (await hypervisor.profiles.list({signal})).filter(profile => profile.id === id);
   const profile = matches[0];
   if (profile === undefined || matches.length !== 1) {
