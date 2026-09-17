@@ -14,8 +14,9 @@ pub(super) fn insert_net_event(
     let timestamp = format_timestamp(event.timestamp);
     let req_body = body_preview(event.request_body.as_deref());
     let resp_body = body_preview(event.response_body.as_deref());
-    let req_headers = cap_field(&event.request_headers);
-    let resp_headers = cap_field(&event.response_headers);
+    let (req_headers, req_headers_cut) = cap_headers(&event.request_headers);
+    let (resp_headers, resp_headers_cut) = cap_headers(&event.response_headers);
+    let headers_truncated = i64::from(req_headers_cut || resp_headers_cut);
     let event_id = event.event_id.clone().unwrap_or_else(new_event_id);
     execute_cached(
         conn,
@@ -23,12 +24,12 @@ pub(super) fn insert_net_event(
             event_id, timestamp, domain, port, decision, process_name, pid,
             method, path, query, status_code,
             bytes_sent, bytes_received, duration_ms, matched_rule,
-            request_headers, response_headers,
+            request_headers, response_headers, headers_truncated,
             request_body_preview, response_body_preview, conn_type,
             policy_mode, policy_action, policy_rule, policy_reason,
             trace_id, turn_id, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)", target.table("net_events")),
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)", target.table("net_events")),
         params![
             event_id,
             timestamp,
@@ -47,6 +48,7 @@ pub(super) fn insert_net_event(
             event.matched_rule,
             req_headers,
             resp_headers,
+            headers_truncated,
             req_body,
             resp_body,
             event.conn_type,

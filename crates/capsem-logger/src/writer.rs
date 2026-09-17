@@ -26,11 +26,26 @@ use flush_faults::take_disk_flush_failure_for_tests;
 pub(crate) use flush_faults::{fail_disk_flushes_for_path_for_tests, fail_disk_flushes_for_tests};
 use model_rows::insert_model_call;
 
-/// Maximum bytes stored for any non-preview text field (256 KB), e.g.
-/// request/response headers. Callers should truncate before constructing
-/// events, but the logger enforces this defensively to prevent unbounded
-/// storage.
+/// Maximum bytes stored for any non-preview text field (256 KB). Callers
+/// should truncate before constructing events, but the logger enforces this
+/// defensively to prevent unbounded storage.
 const MAX_FIELD_BYTES: usize = 256 * 1024;
+
+/// Maximum bytes stored for a request or response header blob (16 KB).
+///
+/// Headers used to share `MAX_FIELD_BYTES` with model text, and 256 KB is not
+/// a bound for them -- it is a budget an upstream can spend. Real headers
+/// average around 300 bytes, so the gap between what they need and what they
+/// were allowed was three orders of magnitude, and every byte of it went
+/// straight into the hot in-RAM mirror that two processes hold. A server that
+/// wants the ledger to cost a gigabyte only has to pad a response header and
+/// be talked to four thousand times.
+///
+/// 16 KB is above every header set worth recording and below the point where
+/// padding pays. What is cut is recorded in `net_events.headers_truncated`,
+/// because a header blob that stops mid-line must not read as one that simply
+/// ended there.
+const HEADER_BYTES: usize = 16 * 1024;
 
 /// Display previews are a UI convenience; the forensic copy is the archived
 /// body. 2 KB shows the first screen of any JSON or SSE body. A 10-day
@@ -100,6 +115,17 @@ fn cap_bytes(s: &Option<String>, max: usize) -> Option<String> {
 /// Truncate an optional string field to MAX_FIELD_BYTES.
 fn cap_field(s: &Option<String>) -> Option<String> {
     cap_bytes(s, MAX_FIELD_BYTES)
+}
+
+/// Truncate a stored header blob to HEADER_BYTES, saying whether it was cut.
+///
+/// The flag is the point: a reader looking at a header set that ends mid-line
+/// cannot otherwise tell a hostile 256 KB pad from a short response, and a
+/// forensic record that silently loses its tail is worse than one that admits
+/// to it.
+pub(crate) fn cap_headers(s: &Option<String>) -> (Option<String>, bool) {
+    let truncated = s.as_ref().is_some_and(|v| v.len() > HEADER_BYTES);
+    (cap_bytes(s, HEADER_BYTES), truncated)
 }
 
 /// Truncate an optional display-preview field to PREVIEW_BYTES. The full

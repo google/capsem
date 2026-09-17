@@ -7,6 +7,7 @@ pub(super) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "timestamp",
             "domain",
             "decision",
+            "headers_truncated",
             "trace_id",
             "turn_id",
             "credential_ref",

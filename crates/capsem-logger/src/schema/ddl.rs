@@ -32,6 +32,9 @@ pub const CREATE_SCHEMA: &str = "
         matched_rule TEXT,
         request_headers TEXT,
         response_headers TEXT,
+        -- 1 when either header blob above was cut at HEADER_BYTES. A header
+        -- set that stops mid-line must not read as one that ended there.
+        headers_truncated INTEGER NOT NULL DEFAULT 0 CHECK (headers_truncated IN (0, 1)),
         request_body_preview TEXT, -- display excerpt; the full body is in event_body_blobs
         response_body_preview TEXT, -- display excerpt; the full body is in event_body_blobs
         conn_type TEXT DEFAULT 'https',
