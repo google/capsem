@@ -16,6 +16,10 @@ pub(super) struct ExecCapture {
     pub(super) stderr: Vec<u8>,
     pub(super) stdout_bytes: u64,
     pub(super) stderr_bytes: u64,
+    /// Why the output stopped early, when it did. A malformed or truncated
+    /// frame used to read as a clean EOF: a non-streaming exec then returned
+    /// partial output with the guest's exit code and nothing said so.
+    pub(super) error: Option<String>,
 }
 
 pub(super) fn deposit(job_store: &JobStore, id: u64, capture: ExecCapture) -> Option<Arc<tokio::sync::Notify>> {
@@ -25,6 +29,9 @@ pub(super) fn deposit(job_store: &JobStore, id: u64, capture: ExecCapture) -> Op
     exec.captured_stderr = capture.stderr;
     exec.total_bytes = capture.stdout_bytes;
     exec.stderr_bytes = capture.stderr_bytes;
+    if let Some(error) = capture.error {
+        exec.output_error.get_or_insert(error);
+    }
     let deposited = Arc::clone(&exec.deposited);
     drop(active);
     Some(deposited)
@@ -50,7 +57,10 @@ fn read_output(
             Ok(None) => break,
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(error) if strict => return Err(error),
-            Err(_) => break,
+            Err(error) => {
+                capture.error = Some(format!("exec output transport failed: {error}"));
+                break;
+            }
         };
         forward(frame.channel, &frame.data)?;
         let combined = capture.stdout.len().saturating_add(capture.stderr.len());

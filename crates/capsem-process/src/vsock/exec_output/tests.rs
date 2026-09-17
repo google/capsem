@@ -88,6 +88,41 @@ fn truncated_frame_is_not_clean_socket_eof() {
     );
 }
 
+/// A non-streaming exec swallowed malformed and truncated frames as a clean
+/// EOF, so it returned partial output with the guest's exit code and nothing
+/// recorded that the output was incomplete.
+#[test]
+fn a_truncated_capture_records_why_the_output_stopped() {
+    let mut source = Vec::new();
+    write_frame(&mut source, ExecOutputChannel::Stdout, b"partial");
+    source.extend_from_slice(&[0, 0, 0, 12, 1, 2]);
+    let capture = read_output(
+        &mut std::io::Cursor::new(source),
+        |_, _| Ok(()),
+        false,
+        MAX_EXEC_OUTPUT_BYTES,
+    )
+    .expect("a non-streaming capture still returns what it read");
+
+    assert_eq!(capture.stdout, b"partial");
+    let error = capture.error.expect("the truncated frame is reported");
+    assert!(error.contains("exec output transport failed"), "{error}");
+}
+
+#[test]
+fn a_complete_capture_reports_no_error() {
+    let mut source = Vec::new();
+    write_frame(&mut source, ExecOutputChannel::Stdout, b"done");
+    let capture = read_output(
+        &mut std::io::Cursor::new(source),
+        |_, _| Ok(()),
+        false,
+        MAX_EXEC_OUTPUT_BYTES,
+    )
+    .unwrap();
+    assert_eq!(capture.error, None);
+}
+
 #[test]
 fn stream_preserves_lanes_and_retains_only_ledger_previews() {
     let mut source = Vec::new();
