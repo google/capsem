@@ -4,6 +4,7 @@ import {z} from "zod";
 import type {ProfileCatalogStatus} from "../models/ProfileCatalogStatus.js";
 import {AssetManifestStatusSchema} from "./AssetManifestStatus.js";
 import {ProfileCatalogSourceSchema} from "./ProfileCatalogSource.js";
+import {ProfileDefaultsSchema} from "./ProfileDefaults.js";
 import {ProfileReadinessSchema} from "./ProfileReadiness.js";
 
 export const ProfileCatalogStatusSchema: z.ZodType<ProfileCatalogStatus> = z.object({
@@ -11,7 +12,7 @@ export const ProfileCatalogStatusSchema: z.ZodType<ProfileCatalogStatus> = z.obj
   "bytes_done": z.int().min(0).nullable().exactOptional(),
   "bytes_total": z.int().min(0).nullable().exactOptional(),
   "current_asset": z.string().nullable().exactOptional(),
-  "default_profile_id": z.string().nullable().exactOptional(),
+  "defaults": z.lazy(() => ProfileDefaultsSchema).exactOptional(),
   "downloaded": z.int().min(0).nullable().exactOptional(),
   "profile_count": z.int().min(0),
   "profiles": z.array(z.lazy(() => ProfileReadinessSchema)),

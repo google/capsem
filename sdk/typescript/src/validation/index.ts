@@ -98,6 +98,7 @@ export {ProfileArtifactIssueSchema} from "./ProfileArtifactIssue.js";
 export {ProfileAvailabilitySummarySchema} from "./ProfileAvailabilitySummary.js";
 export {ProfileCatalogSourceSchema} from "./ProfileCatalogSource.js";
 export {ProfileCatalogStatusSchema} from "./ProfileCatalogStatus.js";
+export {ProfileDefaultsSchema} from "./ProfileDefaults.js";
 export {ProfileExistingVmUpdateSemanticsSchema} from "./ProfileExistingVmUpdateSemantics.js";
 export {ProfileMcpInfoResponseSchema} from "./ProfileMcpInfoResponse.js";
 export {ProfileNewSessionUpdateSemanticsSchema} from "./ProfileNewSessionUpdateSemantics.js";

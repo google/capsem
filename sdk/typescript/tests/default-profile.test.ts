@@ -7,7 +7,7 @@ import {gateway} from './gateway.js';
 // profile name of its own.
 it('creates and runs with the catalog default, resolved once', async () => {
   const state = new FacadeGateway();
-  state.defaultProfileId = 'co-work';
+  state.defaultVmProfileId = 'co-work';
   await gateway((request, response) => state.handle(request, response), async (url, received) => {
     const hv = new Hypervisor(url, 'secret');
     try {
@@ -36,12 +36,42 @@ it('never asks for the default when a profile is named', async () => {
 
 it('reports a catalog without a default instead of inventing one', async () => {
   const state = new FacadeGateway();
-  state.defaultProfileId = undefined;
+  state.defaultVmProfileId = undefined;
   await gateway((request, response) => state.handle(request, response), async (url, received) => {
     const hv = new Hypervisor(url, 'secret');
     try {
-      await expect(hv.create()).rejects.toThrow(/names no default profile/);
+      await expect(hv.create()).rejects.toThrow(/names no default vm profile/);
       expect(received.map(r => r.url)).not.toContain('/vms/create');
+    } finally {hv.close();}
+  });
+});
+
+// The two defaults are free to differ; a container must not take the VM's.
+it('creates a container with the catalog container default', async () => {
+  const state = new FacadeGateway();
+  state.defaultVmProfileId = 'code';
+  state.defaultContainerProfileId = 'co-work';
+  await gateway((request, response) => state.handle(request, response), async (url, received) => {
+    const hv = new Hypervisor(url, 'secret');
+    try {
+      await hv.create({image: 'alpine:3'});
+      await hv.create();
+      const bodies = received.filter(r => r.url === '/vms/create')
+        .map(r => JSON.parse(r.body.toString()) as {profile_id: string});
+      expect(bodies.map(body => body.profile_id)).toEqual(['co-work', 'code']);
+    } finally {hv.close();}
+  });
+});
+
+it('names the runtime whose default the catalog lacks', async () => {
+  const state = new FacadeGateway();
+  state.defaultContainerProfileId = undefined;
+  await gateway((request, response) => state.handle(request, response), async (url, received) => {
+    const hv = new Hypervisor(url, 'secret');
+    try {
+      await expect(hv.create({image: 'alpine:3'})).rejects.toThrow(/names no default container profile/);
+      expect(received.map(r => r.url)).not.toContain('/vms/create');
+      await hv.create(); // The VM default is untouched by the container's absence.
     } finally {hv.close();}
   });
 });

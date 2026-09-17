@@ -6,7 +6,8 @@ export class FacadeGateway {
   names = ['chosen'];
   containerStates = ['running'];
   previewSessionStatus: number | undefined;
-  defaultProfileId: string | undefined = 'code';
+  defaultVmProfileId: string | undefined = 'code';
+  defaultContainerProfileId: string | undefined = 'code';
   exposureDeleteStatus: number | undefined;
   readonly files = new Map<string, Buffer>();
 
@@ -35,8 +36,10 @@ export class FacadeGateway {
       const catalog: Record<string, unknown> = {
         ...sample(schemas.ProfileCatalogStatus ?? {}) as Record<string, unknown>, profiles: [],
       };
-      if (this.defaultProfileId === undefined) delete catalog.default_profile_id;
-      else catalog.default_profile_id = this.defaultProfileId;
+      catalog.defaults = {
+        ...(this.defaultVmProfileId === undefined ? {} : {vm: this.defaultVmProfileId}),
+        ...(this.defaultContainerProfileId === undefined ? {} : {container: this.defaultContainerProfileId}),
+      };
       value = {...value as object, profiles: catalog, vms: [], vm_count: 0};
     }
     if (operation.operationId === 'listProfiles') value = {

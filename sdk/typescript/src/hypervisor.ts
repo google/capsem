@@ -3,7 +3,7 @@ import {Debug} from './debug.js';
 import {commandDeadlineMs} from './execution.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
-import type {CreateOptions, HostLogOptions, RunOptions, VmSelector} from './options.js';
+import type {CreateOptions, HostLogOptions, RunOptions, Runtime, VmSelector} from './options.js';
 import {Transport, type CallOptions, type TransportOptions} from './transport.js';
 import {Networks, Profiles} from './resources.js';
 import {VM} from './vm.js';
@@ -20,7 +20,7 @@ export class Hypervisor extends Client {
   readonly networks: Networks;
   readonly profiles: Profiles;
   readonly debug: Debug;
-  #defaultProfile: Promise<string> | undefined;
+  #defaults: Promise<models.ProfileDefaults> | undefined;
   constructor(url: string, token: string, options: TransportOptions = {}) {
     const transport = new Transport(url, token, options);
     super(transport);
@@ -32,21 +32,21 @@ export class Hypervisor extends Client {
     return api.getHypervisorInfo(this.transport, options);
   }
   /**
-   * The profile the gateway's catalog uses when a call names none, read from
-   * `GET /status` on first use and cached, so the SDK carries no profile name.
+   * The profile the catalog uses for `runtime` when a call names none, read
+   * from `GET /status` on first use and cached, so the SDK carries no profile
+   * name. A container brings its own userland, so its default is the
+   * catalog's to answer apart from a VM's.
    */
-  async defaultProfileId(options: CallOptions = {}): Promise<string> {
-    this.#defaultProfile ??= this.info(options).then(info => {
-      const id = info.profiles?.default_profile_id;
-      if (!id) {
-        throw new TypeError('The gateway profile catalog names no default profile; pass a profile from hypervisor.profiles.list()');
-      }
-      return id;
-    }).catch((error: unknown) => {
-      this.#defaultProfile = undefined; // A failed lookup must not be cached.
+  async defaultProfileId(runtime: Runtime = 'vm', options: CallOptions = {}): Promise<string> {
+    this.#defaults ??= this.info(options).then(info => info.profiles?.defaults ?? {}).catch((error: unknown) => {
+      this.#defaults = undefined; // A failed lookup must not be cached.
       throw error;
     });
-    return this.#defaultProfile;
+    const id = (await this.#defaults)[runtime];
+    if (!id) {
+      throw new TypeError(`The gateway profile catalog names no default ${runtime} profile; pass a profile from hypervisor.profiles.list()`);
+    }
+    return id;
   }
   async list(options: CallOptions = {}): Promise<models.ListResponse> {
     return api.listVms(this.transport, options);
@@ -74,7 +74,7 @@ export class Hypervisor extends Client {
       ...(options.registry === undefined ? {} : {registry: {...options.registry}}),
       attach: false,
     };
-    const profileId = options.profile?.id ?? await this.defaultProfileId(options);
+    const profileId = options.profile?.id ?? await this.defaultProfileId(options.image === undefined ? 'vm' : 'container', options);
     const response = await api.createVm(this.transport, {body: {
       profile_id: profileId, name: options.name || null, persistent: Boolean(options.name),
       cpus: options.cpus ?? null, ram_mb,
@@ -89,7 +89,7 @@ export class Hypervisor extends Client {
   }
   async run(command: string, options: RunOptions = {}): Promise<models.ExecResponse> {
     const ram_mb = memoryMb(options.memory);
-    const profileId = options.profile?.id ?? await this.defaultProfileId(options);
+    const profileId = options.profile?.id ?? await this.defaultProfileId('vm', options);
     return api.runVm(this.transport, {body: {
       command, profile_id: profileId, timeout_secs: options.timeout_secs ?? null,
       cpus: options.cpus ?? null, ram_mb, env: options.env ?? null,

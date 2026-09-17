@@ -98,6 +98,7 @@ export type { ProfileArtifactIssue } from "./ProfileArtifactIssue.js";
 export type { ProfileAvailabilitySummary } from "./ProfileAvailabilitySummary.js";
 export { ProfileCatalogSource } from "./ProfileCatalogSource.js";
 export type { ProfileCatalogStatus } from "./ProfileCatalogStatus.js";
+export type { ProfileDefaults } from "./ProfileDefaults.js";
 export { ProfileExistingVmUpdateSemantics } from "./ProfileExistingVmUpdateSemantics.js";
 export type { ProfileMcpInfoResponse } from "./ProfileMcpInfoResponse.js";
 export { ProfileNewSessionUpdateSemantics } from "./ProfileNewSessionUpdateSemantics.js";

@@ -1,6 +1,12 @@
 import type {HistoryLayerFilter, HostLogSource, NetworkInfo, ProfileSummary, TimelineLayer} from './models/index.js';
 import type {CallOptions} from './transport.js';
 
+/**
+ * What a created sandbox runs. A container brings its own userland, so the
+ * catalog answers its default profile apart from a VM's.
+ */
+export type Runtime = 'vm' | 'container';
+
 export type VmSelector = {id: string; name?: never} | {name: string; id?: never};
 export interface Registry {username?: string; password?: string; ca_pem?: string}
 export interface CreateOptions extends CallOptions {

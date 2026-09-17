@@ -2,6 +2,7 @@
 
 import type { AssetManifestStatus } from "./AssetManifestStatus.js";
 import type { ProfileCatalogSource } from "./ProfileCatalogSource.js";
+import type { ProfileDefaults } from "./ProfileDefaults.js";
 import type { ProfileReadiness } from "./ProfileReadiness.js";
 
 export interface ProfileCatalogStatus {
@@ -9,7 +10,7 @@ export interface ProfileCatalogStatus {
   "bytes_done"?: number | null;
   "bytes_total"?: number | null;
   "current_asset"?: string | null;
-  "default_profile_id"?: string | null;
+  "defaults"?: ProfileDefaults;
   "downloaded"?: number | null;
   "profile_count": number;
   "profiles": Array<ProfileReadiness>;

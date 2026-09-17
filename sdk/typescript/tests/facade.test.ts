@@ -8,7 +8,7 @@ it('creates bound VM handles with profile defaults and shared lifetime', async (
   await gateway((request, response) => response.end(JSON.stringify(request.url === '/status'
     ? {
       ...sample(schemas.HypervisorInfo ?? {}) as object,
-      profiles: {...sample(schemas.ProfileCatalogStatus ?? {}) as object, default_profile_id: 'code'},
+      profiles: {...sample(schemas.ProfileCatalogStatus ?? {}) as object, defaults: {vm: 'code', container: 'code'}},
     }
     : {...sample(schemas.ProvisionResponse ?? {}) as object, id: 'vm-0', name: 'chosen'})),
   async (url, received) => {
