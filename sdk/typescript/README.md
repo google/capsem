@@ -78,8 +78,8 @@ the restart call. Acceptance does not claim reconnection has completed.
 
 `hv.networks` provides typed create/list/inspect/delete, member attach/detach and
 cursor-based audit logs; pass returned network objects directly to creation.
-`image` selects a container workload, with `command`, `env`, `registry`, and
-`attach` as optional settings. Creation returns after HTTP reports the workload
+`image` selects a container workload, with `command`, `env`, and a typed
+`Registry` as optional settings. Creation returns after HTTP reports the workload
 ready, while `vm.container.status()` remains a read-only diagnostic.
 `vm.ports.open` creates a plain loopback listener by default and uses the
 browser-authentication flow when `authenticate` is true. The SDK infers whether

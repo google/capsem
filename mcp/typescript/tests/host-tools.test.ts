@@ -198,7 +198,7 @@ describe('host-tools', () => {
         profile: 'code',
         env: {APP_SECRET: 'container-secret'},
         image: 'registry.example/app:latest', command: ['serve'],
-        registry: {username: 'robot', password: 'registry-secret'}, attach: false,
+        registry: {username: 'robot', password: 'registry-secret'},
       },
     });
     expect(structured(created)).toEqual({id: 'vm-1', name: 'demo'});

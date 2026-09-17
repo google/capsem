@@ -64,8 +64,8 @@ diagnostics, while `triage` can include one VM's session ledger. Profile MCP
 calls preserve arbitrary JSON arguments and results while discovery and
 permissions remain typed.
 
-VM creation accepts a top-level OCI image, command, environment, registry, and
-attach settings. The VM remains the workload's private runtime.
+VM creation accepts a top-level OCI image, command, environment, and typed
+`Registry`. The VM remains the workload's private runtime.
 The create request returns after the service reports workload readiness;
 `vm.container` exposes read-only diagnostic status. `vm.ports.open` creates a
 plain host-loopback listener by default; `authenticate=true` selects the

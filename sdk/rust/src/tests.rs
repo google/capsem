@@ -119,10 +119,17 @@ async fn cloned_vm_handles_resolve_names_once_even_concurrently() {
 async fn container_and_port_resources_hide_wire_exposure_details() {
     let mut server = gateway().await;
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    let registry = Registry {
+        username: Some("robot".into()),
+        password: Some("registry-secret".into()),
+        ca_pem: None,
+    };
+    assert!(!format!("{registry:?}").contains("registry-secret"));
     let vm = hv
         .create(CreateOptions {
             env: Some([("MODE".into(), "preview".into())].into()),
             image: Some("docker://busybox:latest".into()),
+            registry: Some(registry),
             ..Default::default()
         })
         .await
@@ -131,6 +138,9 @@ async fn container_and_port_resources_hide_wire_exposure_details() {
     assert_eq!(create["env"], serde_json::Value::Null);
     assert_eq!(create["container"]["image"], "docker://busybox:latest");
     assert_eq!(create["container"]["env"]["MODE"], "preview");
+    assert_eq!(create["container"]["registry"]["username"], "robot");
+    assert_eq!(create["container"]["registry"]["password"], "registry-secret");
+    assert_eq!(create["container"]["attach"], false);
     vm.container().status().await.unwrap();
     request(&mut server, "/vms/vm-1/container").await;
     let port = vm.ports().open(8080).await.unwrap();

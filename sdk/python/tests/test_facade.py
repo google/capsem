@@ -13,6 +13,7 @@ from capsem import (
     HttpError,
     Hypervisor,
     Port,
+    Registry,
     models,
 )
 
@@ -156,13 +157,17 @@ def test_cancelling_execution_does_not_retry_or_break_the_connection() -> None:
 def test_container_create_is_ready_and_status_is_read_only() -> None:
     async def run() -> None:
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
+            registry = Registry(username="robot", password="registry-secret")
+            assert "registry-secret" not in repr(registry)
             vm = await hv.create(
-                image="docker://busybox:latest", command=[], env={"MODE": "preview"},
+                image="docker://busybox:latest", command=[], env={"MODE": "preview"}, registry=registry,
             )
             body = json.loads(state.requests[-1][2])
             assert body["env"] is None
             assert body["container"] == {
-                "image": "docker://busybox:latest", "args": [], "env": {"MODE": "preview"}, "attach": False,
+                "image": "docker://busybox:latest", "args": [], "env": {"MODE": "preview"},
+                "registry": {"username": "robot", "password": "registry-secret", "ca_pem": None},
+                "attach": False,
             }
             assert (await vm.container.status()).image == "docker://busybox:latest"
             assert {method for method, path, _ in state.requests if path.endswith("/container")} == {"GET"}
@@ -174,6 +179,9 @@ def test_container_options_without_an_image_are_rejected_before_http() -> None:
         async with gateway() as (url, _), Hypervisor(url, "token") as hv:
             with pytest.raises(ValueError, match="image"):
                 await hv.create(command=["true"])
+            invalid_registry: Any = models.RegistryAccess()
+            with pytest.raises(TypeError, match="Registry"):
+                await hv.create(image="busybox", registry=invalid_registry)
     asyncio.run(run())
 
 

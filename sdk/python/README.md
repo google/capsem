@@ -81,7 +81,7 @@ restart call. The acknowledgement does not claim reconnection has completed.
 
 Private networks are available through `hv.networks`; pass returned network
 objects directly to `create`. Setting `image` creates a container workload,
-with `command`, `env`, `registry`, and `attach` as optional settings. Creation
+with `command`, `env`, and a typed `Registry` from `capsem` as optional settings. Creation
 returns after HTTP reports the workload ready; `vm.container.status()` remains
 a read-only diagnostic. `vm.ports.open()` opens a plain loopback TCP port by
 default. `authenticate=True` uses the browser-authentication flow and returns

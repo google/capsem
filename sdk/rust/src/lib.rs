@@ -12,7 +12,7 @@ mod vm;
 pub use error::{Error, Result};
 pub use hypervisor::Hypervisor;
 pub use options::{
-    CreateOptions, DiagnosticOptions, HistoryOptions, LogOptions, NetworkLogOptions, PageOptions, RunOptions,
+    CreateOptions, DiagnosticOptions, HistoryOptions, LogOptions, NetworkLogOptions, PageOptions, Registry, RunOptions,
     TimelineOptions, TriageOptions, VmSelector,
 };
 pub use resources::{Port, PortOptions};

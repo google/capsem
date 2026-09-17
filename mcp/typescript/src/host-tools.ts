@@ -58,7 +58,6 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
       image: z.string().min(1).optional(),
       command: z.array(z.string()).optional(),
       registry: registry.optional(),
-      attach: z.boolean().optional(),
     },
   }, ({profile, network_ids, registry: access, ...options}) => toolCall(async () => {
     const networks = await Promise.all((network_ids ?? []).map(id => hypervisor.networks.inspect(id)));

@@ -36,8 +36,8 @@ export class Hypervisor extends Client {
     if (options.cpus !== undefined && (!Number.isSafeInteger(options.cpus) || options.cpus < 1)) {
       throw new TypeError('cpus must be positive');
     }
-    if (options.image === undefined && (options.command !== undefined || options.registry !== undefined || options.attach === true)) {
-      throw new TypeError('Container command, registry, and attach require an image');
+    if (options.image === undefined && (options.command !== undefined || options.registry !== undefined)) {
+      throw new TypeError('Container command and registry require an image');
     }
     if (options.image !== undefined && (typeof options.image !== 'string' || !options.image)) {
       throw new TypeError('Image must be a nonempty string');
@@ -46,8 +46,8 @@ export class Hypervisor extends Client {
       image: options.image,
       args: [...(options.command ?? [])],
       env: options.env ?? {},
-      ...(options.registry === undefined ? {} : {registry: options.registry}),
-      attach: options.attach ?? false,
+      ...(options.registry === undefined ? {} : {registry: {...options.registry}}),
+      attach: false,
     };
     const response = await api.createVm(this.transport, {body: {
       profile_id: options.profile?.id ?? 'code', name: options.name || null, persistent: Boolean(options.name),

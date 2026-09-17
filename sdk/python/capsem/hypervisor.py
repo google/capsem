@@ -10,6 +10,7 @@ from ._client import Client
 from ._networks import Networks
 from ._profiles import Profiles
 from .execution import ExecResult
+from .registry import Registry
 from .vm import VM
 
 
@@ -45,12 +46,13 @@ class Hypervisor(Client):
                      name: str = "", cpus: int | None = None,
                      memory: int | None = None, env: dict[str, str] | None = None,
                      networks: Sequence[models.NetworkInfo] = (), image: str | None = None,
-                     command: Sequence[str] = (), registry: models.RegistryAccess | None = None,
-                     attach: bool = False) -> VM:
+                     command: Sequence[str] = (), registry: Registry | None = None) -> VM:
         if cpus is not None and (isinstance(cpus, bool) or not isinstance(cpus, int) or cpus < 1):
             raise ValueError("cpus must be positive")
-        if image is None and (command or registry is not None or attach):
-            raise ValueError("container command, registry, and attach require an image")
+        if image is None and (command or registry is not None):
+            raise ValueError("container command and registry require an image")
+        if registry is not None and not isinstance(registry, Registry):
+            raise TypeError("registry must be a Registry object")
         if image is not None and (not isinstance(image, str) or not image):
             raise ValueError("image must be a nonempty string")
         network_names: list[str] = []
@@ -61,9 +63,9 @@ class Hypervisor(Client):
         wire: models.ContainerSpec | None = None
         if image is not None:
             wire = models.ContainerSpec(
-                image=image, args=list(command), env=env or {}, attach=attach,
+                image=image, args=list(command), env=env or {}, attach=False,
             ) if registry is None else models.ContainerSpec(
-                image=image, args=list(command), env=env or {}, registry=registry, attach=attach,
+                image=image, args=list(command), env=env or {}, registry=registry._wire(), attach=False,
             )
         request = models.ProvisionRequest(
             profile_id=_profile_id(profile),

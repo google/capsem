@@ -1,5 +1,5 @@
 import {expect, it} from 'vitest';
-import {HistoryLayerFilter, HostLogSource, HttpError, Hypervisor, RestartAuthentication, RestartStatus, TimelineLayer, VM, type NetworkInfo, type ProfileSummary} from '../src/index.js';
+import {HistoryLayerFilter, HostLogSource, HttpError, Hypervisor, RestartAuthentication, RestartStatus, TimelineLayer, VM, type NetworkInfo, type ProfileSummary, type Registry} from '../src/index.js';
 import {gateway} from './gateway.js';
 import {sample, schemas} from './contract.js';
 import {FacadeGateway} from './facade-gateway.js';
@@ -159,14 +159,18 @@ it('creates ready containers and exposes read-only diagnostic status', async () 
   const state = new FacadeGateway();
   await gateway((request, response) => state.handle(request, response), async (url, received) => {
     const hv = new Hypervisor(url, 'secret');
+    const registry: Registry = {username: 'robot', password: 'registry-secret'};
     const vm = await hv.create({
       env: {MODE: 'preview'},
-      image: 'docker://busybox:latest', command: [], attach: false,
+      image: 'docker://busybox:latest', command: [], registry,
     });
     try {
       expect(JSON.parse(received[0]?.body.toString() ?? '') as unknown).toMatchObject({
         env: null,
-        container: {image: 'docker://busybox:latest', env: {MODE: 'preview'}},
+        container: {
+          image: 'docker://busybox:latest', env: {MODE: 'preview'},
+          registry: {username: 'robot', password: 'registry-secret'}, attach: false,
+        },
       });
       expect((await vm.container.status()).image).toBe('docker://busybox:latest');
       expect(received.filter(request => request.url.endsWith('/container')).every(request => request.method === 'GET')).toBe(true);

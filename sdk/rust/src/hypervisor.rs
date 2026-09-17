@@ -67,10 +67,8 @@ impl Hypervisor {
         if options.cpus == Some(0) {
             return Err(Error::InvalidInput("cpus must be positive"));
         }
-        if options.image.is_none() && (!options.command.is_empty() || options.registry.is_some() || options.attach) {
-            return Err(Error::InvalidInput(
-                "container command, registry, and attach require an image",
-            ));
+        if options.image.is_none() && (!options.command.is_empty() || options.registry.is_some()) {
+            return Err(Error::InvalidInput("container command and registry require an image"));
         }
         let name = options.name.filter(|name| !name.is_empty());
         let has_container = options.image.is_some();
@@ -81,8 +79,8 @@ impl Hypervisor {
                     image,
                     args: options.command,
                     env: options.env.unwrap_or_default().into_iter().collect(),
-                    registry: options.registry,
-                    attach: options.attach,
+                    registry: options.registry.map(Into::into),
+                    attach: false,
                 }),
             ),
             Some(_) => return Err(Error::InvalidInput("image must be a nonempty string")),

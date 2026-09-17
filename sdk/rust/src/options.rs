@@ -1,6 +1,38 @@
 use std::collections::HashMap;
 
-use crate::models::{HistoryLayerFilter, NetworkInfo, ProfileSummary, RegistryAccess, TimelineLayer};
+use std::fmt;
+
+use crate::models::{HistoryLayerFilter, NetworkInfo, ProfileSummary, TimelineLayer};
+
+/// Credentials and optional trust material used for one registry pull.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Registry {
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub ca_pem: Option<String>,
+}
+
+impl fmt::Debug for Registry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let present = |value: &Option<String>| if value.is_some() { "<redacted>" } else { "<none>" };
+        formatter
+            .debug_struct("Registry")
+            .field("username", &present(&self.username))
+            .field("password", &present(&self.password))
+            .field("ca_pem", &present(&self.ca_pem))
+            .finish()
+    }
+}
+
+impl From<Registry> for crate::models::RegistryAccess {
+    fn from(registry: Registry) -> Self {
+        Self {
+            username: registry.username,
+            password: registry.password,
+            ca_pem: registry.ca_pem,
+        }
+    }
+}
 
 /// Exactly one way to select a VM; names resolve once through the gateway.
 #[derive(Debug, Clone)]
@@ -21,8 +53,7 @@ pub struct CreateOptions {
     pub networks: Vec<NetworkInfo>,
     pub image: Option<String>,
     pub command: Vec<String>,
-    pub registry: Option<RegistryAccess>,
-    pub attach: bool,
+    pub registry: Option<Registry>,
 }
 
 #[derive(Debug, Clone, Default)]
