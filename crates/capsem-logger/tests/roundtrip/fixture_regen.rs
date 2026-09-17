@@ -862,6 +862,26 @@ fn regenerate_session_fixture() {
 /// It is also the standing proof that regeneration is reproducible: a run
 /// against an unchanged tree rewrites the fixture and must arrive back at the
 /// digests already on record.
+/// The `sha256` recorded for the entry whose path ends in `name`.
+///
+/// `fixture_ownership.toml` lists a fixture's `source`/`path` and then its
+/// `sha256`, so the digest belonging to a file is the first one after the line
+/// that names it.
+fn recorded_digest(ownership: &str, name: &str) -> Option<String> {
+    let mut seen_entry = false;
+    for line in ownership.lines() {
+        let line = line.trim();
+        if line.starts_with("source =") || line.starts_with("path =") {
+            seen_entry = line.contains(name);
+        } else if seen_entry {
+            if let Some(value) = line.strip_prefix("sha256 = ") {
+                return Some(value.trim_matches('"').to_string());
+            }
+        }
+    }
+    None
+}
+
 fn assert_recorded_digests(fixture: &std::path::Path, bodies: &std::path::Path) {
     use sha2::{Digest, Sha256};
 
@@ -873,12 +893,17 @@ fn assert_recorded_digests(fixture: &std::path::Path, bodies: &std::path::Path) 
 
     let mut stale = Vec::new();
     for path in [fixture, bodies] {
-        if !path.exists() {
-            continue;
-        }
+        let name = path.file_name().expect("fixture name").to_string_lossy().into_owned();
+        assert!(
+            path.exists(),
+            "{name} was not written; a fixture the regenerator skips is one nobody is checking"
+        );
         let digest = format!("{:x}", Sha256::digest(std::fs::read(path).expect("read fixture")));
-        let name = path.file_name().expect("fixture name").to_string_lossy();
-        if !recorded.contains(&digest) {
+        // Keyed, not a substring scan of the whole file: both fixtures are
+        // recorded in it, so `contains` would let test.db pass on test.bodies'
+        // digest -- the two are never equal, but the check would be saying
+        // "some fixture has these bytes", which is not the question.
+        if recorded_digest(&recorded, &name).as_deref() != Some(digest.as_str()) {
             stale.push(format!("  {name}: sha256 = \"{digest}\""));
         }
     }
@@ -889,4 +914,38 @@ fn assert_recorded_digests(fixture: &std::path::Path, bodies: &std::path::Path) 
         ownership.display(),
         stale.join("\n")
     );
+}
+
+/// The keyed lookup is keyed.
+///
+/// It replaced `recorded.contains(&digest)`, a scan of the whole file: both
+/// fixtures are recorded in it, so that form answered "some fixture has these
+/// bytes" rather than "this one does". The two digests are never equal in
+/// practice, which is exactly why the weaker check would have gone on looking
+/// correct.
+#[test]
+fn recorded_digest_is_read_per_fixture() {
+    let ownership = r#"
+[[fixture]]
+source = "tests/fixtures/session/test.db"
+target = "tests/fixtures/session/test.db"
+consumers = [
+  "crates/capsem-logger/tests/roundtrip/file_events.rs",
+]
+sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
+regenerator = "crates/capsem-logger/tests/roundtrip/fixture_regen.rs"
+
+[[fixture.companion]]
+path = "tests/fixtures/session/test.bodies"
+sha256 = "2222222222222222222222222222222222222222222222222222222222222222"
+"#;
+    assert_eq!(
+        recorded_digest(ownership, "test.db").as_deref(),
+        Some("1".repeat(64).as_str())
+    );
+    assert_eq!(
+        recorded_digest(ownership, "test.bodies").as_deref(),
+        Some("2".repeat(64).as_str())
+    );
+    assert_eq!(recorded_digest(ownership, "absent.db"), None);
 }

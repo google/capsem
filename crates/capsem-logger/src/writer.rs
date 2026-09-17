@@ -42,9 +42,14 @@ const MAX_FIELD_BYTES: usize = 256 * 1024;
 /// be talked to four thousand times.
 ///
 /// 16 KB is above every header set worth recording and below the point where
-/// padding pays. What is cut is recorded in `net_events.headers_truncated`,
-/// because a header blob that stops mid-line must not read as one that simply
-/// ended there.
+/// padding pays. `net_events.headers_truncated` records that something was
+/// cut, because a header blob that stops mid-line must not read as one that
+/// simply ended there. It is one flag for the row, not one per direction: a
+/// reader that sees it set knows the request headers, the response headers or
+/// both were cut, and must compare each blob's length against the cap to say
+/// which. Splitting it in two would be the honest shape if anything ever needs
+/// to tell them apart; nothing does yet, and a column nobody reads is the
+/// thing this work has been removing.
 const HEADER_BYTES: usize = 16 * 1024;
 
 /// Display previews are a UI convenience; the forensic copy is the archived
@@ -118,6 +123,8 @@ fn cap_field(s: &Option<String>) -> Option<String> {
 }
 
 /// Truncate a stored header blob to HEADER_BYTES, saying whether it was cut.
+///
+/// The caller ORs the two answers into the row's single `headers_truncated`.
 ///
 /// The flag is the point: a reader looking at a header set that ends mid-line
 /// cannot otherwise tell a hostile 256 KB pad from a short response, and a

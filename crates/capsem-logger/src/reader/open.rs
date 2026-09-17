@@ -26,6 +26,16 @@ impl DbReader {
         Self::open_with(path, false)
     }
 
+    /// Nothing on this path writes `main` -- `upgrade_legacy` was the last
+    /// thing that did -- so `SQLITE_OPEN_READ_ONLY` looks like the obvious
+    /// tightening. It is not, and the reason is worth keeping: a WAL database
+    /// opened read-only needs its `-shm` index to already exist, because it
+    /// may not create one. A live session has it, so this would pass every
+    /// test that opens a ledger beside its writer, and fail on exactly the
+    /// case that matters -- reading a retained session whose writer is gone
+    /// and whose sidecars were checkpointed away. `apply_reader_pragmas` keeps
+    /// the connection query-only; the flag stays read-write so the file can be
+    /// opened at all.
     fn open_with(path: &Path, memory_mirror: bool) -> rusqlite::Result<Self> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI;
         let conn = Connection::open_with_flags(path, flags)?;

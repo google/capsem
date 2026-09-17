@@ -31,21 +31,82 @@ pub(crate) use memory_sync::{is_disk_only_table, table_column_names};
 
 /// Create all tables and indexes on the given connection, then assert the shape.
 ///
-/// The transport ledger is stamped once and never recreated: `CREATE TABLE IF
-/// NOT EXISTS` would quietly hand back an empty `transport_events` to a file
-/// that had lost it, and that table is the record of which connections were
-/// allowed and which were blocked. A session that never reached the network
-/// and a session whose evidence is gone must not read the same. So the
-/// transport batch runs only on a ledger that has never carried the marker,
-/// and `assert_current` speaks for every open after that.
+/// The transport ledger is stamped once and never recreated. `transport_events`
+/// is the record of which connections were allowed and which were blocked, so
+/// handing back an empty one to a file that had lost it would erase exactly
+/// the evidence this ledger exists to keep: a session that never reached the
+/// network and a session whose transport history was deleted must not read
+/// alike. `assert_current` speaks for every open after the stamp.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
-    let never_stamped = !table_exists(conn, "main", "transport_schema")?;
     conn.execute_batch(CREATE_SCHEMA)?;
-    if never_stamped {
-        conn.execute_batch(ddl::CREATE_TRANSPORT)?;
+    if !table_exists(conn, "main", "transport_schema")? {
+        stamp_transport_ledger(conn)?;
     }
     transport::assert_current(conn)?;
     security_event_types::assert_current(conn)
+}
+
+/// Create the transport ledger, on a file that has never recorded anything.
+///
+/// "Has never had the marker" is a fact about the past that the marker's
+/// absence does not establish. Drop `transport_events` and `transport_schema`
+/// from a session with a thousand `net_events` rows and the absence looks
+/// identical to a brand-new file -- so this asked the wrong question and
+/// answered a stripped ledger by rebuilding the missing half empty, which is
+/// the erasure the rest of this module exists to refuse. A reader already
+/// refused that same file by name, so one file was corrupt to a reader and
+/// healthy to a writer.
+///
+/// What separates the two cases is rows. A fresh ledger has none; a stripped
+/// one has whatever was recorded before the tables went missing.
+///
+/// The whole check runs under `BEGIN IMMEDIATE` and re-reads the marker once
+/// it holds the lock, because two writers opening the same fresh ledger at
+/// once would otherwise race: the loser could see the winner's first rows and
+/// call the file stripped. It is also what makes the stamp atomic -- a crash
+/// between `CREATE TABLE transport_schema` and its marker row used to leave a
+/// table with no row behind, which is a state nothing knew how to describe.
+fn stamp_transport_ledger(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let stamped = stamp_under_lock(conn);
+    if stamped.is_err() {
+        let _ = conn.execute_batch("ROLLBACK");
+        return stamped;
+    }
+    conn.execute_batch("COMMIT")
+}
+
+fn stamp_under_lock(conn: &Connection) -> rusqlite::Result<()> {
+    // Another writer may have stamped it while this one waited for the lock.
+    if table_exists(conn, "main", "transport_schema")? {
+        return Ok(());
+    }
+    if let Some((table, rows)) = recorded_rows(conn)? {
+        return Err(rusqlite::Error::InvalidParameterName(format!(
+            "session ledger has no transport tables but has already recorded activity              ({rows} rows in {table}); refusing to recreate transport_events empty,              which would report a session with deleted network history as one that              never reached the network"
+        )));
+    }
+    conn.execute_batch(ddl::CREATE_TRANSPORT)
+}
+
+/// The first ledger table found to hold rows, with how many.
+///
+/// Any one of them is enough: the question is only whether this file has ever
+/// recorded anything, not how much.
+fn recorded_rows(conn: &Connection) -> rusqlite::Result<Option<(&'static str, i64)>> {
+    for (table, _) in READY_SCHEMA_COLUMNS {
+        if matches!(*table, "transport_events" | "transport_schema") {
+            continue;
+        }
+        if !table_exists(conn, "main", table)? {
+            continue;
+        }
+        let rows: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM main.{table}"), [], |row| row.get(0))?;
+        if rows > 0 {
+            return Ok(Some((table, rows)));
+        }
+    }
+    Ok(None)
 }
 
 /// Attach the DB-owned in-memory schema and mirror hot ledger tables into it.

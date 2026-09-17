@@ -9,7 +9,7 @@
 //! the case where that other process won. The table is declared in
 //! `schema/ddl.rs` like every other one now, and this module only reads.
 use super::{columns::READY_SCHEMA_COLUMNS, table_column_names, table_exists};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 const VERSION: i64 = 1;
 
@@ -24,9 +24,21 @@ pub(crate) fn assert_current(conn: &Connection) -> rusqlite::Result<()> {
             "session ledger predates the transport ledger: transport_schema is missing".to_string(),
         ));
     }
-    let version: i64 = conn.query_row("SELECT version FROM main.transport_schema WHERE id=1", [], |row| {
-        row.get(0)
-    })?;
+    let version: i64 = conn
+        .query_row("SELECT version FROM main.transport_schema WHERE id=1", [], |row| {
+            row.get(0)
+        })
+        .optional()?
+        .ok_or_else(|| {
+            // The table without its row. `create_tables` stamps both inside one
+            // transaction now, so this is a file torn by an older build or by
+            // something outside Capsem -- and a bare QueryReturnedNoRows would
+            // name neither the table nor the column, which is the one shape
+            // this module promises never to fail as.
+            rusqlite::Error::InvalidParameterName(
+                "transport_schema exists but carries no version row: the ledger was torn mid-stamp".to_string(),
+            )
+        })?;
     if version != VERSION {
         return Err(rusqlite::Error::InvalidParameterName(format!(
             "unsupported transport schema version {version}"
@@ -36,6 +48,12 @@ pub(crate) fn assert_current(conn: &Connection) -> rusqlite::Result<()> {
 }
 
 fn validate(conn: &Connection) -> rusqlite::Result<()> {
+    // A table that is gone is not a table missing its first column: say which.
+    if !table_exists(conn, "main", "transport_events")? {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "session ledger is missing the transport_events table".to_string(),
+        ));
+    }
     let (_, required) = READY_SCHEMA_COLUMNS
         .iter()
         .find(|(name, _)| *name == "transport_events")

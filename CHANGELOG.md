@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The `vm.resources.terminated_retention_days` setting. It was offered in the
+  settings UI and written into every generated profile, and nothing read it:
+  no crate looked it up, and the session-index purge it was named for was
+  never wired to it. A retention policy that appears to be in force and is not
+  is worse than one that does not exist. `vm.resources.retention_days` is
+  unaffected.
+
 ### Added
 
 - `capsem run --image IMAGE --network NAME` joins the container's VM to a named

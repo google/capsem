@@ -214,3 +214,111 @@ fn primary_transport_rows_exist_without_a_matched_security_rule() {
     assert!(conn.execute("INSERT INTO transport_events(event_id,timestamp_unix_ms,event_type,event_json) VALUES('123456abcdef',1,'network.typo','{}')", []).is_err());
     assert!(conn.execute("INSERT INTO transport_events(event_id,timestamp_unix_ms,event_type,event_json) VALUES('abcdef123456',2,'network.close','{}')", []).is_err());
 }
+
+/// A ledger stripped of its transport tables is refused, not rebuilt empty.
+///
+/// The gate used to ask whether `transport_schema` was there, which is a fact
+/// about now, and act on it as though it were a fact about the past. Drop both
+/// transport objects from a session that had recorded a thousand requests and
+/// the absence is indistinguishable from a brand-new file: the next
+/// `DbWriter::open` recreated them, and the session then read as one that
+/// never touched the network. A reader refused that same file by name the
+/// whole time, so it was corrupt to a reader and healthy to a writer.
+#[test]
+fn a_stripped_ledger_is_refused_rather_than_rebuilt_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let conn = Connection::open(&path).unwrap();
+    create_tables(&conn).unwrap();
+    conn.execute(
+        "INSERT INTO net_events (event_id, timestamp, domain, decision)
+         VALUES ('abcdef123456', '2026-01-01T00:00:00Z', 'blocked.example', 'denied')",
+        [],
+    )
+    .unwrap();
+    conn.execute_batch("DROP TABLE transport_events; DROP TABLE transport_schema;")
+        .unwrap();
+    drop(conn);
+
+    let error = crate::DbWriter::open(&path, 8)
+        .err()
+        .expect("a ledger with recorded activity and no transport tables must not be rebuilt")
+        .to_string();
+    assert!(
+        error.contains("net_events") && error.contains("already recorded activity"),
+        "the refusal must say what it found: {error}"
+    );
+
+    // And the reader agrees, which is the point: one file, one answer.
+    assert!(crate::DbReader::open(&path).is_err());
+
+    // Nothing was created behind the refusal.
+    let conn = Connection::open(&path).unwrap();
+    assert!(!crate::schema::table_exists(&conn, "main", "transport_events").unwrap());
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM net_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 1, "the recorded row must survive the refusal");
+}
+
+/// A genuinely fresh ledger still creates cleanly. Without this the fix above
+/// could be "refuse everything", which passes the test that matters and breaks
+/// every session.
+#[test]
+fn a_fresh_ledger_still_gets_its_transport_tables() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let writer = crate::DbWriter::open(&path, 8).unwrap();
+    writer.shutdown_blocking();
+
+    let conn = Connection::open(&path).unwrap();
+    assert!(crate::schema::table_exists(&conn, "main", "transport_events").unwrap());
+    let version: i64 = conn
+        .query_row("SELECT version FROM transport_schema WHERE id=1", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 1);
+    crate::DbReader::open(&path).unwrap().ready().unwrap();
+}
+
+/// The torn stamp: the marker table present, its row never written.
+///
+/// `create_tables` writes both inside one transaction now, so this cannot
+/// arise from Capsem. It can still be read -- an older build tore it, or
+/// something outside Capsem did -- and the failure has to name the table
+/// rather than surfacing as a bare `QueryReturnedNoRows`, whose text names
+/// neither a table nor a column.
+#[test]
+fn a_transport_marker_without_its_row_fails_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let conn = Connection::open(&path).unwrap();
+    create_tables(&conn).unwrap();
+    conn.execute_batch("DELETE FROM transport_schema").unwrap();
+
+    let error = crate::schema::transport::assert_current(&conn)
+        .expect_err("a marker table with no row is not a current ledger")
+        .to_string();
+    assert!(
+        error.contains("transport_schema"),
+        "the failure must name the table it could not read: {error}"
+    );
+}
+
+/// The whole table gone reads as the whole table gone, not as its first
+/// column missing.
+#[test]
+fn an_absent_transport_table_is_named_as_a_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let conn = Connection::open(&path).unwrap();
+    create_tables(&conn).unwrap();
+    conn.execute_batch("DROP TABLE transport_events").unwrap();
+
+    let error = crate::schema::transport::assert_current(&conn)
+        .expect_err("a ledger without transport_events is not current")
+        .to_string();
+    assert!(
+        error.contains("missing the transport_events table"),
+        "an absent table must not be reported as a missing column: {error}"
+    );
+}
