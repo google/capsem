@@ -19,7 +19,7 @@ from pathlib import Path
 
 import blake3
 import pytest
-from helpers.body_archive import security_payload
+from helpers.body_archive import session_archive
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -562,7 +562,8 @@ def _assert_openai_embeddings_and_image_ledger(model_client_env: ModelClientEnv)
             "event_ids": event_ids,
             "security_rows": [dict(row) for row in security_rows],
         }
-        assert all(security_payload(conn, row["event_id"]) for row in security_rows)
+        with session_archive(conn) as archive:
+            assert all(archive.security_payload(row["event_id"]) for row in security_rows)
         assert all(json.loads(row["rule_json"]) for row in security_rows)
 
         substitution_rows = _eventually(
@@ -848,7 +849,8 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             row["detection_level"] in {"none", "informational", "low", "medium", "high", "critical"}
             for row in rule_rows
         )
-        assert all(security_payload(conn, row["event_id"]) for row in rule_rows)
+        with session_archive(conn) as archive:
+            assert all(archive.security_payload(row["event_id"]) for row in rule_rows)
         assert all(json.loads(row["rule_json"]) for row in rule_rows)
 
         detail = model_client_env.client.get(

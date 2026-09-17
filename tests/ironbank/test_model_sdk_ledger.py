@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from helpers.body_archive import security_payload
+from helpers.body_archive import security_payload, session_archive
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -1516,7 +1516,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 row["event_type"] for row in security_rows
             }
             assert all(json.loads(row["rule_json"]) for row in security_rows)
-            assert all(security_payload(conn, row["event_id"]) for row in security_rows)
+            with session_archive(conn) as archive:
+                assert all(archive.security_payload(row["event_id"]) for row in security_rows)
             security_by_event: dict[str, list[sqlite3.Row]] = {}
             for row in security_rows:
                 security_by_event.setdefault(row["event_id"], []).append(row)
@@ -1610,7 +1611,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 and item["rule_action"] in {"allow", "ask"}
                 for item in mcp_list_security_rows
             )
-            security_payloads = [security_payload(conn, row["event_id"]) for row in security_rows]
+            with session_archive(conn) as archive:
+                security_payloads = [archive.security_payload(row["event_id"]) for row in security_rows]
             plugin_executions = [
                 execution
                 for payload in security_payloads
@@ -1898,7 +1900,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 rows = security_by_real_client_event[row["event_id"]]
                 assert rows
                 assert all(json.loads(item["rule_json"]) for item in rows)
-                assert all(security_payload(conn, item["event_id"]) for item in rows)
+                with session_archive(conn) as archive:
+                    assert all(archive.security_payload(item["event_id"]) for item in rows)
                 assert "allow" in {item["rule_action"] for item in rows}
                 assert "profiles.rules.default_model" in {item["rule_id"] for item in rows}
 

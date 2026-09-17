@@ -208,8 +208,12 @@ async fn read_security_ledger(
         &[],
     )
     .await?;
+    // Keyed to `latest`, not chosen again by its own ordering: two windows
+    // picked independently -- one by timestamp, one by index id -- drift the
+    // moment a flush lands between them, and a page of rows carrying another
+    // page's payloads is a projection that lies.
     let payloads = if with_payloads {
-        security_payloads(vm_id, db_path, &db).await?
+        security_payloads(vm_id, db_path, &db, &latest).await?
     } else {
         BTreeMap::new()
     };
@@ -221,25 +225,53 @@ async fn read_security_ledger(
     }))
 }
 
-/// The archived payload of each recent rule match, by event id.
+/// What one hydration pass may hold in archived payloads at once.
 ///
-/// The DB handle owns the archive; this is one call for the whole window
+/// The window is 2000 matches and a body may be 10 MiB, so the row count alone
+/// permits 20 GiB. In practice a payload is about a kilobyte and the whole
+/// window fits in single-digit megabytes; this is the ceiling for the session
+/// that is not typical, and reaching it is reported rather than hidden.
+const SECURITY_PAYLOAD_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+
+/// The archived payload of each match in `latest`, by event id.
+///
+/// The DB handle owns the archive; this is one read for the whole window
 /// rather than one per row, and a payload that is not valid UTF-8 is not a
 /// payload this ledger wrote.
+///
+/// A session whose archive cannot be opened, or that gave up mid-session,
+/// simply has no bodies to return: the map comes back short or empty and the
+/// caller's own accounting degrades with it -- fewer plugin executions, fewer
+/// brokered credentials -- with `last_error` naming the events it could not
+/// read. That is the intended failure: an archive that lost bodies must not
+/// take the rest of the ledger down with it, and must not be reported as a
+/// session that had none.
 async fn security_payloads(
     vm_id: &str,
     db_path: &StdPath,
     db: &capsem_logger::DbHandle,
+    latest: &[capsem_logger::SecurityRuleMatch],
 ) -> Result<BTreeMap<String, String>, AppError> {
-    let bodies = db
-        .read_recent_bodies(
+    let event_ids: Vec<&str> = latest.iter().map(|event| event.event_id.as_str()).collect();
+    let archived = db
+        .read_bodies_for_events(
+            &event_ids,
             "security_rule_events",
             capsem_logger::BodyDirection::Payload,
-            SECURITY_LATEST_LIMIT,
+            SECURITY_PAYLOAD_BUDGET_BYTES,
         )
         .await
         .map_err(|error| ledger_route_error(vm_id, "security", "read payloads of", db_path, &error))?;
-    Ok(bodies
+    if archived.truncated_rows > 0 {
+        warn!(
+            vm_id,
+            truncated_rows = archived.truncated_rows,
+            budget_bytes = SECURITY_PAYLOAD_BUDGET_BYTES,
+            "security payload budget reached; plugin and credential hydration will undercount"
+        );
+    }
+    Ok(archived
+        .bodies
         .into_iter()
         .filter_map(|body| {
             String::from_utf8(body.bytes)

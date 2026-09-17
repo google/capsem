@@ -3,6 +3,7 @@ import {
   compactJsonForDisplay,
   detailPayloadSections,
   formatDetailValue,
+  payloadSectionMeta,
   visibleDetailEntries,
 } from '../stats-detail';
 
@@ -100,5 +101,37 @@ describe('stats detail helpers', () => {
       ['response_body', 'json'],
       ['context_json', 'json'],
     ]);
+  });
+});
+
+describe('archived body metadata', () => {
+  it('reports what the archive holds for a body the index names', () => {
+    const rows = payloadSectionMeta({ key: 'payload_body' }, {
+      payload_body_content_type: 'application/json',
+      payload_body_original_bytes: 2400,
+      payload_body_stored_bytes: 2400,
+      payload_body_truncated: 0,
+      payload_body_hash: `blake3:${'a'.repeat(64)}`,
+    });
+    expect(rows.map(row => row.label)).toEqual([
+      'Content Type',
+      'Original',
+      'Stored',
+      'Truncated',
+      'Hash',
+    ]);
+    expect(rows.find(row => row.label === 'Truncated')?.value).toBe('no');
+  });
+
+  it('says a body was truncated only when there is a body to say it about', () => {
+    // A rule match whose payload the archive never stored has no index row and
+    // so no metadata. Truncated used to answer "no" for it anyway, which is
+    // how the Matched Event section rendered a lone "TRUNCATED no".
+    expect(payloadSectionMeta({ key: 'payload_body' }, { rule_id: 'profiles.rules.x' })).toEqual([]);
+    const truncated = payloadSectionMeta({ key: 'payload_body' }, {
+      payload_body_truncated: 1,
+      payload_body_hash: `blake3:${'b'.repeat(64)}`,
+    });
+    expect(truncated.find(row => row.label === 'Truncated')?.value).toBe('yes');
   });
 });

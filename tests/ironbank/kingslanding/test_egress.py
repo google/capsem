@@ -9,7 +9,7 @@ import textwrap
 import uuid
 
 import pytest
-from helpers.body_archive import security_payload_at
+from helpers.body_archive import SessionArchive
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import ServiceInstance, vm_session_db_path
 
@@ -156,8 +156,9 @@ def test_container_egress_is_intercepted_policed_and_audited(egress, tmp_path):
     session_db = vm_session_db_path(service.tmp_dir, client, vm_id)
     http = []
     dns = []
+    archive = SessionArchive(session_db)
     for row in latest:
-        event = security_payload_at(session_db, row["event_id"])
+        event = archive.security_payload(row["event_id"])
         if row["event_type"] == "http.request":
             http.append((event["http"]["host"], event["http"]["path"], row["rule_id"], row["rule_action"]))
         elif row["event_type"] == "dns.query":

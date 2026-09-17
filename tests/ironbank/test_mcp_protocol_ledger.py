@@ -12,7 +12,7 @@ from contextlib import closing, suppress
 from pathlib import Path
 
 import pytest
-from helpers.body_archive import security_payload
+from helpers.body_archive import session_archive
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -318,12 +318,13 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
                 (call_row["event_id"],),
             ).fetchall()
             assert security_rows
+            archive = session_archive(conn)
             security_by_event: dict[str, list[sqlite3.Row]] = {}
             for row in security_rows:
                 security_by_event.setdefault(row["event_id"], []).append(row)
                 assert row["trace_id"] == trace_id
                 assert json.loads(row["rule_json"])["name"]
-                event = security_payload(conn, row["event_id"])
+                event = archive.security_payload(row["event_id"])
                 assert event["mcp"]["server_name"] == observed_server
                 assert event["tcp"]["port"] == "3713"
                 assert event["ip"]["value"] == "127.0.0.1"
@@ -346,7 +347,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             for row in list_security:
                 assert row["trace_id"]
                 assert json.loads(row["rule_json"])["name"]
-            list_event = security_payload(conn, list_security[0]["event_id"])
+            list_event = archive.security_payload(list_security[0]["event_id"])
             assert list_event["event_type"] == "mcp.tool_list"
             assert list_event["mcp"]["method"] == "tools/list"
             listed_tools = json.loads(list_event["mcp"]["tool_list"])["result"]["tools"]
@@ -374,7 +375,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
                 and row["rule_action"] == "ask"
                 for row in call_security
             )
-            call_event = security_payload(conn, call_security[0]["event_id"])
+            call_event = archive.security_payload(call_security[0]["event_id"])
             assert call_event["event_type"] == "mcp.tool_call"
             assert call_event["mcp"]["method"] == "tools/call"
             assert call_event["mcp"]["tool_call_name"] == "fixture_lookup"

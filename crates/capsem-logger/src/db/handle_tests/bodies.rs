@@ -61,43 +61,92 @@ async fn security_rule_payload_is_archived_not_inlined() {
     assert_eq!(body.bytes.len(), 2400, "and all of it, not a preview");
 }
 
-/// A route with a page of rules in hand needs a payload per row. Asking event
-/// by event is a query and a blocking task each, and inflates the block that
-/// holds them once per body; one call reads the page in archive order.
-#[tokio::test]
-async fn recent_bodies_reads_a_page_of_payloads_in_one_pass() {
-    let p = temp_db_path("security-rule-payload-page");
-    let db = DbHandle::open(&p).expect("open handle");
+/// Write `count` security rule matches whose payloads are `{"match":N}`, and
+/// return their event ids in the order they were written.
+async fn write_security_payloads(db: &DbHandle, count: usize) -> Vec<String> {
     let credential_ref = credential_reference("test", "not-a-real-secret");
-    for index in 0..5 {
+    let mut event_ids = Vec::with_capacity(count);
+    for index in 0..count {
         let mut event = make_correctness_security_event(&credential_ref);
         event.event_id = format!("{index:012x}");
         event.event_json = format!(r#"{{"match":{index}}}"#);
+        event_ids.push(event.event_id.clone());
         db.write(WriteOp::SecurityRuleEvent(event))
             .await
             .expect("write security rule event");
     }
     db.flush().await.expect("flush");
+    event_ids
+}
 
-    let payloads = db
-        .read_recent_bodies("security_rule_events", BodyDirection::Payload, 3)
+/// A route with a page of rules in hand needs a payload per row. Asking event
+/// by event is a query and a blocking task each, and inflates the block that
+/// holds them once per body; one call reads the page the caller named, in the
+/// order the archive holds them.
+#[tokio::test]
+async fn bodies_for_events_read_the_named_page_in_one_pass() {
+    let p = temp_db_path("security-rule-payload-page");
+    let db = DbHandle::open(&p).expect("open handle");
+    let event_ids = write_security_payloads(&db, 5).await;
+
+    // Deliberately out of archive order, and a subset: the caller names rows,
+    // the archive decides the read order.
+    let asked: Vec<&str> = vec![event_ids[3].as_str(), event_ids[0].as_str(), event_ids[2].as_str()];
+    let archived = db
+        .read_bodies_for_events(&asked, "security_rule_events", BodyDirection::Payload, 1 << 20)
         .await
-        .expect("read the newest payloads");
-    let mut seen: Vec<String> = payloads
+        .expect("read the named payloads");
+
+    let seen: Vec<String> = archived
+        .bodies
         .iter()
         .map(|body| String::from_utf8(body.bytes.clone()).expect("payloads are JSON text"))
         .collect();
-    seen.sort();
     assert_eq!(
         seen,
-        vec![r#"{"match":2}"#, r#"{"match":3}"#, r#"{"match":4}"#],
-        "the limit must take the newest matches, not the oldest"
+        vec![r#"{"match":0}"#, r#"{"match":2}"#, r#"{"match":3}"#],
+        "the read must return exactly the named rows, in the order the archive holds them"
     );
-    assert!(payloads.iter().all(|body| body.source_table == "security_rule_events"));
+    assert_eq!(archived.truncated_rows, 0, "a budget this large refuses nothing");
+    assert!(archived
+        .bodies
+        .iter()
+        .all(|body| body.source_table == "security_rule_events"));
     assert_eq!(
         db.archive_blocks_inflated_for_tests(),
         1,
         "a page of payloads that share a block must cost one inflate"
+    );
+}
+
+/// A row count alone is not a memory bound: 2000 rows of a 10 MiB body is
+/// 20 GiB. The byte budget stops accumulating, and what it refused is counted
+/// -- a caller that reported nothing would be saying the ledger was empty.
+#[tokio::test]
+async fn the_payload_budget_stops_accumulating_and_counts_what_it_refused() {
+    let p = temp_db_path("security-rule-payload-budget");
+    let db = DbHandle::open(&p).expect("open handle");
+    let event_ids = write_security_payloads(&db, 3).await;
+    let asked: Vec<&str> = event_ids.iter().map(String::as_str).collect();
+
+    // Every payload is the same length, so a budget of two admits exactly two.
+    let one_payload = r#"{"match":0}"#.len();
+    let archived = db
+        .read_bodies_for_events(&asked, "security_rule_events", BodyDirection::Payload, one_payload * 2)
+        .await
+        .expect("read within the budget");
+
+    assert_eq!(archived.bodies.len(), 2, "the budget admits two of the three");
+    assert_eq!(archived.truncated_rows, 1, "and says the third was refused");
+    let seen: Vec<String> = archived
+        .bodies
+        .iter()
+        .map(|body| String::from_utf8(body.bytes.clone()).expect("payloads are JSON text"))
+        .collect();
+    assert_eq!(
+        seen,
+        vec![r#"{"match":0}"#, r#"{"match":1}"#],
+        "the budget takes them in archive order, not an arbitrary two"
     );
 }
 

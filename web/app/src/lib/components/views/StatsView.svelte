@@ -8,6 +8,7 @@
     detailPayloadSections,
     formatDetailValue,
     normalizePayloadContent,
+    payloadSectionMeta,
     visibleDetailEntries,
   } from '../../stats-detail';
   import { themeStore } from '../../stores/theme.svelte.ts';
@@ -93,32 +94,6 @@
   function eventTimeMs(value: number): string {
     return new Date(value).toISOString();
   }
-
-  function isPresent(value: unknown): boolean {
-    if (value == null) return false;
-    if (typeof value === 'string') return value.trim().length > 0;
-    return true;
-  }
-
-  function payloadSectionMeta(
-    section: { key: string },
-    obj: Record<string, unknown>,
-  ): { label: string; value: string }[] {
-    const prefix = section.key;
-    return [
-      { label: 'Content Type', value: text(obj[`${prefix}_content_type`]) },
-      { label: 'Original', value: formatBodyBytes(obj[`${prefix}_original_bytes`]) },
-      { label: 'Stored', value: formatBodyBytes(obj[`${prefix}_stored_bytes`]) },
-      { label: 'Truncated', value: number(obj[`${prefix}_truncated`]) === 1 ? 'yes' : 'no' },
-      { label: 'Hash', value: text(obj[`${prefix}_hash`]) },
-    ].filter(row => row.value.length > 0);
-  }
-
-  function formatBodyBytes(value: unknown): string {
-    if (!isPresent(value)) return '';
-    return formatBytes(number(value));
-  }
-
 
   function formatAndHighlight(value: unknown, lang: string | undefined = undefined): string {
     shikiTick;
@@ -521,17 +496,19 @@
             <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Rule Snapshot</div>
             <div class="detail-shiki rounded overflow-auto max-h-64 bg-background-1">{@html formatAndHighlight(compactJsonForDisplay(detail.data.rule_json), 'json')}</div>
           </div>
-          <div>
-            <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Matched Event</div>
-            <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-muted-foreground-1">
-              {#each payloadSectionMeta({ key: 'payload_body' }, detail.data) as row}
-                <div class="min-w-0">
-                  <span class="uppercase tracking-wider">{row.label}</span>
-                  <span class="detail-value ms-1 font-mono text-foreground">{row.value}</span>
-                </div>
-              {/each}
+          {#if payloadSectionMeta({ key: 'payload_body' }, detail.data).length > 0}
+            <div>
+              <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Matched Event</div>
+              <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-muted-foreground-1">
+                {#each payloadSectionMeta({ key: 'payload_body' }, detail.data) as row}
+                  <div class="min-w-0">
+                    <span class="uppercase tracking-wider">{row.label}</span>
+                    <span class="detail-value ms-1 font-mono text-foreground">{row.value}</span>
+                  </div>
+                {/each}
+              </div>
             </div>
-          </div>
+          {/if}
         {/if}
       </div>
     </div>

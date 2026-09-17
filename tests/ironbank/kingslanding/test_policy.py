@@ -3,7 +3,7 @@
 import socket
 
 import pytest
-from helpers.body_archive import security_payload_at
+from helpers.body_archive import SessionArchive
 from helpers.constants import CODE_PROFILE_ID
 from helpers.service import vm_session_db_path
 
@@ -109,18 +109,20 @@ def test_expose_security_prevents_redis_accept_and_retains_trusted_facts(redis, 
 
         def audited():
             rows[:] = client.get(f"/vms/{vm_id}/security/latest?limit=2000")
-            seen = {
-                security_payload_at(session_db, row["event_id"])["network"]["source"]["address"]
-                for row in rows
-                if row["event_type"] == "network.connect"
-            }
+            with SessionArchive(session_db) as archive:
+                seen = {
+                    archive.security_payload(row["event_id"])["network"]["source"]["address"]
+                    for row in rows
+                    if row["event_type"] == "network.connect"
+                }
             return denied_peers <= seen
 
         wait_for(audited, "denied connection security rows", timeout=15)
+        archive = SessionArchive(session_db)
         for row in rows:
             if row["event_type"] != "network.connect":
                 continue
-            event = security_payload_at(session_db, row["event_id"])
+            event = archive.security_payload(row["event_id"])
             facts = event["network"]
             if facts["source"]["address"] not in denied_peers:
                 continue

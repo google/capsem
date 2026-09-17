@@ -90,7 +90,9 @@ erDiagram
         text source_table
         text direction
         text body_hash
-        blob body
+        int block_offset
+        int body_offset
+        int body_len
     }
     security_rule_events {
         int id PK
@@ -100,7 +102,6 @@ erDiagram
         text rule_action
         text detection_level
         text rule_json
-        text event_json
     }
     security_ask_events {
         int id PK
@@ -335,8 +336,8 @@ forensic body truth lives in the archive and joins by `event_id` plus
 | `id` | INTEGER PK | Auto-increment |
 | `event_id` | TEXT | 12-hex event id from `net_events`, `model_calls`, or `tool_calls` |
 | `event_type` | TEXT | Canonical event type such as `http.request`, `model.call`, or `mcp.tool_call` |
-| `source_table` | TEXT | `net_events`, `model_calls`, or `tool_calls` |
-| `direction` | TEXT | `request` or `response` |
+| `source_table` | TEXT | `net_events`, `model_calls`, `tool_calls`, `tool_responses`, `exec_events`, or `security_rule_events` |
+| `direction` | TEXT | `request`, `response`, `payload` (a security rule match's forensic event), `stdout` or `stderr` |
 | `content_type` | TEXT | MIME type or protocol content type, when known |
 | `original_bytes` | INTEGER | Full body byte count observed at the boundary |
 | `stored_bytes` | INTEGER | Bytes actually archived, after the 10 MB per-direction cap |
@@ -589,15 +590,29 @@ ORDER BY timestamp_unix_ms DESC
 LIMIT 20;"
 ```
 
-For forensic review, inspect the stored rule and event snapshots:
+For forensic review, inspect the stored rule snapshot:
 
 ```bash
 just query-session "
-SELECT rule_id, rule_json, event_json
+SELECT rule_id, rule_action, detection_level, rule_json, trace_id, credential_ref
 FROM security_rule_events
 WHERE event_id = '<event_id>'
 ORDER BY id DESC;"
 ```
+
+The matched event's payload is not a column and no SQL recipe returns it: it is
+archive-backed, and `event_body_blobs` says where:
+
+```bash
+just query-session "
+SELECT direction, content_type, original_bytes, stored_bytes, truncated, body_hash
+FROM event_body_blobs
+WHERE event_id = '<event_id>' AND source_table = 'security_rule_events';"
+```
+
+The bytes come back through the body route once Task 7 lands. Offline, from a
+copy of a session, `tests/helpers/body_archive.py` reads `session.bodies` the
+way the product does and verifies both hashes on the way out.
 
 ### HTTP Join
 

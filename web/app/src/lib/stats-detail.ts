@@ -1,3 +1,5 @@
+import { formatBytes } from './format';
+
 export type DetailPayloadSection = {
   key: string;
   label: string;
@@ -154,4 +156,41 @@ export function normalizePayloadContent(content: string): string {
     }
   }
   return content;
+}
+
+/// The index metadata beside one body: what it is, how big it was, how much of
+/// it the archive kept, and the hash a reader checks it against.
+///
+/// Every row drops out when its field is absent, including Truncated -- which
+/// would otherwise read "no" whether the body was whole or there was no body
+/// row at all, and render a section holding a lone "TRUNCATED no". The hash is
+/// the marker that an index row exists; no rows means no metadata, and the
+/// caller should render no section.
+export function payloadSectionMeta(
+  section: { key: string },
+  obj: Record<string, unknown>,
+): { label: string; value: string }[] {
+  const prefix = section.key;
+  const hash = metaText(obj[`${prefix}_hash`]);
+  return [
+    { label: 'Content Type', value: metaText(obj[`${prefix}_content_type`]) },
+    { label: 'Original', value: metaBytes(obj[`${prefix}_original_bytes`]) },
+    { label: 'Stored', value: metaBytes(obj[`${prefix}_stored_bytes`]) },
+    { label: 'Truncated', value: hash ? (metaNumber(obj[`${prefix}_truncated`]) === 1 ? 'yes' : 'no') : '' },
+    { label: 'Hash', value: hash },
+  ].filter(row => row.value.length > 0);
+}
+
+function metaText(value: unknown): string {
+  return value == null ? '' : String(value);
+}
+
+function metaNumber(value: unknown): number {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function metaBytes(value: unknown): string {
+  if (!isPresent(value)) return '';
+  return formatBytes(metaNumber(value));
 }

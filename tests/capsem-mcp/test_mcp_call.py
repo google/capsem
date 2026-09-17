@@ -6,7 +6,7 @@ import time
 import uuid
 
 import pytest
-from helpers.body_archive import security_payload_at
+from helpers.body_archive import SessionArchive
 from helpers.mcp import content_text
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import vm_session_db_path
@@ -184,10 +184,11 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(capsem_service, shared_v
         assert any(row["rule_id"] == "profiles.rules.default_mcp" for row in security_rows)
         assert {row["rule_action"] for row in security_rows} <= {"allow", "ask"}
         assert all(row["detection_level"] in {"none", "informational"} for row in security_rows)
-        security_db = _session_db_path(capsem_service, vm_name)
+        # The matched event's payload is archive-backed, not a column, and
+        # one reader serves the whole page.
+        archive = SessionArchive(_session_db_path(capsem_service, vm_name))
         for row in security_rows:
-            # The matched event's payload is archive-backed, not a column.
-            event = security_payload_at(security_db, row["event_id"])
+            event = archive.security_payload(row["event_id"])
             rule = json.loads(row["rule_json"])
             assert event["event_type"] == "mcp.tool_call"
             assert event["mcp"]["server_name"] == "local"

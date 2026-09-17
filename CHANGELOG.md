@@ -102,7 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session body archive instead of inside every row of `security_rule_events`.
   It averaged a kilobyte and peaked at 297 KB in a real session, on a table the
   service also mirrors in memory. The security, detection and enforcement views
-  list the rule metadata as before -- rule, action, detection level, actor,
+  list the rule metadata as before -- rule, action, detection level, event type,
   trace -- and show the payload's size and hash; the payload itself is fetched
   on demand once the body route lands.
 

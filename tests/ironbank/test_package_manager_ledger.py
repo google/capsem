@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from helpers.body_archive import security_payload
+from helpers.body_archive import session_archive
 from helpers.constants import (
     CODE_PROFILE_ID,
     DEFAULT_CPUS,
@@ -449,11 +449,12 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
                 (script_name,),
             ).fetchall()
             assert security_rows, "package probe upload must be governed by file rule"
+            archive = session_archive(conn)
             for row in security_rows:
                 assert row["event_type"] == "file.import"
                 assert row["rule_id"] == "profiles.rules.default_file"
                 assert row["rule_action"] == "allow"
-                event_json = security_payload(conn, row["event_id"])
+                event_json = archive.security_payload(row["event_id"])
                 assert event_json["file"]["import_name"] == script_name
                 assert event_json["file"]["import_path"] == script_name
                 assert event_json["decision"]["effective"] == "allow"
@@ -522,7 +523,7 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             assert "profiles.rules.default_dns" in remote_rule_ids
             for row in remote_security_rows:
                 assert row["rule_action"] == "allow"
-                assert security_payload(conn, row["event_id"])["decision"]["effective"] == "allow"
+                assert archive.security_payload(row["event_id"])["decision"]["effective"] == "allow"
         finally:
             conn.close()
 

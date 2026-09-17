@@ -22,7 +22,7 @@ from pathlib import Path
 
 import blake3
 import pytest
-from helpers.body_archive import security_payload
+from helpers.body_archive import session_archive
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import (
@@ -275,9 +275,11 @@ def _query_mcp_event_rows(db_path: Path):
             """
         ).fetchall()
         out = []
+        # The matched event's payload is archive-backed, not a column, and
+        # one reader serves the whole page.
+        archive = session_archive(conn)
         for row in rows:
-            # The matched event's payload is archive-backed, not a column.
-            event = security_payload(conn, row["event_id"])
+            event = archive.security_payload(row["event_id"])
             mcp = event.get("mcp") or {}
             request = mcp.get("request") or {}
             response = mcp.get("response") or {}

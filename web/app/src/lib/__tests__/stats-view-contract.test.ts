@@ -195,6 +195,11 @@ describe('StatsView detail drawer contract', () => {
     // must not pretend to hold bytes the route never sent.
     expect(source).not.toContain('detail.data.event_json');
     expect(source).toContain("payloadSectionMeta({ key: 'payload_body' }, detail.data)");
+    // And no metadata means no section: an unguarded one rendered an empty
+    // heading over a lone "TRUNCATED no".
+    expect(source).toContain(
+      "{#if payloadSectionMeta({ key: 'payload_body' }, detail.data).length > 0}",
+    );
   });
 
   it('gives detail fields enough room to wrap without overlapping values', () => {

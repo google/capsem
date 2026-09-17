@@ -61,6 +61,23 @@ pub struct StoredBody {
     pub bytes: Vec<u8>,
 }
 
+/// Archived bodies, and what a budget left behind.
+///
+/// `truncated_rows` is not an error: the index named that many more bodies and
+/// the budget refused them. A caller that reports nothing has told its user the
+/// ledger was empty, which is a different statement.
+#[derive(Debug, Default, Clone)]
+pub struct ArchivedBodies {
+    pub bodies: Vec<StoredBody>,
+    pub truncated_rows: usize,
+}
+
+/// SQLite's default `SQLITE_MAX_VARIABLE_NUMBER` is 999, and two of them are
+/// the source table and the direction. A longer event list is chunked rather
+/// than interpolated: the ids come from ledger rows, and a query built by
+/// concatenation is a query one careless change makes injectable.
+const MAX_EVENT_IDS_PER_QUERY: usize = 997;
+
 /// An index row, before its bytes are fetched.
 struct IndexRow {
     event_id: String,
@@ -100,39 +117,67 @@ impl DbHandle {
         self.read_archived(rows).await
     }
 
-    /// Read the newest archived bodies of one source table and direction.
+    /// Read one direction's archived body for a named set of events.
     ///
     /// The per-event reads above answer "show me this exchange". This answers
     /// "I have a page of rows and I need the body of each" -- asking event by
     /// event would cost an index query and a blocking task per row, and would
     /// inflate the same block once for every body that sits in it. Here it is
-    /// one query and one pass, in archive order.
+    /// one query per chunk, each read in archive order.
+    ///
+    /// The caller names the events rather than asking for "the newest N",
+    /// because the two windows are chosen by different orderings and a page of
+    /// rows whose payloads came from a different page is a projection that
+    /// lies. Whatever the caller listed is what it gets back.
+    ///
+    /// `max_total_bytes` is the second bound, and the one that matters: a row
+    /// count alone permits `event_ids.len()` times the 10 MiB body cap in
+    /// resident memory. Accumulation stops at the budget and the rows not read
+    /// are counted rather than silently dropped, so a caller can say so.
     ///
     /// # Errors
     ///
     /// The same as the per-event reads: a row whose bytes the archive cannot
     /// produce, or does not produce intact, is a broken ledger and fails.
-    pub async fn read_recent_bodies(
+    pub async fn read_bodies_for_events(
         &self,
+        event_ids: &[&str],
         source_table: &str,
         direction: BodyDirection,
-        limit: usize,
-    ) -> DbResult<Vec<StoredBody>> {
-        let sql = format!(
-            "SELECT {INDEX_COLUMNS} FROM (
-                 SELECT {INDEX_COLUMNS}, block_offset AS block_order, body_offset AS body_order
-                 FROM event_body_blobs
-                 WHERE source_table = ?1 AND direction = ?2
-                 ORDER BY id DESC LIMIT ?3
-             ) ORDER BY block_order, body_order"
-        );
-        let rows = self
-            .body_index_rows(
-                &sql,
-                &[source_table.into(), direction.as_str().into(), (limit as u64).into()],
-            )
-            .await?;
-        self.read_archived(rows).await
+        max_total_bytes: usize,
+    ) -> DbResult<ArchivedBodies> {
+        let mut archived = ArchivedBodies::default();
+        let mut budget = max_total_bytes;
+        for chunk in event_ids.chunks(MAX_EVENT_IDS_PER_QUERY) {
+            let placeholders = (3..3 + chunk.len())
+                .map(|index| format!("?{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "SELECT {INDEX_COLUMNS} FROM event_body_blobs
+                 WHERE source_table = ?1 AND direction = ?2 AND event_id IN ({placeholders})
+                 {INDEX_ORDER}"
+            );
+            let mut params: Vec<Value> = Vec::with_capacity(chunk.len() + 2);
+            params.push(source_table.into());
+            params.push(direction.as_str().into());
+            params.extend(chunk.iter().map(|event_id| Value::from(*event_id)));
+            let rows = self.body_index_rows(&sql, &params).await?;
+            // Split before reading, so the budget bounds what is inflated and
+            // held rather than what is thrown away afterwards.
+            let mut affordable = Vec::with_capacity(rows.len());
+            for row in rows {
+                let cost = row.reference.len as usize;
+                if cost > budget {
+                    archived.truncated_rows += 1;
+                    continue;
+                }
+                budget -= cost;
+                affordable.push(row);
+            }
+            archived.bodies.extend(self.read_archived(affordable).await?);
+        }
+        Ok(archived)
     }
 
     async fn body_index_rows(&self, sql: &str, params: &[Value]) -> DbResult<Vec<IndexRow>> {

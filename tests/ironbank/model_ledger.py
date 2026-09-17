@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from helpers.body_archive import security_payload
+from helpers.body_archive import session_archive
 from ironbank.model_pricing import assert_model_call_price
 
 
@@ -761,7 +761,8 @@ def _assert_security_rows(conn: sqlite3.Connection, event_ids: list[str]) -> Non
     assert set(event_ids) <= covered
     assert "allow" in {row["rule_action"] for row in rows}
     assert all(json.loads(row["rule_json"]) for row in rows)
-    assert all(security_payload(conn, row["event_id"]) for row in rows)
+    with session_archive(conn) as archive:
+        assert all(archive.security_payload(row["event_id"]) for row in rows)
 
 
 def _assert_brokered_model_credentials(

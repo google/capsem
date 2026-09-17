@@ -14,7 +14,7 @@ from contextlib import closing, contextmanager, suppress
 from pathlib import Path
 
 import pytest
-from helpers.body_archive import security_payload
+from helpers.body_archive import session_archive
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -487,9 +487,10 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                     row["detection_level"] in {"none", "informational"}
                     for row in security_rows
                 )
+                archive = session_archive(conn)
                 for row in security_rows:
                     assert row["trace_id"] == tool_row["trace_id"]
-                    event = security_payload(conn, row["event_id"])
+                    event = archive.security_payload(row["event_id"])
                     rule = json.loads(row["rule_json"])
                     assert event["event_type"] == "mcp.tool_call"
                     assert event["mcp"]["server_name"] == "local"
