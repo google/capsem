@@ -151,8 +151,8 @@ pub struct Publication {
     preview: Option<Arc<PreviewState>>,
 }
 
-const PREVIEW_BOOTSTRAP_LIFETIME: Duration = Duration::from_secs(30);
-const PREVIEW_SESSION_LIFETIME: Duration = Duration::from_secs(15 * 60);
+const PREVIEW_BOOTSTRAP_LIFETIME: Duration = Duration::from_secs(capsem_proto::PREVIEW_BOOTSTRAP_LIFETIME_SECS as u64);
+const PREVIEW_SESSION_LIFETIME: Duration = Duration::from_secs(capsem_proto::PREVIEW_SESSION_LIFETIME_SECS as u64);
 const PREVIEW_HANDOFF_LIFETIME: Duration = Duration::from_secs(5);
 const MAX_PREVIEW_CREDENTIALS: usize = 128;
 

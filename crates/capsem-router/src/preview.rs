@@ -20,7 +20,7 @@ use tokio::net::UnixStream;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
-const PREVIEW_COOKIE: &str = "capsem_preview";
+use capsem_proto::PREVIEW_COOKIE;
 const DOWNSTREAM_DRAIN: std::time::Duration = std::time::Duration::from_secs(2);
 
 struct Upgrades {
@@ -202,23 +202,42 @@ fn empty_body() -> BoxBody<bytes::Bytes, hyper::Error> {
     Empty::<bytes::Bytes>::new().map_err(|never| match never {}).boxed()
 }
 
+/// Cookie values are bytes: hyper accepts 0x80-0xFF, which a workload may well
+/// have set, while `HeaderValue::to_str` refuses them. Filtering on `to_str`
+/// dropped the whole header over one such byte and logged the user out of the
+/// workload, so the split and rebuild work on bytes.
 fn strip_control_headers(headers: &mut hyper::HeaderMap) {
     headers.remove(AUTHORIZATION);
     headers.remove(PROXY_AUTHORIZATION);
-    let retained = headers
+    let reserved = format!("{PREVIEW_COOKIE}=").into_bytes();
+    let mut retained: Vec<u8> = Vec::new();
+    for pair in headers
         .get_all(COOKIE)
         .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(';'))
-        .map(str::trim)
-        .filter(|pair| !pair.starts_with(&format!("{PREVIEW_COOKIE}=")))
-        .collect::<Vec<_>>()
-        .join("; ");
+        .flat_map(|value| value.as_bytes().split(|byte| *byte == b';'))
+        .map(trim_ascii)
+        .filter(|pair| !pair.starts_with(&reserved))
+        .filter(|pair| !pair.is_empty())
+    {
+        if !retained.is_empty() {
+            retained.extend_from_slice(b"; ");
+        }
+        retained.extend_from_slice(pair);
+    }
     headers.remove(COOKIE);
     if !retained.is_empty() {
-        if let Ok(value) = retained.parse() {
+        if let Ok(value) = hyper::header::HeaderValue::from_bytes(&retained) {
             headers.insert(COOKIE, value);
         }
+    }
+}
+
+fn trim_ascii(value: &[u8]) -> &[u8] {
+    let start = value.iter().position(|byte| !byte.is_ascii_whitespace());
+    let end = value.iter().rposition(|byte| !byte.is_ascii_whitespace());
+    match (start, end) {
+        (Some(start), Some(end)) => &value[start..=end],
+        _ => &[],
     }
 }
 
@@ -226,15 +245,12 @@ fn strip_control_set_cookies(headers: &mut hyper::HeaderMap) {
     let retained = headers
         .get_all(SET_COOKIE)
         .iter()
-        .filter_map(|value| value.to_str().ok())
         .filter(|value| {
-            value
-                .split(';')
-                .next()
-                .and_then(|pair| pair.split_once('='))
-                .is_none_or(|(name, _)| name.trim() != PREVIEW_COOKIE)
+            let first = value.as_bytes().split(|byte| *byte == b';').next().unwrap_or_default();
+            let name = first.split(|byte| *byte == b'=').next().unwrap_or_default();
+            trim_ascii(name) != PREVIEW_COOKIE.as_bytes()
         })
-        .filter_map(|value| value.parse().ok())
+        .cloned()
         .collect::<Vec<_>>();
     headers.remove(SET_COOKIE);
     for value in retained {

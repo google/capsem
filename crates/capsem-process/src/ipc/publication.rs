@@ -108,7 +108,7 @@ pub(super) async fn exchange_bootstrap(
             .send(ProcessToService::PreviewBootstrapExchanged {
                 id,
                 session_token: result.as_ref().ok().cloned(),
-                expires_in_seconds: 15 * 60,
+                expires_in_seconds: capsem_proto::PREVIEW_SESSION_LIFETIME_SECS,
                 error: result.err().map(|error| format!("{error:#}")),
             })
             .await
