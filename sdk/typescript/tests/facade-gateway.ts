@@ -6,6 +6,7 @@ export class FacadeGateway {
   names = ['chosen'];
   containerStates = ['running'];
   previewSessionStatus: number | undefined;
+  defaultProfileId: string | undefined = 'code';
   exposureDeleteStatus: number | undefined;
   readonly files = new Map<string, Buffer>();
 
@@ -30,6 +31,14 @@ export class FacadeGateway {
     if (operation.operationId === 'listVms') value = {
       sandboxes: this.names.map(name => ({...sample(schemas.SandboxInfo ?? {}) as object, id: 'vm-0', name})),
     };
+    if (operation.operationId === 'getHypervisorInfo') {
+      const catalog: Record<string, unknown> = {
+        ...sample(schemas.ProfileCatalogStatus ?? {}) as Record<string, unknown>, profiles: [],
+      };
+      if (this.defaultProfileId === undefined) delete catalog.default_profile_id;
+      else catalog.default_profile_id = this.defaultProfileId;
+      value = {...value as object, profiles: catalog, vms: [], vm_count: 0};
+    }
     if (operation.operationId === 'listProfiles') value = {
       profiles: [{...sample(schemas.ProfileSummary ?? {}) as object, id: 'code', name: 'Code'}],
     };

@@ -17,7 +17,7 @@ it.each([undefined, 500])('closes the exposure when an authenticated port cannot
       const opening = vm.ports.open(3000, {authenticate: true});
       await expect(opening).rejects.toBeInstanceOf(HttpError);
       await expect(opening).rejects.toMatchObject({status: 503});
-      expect(received.slice(1).map(request => [request.method, request.url])).toEqual([
+      expect(received.slice(2).map(request => [request.method, request.url])).toEqual([
         ['POST', '/vms/vm-0/exposures'],
         ['POST', '/vms/vm-0/exposures/preview-id/preview-session'],
         ['DELETE', '/vms/vm-0/exposures/preview-id'],

@@ -5,9 +5,13 @@ import {sample, schemas} from './contract.js';
 import {FacadeGateway} from './facade-gateway.js';
 
 it('creates bound VM handles with profile defaults and shared lifetime', async () => {
-  await gateway((_, response) => response.end(JSON.stringify({
-    ...sample(schemas.ProvisionResponse ?? {}) as object, id: 'vm-0', name: 'chosen',
-  })), async (url, received) => {
+  await gateway((request, response) => response.end(JSON.stringify(request.url === '/status'
+    ? {
+      ...sample(schemas.HypervisorInfo ?? {}) as object,
+      profiles: {...sample(schemas.ProfileCatalogStatus ?? {}) as object, default_profile_id: 'code'},
+    }
+    : {...sample(schemas.ProvisionResponse ?? {}) as object, id: 'vm-0', name: 'chosen'})),
+  async (url, received) => {
     const hv = new Hypervisor(url, 'secret');
     const network = {...sample(schemas.NetworkInfo ?? {}) as object, name: 'team'} as NetworkInfo;
     const profile = {...sample(schemas.ProfileSummary ?? {}) as object, id: 'custom'} as ProfileSummary;
@@ -22,7 +26,8 @@ it('creates bound VM handles with profile defaults and shared lifetime', async (
     vm.close();
     await expect(vm.info()).rejects.toThrow('closed');
     const sibling = await hv.create();
-    expect(JSON.parse(received[1]?.body.toString() ?? '')).toMatchObject({persistent: false, cpus: null, ram_mb: null});
+    const creates = received.filter(entry => entry.url === '/vms/create');
+    expect(JSON.parse(creates[1]?.body.toString() ?? '')).toMatchObject({persistent: false, cpus: null, ram_mb: null});
     hv.close();
     await expect(sibling.info()).rejects.toThrow('closed');
     await expect(hv.list()).rejects.toThrow('closed');
@@ -136,7 +141,8 @@ it.each([1, 8])('accepts positive memory in GiB: %s', async memory => {
     const hv = new Hypervisor(url, 'secret');
     try {
       const vm = await hv.create({memory, env: {LANG: 'C'}});
-      expect(JSON.parse(received[0]?.body.toString() ?? '')).toMatchObject({ram_mb: memory * 1024, env: {LANG: 'C'}});
+      const created = received.find(entry => entry.url === '/vms/create');
+      expect(JSON.parse(created?.body.toString() ?? '')).toMatchObject({ram_mb: memory * 1024, env: {LANG: 'C'}});
       vm.close();
     } finally {hv.close();}
   });
@@ -166,7 +172,7 @@ it('creates ready containers and exposes read-only diagnostic status', async () 
       image: 'docker://busybox:latest', command: [], registry,
     });
     try {
-      expect(JSON.parse(received[0]?.body.toString() ?? '') as unknown).toMatchObject({
+      expect(JSON.parse(received.find(entry => entry.url === '/vms/create')?.body.toString() ?? '') as unknown).toMatchObject({
         env: null,
         container: {
           image: 'docker://busybox:latest', env: {MODE: 'preview'},
@@ -203,6 +209,7 @@ it('opens typed ports and hides exposure targets and preview sessions', async ()
       expect(received).toHaveLength(requestCount);
       await vm.ports.close(plain);
       expect(received.map(request => [request.method, request.url])).toEqual([
+        ['GET', '/status'],
         ['POST', '/vms/create'],
         ['POST', '/vms/vm-0/exposures'],
         ['POST', '/vms/vm-0/exposures'],

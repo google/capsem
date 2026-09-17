@@ -20,6 +20,7 @@ export class Hypervisor extends Client {
   readonly networks: Networks;
   readonly profiles: Profiles;
   readonly debug: Debug;
+  #defaultProfile: Promise<string> | undefined;
   constructor(url: string, token: string, options: TransportOptions = {}) {
     const transport = new Transport(url, token, options);
     super(transport);
@@ -29,6 +30,23 @@ export class Hypervisor extends Client {
   }
   async info(options: CallOptions = {}): Promise<models.HypervisorInfo> {
     return api.getHypervisorInfo(this.transport, options);
+  }
+  /**
+   * The profile the gateway's catalog uses when a call names none, read from
+   * `GET /status` on first use and cached, so the SDK carries no profile name.
+   */
+  async defaultProfileId(options: CallOptions = {}): Promise<string> {
+    this.#defaultProfile ??= this.info(options).then(info => {
+      const id = info.profiles?.default_profile_id;
+      if (!id) {
+        throw new TypeError('The gateway profile catalog names no default profile; pass a profile from hypervisor.profiles.list()');
+      }
+      return id;
+    }).catch((error: unknown) => {
+      this.#defaultProfile = undefined; // A failed lookup must not be cached.
+      throw error;
+    });
+    return this.#defaultProfile;
   }
   async list(options: CallOptions = {}): Promise<models.ListResponse> {
     return api.listVms(this.transport, options);
@@ -46,6 +64,9 @@ export class Hypervisor extends Client {
     if (options.image !== undefined && (typeof options.image !== 'string' || !options.image)) {
       throw new TypeError('Image must be a nonempty string');
     }
+    // Every local check first: an invalid argument must be refused before
+    // the client asks the gateway anything.
+    const ram_mb = memoryMb(options.memory);
     const container = options.image === undefined ? undefined : {
       image: options.image,
       args: [...(options.command ?? [])],
@@ -53,9 +74,10 @@ export class Hypervisor extends Client {
       ...(options.registry === undefined ? {} : {registry: {...options.registry}}),
       attach: false,
     };
+    const profileId = options.profile?.id ?? await this.defaultProfileId(options);
     const response = await api.createVm(this.transport, {body: {
-      profile_id: options.profile?.id ?? 'code', name: options.name || null, persistent: Boolean(options.name),
-      cpus: options.cpus ?? null, ram_mb: memoryMb(options.memory),
+      profile_id: profileId, name: options.name || null, persistent: Boolean(options.name),
+      cpus: options.cpus ?? null, ram_mb,
       env: container === undefined ? options.env ?? null : null,
       networks: (options.networks ?? []).map(network => network.name),
       ...(container === undefined ? {} : {container}),
@@ -66,9 +88,11 @@ export class Hypervisor extends Client {
     return api.getHypervisorLogs(this.transport, {...options, name: options.source ?? models.HostLogSource.SERVICE}, options);
   }
   async run(command: string, options: RunOptions = {}): Promise<models.ExecResponse> {
+    const ram_mb = memoryMb(options.memory);
+    const profileId = options.profile?.id ?? await this.defaultProfileId(options);
     return api.runVm(this.transport, {body: {
-      command, profile_id: options.profile?.id ?? 'code', timeout_secs: options.timeout_secs ?? null,
-      cpus: options.cpus ?? null, ram_mb: memoryMb(options.memory), env: options.env ?? null,
+      command, profile_id: profileId, timeout_secs: options.timeout_secs ?? null,
+      cpus: options.cpus ?? null, ram_mb, env: options.env ?? null,
     }}, {...options, timeoutMs: options.timeoutMs ?? commandDeadlineMs(this.transport.timeoutMs, options.timeout_secs)});
   }
   async purge(options: CallOptions & {all?: boolean} = {}): Promise<models.PurgeResponse> {

@@ -48,8 +48,9 @@ included in strict compilation, lint, coverage, drift and module-size checks.
 
 Named VMs are persistent. Unnamed VMs are ephemeral. Omitted CPU and memory
 values use the selected profile's defaults; memory is a positive integer in GiB.
-Omit `profile` for Capsem's standard `code` profile. To select another profile,
-pass an object from `await hv.profiles.list()` to `create` or `run`.
+Omit `profile` for the profile the gateway's catalog names as its default,
+which the client reads once from `GET /status` and caches. To select another
+profile, pass an object from `await hv.profiles.list()` to `create` or `run`.
 VM names resolve through `hv.list()` and cache the canonical ID. Missing or
 ambiguous names fail before a VM operation is sent.
 

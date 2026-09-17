@@ -30,7 +30,8 @@ it('lets exec and run outlive the default deadline without replaying them', asyn
     try {
       await vm.exec('slow build', {timeout_secs: 600});
       await hv.run('slow build');
-      expect(received.map(request => request.url)).toEqual(['/vms/vm-0/exec', '/run']);
+      // `run` without a profile resolves the catalog default first.
+      expect(received.map(request => request.url)).toEqual(['/vms/vm-0/exec', '/status', '/run']);
     } finally {vm.close(); hv.close();}
   });
 });
