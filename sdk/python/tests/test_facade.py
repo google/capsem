@@ -197,7 +197,8 @@ def test_exec_outlives_the_default_deadline_without_replaying_it() -> None:
             state.delays["/run"] = 0.3
             async with Hypervisor(url, "token", timeout=0.05) as hv:
                 await hv.run("slow build")
-            assert [path for _, path, _ in state.requests] == ["/vms/vm-0/exec", "/run"]
+            # `run` without a profile resolves the catalog default first.
+            assert [path for _, path, _ in state.requests] == ["/vms/vm-0/exec", "/status", "/run"]
     asyncio.run(run())
 
 

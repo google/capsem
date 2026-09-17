@@ -36,6 +36,7 @@ def test_ports_hide_wire_exposures_and_infer_the_container_target() -> None:
                 {"guest_port": 3000, "host_port": 0, "target": "container", "access": "http_preview"},
             ]
             assert [(method, path.split("?")[0]) for method, path, _ in state.requests] == [
+                ("GET", "/status"),
                 ("POST", "/vms/create"),
                 ("POST", "/vms/created-id/exposures"),
                 ("POST", "/vms/created-id/exposures"),
@@ -54,7 +55,7 @@ def test_authenticated_port_closes_its_exposure_when_the_session_fails() -> None
             with pytest.raises(HttpError) as raised:
                 await vm.ports.open(3000, authenticate=True)
             assert raised.value.status == 503
-            assert [(method, path) for method, path, _ in state.requests[1:]] == [
+            assert [(method, path) for method, path, _ in state.requests[2:]] == [
                 ("POST", "/vms/created-id/exposures"),
                 ("POST", "/vms/created-id/exposures/preview-id/preview-session"),
                 ("DELETE", "/vms/created-id/exposures/preview-id"),

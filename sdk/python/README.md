@@ -47,7 +47,8 @@ async with VM("http://127.0.0.1:19222", token, name="workspace") as vm:
 ```
 
 Named VMs are persistent; an omitted name creates an ephemeral VM. Omitting
-`profile` selects Capsem's standard `code` profile. To select another profile,
+`profile` selects the profile the gateway's catalog names as its default, read
+once from `GET /status` and cached on the client. To select another profile,
 pass an object returned by `await hv.profiles.list()` to `create(profile=...)`
 or `run(profile=...)`. Omitting `cpus` or `memory` uses the selected profile's
 defaults. Memory is a positive integer in GiB.
