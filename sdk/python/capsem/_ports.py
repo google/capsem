@@ -30,6 +30,16 @@ class Port:
     bootstrap_token: str | None = None
     expires_in_seconds: int | None = None
 
+    def __repr__(self) -> str:
+        # The bootstrap token opens a browser session on the workload; keep it
+        # out of logs and tracebacks the way Registry keeps its secrets out.
+        token = "<none>" if self.bootstrap_token is None else "<redacted>"
+        return (
+            f"Port(id={self.id!r}, guest={self.guest!r}, host={self.host!r}, "
+            f"authenticate={self.authenticate!r}, url={self.url!r}, "
+            f"bootstrap_token={token}, expires_in_seconds={self.expires_in_seconds!r})"
+        )
+
 
 class Ports:
     def __init__(self, vm: _Vm) -> None:

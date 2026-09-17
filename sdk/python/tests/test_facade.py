@@ -223,6 +223,19 @@ def test_ports_hide_wire_exposures_and_infer_the_container_target() -> None:
     asyncio.run(run())
 
 
+def test_port_repr_never_prints_the_preview_bootstrap_token() -> None:
+    port = Port(
+        id="preview-id", guest=3000, host=None, authenticate=True,
+        url="http://preview-id.localhost:19223/_capsem/bootstrap",
+        bootstrap_token="bootstrap-secret", expires_in_seconds=30,
+    )
+    for text in (repr(port), str(port), f"{port}", repr([port])):
+        assert "bootstrap-secret" not in text
+        assert "bootstrap_token=<redacted>" in text
+    assert "bootstrap_token=<none>" in repr(Port(id="49152", guest=80, host=49152, authenticate=False))
+    assert port.bootstrap_token == "bootstrap-secret"
+
+
 def test_http_deadline_bounds_execution_without_replaying_it() -> None:
     async def run() -> None:
         async with gateway() as (url, state), VM(url, "token", id="vm-0", timeout=0.05) as vm:
