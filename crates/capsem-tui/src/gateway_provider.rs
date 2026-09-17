@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use capsem_sdk::models::{HypervisorInfo, ServiceAvailability, UpdateStatusResponse, VmLifecycleState, VmSummary};
-use capsem_sdk::transport::{CallOptions, Transport};
+use capsem_sdk::Hypervisor;
 use serde::Deserialize;
 
 use crate::app::ControlAction;
@@ -121,7 +121,7 @@ impl GatewayProvider {
             return update_with_binary(&capsem_binary()).await;
         }
         let token = self.token().await?;
-        invoke_action(&self.client, &self.base_url, &token, action).await
+        invoke_action(&self.base_url, &token, action).await
     }
 }
 
@@ -148,17 +148,18 @@ async fn fetch_token(client: &reqwest::Client, base_url: &str) -> Result<String>
 }
 
 async fn fetch_status(base_url: &str, token: &str) -> Result<HypervisorInfo> {
-    capsem_sdk::Hypervisor::new(base_url, token)?
+    Hypervisor::new(base_url, token)?
         .info()
         .await
         .map_err(crate::sdk_actions::display_error)
 }
 
 async fn fetch_profiles(base_url: &str, token: &str) -> Result<Vec<ProfileOption>> {
-    let transport = Transport::new(base_url, token, Duration::from_secs(30))?;
-    let response = capsem_sdk::operations::list_profiles(&transport, CallOptions::default()).await?;
-    Ok(response
-        .profiles
+    let hypervisor = Hypervisor::new(base_url, token)?;
+    Ok(hypervisor
+        .profiles()
+        .list()
+        .await?
         .into_iter()
         .filter(|record| record.availability.shell)
         .map(|record| ProfileOption {
@@ -336,27 +337,18 @@ pub struct ActionOutcome {
     pub focus_session: Option<String>,
 }
 
-async fn invoke_action(
-    client: &reqwest::Client,
-    base_url: &str,
-    token: &str,
-    action: &ControlAction,
-) -> Result<ActionOutcome> {
+async fn invoke_action(base_url: &str, token: &str, action: &ControlAction) -> Result<ActionOutcome> {
     match action {
         ControlAction::StartService => start_service().await,
         ControlAction::Update => update_with_binary(&capsem_binary()).await,
         ControlAction::Purge { all } => {
-            let response = client
-                .post(join_url(base_url, &["purge"])?)
-                .bearer_auth(token)
-                .json(&serde_json::json!({ "all": all }))
-                .send()
+            let response = Hypervisor::new(base_url, token)?
+                .purge(*all)
                 .await
-                .context("purge capsem sessions")?;
-            let body = response_json(response).await?;
-            let purged = json_u64(&body, "purged");
-            let persistent = json_u64(&body, "persistent_purged");
-            let ephemeral = json_u64(&body, "ephemeral_purged");
+                .map_err(crate::sdk_actions::display_error)?;
+            let purged = response.purged;
+            let persistent = response.persistent_purged;
+            let ephemeral = response.ephemeral_purged;
             let message = if *all {
                 format!("purged {purged} sessions ({persistent} persistent, {ephemeral} temporary)")
             } else if persistent > 0 {
@@ -452,31 +444,6 @@ fn home_dir() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."))
-}
-
-async fn response_json(response: reqwest::Response) -> Result<serde_json::Value> {
-    let status = response.status();
-    let text = response.text().await.context("read gateway action response body")?;
-    if !status.is_success() {
-        return Err(anyhow::anyhow!("gateway action failed ({status}): {text}"));
-    }
-    if text.trim().is_empty() {
-        return Ok(serde_json::json!({}));
-    }
-    serde_json::from_str(&text).context("parse gateway action response")
-}
-
-fn json_u64(body: &serde_json::Value, key: &str) -> u64 {
-    body.get(key).and_then(serde_json::Value::as_u64).unwrap_or_default()
-}
-
-fn join_url(base_url: &str, path_segments: &[&str]) -> Result<reqwest::Url> {
-    let mut url = reqwest::Url::parse(&format!("{}/", base_url.trim_end_matches('/')))
-        .context("parse capsem gateway base URL")?;
-    url.path_segments_mut()
-        .map_err(|_| anyhow::anyhow!("capsem gateway URL cannot be a base"))?
-        .extend(path_segments);
-    Ok(url)
 }
 
 #[derive(Debug, Deserialize)]
