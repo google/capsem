@@ -87,7 +87,16 @@ export class Ports extends Resource {
     }}, options);
     const opened = port(exposure);
     if (!authenticate) return opened;
-    const session = await api.createVmPreviewSession(transport, {id, exposure_id: exposure.id}, options);
+    let session: models.PreviewSessionResponse;
+    try {
+      session = await api.createVmPreviewSession(transport, {id, exposure_id: exposure.id}, options);
+    } catch (error) {
+      // The caller never receives a Port to close. Remove the exposure without
+      // the caller's signal (it may be the reason we failed) and report the
+      // session failure.
+      await api.deleteVmExposure(transport, {id, exposure_id: exposure.id}).catch(() => undefined);
+      throw error;
+    }
     return {...opened, host: null, url: session.url, bootstrapToken: session.bootstrap_token,
       expiresInSeconds: session.expires_in_seconds};
   }

@@ -5,6 +5,8 @@ import type {Request} from './gateway.js';
 export class FacadeGateway {
   names = ['chosen'];
   containerStates = ['running'];
+  previewSessionStatus: number | undefined;
+  exposureDeleteStatus: number | undefined;
   readonly files = new Map<string, Buffer>();
 
   handle(request: Request, response: ServerResponse): void {
@@ -13,6 +15,14 @@ export class FacadeGateway {
       && new RegExp(`^${route.path.replace(/\{[^}]+\}/g, '[^/]+')}$`).test(url.pathname));
     if (!route) {response.writeHead(404).end('missing'); return;}
     const operation = route.operation;
+    if (operation.operationId === 'createVmPreviewSession' && this.previewSessionStatus !== undefined) {
+      response.writeHead(this.previewSessionStatus).end('preview session refused');
+      return;
+    }
+    if (operation.operationId === 'deleteVmExposure' && this.exposureDeleteStatus !== undefined) {
+      response.writeHead(this.exposureDeleteStatus).end('exposure delete failed');
+      return;
+    }
     const status = operation.responses['200'] ? '200' : '202';
     const schema = operation.responses[status]?.content['application/json']?.schema;
     response.statusCode = Number(status);
