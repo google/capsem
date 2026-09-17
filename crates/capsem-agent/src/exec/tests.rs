@@ -192,6 +192,41 @@ fn exec_accepts_binary_stdin_until_explicit_eof() {
 }
 
 #[test]
+fn exec_cancellation_reaches_a_grandchild_holding_the_output_pipe() {
+    use std::os::unix::io::IntoRawFd;
+    use std::os::unix::net::UnixStream;
+
+    let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
+    let (ctrl_tx, ctrl_rx) = test_ctrl_channel();
+    let exec_fd = exec_guest.into_raw_fd();
+    let cancellation = std::sync::Arc::new(ExecCancellation::default());
+    let cancellation_for_exec = std::sync::Arc::clone(&cancellation);
+    std::thread::spawn(move || {
+        run_exec_on_fds_with_cancel(
+            exec_fd,
+            &ctrl_tx,
+            9,
+            // The shell exits at once; the grandchild keeps stdout open, so
+            // the output drain outlives the child the cancellation targets.
+            "sleep 30 & echo started",
+            &[],
+            &cancellation_for_exec,
+        );
+    });
+
+    assert_eq!(read_exec_started(&mut exec_host), 9);
+    let started = std::time::Instant::now();
+    cancellation.cancel();
+    let _ = read_exec_lanes(&mut exec_host);
+    let (id, _) = recv_exec_done(&ctrl_rx);
+    assert_eq!(id, 9);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "cancellation must not wait for the grandchild to exit"
+    );
+}
+
+#[test]
 fn exec_cancellation_kills_the_child_process_group() {
     use std::os::unix::io::IntoRawFd;
     use std::os::unix::net::UnixStream;

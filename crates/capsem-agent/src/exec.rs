@@ -308,10 +308,15 @@ pub(super) fn run_exec_on_fds_with_cancel(
         })
     });
 
+    // Drain before reaping. A grandchild holding the stdout pipe keeps these
+    // joins blocked, and while the child is unreaped its pid is still its
+    // process group's, so a cancellation arriving during the drain can still
+    // signal the group. Completing first made cancel() a no-op and ExecDone
+    // waited for the grandchild.
+    finish_exec_io(&output, stderr_thread, stdout_thread, stdin_thread);
+
     let status = child.wait();
     cancellation.complete();
-
-    finish_exec_io(&output, stderr_thread, stdout_thread, stdin_thread);
 
     let exit_code = match status {
         Ok(status) => status.code().unwrap_or_else(|| 128 + status.signal().unwrap_or(1)),
