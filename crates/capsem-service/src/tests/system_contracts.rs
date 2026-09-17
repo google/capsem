@@ -124,7 +124,10 @@ async fn system_status_route_returns_exact_installed_documents_in_one_response()
     assert!(profiles.profiles.iter().any(|profile| profile.id == "code"));
     // Clients ask the catalog which profile to use when they name none,
     // instead of compiling a profile name into every SDK.
-    assert_eq!(profiles.default_profile_id.as_deref(), Some("code"));
+    // A container's default is published apart from a VM's; today one profile
+    // answers both, and the route must publish both claims either way.
+    assert_eq!(profiles.defaults.vm.as_deref(), Some("code"));
+    assert_eq!(profiles.defaults.container.as_deref(), Some("code"));
     let code = body["profiles"]["profiles"]
         .as_array()
         .unwrap()
