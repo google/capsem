@@ -8,6 +8,14 @@ const built = await import(packageName);
 const {Hypervisor, VmLifecycleState} = /** @type {typeof import('../src/index.js')} */ (built);
 const url = process.env.SDK_GATEWAY_URL, token = process.env.SDK_GATEWAY_TOKEN;
 assert(url && token, 'Fixture gateway URL and token are required');
+/**
+ * @param {import('../src/index.js').ExecOutput} output
+ * @param {string} expected
+ */
+function assertOutput(output, expected) {
+  assert.equal(output.encoding, 'utf8');
+  assert.equal(output.data, expected);
+}
 const hv = new Hypervisor(url, token, {timeoutMs: 120_000});
 const name = `sdk-ts-${randomUUID().slice(0, 8)}`;
 try {
@@ -17,7 +25,7 @@ try {
     : (await hv.profiles.list()).find(item => item.id === requestedProfile);
   assert(requestedProfile === undefined || profile !== undefined, `missing profile ${requestedProfile}`);
   const vm = await hv.create({name, cpus: 2, memory: 2, ...(profile === undefined ? {} : {profile})});
-  assert.equal((await vm.exec('printf SDK_EXEC_READY')).stdout.data, 'SDK_EXEC_READY');
+  assertOutput((await vm.exec('printf SDK_EXEC_READY')).stdout, 'SDK_EXEC_READY');
   const info = await vm.info();
   assert.equal(info.id, vm.id);
   assert.equal(info.status, VmLifecycleState.RUNNING);
@@ -31,7 +39,7 @@ try {
   const exec = await vm.exec('sha256sum /root/sdk-proof.bin; printf SDK_STDERR >&2; exit 7');
   assert.equal(exec.exit_code, 7);
   assert.equal(exec.stdout.data.split(' ')[0], digest);
-  assert(exec.stderr.data === 'SDK_STDERR');
+  assertOutput(exec.stderr, 'SDK_STDERR');
   await vm.log({tail: 10});
   await hv.log({tail: 10});
   await vm.history({limit: 10});
@@ -53,7 +61,7 @@ try {
   await vm.pause();
   assert.equal((await vm.info()).status, VmLifecycleState.SUSPENDED);
   await vm.resume();
-  assert.equal((await vm.exec('printf SDK_RESUMED')).stdout, 'SDK_RESUMED');
+  assertOutput((await vm.exec('printf SDK_RESUMED')).stdout, 'SDK_RESUMED');
   assert.deepEqual(await vm.files.read('sdk-proof.bin'), data);
   // On failure the owning service fixture preserves evidence before cleanup.
   await fork.delete();
