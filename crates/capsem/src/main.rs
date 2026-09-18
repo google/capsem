@@ -2210,9 +2210,9 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
             let (resp_body, _ct) = client
                 .request_bytes("POST", &url, Some(bytes.clone()), Some("application/octet-stream"))
                 .await?;
-            // POST handler returns JSON `{success, size}`; surface for sanity.
-            let _ = resp_body;
-            eprintln!("[cp] {} bytes  {}  ->  {}:{}", bytes.len(), src, session, guest_path,);
+            // The service answers with where the guest sees the file.
+            let written: capsem_api::UploadResponse = serde_json::from_slice(&resp_body).context("upload response")?;
+            eprintln!("[cp] {} bytes  {src}  ->  {session}:{}", bytes.len(), written.vm_path);
             Ok(())
         }
     }
