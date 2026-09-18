@@ -103,9 +103,9 @@ pub enum PublicationAccess {
 /// it and the confined router that strips it before the workload sees it.
 pub const PREVIEW_COOKIE: &str = "capsem_preview";
 /// How long a single-use browser bootstrap token may be exchanged.
-pub const PREVIEW_BOOTSTRAP_LIFETIME_SECS: u32 = 30;
+pub const PREVIEW_BOOTSTRAP_LIFETIME_SECS: u16 = 30;
 /// How long an exchanged preview session admits connections.
-pub const PREVIEW_SESSION_LIFETIME_SECS: u32 = 15 * 60;
+pub const PREVIEW_SESSION_LIFETIME_SECS: u16 = 15 * 60;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
