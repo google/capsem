@@ -86,7 +86,7 @@ fn the_query_covers_every_source_table_the_schema_allows() {
 }
 
 #[test]
-fn a_records_id_names_the_event_and_the_direction() {
+fn a_records_id_names_the_session_the_event_and_the_direction() {
     let row = IndexRow {
         event_id: "0123456789ab".into(),
         source_table: "net_events".into(),
@@ -101,5 +101,8 @@ fn a_records_id_names_the_event_and_the_direction() {
             len: 4,
         },
     };
-    assert_eq!(record_id(&row), "urn:capsem:0123456789ab:response");
+    assert_eq!(
+        record_id("a-session", &row),
+        "urn:capsem:a-session:0123456789ab:response"
+    );
 }

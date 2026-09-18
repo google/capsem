@@ -90,6 +90,17 @@ pub(super) async fn export_to_bytes(db: &DbHandle, db_path: &std::path::Path) ->
     (summary, bytes)
 }
 
+/// The `WARC-Record-ID` header a body of the ledger at `db_path` is exported
+/// under, angle brackets included. The session is the ledger's directory.
+pub(super) fn body_record_id(db_path: &std::path::Path, event_id: &str, direction: &str) -> String {
+    let session = db_path
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .expect("a ledger lives in a session directory")
+        .to_string_lossy();
+    format!("<urn:capsem:{session}:{event_id}:{direction}>")
+}
+
 /// Close the owning handle, edit the ledger on disk, and reopen it as an
 /// external reader.
 ///
@@ -193,23 +204,29 @@ async fn every_archived_body_becomes_one_record_named_by_where_it_came_from() {
         })
         .collect();
     assert_eq!(
-        described.get("<urn:capsem:0123456789ab:response>").map(String::as_str),
+        described
+            .get(&body_record_id(&p, "0123456789ab", "response"))
+            .map(String::as_str),
         Some("https://answers.example/api"),
         "{described:?}"
     );
     assert_eq!(
-        described.get("<urn:capsem:0123456789ac:request>").map(String::as_str),
+        described
+            .get(&body_record_id(&p, "0123456789ac", "request"))
+            .map(String::as_str),
         Some("https://api.model.example/v1/messages"),
         "{described:?}"
     );
     assert_eq!(
-        described.get("<urn:capsem:0123456789ad:payload>").map(String::as_str),
+        described
+            .get(&body_record_id(&p, "0123456789ad", "payload"))
+            .map(String::as_str),
         Some("capsem://security/block-secrets"),
         "{described:?}"
     );
     assert_eq!(
         described
-            .get(&format!("<urn:capsem:{tool_response_event_id}:response>"))
+            .get(&body_record_id(&p, &tool_response_event_id, "response"))
             .map(String::as_str),
         Some("capsem://tool-response/warc-tool-call-1"),
         "{described:?}"
@@ -224,9 +241,48 @@ async fn every_archived_body_becomes_one_record_named_by_where_it_came_from() {
 
     let net = members
         .iter()
-        .find(|member| header(member, "WARC-Record-ID").as_deref() == Some("<urn:capsem:0123456789ab:response>"))
+        .find(|member| header(member, "WARC-Record-ID") == Some(body_record_id(&p, "0123456789ab", "response")))
         .expect("the net event's record");
     assert_eq!(block(net), br#"{"answer":"yes"}"#, "the block is the archived body");
+}
+
+/// WARC requires record ids to be globally unique, and an event id is only
+/// unique within its ledger. Two sessions that happen to assign the same one
+/// must still export records a merged collection can tell apart.
+#[tokio::test]
+async fn two_sessions_with_the_same_event_id_export_distinct_record_ids() {
+    let mut ids = Vec::new();
+    for session in ["warc-session-a", "warc-session-b"] {
+        let dir = std::env::temp_dir().join(format!("capsem-test-{session}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create the session directory");
+        let p = dir.join("session.db");
+        let db = DbHandle::open(&p).expect("open handle");
+        db.write(WriteOp::NetEvent(net_event_with_response(
+            "0123456789ab",
+            "same.example",
+            "the same event id in both sessions",
+        )))
+        .await
+        .expect("write net event");
+        db.flush().await.expect("flush");
+
+        let (summary, out) = export_to_bytes(&db, &p).await;
+        assert_eq!(summary.records, 1, "{:?}", summary.skipped);
+        let id = header(&body_members(&out)[0], "WARC-Record-ID").expect("the record has an id");
+        assert_eq!(
+            id,
+            format!(
+                "<urn:capsem:{}:0123456789ab:response>",
+                dir.file_name().unwrap().to_string_lossy()
+            ),
+            "the id names the session, then the event, then the direction"
+        );
+        ids.push(id);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    assert_ne!(ids[0], ids[1], "a merged collection must not see one id twice");
 }
 
 /// A caller streaming the export to a client drops the summary on the floor,

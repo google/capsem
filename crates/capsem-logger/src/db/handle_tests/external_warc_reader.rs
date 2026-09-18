@@ -20,7 +20,7 @@ use std::path::Path;
 use std::process::Command;
 
 use super::bodies::{count, net_event_with_response};
-use super::warc_export::{export_to_bytes, rewrite_and_reopen};
+use super::warc_export::{body_record_id, export_to_bytes, rewrite_and_reopen};
 use super::*;
 
 /// `--frozen` and `--project build_system`: the interpreter and `warcio` both
@@ -145,7 +145,7 @@ async fn warcio_reads_every_record_the_export_wrote() {
 
     let known = bodies
         .iter()
-        .find(|record| record["id"] == "<urn:capsem:0123456789ab:response>")
+        .find(|record| record["id"] == body_record_id(&p, "0123456789ab", "response"))
         .expect("the net event's record, as warcio identifies it");
     assert_eq!(known["uri"], "https://answers.example/api");
     assert_eq!(

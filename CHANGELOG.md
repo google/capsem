@@ -29,7 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A session's captured bodies can be exported as a standard WARC 1.1 file, one
   `resource` record per stored body, gzip-member framed so `warcio`, `pywb` and
   the rest of the web-archive toolchain can read it -- and seek within it --
-  without any Capsem code. Each record names where the body came from: a real
+  without any Capsem code. Each record's id,
+  `urn:capsem:<session>:<event id>:<direction>`, is unique across sessions
+  merged into one collection and names the ledger row it came from. Each
+  record names where the body came from: a real
   `https://` URI for network and model traffic, and a `capsem://` one for
   tools, exec output and security-rule payloads. A body the export cannot
   honestly describe -- its source row gone, its timestamp unreadable, its URI

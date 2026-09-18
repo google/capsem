@@ -165,11 +165,17 @@ impl fmt::Display for SkipReason {
     }
 }
 
-/// How a body's identity is spelled in `WARC-Record-ID`. Unique by the
-/// `UNIQUE(event_id, source_table, direction)` index on `event_body_blobs`:
-/// one event has at most one body per direction, whichever table it is in.
-fn record_id(row: &IndexRow) -> String {
-    format!("urn:capsem:{}:{}", row.event_id, row.direction.as_str())
+/// How a body's identity is spelled in `WARC-Record-ID`.
+///
+/// WARC requires record ids to be globally unique, and an event id is only
+/// unique within its ledger: twelve hex digits the session assigns, so two
+/// sessions merged into one collection can carry the same one. The session
+/// names the ledger and the event id names the row in it -- the
+/// `UNIQUE(event_id, source_table, direction)` index on `event_body_blobs`
+/// gives one event at most one body per direction -- so the id is unique
+/// across sessions and still points straight back at what it came from.
+fn record_id(session: &str, row: &IndexRow) -> String {
+    format!("urn:capsem:{session}:{}:{}", row.event_id, row.direction.as_str())
 }
 
 /// One body's index row plus the two facts only its source row can supply.
@@ -329,7 +335,9 @@ impl DbHandle {
                 // Checked here rather than left to `write_record`, so a URI a
                 // counterparty chose is a counted skip instead of a refusal
                 // that would end the walk. It is the only header value in a
-                // record that a counterparty can reach: the record id is an
+                // record that a counterparty can reach: the record id is the
+                // ledger's own directory name -- already in the opening
+                // `warcinfo` id, which would have refused it first -- and an
                 // event id SQLite CHECKs to twelve hex digits, the date is
                 // generated here, and `content_type` is cut out of a header
                 // line and trimmed on the way in -- which
@@ -351,7 +359,7 @@ impl DbHandle {
                         .push(identity.because(SkipReason::UnreadableTimestamp(stamp)));
                     continue;
                 };
-                let id = record_id(&row.index);
+                let id = record_id(&session, &row.index);
                 let truncated = row.index.truncated;
                 // The hash-verified read path, not a shortcut around it.
                 // Damage to this row or its block costs this row: a span that
