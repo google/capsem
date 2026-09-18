@@ -9,10 +9,11 @@ session.bodies, the ledger row counts, and the RSS of this VM's capsem-process
 and of this run's capsem-service, then reports the per-request cost.
 
 PASS when:
-  - disk per request (session.db + WAL + session.bodies) < 6 KB;
-  - capsem-process RSS growth per request < 2 KB between the 10-minute mark
-    and the last sample;
-  - capsem-service RSS growth per request < 512 B over the same window (the
+  - each request adds < 6 KB on disk (session.db + WAL + session.bodies),
+    measured as a slope from the 10-minute mark to the last sample, so the
+    empty schema's fixed floor (~470 KB) is not billed to the requests;
+  - capsem-process RSS grows < 2 KB per request over the same window;
+  - capsem-service RSS grows < 512 B per request over the same window (the
     service reads ledgers from disk, so it must not grow with traffic);
   - only capsem-process ever holds session.bodies open for writing;
   - the request count grows between every pair of samples, and the model was
@@ -20,8 +21,9 @@ PASS when:
     output, so an exec that silently does nothing would otherwise "pass" with
     zero traffic; a flat line is a FAIL, never a pass.
 
-It also reports the compression ratio actually achieved: raw body bytes the
-index holds against the size of session.bodies.
+It also prints total disk divided by request count (which includes the fixed
+floor) and the compression ratio actually achieved: raw body bytes the index
+holds against the size of session.bodies.
 
 Usage (build first, then bound the run so no VM leaks):
     just _sign
@@ -192,30 +194,30 @@ def judge(samples: list[dict], failures: list[str]) -> None:
     if last["models"] == 0:
         fail(f"no model_calls rows: {MODEL} was never called through the egress")
 
-    per_req = _disk(last) / max(last["reqs"], 1)
-    print(f"\n  disk per request: {per_req / kb:.2f} KB over {last['reqs']} requests")
-    if per_req > 6 * kb:
-        fail(f"disk per request {per_req / kb:.1f} KB > 6 KB")
-    # Informational: the same cost without the empty schema's fixed floor.
-    first = samples[0]
-    if last["reqs"] > first["reqs"]:
-        marginal = (_disk(last) - _disk(first)) / (last["reqs"] - first["reqs"])
-        print(f"  marginal disk per request after t+5m: {marginal / kb:.2f} KB")
-
+    overall = _disk(last) / max(last["reqs"], 1)
+    print(f"\n  disk / requests, including the empty schema's fixed floor: {overall / kb:.2f} KB")
     print(f"  bodies indexed: {last['stored'] // kb} KB of {last['original'] // kb} KB seen")
     if last["bodies"]:
         print(f"  blocks: {last['raw'] // kb} KB raw -> {last['comp'] // kb} KB compressed")
         ratio = last["stored"] / last["bodies"]
         print(f"  session.bodies {last['bodies'] // kb} KB: {ratio:.2f}x vs indexed bytes")
 
+    # Every budget is a slope: what one more request costs a long session,
+    # from the 10-minute mark (past boot and the schema's fixed floor) to the end.
     if len(samples) < 3:
-        fail(f"{len(samples)} samples; RSS growth needs >= 3 (CAPSEM_ECON_MINUTES >= 15)")
+        fail(f"{len(samples)} samples; the slopes need >= 3 (CAPSEM_ECON_MINUTES >= 15)")
     else:
-        a, b = samples[1], samples[-1]  # the 10-minute mark and the end
+        a, b = samples[1], samples[-1]
         dreq = max(b["reqs"] - a["reqs"], 1)
+        disk = (_disk(b) - _disk(a)) / dreq
         proc = (b["process_rss"] - a["process_rss"]) * kb / dreq
         svc = (b["service_rss"] - a["service_rss"]) * kb / dreq
-        print(f"  RSS growth per request, t+10m..end: process {proc:.0f} B, service {svc:.0f} B")
+        print(
+            f"  per request, t+10m..end over {dreq} requests: disk {disk / kb:.2f} KB, "
+            f"process RSS {proc:.0f} B, service RSS {svc:.0f} B"
+        )
+        if disk > 6 * kb:
+            fail(f"each request adds {disk / kb:.1f} KB on disk (> 6 KB)")
         if proc > 2 * kb:
             fail(f"capsem-process grows {proc / kb:.1f} KB per request")
         if svc > 512:

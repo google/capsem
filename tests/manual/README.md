@@ -85,15 +85,19 @@ Boots one sandboxed VM and runs a 30-minute fetch-and-summarise loop against
 the host's Gemma through capsem's egress. Every five minutes it samples
 `session.db` (and its WAL), `session.bodies`, the ledger row counts, and the
 RSS of this VM's `capsem-process` and this run's `capsem-service`, then
-asserts the storage budget: under 6 KB per request on disk, under 2 KB per
-request of `capsem-process` RSS growth from the 10-minute mark, a flat
-`capsem-service`, and `capsem-process` as the only writer of the archive.
+asserts what one more request costs a long session. Every budget is a slope
+from the 10-minute mark to the last sample: each request may add under 6 KB
+on disk (`session.db` + WAL + `session.bodies`), under 2 KB of
+`capsem-process` RSS, and under 512 B of `capsem-service` RSS (it reads
+ledgers from disk, so it should stay flat). `capsem-process` must be the only
+writer of the archive. Total disk divided by request count is printed too,
+labelled as including the empty schema's fixed floor (~470 KB), which a
+short run would otherwise bill to its first few requests.
 
 The numbers come from the ledger and process RSS, not from exec output, so
 the run also fails if the request count ever stops growing between samples
 or no model call was recorded: a loop that silently did nothing must not
-pass. It prints the per-sample request counts, the marginal disk cost per
-request without the empty schema's fixed floor, and the compression actually
+pass. It prints the per-sample request counts and the compression actually
 achieved (indexed body bytes against the size of `session.bodies`).
 
 ```bash
