@@ -21,7 +21,7 @@ def test_sdk_observes_real_model_and_tool_events(model_client_env, tmp_path: Pat
     try:
         gateway.start()
         result = subprocess.run(
-            ["uv", "run", "--frozen", "python", "-m", "tests.model_acceptance"],
+            ["uv", "run", "--frozen", "--no-sync", "python", "-m", "tests.model_acceptance"],
             cwd=ROOT / "sdk/python", env={
                 **{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
                 "SDK_GATEWAY_URL": gateway.base_url, "SDK_GATEWAY_TOKEN": gateway.token,

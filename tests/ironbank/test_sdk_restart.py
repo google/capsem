@@ -37,7 +37,7 @@ def test_sdk_receives_managed_restart_and_reconnects_explicitly(language: str) -
         registry = json.loads((service.tmp_dir / "persistent_registry.json").read_text())
         workspace = workspace_digest(service.tmp_dir / "persistent" / VM_ID)
         project = ROOT / "sdk" / language
-        command = ["uv", "run", "--frozen", "python", "-m", "tests.restart_acceptance"] if language == "python" else ["node", "tools/restart-acceptance.mjs"]
+        command = ["uv", "run", "--frozen", "--no-sync", "python", "-m", "tests.restart_acceptance"] if language == "python" else ["node", "tools/restart-acceptance.mjs"]
         result = subprocess.run(command, cwd=project, env={
             **{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
             "SDK_GATEWAY_URL": f"http://127.0.0.1:{before.port}", "SDK_GATEWAY_TOKEN": before.token,
@@ -50,7 +50,7 @@ def test_sdk_receives_managed_restart_and_reconnects_explicitly(language: str) -
         assert json.loads((service.tmp_dir / "persistent_registry.json").read_text()) == registry
         assert workspace_digest(service.tmp_dir / "persistent" / VM_ID) == workspace
         reconnect = subprocess.run(
-            ["uv", "run", "--frozen", "python", "-m", "tests.gateway_acceptance"]
+            ["uv", "run", "--frozen", "--no-sync", "python", "-m", "tests.gateway_acceptance"]
             if language == "python" else ["node", "tools/gateway-acceptance.mjs"],
             cwd=project, env={
                 **{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},

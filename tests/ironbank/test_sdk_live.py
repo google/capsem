@@ -22,7 +22,7 @@ def test_sdk_live_vm_lifecycle_and_binary_files(language: str) -> None:
         service.start()
         gateway.start()
         result = subprocess.run(
-            ["uv", "run", "--frozen", "python", "-m", "tests.live_acceptance"]
+            ["uv", "run", "--frozen", "--no-sync", "python", "-m", "tests.live_acceptance"]
             if language == "python" else ["node", "tools/live-acceptance.mjs"],
             cwd=ROOT / "sdk" / language, env={
                 **{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},

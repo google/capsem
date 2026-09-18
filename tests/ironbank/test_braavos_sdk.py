@@ -24,18 +24,18 @@ def test_braavos_sdk_against_real_gateway_and_stopped_workspace(
     gateway = GatewayInstance(service.uds_path)
     project = ROOT / "sdk" / language
     try:
-        if language == "typescript":
-            build = subprocess.run(["node", "tools/build.mjs"], cwd=project,
-                                   capture_output=True, text=True, timeout=60, check=False)
-            assert build.returncode == 0, build.stdout + build.stderr
         service.profiles_dir = materialize_test_profiles(service.tmp_dir)
         seed_workspace_changes(service.tmp_dir, service.profiles_dir)
         service.start()
         gateway.start()
+        # The gate prepares each SDK before the suites (`sdk.python.sync`,
+        # `functional.sdk.rust.example`, `functional.sdk.typescript.bundle`);
+        # these run with no network, so they only consume what it made.
         commands = {
-            "python": ["uv", "run", "--project", str(project), "--frozen", "python", "-m", "tests.gateway_acceptance"],
+            "python": ["uv", "run", "--project", str(project), "--frozen", "--no-sync",
+                       "python", "-m", "tests.gateway_acceptance"],
             "typescript": ["node", "tools/gateway-acceptance.mjs"],
-            "rust": ["cargo", "run", "--quiet", "-p", "capsem-sdk", "--example", "gateway_acceptance"],
+            "rust": ["cargo", "run", "--frozen", "--quiet", "-p", "capsem-sdk", "--example", "gateway_acceptance"],
         }
         result = subprocess.run(
             commands[language],
