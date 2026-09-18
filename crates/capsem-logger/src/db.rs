@@ -220,7 +220,15 @@ struct DbHandleInner {
     /// so SQLite's `data_version` -- not a local write -- is what tells it the
     /// ledger moved and its read caches expired.
     external: bool,
+    /// Parks the next `query_many` right after its cache lookup, so a test can
+    /// land an invalidation exactly there. See `pause_next_query_many_for_tests`.
+    #[cfg(test)]
+    query_many_pause: Mutex<Option<QueryManyPause>>,
 }
+
+/// Signals "the lookup is done" and waits for "go on".
+#[cfg(test)]
+type QueryManyPause = (tokio::sync::oneshot::Sender<()>, tokio::sync::oneshot::Receiver<()>);
 
 impl Drop for DbHandleInner {
     fn drop(&mut self) {
@@ -295,6 +303,8 @@ impl DbHandle {
                 read_cache_epoch: AtomicU64::new(0),
                 session_summary_cache_epoch: AtomicU64::new(0),
                 external,
+                #[cfg(test)]
+                query_many_pause: Mutex::new(None),
             }),
         })
     }
@@ -450,7 +460,14 @@ impl DbHandle {
         let started = Instant::now();
         let query_count = queries.len();
         let params_count: usize = queries.iter().map(|(_, params)| params.len()).sum();
-        let cached = self.cached_query_many(&queries);
+        // The epoch the result will belong to, read under the same lock as the
+        // lookup and the invalidations, so it is exactly the epoch the cached
+        // entry was valid in. Read any later and an invalidation landing in
+        // between is invisible: a pre-commit answer would be stored under the
+        // post-commit epoch and served as current until the next commit.
+        let (mut epoch_before, cached) = self.cached_query_many(&queries);
+        #[cfg(test)]
+        self.pause_query_many_for_tests().await;
         if !self.inner.external {
             // An in-process handle owns the writer, so anything that could
             // invalidate this entry already has; the entry stands on its own.
@@ -472,11 +489,6 @@ impl DbHandle {
         // `data_version` and re-executes the batch only when it moved.
         let cache_valid = self.inner.external && cached.is_some();
         let cache_key = queries.clone();
-        // The epoch the result will belong to. A write or an external
-        // invalidation that lands while the reader thread is executing bumps
-        // it, and a result from before it must not be cached: it would be
-        // served as current until the next invalidation.
-        let mut epoch_before = self.read_cache_epoch(ReadCacheDomain::All);
         let (reply, rx) = tokio::sync::oneshot::channel();
         self.inner
             .reader_tx
@@ -506,9 +518,11 @@ impl DbHandle {
                 if changed {
                     // The worker observed a commit by the other process and
                     // then executed against it: these results belong to the
-                    // new epoch, not the one this call started in.
-                    self.invalidate_read_cache();
-                    epoch_before = self.read_cache_epoch(ReadCacheDomain::All);
+                    // new epoch, not the one this call started in -- the one
+                    // this invalidation created, not whatever the counter
+                    // reads a moment later, which a newer commit may already
+                    // have moved past these results.
+                    epoch_before = self.expire_read_caches(true);
                 }
                 Some(results)
             }
@@ -611,13 +625,21 @@ impl DbHandle {
     /// A hit moves its entry to the front, so the batches a route actually
     /// polls keep each other alive and a one-off batch is what falls off the
     /// end.
-    fn cached_query_many(&self, queries: &[DbQueryOwned]) -> Option<Vec<DbQueryJson>> {
+    ///
+    /// Returns the read epoch alongside, taken under the cache lock. Every
+    /// invalidation bumps the epoch under that same lock, so the pair is one
+    /// consistent observation: the entry, if any, was valid in exactly this
+    /// epoch, and a result stored against it is refused once anything expires.
+    fn cached_query_many(&self, queries: &[DbQueryOwned]) -> (u64, Option<Vec<DbQueryJson>>) {
         let mut cache = self.inner.query_many_cache.lock().unwrap_or_else(|e| e.into_inner());
-        let position = cache.iter().position(|(key, _)| key == queries)?;
+        let epoch = self.read_cache_epoch(ReadCacheDomain::All);
+        let Some(position) = cache.iter().position(|(key, _)| key == queries) else {
+            return (epoch, None);
+        };
         cache[..=position].rotate_right(1);
         let result = cache[0].1.clone();
         drop(cache);
-        Some(result)
+        (epoch, Some(result))
     }
 
     /// Cache a `query_many` result unless the read epoch moved while the
@@ -640,25 +662,29 @@ impl DbHandle {
     /// Invalidate DB-owned read caches after external logger lifecycle helpers
     /// mutate the same database.
     pub fn invalidate_read_cache(&self) {
-        self.inner
-            .query_many_cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        self.inner.read_cache_epoch.fetch_add(1, Ordering::AcqRel);
-        self.inner.session_summary_cache_epoch.fetch_add(1, Ordering::AcqRel);
+        self.expire_read_caches(true);
     }
 
     fn invalidate_after_write(&self, affects_session_summary: bool) {
-        self.inner
-            .query_many_cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        self.inner.read_cache_epoch.fetch_add(1, Ordering::AcqRel);
+        self.expire_read_caches(affects_session_summary);
+    }
+
+    /// Bump the read epochs and drop every cached batch, as one step under the
+    /// cache lock, and return the read epoch this created.
+    ///
+    /// One step because a store checks the epoch under that lock too. Clearing
+    /// first and bumping after, outside it, left a window in which a result
+    /// read before the commit was stored under the old epoch after the clear,
+    /// and survived it.
+    fn expire_read_caches(&self, affects_session_summary: bool) -> u64 {
+        let mut cache = self.inner.query_many_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let epoch = self.inner.read_cache_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         if affects_session_summary {
             self.inner.session_summary_cache_epoch.fetch_add(1, Ordering::AcqRel);
         }
+        cache.clear();
+        drop(cache);
+        epoch
     }
 
     /// Monotonic generation for one typed DB read domain.
@@ -724,6 +750,29 @@ impl DbHandle {
         writer.flush_checked().await?;
         self.invalidate_read_cache();
         Ok(())
+    }
+
+    /// Park the next `query_many` on this handle just after its cache lookup.
+    ///
+    /// The first receiver resolves once it is parked; sending on the returned
+    /// sender lets it go on. One-shot: later calls run straight through.
+    #[cfg(test)]
+    pub(crate) fn pause_next_query_many_for_tests(
+        &self,
+    ) -> (tokio::sync::oneshot::Receiver<()>, tokio::sync::oneshot::Sender<()>) {
+        let (parked_tx, parked_rx) = tokio::sync::oneshot::channel();
+        let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
+        *self.inner.query_many_pause.lock().unwrap() = Some((parked_tx, resume_rx));
+        (parked_rx, resume_tx)
+    }
+
+    #[cfg(test)]
+    async fn pause_query_many_for_tests(&self) {
+        let pause = self.inner.query_many_pause.lock().unwrap().take();
+        if let Some((parked, resume)) = pause {
+            let _ = parked.send(());
+            let _ = resume.await;
+        }
     }
 
     #[cfg(test)]

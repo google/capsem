@@ -586,7 +586,7 @@ SELECT event_id, timestamp, exec_id, command, exit_code, duration_ms,
        credential_ref
 FROM exec_events
 ORDER BY id DESC
-LIMIT 100
+LIMIT ?1
 "#;
 
 const STATS_DETAIL_AUDIT_EVENTS_SQL: &str = r#"
@@ -630,10 +630,10 @@ pub(super) async fn read_stats_detail_payload_from_session_db(
         "http_events": stats_detail_query_objects(vm_id, db_path, &db, "http_events", STATS_DETAIL_HTTP_EVENTS_SQL).await?,
         "dns_events": stats_detail_query_objects(vm_id, db_path, &db, "dns_events", STATS_DETAIL_DNS_EVENTS_SQL).await?,
         "file_events": stats_detail_query_objects(vm_id, db_path, &db, "file_events", STATS_DETAIL_FILE_EVENTS_SQL).await?,
-        "process_events": stats_detail_query_objects(vm_id, db_path, &db, "process_events", STATS_DETAIL_PROCESS_EVENTS_SQL).await?,
+        "process_events": query_route_objects(vm_id, "stats_detail", "process_events", db_path, &db, STATS_DETAIL_PROCESS_EVENTS_SQL, &[json!(bodies::STATS_DETAIL_PROCESS_EVENTS_LIMIT)]).await?,
         "audit_events": stats_detail_query_objects(vm_id, db_path, &db, "audit_events", STATS_DETAIL_AUDIT_EVENTS_SQL).await?,
         "credential_events": stats_detail_query_objects(vm_id, db_path, &db, "credential_events", STATS_DETAIL_CREDENTIAL_EVENTS_SQL).await?,
-        "body_blobs": body_blob_map(stats_detail_query_objects(vm_id, db_path, &db, "body_blobs", STATS_DETAIL_BODY_BLOBS_SQL).await?),
+        "body_blobs": body_blob_map(query_route_objects(vm_id, "stats_detail", "body_blobs", db_path, &db, STATS_DETAIL_BODY_BLOBS_SQL, &[json!(bodies::STATS_DETAIL_PROCESS_EVENTS_LIMIT)]).await?),
     }))
 }
 

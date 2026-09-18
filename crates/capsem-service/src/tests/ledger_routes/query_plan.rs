@@ -2,9 +2,14 @@
 //!
 //! The statements are owned here, not in `capsem-logger` -- a route owns its
 //! query intent -- so the guard that they stay indexed is owned here too,
-//! running against the exact strings the route sends. `capsem-logger`'s
-//! `security_rule_aggregates_run_on_indexes` is the other half: it guards the
-//! shape `security_rule_events` offers them.
+//! running against the exact strings the route sends.
+//!
+//! "Uses some index" is not enough to hold on to: drop
+//! `idx_security_rule_events_rule_stats` and the per-rule breakdown still
+//! uses one -- `idx_security_rule_events_rule_id`, non-covering, with three
+//! temp B-trees -- so each statement also names the covering index it has to
+//! be answered from. An index nobody pins is one whose loss nobody notices,
+//! and every index is paid for on every insert into this table.
 //!
 //! Rewriting one of these statements is the easy way to lose that shape. A
 //! `GROUP BY` on a column with no index, or a correlated lookup whose
@@ -62,7 +67,28 @@ async fn security_status_aggregates_run_on_indexes() {
     let db = capsem_logger::DbHandle::open_external_reader(&db_path).unwrap();
     db.ready().await.unwrap();
 
-    for (sql, _) in security_stats_batch() {
+    // The covering index each statement, in `security_stats_batch` order, must
+    // be answered from -- every table node of its plan names it. The total is
+    // not pinned: an unfiltered `COUNT(*)` is answered from whichever index is
+    // narrowest, which is SQLite's choice to make and costs no index of ours.
+    // The level count shares `rule_stats` rather than keeping an index of its
+    // own: three values grouped in a temp B-tree do not justify a write on
+    // every rule match.
+    const RULE_STATS: &str = "idx_security_rule_events_rule_stats";
+    let pinned: [Option<&str>; 5] = [
+        None,
+        Some(RULE_STATS),
+        Some("idx_security_rule_events_event_type"),
+        Some(RULE_STATS),
+        Some(RULE_STATS),
+    ];
+    let batch = security_stats_batch();
+    assert_eq!(
+        batch.len(),
+        pinned.len(),
+        "pin an index for every security/status statement"
+    );
+    for ((sql, _), index) in batch.into_iter().zip(pinned) {
         let raw = db
             .query(&format!("EXPLAIN QUERY PLAN {sql}"), &[])
             .await
@@ -94,6 +120,21 @@ async fn security_status_aggregates_run_on_indexes() {
              so a scan here is every poll of every running session reading every matched rule it \
              ever recorded. Add the index the plan wants in capsem-logger's schema/ddl.rs, or \
              rewrite the statement so an existing one serves it.",
+            plan.join("\n  ")
+        );
+        let Some(index) = index else { continue };
+        let table_nodes: Vec<&String> = plan
+            .iter()
+            .filter(|node| node.trim().starts_with("SCAN ") || node.trim().starts_with("SEARCH "))
+            .collect();
+        let covering = format!("USING COVERING INDEX {index}");
+        assert!(
+            !table_nodes.is_empty() && table_nodes.iter().all(|node| node.contains(&covering)),
+            "a security/status statement is no longer answered from {index}\n\
+             statement:{sql}\nfull plan:\n  {}\n\
+             Every table read here must be a covering read of that index. If the index was \
+             dropped, or the statement no longer lines up with its columns, the plan falls back \
+             to row lookups and sorts per poll of every running session.",
             plan.join("\n  ")
         );
     }

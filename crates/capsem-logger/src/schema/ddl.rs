@@ -393,7 +393,7 @@ pub const CREATE_SCHEMA: &str = "
         ON security_rule_events(rule_id);
     CREATE INDEX IF NOT EXISTS idx_security_rule_events_event_type
         ON security_rule_events(event_type);
-    -- The indexes `security/status` groups on. That route is polled beside
+    -- The index `security/status` groups on. That route is polled beside
     -- `stats/summary`, and its worst statement is the per-rule breakdown: for
     -- each (rule, action, level) group it asks for the newest match, which
     -- without this index is a scan of the whole table per group plus a sort.
@@ -401,10 +401,11 @@ pub const CREATE_SCHEMA: &str = "
     -- action count groups on the leading column, the per-rule breakdown scans
     -- it as a covering index, and its correlated lookup meets all three
     -- equalities and then reads the ordering columns in the order it wants.
+    -- The level count scans it too, grouping three values in a temp B-tree;
+    -- an index of its own would be a write on every rule match to save that.
+    -- capsem-service's `security_status_aggregates_run_on_indexes` pins it.
     CREATE INDEX IF NOT EXISTS idx_security_rule_events_rule_stats
         ON security_rule_events(rule_action, detection_level, rule_id, timestamp_unix_ms, id, event_id);
-    CREATE INDEX IF NOT EXISTS idx_security_rule_events_detection_level
-        ON security_rule_events(detection_level);
 
     CREATE TABLE IF NOT EXISTS security_decision_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

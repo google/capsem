@@ -7,11 +7,18 @@
 //! running session reading every captured byte of `net_events` and
 //! `model_calls`, the two widest tables in the ledger.
 //!
-//! This guard asks SQLite how it intends to run each statement and fails on a
-//! `SCAN` of a ledger table that names no index. It runs against the same
-//! reader shape the service uses -- `open_disk_only`, reading `main` through
-//! WAL -- because the mirrored in-process reader resolves different tables and
-//! would answer a different question.
+//! This guard asks SQLite how it intends to run each statement and fails on
+//! any `SCAN` that names no index. It runs against the same reader shape the
+//! service uses -- `open_disk_only`, reading `main` through WAL -- because the
+//! mirrored in-process reader resolves different tables and would answer a
+//! different question.
+//!
+//! `security/status`'s aggregates are not guarded here. Their SQL belongs to
+//! `capsem-service`, which owns the route's query intent, and
+//! `security_status_aggregates_run_on_indexes` there runs the exact strings
+//! the route sends. A copy of them here would be a second guard over
+//! statements that are not the ones in production, and would go on passing
+//! while the real ones drifted.
 
 use rusqlite::Connection;
 
@@ -22,17 +29,6 @@ use crate::schema;
 /// Enough rows that a scan is a decision SQLite would regret, and few enough
 /// that the fixture builds in well under a second.
 const ROWS_PER_TABLE: usize = 2_500;
-
-/// The tables a plan is allowed to touch, and therefore the ones a bare
-/// `SCAN` of is a finding. A name that is not a ledger table -- a co-routine,
-/// a subquery result, `json_each` -- is not this guard's business.
-const LEDGER_TABLES: &[&str] = &[
-    "net_events",
-    "model_calls",
-    "tool_calls",
-    "security_rule_events",
-    "substitution_events",
-];
 
 fn ledger_with_rows() -> (tempfile::TempDir, DbReader) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -67,26 +63,6 @@ fn ledger_with_rows() -> (tempfile::TempDir, DbReader) {
             rusqlite::params![row as i64, ["native", "mcp", "builtin", "local"][row % 4]],
         )
         .expect("insert tool call");
-        conn.execute(
-            "INSERT INTO security_rule_events (timestamp_unix_ms, event_id, event_type, rule_id,
-                                               rule_action, detection_level, rule_json)
-             VALUES (?, ?, 'model.call', ?, ?, ?, '{}')",
-            rusqlite::params![
-                1_789_000_000_000_i64 + row as i64,
-                format!("{:012x}", row),
-                format!("profiles.rules.r{}", row % 17),
-                ["allow", "ask", "block"][row % 3],
-                ["none", "low", "high"][row % 3],
-            ],
-        )
-        .expect("insert security rule event");
-        conn.execute(
-            "INSERT INTO substitution_events (timestamp, substitution_ref, material_class, provider, outcome,
-                                             source, algorithm)
-             VALUES ('2026-01-01T00:00:00Z', ?, 'credential', 'anthropic', 'injected', 'proxy', 'blake3')",
-            rusqlite::params![format!("credential:blake3:{:064x}", row % 11)],
-        )
-        .expect("insert substitution event");
     }
     conn.execute_batch("COMMIT").expect("commit");
     drop(conn);
@@ -108,25 +84,49 @@ fn plan(reader: &DbReader, sql: &str) -> Vec<String> {
     rows
 }
 
-/// Fail naming every plan node that scans a ledger table with no index.
+/// Every `SCAN` in a plan that reads a table without an index.
+///
+/// Judged on the node, not on a list of table names: SQLite reports a table
+/// by the alias the statement gives it, so a name list is blind to exactly
+/// the aliased subqueries -- `mc2` in the model totals -- that are easiest to
+/// break. What is exempt is what is not a table at all: a co-routine or
+/// materialized subquery the plan itself declared, a virtual table such as
+/// `json_each`, and the constant row of a table-less `SELECT`.
+fn unindexed_scans(plan: &[String]) -> Vec<&String> {
+    let derived: Vec<&str> = plan
+        .iter()
+        .filter_map(|node| {
+            let node = node.trim();
+            node.strip_prefix("CO-ROUTINE ")
+                .or_else(|| node.strip_prefix("MATERIALIZE "))
+                .and_then(|rest| rest.split_whitespace().next())
+        })
+        .collect();
+    plan.iter()
+        .filter(|node| {
+            let Some(rest) = node.trim().strip_prefix("SCAN ") else {
+                return false;
+            };
+            let target = rest.split_whitespace().next().unwrap_or_default();
+            !rest.contains("USING INDEX")
+                && !rest.contains("USING COVERING INDEX")
+                && !rest.contains("VIRTUAL TABLE")
+                && rest != "CONSTANT ROW"
+                && !derived.contains(&target)
+        })
+        .collect()
+}
+
+/// Fail naming every plan node that scans a table with no index.
 ///
 /// The message carries the whole plan, because the useful thing to know when
 /// this fires is not that some line was bad but which index the statement
 /// stopped being able to use.
 fn assert_no_unindexed_scan(label: &str, plan: &[String]) {
-    let offenders: Vec<&String> = plan
-        .iter()
-        .filter(|node| {
-            let Some(rest) = node.trim().strip_prefix("SCAN ") else {
-                return false;
-            };
-            let table = rest.split_whitespace().next().unwrap_or_default();
-            LEDGER_TABLES.contains(&table) && !rest.contains("USING INDEX") && !rest.contains("USING COVERING INDEX")
-        })
-        .collect();
+    let offenders = unindexed_scans(plan);
     assert!(
         offenders.is_empty(),
-        "{label} scans a ledger table with no index: {offenders:?}\nfull plan:\n  {}\n\
+        "{label} scans a table with no index: {offenders:?}\nfull plan:\n  {}\n\
          This route is polled per VM on a timer and the service reads the file, so a scan here \
          is every poll of every running session reading every captured byte of that table. \
          Add the index the plan wants in schema/ddl.rs, or -- if the aggregate genuinely cannot \
@@ -147,37 +147,24 @@ fn session_stats_aggregates_run_on_indexes() {
     }
 }
 
-/// The security ledger's own aggregates, behind `GET /vms/{id}/security/status`.
+/// The rule itself, against plans SQLite really produced.
 ///
-/// The SQL these run is owned by `capsem-service`, which owns the route's
-/// query intent; `capsem-service`'s own
-/// `security_status_aggregates_run_on_indexes` guards those exact strings.
-/// What is guarded here is the shape the ledger offers them: the indexes on
-/// `security_rule_events` that let a grouped count be answered from an index,
-/// and the correlated "latest match per rule" lookup be a seek rather than a
-/// scan per group.
+/// The model-totals plan below is the one it printed with
+/// `idx_model_calls_usage_details` dropped: the aliased `mc2` scan is the
+/// finding, and the co-routine `je` and the `json_each` virtual table are not.
+/// A guard that matched table names passed this plan.
 #[test]
-fn security_rule_aggregates_run_on_indexes() {
-    let (_dir, reader) = ledger_with_rows();
-    for (label, sql) in [
-        (
-            "by action",
-            "SELECT rule_action, COUNT(*) FROM security_rule_events GROUP BY rule_action".to_string(),
-        ),
-        (
-            "by level",
-            "SELECT detection_level, COUNT(*) FROM security_rule_events GROUP BY detection_level".to_string(),
-        ),
-        (
-            "latest per rule",
-            "SELECT sre.rule_id, (SELECT latest.event_id FROM security_rule_events latest \
-             WHERE latest.rule_id = sre.rule_id AND latest.rule_action = sre.rule_action \
-             AND latest.detection_level = sre.detection_level \
-             ORDER BY latest.timestamp_unix_ms DESC, latest.id DESC LIMIT 1) \
-             FROM security_rule_events sre GROUP BY sre.rule_id, sre.rule_action, sre.detection_level"
-                .to_string(),
-        ),
-    ] {
-        assert_no_unindexed_scan(label, &plan(&reader, &sql));
-    }
+fn an_aliased_scan_is_a_finding_and_a_derived_one_is_not() {
+    let plan: Vec<String> = [
+        "SCAN model_calls USING COVERING INDEX idx_model_calls_usage_totals",
+        "SCALAR SUBQUERY 2",
+        "CO-ROUTINE je",
+        "SCAN mc2",
+        "SCAN je VIRTUAL TABLE INDEX 1:",
+        "USE TEMP B-TREE FOR GROUP BY",
+        "SCAN je",
+    ]
+    .map(String::from)
+    .to_vec();
+    assert_eq!(unindexed_scans(&plan), vec!["SCAN mc2"]);
 }

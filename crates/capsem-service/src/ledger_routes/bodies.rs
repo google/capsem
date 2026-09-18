@@ -28,8 +28,9 @@ use super::*;
 /// the hash that would say a body was captured. The cost is a slightly larger
 /// list response, which is the trade for the section rendering from the list
 /// like every other one. Each window matches the list it annotates: exec rows
-/// are `STATS_DETAIL_PROCESS_EVENTS_SQL`'s hundred, not two hundred of which
-/// half would describe rows the response does not carry.
+/// are bound to [`STATS_DETAIL_PROCESS_EVENTS_LIMIT`] as `?1`, the same number
+/// the process list is bound to, so the two cannot drift into metadata for
+/// rows the response does not carry or rows with none.
 pub(crate) const STATS_DETAIL_BODY_BLOBS_SQL: &str = r#"
 SELECT event_id, source_table, direction, content_type, original_bytes, stored_bytes, truncated, body_hash
 FROM event_body_blobs
@@ -43,13 +44,18 @@ OR event_id IN (
     SELECT event_id FROM tool_calls WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
 )
 OR event_id IN (
-    SELECT event_id FROM exec_events ORDER BY id DESC LIMIT 100
+    SELECT event_id FROM exec_events ORDER BY id DESC LIMIT ?1
 )
 OR event_id IN (
     SELECT event_id FROM security_rule_events ORDER BY id DESC LIMIT 200
 )
 ORDER BY event_id, direction
 "#;
+
+/// How many exec rows the stats detail view lists, and so how many it carries
+/// body metadata for. `STATS_DETAIL_PROCESS_EVENTS_SQL` and
+/// [`STATS_DETAIL_BODY_BLOBS_SQL`] both bind it; neither spells the number.
+pub(crate) const STATS_DETAIL_PROCESS_EVENTS_LIMIT: usize = 100;
 
 /// Index rows grouped by the event they describe, so the detail view can look
 /// up one event's metadata without scanning the list.

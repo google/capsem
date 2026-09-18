@@ -329,10 +329,19 @@ async fn session_stats_are_served_from_the_batch_cache() {
     let reader = DbHandle::open_external_reader(&p).expect("open service external reader");
     reader.ready().await.expect("external reader ready");
 
+    // The counter has to move on the first call, or "it did not move on the
+    // second" proves nothing: the old private request ran its aggregates
+    // without counting them, and would have passed the cache assertion below
+    // while re-running everything on every poll.
+    let before_first = reader.queries_executed_for_tests().await.expect("read counter");
     let first = reader.session_stats().await.expect("first session stats");
     assert_eq!(first.net_total, 1);
     assert_eq!(first.net_allowed, 1);
     let executed = reader.queries_executed_for_tests().await.expect("read counter");
+    assert!(
+        executed > before_first,
+        "the first summary poll must execute and count its aggregates. {DB_BOUNDARY_RATIONALE}"
+    );
 
     let second = reader.session_stats().await.expect("second session stats");
     assert_eq!(second.net_total, first.net_total);
@@ -355,5 +364,69 @@ async fn session_stats_are_served_from_the_batch_cache() {
     assert!(
         reader.queries_executed_for_tests().await.expect("read counter") > executed,
         "a changed ledger must re-run the aggregates. {DB_BOUNDARY_RATIONALE}"
+    );
+}
+
+/// A commit that lands between a poll's cache lookup and its reply costs at
+/// most that one poll a stale answer; it must never be cached as current.
+///
+/// The two polled routes share one handle and run concurrently. Batch B finds
+/// its old entry; batch A's worker observes the writer's commit and A expires
+/// the cache; the worker then answers B "still valid", because the commit is
+/// already recorded. If B read its epoch only after that -- as `query_many`
+/// once did -- it stored its pre-commit answer under the post-commit epoch,
+/// and an idle session served it until something else happened to commit.
+#[tokio::test]
+async fn a_commit_between_lookup_and_reply_is_never_cached_as_current() {
+    let p = temp_db_path("external-lookup-race");
+    let writer = DbHandle::open(&p).expect("open owning writer handle");
+    writer
+        .write(WriteOp::NetEvent(make_net_event("race.example", Decision::Allowed)))
+        .await
+        .expect("first write");
+    writer.flush().await.expect("flush writer");
+
+    let reader = DbHandle::open_external_reader(&p).expect("open service external reader");
+    reader.ready().await.expect("external reader ready");
+
+    let batch_b = || vec![("SELECT COUNT(*) AS n FROM net_events".to_string(), Vec::new())];
+    let batch_a = || {
+        vec![(
+            "SELECT COUNT(*) AS total FROM security_rule_events".to_string(),
+            Vec::new(),
+        )]
+    };
+    let count = |raw: &[String]| query_json(&raw[0])["rows"][0][0].clone();
+
+    assert_eq!(count(&reader.query_many(batch_b()).await.expect("prime B")), json!(1));
+
+    writer
+        .write(WriteOp::NetEvent(make_net_event("race.example", Decision::Allowed)))
+        .await
+        .expect("second write");
+    writer.flush().await.expect("flush writer");
+
+    // B looks its old entry up, then parks before asking the worker.
+    let (parked, resume) = reader.pause_next_query_many_for_tests();
+    let poll_b = tokio::spawn({
+        let reader = reader.clone();
+        async move { reader.query_many(batch_b()).await }
+    });
+    parked.await.expect("B parked after its lookup");
+
+    // A observes the commit, records it, and expires the cache.
+    reader.query_many(batch_a()).await.expect("A observes the commit");
+
+    resume.send(()).expect("resume B");
+    // B's own answer may be the old one: the race costs this one response.
+    poll_b.await.expect("join B").expect("B completes");
+
+    // It must not have been stored as current.
+    assert_eq!(
+        count(&reader.query_many(batch_b()).await.expect("next B poll")),
+        json!(2),
+        "a pre-commit answer was cached under the post-commit epoch and served again; \
+         the epoch a result belongs to must be read with the lookup, before any \
+         invalidation can land. {DB_BOUNDARY_RATIONALE}"
     );
 }

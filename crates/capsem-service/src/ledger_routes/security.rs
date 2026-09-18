@@ -268,10 +268,9 @@ pub(crate) async fn security_latest_for_vm(
 /// touching the file. Five separate queries could not be: each would be its
 /// own round trip, and none of them is what the handle caches.
 ///
-/// `capsem-logger`'s `security_rule_aggregates_run_on_indexes` guards the
-/// shape these need from `security_rule_events`; this crate's
-/// `security_status_aggregates_run_on_indexes` guards these exact strings
-/// against it.
+/// `security_status_aggregates_run_on_indexes` runs `EXPLAIN QUERY PLAN` over
+/// these exact strings and pins the covering index each must be answered
+/// from.
 pub(crate) fn security_stats_batch() -> Vec<(String, Vec<serde_json::Value>)> {
     vec![
         (SECURITY_STATS_TOTAL_SQL.to_string(), Vec::new()),
