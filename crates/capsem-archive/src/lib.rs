@@ -63,6 +63,11 @@ pub enum ArchiveError {
     /// headers of its own -- a forged record rather than a malformed one.
     #[error("WARC header field {field} contains a line break")]
     WarcHeaderBreak { field: &'static str },
+    /// A record that captures something was given no `WARC-Target-URI`. The
+    /// spec makes the header mandatory for every type but `warcinfo`, and a
+    /// `resource` record without it describes nothing.
+    #[error("a WARC {record_type} record must carry a target URI")]
+    WarcMissingTargetUri { record_type: String },
 }
 
 pub type Result<T> = std::result::Result<T, ArchiveError>;

@@ -86,14 +86,26 @@ pub struct WarcRecord<'a> {
 /// - [`ArchiveError::WarcHeaderBreak`] when a header value contains `\r` or
 ///   `\n`. Nothing is written in that case, so a refused record cannot leave a
 ///   half-written member behind.
+/// - [`ArchiveError::WarcMissingTargetUri`] when a type other than `warcinfo`
+///   is given no target URI.
 /// - [`ArchiveError::Io`] from the gzip encoder or from `out`.
 pub fn write_record<W: Write>(out: &mut W, rec: &WarcRecord<'_>) -> Result<()> {
     // Every field is checked before a byte is compressed: the alternative is
     // discovering the forgery with half a member already in the caller's file.
     refuse_line_breaks("record_type", rec.record_type)?;
     refuse_line_breaks("record_id", rec.record_id)?;
-    if let Some(target_uri) = rec.target_uri {
-        refuse_line_breaks("target_uri", target_uri)?;
+    match rec.target_uri {
+        Some(target_uri) => refuse_line_breaks("target_uri", target_uri)?,
+        // `warcinfo` is the only type that captures nothing. For every other
+        // one the spec makes the header mandatory, and a record that says it
+        // is a `resource` without saying what of is not a lenient record, it
+        // is an unreadable one.
+        None if rec.record_type != WARC_TYPE_WARCINFO => {
+            return Err(ArchiveError::WarcMissingTargetUri {
+                record_type: rec.record_type.to_string(),
+            })
+        }
+        None => {}
     }
     refuse_line_breaks("date", rec.date)?;
     if let Some(content_type) = rec.content_type {

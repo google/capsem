@@ -409,6 +409,163 @@ async fn a_body_that_fails_its_hash_check_is_skipped_and_the_file_says_so() {
     );
 }
 
+/// Two index rows damaged the same way, one step apart in how far the edit
+/// went: one span still lands inside its block and comes back as bytes that
+/// fail the hash, the other lands outside it and the archive refuses. They are
+/// the same damage and must cost the same thing -- one record each. Before
+/// this, the first was a counted skip and the second ended the whole export.
+#[tokio::test]
+async fn neighbouring_corruption_costs_two_rows_not_the_export() {
+    let p = temp_db_path("warc-export-neighbouring-corruption");
+    let db = DbHandle::open(&p).expect("open handle");
+    for index in 0..4 {
+        db.write(WriteOp::NetEvent(net_event_with_response(
+            &format!("{index:012x}"),
+            "neighbours.example",
+            &format!("body number {index} is long enough to have an inside"),
+        )))
+        .await
+        .expect("write event");
+    }
+    db.flush().await.expect("flush");
+
+    let db = rewrite_and_reopen(
+        db,
+        &p,
+        // 000000000001: still inside its block, so the archive returns bytes
+        // and the hash check is what catches it.
+        // 000000000002: past the end of the block, so the archive refuses.
+        "UPDATE event_body_blobs SET body_offset = body_offset + 1
+           WHERE event_id = '000000000001';
+         UPDATE event_body_blobs SET body_offset = 1000000000
+           WHERE event_id = '000000000002';",
+    )
+    .await;
+
+    let (summary, out) = export_to_bytes(&db, &p).await;
+    assert_eq!(summary.records, 2, "the two undamaged bodies still reach the reviewer");
+    assert_eq!(body_members(&out).len(), 2);
+    assert_eq!(summary.skipped.len(), 2, "{:?}", summary.skipped);
+
+    let by_event: BTreeMap<&str, &SkipReason> = summary
+        .skipped
+        .iter()
+        .map(|body| (body.event_id.as_str(), &body.reason))
+        .collect();
+    assert!(
+        matches!(by_event["000000000001"], SkipReason::CorruptBody(_)),
+        "an in-range edit is caught by the hash: {by_event:?}"
+    );
+    assert!(
+        matches!(by_event["000000000002"], SkipReason::UnreadableBody(_)),
+        "an out-of-range edit is refused by the archive: {by_event:?}"
+    );
+
+    let closing = warcinfo_fields(members(&out).last().expect("records"));
+    assert_eq!(closing["capsem-skipped"], "2");
+    assert_eq!(closing["capsem-skipped-corrupt-body"], "1");
+    assert_eq!(closing["capsem-skipped-unreadable-body"], "1");
+}
+
+/// The `warcinfo` ids were once byte-identical in every export ever produced,
+/// which WARC forbids and which collides the moment two exports are merged
+/// into one collection.
+#[tokio::test]
+async fn two_exports_of_one_session_do_not_share_a_warcinfo_id() {
+    let p = temp_db_path("warc-export-unique-warcinfo-ids");
+    let db = DbHandle::open(&p).expect("open handle");
+    write_a_session_of_every_kind(&db).await;
+
+    let ids = |bytes: &[u8]| -> Vec<String> {
+        warcinfo_records(bytes)
+            .iter()
+            .map(|record| header(record, "WARC-Record-ID").expect("every record has an id"))
+            .collect()
+    };
+    let first = ids(&export_to_bytes(&db, &p).await.1);
+    let second = ids(&export_to_bytes(&db, &p).await.1);
+
+    assert_eq!(first.len(), 2);
+    assert_ne!(first[0], first[1], "the two ends of one export differ: {first:?}");
+    let shared: Vec<&String> = first.iter().filter(|id| second.contains(id)).collect();
+    assert!(
+        shared.is_empty(),
+        "two exports of one session must share no record id: {shared:?}"
+    );
+    for id in first.iter().chain(&second) {
+        assert!(id.contains("warcinfo"), "the id must still say what it is: {id}");
+    }
+}
+
+/// The wire format of the two `warcinfo` records. These names sit in an
+/// exported artifact, so a reader parsing last month's file must find this
+/// month's spelling -- there is no version negotiation and nobody to ask.
+#[tokio::test]
+async fn the_warcinfo_field_names_and_skip_labels_are_the_documented_wire_format() {
+    assert_eq!(
+        [
+            SkipReason::MissingSourceRow,
+            SkipReason::UnreadableTimestamp(String::new()),
+            SkipReason::UnrepresentableUri(String::new()),
+            SkipReason::CorruptBody(String::new()),
+            SkipReason::UnreadableBody(String::new()),
+        ]
+        .map(|reason| reason.label()),
+        [
+            "missing-source-row",
+            "unreadable-timestamp",
+            "unrepresentable-uri",
+            "corrupt-body",
+            "unreadable-body",
+        ],
+        "every skip reason's label is wire format and may not be renamed silently"
+    );
+
+    let p = temp_db_path("warc-export-wire-format");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.write(WriteOp::NetEvent(net_event_with_response(
+        "0123456789ab",
+        "wire.example",
+        "a body",
+    )))
+    .await
+    .expect("write event");
+    db.flush().await.expect("flush");
+    let db = rewrite_and_reopen(
+        db,
+        &p,
+        "UPDATE net_events SET timestamp = 'not a timestamp' WHERE event_id = '0123456789ab'",
+    )
+    .await;
+
+    let (_, out) = export_to_bytes(&db, &p).await;
+    let all = members(&out);
+    assert_eq!(
+        warcinfo_fields(&all[0]).keys().cloned().collect::<Vec<_>>(),
+        vec![
+            "capsem-block-digest-algorithm",
+            "capsem-exported-at",
+            "capsem-session",
+            "format",
+            "software",
+        ],
+        "the opening record's field names are wire format"
+    );
+    assert_eq!(
+        warcinfo_fields(all.last().expect("records"))
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![
+            "capsem-records",
+            "capsem-skipped",
+            "capsem-skipped-unreadable-timestamp",
+            "software",
+        ],
+        "the closing record's field names are wire format, one per reason that fired"
+    );
+}
+
 /// An exec event's output is a body like any other, and its URI names the
 /// exec it came from rather than pretending to be a URL.
 #[tokio::test]

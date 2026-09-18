@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use capsem_archive::{BodyLogReader, BodyRef};
+use capsem_archive::{ArchiveError, BodyLogReader, BodyRef};
 use serde_json::Value;
 
 use super::{DbHandle, DbResult};
@@ -338,19 +338,33 @@ impl DbHandle {
     }
 }
 
-/// Why one archived body could not be produced.
+/// Why one archived body could not be produced, and how far the damage reaches.
 ///
-/// The two are different questions for a caller reading many rows. A file the
-/// archive cannot read at all is a broken ledger and every later row will fail
-/// the same way; a body that came back and does not match its recorded hash is
-/// one damaged row among however many good ones. The interactive reads below
-/// flatten both into a hard error, because a route asked for that body and has
-/// nothing to show without it. The export tells them apart.
+/// The distinction is what a caller reading many rows needs. Almost every way
+/// a read fails is local: `RefOutOfRange` is this one row, whose recorded span
+/// falls outside a block that inflated perfectly well, and a bad header, a
+/// truncated payload or a failed inflate are that one block. Only a seek
+/// failure is about the file, and a file that cannot be opened at all never
+/// reaches here -- `with_archive_reader` fails on the open before any row is
+/// read.
+///
+/// Getting this wrong was a real asymmetry: an index row edited to a
+/// wrong-but-in-range span returned bytes, failed the hash and was skipped,
+/// while the same row edited a little further aborted the whole export. The
+/// reader's own module doc names index tampering as the expected shape.
+///
+/// The interactive reads below flatten all of it into one error, because a
+/// route asked for that body and has nothing to show without it. The export
+/// tells them apart.
 #[derive(Debug)]
 pub(super) enum BodyFault {
-    /// The archive could not resolve the reference: a bad offset, a truncated
-    /// file, a block that will not inflate.
-    Unresolvable(String),
+    /// Local to this row or its block: an out-of-range span, a bad block
+    /// header, a truncated payload, a block that will not inflate or does not
+    /// match its own hash. Every other row is still worth trying.
+    Unreadable(String),
+    /// The file itself would not seek. The handle is in no state to answer the
+    /// next row either.
+    FileIo(String),
     /// The bytes came back and are not the bytes the index recorded.
     Corrupt(String),
 }
@@ -358,7 +372,7 @@ pub(super) enum BodyFault {
 impl BodyFault {
     pub(super) fn into_message(self) -> String {
         match self {
-            Self::Unresolvable(message) | Self::Corrupt(message) => message,
+            Self::Unreadable(message) | Self::FileIo(message) | Self::Corrupt(message) => message,
         }
     }
 }
@@ -370,12 +384,20 @@ pub(super) fn read_one(reader: &BodyLogReader, row: IndexRow) -> DbResult<Stored
 /// Resolve one index row to its bytes, keeping the two failure kinds apart.
 pub(super) fn read_one_checked(reader: &BodyLogReader, row: IndexRow) -> Result<StoredBody, BodyFault> {
     let bytes = reader.read(row.reference).map_err(|error| {
-        BodyFault::Unresolvable(format!(
+        let message = format!(
             "session body archive could not resolve {}/{} of event {}: {error}",
             row.source_table,
             row.direction.as_str(),
             row.event_id
-        ))
+        );
+        match error {
+            // The only variant the read raises about the file rather than
+            // about one row or one block: `BodyLogReader::inflate` seeks
+            // before it does anything else, and every other failure it can
+            // produce is named after the offset it happened at.
+            ArchiveError::Io(_) => BodyFault::FileIo(message),
+            _ => BodyFault::Unreadable(message),
+        }
     })?;
     // The archive verifies its own block; this verifies the span of it the
     // index row picked out. A block's hash cannot notice an index row that

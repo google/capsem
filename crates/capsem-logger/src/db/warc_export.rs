@@ -14,12 +14,21 @@
 //! **Nothing is invented, and one bad row does not cost the rest.** A body
 //! whose source row is gone has no URI; a row whose timestamp will not parse
 //! has no date; a URI built from a `tool_name` with a newline in it cannot be
-//! written as a header at all; a body whose bytes do not match the hash the
-//! index recorded is not that body. Every one of them is skipped and counted
-//! with its reason rather than described with a guess or allowed to abort the
-//! walk. One damaged block must not deny a reviewer the other four thousand
-//! records, and a record carrying a plausible guess is worse than one that is
-//! absent, because a reviewer cannot tell the two apart afterwards.
+//! written as a header at all; a body whose bytes fail the hash the index
+//! recorded is not that body, and one the archive cannot produce at all is
+//! nothing. Every one of them is skipped and counted with its reason rather
+//! than described with a guess or allowed to abort the walk. A record carrying
+//! a plausible guess is worse than one that is absent, because a reviewer
+//! cannot tell the two apart afterwards; and one damaged row must not deny a
+//! reviewer the other four thousand.
+//!
+//! The last two are deliberately the same answer. An index row edited to a
+//! span that still lands inside its block comes back as bytes that fail the
+//! hash, and the same row edited one step further lands outside it and the
+//! archive refuses -- the same damage, and no reading on which one of them
+//! should cost a reviewer the session and the other should not. Only a failed
+//! seek is about the file rather than a row, and it is the one thing here that
+//! is still an error.
 //!
 //! **The omissions are in the artifact, not only in the summary.** A caller
 //! that streams this to a client (`GET /vms/{id}/bodies/export.warc.gz`) drops
@@ -27,6 +36,13 @@
 //! leading `warcinfo` record naming the software, the session and the export
 //! date, and a trailing one carrying the skip counts by reason. The spec
 //! permits several `warcinfo` records per file and this is what they are for.
+//!
+//! The closing record is also the completion signal. An export that fails hard
+//! has already written the opening record and streamed whatever it got
+//! through, so the file simply ends after its last complete record. **A file
+//! with no closing `warcinfo` is an export that did not finish**, and its
+//! record list is not the session -- which is the one thing a reader cannot
+//! work out from the records themselves.
 //!
 //! Every body goes out through the same hash-verified read path a route uses.
 //! An export is evidence, and evidence that skipped the check the interactive
@@ -42,7 +58,6 @@ use serde_json::Value;
 
 use super::bodies::{index_row, read_one_checked, BodyFault, IndexRow, INDEX_COLUMNS};
 use super::{DbHandle, DbResult};
-use crate::writer::format_ledger_timestamp;
 
 /// What an export did, and what it could not describe.
 #[derive(Debug, Default, Clone)]
@@ -107,6 +122,15 @@ pub enum SkipReason {
     /// session, and the trailing `warcinfo` is what makes the loss visible in
     /// the file itself.
     CorruptBody(String),
+    /// The archive could not produce the bytes at all: this row's recorded
+    /// span falls outside its block, or the block itself has a bad header, a
+    /// truncated payload, or will not inflate.
+    ///
+    /// The same class of damage as `CorruptBody` and treated the same way. A
+    /// row edited to a wrong-but-in-range span lands there and a row edited a
+    /// little further lands here; there is no reading on which one of those
+    /// should cost a reviewer the whole session and the other should not.
+    UnreadableBody(String),
 }
 
 impl SkipReason {
@@ -120,6 +144,7 @@ impl SkipReason {
             Self::UnreadableTimestamp(_) => "unreadable-timestamp",
             Self::UnrepresentableUri(_) => "unrepresentable-uri",
             Self::CorruptBody(_) => "corrupt-body",
+            Self::UnreadableBody(_) => "unreadable-body",
         }
     }
 }
@@ -135,6 +160,7 @@ impl fmt::Display for SkipReason {
                 write!(f, "its target URI {uri:?} has a line break a WARC header cannot carry")
             }
             Self::CorruptBody(detail) => write!(f, "its archived bytes failed their hash check: {detail}"),
+            Self::UnreadableBody(detail) => write!(f, "the archive could not produce its bytes: {detail}"),
         }
     }
 }
@@ -246,11 +272,20 @@ impl DbHandle {
     ///
     /// # Errors
     ///
-    /// A row the export cannot honestly describe is skipped and counted, not
-    /// an error: see [`SkipReason`]. What does fail is a ledger the archive
-    /// cannot read at all, which would fail identically for every remaining
-    /// row, and a write failure -- a truncated export that returned a summary
-    /// would be one nobody knew was partial.
+    /// A row the export cannot honestly describe, or whose bytes the archive
+    /// cannot produce, is skipped and counted rather than an error: see
+    /// [`SkipReason`]. Two things do fail. An archive that cannot be opened,
+    /// or a seek on it that fails, is about the file rather than about a row,
+    /// and the next row would be read through the same broken handle. A write
+    /// failure fails because a truncated export that returned a summary would
+    /// be one nobody knew was partial.
+    ///
+    /// **A hard failure leaves a file with no closing `warcinfo`.** The
+    /// opening record is already written and the bytes already streamed, so
+    /// the file ends after its last complete record. That absence is the
+    /// signal: a reader that finds no closing bracket is holding an export
+    /// that did not finish, and must not read its record list as the whole
+    /// session.
     pub async fn export_warc<W: Write + Send + 'static>(&self, out: W) -> DbResult<ExportSummary> {
         let rows = self.export_rows().await?;
         let handle = self.clone();
@@ -271,17 +306,24 @@ impl DbHandle {
         let mut counting = CountingWriter { inner: out, count: 0 };
         let mut summary = ExportSummary::default();
         let exported_at = warc_date_now();
+        let session = self.session_name();
+        // One id per export, not per record kind: two exports of the same
+        // session must not collide when a reader merges them.
+        let export_id = uuid::Uuid::new_v4().simple().to_string();
         write_warcinfo(
             &mut counting,
+            &session,
+            &export_id,
             "opening",
             &exported_at,
-            &opening_fields(&self.session_name(), &exported_at),
+            &opening_fields(&session, &exported_at),
         )?;
 
         self.with_archive_reader(|reader| {
             for row in rows {
+                let identity = RowIdentity::of(&row.index);
                 let Some(target_uri) = row.target_uri.clone() else {
-                    summary.skipped.push(skipped(&row.index, SkipReason::MissingSourceRow));
+                    summary.skipped.push(identity.because(SkipReason::MissingSourceRow));
                     continue;
                 };
                 // Checked here rather than left to `write_record`, so a URI a
@@ -296,7 +338,7 @@ impl DbHandle {
                 if target_uri.contains(['\r', '\n']) {
                     summary
                         .skipped
-                        .push(skipped(&row.index, SkipReason::UnrepresentableUri(target_uri)));
+                        .push(identity.because(SkipReason::UnrepresentableUri(target_uri)));
                     continue;
                 }
                 let Some(date) = row.warc_date() else {
@@ -306,23 +348,28 @@ impl DbHandle {
                     });
                     summary
                         .skipped
-                        .push(skipped(&row.index, SkipReason::UnreadableTimestamp(stamp)));
+                        .push(identity.because(SkipReason::UnreadableTimestamp(stamp)));
                     continue;
                 };
                 let id = record_id(&row.index);
                 let truncated = row.index.truncated;
-                let described = describe(&row.index);
-                // The hash-verified read path, not a shortcut around it. A
-                // body that fails the check is not that body, so it is counted
-                // and left out; a file the archive cannot read at all would
-                // fail the same way for every row after it and is an error.
+                // The hash-verified read path, not a shortcut around it.
+                // Damage to this row or its block costs this row: a span that
+                // falls outside its block and a span that falls inside the
+                // wrong part of it are the same edit, one byte apart, and
+                // there is no reading on which one should end the export. Only
+                // a failed seek is about the file, and the next row would be
+                // read through the same handle.
                 let body = match read_one_checked(reader, row.index) {
                     Ok(body) => body,
                     Err(BodyFault::Corrupt(detail)) => {
-                        summary.skipped.push(SkippedBody {
-                            reason: SkipReason::CorruptBody(detail),
-                            ..described
-                        });
+                        summary.skipped.push(identity.because(SkipReason::CorruptBody(detail)));
+                        continue;
+                    }
+                    Err(BodyFault::Unreadable(detail)) => {
+                        summary
+                            .skipped
+                            .push(identity.because(SkipReason::UnreadableBody(detail)));
                         continue;
                     }
                     Err(fault) => return Err(fault.into_message()),
@@ -345,7 +392,14 @@ impl DbHandle {
             Ok(())
         })?;
 
-        write_warcinfo(&mut counting, "closing", &exported_at, &closing_fields(&summary))?;
+        write_warcinfo(
+            &mut counting,
+            &session,
+            &export_id,
+            "closing",
+            &exported_at,
+            &closing_fields(&summary),
+        )?;
         counting
             .inner
             .flush()
@@ -415,13 +469,32 @@ fn closing_fields(summary: &ExportSummary) -> Vec<(String, String)> {
     fields
 }
 
-fn write_warcinfo<W: Write>(out: &mut W, which: &str, date: &str, fields: &[(String, String)]) -> DbResult<()> {
+/// The `warcinfo` record id.
+///
+/// WARC requires record ids to be globally unique, and these were once
+/// `urn:capsem:warcinfo:opening` -- byte-identical in every export ever
+/// produced, so two exports merged into one collection collided by
+/// construction. The session names which ledger this came from, and the
+/// per-export uuid is what actually makes it unique, including across two
+/// exports of the same session in the same second.
+fn warcinfo_record_id(session: &str, export_id: &str, which: &str) -> String {
+    format!("urn:capsem:{session}:warcinfo:{which}:{export_id}")
+}
+
+fn write_warcinfo<W: Write>(
+    out: &mut W,
+    session: &str,
+    export_id: &str,
+    which: &str,
+    date: &str,
+    fields: &[(String, String)],
+) -> DbResult<()> {
     let block = warc_fields(fields);
     warc::write_record(
         out,
         &WarcRecord {
             record_type: warc::WARC_TYPE_WARCINFO,
-            record_id: &format!("urn:capsem:warcinfo:{which}"),
+            record_id: &warcinfo_record_id(session, export_id, which),
             target_uri: None,
             date,
             content_type: Some(warc::WARCINFO_CONTENT_TYPE),
@@ -432,9 +505,15 @@ fn write_warcinfo<W: Write>(out: &mut W, which: &str, date: &str, fields: &[(Str
     .map_err(|error| format!("session body WARC export could not write its {which} warcinfo record: {error}"))
 }
 
+/// Now, in the WARC date format.
+///
+/// Formatted straight to whole seconds rather than formatted to microseconds
+/// and parsed back. The round trip needed a fallback for a parse that cannot
+/// fail, and this module's whole argument is that it writes no date it did not
+/// verify -- a `1970-01-01` that no clock produced would have been the one
+/// exception, sitting in the record that describes the file.
 fn warc_date_now() -> String {
-    warc_date_from_ledger(&format_ledger_timestamp(SystemTime::now()))
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
+    humantime::format_rfc3339_seconds(SystemTime::now()).to_string()
 }
 
 impl ExportRow {
@@ -449,21 +528,37 @@ impl ExportRow {
     }
 }
 
-fn skipped(row: &IndexRow, reason: SkipReason) -> SkippedBody {
-    SkippedBody {
-        reason,
-        ..describe(row)
-    }
+/// Which row a skip is about, taken before the read consumes the row.
+///
+/// A type of its own rather than a half-filled `SkippedBody`: the earlier
+/// shape handed back one with a placeholder `reason` that callers overwrote
+/// through `..`, so a future spread that forgot the field would have labelled
+/// a corrupt body as a missing source row and nothing would have said so.
+/// Here there is nothing to forget -- the only way to a `SkippedBody` is
+/// [`RowIdentity::because`], and it takes the reason.
+#[derive(Debug, Clone)]
+struct RowIdentity {
+    event_id: String,
+    source_table: String,
+    direction: String,
 }
 
-/// Which row this is, with a placeholder reason the caller replaces. Taken
-/// before the read consumes the row, because the row is moved into it.
-fn describe(row: &IndexRow) -> SkippedBody {
-    SkippedBody {
-        event_id: row.event_id.clone(),
-        source_table: row.source_table.clone(),
-        direction: row.direction.as_str().to_string(),
-        reason: SkipReason::MissingSourceRow,
+impl RowIdentity {
+    fn of(row: &IndexRow) -> Self {
+        Self {
+            event_id: row.event_id.clone(),
+            source_table: row.source_table.clone(),
+            direction: row.direction.as_str().to_string(),
+        }
+    }
+
+    fn because(self, reason: SkipReason) -> SkippedBody {
+        SkippedBody {
+            event_id: self.event_id,
+            source_table: self.source_table,
+            direction: self.direction,
+            reason,
+        }
     }
 }
 

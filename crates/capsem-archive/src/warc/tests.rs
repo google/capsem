@@ -175,6 +175,23 @@ fn block_of(member: &[u8]) -> Vec<u8> {
     member[start..member.len() - 4].to_vec()
 }
 
+/// The other half of the rule above: `warcinfo` may omit the target URI
+/// because it captures nothing, and every other type may not. A `resource`
+/// record that does not say what it is a resource of is not lenient, it is
+/// unreadable.
+#[test]
+fn a_capturing_record_without_a_target_uri_is_refused() {
+    let rec = WarcRecord {
+        target_uri: None,
+        ..record(b"body", Some("text/plain"))
+    };
+    let mut buffer = Vec::new();
+    let error = write_record(&mut buffer, &rec).expect_err("a resource record must name its target");
+    assert!(error.to_string().contains("resource"), "{error}");
+    assert!(error.to_string().contains("target URI"), "{error}");
+    assert!(buffer.is_empty(), "nothing is written when the record is refused");
+}
+
 #[test]
 fn two_records_concatenate_into_one_stream_of_two_members() {
     let mut stream = Vec::new();
@@ -197,7 +214,7 @@ fn two_records_concatenate_into_one_stream_of_two_members() {
 /// and let the rest of it forge headers of its own, so it is refused by name.
 #[test]
 fn a_line_break_in_a_header_value_is_refused_by_field_name() {
-    let cases: [(&str, WarcRecord<'_>); 4] = [
+    let cases: [(&str, WarcRecord<'_>); 5] = [
         (
             "content_type",
             WarcRecord {
@@ -223,6 +240,13 @@ fn a_line_break_in_a_header_value_is_refused_by_field_name() {
             "date",
             WarcRecord {
                 date: "2026-09-17T10:11:12Z\r\nWARC-Date: 1999-01-01T00:00:00Z",
+                ..record(b"body", None)
+            },
+        ),
+        (
+            "record_type",
+            WarcRecord {
+                record_type: "resource\r\nWARC-Refers-To: <urn:capsem:elsewhere>",
                 ..record(b"body", None)
             },
         ),

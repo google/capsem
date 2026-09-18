@@ -33,12 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `https://` URI for network and model traffic, and a `capsem://` one for
   tools, exec output and security-rule payloads. A body the export cannot
   honestly describe -- its source row gone, its timestamp unreadable, its URI
-  carrying a line break a WARC header cannot hold, or its bytes failing the
-  hash the ledger recorded -- is left out rather than described with a guess,
-  and never costs the rest of the session. The file says so itself: it opens
-  and closes with a `warcinfo` record, and the closing one carries the count of
-  omitted bodies by reason, so a reviewer holding only the file can see what is
-  missing. Two things a reader should know: a `capsem://tool-response/...`
+  carrying a line break a WARC header cannot hold, its bytes failing the hash
+  the ledger recorded, or the archive unable to produce them at all -- is left
+  out rather than described with a guess, and never costs the rest of the
+  session. The file says so itself: it opens and closes with a `warcinfo`
+  record, and the closing one carries the count of omitted bodies by reason, so
+  a reviewer holding only the file can see what is missing. The closing record
+  doubles as the completion mark: a file without one is an export that did not
+  finish, and its records are not the whole session. Two other things a reader
+  should know: a `capsem://tool-response/...`
   record's `WARC-Date` is when the body was archived rather than when the
   response arrived, because `tool_responses` has no timestamp of its own; and
   `WARC-Block-Digest` is blake3, which is the digest the ledger already
