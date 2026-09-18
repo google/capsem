@@ -3,8 +3,8 @@
   import * as api from '../../api';
   import { formatBytes, formatDuration, formatTime } from '../../format';
   import { getShikiHighlighter, resolveShikiTheme, ensureShikiLang, ensureShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
+  import { createDetailLoader } from '../../event-bodies';
   import {
-    BODY_DIRECTIONS,
     compactJsonForDisplay,
     detailPayloadSections,
     formatDetailValue,
@@ -58,86 +58,21 @@
   let securityStatus = $state<api.SecurityRuleStats | null>(null);
   let bodyBlobs = $state<Record<string, Row[]>>({});
 
-  function safeEventId(value: unknown): string | null {
-    const id = text(value);
-    return /^[0-9a-f]{12}$/.test(id) ? id : null;
-  }
-
-  function isBodyDirection(value: string): value is (typeof BODY_DIRECTIONS)[number] {
-    return (BODY_DIRECTIONS as readonly string[]).includes(value);
-  }
-
-  // How many bytes of the archived body this response actually carried. The
-  // route reports that it cut one, not where; for text that is the encoded
-  // length of what came back, and for base64 it is what those characters
-  // decode to.
-  function shownBytes(body: api.EventBody): number {
-    if (body.encoding === 'base64') {
-      const padding = (body.content.match(/=+$/)?.[0].length) ?? 0;
-      return Math.max(0, Math.floor((body.content.length * 3) / 4) - padding);
-    }
-    return new TextEncoder().encode(body.content).length;
-  }
-
-  // Bytes that are not text are not rendered as text. The metadata rows beside
-  // this say what they are; pasting base64 into a syntax highlighter would be
-  // noise dressed as evidence.
-  function bodyContent(body: api.EventBody): string {
-    if (body.encoding !== 'base64') return body.content;
-    return `[binary body, ${shownBytes(body)} bytes, not text]`;
-  }
-
-  // Which event the open detail pane is for, so a second click while the first
-  // fetch is in flight does not paint one event's bodies onto another's row.
-  let detailToken = 0;
-
-  async function showDetail(type: string, row: Row) {
-    detail = { type, data: row };
-    const eventId = safeEventId(row.event_id);
-    if (!eventId) return;
-    const token = ++detailToken;
-
-    // The index metadata the list already carries: what was captured.
-    const enriched: Row = { ...row };
-    for (const bodyRow of bodyBlobs[eventId] ?? []) {
-      const direction = text(bodyRow.direction);
-      if (!isBodyDirection(direction)) continue;
-      enriched[`${direction}_body_content_type`] = bodyRow.content_type;
-      enriched[`${direction}_body_original_bytes`] = bodyRow.original_bytes;
-      enriched[`${direction}_body_stored_bytes`] = bodyRow.stored_bytes;
-      enriched[`${direction}_body_truncated`] = bodyRow.truncated;
-      enriched[`${direction}_body_hash`] = bodyRow.body_hash;
-    }
-    detail = { type, data: enriched };
-
-    // And the bytes, fetched on demand. They are archive-backed and never ride
-    // along with a list of two hundred rows.
-    let fetched: api.EventBody[];
-    try {
-      fetched = (await api.fetchEventBodies(vmId, eventId)).bodies;
-    } catch (e) {
-      if (token === detailToken) bodyError = e instanceof Error ? e.message : 'Failed to load event bodies';
-      return;
-    }
-    if (token !== detailToken) return;
-    bodyError = null;
-
-    const withBodies: Row = { ...enriched };
-    for (const body of fetched) {
-      if (!isBodyDirection(body.direction)) continue;
-      const key = `${body.direction}_body`;
-      withBodies[key] = bodyContent(body);
-      withBodies[`${key}_content_type`] = body.content_type;
-      withBodies[`${key}_original_bytes`] = body.original_bytes;
-      withBodies[`${key}_stored_bytes`] = body.stored_bytes;
-      withBodies[`${key}_truncated`] = body.truncated ? 1 : 0;
-      withBodies[`${key}_truncated_for_transport`] = body.truncated_for_transport;
-      withBodies[`${key}_shown_bytes`] = shownBytes(body);
-      withBodies[`${key}_encoding`] = body.encoding;
-      withBodies[`${key}_hash`] = body.body_hash;
-    }
-    detail = { type, data: withBodies };
-  }
+  // Every row in every tab opens the pane through here. The rules about which
+  // selection is the open one, and what a response that lands after the user
+  // has moved on is allowed to do, live in `event-bodies.ts` where they can be
+  // tested -- they had two bugs in them that reading the source could not have
+  // found. The component supplies the two writes and the two sources.
+  const showDetail = createDetailLoader(
+    {
+      show: selection => { detail = selection; },
+      setError: message => { bodyError = message; },
+    },
+    {
+      indexRowsFor: eventId => bodyBlobs[eventId] ?? [],
+      fetchBodies: async eventId => (await api.fetchEventBodies(vmId, eventId)).bodies,
+    },
+  );
 
   function number(value: unknown): number {
     const n = Number(value ?? 0);
@@ -402,7 +337,7 @@
           <MetricCard label="Redirected" value={dnsRows.filter(row => text(row.decision) === 'redirected').length.toLocaleString()} />
           <MetricCard label="Avg Upstream" value={`${Math.round(dnsRows.reduce((sum, row) => sum + number(row.upstream_resolver_ms), 0) / Math.max(1, dnsRows.length))}ms`} />
         </div>
-        <StatsEventList title="DNS Events" rows={dnsRows} columns={['Time', 'Name', 'Type', 'Rcode', 'Decision']} onrow={(row) => detail = { type: 'dns', data: row }}>
+        <StatsEventList title="DNS Events" rows={dnsRows} columns={['Time', 'Name', 'Type', 'Rcode', 'Decision']} onrow={(row) => { void showDetail('dns', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2 font-mono text-xs text-foreground">{row.qname}</td>
@@ -419,7 +354,7 @@
           <MetricCard label="Modified" value={fileModified.toLocaleString()} />
           <MetricCard label="Deleted" value={fileDeleted.toLocaleString()} tone="danger" />
         </div>
-        <StatsEventList title="File Events" rows={fileRows} columns={['Time', 'Action', 'Path', 'Size', 'Trace']} onrow={(row) => detail = { type: 'file', data: row }}>
+        <StatsEventList title="File Events" rows={fileRows} columns={['Time', 'Action', 'Path', 'Size', 'Trace']} onrow={(row) => { void showDetail('file', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2"><StatsBadge value={text(row.action)} /></td>
@@ -436,7 +371,7 @@
           <MetricCard label="Observed Processes" value={auditRows.length.toLocaleString()} />
           <MetricCard label="Unique Binaries" value={processUniqueBinaries.toLocaleString()} />
         </div>
-        <StatsEventList title="Process Exec Events" rows={processRows} columns={['Time', 'Source', 'Command', 'Exit', 'Duration']} onrow={(row) => detail = { type: 'process', data: row }}>
+        <StatsEventList title="Process Exec Events" rows={processRows} columns={['Time', 'Source', 'Command', 'Exit', 'Duration']} onrow={(row) => { void showDetail('process', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2 text-muted-foreground-1">{row.source}</td>
@@ -445,7 +380,7 @@
             <td class="px-4 py-2 text-right text-muted-foreground">{row.duration_ms != null ? formatDuration(number(row.duration_ms)) : '--'}</td>
           {/snippet}
         </StatsEventList>
-        <StatsEventList title="Observed Processes" rows={auditRows} columns={['Observed', 'Executable', 'Command', 'PID', 'Parent']} onrow={(row) => detail = { type: 'observed process', data: row }}>
+        <StatsEventList title="Observed Processes" rows={auditRows} columns={['Observed', 'Executable', 'Command', 'PID', 'Parent']} onrow={(row) => { void showDetail('observed process', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2 font-mono text-xs text-foreground max-w-xl truncate">{row.exe}</td>
@@ -462,7 +397,7 @@
           <MetricCard label="Injected" value={brokerInjectedCount.toLocaleString()} />
           <MetricCard label="Errors" value={brokerErrorCount.toLocaleString()} tone="danger" />
         </div>
-        <StatsEventList title="Credential Broker Events" rows={substitutionRows} columns={['Time', 'Verb', 'Source', 'Provider', 'Origin']} onrow={(row) => detail = { type: 'credential broker event', data: row }}>
+        <StatsEventList title="Credential Broker Events" rows={substitutionRows} columns={['Time', 'Verb', 'Source', 'Provider', 'Origin']} onrow={(row) => { void showDetail('credential broker event', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2"><StatsBadge value={brokerVerb(row)} /></td>
@@ -550,7 +485,13 @@
                 </div>
               {/each}
             </div>
-            <div class="detail-shiki rounded overflow-auto max-h-80 bg-background-1">{@html formatAndHighlight(section.value, section.lang)}</div>
+            {#if section.hasContent}
+              <div class="detail-shiki rounded overflow-auto max-h-80 bg-background-1">{@html formatAndHighlight(section.value, section.lang)}</div>
+            {:else}
+              <div class="rounded px-2 py-1 bg-background-1 text-muted-foreground-1 italic">
+                {bodyError ? 'bytes not loaded' : 'no bytes stored'}
+              </div>
+            {/if}
           </div>
         {/each}
         {#if detail.type === 'security' || detail.type === 'detection' || detail.type === 'enforcement'}

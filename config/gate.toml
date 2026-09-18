@@ -2866,9 +2866,15 @@ slowest_steps = 10
 #
 # A route added to the router and to no class fails
 # `tests/citadel/test_bench_route_coverage.py` in the fast phase. That is the
-# point: 53 of the 101 service routes had no timing signal of any kind, and
-# nothing noticed, because coverage was a hand-maintained list of 27 contracts
-# in a test file rather than something derived from the router.
+# point: when this was written, 53 of the 101 service routes that existed then
+# had no timing signal of any kind, and nothing noticed, because coverage was a
+# hand-maintained list of 27 contracts in a test file rather than something
+# derived from the router.
+#
+# Those numbers are the finding, not the state. The router has grown since and
+# will again; the live count is whatever the guard reads out of it, and this
+# comment deliberately does not restate it -- a total written down here is a
+# total that goes stale silently, which is the same failure one class up.
 #
 # `unmeasured` is a debt inventory, not an exemption list. It starts holding
 # every route because the bench system measures none of them yet, and each

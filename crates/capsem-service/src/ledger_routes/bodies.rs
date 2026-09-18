@@ -72,6 +72,16 @@ const DEFAULT_TRANSPORT_BYTES: usize = 1024 * 1024;
 const MAX_TRANSPORT_BYTES: usize = 16 * 1024 * 1024;
 
 /// How much of each body to send back.
+///
+/// Two things `max_bytes` is not, both of which a caller sizing a buffer would
+/// otherwise get wrong:
+///
+/// - It bounds the **decoded** bytes, not the bytes on the wire. A body that
+///   is not valid UTF-8 goes out as base64, which is about 4/3 the size plus
+///   JSON escaping, so `max_bytes=16777216` can produce a response of roughly
+///   21 MiB.
+/// - It is **per body**, not per response. An event has at most one body per
+///   direction, so a response carries at most `directions * max_bytes`.
 #[derive(Deserialize, Debug, Default)]
 pub(crate) struct EventBodiesQuery {
     /// Bytes per body. Absent means [`DEFAULT_TRANSPORT_BYTES`]; anything
@@ -175,6 +185,23 @@ fn floor_char_boundary(text: &str, at: usize) -> usize {
 /// An event with no archived body answers with an empty list rather than a
 /// 404: the event may simply have had no body, and a 404 would say instead
 /// that the event does not exist.
+///
+/// **`max_bytes` bounds the response, not the read.** `read_bodies` inflates
+/// every body of the event before [`bounded_body_response`] cuts any of them,
+/// so peak service memory for one request is what the archive holds for this
+/// event, not what the caller asked to be sent.
+///
+/// That is deliberate, and it is why this read takes no `max_total_bytes` the
+/// way [`capsem_logger::DbHandle::read_bodies_for_events`] does. The index is
+/// `UNIQUE(event_id, source_table, direction)`, so one event has at most one
+/// body per direction -- five, and the writer stages at most
+/// `MAX_BODY_BLOB_BYTES` (10 MiB) of each. The ceiling is a constant nobody
+/// can raise from a URL. The page read is the opposite shape: the caller names
+/// up to two hundred events and the same reasoning gives two hundred times the
+/// cap, which is a budget precisely because the caller chooses the multiplier.
+///
+/// If a direction is ever added, or the capture cap raised much, that constant
+/// stops being small and this read needs the budget too.
 pub(crate) async fn handle_event_bodies(
     State(state): State<Arc<ServiceState>>,
     Path((id, event_id)): Path<(String, String)>,
@@ -222,11 +249,20 @@ struct ExportChannelWriter {
     chunks: tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>,
 }
 
+/// What a dropped receiver is reported as.
+///
+/// The export flattens its writer's `io::Error` into a message on the way out,
+/// so the kind is gone by the time the spawned task sees it and this string is
+/// all that is left to tell a cancelled download from a broken one. It is a
+/// constant rather than two literals precisely because a match on a message
+/// written twice is a match that drifts.
+const EXPORT_CLIENT_GONE: &str = "the export client went away";
+
 impl std::io::Write for ExportChannelWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.chunks
             .blocking_send(Ok(Bytes::copy_from_slice(buf)))
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the export client went away"))?;
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, EXPORT_CLIENT_GONE))?;
         Ok(buf.len())
     }
 
@@ -281,6 +317,16 @@ pub(crate) async fn handle_bodies_warc_export(
                 bytes_written = summary.bytes_written,
                 skipped = summary.skipped.len(),
                 "bodies_warc_export"
+            ),
+            // A client that closes the connection mid-download is the normal
+            // way this ends -- a reviewer who saw enough, a page navigated
+            // away from -- and logging it at error level would fill the log
+            // with the one outcome nobody needs to investigate, beside the one
+            // they do.
+            Err(error) if error.contains(EXPORT_CLIENT_GONE) => info!(
+                route = "/vms/{id}/bodies/export.warc.gz",
+                vm_id = vm_id.as_str(),
+                "session body WARC export was cancelled by the client"
             ),
             Err(error) => error!(
                 route = "/vms/{id}/bodies/export.warc.gz",

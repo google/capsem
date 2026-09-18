@@ -168,8 +168,65 @@ describe('archived body metadata', () => {
       rule_id: 'profiles.rules.x',
       payload_body: '{"model":{"provider":"ollama"}}',
     });
-    expect(sections.map(section => [section.key, section.lang])).toEqual([
-      ['payload_body', 'json'],
+    expect(sections.map(section => [section.key, section.lang, section.hasContent])).toEqual([
+      ['payload_body', 'json', true],
     ]);
+  });
+
+  it('keeps the section when the bytes could not be fetched', () => {
+    // A section used to exist only when its content did, and every metadata
+    // key is filtered out of the generic field grid -- so a failed fetch took
+    // the content type, both sizes, the truncation flag and the hash out of
+    // the pane with it, and the pane said nothing at all about a body it knew
+    // was there. The index metadata alone is still worth rendering.
+    const sections = detailPayloadSections({
+      rule_id: 'profiles.rules.x',
+      payload_body_content_type: 'application/json',
+      payload_body_original_bytes: 2400,
+      payload_body_stored_bytes: 2400,
+      payload_body_truncated: 0,
+      payload_body_hash: `blake3:${'e'.repeat(64)}`,
+    });
+    expect(sections.map(section => [section.key, section.hasContent])).toEqual([
+      ['payload_body', false],
+    ]);
+    expect(payloadSectionMeta(sections[0], {
+      payload_body_content_type: 'application/json',
+      payload_body_original_bytes: 2400,
+      payload_body_stored_bytes: 2400,
+      payload_body_truncated: 0,
+      payload_body_hash: `blake3:${'e'.repeat(64)}`,
+    }).map(row => row.label)).toEqual(['Content Type', 'Original', 'Stored', 'Truncated', 'Hash']);
+  });
+
+  it('keeps the section when the upstream sent a zero-length body', () => {
+    // `isPresent('')` is false, so an empty body is indistinguishable from a
+    // missing one by content alone. The index row says one was stored.
+    const sections = detailPayloadSections({
+      response_body: '',
+      response_body_content_type: 'text/plain',
+      response_body_original_bytes: 0,
+      response_body_stored_bytes: 0,
+      response_body_truncated: 0,
+      response_body_hash: `blake3:${'f'.repeat(64)}`,
+    });
+    expect(sections.map(section => [section.key, section.hasContent])).toEqual([
+      ['response_body', false],
+    ]);
+  });
+
+  it('says nothing about a direction the index never named', () => {
+    // No hash means no index row means no body: an empty section here would
+    // assert a body that never existed.
+    expect(detailPayloadSections({ rule_id: 'profiles.rules.x' })).toEqual([]);
+  });
+
+  it('does not duplicate a body that has both content and metadata', () => {
+    const sections = detailPayloadSections({
+      response_body: '{"ok":true}',
+      response_body_hash: `blake3:${'a'.repeat(64)}`,
+    });
+    expect(sections).toHaveLength(1);
+    expect(sections[0].hasContent).toBe(true);
   });
 });

@@ -75,7 +75,14 @@ USES_ID = re.compile(r"(?P<callee>\w+)\s*\([^)]*?&?\s*\bevent_id\b")
 # returns the query string of the request being served; a handler that reads
 # its own URI has not read the database, and reporting it would leave the
 # handler no shape it could be written in.
-NOT_A_RECEIVER = ("uri()",)
+#
+# The leading dot is load-bearing. A bare `uri()` suffix also matched
+# `db_uri()`, `session_uri()` and `conn_uri()` -- three names anyone could
+# reach for, each of which would have exempted the `.query(` after it. What is
+# left is `db.uri().query(`, where a field genuinely named `uri` returns
+# something with a `query` method: inherent to matching text rather than types,
+# and narrow enough to accept.
+NOT_A_RECEIVER = (".uri()",)
 
 # Callees that take the id and are not a use of it: the validator itself, and
 # axum's extractor binding it.
@@ -405,6 +412,31 @@ async fn handle_proxy(State(state): State<Arc<AppState>>, req: Request) -> Respo
 }
 '''
     assert unvalidated_handlers({"router.rs": router, "proxy.rs": proxy}) == []
+
+
+def test_a_function_named_like_a_uri_does_not_exempt_the_call_after_it() -> None:
+    """The exemption is `.uri()` the method, not `uri()` the suffix.
+
+    `db_uri()`, `session_uri()` and `conn_uri()` are names anyone could reach
+    for, and a bare suffix match let each of them carry an unvalidated read
+    past this guard.
+    """
+    router = '''
+fn routes() -> Router {
+    Router::new().route("/events/{event_id}/bodies", get(handle_event_bodies))
+}
+'''
+    for escape in ("db_uri()", "session_uri()", "conn_uri()"):
+        handler = f'''
+async fn handle_event_bodies(Path(event_id): Path<String>, db: DbHandle) -> Response {{
+    let rows = {escape}.query("SELECT 1", &[]).await;
+    validate_event_id(&event_id)?;
+    Json(rows).into_response()
+}}
+'''
+        found = unvalidated_handlers({"router.rs": router, "handler.rs": handler})
+        assert len(found) == 1, (escape, found)
+        assert "after it reaches the database" in found[0], (escape, found)
 
 
 def test_a_real_database_call_is_still_a_database_call() -> None:

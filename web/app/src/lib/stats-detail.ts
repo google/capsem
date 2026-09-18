@@ -5,6 +5,8 @@ export type DetailPayloadSection = {
   label: string;
   value: unknown;
   lang: string;
+  /** Whether there are bytes to render, as opposed to provenance alone. */
+  hasContent: boolean;
 };
 
 // The sections the detail pane renders as payloads. `*_body` values are
@@ -84,15 +86,44 @@ export function visibleDetailEntries(obj: Record<string, unknown>): [string, unk
     .filter(([, value]) => isPresent(value));
 }
 
+const BODY_SECTION_KEYS = BODY_DIRECTIONS.map(direction => `${direction}_body`);
+
+// The sections the detail pane renders, content first and then the bodies the
+// index names but whose bytes are not here.
+//
+// That second pass is not a nicety. A section used to exist only when its
+// content did, and every metadata key is filtered out of the generic field
+// grid, so a body whose fetch failed -- or one the upstream sent empty --
+// dropped its content type, its sizes, its truncation flag and its hash out of
+// the pane entirely. The pane said nothing rather than "there was a body here
+// and these are its dimensions", which is the difference between an event with
+// no body and an event whose body could not be read.
+//
+// The hash is the marker, as it is for the metadata rows: an index row exists
+// for this direction or it does not.
 export function detailPayloadSections(obj: Record<string, unknown>): DetailPayloadSection[] {
-  return Object.entries(obj)
+  const sections: DetailPayloadSection[] = Object.entries(obj)
     .filter(([key, value]) => DETAIL_PAYLOAD_KEYS.has(key) && isPresent(value))
     .map(([key, value]) => ({
       key,
       label: labelForDetailKey(key),
       value,
       lang: detailPayloadLang(key, value),
+      hasContent: true,
     }));
+
+  for (const key of BODY_SECTION_KEYS) {
+    if (sections.some(section => section.key === key)) continue;
+    if (!isPresent(obj[`${key}_hash`])) continue;
+    sections.push({
+      key,
+      label: labelForDetailKey(key),
+      value: null,
+      lang: 'text',
+      hasContent: false,
+    });
+  }
+  return sections;
 }
 
 export function detailPayloadLang(key: string, value: unknown): string {
