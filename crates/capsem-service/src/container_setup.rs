@@ -362,6 +362,26 @@ pub(crate) fn record_launched(state: &ServiceState, id: &str) -> Result<(), Stri
 
 /// GET /vms/{id}/container -- the VM's container workload status.
 ///
+/// Whether VM `id` runs a container workload, live or recorded: the files API
+/// resolves absolute paths against what the container sees.
+pub(crate) async fn runs_container(state: &Arc<ServiceState>, id: &str) -> bool {
+    let live = state.containers.status(id);
+    let id = id.to_owned();
+    matches!(
+        state.off_worker(move |state| observe(&state, &id, live)).await,
+        Ok(Ok(Some(_)))
+    )
+}
+
+/// Resolve a files-API path against what VM `id` shows its guest.
+pub(crate) async fn guest_file(
+    state: &Arc<ServiceState>,
+    id: &str,
+    query: &capsem_service::fs_utils::FileContentQuery,
+) -> Result<capsem_service::fs_utils::FilePath, AppError> {
+    capsem_service::fs_utils::resolve_file_path(&query.path, query.exact, runs_container(state, id).await)
+}
+
 /// `running` is guest-reported: the launcher writes its ready marker into the
 /// shared workspace once the image is unpacked and the workload started.
 pub(crate) async fn handle_container_status(

@@ -1,6 +1,6 @@
 use super::*;
 use capsem_foundation::unix::contained::ContainedOpenOptions;
-use capsem_service::fs_utils::sanitize_file_path;
+use capsem_service::fs_utils::{sanitize_file_path, FileContentQuery, FileListQuery};
 use std::io::{Read as _, Write as _};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -67,11 +67,16 @@ async fn stopped_workspace_uses_canonical_id_without_bypassing_file_security() {
 // Download / Upload via resolve_workspace_path
 // -----------------------------------------------------------------------
 
-fn setup_vm_with_workspace(state: &ServiceState, dir: &std::path::Path, vm_id: &str) {
+pub(super) fn setup_vm_with_workspace(state: &ServiceState, dir: &std::path::Path, vm_id: &str) {
     setup_vm_with_workspace_and_uds(state, dir, vm_id, dir.join("process.sock"));
 }
 
-fn setup_vm_with_workspace_and_uds(state: &ServiceState, dir: &std::path::Path, vm_id: &str, uds_path: PathBuf) {
+pub(super) fn setup_vm_with_workspace_and_uds(
+    state: &ServiceState,
+    dir: &std::path::Path,
+    vm_id: &str,
+    uds_path: PathBuf,
+) {
     let session_dir = dir.join("session");
     let workspace = session_dir.join("guest/workspace");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -139,7 +144,7 @@ async fn exec_response_preserves_non_utf8_output() {
     owner.await.unwrap();
 }
 
-async fn spawn_file_boundary_ipc(
+pub(super) async fn spawn_file_boundary_ipc(
     expected_messages: usize,
 ) -> (
     tempfile::TempDir,
@@ -175,6 +180,7 @@ async fn upload_logs_file_import_before_writing_workspace_file() {
         Path("up-ledger-vm".to_string()),
         Query(FileContentQuery {
             path: "new.txt".to_string(),
+            exact: false,
         }),
         axum::body::Bytes::from_static(b"uploaded through ledger"),
     )
@@ -219,6 +225,7 @@ async fn download_logs_file_export_before_returning_response() {
         Path("dl-ledger-vm".to_string()),
         Query(FileContentQuery {
             path: "report.txt".to_string(),
+            exact: false,
         }),
     )
     .await
@@ -266,6 +273,7 @@ async fn download_file_content_does_not_wait_on_stats_rebuild() {
             Path("fast-file-vm".to_string()),
             Query(FileContentQuery {
                 path: "latency.txt".to_string(),
+                exact: false,
             }),
         ),
     )
@@ -408,6 +416,7 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
         Path("deny-ledger-vm".to_string()),
         Query(FileContentQuery {
             path: "blocked.txt".to_string(),
+            exact: false,
         }),
         axum::body::Bytes::from_static(b"must not land"),
     )
@@ -572,6 +581,7 @@ async fn upload_refuses_a_dangling_symlink_target() {
         Path("up-dangling-vm".to_string()),
         Query(FileContentQuery {
             path: "notes.txt".to_string(),
+            exact: false,
         }),
         axum::body::Bytes::from_static(b"ssh-ed25519 AAAA attacker"),
     )
@@ -594,6 +604,7 @@ async fn upload_refuses_a_symlinked_parent_even_when_the_leaf_directory_is_missi
         Path("up-parent-vm".to_string()),
         Query(FileContentQuery {
             path: "link/sub/new.txt".to_string(),
+            exact: false,
         }),
         axum::body::Bytes::from_static(b"payload"),
     )
@@ -619,6 +630,7 @@ async fn download_refuses_a_symlink_to_a_host_file() {
         Path("dl-symlink-vm".to_string()),
         Query(FileContentQuery {
             path: "leak.txt".to_string(),
+            exact: false,
         }),
     )
     .await
@@ -640,6 +652,7 @@ async fn listing_neither_follows_nor_shows_a_symlinked_directory() {
         Query(FileListQuery {
             path: Some("peek".to_string()),
             depth: 3,
+            exact: false,
         }),
     )
     .await
@@ -649,7 +662,11 @@ async fn listing_neither_follows_nor_shows_a_symlinked_directory() {
     let root = handle_list_files(
         State(state),
         Path("ls-symlink-vm".to_string()),
-        Query(FileListQuery { path: None, depth: 3 }),
+        Query(FileListQuery {
+            path: None,
+            depth: 3,
+            exact: false,
+        }),
     )
     .await
     .expect("listing the workspace root");

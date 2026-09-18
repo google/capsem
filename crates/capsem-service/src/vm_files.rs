@@ -390,7 +390,10 @@ use std::ffi::OsString;
 use capsem_foundation::unix::contained::{
     is_not_directory, is_symlink_refusal, ContainedDir, ContainedOpenOptions, EntryKind,
 };
-use capsem_service::fs_utils::{identify_bytes_sync, identify_file_sync, sanitize_file_path, unknown_file_type};
+use capsem_service::fs_utils::{
+    identify_bytes_sync, identify_file_sync, unknown_file_type, FileContentQuery, FileListQuery,
+};
+use capsem_service::fs_utils::{resolve_dir_path, FilePath};
 
 // ---------------------------------------------------------------------------
 // Files API -- workspace path resolver (state-bound; pure helpers live in fs_utils.rs)
@@ -471,23 +474,6 @@ pub(super) fn resolve_workspace_target(
 // Files API Handlers (host-side VirtioFS)
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
-pub(super) struct FileListQuery {
-    #[serde(default)]
-    pub(super) path: Option<String>,
-    #[serde(default = "default_file_depth")]
-    pub(super) depth: u32,
-}
-
-pub(super) fn default_file_depth() -> u32 {
-    1
-}
-
-#[derive(Deserialize)]
-pub(super) struct FileContentQuery {
-    pub(super) path: String,
-}
-
 /// Recursively list a directory up to `max_depth`. Symlinks and special
 /// files are neither followed nor shown.
 pub(super) fn list_dir_recursive(
@@ -564,10 +550,8 @@ pub(super) async fn handle_list_files(
     Query(params): Query<FileListQuery>,
 ) -> Result<Json<FileListResponse>, AppError> {
     let depth = params.depth.min(6);
-    let rel_path = match params.path.as_deref() {
-        Some(p) if !p.is_empty() => sanitize_file_path(p)?,
-        _ => String::new(),
-    };
+    let container = crate::container_setup::runs_container(&state, &id).await;
+    let rel_path = resolve_dir_path(params.path.as_deref().unwrap_or(""), params.exact, container)?;
     let target = workspace_root(&state, &id)?
         .walk(StdPath::new(&rel_path))
         .map_err(workspace_io_error)?;
@@ -647,8 +631,8 @@ pub(super) async fn handle_download_file(
     Path(id): Path<String>,
     Query(params): Query<FileContentQuery>,
 ) -> Result<axum::response::Response, AppError> {
-    let sanitized = sanitize_file_path(&params.path)?;
-    let (parent, name) = resolve_workspace_target(&state, &id, &sanitized, false)?;
+    let FilePath { relative, vm_path, .. } = crate::container_setup::guest_file(&state, &id, &params).await?;
+    let (parent, name) = resolve_workspace_target(&state, &id, &relative, false)?;
 
     // Open without following symlinks, read, and detect type in spawn_blocking
     let state_clone = Arc::clone(&state);
@@ -685,7 +669,7 @@ pub(super) async fn handle_download_file(
         &state,
         &id,
         FileBoundaryAction::Export,
-        sanitized,
+        relative,
         file_security_preview_bytes(&data),
         data.len() as u64,
         Some(mime.clone()),
@@ -703,6 +687,7 @@ pub(super) async fn handle_download_file(
                 format!("attachment; filename=\"{filename}\""),
             ),
             (axum::http::header::CONTENT_LENGTH, data.len().to_string()),
+            (axum::http::HeaderName::from_static("x-capsem-vm-path"), vm_path),
         ],
         data,
     )
@@ -715,15 +700,19 @@ pub(super) async fn handle_upload_file(
     Query(params): Query<FileContentQuery>,
     body: axum::body::Bytes,
 ) -> Result<Json<UploadResponse>, AppError> {
-    let sanitized = sanitize_file_path(&params.path)?;
-    let (parent, name) = resolve_workspace_target(&state, &id, &sanitized, true)?;
+    let FilePath {
+        relative,
+        vm_path,
+        container_path,
+    } = crate::container_setup::guest_file(&state, &id, &params).await?;
+    let (parent, name) = resolve_workspace_target(&state, &id, &relative, true)?;
 
     let mut data = body.to_vec();
     let size = data.len() as u64;
     let preview = file_security_preview_bytes(&data);
 
     if let Some(rewritten) =
-        log_file_boundary(&state, &id, FileBoundaryAction::Import, sanitized, preview, size, None).await?
+        log_file_boundary(&state, &id, FileBoundaryAction::Import, relative, preview, size, None).await?
     {
         data = rewritten;
     }
@@ -745,6 +734,8 @@ pub(super) async fn handle_upload_file(
     Ok(Json(UploadResponse {
         success: true,
         size: written_size,
+        vm_path,
+        container_path,
     }))
 }
 

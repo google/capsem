@@ -725,6 +725,7 @@ mod assets_registry;
 mod async_io_contract;
 mod db_handle_ownership;
 mod files_api;
+mod files_paths;
 mod inspection;
 mod interactions;
 mod ipc_command;

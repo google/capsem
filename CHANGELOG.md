@@ -50,6 +50,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The files API now speaks the guest's paths. An absolute path is where the
+  guest sees the file: `/root/x` in a VM, `/workspace/x` in its container.
+  Uploading `/root/x` used to land at the workspace's `root/x`, so the
+  file was missing when read back with `cat /root/x` in the VM. Any other
+  absolute path is refused with a 400 naming the reachable root, instead of
+  being silently rehomed under the workspace. `exact=true` (Python/TS
+  `exact`, Rust `files().exact()`) takes a path literally, relative to the
+  workspace. Uploads return `vm_path`, plus `container_path` when the VM
+  runs a container, and downloads carry `x-capsem-vm-path`. `capsem cp`
+  prints the true path, and in the SDKs and MCP an empty path, not `/`,
+  lists the workspace root.
+
+- A container workload now sees the VM's workspace, mounted read-write at
+  `/workspace`, so files written through the files API reach it. The
+  launcher's own stage directory stays masked inside that mount.
+
 - Listing a VM's changes since a checkpoint (`GET /vms/{id}/changes`, the
   UI's change view) no longer hashes every file of the workspace and the
   checkpoint on each page. A checkpoint now records each file's identity

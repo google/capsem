@@ -327,7 +327,10 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
     assert_eq!(std::fs::read(stage.join("0-0")).unwrap(), b"{\"manifests\":[]}");
     let options: serde_json::Value =
         serde_json::from_slice(&std::fs::read(stage.join("options.json")).unwrap()).unwrap();
-    assert_eq!(options, json!({"args": ["serve"], "env": {"MODE": "test"}}));
+    assert_eq!(
+        options,
+        json!({"args": ["serve"], "env": {"MODE": "test"}, "workspace": "/workspace"})
+    );
     assert!(!stage.join("1-0").exists(), "an empty layout file has no part");
 }
 
