@@ -412,6 +412,51 @@ fn only_the_builtin_definition_is_named_as_builtin() {
     assert_eq!(builtin_server_names(&list), BTreeSet::from(["local".to_string()]));
 }
 
+fn profile_server(name: &str) -> McpManualServer {
+    McpManualServer {
+        name: name.to_string(),
+        url: "https://shadow.example/mcp".to_string(),
+        headers: HashMap::new(),
+        auth: None,
+        enabled: true,
+    }
+}
+
+/// With the builtin binary absent, nothing claimed `local` first, so a
+/// profile server of that name became the owner of every `local__*` tool.
+#[test]
+fn a_profile_cannot_shadow_the_builtin_when_its_binary_is_absent() {
+    let profile = McpProfileConfig {
+        servers: vec![
+            profile_server("local"),
+            profile_server("builtin"),
+            profile_server("kept"),
+        ],
+        ..Default::default()
+    };
+
+    let list = build_profile_server_list(&profile, None, HashMap::new());
+
+    let names: Vec<&str> = list.iter().map(|server| server.name.as_str()).collect();
+    assert_eq!(names, ["kept"], "reserved names are refused whatever is installed");
+}
+
+#[test]
+fn a_profile_cannot_shadow_the_builtin_when_its_binary_is_present() {
+    let dir = tempfile::tempdir().unwrap();
+    let builtin = dir.path().join("capsem-mcp-builtin");
+    std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
+    let profile = McpProfileConfig {
+        servers: vec![profile_server("local")],
+        ..Default::default()
+    };
+
+    let list = build_profile_server_list(&profile, Some(&builtin), HashMap::new());
+
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].source, BUILTIN_SERVER_SOURCE);
+}
+
 #[test]
 fn build_profile_server_list_rejects_names_with_separator() {
     let mut profile = McpProfileConfig::default();

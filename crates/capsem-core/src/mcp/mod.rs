@@ -39,6 +39,16 @@ pub fn resolve_inflight_cap() -> usize {
 /// profile could also choose.
 pub const BUILTIN_SERVER_SOURCE: &str = "builtin";
 
+/// The name the builtin server's tools are namespaced under (`local__echo`).
+pub const BUILTIN_SERVER_NAME: &str = "local";
+
+/// Server names no profile may take: the builtin's own, and the name it had
+/// before it was `local`. Reserved whether or not the builtin binary is
+/// installed -- a profile server named `local` on a host without it would
+/// otherwise own every `local__*` tool name, and nothing downstream could tell
+/// its tools from the builtin's by name.
+const RESERVED_SERVER_NAMES: &[&str] = &[BUILTIN_SERVER_NAME, "builtin"];
+
 /// The names of the servers in `servers` that are Capsem's own builtin.
 pub fn builtin_server_names(servers: &[McpServerDef]) -> BTreeSet<String> {
     servers
@@ -74,7 +84,7 @@ fn local_builtin_server_def(bin: &Path, builtin_env: HashMap<String, String>, en
     };
 
     McpServerDef {
-        name: "local".to_string(),
+        name: BUILTIN_SERVER_NAME.to_string(),
         url: String::new(),
         command: Some(bin.to_string_lossy().to_string()),
         args: vec![],
@@ -103,9 +113,13 @@ pub fn build_profile_server_list(
 
     if let Some(bin) = builtin_binary {
         if bin.exists() {
-            let enabled = profile_config.server_enabled.get("local").copied().unwrap_or(true);
+            let enabled = profile_config
+                .server_enabled
+                .get(BUILTIN_SERVER_NAME)
+                .copied()
+                .unwrap_or(true);
             servers.push(local_builtin_server_def(bin, builtin_env, enabled));
-            seen.insert("local".to_string());
+            seen.insert(BUILTIN_SERVER_NAME.to_string());
             info!(bin = %bin.display(), "added profile local builtin MCP server");
         } else {
             warn!(bin = %bin.display(), "builtin MCP server binary not found, skipping");
@@ -117,8 +131,8 @@ pub fn build_profile_server_list(
             warn!("profile MCP server has empty name, skipping");
             continue;
         }
-        if manual.name == "builtin" {
-            warn!("profile MCP server uses reserved name 'builtin', skipping");
+        if RESERVED_SERVER_NAMES.contains(&manual.name.as_str()) {
+            warn!(name = %manual.name, "profile MCP server uses a name reserved for the builtin server, skipping");
             continue;
         }
         if manual.name.contains(capsem_proto::mcp_contracts::NS_SEP) {

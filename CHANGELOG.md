@@ -115,6 +115,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- A profile can no longer define an MCP server named `local`, the name the
+  builtin tools are served under. It was reserved only when the builtin binary
+  was installed, so on a host without it a profile server of that name owned
+  every `local__*` tool name. `local` and `builtin` are now refused whatever is
+  installed, and the profile server is skipped with a warning.
 - The session ledger now records every filesystem change under the workspace.
   The host monitor used to drop any path containing `.git`, `node_modules`,
   `__pycache__`, `.cache`, `target`, `.venv` or `.swapfile`, which is exactly
