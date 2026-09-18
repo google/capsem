@@ -259,6 +259,7 @@ mod operation;
 mod recording;
 mod retention;
 mod retention_faults;
+mod writer_lock;
 #[cfg(test)]
 pub(crate) use retention_faults::{fail_retention_for_path_for_tests, RetentionFault};
 
@@ -325,6 +326,7 @@ impl DbWriter {
     }
 
     fn open_once(path: &Path, capacity: usize, now: LedgerClock) -> rusqlite::Result<Self> {
+        let held = writer_lock::acquire(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
@@ -356,6 +358,7 @@ impl DbWriter {
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
             .spawn(move || {
+                let _held = held;
                 writer_loop(
                     conn,
                     rx,

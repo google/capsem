@@ -132,7 +132,7 @@ fn cap_preview_caps_to_exactly_preview_bytes() {
 }
 
 #[test]
-fn multi_writer_net_events_keep_rows_and_body_blobs_consistent() {
+fn writers_in_turn_keep_rows_and_body_blobs_consistent() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("multi-writer-net.db");
     let process_event_id = "111111aaaaaa".to_string();
@@ -152,6 +152,10 @@ fn multi_writer_net_events_keep_rows_and_body_blobs_consistent() {
         ready_path: &process_ready,
         go_path: &process_go,
     });
+    wait_for_child_ready(&process_ready);
+    std::fs::write(&process_go, b"go").unwrap();
+    let process_status = process_child.wait().expect("wait process child");
+    assert!(process_status.success(), "process writer failed: {process_status}");
     let mut builtin_child = spawn_net_event_writer_child(ChildNetEvent {
         db_path: &db_path,
         event_id: &builtin_event_id,
@@ -162,11 +166,7 @@ fn multi_writer_net_events_keep_rows_and_body_blobs_consistent() {
         ready_path: &builtin_ready,
         go_path: &builtin_go,
     });
-    wait_for_child_ready(&process_ready);
     wait_for_child_ready(&builtin_ready);
-    std::fs::write(&process_go, b"go").unwrap();
-    let process_status = process_child.wait().expect("wait process child");
-    assert!(process_status.success(), "process writer failed: {process_status}");
     std::fs::write(&builtin_go, b"go").unwrap();
     let builtin_status = builtin_child.wait().expect("wait builtin child");
     assert!(builtin_status.success(), "builtin writer failed: {builtin_status}");
