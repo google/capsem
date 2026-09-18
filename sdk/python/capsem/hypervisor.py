@@ -56,10 +56,12 @@ class Hypervisor(Client):
         """
         if runtime not in ("vm", "container"):
             raise ValueError("runtime must be 'vm' or 'container'")
-        if self._defaults is None:
+        defaults = self._defaults
+        if defaults is None:
             catalog = (await self.info()).profiles
-            self._defaults = catalog.defaults if catalog is not None else models.ProfileDefaults()
-        default = self._defaults.vm if runtime == "vm" else self._defaults.container
+            defaults = (catalog.defaults if catalog is not None else None) or models.ProfileDefaults()
+            self._defaults = defaults
+        default = defaults.vm if runtime == "vm" else defaults.container
         if not default:
             raise RuntimeError(
                 f"the gateway profile catalog names no default {runtime} profile; "
