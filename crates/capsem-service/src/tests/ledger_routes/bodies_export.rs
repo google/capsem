@@ -1,20 +1,38 @@
 //! `GET /vms/{id}/bodies/export.warc.gz`: the streamed session export.
 //!
 //! What matters about a WARC export is that code which is not ours can read
-//! it, so `warcio` is what reads it here -- the same probe-and-skip pattern
-//! `crates/capsem-logger/src/db/handle_tests/external_warc_reader.rs` uses, so
-//! a developer offline on a train sees a skip rather than a red test. What the
-//! route adds over the logger's own export test is the streaming path: these
-//! bytes came through a bounded channel and `Body::from_stream`, and a framing
-//! mistake there would produce a file no reader can open.
+//! it, so `warcio` is what reads it here, exactly as
+//! `crates/capsem-logger/src/db/handle_tests/external_warc_reader.rs` does.
+//! What the route adds over the logger's own export test is the streaming
+//! path: these bytes came through a bounded channel and `Body::from_stream`,
+//! and a framing mistake there would produce a file no reader can open.
+//!
+//! **This does not skip.** It used to probe for `warcio` and return quietly
+//! when the probe failed, which meant the one proof the streamed file is
+//! readable could stop running without turning anything red. `uv` is not
+//! optional here and `warcio` is pinned in `build_system`, so `--frozen`
+//! resolves it from the checked-in lock without the network.
 
 use super::bodies::session_with_bodies;
 use super::*;
 use std::process::Command;
 
-/// The tool, and the exact invocation used for both the probe and the read.
+/// `--frozen` and `--project build_system`: the interpreter and `warcio` both
+/// come from the checked-in lock, so this resolves offline.
 const UV: &str = "uv";
-const UV_ARGS: [&str; 4] = ["run", "--with", "warcio", "--no-project"];
+const UV_ARGS: [&str; 4] = ["run", "--project", "build_system", "--frozen"];
+
+const MISSING_UV: &str = "`uv` is required to run this repository's Python; install it with `just doctor fix`. \
+                          It is not optional: every gate command runs through it";
+
+/// `--project build_system` is relative, and `cargo test` runs from the crate.
+fn repository_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("the crate sits two levels below the repository root")
+        .to_path_buf()
+}
 
 const COUNT_WITH_WARCIO: &str = r#"
 import json, sys
@@ -26,17 +44,6 @@ with open(sys.argv[1], "rb") as handle:
         types.append(record.rec_type)
 print(json.dumps(types))
 "#;
-
-/// Whether `uv` can produce an interpreter with `warcio` in it right now. A
-/// probe rather than a `which`: the package still has to be fetched or found
-/// in the cache, and an offline machine fails there, not at the executable.
-fn warcio_is_available() -> bool {
-    Command::new(UV)
-        .args(UV_ARGS)
-        .args(["python", "-c", "import warcio"])
-        .output()
-        .is_ok_and(|output| output.status.success())
-}
 
 #[tokio::test]
 async fn the_export_route_streams_a_warc_a_standard_reader_can_open() {
@@ -82,23 +89,15 @@ async fn the_export_route_streams_a_warc_a_standard_reader_can_open() {
     let indexed = indexed["rows"][0][0].as_u64().expect("a count");
     assert_eq!(indexed, 2, "the fixture archives a request and a response");
 
-    if !warcio_is_available() {
-        eprintln!(
-            "skipping the warcio read: `{UV} {} python -c 'import warcio'` did not succeed, so \
-             this machine has no warcio to check the export against (offline, or uv is missing)",
-            UV_ARGS.join(" ")
-        );
-        return;
-    }
-
     let export = session_dir.join("route-export.warc.gz");
     std::fs::write(&export, &bytes).expect("write the streamed export for warcio");
     let output = Command::new(UV)
         .args(UV_ARGS)
         .args(["python", "-c", COUNT_WITH_WARCIO])
         .arg(&export)
+        .current_dir(repository_root())
         .output()
-        .expect("run warcio");
+        .unwrap_or_else(|error| panic!("{MISSING_UV}: {error}"));
     assert!(
         output.status.success(),
         "warcio could not read what the route streamed: {}",
@@ -106,12 +105,22 @@ async fn the_export_route_streams_a_warc_a_standard_reader_can_open() {
     );
     let types: Vec<String> = serde_json::from_slice(&output.stdout).expect("warcio prints JSON");
     assert_eq!(
-        types.len() as u64,
+        types.iter().filter(|kind| *kind == "resource").count() as u64,
         indexed,
-        "one record per index row; warcio found {types:?}"
+        "one resource record per index row; warcio found {types:?}"
     );
-    assert!(
-        types.iter().all(|kind| kind == "resource"),
-        "every record is a resource record: {types:?}"
+    // The export brackets its bodies with a warcinfo at each end, so the file
+    // says for itself what it holds and what it left out. The streaming path
+    // must carry those through like any other record.
+    assert_eq!(
+        types.first().map(String::as_str),
+        Some("warcinfo"),
+        "the streamed file must open by describing itself: {types:?}"
     );
+    assert_eq!(
+        types.last().map(String::as_str),
+        Some("warcinfo"),
+        "and close by saying what it left out: {types:?}"
+    );
+    assert_eq!(types.len() as u64, indexed + 2, "{types:?}");
 }

@@ -6,8 +6,9 @@ const DATE: &str = "2026-09-17T10:11:12Z";
 
 fn record<'a>(body: &'a [u8], content_type: Option<&'a str>) -> WarcRecord<'a> {
     WarcRecord {
+        record_type: WARC_TYPE_RESOURCE,
         record_id: "urn:capsem:0123456789ab:response",
-        target_uri: "https://example.test/answer",
+        target_uri: Some("https://example.test/answer"),
         date: DATE,
         content_type,
         truncated: false,
@@ -138,6 +139,42 @@ fn a_truncated_body_carries_the_specs_own_field_and_its_real_length() {
     );
 }
 
+/// A `warcinfo` record describes the file rather than capturing something, so
+/// it carries no `WARC-Target-URI` -- the spec makes that header mandatory for
+/// the types that capture, and a `warcinfo` claiming to have captured a URI is
+/// a record that says something untrue.
+#[test]
+fn a_warcinfo_record_omits_the_target_uri_it_has_nothing_to_put_in() {
+    let fields = b"software: capsem\r\nformat: WARC File Format 1.1\r\n";
+    let rec = WarcRecord {
+        record_type: WARC_TYPE_WARCINFO,
+        target_uri: None,
+        content_type: Some(WARCINFO_CONTENT_TYPE),
+        ..record(fields, None)
+    };
+    let text = String::from_utf8(members(&write_one(&rec))[0].clone()).expect("text");
+
+    assert!(text.starts_with("WARC/1.1\r\nWARC-Type: warcinfo\r\n"), "{text}");
+    assert!(!text.contains("WARC-Target-URI"), "{text}");
+    assert!(text.contains("Content-Type: application/warc-fields\r\n"), "{text}");
+    assert!(
+        text.contains("WARC-Record-ID: <urn:capsem:0123456789ab:response>\r\nWARC-Date:"),
+        "the date must follow the id directly when there is no target: {text}"
+    );
+    assert_eq!(block_of(&members(&write_one(&rec))[0]), fields);
+}
+
+/// The whole-header assertion above pins the order with a target URI present;
+/// this pins that dropping it drops exactly one line and nothing else.
+fn block_of(member: &[u8]) -> Vec<u8> {
+    let start = member
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("a blank line ends the headers")
+        + 4;
+    member[start..member.len() - 4].to_vec()
+}
+
 #[test]
 fn two_records_concatenate_into_one_stream_of_two_members() {
     let mut stream = Vec::new();
@@ -171,7 +208,7 @@ fn a_line_break_in_a_header_value_is_refused_by_field_name() {
         (
             "target_uri",
             WarcRecord {
-                target_uri: "https://example.test/a\nWARC-Target-URI: https://elsewhere.test/",
+                target_uri: Some("https://example.test/a\nWARC-Target-URI: https://elsewhere.test/"),
                 ..record(b"body", None)
             },
         ),

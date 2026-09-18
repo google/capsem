@@ -226,15 +226,19 @@ impl DbHandle {
 
     /// The raw JSON rows of an index query, for a caller that selects more
     /// than [`INDEX_COLUMNS`] and reads the rest of each row itself.
+    ///
+    /// The rows are taken out of the decoded value rather than cloned: this is
+    /// the interactive per-event read path as well as the export's, and a
+    /// session's worth of index rows is not worth a second copy that is
+    /// dropped one line later.
     pub(super) async fn body_index_values(&self, sql: &str, params: &[Value]) -> DbResult<Vec<Value>> {
         let raw = self.query(sql, params).await?;
-        let value: Value =
+        let mut value: Value =
             serde_json::from_str(&raw).map_err(|error| format!("body index rows were not decodable: {error}"))?;
-        value
-            .get("rows")
-            .and_then(Value::as_array)
-            .cloned()
-            .ok_or_else(|| "body index query returned no rows array".to_string())
+        match value.get_mut("rows").map(Value::take) {
+            Some(Value::Array(rows)) => Ok(rows),
+            _ => Err("body index query returned no rows array".to_string()),
+        }
     }
 
     /// Resolve index rows to bytes on a blocking thread: inflating a block is
@@ -334,14 +338,44 @@ impl DbHandle {
     }
 }
 
+/// Why one archived body could not be produced.
+///
+/// The two are different questions for a caller reading many rows. A file the
+/// archive cannot read at all is a broken ledger and every later row will fail
+/// the same way; a body that came back and does not match its recorded hash is
+/// one damaged row among however many good ones. The interactive reads below
+/// flatten both into a hard error, because a route asked for that body and has
+/// nothing to show without it. The export tells them apart.
+#[derive(Debug)]
+pub(super) enum BodyFault {
+    /// The archive could not resolve the reference: a bad offset, a truncated
+    /// file, a block that will not inflate.
+    Unresolvable(String),
+    /// The bytes came back and are not the bytes the index recorded.
+    Corrupt(String),
+}
+
+impl BodyFault {
+    pub(super) fn into_message(self) -> String {
+        match self {
+            Self::Unresolvable(message) | Self::Corrupt(message) => message,
+        }
+    }
+}
+
 pub(super) fn read_one(reader: &BodyLogReader, row: IndexRow) -> DbResult<StoredBody> {
+    read_one_checked(reader, row).map_err(BodyFault::into_message)
+}
+
+/// Resolve one index row to its bytes, keeping the two failure kinds apart.
+pub(super) fn read_one_checked(reader: &BodyLogReader, row: IndexRow) -> Result<StoredBody, BodyFault> {
     let bytes = reader.read(row.reference).map_err(|error| {
-        format!(
+        BodyFault::Unresolvable(format!(
             "session body archive could not resolve {}/{} of event {}: {error}",
             row.source_table,
             row.direction.as_str(),
             row.event_id
-        )
+        ))
     })?;
     // The archive verifies its own block; this verifies the span of it the
     // index row picked out. A block's hash cannot notice an index row that
@@ -349,13 +383,13 @@ pub(super) fn read_one(reader: &BodyLogReader, row: IndexRow) -> DbResult<Stored
     // that row would otherwise be served as this event's body.
     let hash = format!("blake3:{}", blake3::hash(&bytes).to_hex());
     if hash != row.body_hash {
-        return Err(format!(
+        return Err(BodyFault::Corrupt(format!(
             "session body archive returned the wrong bytes for {}/{} of event {}: index says {}, bytes hash to {hash}",
             row.source_table,
             row.direction.as_str(),
             row.event_id,
             row.body_hash
-        ));
+        )));
     }
     Ok(StoredBody {
         event_id: row.event_id,

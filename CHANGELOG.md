@@ -31,9 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the rest of the web-archive toolchain can read it -- and seek within it --
   without any Capsem code. Each record names where the body came from: a real
   `https://` URI for network and model traffic, and a `capsem://` one for
-  tools, exec output and security-rule payloads. A body whose source row is
-  gone, or whose timestamp cannot be read, is left out and reported rather than
-  described with a guess.
+  tools, exec output and security-rule payloads. A body the export cannot
+  honestly describe -- its source row gone, its timestamp unreadable, its URI
+  carrying a line break a WARC header cannot hold, or its bytes failing the
+  hash the ledger recorded -- is left out rather than described with a guess,
+  and never costs the rest of the session. The file says so itself: it opens
+  and closes with a `warcinfo` record, and the closing one carries the count of
+  omitted bodies by reason, so a reviewer holding only the file can see what is
+  missing. Two things a reader should know: a `capsem://tool-response/...`
+  record's `WARC-Date` is when the body was archived rather than when the
+  response arrived, because `tool_responses` has no timestamp of its own; and
+  `WARC-Block-Digest` is blake3, which is the digest the ledger already
+  records, so tools expecting the conventional base32 sha1 will not verify it.
 - `vm.resources.retention_days` is now enforced, having been a setting nothing
   read. Failed-session directories older than it are removed when the service
   starts -- they were culled only by count, and only when a *new* failure

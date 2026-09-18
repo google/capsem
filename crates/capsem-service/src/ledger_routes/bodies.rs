@@ -257,6 +257,11 @@ impl std::io::Write for ExportChannelWriter {
 /// is the honest outcome available -- the WARC stops after its last complete
 /// record rather than carrying a wrong one -- and the service log is the only
 /// place the reason exists.
+///
+/// A *skipped body* is not that case and needs no log to be seen: the export
+/// leaves out rows it cannot honestly describe, keeps going, and closes the
+/// file with a `warcinfo` record counting the omissions by reason. The summary
+/// logged below is a convenience; the file itself is the record.
 pub(crate) async fn handle_bodies_warc_export(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,

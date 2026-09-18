@@ -6,24 +6,31 @@
 //! tool will open. The whole point of exporting WARC is that a reviewer uses
 //! `warcio`, `pywb` or `wget --warc`, so `warcio` is what reads it here.
 //!
-//! It shells out, which is how the other optional-tool tests in this tree work
-//! -- `capsem-admin` runs `pkgbuild`, `capsem-guard` runs `perl`. The
-//! difference is that `warcio` is not on a machine by default, so this probes
-//! for it first and skips with a reason rather than failing: a developer
-//! offline on a train must not see a red test about a Python package.
+//! **This does not skip.** It used to, when `uv` was missing or the machine was
+//! offline, and `#[test]` has no way to report a skip -- the `eprintln!` was
+//! swallowed without `--nocapture`, so the one proof the format is real could
+//! quietly stop running and the suite would still be green. `uv` is not
+//! optional in this repository: every gate command runs through it and
+//! `just doctor fix` installs it. `warcio` is pinned in `build_system`'s dev
+//! dependency group, so `--frozen` resolves it from the checked-in lock
+//! without reaching the network. Both are therefore hard requirements, and a
+//! machine without them fails here with the command that would fix it.
 
 use std::path::Path;
 use std::process::Command;
 
 use super::bodies::{count, net_event_with_response};
-use super::warc_export::export_to_bytes;
+use super::warc_export::{export_to_bytes, rewrite_and_reopen};
 use super::*;
 
-/// The tool, and the exact invocation used for both the probe and the read.
-/// `--no-project` because this is not a `build_system` script: it is a
-/// throwaway interpreter with one package in it.
+/// `--frozen` and `--project build_system`: the interpreter and `warcio` both
+/// come from the checked-in lock, so this resolves offline and cannot drift to
+/// whatever version a machine happens to have.
 const UV: &str = "uv";
-const UV_ARGS: [&str; 4] = ["run", "--with", "warcio", "--no-project"];
+const UV_ARGS: [&str; 4] = ["run", "--project", "build_system", "--frozen"];
+
+const MISSING_UV: &str = "`uv` is required to run this repository's Python; install it with `just doctor fix`. \
+                          It is not optional: every gate command runs through it";
 
 /// Print one JSON object per record, as `warcio` sees it.
 const READ_WITH_WARCIO: &str = r#"
@@ -47,26 +54,15 @@ with open(sys.argv[1], "rb") as handle:
 print(json.dumps(records))
 "#;
 
-/// Whether `uv` can produce an interpreter with `warcio` in it right now.
-///
-/// A probe rather than a `which`: the package still has to be fetched or found
-/// in the cache, and an offline machine fails there, not at the executable.
-fn warcio_is_available() -> bool {
-    Command::new(UV)
-        .args(UV_ARGS)
-        .args(["python", "-c", "import warcio"])
-        .output()
-        .is_ok_and(|output| output.status.success())
-}
-
 /// Every record of `path`, as `warcio` parsed it.
 fn read_with_warcio(path: &Path) -> Vec<serde_json::Value> {
     let output = Command::new(UV)
         .args(UV_ARGS)
         .args(["python", "-c", READ_WITH_WARCIO])
         .arg(path)
+        .current_dir(repository_root())
         .output()
-        .expect("run warcio");
+        .unwrap_or_else(|error| panic!("{MISSING_UV}: {error}"));
     assert!(
         output.status.success(),
         "warcio could not read the export: {}",
@@ -75,17 +71,28 @@ fn read_with_warcio(path: &Path) -> Vec<serde_json::Value> {
     serde_json::from_slice(&output.stdout).expect("warcio prints JSON")
 }
 
+/// `--project build_system` is relative, and `cargo test` runs from the crate.
+fn repository_root() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("the crate sits two levels below the repository root")
+        .to_path_buf()
+}
+
+/// The fields of a `warcinfo` record's `application/warc-fields` block.
+fn fields(record: &serde_json::Value) -> BTreeMap<String, String> {
+    record["body"]
+        .as_str()
+        .expect("warc-fields are text")
+        .split("\r\n")
+        .filter_map(|line| line.split_once(": "))
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect()
+}
+
 #[tokio::test]
 async fn warcio_reads_every_record_the_export_wrote() {
-    if !warcio_is_available() {
-        eprintln!(
-            "skipping: `{UV} {} python -c 'import warcio'` did not succeed, so this machine \
-             has no warcio to check the export against (offline, or uv is not installed)",
-            UV_ARGS.join(" ")
-        );
-        return;
-    }
-
     let p = temp_db_path("warc-export-warcio");
     let db = DbHandle::open(&p).expect("open handle");
     db.write(WriteOp::NetEvent(net_event_with_response(
@@ -106,6 +113,18 @@ async fn warcio_reads_every_record_the_export_wrote() {
     }
     db.flush().await.expect("flush");
 
+    // One body is given a hash its bytes do not have, so the export has
+    // something real to leave out and the trailing warcinfo has something to
+    // report. A file that only ever describes a clean session cannot show that
+    // the omission is visible in the artifact.
+    let db = rewrite_and_reopen(
+        db,
+        &p,
+        "UPDATE event_body_blobs SET body_hash = 'blake3:' || hex(zeroblob(32))
+         WHERE event_id = '000000000002'",
+    )
+    .await;
+
     // Exported once and kept, because the tool needs a path rather than bytes.
     let (summary, bytes) = export_to_bytes(&db, &p).await;
     let export = p.with_extension("read-by-warcio.warc.gz");
@@ -115,18 +134,16 @@ async fn warcio_reads_every_record_the_export_wrote() {
     let records = read_with_warcio(&export);
     let _ = std::fs::remove_file(&export);
 
+    assert_eq!(summary.skipped.len(), 1, "{:?}", summary.skipped);
+    let bodies: Vec<&serde_json::Value> = records.iter().filter(|r| r["type"] == "resource").collect();
     assert_eq!(
-        records.len(),
+        bodies.len(),
         indexed - summary.skipped.len(),
         "warcio must find one record per index row the export did not skip"
     );
-    assert_eq!(records.len(), summary.records as usize, "and as many as we counted");
-    assert!(
-        records.iter().all(|record| record["type"] == "resource"),
-        "every record is a resource record: {records:?}"
-    );
+    assert_eq!(bodies.len(), summary.records as usize, "and as many as we counted");
 
-    let known = records
+    let known = bodies
         .iter()
         .find(|record| record["id"] == "<urn:capsem:0123456789ab:response>")
         .expect("the net event's record, as warcio identifies it");
@@ -140,5 +157,28 @@ async fn warcio_reads_every_record_the_export_wrote() {
         known["date"].as_str().expect("a date").ends_with('Z'),
         "{:?}",
         known["date"]
+    );
+
+    // The file describes itself, as warcio reads it: a warcinfo at each end,
+    // and the trailing one accounting for the body that was left out.
+    let info: Vec<&serde_json::Value> = records.iter().filter(|r| r["type"] == "warcinfo").collect();
+    assert_eq!(info.len(), 2, "one warcinfo at each end: {records:?}");
+    assert_eq!(records[0]["type"], "warcinfo", "the first record describes the file");
+    assert_eq!(
+        records.last().expect("records")["type"],
+        "warcinfo",
+        "the last record says what was left out"
+    );
+
+    let opening = fields(info[0]);
+    assert!(opening["software"].starts_with("capsem/"), "{opening:?}");
+    assert_eq!(opening["format"], "WARC File Format 1.1");
+
+    let closing = fields(info[1]);
+    assert_eq!(closing["capsem-records"], summary.records.to_string());
+    assert_eq!(closing["capsem-skipped"], "1");
+    assert_eq!(
+        closing["capsem-skipped-corrupt-body"], "1",
+        "the injected omission must be visible to a reader holding only the file: {closing:?}"
     );
 }

@@ -112,6 +112,7 @@ dev = [
     "ruff>=0.15.16",
     "setuptools>=80",
     "ty>=0.0.46",
+    "warcio>=1.7.5",
     "watchdog>=6.0.0",
     "websockets>=16.0",
 ]

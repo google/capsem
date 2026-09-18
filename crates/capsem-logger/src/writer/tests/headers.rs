@@ -134,3 +134,30 @@ fn cap_headers_reports_only_a_real_cut() {
     assert_eq!(value.unwrap().len(), HEADER_BYTES);
     assert!(cut);
 }
+
+/// The claim the WARC export's `UnrepresentableUri` skip rests on: the target
+/// URI is the one header value in an exported record that a counterparty can
+/// reach.
+///
+/// `content_type` is the other candidate, and it cannot be one: it is cut out
+/// of a single header line and trimmed on the way in, so whatever an upstream
+/// spells, what reaches `event_body_blobs.content_type` carries no line break
+/// and cannot forge a WARC header. If this ever stops being true, the export
+/// has a second vector and `crates/capsem-logger/src/db/warc_export.rs` has to
+/// check that field too.
+#[test]
+fn a_stored_content_type_can_never_carry_a_line_break() {
+    for headers in [
+        "content-type: text/html\r\nx-other: 1",
+        "content-type: text/html\nWARC-Type: revisit",
+        "Content-Type:\ttext/plain; charset=utf-8\r\n",
+        "content-type:   \r\n",
+        "x-none: 1",
+    ] {
+        let parsed = crate::writer::traffic_rows::content_type_from_headers(headers);
+        assert!(
+            parsed.is_none_or(|value| !value.contains(['\r', '\n'])),
+            "{headers:?} produced {parsed:?}"
+        );
+    }
+}
