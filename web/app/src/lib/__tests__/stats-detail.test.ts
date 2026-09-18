@@ -134,4 +134,42 @@ describe('archived body metadata', () => {
     });
     expect(truncated.find(row => row.label === 'Truncated')?.value).toBe('yes');
   });
+
+  it('reports what the route sent separately from what the capture kept', () => {
+    const rows = payloadSectionMeta({ key: 'response_body' }, {
+      response_body_stored_bytes: 3 * 1024 * 1024,
+      response_body_original_bytes: 3 * 1024 * 1024,
+      response_body_truncated: 0,
+      response_body_truncated_for_transport: true,
+      response_body_shown_bytes: 1024 * 1024,
+      response_body_encoding: 'utf8',
+      response_body_hash: `blake3:${'c'.repeat(64)}`,
+    });
+    // The whole body is in the archive; this page is showing a prefix of it.
+    // Reading "Truncated no" beside "Showing first 1.0 MB of 3.0 MB" is the point:
+    // a reviewer must be able to tell a lost body from a paged one.
+    expect(rows.find(row => row.label === 'Truncated')?.value).toBe('no');
+    expect(rows.find(row => row.label === 'Showing')?.value).toBe('first 1.0 MB of 3.0 MB');
+    expect(rows.find(row => row.label === 'Encoding')?.value).toBe('utf8');
+  });
+
+  it('says nothing about transport when the whole body came back', () => {
+    const rows = payloadSectionMeta({ key: 'response_body' }, {
+      response_body_stored_bytes: 11,
+      response_body_shown_bytes: 11,
+      response_body_truncated_for_transport: false,
+      response_body_hash: `blake3:${'d'.repeat(64)}`,
+    });
+    expect(rows.map(row => row.label)).not.toContain('Showing');
+  });
+
+  it('renders a security payload as a body section, not as metadata alone', () => {
+    const sections = detailPayloadSections({
+      rule_id: 'profiles.rules.x',
+      payload_body: '{"model":{"provider":"ollama"}}',
+    });
+    expect(sections.map(section => [section.key, section.lang])).toEqual([
+      ['payload_body', 'json'],
+    ]);
+  });
 });

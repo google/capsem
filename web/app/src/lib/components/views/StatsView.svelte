@@ -4,6 +4,7 @@
   import { formatBytes, formatDuration, formatTime } from '../../format';
   import { getShikiHighlighter, resolveShikiTheme, ensureShikiLang, ensureShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
   import {
+    BODY_DIRECTIONS,
     compactJsonForDisplay,
     detailPayloadSections,
     formatDetailValue,
@@ -38,6 +39,7 @@
   let loading = $state(false);
   let error = $state<string | null>(null);
   let detail = $state<DetailSelection | null>(null);
+  let bodyError = $state<string | null>(null);
   let shiki = $state<ShikiHighlighter | null>(null);
   let shikiTick = $state(0);
 
@@ -61,18 +63,45 @@
     return /^[0-9a-f]{12}$/.test(id) ? id : null;
   }
 
+  function isBodyDirection(value: string): value is (typeof BODY_DIRECTIONS)[number] {
+    return (BODY_DIRECTIONS as readonly string[]).includes(value);
+  }
+
+  // How many bytes of the archived body this response actually carried. The
+  // route reports that it cut one, not where; for text that is the encoded
+  // length of what came back, and for base64 it is what those characters
+  // decode to.
+  function shownBytes(body: api.EventBody): number {
+    if (body.encoding === 'base64') {
+      const padding = (body.content.match(/=+$/)?.[0].length) ?? 0;
+      return Math.max(0, Math.floor((body.content.length * 3) / 4) - padding);
+    }
+    return new TextEncoder().encode(body.content).length;
+  }
+
+  // Bytes that are not text are not rendered as text. The metadata rows beside
+  // this say what they are; pasting base64 into a syntax highlighter would be
+  // noise dressed as evidence.
+  function bodyContent(body: api.EventBody): string {
+    if (body.encoding !== 'base64') return body.content;
+    return `[binary body, ${shownBytes(body)} bytes, not text]`;
+  }
+
+  // Which event the open detail pane is for, so a second click while the first
+  // fetch is in flight does not paint one event's bodies onto another's row.
+  let detailToken = 0;
+
   async function showDetail(type: string, row: Row) {
     detail = { type, data: row };
     const eventId = safeEventId(row.event_id);
     if (!eventId) return;
+    const token = ++detailToken;
 
-    const bodyRows = bodyBlobs[eventId] ?? [];
-    if (bodyRows.length === 0) return;
-
+    // The index metadata the list already carries: what was captured.
     const enriched: Row = { ...row };
-    for (const bodyRow of bodyRows) {
+    for (const bodyRow of bodyBlobs[eventId] ?? []) {
       const direction = text(bodyRow.direction);
-      if (direction !== 'request' && direction !== 'response' && direction !== 'payload') continue;
+      if (!isBodyDirection(direction)) continue;
       enriched[`${direction}_body_content_type`] = bodyRow.content_type;
       enriched[`${direction}_body_original_bytes`] = bodyRow.original_bytes;
       enriched[`${direction}_body_stored_bytes`] = bodyRow.stored_bytes;
@@ -80,6 +109,34 @@
       enriched[`${direction}_body_hash`] = bodyRow.body_hash;
     }
     detail = { type, data: enriched };
+
+    // And the bytes, fetched on demand. They are archive-backed and never ride
+    // along with a list of two hundred rows.
+    let fetched: api.EventBody[];
+    try {
+      fetched = (await api.fetchEventBodies(vmId, eventId)).bodies;
+    } catch (e) {
+      if (token === detailToken) bodyError = e instanceof Error ? e.message : 'Failed to load event bodies';
+      return;
+    }
+    if (token !== detailToken) return;
+    bodyError = null;
+
+    const withBodies: Row = { ...enriched };
+    for (const body of fetched) {
+      if (!isBodyDirection(body.direction)) continue;
+      const key = `${body.direction}_body`;
+      withBodies[key] = bodyContent(body);
+      withBodies[`${key}_content_type`] = body.content_type;
+      withBodies[`${key}_original_bytes`] = body.original_bytes;
+      withBodies[`${key}_stored_bytes`] = body.stored_bytes;
+      withBodies[`${key}_truncated`] = body.truncated ? 1 : 0;
+      withBodies[`${key}_truncated_for_transport`] = body.truncated_for_transport;
+      withBodies[`${key}_shown_bytes`] = shownBytes(body);
+      withBodies[`${key}_encoding`] = body.encoding;
+      withBodies[`${key}_hash`] = body.body_hash;
+    }
+    detail = { type, data: withBodies };
   }
 
   function number(value: unknown): number {
@@ -168,12 +225,6 @@
     getShikiHighlighter().then(h => { shiki = h; });
     await load();
   });
-
-  // The open detail's archived-payload metadata, computed once: the template
-  // both tests it and iterates it.
-  const payloadMeta = $derived(
-    detail ? payloadSectionMeta({ key: 'payload_body' }, detail.data) : [],
-  );
 
   const modelCalls = $derived(modelStats.reduce((sum, row) => sum + number(row.call_count), 0));
   const modelInput = $derived(modelStats.reduce((sum, row) => sum + number(row.input_tokens), 0));
@@ -435,7 +486,7 @@
             <StatsMiniGroup title="By Event Type" rows={securityStatus.by_event_type} nameKey="event_type" />
           </div>
         {/if}
-        <StatsEventList title="Security Ledger" rows={securityLatest} columns={['Time', 'Event', 'Rule', 'Action', 'Level']} onrow={(row) => detail = { type: 'security', data: row as any }}>
+        <StatsEventList title="Security Ledger" rows={securityLatest} columns={['Time', 'Event', 'Rule', 'Action', 'Level']} onrow={(row) => { void showDetail('security', row as any); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(eventTimeMs(row.timestamp_unix_ms))}</td>
             <td class="px-4 py-2 font-mono text-xs text-foreground">{row.event_type}</td>
@@ -445,14 +496,14 @@
           {/snippet}
         </StatsEventList>
         <div class="grid grid-cols-2 gap-4">
-          <StatsEventList title="Detection Latest" rows={detectionLatest} columns={['Time', 'Rule', 'Level']} onrow={(row) => detail = { type: 'detection', data: row as any }}>
+          <StatsEventList title="Detection Latest" rows={detectionLatest} columns={['Time', 'Rule', 'Level']} onrow={(row) => { void showDetail('detection', row as any); }}>
             {#snippet children(row: any)}
               <td class="px-4 py-2 text-muted-foreground">{formatTime(eventTimeMs(row.timestamp_unix_ms))}</td>
               <td class="px-4 py-2 font-mono text-xs text-foreground">{row.rule_id}</td>
               <td class="px-4 py-2"><StatsBadge value={row.detection_level} kind="detection" /></td>
             {/snippet}
           </StatsEventList>
-          <StatsEventList title="Enforcement Latest" rows={enforcementLatest} columns={['Time', 'Rule', 'Action']} onrow={(row) => detail = { type: 'enforcement', data: row as any }}>
+          <StatsEventList title="Enforcement Latest" rows={enforcementLatest} columns={['Time', 'Rule', 'Action']} onrow={(row) => { void showDetail('enforcement', row as any); }}>
             {#snippet children(row: any)}
               <td class="px-4 py-2 text-muted-foreground">{formatTime(eventTimeMs(row.timestamp_unix_ms))}</td>
               <td class="px-4 py-2 font-mono text-xs text-foreground">{row.rule_id}</td>
@@ -469,11 +520,16 @@
     <div class="w-[560px] shrink-0 border-s border-line-2 flex flex-col overflow-hidden bg-background">
       <div class="flex items-center gap-2 px-3 py-2 border-b border-line-2 bg-surface">
         <span class="text-xs font-semibold flex-1 truncate capitalize text-foreground">{detail.type}</span>
-        <button class="p-1 rounded hover:bg-muted-hover text-muted-foreground-1 hover:text-foreground" onclick={() => detail = null} aria-label="Close detail panel">
+        <button class="p-1 rounded hover:bg-muted-hover text-muted-foreground-1 hover:text-foreground" onclick={() => { detail = null; bodyError = null; }} aria-label="Close detail panel">
           <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
       <div class="flex-1 overflow-auto p-3 text-xs space-y-3">
+        {#if bodyError}
+          <div class="p-2 rounded border border-destructive/30 bg-destructive/10 text-destructive">
+            Could not load this event's bodies: {bodyError}
+          </div>
+        {/if}
         <div class="space-y-1">
           <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Event Fields</div>
           {#each visibleDetailEntries(detail.data) as [key, value]}
@@ -502,19 +558,6 @@
             <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Rule Snapshot</div>
             <div class="detail-shiki rounded overflow-auto max-h-64 bg-background-1">{@html formatAndHighlight(compactJsonForDisplay(detail.data.rule_json), 'json')}</div>
           </div>
-          {#if payloadMeta.length > 0}
-            <div>
-              <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Matched Event</div>
-              <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-muted-foreground-1">
-                {#each payloadMeta as row}
-                  <div class="min-w-0">
-                    <span class="uppercase tracking-wider">{row.label}</span>
-                    <span class="detail-value ms-1 font-mono text-foreground">{row.value}</span>
-                  </div>
-                {/each}
-              </div>
-            </div>
-          {/if}
         {/if}
       </div>
     </div>

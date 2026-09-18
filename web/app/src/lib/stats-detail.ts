@@ -7,11 +7,19 @@ export type DetailPayloadSection = {
   lang: string;
 };
 
+// The sections the detail pane renders as payloads. `*_body` values are
+// fetched from GET /vms/{id}/bodies/{event_id} when an event is expanded --
+// the list views carry only the index metadata beside them.
+//
+// `payload_body` is the security-rule matched event. It was metadata-only
+// while there was no route to read the bytes with; it is a body like any
+// other now, and renders through the same section as the rest.
 const DETAIL_PAYLOAD_KEYS = new Set([
   'request_headers',
   'response_headers',
   'request_body',
   'response_body',
+  'payload_body',
   'context_json',
 ]);
 
@@ -19,23 +27,30 @@ const DETAIL_STRUCTURED_KEYS = new Set([
   'rule_json',
 ]);
 
-const DETAIL_BODY_METADATA_KEYS = new Set([
-  'request_body_content_type',
-  'request_body_original_bytes',
-  'request_body_stored_bytes',
-  'request_body_truncated',
-  'request_body_hash',
-  'response_body_content_type',
-  'response_body_original_bytes',
-  'response_body_stored_bytes',
-  'response_body_truncated',
-  'response_body_hash',
-  'payload_body_content_type',
-  'payload_body_original_bytes',
-  'payload_body_stored_bytes',
-  'payload_body_truncated',
-  'payload_body_hash',
-]);
+export const BODY_DIRECTIONS = ['request', 'response', 'payload'] as const;
+
+// Everything the body index and the body route say *about* a body, as opposed
+// to the body. These render as the small grid above each payload section and
+// are kept out of the generic field list, where they would bury the event's
+// own columns under fifteen rows of provenance.
+const DETAIL_BODY_METADATA_SUFFIXES = [
+  'content_type',
+  'original_bytes',
+  'stored_bytes',
+  'truncated',
+  'hash',
+  // From the route rather than the index: how it was encoded for transport,
+  // how much of it this response carried, and whether it had to cut it.
+  'encoding',
+  'shown_bytes',
+  'truncated_for_transport',
+];
+
+const DETAIL_BODY_METADATA_KEYS = new Set(
+  BODY_DIRECTIONS.flatMap(direction =>
+    DETAIL_BODY_METADATA_SUFFIXES.map(suffix => `${direction}_body_${suffix}`),
+  ),
+);
 
 const DETAIL_HIDDEN_KEYS = new Set([
   'substitution_ref',
@@ -158,14 +173,21 @@ export function normalizePayloadContent(content: string): string {
   return content;
 }
 
-// The index metadata beside one body: what it is, how big it was, how much of
-// it the archive kept, and the hash a reader checks it against.
+// The metadata beside one body: what it is, how big it was, how much of it the
+// archive kept, how much of that this page is showing, and the hash a reader
+// checks it against.
 //
 // Every row drops out when its field is absent, including Truncated -- which
 // would otherwise read "no" whether the body was whole or there was no body
 // row at all, and render a section holding a lone "TRUNCATED no". The hash is
 // the marker that an index row exists; no rows means no metadata, and the
 // caller should render no section.
+//
+// Truncated and Showing are two different statements and stay two rows.
+// Truncated is the capture: the upstream sent more than Capsem kept, and the
+// rest is gone. Showing is this response: the route sent a prefix and the rest
+// is one larger request away. Merging them would tell a reviewer evidence was
+// lost when it is sitting in the archive.
 export function payloadSectionMeta(
   section: { key: string },
   obj: Record<string, unknown>,
@@ -177,8 +199,20 @@ export function payloadSectionMeta(
     { label: 'Original', value: metaBytes(obj[`${prefix}_original_bytes`]) },
     { label: 'Stored', value: metaBytes(obj[`${prefix}_stored_bytes`]) },
     { label: 'Truncated', value: hash ? (metaNumber(obj[`${prefix}_truncated`]) === 1 ? 'yes' : 'no') : '' },
+    { label: 'Showing', value: transportNote(prefix, obj) },
+    { label: 'Encoding', value: metaText(obj[`${prefix}_encoding`]) },
     { label: 'Hash', value: hash },
   ].filter(row => row.value.length > 0);
+}
+
+// "first 1 MB of 3 MB", and nothing at all when the whole body came back --
+// a row saying the response was complete is a row on every body forever.
+export function transportNote(prefix: string, obj: Record<string, unknown>): string {
+  if (obj[`${prefix}_truncated_for_transport`] !== true) return '';
+  const shown = metaBytes(obj[`${prefix}_shown_bytes`]);
+  const stored = metaBytes(obj[`${prefix}_stored_bytes`]);
+  if (!shown) return '';
+  return stored ? `first ${shown} of ${stored}` : `first ${shown}`;
 }
 
 function metaText(value: unknown): string {

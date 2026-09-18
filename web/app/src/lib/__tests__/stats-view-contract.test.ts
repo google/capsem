@@ -157,12 +157,16 @@ describe('StatsView detail drawer contract', () => {
     expect(source).not.toContain("lang: 'json',");
   });
 
-  it('loads body payloads from event_body_blobs instead of preview columns', () => {
+  it('fetches body bytes per event instead of carrying them in the list', () => {
+    // The list view brings the index metadata; the bytes come from the body
+    // route when one event is expanded. Inlining them in the detail response
+    // would make a page of rows as large as the traffic it describes.
     expect(source).toContain('api.getVmStatsDetail(vmId)');
     expect(source).toContain('bodyBlobs = detailRows.body_blobs');
+    expect(source).toContain('api.fetchEventBodies(vmId, eventId)');
     expect(detailSource).toContain("'request_body'");
     expect(detailSource).toContain("'response_body'");
-    expect(source).toContain('`${direction}_body`');
+    expect(source).toContain('`${body.direction}_body`');
     expect(source).toContain("void showDetail('model', row)");
     expect(source).toContain("void showDetail('tool', row)");
     expect(source).toContain("void showDetail('http', row)");
@@ -173,14 +177,39 @@ describe('StatsView detail drawer contract', () => {
     expect(source).not.toContain('text_content');
   });
 
+  it('does not paint one event\'s bodies onto another\'s row', () => {
+    // The fetch is async and the user can click a second row while it is in
+    // flight. Without the token the later selection is overwritten by the
+    // earlier response.
+    expect(source).toContain('const token = ++detailToken');
+    expect(source).toContain('if (token !== detailToken) return;');
+  });
+
   it('keeps body ledger metadata out of the generic field grid', () => {
     expect(detailSource).toContain('DETAIL_BODY_METADATA_KEYS');
     expect(source).toContain('payloadSectionMeta(section, detail.data)');
-    expect(source).toContain('Original');
-    expect(source).toContain('Stored');
-    expect(source).toContain('Truncated');
-    expect(source).toContain('Hash');
+    // The labels live with the helper that builds them, not with the template
+    // that iterates them -- this used to assert against the template and so
+    // asserted nothing.
+    for (const label of ['Content Type', 'Original', 'Stored', 'Truncated', 'Showing', 'Encoding', 'Hash']) {
+      expect(detailSource).toContain(`label: '${label}'`);
+    }
     expect(detailSource).toContain('&& !DETAIL_BODY_METADATA_KEYS.has(key)');
+  });
+
+  it('says how much of a body it is showing, separately from what was captured', () => {
+    // Two different statements. Truncated means the capture is gone; Showing
+    // means the rest is one larger request away.
+    expect(detailSource).toContain('transportNote');
+    expect(detailSource).toContain('_truncated_for_transport');
+    expect(detailSource).toContain('first ${shown} of ${stored}');
+    expect(source).toContain('_truncated_for_transport`] = body.truncated_for_transport');
+    expect(source).toContain('_shown_bytes`] = shownBytes(body)');
+  });
+
+  it('does not render non-text bodies as text', () => {
+    expect(source).toContain("if (body.encoding !== 'base64') return body.content;");
+    expect(source).toContain('binary body,');
   });
 
   it('renders compact structured snapshots instead of null-heavy security projections', () => {
@@ -189,17 +218,23 @@ describe('StatsView detail drawer contract', () => {
     expect(source).not.toContain("formatAndHighlight(detail.data.rule_json, 'json')");
   });
 
-  it('shows the matched event as archive metadata, never as an inlined payload', () => {
-    // The forensic payload left SQLite for the body archive. Until the body
-    // route lands, the detail pane says what is stored and how big it is; it
-    // must not pretend to hold bytes the route never sent.
+  it('renders the matched event through the same body section as every other body', () => {
+    // The forensic payload left SQLite for the body archive, and while there
+    // was no route to read it the detail pane showed its metadata under a
+    // hand-rolled "Matched Event" block. There is a route now, so `payload` is
+    // a direction like `request` and `response`: one section builder, one
+    // metadata grid, one place that decides what a truncated body looks like.
     expect(source).not.toContain('detail.data.event_json');
-    expect(source).toContain("payloadSectionMeta({ key: 'payload_body' }, detail.data)");
-    // And no metadata means no section: an unguarded one rendered an empty
-    // heading over a lone "TRUNCATED no". The template tests and iterates one
-    // derived value rather than recomputing it per render.
-    expect(source).toContain('{#if payloadMeta.length > 0}');
-    expect(source).toContain('{#each payloadMeta as row}');
+    expect(detailSource).toContain("'payload_body'");
+    expect(source).toContain("void showDetail('security', row as any)");
+    expect(source).toContain("void showDetail('detection', row as any)");
+    expect(source).toContain("void showDetail('enforcement', row as any)");
+    // The bespoke block and its derived value are gone with it.
+    expect(source).not.toContain('payloadMeta');
+    expect(source).not.toContain('Matched Event');
+    // An event whose bodies cannot be read says so instead of rendering an
+    // empty section that reads as "there was nothing here".
+    expect(source).toContain('bodyError');
   });
 
   it('gives detail fields enough room to wrap without overlapping values', () => {
