@@ -238,6 +238,20 @@ cannot leave a Docker client, compiler, test runner, or helper behind. Do not
 use it around `just test` or either release command: the gate's config-owned
 timeouts, journal, resource teardown, and resumable graph remain authoritative.
 
+The wrapper also owns **who has the machine**. A wrapped `cargo` that compiles
+takes the same kernel lock a gate run holds (`[locks.bounded]` in
+`config/gate.toml`), so it queues behind a running gate or another session's
+compile, names the holder on stderr, and starts by itself when the machine is
+free. The wait happens before the child exists and never spends
+`--timeout-seconds`; exit 75 means the wait itself ran out. Run a long wait in
+the background rather than killing it.
+
+So: never run a bare `cargo`, and never coordinate machine use with another
+session by message. "Starting VMs" / "VMs done" handshakes and "hold your
+compiles" requests are the failure this replaced -- one session spent ninety
+minutes of a day paused on them. If two pieces of work collide, the fix is a
+lease in the wrapper or the gate, not etiquette.
+
 ## Serialized Orthogonal Releases
 
 Release authority is [RELEASE.md](RELEASE.md). Start there, then load

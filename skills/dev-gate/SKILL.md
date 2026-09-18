@@ -152,6 +152,15 @@ are `threading.Lock`s: they order steps inside one plan and coordinate nothing
 between two `capsem-gate` processes. `just _sign` in one terminal could replace
 the codesigned binaries a qualification in another was executing.
 
+Direct commands are the other half. `boundedlease` makes the bounded-command
+wrapper take this same lock for the programs `[locks.bounded]` names (cargo,
+minus subcommands that neither compile nor write), seen through `env` and
+assignments, and skipped inside a run because the lock is not reentrant. Until
+it did, the lock ordered gates while every worktree's cargo went unarbitrated
+into the shared target directory: a 0%-CPU deadlock on an incremental session
+lock, VM start deadlines missed under another session's compile, and agents
+trading "VMs done" messages. Add a program there; do not add a second lock.
+
 The machine `flock` and holder record are config-owned user-home paths, never
 checkout-relative paths. Every linked worktree, clone, and detached full-SHA
 prefix shares the service home, Docker/Colima daemon, ports, and signing state;
