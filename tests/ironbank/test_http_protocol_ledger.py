@@ -61,6 +61,7 @@ EXPECTED_NET_COLUMNS = {
     "matched_rule",
     "request_headers",
     "response_headers",
+    "headers_truncated",
     "request_body_preview",
     "response_body_preview",
     "conn_type",

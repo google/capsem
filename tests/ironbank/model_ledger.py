@@ -200,20 +200,20 @@ def assert_model_ledger_exchange(spec: ModelLedgerSpec, run: ModelLedgerRun) -> 
             assert row["decision"] == "allowed"
             assert row["bytes_sent"] > 0
             assert row["bytes_received"] > 0
-            request_preview = row["request_body_preview"] or ""
-            response_preview = row["response_body_preview"] or ""
+            request_body = _archived_text(conn, "net_events", row["event_id"], "request")
+            response_body = _archived_text(conn, "net_events", row["event_id"], "response")
             upstream_request = upstream["request_body"]
             upstream_response = upstream["response_body"]
             if spec.input in upstream_request:
-                assert spec.input in request_preview, dict(row)
+                assert spec.input in request_body, dict(row)
             if spec.call_response in upstream_request:
-                assert spec.call_response in request_preview, dict(row)
+                assert spec.call_response in request_body, dict(row)
             if spec.tool_call_name in upstream_response:
-                assert spec.tool_call_name in response_preview, dict(row)
+                assert spec.tool_call_name in response_body, dict(row)
             if spec.output in upstream_response:
-                assert spec.output in response_preview, dict(row)
+                assert spec.output in response_body, dict(row)
             if spec.reasoning and spec.reasoning in upstream_response:
-                assert spec.reasoning in response_preview, dict(row)
+                assert spec.reasoning in response_body, dict(row)
 
         _assert_security_rows(conn, [row["event_id"] for row in (*model_rows, *net_rows)])
         credential_refs = _assert_brokered_model_credentials(
@@ -460,7 +460,8 @@ def assert_live_model_ledger_exchange(
         assert final_model["text_content"] == spec.output, dict(final_model)
         if spec.reasoning:
             assert final_model["thinking_content"] == spec.reasoning, dict(final_model)
-        assert spec.input in (model_rows[0]["request_body_preview"] or ""), dict(model_rows[0])
+        first_request = _archived_text(conn, "model_calls", model_rows[0]["event_id"], "request")
+        assert spec.input in first_request, dict(model_rows[0])
 
         tool_rows = _latest_rows(
             conn,
@@ -528,8 +529,10 @@ def assert_live_model_ledger_exchange(
             assert row["decision"] == "allowed"
             assert row["bytes_sent"] > 0
             assert row["bytes_received"] > 0
-        assert spec.input in (net_rows[0]["request_body_preview"] or ""), dict(net_rows[0])
-        assert spec.output in (net_rows[-1]["response_body_preview"] or ""), dict(net_rows[-1])
+        first_request = _archived_text(conn, "net_events", net_rows[0]["event_id"], "request")
+        last_response = _archived_text(conn, "net_events", net_rows[-1]["event_id"], "response")
+        assert spec.input in first_request, dict(net_rows[0])
+        assert spec.output in last_response, dict(net_rows[-1])
 
         _assert_security_rows(conn, [row["event_id"] for row in (*model_rows, *net_rows)])
         credential_refs = _assert_brokered_model_credentials(
@@ -688,6 +691,22 @@ def _nested_int(value: dict[str, Any], key: str, nested_key: str) -> int:
     if not isinstance(nested, dict):
         return 0
     return int(nested.get(nested_key) or 0)
+
+
+def _archived_text(
+    conn: sqlite3.Connection, source_table: str, event_id: str, direction: str
+) -> str:
+    """The full captured body, from the archive.
+
+    The row's `*_preview` columns are display excerpts capped at 2 KB, so a
+    prompt past the first 2 KB of a request (every agent client's system prompt
+    puts it there) is only in the archived body. What the ledger recorded is
+    asked of the archive, never of the preview.
+    """
+    with session_archive(conn) as archive:
+        body = archive.read(event_id, source_table, direction)
+    assert body is not None, f"{source_table} {event_id} has no archived {direction} body"
+    return body.decode("utf-8", "replace")
 
 
 def _assert_event_id(value: object) -> None:
