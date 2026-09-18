@@ -93,33 +93,16 @@ pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
 
 /// Apply read-safe pragmas for DB-owned query connections.
 ///
-/// These connections may be opened read-write briefly so the DB layer can
-/// attach and populate its private `mem` schema. After setup, `query_only`
-/// prevents writes through the read worker.
-pub fn apply_reader_pragmas(conn: &Connection, memory_mirror: bool) -> rusqlite::Result<()> {
+/// Readers open the file read-write (see `DbReader::open`) and `query_only`
+/// is what keeps the read worker from writing through it.
+pub fn apply_reader_pragmas(conn: &Connection) -> rusqlite::Result<()> {
     apply_mmap_pragma(conn)?;
     conn.pragma_update(None, "query_only", "ON")?;
-    if !memory_mirror {
-        // A disk-only reader takes no shared-cache table locks: WAL already
-        // lets it read the file while the writer commits. Leaving
-        // `read_uncommitted` off keeps it on committed data only.
-        //
-        // WAL is not the whole story, though: `wal_checkpoint(TRUNCATE)` and
-        // `VACUUM` take an exclusive file lock, and a read that lands during
-        // one gets SQLITE_BUSY, which `retry_while_table_locked` does not
-        // cover. Wait it out the same way the writer does rather than failing
-        // a route because a ledger was being compacted.
-        conn.busy_timeout(READER_BUSY_TIMEOUT)?;
-        return Ok(());
-    }
-    // The hot ledger tables live in a shared-cache memory schema, where a
-    // reader takes a table-level read lock and fails at once with
-    // SQLITE_LOCKED while the writer's batch holds the table -- and starves
-    // outright while batches are back to back. `read_uncommitted` is
-    // SQLite's answer for shared-cache readers: no table locks, so a read
-    // never waits on or fails against the single writer. What it may see is
-    // the tail of a batch before its commit, which for an append-only ledger
-    // written by one thread is the same rows a moment early.
-    conn.pragma_update(None, "read_uncommitted", "ON")?;
+    // WAL lets a reader read the file while the writer commits, but
+    // `wal_checkpoint(TRUNCATE)` and `VACUUM` take an exclusive file lock,
+    // and a read that lands during one gets SQLITE_BUSY. Wait it out the same
+    // way the writer does rather than failing a route because a ledger was
+    // being compacted.
+    conn.busy_timeout(READER_BUSY_TIMEOUT)?;
     Ok(())
 }

@@ -19,15 +19,12 @@ loud, not empty, and not repaired behind the operator's back. A session ledger
 belongs to the writer that created it; a file an old build wrote is that
 build's, and a new one says so rather than editing it.
 
-The same rule covers `CREATE TABLE`, with one exception that is worth stating
-rather than quietly allowing: `reader/open.rs` calls `create_memory_tables`,
-which issues `CREATE TABLE` into the `mem` schema. That is not the ledger. The
-memory mirror is a process-private in-RAM database, derived from
-`main.sqlite_master` on every open and thrown away with the connection, so
-building it decides nothing about the file and survives nothing. The call is
-allowed because `schema/memory_sync.rs` owns the statements; a `CREATE TABLE`
-written out in the reader itself is not, whichever schema it names, which is
-what the predicate below checks.
+The same rule covers `CREATE TABLE`, whichever schema it names. Readers used
+to build a RAM mirror of the hot tables in a `mem` schema; they no longer attach
+`mem` at all (#213). The writer's `mem` holds only rows it has not flushed, so a
+reader that read it would see a sliver of the ledger, and one that copied disk
+into it would pay the whole ledger in RAM again. The reader opens the file and
+nothing else, which the test below holds.
 
 The forbidden spellings cover the idiomatic forms as well as the one that was
 there. `Transaction::new` was how `upgrade_legacy` did it, but
@@ -161,26 +158,68 @@ def test_the_predicate_flags_the_idiomatic_spellings() -> None:
         assert any(expected in item for item in found), (line, found)
 
 
-def test_the_memory_mirror_is_built_by_the_module_that_owns_it() -> None:
-    """The stated exception, asserted rather than assumed.
+NO_READER_MIRROR_RATIONALE = """\
+A reader reads the file, not the writer's memory.
 
-    `reader/open.rs` may ask for the memory mirror; it may not write the DDL.
-    If the statements ever move into the reader, the exception's reason -- that
-    `schema/memory_sync.rs` owns them -- has stopped being true.
-    """
+The writer's `mem` schema holds only rows it has not flushed yet. Readers used
+to attach it and read hot tables through TEMP views, which obliged the writer
+to rehydrate the whole ledger into RAM at open and keep every row for the life
+of the session: capsem-process grew ~138 KB per request (#213).
+
+Do not attach `mem`, create memory tables or views, or copy disk into memory
+from the read path. A reader that needs freshness asks SQLite's `data_version`.
+"""
+
+READER_MIRROR_CALLS = (
+    "create_memory_tables",
+    "create_memory_read_views",
+    "rehydrate_memory_tables",
+    "sync_memory_tables_from_disk",
+    "memory_uri_for",
+    "MEMORY_SCHEMA",
+)
+
+
+def reader_mirror_violations(path: str, text: str) -> list[str]:
+    """Pure predicate over (path, text): the read path reaching for `mem`."""
+    if path not in READ_PATH and not path.startswith(READ_PATH_DIR):
+        return []
+    if path.endswith("tests.rs") or "/tests/" in path:
+        return []
+    return [
+        f"{path}:{number} contains `{needle}`"
+        for number, line in enumerate(text.splitlines(), start=1)
+        for needle in READER_MIRROR_CALLS
+        if needle in code_of(line)
+    ]
+
+
+def test_no_reader_attaches_the_writers_memory() -> None:
     opener = PROJECT_ROOT / "crates/capsem-logger/src/reader/open.rs"
     assert opener.is_file(), f"{opener} is missing; this guard is vacuous"
-    text = opener.read_text()
-    assert "create_memory_tables" in text, (
-        "reader/open.rs no longer builds the memory mirror; drop this exception"
-    )
-    assert not read_path_violations("crates/capsem-logger/src/reader/open.rs", text), (
-        "the reader must call for the mirror, not author it"
-    )
-    owner = PROJECT_ROOT / "crates/capsem-logger/src/schema/memory_sync.rs"
-    assert "CREATE TABLE" in owner.read_text(), (
-        "memory_sync.rs no longer owns the mirror's DDL; the exception names the wrong file"
-    )
+    violations: list[str] = []
+    for source in read_path_sources():
+        if source.is_file():
+            violations.extend(reader_mirror_violations(str(source.relative_to(PROJECT_ROOT)), source.read_text()))
+    assert not violations, NO_READER_MIRROR_RATIONALE + "\n" + "\n".join(violations)
+
+
+def test_the_mirror_predicate_flags_the_reader_that_was_burned() -> None:
+    """The adversarial case: `DbReader::open_with` as it was before #213."""
+    revived = """
+    if memory_mirror {
+        let memory_uri = schema::memory_uri_for_path(path);
+        schema::with_memory_schema_lock(|| {
+            schema::create_memory_tables(&conn, &memory_uri)?;
+            schema::rehydrate_memory_tables_from_disk_once(&conn, schema::hot_ledger_tables())?;
+            schema::create_memory_read_views(&conn)
+        })?;
+    }
+"""
+    found = reader_mirror_violations("crates/capsem-logger/src/reader/open.rs", revived)
+    assert len(found) == 4, found
+    # The writer owns `mem`; this guard does not reach it.
+    assert reader_mirror_violations("crates/capsem-logger/src/writer.rs", revived) == []
 
 
 def test_the_predicate_allows_an_assertion() -> None:

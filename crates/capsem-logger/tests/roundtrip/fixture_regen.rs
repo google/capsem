@@ -816,7 +816,7 @@ fn regenerate_session_fixture() {
         }
     }
 
-    let reader = DbReader::open_disk_only(&fixture).unwrap();
+    let reader = DbReader::open(&fixture).unwrap();
     reader
         .ready()
         .expect("the regenerated fixture must be a current-shape ledger");

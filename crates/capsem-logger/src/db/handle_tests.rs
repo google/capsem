@@ -20,6 +20,7 @@ mod correctness;
 mod dedup;
 mod external_reader;
 mod external_warc_reader;
+mod owning_reader;
 mod query;
 mod retention;
 mod security_payloads;
@@ -267,13 +268,26 @@ async fn db_correctness_db_interrupted_flush_is_transactional() {
     let p = temp_db_path("interrupted-flush-transactional");
     let db = DbHandle::open(&p).expect("open handle");
     db.ready().await.expect("db ready");
+    let visible = || async {
+        query_json(
+            &db.query(
+                "SELECT domain, decision, trace_id, turn_id
+                 FROM net_events
+                 WHERE domain LIKE 'flush-%'
+                 ORDER BY domain",
+                &[],
+            )
+            .await
+            .expect("query flushed rows"),
+        )
+    };
 
     db.write(WriteOp::NetEvent(make_net_event(
         "flush-committed.example",
         Decision::Allowed,
     )))
     .await
-    .expect("baseline write must acknowledge memory row");
+    .expect("baseline write must be accepted");
     db.flush_for_tests().await;
     assert_eq!(
         disk_net_event_count(&p, "flush-committed.example"),
@@ -286,38 +300,25 @@ async fn db_correctness_db_interrupted_flush_is_transactional() {
         Decision::Allowed,
     )))
     .await
-    .expect("interrupted write must acknowledge memory row before disk flush");
+    .expect("interrupted write must be accepted before its disk flush");
     crate::writer::fail_disk_flushes_for_path_for_tests(&p, 1);
     db.flush_for_tests().await;
 
-    let memory_before_failed_flush = query_json(
-        &db.query(
-            "SELECT domain, decision, trace_id, turn_id
-             FROM net_events
-             WHERE domain LIKE 'flush-%'
-             ORDER BY domain",
-            &[],
-        )
-        .await
-        .expect("memory query before failed flush"),
+    let committed_only = json!([[
+        "flush-committed.example",
+        "allowed",
+        "trace-db-handle",
+        "trace-db-handle"
+    ]]);
+    assert_eq!(
+        visible().await["rows"],
+        committed_only,
+        "readers read the file: a row whose flush failed is not there yet. {DB_BOUNDARY_RATIONALE}"
     );
     assert_eq!(
-        memory_before_failed_flush["rows"],
-        json!([
-            [
-                "flush-committed.example",
-                "allowed",
-                "trace-db-handle",
-                "trace-db-handle"
-            ],
-            [
-                "flush-interrupted.example",
-                "allowed",
-                "trace-db-handle",
-                "trace-db-handle"
-            ]
-        ]),
-        "rows from an interrupted disk flush must remain visible in DB-owned memory. {DB_BOUNDARY_RATIONALE}"
+        crate::schema::memory_row_count_for_tests(&p, "net_events"),
+        1,
+        "the failed flush must leave its row in the writer's memory for the retry. {DB_BOUNDARY_RATIONALE}"
     );
 
     crate::writer::fail_disk_flushes_for_path_for_tests(&p, 100);
@@ -338,21 +339,10 @@ async fn db_correctness_db_interrupted_flush_is_transactional() {
         "ok",
         "failed flush must leave the disk database transactionally valid"
     );
-
-    let memory_after_failed_flush = query_json(
-        &db.query(
-            "SELECT domain, decision, trace_id, turn_id
-             FROM net_events
-             WHERE domain LIKE 'flush-%'
-             ORDER BY domain",
-            &[],
-        )
-        .await
-        .expect("memory query after failed flush"),
-    );
     assert_eq!(
-        memory_before_failed_flush, memory_after_failed_flush,
-        "failed disk flush must not corrupt acknowledged DB-owned memory truth. {DB_BOUNDARY_RATIONALE}"
+        crate::schema::memory_row_count_for_tests(&p, "net_events"),
+        1,
+        "repeated failed flushes must not lose the accepted row. {DB_BOUNDARY_RATIONALE}"
     );
 
     crate::writer::fail_disk_flushes_for_tests(0);
@@ -362,10 +352,29 @@ async fn db_correctness_db_interrupted_flush_is_transactional() {
         1,
         "clearing the injected failure must let the dirty memory row flush exactly once"
     );
+    let both = visible().await;
+    assert_eq!(
+        both["rows"],
+        json!([
+            [
+                "flush-committed.example",
+                "allowed",
+                "trace-db-handle",
+                "trace-db-handle"
+            ],
+            [
+                "flush-interrupted.example",
+                "allowed",
+                "trace-db-handle",
+                "trace-db-handle"
+            ]
+        ]),
+        "after the recovery flush both accepted rows are readable. {DB_BOUNDARY_RATIONALE}"
+    );
     drop(db);
 
     let reopened = DbHandle::open(&p).expect("reopen handle");
-    reopened.ready().await.expect("rehydrate after recovery flush");
+    reopened.ready().await.expect("ready after recovery flush");
     let after_reopen = query_json(
         &reopened
             .query(
@@ -379,7 +388,7 @@ async fn db_correctness_db_interrupted_flush_is_transactional() {
             .expect("query after recovery reopen"),
     );
     assert_eq!(
-        memory_before_failed_flush, after_reopen,
+        both, after_reopen,
         "after recovery flush and restart, db.query() must return the same ledger truth. {DB_BOUNDARY_RATIONALE}"
     );
 }
@@ -407,7 +416,7 @@ async fn db_shutdown_flushes_dirty_memory_rows_to_disk() {
 }
 
 #[tokio::test]
-async fn db_flush_rehydrate_flushed_rows_survive_reopen() {
+async fn db_flushed_rows_survive_reopen() {
     let p = temp_db_path("flush-rehydrate-reopen");
     {
         let db = DbHandle::open(&p).expect("open handle");
@@ -434,12 +443,12 @@ async fn db_flush_rehydrate_flushed_rows_survive_reopen() {
     assert_eq!(
         value["rows"],
         json!([["flush-rehydrate.example", "allowed", 11]]),
-        "flushed DB-owned memory rows must survive close/reopen through the same query() contract"
+        "flushed rows must survive close/reopen through the same query() contract"
     );
 }
 
 #[tokio::test]
-async fn db_rehydrates_from_disk_before_ready_succeeds() {
+async fn db_reads_rows_already_on_disk_when_it_opens() {
     let p = temp_db_path("startup-rehydrate-existing-disk");
     {
         let conn = rusqlite::Connection::open(&p).expect("open disk fixture");
@@ -466,9 +475,7 @@ async fn db_rehydrates_from_disk_before_ready_succeeds() {
     }
 
     let db = DbHandle::open(&p).expect("open handle over existing disk rows");
-    db.ready()
-        .await
-        .expect("ready() must include DB-owned disk-to-memory rehydration");
+    db.ready().await.expect("ready over an existing ledger");
     let raw = db
         .query(
             "SELECT domain, decision, bytes_sent, bytes_received, trace_id, turn_id
@@ -476,7 +483,7 @@ async fn db_rehydrates_from_disk_before_ready_succeeds() {
             &[json!("startup-rehydrate.example")],
         )
         .await
-        .expect("query rehydrated disk row from memory view");
+        .expect("query the row already on disk");
     let value: serde_json::Value = serde_json::from_str(&raw).expect("query JSON");
     assert_eq!(
         value["rows"],
@@ -488,7 +495,7 @@ async fn db_rehydrates_from_disk_before_ready_succeeds() {
             "trace-startup-rehydrate",
             "turn-startup-rehydrate"
         ]]),
-        "ready() must not succeed until existing disk rows are visible through the DB-owned memory query path"
+        "rows written before the handle opened must be readable through the same query() contract, without being copied into RAM"
     );
 }
 

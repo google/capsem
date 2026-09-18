@@ -150,6 +150,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - rustls moves to 0.23.45 for RUSTSEC-2026-0285: TLS 1.3 handshake messages
   were accepted across encryption level boundaries on the host's TLS paths.
 
+### Fixed
+
+- capsem-process memory no longer grows with the length of a session. The
+  ledger writer copied the whole session ledger into RAM when it opened and
+  kept every row it wrote there until the VM stopped -- about 138 KB per
+  proxied request, and a full copy of a persistent VM's history on every
+  resume. It now holds only rows it has not flushed to disk yet, at most one
+  flush interval (5 s) of traffic, and copies nothing at open. Readers in the
+  same process read the file like the service does. A resumed session's exec
+  completion no longer overwrites the result of an earlier boot's command that
+  reused the same exec id. Measured on a 1M-row ledger: opening it drops from
+  about 2.5 s to 1.6 s (the rest is `ready()`'s integrity check); a poll right
+  after a commit through a handle that owns its writer (`main.db`, network
+  ledgers) goes from 1.7 ms to 3.2-4.1 ms, the cost the service's session
+  readers already paid, and an idle poll from 0.1 us to 6.5 us; the service's
+  session readers go from 4.15 ms to 3.1-3.3 ms after a commit. Accepting
+  writes is unchanged.
+
 ### Changed
 
 - Session ledgers keep captured bodies in a compressed archive beside the

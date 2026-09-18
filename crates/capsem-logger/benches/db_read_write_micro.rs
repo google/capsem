@@ -235,7 +235,7 @@ fn main() {
         .expect("build benchmark runtime");
 
     let (write_ms, post_write_count_ms, shutdown_flush_ms) = rt.block_on(write_100k_rows());
-    let (seed_ms, open_rehydrate_ms, scan_ms, scan_json) = rt.block_on(read_1m_rows());
+    let (seed_ms, open_ms, scan_ms, scan_json) = rt.block_on(read_1m_rows());
     let (deserialize_ms, deserialize_scan_ms, deserialize_scan_json) = deserialize_scan_1m_rows();
     let (serialize_deserialize_ms, serialize_deserialize_scan_ms, serialize_deserialize_scan_json) =
         serialize_deserialize_scan_1m_rows();
@@ -250,7 +250,7 @@ fn main() {
         WRITE_ROWS as f64 / (write_ms / 1000.0)
     );
     println!(
-        "| db_handle_reopen_count_after_flush | {} | {:.3} | {:.0} | validates durable rows after shutdown flush and rehydrate |",
+        "| db_handle_reopen_count_after_flush | {} | {:.3} | {:.0} | validates durable rows after shutdown flush and reopen |",
         WRITE_ROWS,
         post_write_count_ms,
         WRITE_ROWS as f64 / (post_write_count_ms / 1000.0)
@@ -268,10 +268,10 @@ fn main() {
         READ_ROWS as f64 / (seed_ms / 1000.0)
     );
     println!(
-        "| db_handle_open_rehydrate_1m | {} | {:.3} | {:.0} | disk to DB-owned memory tables |",
+        "| db_handle_open_1m | {} | {:.3} | {:.0} | open over 1M disk rows; nothing is copied into memory |",
         READ_ROWS,
-        open_rehydrate_ms,
-        READ_ROWS as f64 / (open_rehydrate_ms / 1000.0)
+        open_ms,
+        READ_ROWS as f64 / (open_ms / 1000.0)
     );
     println!(
         "| db_handle_query_scan_1m | {} | {:.3} | {:.0} | aggregate scan through db.query(); result={} |",

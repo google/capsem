@@ -13,7 +13,7 @@ use crate::writer::{DbWriter, WriteOp};
 /// Callers own query intent: a stats, timeline, or security route may choose
 /// the SQL projection it needs. The DB handle owns execution and storage:
 /// connection threads, write queues, schema checks, WAL/mem/disk mechanics,
-/// batching, flushing, rehydration, and future FTS5/search tables all stay
+/// batching, flushing, and future FTS5/search tables all stay
 /// inside `capsem-logger`.
 ///
 /// Required caller rail:
@@ -127,8 +127,8 @@ fn record_query_metrics(phase: &'static str, started: Instant, params_count: usi
 /// A worker reply, with whether the ledger moved under it.
 ///
 /// `changed` is the handle's cue to expire its read caches and move the epochs
-/// route caches are keyed on. Only an external handle can see it set: an
-/// in-process one is told by its own writer instead.
+/// route caches are keyed on. It is set when the ledger file's `data_version`
+/// moved: a commit by another process, or by this handle's own writer.
 struct Observed<T> {
     changed: bool,
     value: T,
@@ -194,7 +194,7 @@ pub struct SessionDb {
 ///
 /// This is the public boundary for session telemetry/security ledgers. It owns
 /// the reader worker and writer queue and hides whether the implementation is
-/// disk-backed, memory-backed, batched, rehydrated, or eventually indexed for
+/// disk-backed, memory-backed, batched, or eventually indexed for
 /// search. Callers may provide SQL because they own query intent; callers may
 /// not own SQLite connections, route projections, missing-schema fallbacks, or
 /// write buffering.
@@ -216,10 +216,6 @@ struct DbHandleInner {
     query_many_cache: Mutex<DbQueryManyCache>,
     read_cache_epoch: AtomicU64,
     session_summary_cache_epoch: AtomicU64,
-    /// This handle reads a ledger another process writes. It owns no writer,
-    /// so SQLite's `data_version` -- not a local write -- is what tells it the
-    /// ledger moved and its read caches expired.
-    external: bool,
     /// Parks the next `query_many` right after its cache lookup, so a test can
     /// land an invalidation exactly there. See `pause_next_query_many_for_tests`.
     #[cfg(test)]
@@ -248,6 +244,9 @@ impl DbHandle {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         let started = Instant::now();
         let writer = Arc::new(DbWriter::open(path, 1024)?);
+        // Reads go to the file, like every other handle's: the writer's
+        // memory holds only rows it has not flushed, and SQLite's
+        // `data_version` tells the reader when a flush landed.
         DbReader::open(path)?;
         let handle = Self::open_with_writer(path.to_path_buf(), writer)?;
 
@@ -272,8 +271,8 @@ impl DbHandle {
     /// second writer rail.
     pub fn open_external_reader(path: &Path) -> rusqlite::Result<Self> {
         let started = Instant::now();
-        DbReader::open_disk_only(path)?;
-        let handle = Self::open_reader(path.to_path_buf(), true)?;
+        DbReader::open(path)?;
+        let handle = Self::open_reader(path.to_path_buf())?;
         tracing::debug!(
             db_path = %path.display(),
             operation = "open_external_reader",
@@ -283,12 +282,12 @@ impl DbHandle {
         Ok(handle)
     }
 
-    fn open_reader(db_path: PathBuf, external: bool) -> rusqlite::Result<Self> {
+    fn open_reader(db_path: PathBuf) -> rusqlite::Result<Self> {
         let (reader_tx, reader_rx) = mpsc::channel();
         let reader_path = db_path.clone();
         let reader_join = std::thread::Builder::new()
             .name("capsem-db-reader".into())
-            .spawn(move || reader_loop(reader_path, reader_rx, external))
+            .spawn(move || reader_loop(reader_path, reader_rx))
             .expect("failed to spawn db reader thread");
 
         Ok(Self {
@@ -302,7 +301,6 @@ impl DbHandle {
                 query_many_cache: Mutex::new(DbQueryManyCache::new()),
                 read_cache_epoch: AtomicU64::new(0),
                 session_summary_cache_epoch: AtomicU64::new(0),
-                external,
                 #[cfg(test)]
                 query_many_pause: Mutex::new(None),
             }),
@@ -310,9 +308,11 @@ impl DbHandle {
     }
 
     fn open_with_writer(db_path: PathBuf, writer: Arc<DbWriter>) -> rusqlite::Result<Self> {
-        // A handle that owns its writer is never external: its own writes are
-        // what move the ledger, and they invalidate its caches directly.
-        let handle = Self::open_reader(db_path, false)?;
+        // Owning the writer changes only whether `write` is accepted. Its
+        // writes reach the file on the writer's flush, which the reader sees
+        // through `data_version` like any other commit; a local write moving
+        // the epoch is not the moment the rows become readable.
+        let handle = Self::open_reader(db_path)?;
         let mut inner = Arc::try_unwrap(handle.inner).ok().expect("new handle is unique");
         inner.writer = Some(writer);
         Ok(Self { inner: Arc::new(inner) })
@@ -468,26 +468,11 @@ impl DbHandle {
         let (mut epoch_before, cached) = self.cached_query_many(&queries);
         #[cfg(test)]
         self.pause_query_many_for_tests().await;
-        if !self.inner.external {
-            // An in-process handle owns the writer, so anything that could
-            // invalidate this entry already has; the entry stands on its own.
-            if let Some(cached_result) = cached {
-                tracing::debug!(
-                    db_path = %self.inner.path.display(),
-                    operation = "query_many",
-                    cached = true,
-                    query_count,
-                    params_count,
-                    duration_ms = elapsed_ms(started),
-                    "session db handle operation completed"
-                );
-                return Ok(cached_result);
-            }
-        }
-        // An external handle cannot know the file is unchanged without asking
-        // SQLite, so it still pays one worker round trip. The worker checks
-        // `data_version` and re-executes the batch only when it moved.
-        let cache_valid = self.inner.external && cached.is_some();
+        // No handle can know the file is unchanged without asking SQLite --
+        // not even one that owns the writer, whose flush lands on its own
+        // schedule -- so a cached batch still pays one worker round trip. The
+        // worker checks `data_version` and re-executes only when it moved.
+        let cache_valid = cached.is_some();
         let cache_key = queries.clone();
         let (reply, rx) = tokio::sync::oneshot::channel();
         self.inner

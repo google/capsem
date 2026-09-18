@@ -244,7 +244,7 @@ pub(super) fn insert_exec_event(conn: &Connection, event: &ExecEvent, target: Wr
 pub(super) fn update_exec_event(
     conn: &Connection,
     complete: &ExecEventComplete,
-    target: WriteTarget,
+    exec_floor: i64,
     bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
     let stdout_preview = cap_preview(&complete.stdout_preview);
@@ -259,53 +259,46 @@ pub(super) fn update_exec_event(
     // are the true totals, so the index row reports them as `original_bytes`
     // and marks itself truncated rather than claiming the excerpt is all
     // there was.
-    let started: Option<(String, Option<String>)> = conn
-        .prepare_cached(&format!(
-            "SELECT event_id, trace_id FROM {} WHERE exec_id = ?1",
-            target.table("exec_events")
-        ))?
-        .query_row(params![complete.exec_id as i64], |row| Ok((row.get(0)?, row.get(1)?)))
-        .optional()?;
-    match &started {
-        Some((event_id, trace_id)) => {
-            for (direction, body, produced) in [
-                (
-                    "stdout",
-                    complete.stdout_preview.as_deref().map(str::as_bytes),
-                    complete.stdout_bytes,
-                ),
-                (
-                    "stderr",
-                    complete.stderr_preview.as_deref().map(str::as_bytes),
-                    complete.stderr_bytes,
-                ),
-            ] {
-                bodies.stage(EventBodyBlob {
-                    event_id,
-                    event_type: "process.exec_complete",
-                    source_table: "exec_events",
-                    direction,
-                    content_type: Some("text/plain"),
-                    body,
-                    original_bytes: Some(produced),
-                    trace_id: trace_id.as_deref(),
-                    turn_id: trace_id.as_deref(),
-                });
-            }
-        }
+    let Some(start) = find_exec_start(conn, complete.exec_id, exec_floor)? else {
         // The completion arrived without its start row, so there is no
         // event_id to key the output on and it is not archived. Loud, because
         // it means a producer sent a completion for an exec this ledger never
         // saw begin.
-        None => warn!(
+        warn!(
             exec_id = complete.exec_id,
             "exec completion has no start row; its output is not archived"
+        );
+        return Ok(());
+    };
+    for (direction, body, produced) in [
+        (
+            "stdout",
+            complete.stdout_preview.as_deref().map(str::as_bytes),
+            complete.stdout_bytes,
         ),
+        (
+            "stderr",
+            complete.stderr_preview.as_deref().map(str::as_bytes),
+            complete.stderr_bytes,
+        ),
+    ] {
+        bodies.stage(EventBodyBlob {
+            event_id: &start.event_id,
+            event_type: "process.exec_complete",
+            source_table: "exec_events",
+            direction,
+            content_type: Some("text/plain"),
+            body,
+            original_bytes: Some(produced),
+            trace_id: start.trace_id.as_deref(),
+            turn_id: start.trace_id.as_deref(),
+        });
     }
+    let exec_events = start.table;
     execute_cached(
         conn,
         &format!(
-            "UPDATE {} SET
+            "UPDATE {exec_events} SET
             exit_code = ?1,
             duration_ms = ?2,
             stdout_preview = ?3,
@@ -313,8 +306,7 @@ pub(super) fn update_exec_event(
             stdout_bytes = ?5,
             stderr_bytes = ?6,
             pid = ?7
-         WHERE exec_id = ?8",
-            target.table("exec_events")
+         WHERE id = ?8"
         ),
         params![
             i64::from(complete.exit_code),
@@ -324,8 +316,61 @@ pub(super) fn update_exec_event(
             complete.stdout_bytes as i64,
             complete.stderr_bytes as i64,
             complete.pid.map(i64::from),
-            complete.exec_id as i64,
+            start.id,
         ],
     )?;
     Ok(())
+}
+
+/// The exec start row a completion belongs to, and the table it is in now.
+struct ExecStart {
+    table: String,
+    id: i64,
+    event_id: String,
+    trace_id: Option<String>,
+}
+
+/// Find the start row of `exec_id`.
+///
+/// Memory holds only what the writer has not flushed, so a command that ran
+/// past a flush has its start row on disk. It is looked for there only above
+/// `exec_floor`, the ledger's last id when this writer opened: exec ids
+/// restart with the process, and a resumed session's `7` is not the `7` an
+/// earlier boot left behind.
+fn find_exec_start(conn: &Connection, exec_id: u64, exec_floor: i64) -> rusqlite::Result<Option<ExecStart>> {
+    let memory_table = WriteTarget::Memory.table("exec_events");
+    let in_memory = lookup_exec_start(
+        conn,
+        &memory_table,
+        &format!("SELECT id, event_id, trace_id FROM {memory_table} WHERE exec_id = ?1 ORDER BY id DESC LIMIT 1"),
+        params![exec_id as i64],
+    )?;
+    if in_memory.is_some() {
+        return Ok(in_memory);
+    }
+    lookup_exec_start(
+        conn,
+        "main.exec_events",
+        "SELECT id, event_id, trace_id FROM main.exec_events
+         WHERE exec_id = ?1 AND id > ?2 ORDER BY id DESC LIMIT 1",
+        params![exec_id as i64, exec_floor],
+    )
+}
+
+fn lookup_exec_start(
+    conn: &Connection,
+    table: &str,
+    sql: &str,
+    params: impl rusqlite::Params,
+) -> rusqlite::Result<Option<ExecStart>> {
+    conn.prepare_cached(sql)?
+        .query_row(params, |row| {
+            Ok(ExecStart {
+                table: table.to_string(),
+                id: row.get(0)?,
+                event_id: row.get(1)?,
+                trace_id: row.get(2)?,
+            })
+        })
+        .optional()
 }

@@ -504,12 +504,10 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
     };
 
     let db = DbHandle::open(&p).expect("reopen correctness DB handle");
-    db.ready()
-        .await
-        .expect("ready must rehydrate flushed rows before route reads");
+    db.ready().await.expect("ready over the flushed ledger");
     let after_reopen = correctness_snapshot(&db).await;
     assert_eq!(
         before_flush, after_reopen,
-        "the same db.query() results must match exactly after restart/rehydration. {DB_BOUNDARY_RATIONALE}"
+        "the same db.query() results must match exactly after restart. {DB_BOUNDARY_RATIONALE}"
     );
 }

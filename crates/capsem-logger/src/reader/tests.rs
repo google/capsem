@@ -1,6 +1,5 @@
 use super::*;
 use serde_json::{json, Value};
-use std::time::Duration;
 
 mod query_plan;
 
@@ -705,15 +704,21 @@ fn query_raw_returns_row_cap_on_large_results() {
     assert_eq!(v["rows"].as_array().unwrap().len(), 50);
 }
 
-/// Rehydration copies each hot table into `mem` by id watermark, and that is
-/// only correct while the writer never changes a row of an append-only ledger
-/// in place. This holds the writer's SQL to the list in
-/// `UPDATABLE_HOT_TABLES`; a new UPDATE or DELETE on any other hot table must
-/// extend the list, which turns that table back into a full copy.
+/// The writer's memory holds only rows it has not flushed, so an update to a
+/// hot ledger row cannot assume the row is still there: the flush may have
+/// moved it to disk, and the update has to look in both (see
+/// `update_exec_event`). This holds the writer's SQL to the tables in
+/// `UPDATABLE_HOT_TABLES`, which do; a new UPDATE or DELETE on any other hot
+/// table must be taught the same and then listed.
 #[test]
 fn writer_updates_only_the_updatable_tables() {
     let sources = [
         ("writer.rs", include_str!("../writer.rs")),
+        ("writer/traffic_rows.rs", include_str!("../writer/traffic_rows.rs")),
+        ("writer/model_rows.rs", include_str!("../writer/model_rows.rs")),
+        ("writer/event_rows.rs", include_str!("../writer/event_rows.rs")),
+        ("writer/retention.rs", include_str!("../writer/retention.rs")),
+        ("writer/bodies.rs", include_str!("../writer/bodies.rs")),
         ("schema.rs", include_str!("../schema.rs")),
         ("schema/memory_sync.rs", include_str!("../schema/memory_sync.rs")),
         ("db.rs", include_str!("../db.rs")),
@@ -727,14 +732,23 @@ fn writer_updates_only_the_updatable_tables() {
             while let Some(found) = source[search..].find(keyword) {
                 let at = search + found;
                 search = at + keyword.len();
+                // An upsert's `ON CONFLICT ... DO UPDATE` names no table of its own.
+                if source[..at].ends_with("DO ") {
+                    continue;
+                }
                 // The statement text plus the format arguments that follow it.
                 let window = &source[at..(at + 400).min(source.len())];
-                let memory_schema = window.starts_with(&format!("{keyword}{{MEMORY_SCHEMA}}"));
-                let session_index = window.starts_with(&format!("{keyword}sessions"));
+                let target = window[keyword.len()..]
+                    .split(|c: char| c.is_whitespace() || c == '(')
+                    .next()
+                    .unwrap_or("");
+                let memory_schema = target.starts_with("{MEMORY_SCHEMA}");
+                let session_index = target == "sessions";
+                let disk_only = crate::schema::is_disk_only_table(target);
                 let updatable = crate::schema::UPDATABLE_HOT_TABLES
                     .iter()
                     .any(|table| window.contains(table));
-                if !(memory_schema || session_index || updatable) {
+                if !(memory_schema || session_index || disk_only || updatable) {
                     offences.push(format!("{name}: {}", window.lines().next().unwrap_or("")));
                 }
             }
@@ -742,46 +756,9 @@ fn writer_updates_only_the_updatable_tables() {
     }
     assert!(
         offences.is_empty(),
-        "in-place writes to a hot ledger outside UPDATABLE_HOT_TABLES; extend the list so \
-         rehydration copies that table whole: {offences:?}"
+        "in-place writes to a hot ledger outside UPDATABLE_HOT_TABLES; make the write find a row the \
+         flush already moved to disk, then extend the list: {offences:?}"
     );
-}
-
-#[test]
-fn a_read_during_the_writers_open_batch_neither_fails_nor_waits() {
-    // The writer's batch holds the shared-cache memory table; a reader that
-    // arrived meanwhile used to get SQLITE_LOCKED at once, and under back to
-    // back batches it starved. Hold the table from a second connection to the
-    // same memory database and read through it: `read_uncommitted` means the
-    // read completes at once.
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("session.db");
-    let handle = crate::DbHandle::open(&path).unwrap();
-    let reader = DbReader::open(&path).unwrap();
-    let memory_uri = schema::memory_uri_for_path(&path);
-    let locker = Connection::open_with_flags(
-        &memory_uri,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_URI,
-    )
-    .unwrap();
-    locker
-        .execute_batch("BEGIN IMMEDIATE; DELETE FROM transport_events WHERE 0;")
-        .unwrap();
-    let locked_for = Duration::from_millis(200);
-    let release = std::thread::spawn(move || {
-        std::thread::sleep(locked_for);
-        locker.execute_batch("COMMIT").unwrap();
-    });
-    let started = std::time::Instant::now();
-    let result = reader.query_raw("SELECT count(*) FROM transport_events");
-    let waited = started.elapsed();
-    release.join().unwrap();
-    assert!(result.is_ok(), "{result:?}");
-    assert!(
-        waited < locked_for / 2,
-        "the read waited on the writer's lock: {waited:?}"
-    );
-    drop(handle);
 }
 
 /// The readiness gate knows every column a reader selects.

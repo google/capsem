@@ -14,6 +14,35 @@ fn columns_for_schema(conn: &Connection, schema: &str, table: &str) -> BTreeSet<
         .unwrap()
 }
 
+/// Rows the writer of the ledger at `path` still holds in its memory schema.
+///
+/// Opens its own connection to the shared-cache memory database, so a test
+/// can watch the writer's `mem` without a hook into the writer thread.
+/// `read_uncommitted` keeps it off the writer's table locks.
+pub(crate) fn memory_row_count_for_tests(path: &std::path::Path, table: &str) -> i64 {
+    use rusqlite::OpenFlags;
+    let conn = Connection::open_with_flags(
+        ":memory:",
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_URI,
+    )
+    .expect("open probe connection");
+    let uri = memory_uri_for_path(path).replace('\'', "''");
+    conn.execute_batch(&format!(
+        "ATTACH DATABASE '{uri}' AS probe; PRAGMA read_uncommitted = ON;"
+    ))
+    .expect("attach the writer's memory schema");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match conn.query_row(&format!("SELECT COUNT(*) FROM probe.{table}"), [], |row| row.get(0)) {
+            Ok(count) => return count,
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(error) => panic!("count probe.{table}: {error}"),
+        }
+    }
+}
+
 #[test]
 fn create_tables_succeeds() {
     let conn = Connection::open_in_memory().unwrap();
@@ -52,97 +81,81 @@ fn db_mem_tables_match_schema() {
 }
 
 #[test]
-fn fresh_schema_is_final_before_external_memory_rehydrate() {
+fn db_mem_flush_copies_each_row_once_and_empties_memory() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    create_memory_tables(
-        &conn,
-        &memory_uri_for_name("fresh_schema_is_final_before_external_memory_rehydrate"),
-    )
-    .unwrap();
-
-    // Reproduce the production ordering window: an external reader mirrors
-    // the freshly published schema before the writer runs legacy migrations.
-    sync_memory_tables_from_disk(&conn, ["security_ask_events"])
-        .expect("fresh canonical DDL must already match its post-migration shape");
-
-    assert_eq!(
-        columns_for_schema(&conn, MEMORY_SCHEMA, "security_ask_events"),
-        columns_for_schema(&conn, "main", "security_ask_events"),
-        "a fresh DB must not publish a pre-migration table shape to external readers"
-    );
-}
-
-#[test]
-fn db_mem_disk_ready_rejects_missing_memory_schema() {
-    let conn = Connection::open_in_memory().unwrap();
-    create_tables(&conn).unwrap();
-
-    let error =
-        validate_ready_schema(&conn, true).expect_err("ready() must fail if DB-owned memory tables were not created");
-    assert!(
-        error.contains("mem.net_events"),
-        "missing memory schema must fail loudly instead of route projections hiding stale state: {error}"
-    );
-}
-
-#[test]
-fn db_mem_flush_uses_per_table_id_watermark() {
-    let conn = Connection::open_in_memory().unwrap();
-    create_tables(&conn).unwrap();
-    create_memory_tables(&conn, &memory_uri_for_name("db_mem_flush_uses_per_table_id_watermark")).unwrap();
+    create_memory_tables(&conn, &memory_uri_for_name("db_mem_flush_copies_each_row_once")).unwrap();
     let mut watermarks = initial_memory_flush_watermarks(&conn, ["net_events"]).expect("initial watermarks");
+    let count = |schema: &str| -> i64 {
+        conn.query_row(&format!("SELECT COUNT(*) FROM {schema}.net_events"), [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+    };
+    let insert = |domain: &str| {
+        conn.execute(
+            "INSERT INTO mem.net_events (timestamp, domain, decision)
+             VALUES ('2026-06-26T00:00:00Z', ?1, 'allowed')",
+            [domain],
+        )
+        .unwrap();
+    };
 
-    conn.execute(
-        "INSERT INTO mem.net_events (timestamp, domain, decision)
-             VALUES ('2026-06-26T00:00:00Z', 'flush-one.example', 'allowed')",
-        [],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO mem.net_events (timestamp, domain, decision)
-             VALUES ('2026-06-26T00:00:01Z', 'flush-two.example', 'allowed')",
-        [],
-    )
-    .unwrap();
-
-    let before_first = conn.total_changes();
+    insert("flush-one.example");
+    insert("flush-two.example");
     let advanced = flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("first flush");
     watermarks.extend(advanced);
     assert_eq!(
-        conn.total_changes() - before_first,
-        2,
-        "first mem->disk flush should copy exactly the two new rows"
+        (count("main"), count(MEMORY_SCHEMA)),
+        (2, 0),
+        "the first flush moves both rows"
     );
 
-    conn.execute(
-        "INSERT INTO mem.net_events (timestamp, domain, decision)
-             VALUES ('2026-06-26T00:00:02Z', 'flush-three.example', 'allowed')",
-        [],
-    )
-    .unwrap();
-
-    let before_second = conn.total_changes();
+    insert("flush-three.example");
     let advanced = flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("second flush");
     watermarks.extend(advanced);
     assert_eq!(
-        conn.total_changes() - before_second,
-        1,
-        "second mem->disk flush must use the per-table id watermark instead of replaying the whole memory table"
+        (count("main"), count(MEMORY_SCHEMA)),
+        (3, 0),
+        "the second flush moves only the new row; the first two are not replayed"
     );
 
     let before_third = conn.total_changes();
-    let advanced = flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("third flush");
-    watermarks.extend(advanced);
+    flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("third flush");
     assert_eq!(
         conn.total_changes() - before_third,
         0,
-        "unchanged dirty-table flush must not rewrite already flushed rows"
+        "a flush with nothing in memory writes nothing"
     );
 }
 
 #[test]
-fn db_mem_disk_memory_tables_work_before_query_only_guard() {
+fn memory_sequences_start_above_every_id_the_disk_handed_out() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    conn.execute_batch(
+        "INSERT INTO main.net_events (timestamp, domain, decision) VALUES ('t', 'a.example', 'allowed');
+         UPDATE main.sqlite_sequence SET seq = 41 WHERE name = 'net_events';",
+    )
+    .unwrap();
+    create_memory_tables(&conn, &memory_uri_for_name("memory_sequences_start_above_disk")).unwrap();
+    seed_memory_sequences(&conn, hot_ledger_tables()).unwrap();
+    conn.execute(
+        "INSERT INTO mem.net_events (timestamp, domain, decision) VALUES ('t', 'b.example', 'allowed')",
+        [],
+    )
+    .unwrap();
+    assert_eq!(conn.last_insert_rowid(), 42);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM mem.net_events", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1,
+        "seeding the sequence must copy no rows"
+    );
+}
+
+#[test]
+fn reader_pragmas_leave_the_connection_query_only() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.db");
     {
@@ -153,22 +166,17 @@ fn db_mem_disk_memory_tables_work_before_query_only_guard() {
 
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let conn = Connection::open_with_flags(&path, flags).unwrap();
-    create_memory_tables(
-        &conn,
-        &memory_uri_for_name("db_mem_disk_memory_tables_work_before_query_only_guard"),
-    )
-    .unwrap();
-    apply_reader_pragmas(&conn, true).unwrap();
-    validate_ready_schema(&conn, true).expect("query-only connection must still own its DB-local memory schema");
+    apply_reader_pragmas(&conn).unwrap();
+    validate_ready_schema(&conn).expect("a query-only reader validates the disk schema");
     let error = conn
         .execute(
-            "INSERT INTO mem.net_events (timestamp, domain, decision) VALUES ('t', 'example.com', 'allowed')",
+            "INSERT INTO net_events (timestamp, domain, decision) VALUES ('t', 'example.com', 'allowed')",
             [],
         )
-        .expect_err("query_only must prevent writes after DB-owned memory setup");
+        .expect_err("query_only must prevent writes through a reader");
     assert!(
         error.to_string().contains("readonly"),
-        "query_only should make the reader worker effectively read-only after setup: {error}"
+        "query_only should make the reader worker effectively read-only: {error}"
     );
 }
 
@@ -873,7 +881,7 @@ fn reader_pragmas_work_on_readonly_connection() {
     // Open read-only -- apply_reader_pragmas must not fail.
     let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let conn = Connection::open_with_flags(&path, flags).unwrap();
-    apply_reader_pragmas(&conn, true).unwrap();
+    apply_reader_pragmas(&conn).unwrap();
 }
 
 #[test]
@@ -888,7 +896,7 @@ fn reader_pragmas_enable_mmap_before_query_only() {
 
     let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let conn = Connection::open_with_flags(&path, flags).unwrap();
-    apply_reader_pragmas(&conn, true).unwrap();
+    apply_reader_pragmas(&conn).unwrap();
 
     let mmap_size: i64 = conn.query_row("PRAGMA mmap_size", [], |row| row.get(0)).unwrap();
     assert!(

@@ -64,7 +64,7 @@ async fn a_ledger_without_the_kind_column_fails_ready_by_name() {
             .expect("simulate a ledger created before the column existed");
     }
 
-    let error = DbReader::open_disk_only(&path)
+    let error = DbReader::open(&path)
         .unwrap()
         .ready()
         .expect_err("a ledger missing a required column must fail loudly");

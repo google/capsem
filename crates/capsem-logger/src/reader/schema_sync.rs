@@ -7,7 +7,7 @@ impl DbReader {
     /// Empty ledgers are valid. Missing tables or route-critical columns are
     /// DB contract failures and must not be converted into empty route payloads.
     pub fn ready(&self) -> Result<(), String> {
-        schema::validate_ready_schema(&self.conn, self.memory_mirror)
+        schema::validate_ready_schema(&self.conn)
     }
 
     /// The ledger's `data_version` when it differs from the last one committed
@@ -57,8 +57,7 @@ impl DbReader {
         self.queries_executed.set(self.queries_executed.get() + 1);
     }
 
-    /// Schema names attached to this reader's connection (`main`, `temp`, and
-    /// `mem` only when this reader mirrors the hot tables).
+    /// Schema names attached to this reader's connection.
     #[cfg(test)]
     pub(crate) fn attached_schemas(&self) -> rusqlite::Result<Vec<String>> {
         let mut stmt = self.conn.prepare("PRAGMA database_list")?;

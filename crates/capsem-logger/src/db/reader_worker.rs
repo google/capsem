@@ -6,18 +6,11 @@
 
 use super::*;
 
-pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, external: bool) {
+pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
     let started = Instant::now();
-    let open = if external {
-        // Another process owns the writes. WAL makes the file readable while
-        // that writer commits, so this reader queries `main` and mirrors
-        // nothing -- one service watching many sessions used to hold a copy of
-        // every hot table of every one of them.
-        DbReader::open_disk_only
-    } else {
-        DbReader::open
-    };
-    let reader = match open(&path) {
+    // WAL makes the file readable while its writer commits, so this reader
+    // queries `main` and holds no copy of it, whichever process writes.
+    let reader = match DbReader::open(&path) {
         Ok(reader) => reader,
         Err(error) => {
             tracing::error!(
@@ -40,8 +33,8 @@ pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, extern
         match request {
             ReadRequest::Ready { reply } => {
                 let started = Instant::now();
-                let result = observe_change(&reader, external)
-                    .and_then(|observed| reader.ready().map(|()| commit(&reader, observed)));
+                let result =
+                    observe_change(&reader).and_then(|observed| reader.ready().map(|()| commit(&reader, observed)));
                 match &result {
                     Ok(_) => tracing::debug!(
                         db_path = %path.display(),
@@ -63,11 +56,11 @@ pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, extern
                 let started = Instant::now();
                 let sql_hash = sql_fingerprint(&sql);
                 let params_count = params.len();
-                // The row data needs no freshness step -- a disk-only reader's
-                // `main` is the file. The observation is still made and
+                // The row data needs no freshness step -- the reader's `main`
+                // is the file. The observation is still made and
                 // committed, so every read path moves the handle's epochs the
                 // same way and no caller can be told the ledger stood still.
-                let result = observe_change(&reader, external).and_then(|observed| {
+                let result = observe_change(&reader).and_then(|observed| {
                     let executed = reader.query_raw_with_params(&sql, &params);
                     record_query_metrics("execute", started, params_count, &executed);
                     executed.map(|value| Observed {
@@ -104,7 +97,7 @@ pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, extern
                 let started = Instant::now();
                 let query_count = queries.len();
                 let params_count: usize = queries.iter().map(|(_, params)| params.len()).sum();
-                let result = observe_change(&reader, external).and_then(|observed| {
+                let result = observe_change(&reader).and_then(|observed| {
                     if cache_valid && observed.is_none() {
                         // The polled aggregates of an idle session: the caller
                         // already holds this answer and the ledger has not moved.
@@ -163,16 +156,14 @@ pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, extern
     }
 }
 
-/// The ledger's new `data_version`, when another process committed since this
-/// worker last looked.
+/// The ledger's new `data_version`, when another connection committed since
+/// this worker last looked.
 ///
-/// Only an external handle asks: it owns no writer, so SQLite's own
-/// `data_version` is its single answer to "is what I cached still current".
-/// An in-process handle is told by its writer and never pays the probe.
-fn observe_change(reader: &DbReader, external: bool) -> DbResult<Option<i64>> {
-    if !external {
-        return Ok(None);
-    }
+/// SQLite's own `data_version` is the single answer to "is what I cached still
+/// current", for a handle that owns the writer as much as for one that does
+/// not: the writer's connection is another connection, and its flush is the
+/// commit that makes accepted rows readable.
+fn observe_change(reader: &DbReader) -> DbResult<Option<i64>> {
     reader.observe_data_version().map_err(|error| error.to_string())
 }
 

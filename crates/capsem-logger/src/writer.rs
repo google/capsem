@@ -37,7 +37,7 @@ const MAX_FIELD_BYTES: usize = 256 * 1024;
 /// a bound for them -- it is a budget an upstream can spend. Real headers
 /// average around 300 bytes, so the gap between what they need and what they
 /// were allowed was three orders of magnitude, and every byte of it went
-/// straight into the hot in-RAM mirror that two processes hold. A server that
+/// straight into the hot in-RAM mirror that two processes held. A server that
 /// wants the ledger to cost a gigabyte only has to pad a response header and
 /// be talked to four thousand times.
 ///
@@ -59,6 +59,15 @@ const HEADER_BYTES: usize = 16 * 1024;
 pub(crate) const PREVIEW_BYTES: usize = 2 * 1024;
 pub(crate) const MAX_BODY_BLOB_BYTES: usize = 10 * 1024 * 1024;
 const DEFAULT_BATCH_CAPACITY: usize = 10_000;
+/// Unflushed ops that force a disk flush before the interval is up.
+///
+/// Every op waiting for a flush is a row held in RAM, and every flush empties
+/// that memory, so what the writer holds is bounded by `DISK_FLUSH_INTERVAL`
+/// of traffic, not by the session. This threshold only caps a burst faster
+/// than the interval. It stays high on purpose: at 10,000 a 100k-row burst
+/// spent its accept path waiting on ten disk flushes and was accepted 3-4x
+/// slower (see `benches/db_read_write_micro.rs`), where the whole point of
+/// the memory schema is that accepting a row never waits on the disk.
 const DISK_FLUSH_THRESHOLD_OPS: usize = 1_000_000;
 const DISK_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -81,6 +90,10 @@ pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
 pub const DB_ARCHIVE_BODIES_DROPPED_TOTAL: &str = "db.archive_bodies_dropped_total";
 /// Bodies indexed against identical bytes already in the pending block.
 pub const DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL: &str = "db.archive_bodies_deduplicated_total";
+/// Ops the writer holds in memory waiting for a disk flush. It falls to zero
+/// on every flush that lands; a value that only climbs is a disk the writer
+/// cannot flush to, with the session's rows piling up in RAM.
+pub const DB_MEMORY_UNFLUSHED_OPS: &str = "db.memory_unflushed_ops";
 
 /// What the writer reads `event_body_blobs.created_at` and
 /// `body_blocks.sealed_at` from.
@@ -265,6 +278,7 @@ mod writer_lock;
 pub(crate) use retention_faults::{fail_retention_for_path_for_tests, RetentionFault};
 
 use barriers::Barriers;
+use operation::{affected_memory_tables, write_op_affects_storage};
 use recording::{batch_size_bucket, record_batch, record_enqueue};
 pub use retention::RetainOutcome;
 
@@ -342,7 +356,7 @@ impl DbWriter {
         let memory_uri = schema::memory_uri_for_path(path);
         schema::with_memory_schema_lock(|| {
             schema::create_memory_tables(&conn, &memory_uri)?;
-            schema::rehydrate_memory_tables_from_disk_once(&conn, schema::hot_ledger_tables())
+            schema::seed_memory_sequences(&conn, schema::hot_ledger_tables())
         })?;
 
         let batch_capacity = if capacity == 0 {
@@ -393,7 +407,7 @@ impl DbWriter {
         ));
         schema::with_memory_schema_lock(|| {
             schema::create_memory_tables(&conn, &memory_uri)?;
-            schema::rehydrate_memory_tables_from_disk_once(&conn, schema::hot_ledger_tables())
+            schema::seed_memory_sequences(&conn, schema::hot_ledger_tables())
         })?;
 
         let batch_capacity = if capacity == 0 {
@@ -436,9 +450,8 @@ impl DbWriter {
     }
 
     /// `flush`, reporting whether the disk flush the barrier forced happened.
-    /// Same-process readers see the rows either way (they live in the shared
-    /// memory schema); an `Err` means an external reader syncing from disk
-    /// will not, and the caller must not claim otherwise.
+    /// Every reader reads the file, so an `Err` means no reader will see the
+    /// rows yet, and the caller must not claim otherwise.
     pub async fn flush_checked(&self) -> Result<(), String> {
         let Some(tx) = self.clone_sender() else {
             return Ok(());
@@ -505,6 +518,7 @@ impl DbWriter {
     }
 
     /// Open a read-only connection to the same DB file (WAL concurrent reader).
+    /// It sees what the writer has flushed, not what it has only accepted.
     /// Returns Err for in-memory writers (no file to share between connections).
     pub fn reader(&self) -> rusqlite::Result<crate::reader::DbReader> {
         if self.db_path.to_str() == Some(":memory:") {
@@ -588,6 +602,10 @@ fn writer_loop(
                 warn!(error = %error, "db initial memory flush watermark load failed");
                 schema::MemoryFlushWatermarks::new()
             });
+    // Rows at or below the open-time watermark were written by an earlier
+    // writer; exec ids restart with the process, so a completion must not
+    // reach one of those.
+    let exec_floor = flush_watermarks.get("exec_events").copied().unwrap_or(0);
     let mut dirty_tables = BTreeSet::new();
     let mut dirty_ops = 0_usize;
     let mut last_disk_flush = Instant::now();
@@ -617,6 +635,7 @@ fn writer_loop(
                         dirty_ops = 0;
                         last_disk_flush = Instant::now();
                     }
+                    ::metrics::gauge!(DB_MEMORY_UNFLUSHED_OPS).set(dirty_ops as f64);
                     continue;
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => None,
@@ -652,7 +671,7 @@ fn writer_loop(
         if batch.is_empty() {
             record_batch(started, batch_size, batch_capacity, batch_bucket, "ok", &span);
         } else {
-            match span.in_scope(|| execute_memory_batch(&conn, &batch, &mut bodies)) {
+            match span.in_scope(|| execute_memory_batch(&conn, &batch, &mut bodies, exec_floor)) {
                 Ok(outcome) => {
                     dirty_tables.extend(outcome.tables);
                     dirty_ops += outcome.written;
@@ -665,7 +684,8 @@ fn writer_loop(
                         count = batch.len(),
                         "db memory write batch failed; retrying its ops individually"
                     );
-                    let salvaged = span.in_scope(|| retry_batch_ops_individually(&conn, &batch, &mut bodies));
+                    let salvaged =
+                        span.in_scope(|| retry_batch_ops_individually(&conn, &batch, &mut bodies, exec_floor));
                     dirty_tables.extend(salvaged.tables);
                     dirty_ops += salvaged.written;
                 }
@@ -699,6 +719,7 @@ fn writer_loop(
                 }
             }
         }
+        ::metrics::gauge!(DB_MEMORY_UNFLUSHED_OPS).set(dirty_ops as f64);
         barriers.answer(&conn, &mut bodies, &barrier_outcome);
     }
 
@@ -757,64 +778,10 @@ impl WriteTarget {
     }
 }
 
-fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'static str>) {
-    match op {
-        WriteOp::NetEvent(_) => {
-            tables.insert("net_events");
-        }
-        WriteOp::ModelCall(_) => {
-            tables.insert("model_calls");
-            tables.insert("model_items");
-            tables.insert("tool_calls");
-            tables.insert("tool_responses");
-        }
-        WriteOp::McpCall(call) if call.method == "tools/call" => {
-            tables.insert("tool_calls");
-        }
-        WriteOp::McpCall(_) => {}
-        WriteOp::FileEvent(_) => {
-            tables.insert("fs_events");
-        }
-        WriteOp::ExecEvent(_) | WriteOp::ExecEventComplete(_) => {
-            tables.insert("exec_events");
-        }
-        WriteOp::AuditEvent(_) => {
-            tables.insert("audit_events");
-        }
-        WriteOp::TransportEvent(_) => {
-            tables.insert("transport_events");
-        }
-        WriteOp::DnsEvent(_) => {
-            tables.insert("dns_events");
-        }
-        WriteOp::SubstitutionEvent(_) => {
-            tables.insert("substitution_events");
-        }
-        WriteOp::SecurityRuleEvent(_) => {
-            tables.insert("security_rule_events");
-        }
-        WriteOp::SecurityAskEvent(_) => {
-            tables.insert("security_ask_events");
-        }
-        WriteOp::SecurityDecisionEvent(_) => {
-            tables.insert("security_decision_events");
-        }
-        WriteOp::ProfileMutationEvent(_) => {
-            tables.insert("profile_mutation_events");
-        }
-        // Disk-only registry tables: written to main directly, nothing to flush.
-        WriteOp::Network(_) | WriteOp::NetworkMembership(_) => {}
-    }
-}
-
 /// Storage work completed by a batch or by its per-operation salvage pass.
 struct BatchWriteOutcome {
     tables: BTreeSet<&'static str>,
     written: usize,
-}
-
-fn write_op_affects_storage(op: &WriteOp) -> bool {
-    !matches!(op, WriteOp::McpCall(call) if call.method != "tools/call")
 }
 
 /// Re-run a failed batch one op at a time so a single rejected row cannot
@@ -826,7 +793,12 @@ fn write_op_affects_storage(op: &WriteOp) -> bool {
 /// arbitrary window of unrelated events, so the batch failure path pays for a
 /// second pass. Nothing here runs when the batch commits.
 ///
-fn retry_batch_ops_individually(conn: &Connection, batch: &[WriteOp], bodies: &mut BodyArchive) -> BatchWriteOutcome {
+fn retry_batch_ops_individually(
+    conn: &Connection,
+    batch: &[WriteOp],
+    bodies: &mut BodyArchive,
+    exec_floor: i64,
+) -> BatchWriteOutcome {
     let expected_writes = batch.iter().filter(|op| write_op_affects_storage(op)).count();
     let mut salvaged = BatchWriteOutcome {
         tables: BTreeSet::new(),
@@ -837,7 +809,7 @@ fn retry_batch_ops_individually(conn: &Connection, batch: &[WriteOp], bodies: &m
             continue;
         }
         let op_kind = op.kind();
-        match execute_memory_batch(conn, std::slice::from_ref(op), bodies) {
+        match execute_memory_batch(conn, std::slice::from_ref(op), bodies, exec_floor) {
             Ok(outcome) => {
                 salvaged.tables.extend(outcome.tables);
                 salvaged.written += outcome.written;
@@ -870,6 +842,7 @@ fn execute_memory_batch(
     conn: &Connection,
     batch: &[WriteOp],
     bodies: &mut BodyArchive,
+    exec_floor: i64,
 ) -> rusqlite::Result<BatchWriteOutcome> {
     let stored_ops = batch.iter().filter(|op| write_op_affects_storage(op)).count();
     if stored_ops == 0 {
@@ -886,7 +859,7 @@ fn execute_memory_batch(
     let staged_mark = bodies.staged_mark();
     let mut affected_tables = BTreeSet::new();
     let mut op_counts = std::collections::BTreeMap::<&'static str, usize>::new();
-    let outcome = insert_batch_ops(&tx, batch, bodies, &mut affected_tables, &mut op_counts)
+    let outcome = insert_batch_ops(&tx, batch, bodies, exec_floor, &mut affected_tables, &mut op_counts)
         .and_then(|()| tx.commit())
         .map(|()| BatchWriteOutcome {
             tables: affected_tables,
@@ -906,6 +879,7 @@ fn insert_batch_ops(
     tx: &rusqlite::Transaction<'_>,
     batch: &[WriteOp],
     bodies: &mut BodyArchive,
+    exec_floor: i64,
     affected_tables: &mut BTreeSet<&'static str>,
     op_counts: &mut std::collections::BTreeMap<&'static str, usize>,
 ) -> rusqlite::Result<()> {
@@ -923,7 +897,7 @@ fn insert_batch_ops(
             WriteOp::McpCall(c) => insert_mcp_call(tx, c, WriteTarget::Memory, bodies)?,
             WriteOp::FileEvent(f) => insert_file_event(tx, f, WriteTarget::Memory)?,
             WriteOp::ExecEvent(e) => insert_exec_event(tx, e, WriteTarget::Memory)?,
-            WriteOp::ExecEventComplete(c) => update_exec_event(tx, c, WriteTarget::Memory, bodies)?,
+            WriteOp::ExecEventComplete(c) => update_exec_event(tx, c, exec_floor, bodies)?,
             WriteOp::AuditEvent(a) => insert_audit_event(tx, a, WriteTarget::Memory)?,
             WriteOp::DnsEvent(d) => insert_dns_event(tx, d, WriteTarget::Memory)?,
             WriteOp::SubstitutionEvent(s) => insert_substitution_event(tx, s, WriteTarget::Memory)?,

@@ -116,7 +116,7 @@ fn readiness_refuses_what_column_names_cannot_see() {
     let conn = Connection::open_in_memory().unwrap();
     ledger_with_the_older_check(&conn);
 
-    let columns_only = crate::schema::validate_ready_schema(&conn, false);
+    let columns_only = crate::schema::validate_ready_schema(&conn);
     assert!(columns_only.is_err(), "readiness must refuse a stale event_type CHECK");
     let error = columns_only.unwrap_err();
     assert!(error.contains("security_rule_events"), "{error}");
@@ -132,7 +132,7 @@ fn a_missing_security_table_is_left_to_readiness() {
     conn.execute_batch("DROP TABLE security_ask_events").unwrap();
 
     assert!(super::assert_current(&conn).is_ok());
-    let error = crate::schema::validate_ready_schema(&conn, false).unwrap_err();
+    let error = crate::schema::validate_ready_schema(&conn).unwrap_err();
     assert!(error.contains("security_ask_events"), "{error}");
 }
 
@@ -165,7 +165,7 @@ fn a_ledger_that_keeps_security_payloads_inline_is_refused_by_name() {
     }
     assert!(error.contains("event_json"), "and say what is wrong with it: {error}");
 
-    let readiness = crate::schema::validate_ready_schema(&conn, false)
+    let readiness = crate::schema::validate_ready_schema(&conn)
         .expect_err("readiness must refuse it too, since column presence alone would pass it");
     assert!(readiness.contains("event_json"), "{readiness}");
 }

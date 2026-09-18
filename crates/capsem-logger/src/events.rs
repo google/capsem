@@ -193,7 +193,7 @@ pub struct SecurityRuleEvent {
 /// in the session archive, read back by event id with
 /// `BodyDirection::Payload` -- it averaged a kilobyte and peaked at 297 KB in
 /// one real session, which is not something to carry in every scan of a table
-/// that is also mirrored in RAM.
+/// that was also mirrored in RAM.
 ///
 /// Reading a match therefore gives the columns routes filter, group and
 /// correlate on; whoever actually wants the payload asks for it.

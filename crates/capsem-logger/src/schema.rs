@@ -6,9 +6,8 @@ use std::{
 
 use rusqlite::{Connection, OptionalExtension};
 
-/// The DB-owned in-memory mirror of the hot ledger tables. Only a reader that
-/// shares a process with the writer attaches it, to keep the two off each
-/// other's table locks; a reader in another process reads the file over WAL.
+/// The writer's in-memory staging schema: rows it has accepted and not yet
+/// flushed to disk. Only the writer attaches it; every reader reads the file.
 pub(crate) const MEMORY_SCHEMA: &str = "mem";
 static MEMORY_SCHEMA_LOCK: Mutex<()> = Mutex::new(());
 
@@ -22,11 +21,8 @@ mod security_event_types;
 pub(crate) mod transport;
 #[cfg(test)]
 pub(crate) use memory_sync::UPDATABLE_HOT_TABLES;
-pub use memory_sync::{
-    flush_memory_tables_to_disk, reconcile_memory_tables_from_disk, rehydrate_memory_tables_from_disk_once,
-    sync_memory_tables_from_disk,
-};
-pub(crate) use memory_sync::{initial_memory_flush_watermarks, MemoryFlushWatermarks};
+pub use memory_sync::{flush_memory_tables_to_disk, reconcile_memory_tables_from_disk};
+pub(crate) use memory_sync::{initial_memory_flush_watermarks, seed_memory_sequences, MemoryFlushWatermarks};
 pub(crate) use memory_sync::{is_disk_only_table, table_column_names};
 
 /// Create all tables and indexes on the given connection, then assert the shape.
@@ -109,11 +105,7 @@ fn recorded_rows(conn: &Connection) -> rusqlite::Result<Option<(&'static str, i6
     Ok(None)
 }
 
-/// Attach the DB-owned in-memory schema and mirror hot ledger tables into it.
-///
-/// The canonical schema remains the disk schema. The memory schema is derived
-/// from `main.sqlite_master` so table shape cannot drift into a second hand
-/// written contract. Blob storage stays disk-owned and bounded.
+/// The shared-cache URI of the writer's memory schema for the ledger at `path`.
 pub fn memory_uri_for_path(path: &Path) -> String {
     memory_uri_for_name(&path.to_string_lossy())
 }
@@ -130,24 +122,14 @@ pub(crate) fn with_memory_schema_lock<T>(operation: impl FnOnce() -> rusqlite::R
     operation()
 }
 
+/// Attach the writer's memory schema and build its tables.
+///
+/// The canonical schema remains the disk schema. The memory schema is derived
+/// from `main.sqlite_master` so table shape cannot drift into a second hand
+/// written contract. Blob storage stays disk-owned and bounded.
 pub fn create_memory_tables(conn: &Connection, memory_uri: &str) -> rusqlite::Result<()> {
     attach_memory_schema(conn, memory_uri)?;
     reconcile_memory_tables_from_disk(conn)
-}
-
-pub fn create_memory_read_views(conn: &Connection) -> rusqlite::Result<()> {
-    for (table, _) in READY_SCHEMA_COLUMNS {
-        if is_disk_only_table(table) {
-            continue;
-        }
-        if !table_exists(conn, MEMORY_SCHEMA, table)? {
-            continue;
-        }
-        conn.execute_batch(&format!(
-            "CREATE TEMP VIEW IF NOT EXISTS {table} AS SELECT * FROM {MEMORY_SCHEMA}.{table};"
-        ))?;
-    }
-    Ok(())
 }
 
 pub(crate) fn table_exists(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<bool> {
@@ -220,11 +202,7 @@ pub use pragmas::{
 /// This intentionally fails on missing tables or columns. A valid empty DB is
 /// ready; a partially migrated or corrupted DB is not. Routes must surface this
 /// as a DB contract error rather than returning invented empty ledgers.
-///
-/// `memory_mirror` says whether this connection attached `mem`. A disk-only
-/// reader answers from `main`, and demanding `mem` of it would fail a healthy
-/// ledger.
-pub fn validate_ready_schema(conn: &Connection, memory_mirror: bool) -> Result<(), String> {
+pub fn validate_ready_schema(conn: &Connection) -> Result<(), String> {
     let integrity = conn
         .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
         .map_err(|error| format!("session db integrity check failed: {error}"))?;
@@ -234,17 +212,11 @@ pub fn validate_ready_schema(conn: &Connection, memory_mirror: bool) -> Result<(
 
     for (table, required_columns) in READY_SCHEMA_COLUMNS {
         validate_table_columns(conn, "main", table, required_columns)?;
-        if memory_mirror && !is_disk_only_table(table) {
-            validate_table_columns(conn, MEMORY_SCHEMA, table, required_columns)?;
-        }
     }
 
     // A CHECK constraint is not a column, so the loop above cannot see a
     // security ledger that was declared against an older list of event types.
     security_event_types::validate_ready(conn, "main")?;
-    if memory_mirror {
-        security_event_types::validate_ready(conn, MEMORY_SCHEMA)?;
-    }
 
     Ok(())
 }
@@ -279,3 +251,5 @@ fn validate_table_columns(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::memory_row_count_for_tests;

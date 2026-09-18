@@ -8,10 +8,8 @@
 //! `model_calls`, the two widest tables in the ledger.
 //!
 //! This guard asks SQLite how it intends to run each statement and fails on
-//! any `SCAN` that names no index. It runs against the same reader shape the
-//! service uses -- `open_disk_only`, reading `main` through WAL -- because the
-//! mirrored in-process reader resolves different tables and would answer a
-//! different question.
+//! any `SCAN` that names no index. It runs against the reader every handle
+//! uses -- `DbReader::open`, reading `main` through WAL.
 //!
 //! `security/status`'s aggregates are not guarded here. Their SQL belongs to
 //! `capsem-service`, which owns the route's query intent, and
@@ -66,7 +64,7 @@ fn ledger_with_rows() -> (tempfile::TempDir, DbReader) {
     }
     conn.execute_batch("COMMIT").expect("commit");
     drop(conn);
-    let reader = DbReader::open_disk_only(&path).expect("open disk-only reader");
+    let reader = DbReader::open(&path).expect("open disk-only reader");
     (dir, reader)
 }
 

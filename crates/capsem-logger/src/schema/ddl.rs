@@ -2,7 +2,7 @@
 //!
 //! Every table and index a fresh session database is created with, as one
 //! executable statement batch. It lives apart from `schema.rs` because that
-//! module is behavior -- creation, the memory mirror -- and this is the
+//! module is behavior -- creation, the writer's memory schema -- and this is the
 //! contract those behaviors operate on.
 //!
 //! It is the only place a session table is defined. `schema::migrate` used to

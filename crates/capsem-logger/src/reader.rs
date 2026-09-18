@@ -1,7 +1,6 @@
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use rusqlite::{params, Connection, OpenFlags, Row};
@@ -23,8 +22,6 @@ use columns::{
 };
 mod open;
 mod schema_sync;
-
-static IN_MEMORY_READER_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Counts of network events by decision outcome.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -374,18 +371,11 @@ pub fn validate_select_only(sql: &str) -> Result<(), String> {
 
 /// Query-only connection to the session database.
 ///
-/// The DB layer opens the file read-write long enough to run schema upgrades
-/// and, for an in-process reader, to attach and populate its private `mem`
-/// schema; it then enables SQLite `query_only`. Callers never receive the
-/// connection and `DbHandle::query` still rejects non-read SQL before
-/// execution.
+/// It reads the file through WAL and runs with SQLite `query_only`. Callers
+/// never receive the connection and `DbHandle::query` still rejects non-read
+/// SQL before execution.
 pub struct DbReader {
     conn: Connection,
-    /// Whether the hot ledger tables are mirrored into the `mem` schema and
-    /// resolved through TEMP views. A reader that shares a process with the
-    /// writer mirrors them to stay off its table locks; a reader in another
-    /// process reads `main` through WAL and mirrors nothing.
-    memory_mirror: bool,
     /// `PRAGMA main.data_version` as of the last change this reader both saw
     /// and finished acting on. It moves only when another connection commits
     /// to the file, so an unchanged value means results derived from it are

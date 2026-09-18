@@ -114,7 +114,7 @@ pub(super) fn insert_substitution_event(
 /// The row keeps what routes filter and group on; the matched event's payload
 /// goes to the archive as this event's one body. It is the same forensic JSON
 /// it always was -- it simply stops being carried by every scan of this table
-/// and every byte of its RAM mirror, and is read back by event id with
+/// and every byte of the RAM mirror it once had, and is read back by event id with
 /// `BodyDirection::Payload`.
 pub(super) fn insert_security_rule_event(
     conn: &Connection,
@@ -210,7 +210,7 @@ pub(super) fn insert_security_ask_event(
 /// A decision transition's row, and the event it was made about in the
 /// archive. The row is what a projection filters on -- stage, actor, the three
 /// decisions -- and it is small; the event was the other 5-6 KB of every row, in
-/// the table a session writes most often and mirrors in RAM.
+/// the table a session writes most often, and once mirrored in RAM.
 pub(super) fn insert_security_decision_event(
     conn: &Connection,
     event: &SecurityDecisionEvent,
@@ -358,6 +358,19 @@ pub(super) fn insert_transport_event(
     event: &TransportEvent,
     target: WriteTarget,
 ) -> rusqlite::Result<()> {
+    // `event_id` is UNIQUE, and memory only holds what is not flushed yet: an
+    // id already on disk must be refused here, as the memory table refuses one
+    // it still holds, or the flush's INSERT OR REPLACE would overwrite the
+    // recorded event with its replay.
+    let on_disk = conn
+        .prepare_cached("SELECT 1 FROM main.transport_events WHERE event_id = ?1")?
+        .exists([&event.event_id])?;
+    if on_disk {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE),
+            Some("UNIQUE constraint failed: transport_events.event_id".to_string()),
+        ));
+    }
     execute_cached(
         conn,
         &format!(

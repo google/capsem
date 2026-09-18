@@ -72,3 +72,59 @@ fn ensure_option_event_id(event_id: &mut Option<String>) -> Option<String> {
     }
     event_id.clone()
 }
+
+/// The memory tables an op writes, so the next flush knows what to move.
+pub(super) fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'static str>) {
+    match op {
+        WriteOp::NetEvent(_) => {
+            tables.insert("net_events");
+        }
+        WriteOp::ModelCall(_) => {
+            tables.insert("model_calls");
+            tables.insert("model_items");
+            tables.insert("tool_calls");
+            tables.insert("tool_responses");
+        }
+        WriteOp::McpCall(call) if call.method == "tools/call" => {
+            tables.insert("tool_calls");
+        }
+        WriteOp::McpCall(_) => {}
+        WriteOp::FileEvent(_) => {
+            tables.insert("fs_events");
+        }
+        WriteOp::ExecEvent(_) | WriteOp::ExecEventComplete(_) => {
+            tables.insert("exec_events");
+        }
+        WriteOp::AuditEvent(_) => {
+            tables.insert("audit_events");
+        }
+        WriteOp::TransportEvent(_) => {
+            tables.insert("transport_events");
+        }
+        WriteOp::DnsEvent(_) => {
+            tables.insert("dns_events");
+        }
+        WriteOp::SubstitutionEvent(_) => {
+            tables.insert("substitution_events");
+        }
+        WriteOp::SecurityRuleEvent(_) => {
+            tables.insert("security_rule_events");
+        }
+        WriteOp::SecurityAskEvent(_) => {
+            tables.insert("security_ask_events");
+        }
+        WriteOp::SecurityDecisionEvent(_) => {
+            tables.insert("security_decision_events");
+        }
+        WriteOp::ProfileMutationEvent(_) => {
+            tables.insert("profile_mutation_events");
+        }
+        // Disk-only registry tables: written to main directly, nothing to flush.
+        WriteOp::Network(_) | WriteOp::NetworkMembership(_) => {}
+    }
+}
+
+/// Whether an op stores anything; protocol-only MCP traffic does not.
+pub(super) fn write_op_affects_storage(op: &WriteOp) -> bool {
+    !matches!(op, WriteOp::McpCall(call) if call.method != "tools/call")
+}

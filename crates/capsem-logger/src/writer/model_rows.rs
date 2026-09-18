@@ -229,6 +229,9 @@ fn insert_model_items(
         } else {
             cap_field(&content)
         };
+        // First write wins, and the first write may already have been
+        // flushed out of memory: the flush copies with INSERT OR REPLACE, so
+        // a repeat that reached memory would replace the disk row.
         super::execute_cached(
             conn,
             &format!(
@@ -240,6 +243,13 @@ fn insert_model_items(
              SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
              WHERE NOT EXISTS (
                 SELECT 1 FROM {table}
+                WHERE trace_id IS ?7
+                  AND kind = ?8
+                  AND content_hash = ?14
+                  AND call_id = ?10
+             )
+             AND NOT EXISTS (
+                SELECT 1 FROM main.model_items
                 WHERE trace_id IS ?7
                   AND kind = ?8
                   AND content_hash = ?14

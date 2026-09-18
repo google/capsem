@@ -26,7 +26,7 @@ async fn archive_one_body(db: &DbWriter, event_id: &str, payload: &str) {
 }
 
 fn archived_blocks(db_path: &std::path::Path) -> usize {
-    let reader = capsem_logger::DbReader::open_disk_only(db_path).expect("open the ledger");
+    let reader = capsem_logger::DbReader::open(db_path).expect("open the ledger");
     let raw = reader
         .query_raw_with_params("SELECT COUNT(*) FROM body_blocks", &[])
         .expect("count archived blocks");
@@ -68,7 +68,7 @@ async fn retention_keeps_the_bodies_inside_the_period() {
         1,
         "a body written moments ago is not 30 days old"
     );
-    let reader = capsem_logger::DbReader::open_disk_only(&db_path).expect("open the ledger");
+    let reader = capsem_logger::DbReader::open(&db_path).expect("open the ledger");
     let raw = reader
         .query_raw_with_params("SELECT COUNT(*) FROM event_body_blobs", &[])
         .expect("count index rows");
