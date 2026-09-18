@@ -23,6 +23,7 @@ pub mod writer;
 pub use format::{BodyRef, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES, TARGET_BLOCK_BYTES};
 pub use reader::BodyLogReader;
 pub use retain::{commit_retained, stage_retained_blocks, RetainedStaging};
+pub use warc::{write_record, WarcRecord};
 pub use writer::{BodyLogWriter, EncodedBlock, PendingBlock, SealedBlock};
 
 #[derive(Debug, thiserror::Error)]
@@ -57,6 +58,11 @@ pub enum ArchiveError {
     BlockFull,
     #[error("block {got} appended out of order; expected {expected}")]
     OutOfOrderBlock { expected: u64, got: u64 },
+    /// A WARC header value carried a line break. Header blocks are
+    /// line-oriented, so the rest of that value would have been read as
+    /// headers of its own -- a forged record rather than a malformed one.
+    #[error("WARC header field {field} contains a line break")]
+    WarcHeaderBreak { field: &'static str },
 }
 
 pub type Result<T> = std::result::Result<T, ArchiveError>;
