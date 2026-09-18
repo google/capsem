@@ -35,7 +35,7 @@ import json
 import sqlite3
 import zlib
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 FILE_MAGIC = b"CAPSEMBL"
 FILE_VERSION = 1
@@ -62,23 +62,30 @@ def _blake3(data: bytes) -> str:
 
 
 class SessionArchive:
-    """One open session archive, with the product reader's one-block cache.
+    """One session archive, with the product reader's one-block cache.
 
-    Held across a page of rows rather than reopened per body: the bodies of one
+    Held across a page of rows rather than rebuilt per body: the bodies of one
     page mostly share a block, and reading the file per body turned a page into
     N opens and N inflates of the same bytes.
+
+    It holds no file descriptor between reads. The archive is opened only on a
+    block-cache miss -- exactly when a block has to be inflated anyway -- and
+    closed before the read returns. Callers keep one of these for a whole test
+    function, well past the loop that needs it, and an instance that held the
+    file open leaked it into pytest's unraisable-exception check, which fails
+    the test that happened to be running when the collector found it.
     """
 
     def __init__(self, db_path: Path | str) -> None:
         self.db_path = Path(db_path)
         self._archive = archive_path_for_db(self.db_path)
-        self._file = self._archive.open("rb")
         self._verify_file_header()
         self._cached_offset: int | None = None
         self._cached_block: bytes = b""
 
     def close(self) -> None:
-        self._file.close()
+        """Nothing is held open; drop the cached block."""
+        self._cached_offset, self._cached_block = None, b""
 
     def __enter__(self) -> SessionArchive:
         return self
@@ -122,16 +129,22 @@ class SessionArchive:
         return json.loads(body.decode())
 
     def _verify_file_header(self) -> None:
-        self._file.seek(0)
-        header = self._file.read(FILE_HEADER_BYTES)
+        with self._archive.open("rb") as file:
+            header = file.read(FILE_HEADER_BYTES)
         if header[:8] != FILE_MAGIC or int.from_bytes(header[8:10], "little") != FILE_VERSION:
             raise AssertionError(f"{self._archive} is not a capsem body archive")
 
     def _block(self, block_offset: int) -> bytes:
         if self._cached_offset == block_offset:
             return self._cached_block
-        self._file.seek(block_offset)
-        header = self._file.read(BLOCK_HEADER_BYTES)
+        with self._archive.open("rb") as file:
+            raw = self._read_block(file, block_offset)
+        self._cached_offset, self._cached_block = block_offset, raw
+        return raw
+
+    def _read_block(self, file: BinaryIO, block_offset: int) -> bytes:
+        file.seek(block_offset)
+        header = file.read(BLOCK_HEADER_BYTES)
         if len(header) != BLOCK_HEADER_BYTES or header[:4] != BLOCK_MAGIC:
             raise AssertionError(f"no block at offset {block_offset} of {self._archive}")
         raw_len = int.from_bytes(header[4:8], "little")
@@ -151,7 +164,7 @@ class SessionArchive:
                 f"raw_len={raw_len} comp_len={comp_len}, outside the archive's bounds"
             )
         expected_hash = header[12:BLOCK_HEADER_BYTES].hex()
-        compressed = self._file.read(comp_len)
+        compressed = file.read(comp_len)
         if len(compressed) != comp_len:
             raise AssertionError(f"block at {block_offset} of {self._archive} is truncated")
         # Raw deflate, matching miniz_oxide's `compress_to_vec`, and bounded by
@@ -173,7 +186,6 @@ class SessionArchive:
                 f"block at {block_offset} of {self._archive} does not match its own hash: "
                 f"header says {expected_hash}, bytes hash to {_blake3(raw)}"
             )
-        self._cached_offset, self._cached_block = block_offset, raw
         return raw
 
 
