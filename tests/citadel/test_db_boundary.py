@@ -79,6 +79,11 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/db/handle_tests/external_reader.rs"),
     Path("crates/capsem-logger/src/db/handle_tests/query.rs"),
     Path("crates/capsem-logger/src/db/handle_tests/retention.rs"),
+    # The WARC export's fixtures are ledgers the writer will not produce: a
+    # body whose source row is gone, a timestamp that is not one. They are
+    # edited on disk with the owning handle closed, which is a connection this
+    # file holds, exactly like the two handle_tests modules above it.
+    Path("crates/capsem-logger/src/db/handle_tests/warc_export.rs"),
     Path("crates/capsem-logger/src/db/maintenance.rs"),
     Path("crates/capsem-logger/src/db/reader_worker.rs"),
     Path("crates/capsem-logger/src/network_db.rs"),

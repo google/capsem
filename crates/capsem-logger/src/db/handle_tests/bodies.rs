@@ -216,18 +216,18 @@ async fn a_page_past_the_parameter_limit_is_one_budget_across_its_chunks() {
     );
 }
 
-fn archive_path(db_path: &std::path::Path) -> std::path::PathBuf {
+pub(super) fn archive_path(db_path: &std::path::Path) -> std::path::PathBuf {
     db_path.with_extension("bodies")
 }
 
-async fn count(db: &DbHandle, sql: &str) -> i64 {
+pub(super) async fn count(db: &DbHandle, sql: &str) -> i64 {
     query_json(&db.query(sql, &[]).await.expect("count query"))["rows"][0][0]
         .as_i64()
         .expect("count column")
 }
 
 /// One net event with a response body and nothing else to archive.
-fn net_event_with_response(event_id: &str, domain: &str, body: &str) -> NetEvent {
+pub(super) fn net_event_with_response(event_id: &str, domain: &str, body: &str) -> NetEvent {
     let mut event = make_net_event(domain, Decision::Allowed);
     event.event_id = Some(event_id.to_string());
     event.response_headers = Some("content-type: application/json".into());

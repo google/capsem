@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A session's captured bodies can be exported as a standard WARC 1.1 file, one
+  `resource` record per stored body, gzip-member framed so `warcio`, `pywb` and
+  the rest of the web-archive toolchain can read it -- and seek within it --
+  without any Capsem code. Each record names where the body came from: a real
+  `https://` URI for network and model traffic, and a `capsem://` one for
+  tools, exec output and security-rule payloads. A body whose source row is
+  gone, or whose timestamp cannot be read, is left out and reported rather than
+  described with a guess.
 - `vm.resources.retention_days` is now enforced, having been a setting nothing
   read. Failed-session directories older than it are removed when the service
   starts -- they were culled only by count, and only when a *new* failure

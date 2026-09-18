@@ -977,6 +977,7 @@ dependencies = [
  "capsem-foundation",
  "capsem-proto",
  "criterion",
+ "flate2",
  "humantime",
  "memmap2",
  "metrics",

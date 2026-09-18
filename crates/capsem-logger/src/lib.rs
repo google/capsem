@@ -8,7 +8,8 @@ pub mod session_types;
 pub mod writer;
 
 pub use db::{
-    snapshot_session_ledger, ArchivedBodies, BodyDirection, DbHandle, ReadCacheDomain, SessionDb, StoredBody,
+    snapshot_session_ledger, ArchivedBodies, BodyDirection, DbHandle, ExportSummary, ReadCacheDomain, SessionDb,
+    SkipReason, SkippedBody, StoredBody,
 };
 pub use events::{
     credential_reference, is_credential_reference, AuditEvent, Decision, DnsEvent, ExecEvent, ExecEventComplete,

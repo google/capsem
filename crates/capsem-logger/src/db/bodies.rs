@@ -80,19 +80,22 @@ pub struct ArchivedBodies {
 const MAX_EVENT_IDS_PER_QUERY: usize = 997;
 
 /// An index row, before its bytes are fetched.
-struct IndexRow {
-    event_id: String,
-    source_table: String,
-    direction: BodyDirection,
-    content_type: Option<String>,
-    original_bytes: u64,
-    truncated: bool,
-    body_hash: String,
-    reference: BodyRef,
+pub(super) struct IndexRow {
+    pub(super) event_id: String,
+    pub(super) source_table: String,
+    pub(super) direction: BodyDirection,
+    pub(super) content_type: Option<String>,
+    pub(super) original_bytes: u64,
+    pub(super) truncated: bool,
+    pub(super) body_hash: String,
+    pub(super) reference: BodyRef,
 }
 
-const INDEX_COLUMNS: &str = "event_id, source_table, direction, content_type, original_bytes, truncated, \
-                             body_hash, block_offset, body_offset, body_len";
+/// The ten index columns, in the order [`index_row`] reads them. A query that
+/// carries extra columns of its own -- the WARC export joins each body to its
+/// source row -- puts them after these.
+pub(super) const INDEX_COLUMNS: &str = "event_id, source_table, direction, content_type, original_bytes, truncated, \
+                                        body_hash, block_offset, body_offset, body_len";
 
 /// Rows are ordered by block so the reader inflates each block once: the
 /// request and response of one exchange are staged together and almost always
@@ -214,14 +217,24 @@ impl DbHandle {
     }
 
     async fn body_index_rows(&self, sql: &str, params: &[Value]) -> DbResult<Vec<IndexRow>> {
+        self.body_index_values(sql, params)
+            .await?
+            .iter()
+            .map(index_row)
+            .collect()
+    }
+
+    /// The raw JSON rows of an index query, for a caller that selects more
+    /// than [`INDEX_COLUMNS`] and reads the rest of each row itself.
+    pub(super) async fn body_index_values(&self, sql: &str, params: &[Value]) -> DbResult<Vec<Value>> {
         let raw = self.query(sql, params).await?;
         let value: Value =
             serde_json::from_str(&raw).map_err(|error| format!("body index rows were not decodable: {error}"))?;
-        let rows = value
+        value
             .get("rows")
             .and_then(Value::as_array)
-            .ok_or_else(|| "body index query returned no rows array".to_string())?;
-        rows.iter().map(index_row).collect()
+            .cloned()
+            .ok_or_else(|| "body index query returned no rows array".to_string())
     }
 
     /// Resolve index rows to bytes on a blocking thread: inflating a block is
@@ -236,10 +249,22 @@ impl DbHandle {
             .map_err(|error| format!("session body archive read task failed: {error}"))?
     }
 
-    /// Take the reader out of its slot, read with the lock released, and put
-    /// it back. The lock guards the cached reader, not the file: holding it
-    /// across the inflate would make one slow read block every other one.
     fn read_archived_blocking(&self, rows: Vec<IndexRow>) -> DbResult<Vec<StoredBody>> {
+        self.with_archive_reader(|reader| rows.into_iter().map(|row| read_one(reader, row)).collect())
+    }
+
+    /// Take the reader out of its slot, do the work with the lock released,
+    /// and put it back. The lock guards the cached reader, not the file:
+    /// holding it across the inflate would make one slow read block every
+    /// other one.
+    ///
+    /// Everything that resolves a `BodyRef` goes through here, so the archive
+    /// is opened once per batch and each block inflates once for rows given in
+    /// archive order -- and so the staleness check below is not something a
+    /// new caller has to remember.
+    ///
+    /// Blocking: the caller is already on a blocking thread.
+    pub(super) fn with_archive_reader<T>(&self, work: impl FnOnce(&BodyLogReader) -> DbResult<T>) -> DbResult<T> {
         let cached = self.take_archive_reader();
         let reader = match cached {
             // A cached reader that is still on the archive, which is every
@@ -263,12 +288,9 @@ impl DbHandle {
             Some(reader) if !reader.file_was_replaced() => reader,
             _ => open_archive(&crate::writer::archive_path_for_db(&self.inner.path))?,
         };
-        let bodies = rows
-            .into_iter()
-            .map(|row| read_one(&reader, row))
-            .collect::<DbResult<Vec<StoredBody>>>();
+        let done = work(&reader);
         self.put_archive_reader(reader);
-        bodies
+        done
     }
 
     fn take_archive_reader(&self) -> Option<BodyLogReader> {
@@ -312,7 +334,7 @@ impl DbHandle {
     }
 }
 
-fn read_one(reader: &BodyLogReader, row: IndexRow) -> DbResult<StoredBody> {
+pub(super) fn read_one(reader: &BodyLogReader, row: IndexRow) -> DbResult<StoredBody> {
     let bytes = reader.read(row.reference).map_err(|error| {
         format!(
             "session body archive could not resolve {}/{} of event {}: {error}",
@@ -352,7 +374,7 @@ fn open_archive(path: &Path) -> DbResult<BodyLogReader> {
         .map_err(|error| format!("session body archive {} could not be opened: {error}", path.display()))
 }
 
-fn index_row(row: &Value) -> DbResult<IndexRow> {
+pub(super) fn index_row(row: &Value) -> DbResult<IndexRow> {
     let text = |index: usize| -> DbResult<String> {
         row.get(index)
             .and_then(Value::as_str)

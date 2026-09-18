@@ -734,10 +734,12 @@ impl SessionDb {
 mod bodies;
 mod maintenance;
 mod reader_worker;
+mod warc_export;
 
 pub use bodies::{ArchivedBodies, BodyDirection, StoredBody};
 pub use maintenance::snapshot_session_ledger;
 use reader_worker::reader_loop;
+pub use warc_export::{ExportSummary, SkipReason, SkippedBody};
 
 #[cfg(test)]
 mod cache_tests;

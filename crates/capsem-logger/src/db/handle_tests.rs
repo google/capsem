@@ -20,6 +20,7 @@ mod correctness;
 mod external_reader;
 mod query;
 mod retention;
+mod warc_export;
 
 #[test]
 fn db_handle_contract_names_db_ownership_and_schema_failures() {
