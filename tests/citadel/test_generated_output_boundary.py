@@ -508,7 +508,8 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
     release_vitest = (ROOT / "build_system/release_site/vitest.config.ts").read_text(
         encoding="utf-8"
     )
-    conftest = (ROOT / "tests/conftest.py").read_text(encoding="utf-8")
+    # The failure-evidence registry, which derives its root from gate config.
+    failures = (ROOT / "tests/helpers/failures.py").read_text(encoding="utf-8")
     collector = (
         ROOT / "build_system/builder/release/tools/release_collect_evidence.py"
     ).read_text(encoding="utf-8")
@@ -542,7 +543,7 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
     assert (
         f"reportsDirectory: '../../{coverage}/distribution-site'" in release_vitest
     ), RATIONALE
-    assert "_GATE_CONFIG.outputs.test_artifacts" in conftest, RATIONALE
+    assert "gate_config.load(" in failures and ".outputs.test_artifacts" in failures, RATIONALE
     assert f'Path("{evidence}") / "release"' in collector, RATIONALE
 
     required_ci_paths = {

@@ -14,6 +14,7 @@ from pathlib import Path
 
 from log_streams import read_log_stream
 
+from . import failures
 from .constants import (
     ASSETS_DIR,
     BIN_DIR,
@@ -312,11 +313,7 @@ def preserve_tmp_dir_on_failure(
     Also rotates `cache/target/tests/evidence/` after each preserve, keeping only the
     most recent `ARTIFACT_MAX_KEPT_DIRS` failure dirs.
     """
-    try:
-        from conftest import ARTIFACTS_ROOT, FAILED_NODEIDS
-    except ImportError:
-        return
-    artifacts_root = Path(os.environ.get("CAPSEM_TEST_ARTIFACTS_ROOT", ARTIFACTS_ROOT))
+    artifacts_root = Path(os.environ.get("CAPSEM_TEST_ARTIFACTS_ROOT", failures.ARTIFACTS_ROOT))
     tmp_dir = Path(tmp_dir)
     if not tmp_dir.exists():
         return
@@ -327,24 +324,24 @@ def preserve_tmp_dir_on_failure(
     force = force or bool(os.environ.get("CAPSEM_TEST_PRESERVE_ALWAYS"))
     current_test = os.environ.get("PYTEST_CURRENT_TEST", "").rsplit(" (", 1)[0]
     if not force:
-        if not FAILED_NODEIDS:
+        if not failures.FAILED_NODEIDS:
             return
         if (
             not any_worker_failure
             and current_test
-            and current_test not in FAILED_NODEIDS
+            and current_test not in failures.FAILED_NODEIDS
         ):
             return
     import stat as statmod
     import time
 
     worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
-    if any_worker_failure and FAILED_NODEIDS:
-        tag = FAILED_NODEIDS[-1].replace("/", "_").replace(":", "_")[:80]
+    if any_worker_failure and failures.FAILED_NODEIDS:
+        tag = failures.FAILED_NODEIDS[-1].replace("/", "_").replace(":", "_")[:80]
     elif current_test:
         tag = current_test.replace("/", "_").replace(":", "_")[:80]
-    elif FAILED_NODEIDS:
-        tag = FAILED_NODEIDS[-1].replace("/", "_").replace(":", "_")[:80]
+    elif failures.FAILED_NODEIDS:
+        tag = failures.FAILED_NODEIDS[-1].replace("/", "_").replace(":", "_")[:80]
     else:
         tag = "no-failures-on-this-worker"
     ts = time.strftime("%Y%m%d-%H%M%S")

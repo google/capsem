@@ -36,6 +36,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from capsem_builder.gate import config as gate_config
 from helpers.constants import ASSETS_DIR as _SELECTED_ASSETS_DIR
 
+# The failure registry the makereport hook appends to lives in helpers:
+# `conftest` is not a unique module name once a suite has its own conftest.py.
+from helpers.failures import FAILED_NODEIDS
+
 _PROJECT_ROOT = Path(__file__).parent.parent
 _GATE_CONFIG = gate_config.load(_PROJECT_ROOT)
 
@@ -55,15 +59,6 @@ _GATE_CONFIG = gate_config.load(_PROJECT_ROOT)
 # while behaving identically. Debugging the icon means editing this line.
 os.environ["CAPSEM_TRAY_HEADLESS"] = "1"
 
-# Populated by the hookwrapper below; read by fixtures (ServiceInstance.stop)
-# that archive their tmp_dir when this worker session saw any failure.
-FAILED_NODEIDS: list[str] = []
-
-# cache/target/tests/evidence/ is the preserve-on-failure destination.
-# Gitignored. Fixtures copy their tmp_dir here so service.log /
-# sessions/<vm>/process.log / sessions/<vm>/serial.log / session.db all
-# survive the normal shutil.rmtree teardown.
-ARTIFACTS_ROOT = _PROJECT_ROOT / _GATE_CONFIG.outputs.test_artifacts
 _TESTS_ROOT = Path(__file__).parent.parent / "tests"
 
 
