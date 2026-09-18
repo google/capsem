@@ -19,8 +19,7 @@ from helpers.constants import (
     EXEC_READY_TIMEOUT,
     EXEC_TIMEOUT_SECS,
 )
-from helpers.encoded import decoded_text
-from helpers.service import vm_name, wait_exec_ready
+from helpers.service import exec_output_text, vm_name, wait_exec_ready
 
 pytestmark = pytest.mark.integration
 
@@ -328,7 +327,7 @@ class TestRunEndpoint:
             "timeout_secs": EXEC_TIMEOUT_SECS,
         })
         assert resp is not None
-        assert "hello-from-run" in decoded_text(resp.get("stdout")), f"Unexpected response: {resp}"
+        assert "hello-from-run" in exec_output_text(resp), f"Unexpected response: {resp}"
         assert resp.get("exit_code") == 0
 
     def test_run_nonzero_exit(self, client):
@@ -363,8 +362,8 @@ class TestRunEndpoint:
         })
         assert check is not None
         assert check.get("exit_code") == 0, check
-        assert "CAPSEM_RUN_FRESH" in decoded_text(check.get("stdout"))
-        assert marker not in decoded_text(check.get("stdout"))
+        assert "CAPSEM_RUN_FRESH" in exec_output_text(check)
+        assert marker not in exec_output_text(check)
 
 
 class TestListPersistence:

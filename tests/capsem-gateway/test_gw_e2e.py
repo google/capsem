@@ -15,7 +15,7 @@ from helpers.constants import (
     HTTP_TIMEOUT,
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
-from helpers.service import ServiceInstance, vm_name
+from helpers.service import ServiceInstance, exec_output_text, vm_name
 
 pytestmark = [pytest.mark.gateway, pytest.mark.e2e]
 
@@ -69,7 +69,7 @@ class TestGatewayE2E:
             "command": "echo gateway-works",
         })
         assert exec_resp is not None
-        assert "gateway-works" in exec_resp.get("stdout", "")
+        assert "gateway-works" in exec_output_text(exec_resp)
         assert exec_resp.get("exit_code") == 0
 
         # Stop + Delete
@@ -135,7 +135,7 @@ class TestGatewayE2E:
                 timeout=HTTP_TIMEOUT,
             )
             assert exec_resp is not None, "exec returned None"
-            assert "race-ok" in exec_resp.get("stdout", ""), (
+            assert "race-ok" in exec_output_text(exec_resp), (
                 f"expected 'race-ok' in stdout, got: {exec_resp}"
             )
             assert exec_resp.get("exit_code") == 0
@@ -242,7 +242,7 @@ class TestGatewayPersistence:
                 "command": "cat /root/persist-marker.txt",
             })
             assert exec_resp is not None
-            assert "survived-restart" in exec_resp.get("stdout", "")
+            assert "survived-restart" in exec_output_text(exec_resp)
         finally:
             e2e_client.delete(f"/vms/{vm_id}/delete")
 
@@ -312,7 +312,7 @@ class TestGatewayEnvVars:
                 "command": "echo $GW_TEST_VAR",
             })
             assert exec_resp is not None
-            assert "hello-from-gateway" in exec_resp.get("stdout", "")
+            assert "hello-from-gateway" in exec_output_text(exec_resp)
         finally:
             e2e_client.delete(f"/vms/{vm_id}/delete")
 
@@ -329,6 +329,6 @@ def wait_exec_ready_tcp(client, vm_id, timeout=EXEC_READY_TIMEOUT):
             {"command": "echo ready", "timeout_secs": timeout},
             timeout=timeout + 5,
         )
-        return resp is not None and "ready" in resp.get("stdout", "")
+        return resp is not None and "ready" in exec_output_text(resp)
     except Exception:
         return False

@@ -19,6 +19,7 @@ from helpers.constants import (
     EXEC_TIMEOUT_SECS,
     HTTP_TIMEOUT,
 )
+from helpers.service import exec_output_text
 
 pytestmark = pytest.mark.integration
 
@@ -54,7 +55,7 @@ class TestExecImmediatelyAfterProvision:
             timeout=HTTP_TIMEOUT,
         )
         assert exec_resp is not None, "exec returned None"
-        assert "ready-no-wait" in exec_resp.get("stdout", ""), (
+        assert "ready-no-wait" in exec_output_text(exec_resp), (
             f"expected 'ready-no-wait' in stdout, got: {exec_resp}"
         )
         assert exec_resp.get("exit_code") == 0
@@ -136,7 +137,7 @@ class TestExecImmediatelyAfterResume:
             {"command": "echo setup-ok", "timeout_secs": EXEC_TIMEOUT_SECS},
             timeout=HTTP_TIMEOUT,
         )
-        assert setup_resp is not None and "setup-ok" in setup_resp.get("stdout", ""), (
+        assert setup_resp is not None and "setup-ok" in exec_output_text(setup_resp), (
             f"VM {name} never became exec-ready after provision: {setup_resp}"
         )
 
@@ -154,7 +155,7 @@ class TestExecImmediatelyAfterResume:
             timeout=HTTP_TIMEOUT,
         )
         assert exec_resp is not None, "exec after resume returned None"
-        assert "resumed-no-wait" in exec_resp.get("stdout", ""), (
+        assert "resumed-no-wait" in exec_output_text(exec_resp), (
             f"expected 'resumed-no-wait' in stdout, got: {exec_resp}"
         )
         assert exec_resp.get("exit_code") == 0

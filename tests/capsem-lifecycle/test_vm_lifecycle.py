@@ -13,7 +13,7 @@ import uuid
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import vm_name, wait_exec_ready
+from helpers.service import exec_output_text, vm_name, wait_exec_ready
 
 pytestmark = pytest.mark.integration
 
@@ -111,7 +111,7 @@ class TestVmIdentity:
         try:
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
             resp = client.post(f"/vms/{name}/exec", {"command": "echo $CAPSEM_VM_ID"})
-            vm_id = resp["stdout"].strip()
+            vm_id = exec_output_text(resp).strip()
             assert vm_id, "CAPSEM_VM_ID is empty"
             assert len(vm_id) > 0
         finally:
@@ -126,7 +126,7 @@ class TestVmIdentity:
         try:
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
             resp = client.post(f"/vms/{name}/exec", {"command": "echo $CAPSEM_VM_NAME"})
-            vm_name_val = resp["stdout"].strip()
+            vm_name_val = exec_output_text(resp).strip()
             assert vm_name_val == name, \
                 f"CAPSEM_VM_NAME={vm_name_val!r}, expected {name!r}"
         finally:
@@ -141,7 +141,7 @@ class TestVmIdentity:
         try:
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
             resp = client.post(f"/vms/{name}/exec", {"command": "hostname"})
-            hostname = resp["stdout"].strip()
+            hostname = exec_output_text(resp).strip()
             assert hostname == name, \
                 f"hostname={hostname!r}, expected {name!r}"
         finally:
@@ -155,8 +155,8 @@ class TestVmIdentity:
             assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
             id_resp = client.post(f"/vms/{vm_id}/exec", {"command": "echo $CAPSEM_VM_ID"})
             hostname_resp = client.post(f"/vms/{vm_id}/exec", {"command": "hostname"})
-            capsem_id = id_resp["stdout"].strip()
-            hostname = hostname_resp["stdout"].strip()
+            capsem_id = exec_output_text(id_resp).strip()
+            hostname = exec_output_text(hostname_resp).strip()
             assert capsem_id, "CAPSEM_VM_ID not set for ephemeral VM"
             assert hostname == capsem_id, \
                 f"ephemeral hostname={hostname!r} != CAPSEM_VM_ID={capsem_id!r}"
@@ -206,7 +206,7 @@ class TestStopResumeE2E:
 
         # Verify env is set
         resp = client.post(f"/vms/{name}/exec", {"command": f"echo ${env_key}"})
-        assert env_val in resp["stdout"], \
+        assert env_val in exec_output_text(resp), \
             f"{env_key} not set before stop: {resp['stdout']}"
 
         # Stop
@@ -220,7 +220,7 @@ class TestStopResumeE2E:
 
         # Verify env survives
         resp2 = client.post(f"/vms/{resumed_id}/exec", {"command": f"echo ${env_key}"})
-        assert env_val in resp2["stdout"], \
+        assert env_val in exec_output_text(resp2), \
             f"{env_key} did not survive stop + resume: {resp2['stdout']}"
 
         client.delete(f"/vms/{resumed_id}/delete")
