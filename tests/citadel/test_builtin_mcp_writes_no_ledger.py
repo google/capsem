@@ -19,11 +19,10 @@ writes one.
 
 from __future__ import annotations
 
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
-
-import tomllib
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BUILTIN_MANIFEST = PROJECT_ROOT / "crates" / "capsem-mcp-builtin" / "Cargo.toml"
