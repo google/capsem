@@ -61,7 +61,13 @@ impl Hypervisor {
         let defaults = self
             .default_profiles
             .get_or_try_init(|| async {
-                Ok::<_, Error>(self.info().await?.profiles.map(|catalog| catalog.defaults).unwrap_or_default())
+                Ok::<_, Error>(
+                    self.info()
+                        .await?
+                        .profiles
+                        .map(|catalog| catalog.defaults)
+                        .unwrap_or_default(),
+                )
             })
             .await?;
         match runtime {

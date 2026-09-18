@@ -145,7 +145,10 @@ async fn container_and_port_resources_hide_wire_exposure_details() {
     // The profile-less create resolves the catalog default first.
     request(&mut server, "/status").await;
     let create = request(&mut server, "/vms/create").await;
-    assert_eq!(create["profile_id"], "co-work", "a container takes the catalog's container default");
+    assert_eq!(
+        create["profile_id"], "co-work",
+        "a container takes the catalog's container default"
+    );
     assert_eq!(create["env"], serde_json::Value::Null);
     assert_eq!(create["container"]["image"], "docker://busybox:latest");
     assert_eq!(create["container"]["env"]["MODE"], "preview");

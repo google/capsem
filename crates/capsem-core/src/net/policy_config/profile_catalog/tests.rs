@@ -79,7 +79,10 @@ fn the_catalog_names_one_default_profile_per_runtime() {
     .unwrap();
     let error = ProfileCatalog::load_from_dir(dir.path()).unwrap_err();
     assert!(error.contains("more than one default container profile"), "{error}");
-    assert!(!error.contains("default vm profile"), "only the contested runtime is named: {error}");
+    assert!(
+        !error.contains("default vm profile"),
+        "only the contested runtime is named: {error}"
+    );
 
     // The two claims may part: the VM keeps code, the container takes co-work.
     std::fs::write(
