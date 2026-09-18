@@ -556,7 +556,7 @@ VirtioFS share.
 | `credential_ref` | TEXT | Brokered credential reference, when present |
 
 **There is no exclusion list.** `.git/hooks`, `.git/config`, `node_modules`,
-`.venv` and `target/` are where a compromise persists, so every path is
+`.venv` and `target` are where a compromise persists, so every path is
 recorded and evaluated by the profile's file rules like any other. Symlinks are
 recorded as symlinks and never followed. A change is detected by size, mtime,
 inode change time and inode number, so rewriting a file and restoring its

@@ -467,7 +467,7 @@ Rollup happens when a session ends.
   emits and held the rest for the next scan. `size` is how many were held.
   `check_session.py` reports them.
 - Nothing under the workspace is excluded. If `.git/`, `node_modules/` or
-  `target/` paths are absent, the monitor did not see them; it did not filter
+  `target` paths are absent, the monitor did not see them; it did not filter
   them.
 
 ### Bodies missing
