@@ -41,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Listing a VM's changes since a checkpoint (`GET /vms/{id}/changes`, the
+  UI's change view) no longer hashes every file of the workspace and the
+  checkpoint on each page. A checkpoint now records each file's identity
+  (inode, size, mtime and ctime) before cloning, and only files whose
+  identity moved are read. The check keys on ctime, which a guest cannot set,
+  so an edit that keeps the size and puts mtime back is still listed.
+
 - Piping a large stdin into a command that does not read it (for example
   `capsem exec 'sleep 600' < big-file`) no longer wedges the VM owner's IPC
   connection: streaming exec stdin is flow-controlled, so cancellation and

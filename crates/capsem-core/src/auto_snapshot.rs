@@ -216,9 +216,12 @@ impl AutoSnapshotScheduler {
         }
         std::fs::create_dir_all(&slot_dir)?;
 
-        // Clone workspace.
+        // Clone workspace, recording its identities first (see WorkspaceManifest).
         let ws_src = self.workspace_dir();
         let ws_dst = slot_dir.join("workspace");
+        let manifest = changes::WorkspaceManifest::capture(&ws_src, &slot_dir)
+            .inspect_err(|error| warn!(%error, "workspace manifest not recorded; /changes will compare exactly"))
+            .ok();
         clone_directory(&ws_src, &ws_dst)?;
         let clone_ws_ms = t0.elapsed().as_millis();
 
@@ -269,6 +272,9 @@ impl AutoSnapshotScheduler {
             name: name.clone(),
             hash: hash.clone(),
         };
+        if let Some(manifest) = &manifest {
+            manifest.save(&slot_dir)?;
+        }
         let meta_path = slot_dir.join("metadata.json");
         std::fs::write(&meta_path, serde_json::to_string(&meta)?)?;
 
