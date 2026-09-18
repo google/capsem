@@ -374,7 +374,15 @@ forensic body truth lives in the archive and joins by `event_id` plus
 | `created_at` | TEXT | Insert timestamp |
 
 `UNIQUE(event_id, source_table, direction)`: one event has at most one body per
-direction.
+table and direction. Several tables can each hold a body for the same event --
+a rule match, the decision it drove and an ask it raised each archive a
+`payload`.
+
+Rows may share a span. Bytes identical to a body already in the block being
+written are indexed against that body's `block_offset`, `body_offset` and
+`body_len` rather than written again; `original_bytes` and `truncated` stay per
+row. Sharing never crosses a block, so every row naming a block lives and dies
+with it under retention.
 
 The UI and debug routes may render parsed JSON, text, or binary summaries from
 the archived bytes, but they must not invent a second body source. If a compact

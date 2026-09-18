@@ -223,8 +223,12 @@ async fn a_burst_of_large_bodies_seals_before_the_interval() {
     let p = temp_db_path("bodies-burst-seals");
     let db = DbHandle::open(&p).expect("open handle");
 
-    let body = "b".repeat(200 * 1024);
+    // Three quarters of a block each, so exactly two fit before the target is
+    // reached whatever the target is -- and each different, since identical
+    // bodies in one block are stored once.
+    let body_len = capsem_archive::TARGET_BLOCK_BYTES * 3 / 4;
     for i in 0..8 {
+        let body = format!("{i:02}{}", "b".repeat(body_len - 2));
         db.write(WriteOp::NetEvent(net_event_with_response(
             &format!("{i:012x}"),
             "burst.example",
@@ -235,11 +239,11 @@ async fn a_burst_of_large_bodies_seals_before_the_interval() {
     }
     db.flush().await.expect("flush");
 
-    // A block seals once it reaches 256 KiB of raw bodies, and a body is
-    // never split across blocks: 200 KiB bodies therefore pair up, and eight
-    // of them are four blocks. The point is that they are on disk at all --
-    // the 5 s interval has not elapsed, and 1.6 MB of raw bodies is not
-    // sitting in the writer thread.
+    // A block seals once it reaches the target size, and a body is never
+    // split across blocks: bodies of three quarters of a block therefore pair
+    // up, and eight of them are four blocks. The point is that they are on
+    // disk at all -- the 5 s interval has not elapsed, and six blocks' worth
+    // of raw bodies is not sitting in the writer thread.
     let blocks = count(&db, "SELECT COUNT(*) FROM body_blocks").await;
     assert_eq!(
         blocks, 4,

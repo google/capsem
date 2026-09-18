@@ -9,18 +9,33 @@
 //! would leave index rows pointing past EOF, which is a ledger that lies.
 //!
 //! Compression runs on this thread, synchronously, through the archive's
-//! two-phase API (`take_pending` / `encode` / `append`). Deflating 256 KiB
+//! two-phase API (`take_pending` / `encode` / `append`). Deflating a block
 //! costs a few milliseconds once per block, and keeping it here means the
 //! append order is the take order by construction rather than by protocol.
 //! Moving `encode` onto its own thread stays a local change to `seal_pending`.
+//!
+//! Identical bytes within one pending block are stored once. An event that
+//! matches three rules archives its payload three times over, the decision it
+//! drives and an ask it raises repeat it again, and before this each copy was
+//! appended -- the rule copies after the first ending up unindexed, because the
+//! index keeps one row per (event, table, direction). A body whose stored bytes
+//! hash to one already in the pending block is indexed against that span and
+//! appends nothing. The reuse never crosses a block: retention drops blocks
+//! whole, so every row naming a block has to share that block's lifetime, and a
+//! row pointing into an older block would be orphaned the day that block aged
+//! out while the newer row's did not.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use capsem_archive::{ArchiveError, BodyLogWriter, BodyRef, SealedBlock, BLOCK_HEADER_BYTES};
 use rusqlite::{params, Connection};
 use tracing::warn;
 
-use super::{blake3_bytes_ref, execute_cached, format_timestamp, LedgerClock, MAX_BODY_BLOB_BYTES};
+use super::{
+    blake3_bytes_ref, execute_cached, format_timestamp, LedgerClock, DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL,
+    MAX_BODY_BLOB_BYTES,
+};
 
 /// One body to archive, as its `insert_*` writer describes it.
 pub(super) struct EventBodyBlob<'a> {
@@ -76,6 +91,11 @@ pub(super) struct BodyArchive {
     now: LedgerClock,
     /// Rows for the block currently being staged.
     staged: Vec<BodyIndexRow>,
+    /// Where each distinct body in the pending block sits, by the hash of its
+    /// stored bytes -- the same `blake3:` string the index row records, so it
+    /// is computed once. Cleared the moment the pending block is taken to be
+    /// sealed: a span is only reusable while it is in the block being staged.
+    pending_spans: HashMap<String, BodyRef>,
     /// Sequence number the next staged row takes.
     next_seq: u64,
     /// Blocks whose bytes are on disk, waiting for their index rows to commit.
@@ -199,6 +219,7 @@ impl BodyArchive {
             writer,
             now,
             staged: Vec::new(),
+            pending_spans: HashMap::new(),
             next_seq: 0,
             appended: Vec::new(),
             #[cfg(test)]
@@ -225,7 +246,13 @@ impl BodyArchive {
         // is what actually arrived, so under-reporting cannot also erase the
         // truncation this writer did on top of it.
         let original_bytes = blob.original_bytes.unwrap_or(0).max(bytes.len() as u64);
-        let Some(reference) = self.stage_bytes(&bytes[..stored_len]) else {
+        let stored = &bytes[..stored_len];
+        // Over the stored bytes, not the buffer they were cut from: a hash of
+        // something the archive does not hold cannot be checked against
+        // anything, and a reader that verifies what it read is how a corrupted
+        // index row stops being a body. It is also what finds a repeat.
+        let body_hash = blake3_bytes_ref(stored);
+        let Some(reference) = self.stage_bytes(stored, &body_hash) else {
             return;
         };
         let seq = self.next_seq;
@@ -239,12 +266,10 @@ impl BodyArchive {
             content_type: blob.content_type.map(str::to_string),
             original_bytes: original_bytes as i64,
             stored_bytes: stored_len as i64,
+            // Per row, even when the span is shared: two producers can cut the
+            // same stored bytes from bodies of different sizes.
             truncated: original_bytes > stored_len as u64,
-            // Over the stored bytes, not the buffer they were cut from: a
-            // hash of something the archive does not hold cannot be checked
-            // against anything, and a reader that verifies what it read is
-            // how a corrupted index row stops being a body.
-            body_hash: blake3_bytes_ref(&bytes[..stored_len]),
+            body_hash,
             body_offset: i64::from(reference.offset),
             trace_id: blob.trace_id.map(str::to_string),
             turn_id: blob.turn_id.map(str::to_string),
@@ -253,7 +278,12 @@ impl BodyArchive {
     }
 
     /// Stage bytes into the pending block, sealing first if that block cannot
-    /// hold them.
+    /// hold them -- or, when the pending block already holds these exact bytes,
+    /// hand back their span and append nothing.
+    ///
+    /// Keyed by the blake3 of the bytes, never by anything weaker: a length or
+    /// a prefix match would index one body against another's bytes, and the
+    /// reader's hash check would then refuse it forever.
     ///
     /// `BlockFull` is the archive's seal-and-retry contract, not a failure:
     /// the pending block is within 16 MiB of its ceiling and this body does
@@ -267,9 +297,16 @@ impl BodyArchive {
     /// staged beside it would name offsets in a file that never received
     /// them. In neither case may a body take down the writer thread that owns
     /// the whole session ledger.
-    fn stage_bytes(&mut self, bytes: &[u8]) -> Option<BodyRef> {
+    fn stage_bytes(&mut self, bytes: &[u8], body_hash: &str) -> Option<BodyRef> {
+        if let Some(reference) = self.pending_spans.get(body_hash) {
+            ::metrics::counter!(DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL).increment(1);
+            return Some(*reference);
+        }
         match self.writer.as_mut()?.stage(bytes) {
-            Ok(reference) => return Some(reference),
+            Ok(reference) => {
+                self.pending_spans.insert(body_hash.to_string(), reference);
+                return Some(reference);
+            }
             Err(ArchiveError::BlockFull) => {}
             Err(error) => {
                 warn!(error = %error, body_bytes = bytes.len(), "body not archived");
@@ -291,7 +328,10 @@ impl BodyArchive {
             return None;
         };
         match writer.stage(bytes) {
-            Ok(reference) => Some(reference),
+            Ok(reference) => {
+                self.pending_spans.insert(body_hash.to_string(), reference);
+                Some(reference)
+            }
             Err(error) => {
                 warn!(error = %error, body_bytes = bytes.len(), "body not archived after seal");
                 if takes_the_archive_out_of_service(&error) {
@@ -401,6 +441,9 @@ impl BodyArchive {
         let Some(writer) = self.writer.as_mut() else {
             return;
         };
+        // Whatever the pending block held is leaving it, sealed or not, so no
+        // later body may be indexed against a span in it.
+        self.pending_spans.clear();
         let Some(pending) = writer.take_pending() else {
             return;
         };

@@ -17,6 +17,7 @@ static DB_FLUSH_FAILURE_TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::
 
 mod bodies;
 mod correctness;
+mod dedup;
 mod external_reader;
 mod external_warc_reader;
 mod query;

@@ -76,10 +76,11 @@ pub const DB_WRITE_BATCH_CAPACITY: &str = "db.write_batch_capacity";
 pub const DB_WRITE_BATCH_ROWS_PER_SEC: &str = "db.write_batch_rows_per_sec";
 pub const DB_WRITE_OPS_TOTAL: &str = "db.write_ops_total";
 pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
-/// Bodies the session archive gave up on, by the step that gave up. A
-/// poisoned archive is invisible in every other ledger row, so this counter
-/// is where it surfaces anywhere but a log line.
+/// Bodies the archive gave up on, by the step that gave up: the only place a
+/// poisoned archive surfaces besides a log line.
 pub const DB_ARCHIVE_BODIES_DROPPED_TOTAL: &str = "db.archive_bodies_dropped_total";
+/// Bodies indexed against identical bytes already in the pending block.
+pub const DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL: &str = "db.archive_bodies_deduplicated_total";
 
 /// What the writer reads `event_body_blobs.created_at` and
 /// `body_blocks.sealed_at` from.

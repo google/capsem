@@ -173,6 +173,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because a rule match, the decision it drove and an ask it raised name the
   same event, and a body several rows share is exported once rather than once
   per row.
+- Identical bodies written together are stored once in the session archive. A
+  rule match, the decision it drove and an ask it raised carry the same event,
+  and an event matching several rules used to store its payload once per rule
+  with only one copy indexed; on recorded sessions the security payloads now take
+  22-61% less archive space. Bodies are only shared inside one block, so
+  retention still drops every row with the block it points into.
 - A session ledger written by an earlier build is refused rather than upgraded
   in place: opening it fails and names what it lacks. The old upgrade path
   discarded its own errors and could produce a ledger matching neither build,

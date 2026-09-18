@@ -199,10 +199,13 @@ fn a_body_that_does_not_fit_the_pending_block_seals_and_retries() {
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
-    let big = "z".repeat(MAX_BODY_BLOB_BYTES);
+    // Different bytes: identical ones would be one body the pending block
+    // already holds, and never reach the seal this test is about.
+    let first = "y".repeat(MAX_BODY_BLOB_BYTES);
+    let second = "z".repeat(MAX_BODY_BLOB_BYTES);
     let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
-    archive.stage(body_blob("aaaaaaaaaaa1", &big));
-    archive.stage(body_blob("aaaaaaaaaaa2", &big));
+    archive.stage(body_blob("aaaaaaaaaaa1", &first));
+    archive.stage(body_blob("aaaaaaaaaaa2", &second));
     archive.seal_pending();
     archive.commit_index_rows(&conn).unwrap();
     archive.sync();
@@ -229,10 +232,7 @@ fn a_body_that_does_not_fit_the_pending_block_seals_and_retries() {
         .unwrap()
         .map(|reference| reader.read(reference.unwrap()).unwrap())
         .collect();
-    assert_eq!(bodies.len(), 2);
-    for body in bodies {
-        assert_eq!(body, big.as_bytes());
-    }
+    assert_eq!(bodies, vec![first.into_bytes(), second.into_bytes()]);
 }
 
 /// A failed append takes the writer out of service and leaves the blocks it
@@ -334,7 +334,10 @@ fn the_body_lost_to_a_failed_seal_is_counted() {
     let db_path = dir.path().join("seal-failure.db");
     // Two bodies at the logger's cap overflow a 16 MiB block, which is the
     // only thing that makes `stage` seal and retry.
+    // Two different bodies: a repeat would be served from the pending block
+    // and never force the seal whose failure this test is about.
     let body = "b".repeat(MAX_BODY_BLOB_BYTES);
+    let other = "c".repeat(MAX_BODY_BLOB_BYTES);
     // The archive checks its index against the file before opening, so it
     // needs a ledger to check even when the test never writes an index row.
     let conn = rusqlite::Connection::open(&db_path).unwrap();
@@ -344,7 +347,7 @@ fn the_body_lost_to_a_failed_seal_is_counted() {
         let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
         archive.stage(body_blob("0e0e0e0e0e0e", &body));
         archive.fail_next_append_for_tests();
-        archive.stage(body_blob("0f0f0f0f0f0f", &body));
+        archive.stage(body_blob("0f0f0f0f0f0f", &other));
     });
 
     let dropped: Vec<(String, u64)> = snapshotter
@@ -374,5 +377,67 @@ fn the_body_lost_to_a_failed_seal_is_counted() {
     assert!(
         dropped.contains(&("stage_after_seal".to_string(), 1)),
         "and the body being staged when it failed is counted too: {dropped:?}"
+    );
+}
+
+/// The span map, driven directly: a repeat inside the pending block appends
+/// nothing and is counted; bytes of the same length but different content are
+/// not a repeat; and once the block is taken to be sealed, the same bytes are
+/// appended again, into the next block, rather than pointed back across.
+#[test]
+fn identical_bytes_share_a_span_only_inside_the_pending_block() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("dedup-spans.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    crate::schema::create_tables(&conn).unwrap();
+
+    metrics::with_local_recorder(&recorder, || {
+        let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
+        let payload = r#"{"event":"matched by three rules"}"#;
+
+        archive.stage(body_blob("0e0e0e0e0e01", payload));
+        let one_copy = archive.pending_bytes();
+        assert_eq!(one_copy, payload.len());
+        for event_id in ["0e0e0e0e0e02", "0e0e0e0e0e03"] {
+            archive.stage(body_blob(event_id, payload));
+        }
+        assert_eq!(archive.pending_bytes(), one_copy, "repeats append nothing");
+
+        // Same length, different bytes: the hash says so, and a length or a
+        // prefix would not.
+        let same_length: String = payload.chars().rev().collect();
+        assert_eq!(same_length.len(), payload.len());
+        archive.stage(body_blob("0e0e0e0e0e04", &same_length));
+        assert_eq!(archive.pending_bytes(), one_copy * 2, "different content is stored");
+
+        archive.seal_pending();
+        assert_eq!(archive.pending_bytes(), 0);
+        archive.stage(body_blob("0e0e0e0e0e05", payload));
+        assert_eq!(
+            archive.pending_bytes(),
+            payload.len(),
+            "a sealed block's span is never reused: the next block gets its own copy"
+        );
+        archive.seal_pending();
+    });
+
+    let deduplicated: Vec<u64> = snapshotter
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .filter(|(key, _, _, _)| key.key().name() == crate::writer::DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL)
+        .map(|(_, _, _, value)| match value {
+            DebugValue::Counter(count) => count,
+            other => panic!("deduplicated bodies are a counter, not {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        deduplicated,
+        vec![2],
+        "the two repeats are counted, and nothing else is"
     );
 }

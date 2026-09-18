@@ -781,7 +781,7 @@ async fn a_body_whose_timestamp_will_not_parse_is_skipped_and_counted() {
     );
 }
 
-/// Archive order is the whole reason the export is one query: a 256 KiB block
+/// Archive order is the whole reason the export is one query: a block
 /// holding a dozen bodies must inflate once, not a dozen times.
 #[tokio::test]
 async fn the_export_inflates_each_block_once() {

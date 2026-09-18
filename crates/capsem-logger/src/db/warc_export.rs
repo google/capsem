@@ -9,7 +9,7 @@
 //! `(block_offset, body_offset)`, and the whole walk on one blocking thread
 //! through one `BodyLogReader`. Archive order is what makes the export cost
 //! one inflate per block instead of one per body; anything else would inflate
-//! a 256 KiB block again for every body that happens to sit in it.
+//! a block again for every body that happens to sit in it.
 //!
 //! **Nothing is invented, and one bad row does not cost the rest.** A body
 //! whose source row is gone has no URI; a row whose timestamp will not parse
