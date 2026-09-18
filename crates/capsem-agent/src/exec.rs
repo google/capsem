@@ -267,16 +267,15 @@ pub(super) fn run_exec_on_fds_with_cancel(
     let stderr_thread = child.stderr.take().map(|mut stderr| {
         let output = std::sync::Arc::clone(&output);
         thread::spawn(move || {
-            let mut buf = [0u8; 8192];
+            let mut buf = vec![0u8; EXEC_OUTPUT_READ_BYTES];
             loop {
                 match stderr.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        let frame = capsem_proto::ExecOutputFrame {
-                            channel: capsem_proto::ExecOutputChannel::Stderr,
-                            data: buf[..n].to_vec(),
-                        };
-                        if capsem_proto::write_exec_output(&mut *output.lock().unwrap(), &frame).is_err() {
+                        let channel = capsem_proto::ExecOutputChannel::Stderr;
+                        if capsem_proto::write_exec_output_data(&mut *output.lock().unwrap(), channel, &buf[..n])
+                            .is_err()
+                        {
                             break;
                         }
                     }
@@ -288,16 +287,15 @@ pub(super) fn run_exec_on_fds_with_cancel(
     let stdout_thread = child.stdout.take().map(|mut stdout| {
         let output = std::sync::Arc::clone(&output);
         thread::spawn(move || {
-            let mut buf = [0u8; 8192];
+            let mut buf = vec![0u8; EXEC_OUTPUT_READ_BYTES];
             loop {
                 match stdout.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let frame = capsem_proto::ExecOutputFrame {
-                            channel: capsem_proto::ExecOutputChannel::Stdout,
-                            data: buf[..n].to_vec(),
-                        };
-                        if capsem_proto::write_exec_output(&mut *output.lock().unwrap(), &frame).is_err() {
+                        let channel = capsem_proto::ExecOutputChannel::Stdout;
+                        if capsem_proto::write_exec_output_data(&mut *output.lock().unwrap(), channel, &buf[..n])
+                            .is_err()
+                        {
                             break;
                         }
                     }
@@ -330,6 +328,11 @@ pub(super) fn run_exec_on_fds_with_cancel(
     let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code });
     exit_code
 }
+
+/// One read of a child's stdout or stderr, sent as one frame. An 8 KiB buffer
+/// turned 256 KiB of output into 32 frames, each copied and written apart.
+const EXEC_OUTPUT_READ_BYTES: usize = 64 * 1024;
+const _: () = assert!(EXEC_OUTPUT_READ_BYTES <= capsem_proto::MAX_EXEC_DATA_BYTES);
 
 fn finish_exec_io(
     output: &std::sync::Arc<std::sync::Mutex<std::fs::File>>,

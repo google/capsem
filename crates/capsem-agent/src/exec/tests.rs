@@ -525,3 +525,33 @@ fn exec_fd_closed_before_exec_done() {
     assert_eq!(exit_code, 0);
     assert!(String::from_utf8_lossy(&output).contains("ordering_test"));
 }
+
+/// Finding 31: an 8 KiB read buffer turned 256 KiB of output into 32 frames,
+/// each copied and written separately.
+#[test]
+fn large_output_leaves_in_a_few_large_frames() {
+    use std::os::unix::io::IntoRawFd;
+    use std::os::unix::net::UnixStream;
+
+    let (mut exec_host, exec_guest) = UnixStream::pair().unwrap();
+    let (ctrl_tx, _ctrl_rx) = test_ctrl_channel();
+    let exec_fd = exec_guest.into_raw_fd();
+    std::thread::spawn(move || {
+        run_exec_on_fds(exec_fd, &ctrl_tx, 7, "head -c 262144 /dev/zero", &[]);
+    });
+    assert_eq!(read_exec_started(&mut exec_host), 7);
+
+    let (mut bytes, mut frames) = (0, 0);
+    loop {
+        match capsem_proto::read_exec_output(&mut exec_host) {
+            Ok(frame) => {
+                bytes += frame.data.len();
+                frames += 1;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(error) => panic!("exec output frame failed: {error}"),
+        }
+    }
+    assert_eq!(bytes, 262_144);
+    assert!(frames <= 8, "{frames} frames for 256 KiB");
+}
