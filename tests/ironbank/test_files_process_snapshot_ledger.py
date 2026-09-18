@@ -21,6 +21,7 @@ from helpers.constants import (
 )
 from helpers.service import (
     ServiceInstance,
+    exec_output_text,
     vm_name,
     vm_session_db_path,
     vm_session_dir,
@@ -267,7 +268,7 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
         )
         assert exec_resp is not None
         assert exec_resp["exit_code"] == 0, exec_resp
-        result = _extract_json_line(exec_resp["stdout"], "IRONBANK_FILE_PROCESS=")
+        result = _extract_json_line(exec_output_text(exec_resp), "IRONBANK_FILE_PROCESS=")
         assert result["nonce"] == nonce
         assert result["created_text"] == nonce
         assert result["modified_text"] == f"base:{nonce}\nchanged:{nonce}"

@@ -30,6 +30,7 @@ from helpers.constants import (
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
+    exec_output_text,
     vm_name,
     vm_session_db_path,
     vm_session_dir,
@@ -168,8 +169,8 @@ class ModelClientEnv:
         )
         assert exec_resp is not None
         assert exec_resp["exit_code"] == 0, exec_resp
-        stdout = exec_resp.get("stdout") or ""
-        stderr = exec_resp.get("stderr") or ""
+        stdout = exec_output_text(exec_resp)
+        stderr = exec_output_text(exec_resp, "stderr")
         line = next(
             (line for line in stdout.splitlines() if line.startswith("IRONBANK_CLIENT_RESULT=")),
             None,

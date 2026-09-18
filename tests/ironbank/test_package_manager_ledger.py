@@ -27,6 +27,7 @@ from helpers.constants import (
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
+    exec_output_text,
     vm_name,
     vm_session_db_path,
     wait_exec_ready,
@@ -329,8 +330,8 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
         )
         assert exec_resp is not None
         assert exec_resp["exit_code"] == 0, exec_resp
-        stdout = exec_resp.get("stdout", "")
-        stderr = exec_resp.get("stderr", "")
+        stdout = exec_output_text(exec_resp)
+        stderr = exec_output_text(exec_resp, "stderr")
         output = stdout + stderr
         expected_lines = {
             "IRONBANK:node:IRONBANK-PACKAGE-BYTES",

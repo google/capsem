@@ -24,6 +24,7 @@ from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
+    exec_output_text,
     vm_name,
     vm_session_db_path,
     vm_session_dir,
@@ -295,7 +296,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         )
         assert exec_resp is not None
         assert exec_resp["exit_code"] == 0, exec_resp
-        result = _one_json_line(exec_resp.get("stdout") or "", "IRONBANK_DNS_RESULT=")
+        result = _one_json_line(exec_output_text(exec_resp), "IRONBANK_DNS_RESULT=")
         assert result["allowed"]["qname"] == allowed_qname
         assert result["allowed"]["qtype"] == 1
         assert result["allowed"]["qclass"] == 1
@@ -484,7 +485,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
             timeout=60,
         )
         assert attack_result["exit_code"] == 0, attack_result
-        assert "IRONBANK_DNS_MULTIQUESTION_REJECTED" in attack_result["stdout"]
+        assert "IRONBANK_DNS_MULTIQUESTION_REJECTED" in exec_output_text(attack_result)
         upstream_after = [row for row in _records(request_log) if row.get("kind") == "dns"]
         assert len(upstream_after) == upstream_before, upstream_after
         error_rows = _eventually(

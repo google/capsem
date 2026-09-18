@@ -23,7 +23,13 @@ from helpers.constants import (
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
+from helpers.service import (
+    ServiceInstance,
+    exec_output_text,
+    vm_name,
+    vm_session_db_path,
+    wait_exec_ready,
+)
 from log_streams import assert_service_log_evidence
 
 pytestmark = pytest.mark.integration
@@ -221,7 +227,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         assert exec_resp is not None, "MCP protocol exec returned no body"
         assert exec_resp["exit_code"] == 0, exec_resp
         result = _one_json_line(
-            exec_resp.get("stdout") or "",
+            exec_output_text(exec_resp),
             "IRONBANK_MCP_PROTOCOL_RESULT=",
         )
         assert result == {

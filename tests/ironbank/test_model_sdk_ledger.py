@@ -25,6 +25,7 @@ from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
+    exec_output_text,
     vm_name,
     vm_session_db_path,
     wait_exec_ready,
@@ -789,8 +790,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         )
         assert exec_resp is not None, "SDK exec returned no body"
         assert exec_resp["exit_code"] == 0, exec_resp
-        stdout = exec_resp.get("stdout", "")
-        stderr = exec_resp.get("stderr", "")
+        stdout = exec_output_text(exec_resp)
+        stderr = exec_output_text(exec_resp, "stderr")
         assert RAW_SDK_SECRET not in stdout + stderr
         result_line = next(
             (line for line in stdout.splitlines() if line.startswith("IRONBANK_SDK_RESULT=")),
@@ -834,12 +835,12 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         )
         assert shape_exec is not None, "unknown-shape exec returned no body"
         assert shape_exec["exit_code"] == 0, shape_exec
-        shape_output = shape_exec.get("stdout", "") + shape_exec.get("stderr", "")
+        shape_output = exec_output_text(shape_exec) + exec_output_text(shape_exec, "stderr")
         assert "capsem_test_unknown_shape_key" not in shape_output
         shape_line = next(
             (
                 line
-                for line in shape_exec.get("stdout", "").splitlines()
+                for line in exec_output_text(shape_exec).splitlines()
                 if line.startswith("IRONBANK_UNKNOWN_SHAPE_RESULT=")
             ),
             None,
@@ -870,8 +871,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         )
         assert declared_tool_exec is not None, "declared-tool exec returned no body"
         assert declared_tool_exec["exit_code"] == 0, declared_tool_exec
-        declared_tool_output = (declared_tool_exec.get("stdout") or "") + (
-            declared_tool_exec.get("stderr") or ""
+        declared_tool_output = exec_output_text(declared_tool_exec) + (
+            exec_output_text(declared_tool_exec, "stderr")
         )
         assert "capsem_test_declared_tool_key" not in declared_tool_output
         declared_tool_line = next(
@@ -912,12 +913,12 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         mcp_line = next(
             (
                 line
-                for line in mcp_exec.get("stdout", "").splitlines()
+                for line in exec_output_text(mcp_exec).splitlines()
                 if line.startswith("IRONBANK_UNKNOWN_MCP_RESULT=")
             ),
             None,
         )
-        assert mcp_line is not None, mcp_exec.get("stdout", "") + mcp_exec.get("stderr", "")
+        assert mcp_line is not None, exec_output_text(mcp_exec) + exec_output_text(mcp_exec, "stderr")
         mcp_result = json.loads(mcp_line.split("=", 1)[1])
         assert mcp_result == {
             "initialize_server": "capsem-mock-server",
@@ -942,8 +943,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         )
         assert streaming_exec is not None, "streaming provider exec returned no body"
         assert streaming_exec["exit_code"] == 0, streaming_exec
-        streaming_output = (streaming_exec.get("stdout") or "") + (
-            streaming_exec.get("stderr") or ""
+        streaming_output = exec_output_text(streaming_exec) + (
+            exec_output_text(streaming_exec, "stderr")
         )
         assert "capsem_test_google_stream_key" not in streaming_output
         assert "capsem_test_anthropic_stream_key" not in streaming_output
@@ -1037,7 +1038,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             )
             assert replay_exec is not None
             assert replay_exec["exit_code"] == 0, replay_exec
-            replay_output = (replay_exec.get("stdout") or "") + (replay_exec.get("stderr") or "")
+            replay_output = exec_output_text(replay_exec) + exec_output_text(replay_exec, "stderr")
             assert RAW_SDK_SECRET not in replay_output
             replay_line = next(
                 (
@@ -1757,8 +1758,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             )
             assert real_client_exec is not None, "real-client exec returned no body"
             assert real_client_exec["exit_code"] == 0, real_client_exec
-            real_client_output = (real_client_exec.get("stdout") or "") + (
-                real_client_exec.get("stderr") or ""
+            real_client_output = exec_output_text(real_client_exec) + (
+                exec_output_text(real_client_exec, "stderr")
             )
             assert "capsem_test_anthropic_sdk_key" not in real_client_output
             assert "capsem_test_litellm_sdk_key" not in real_client_output
@@ -1990,7 +1991,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         )
         assert exec_resp is not None
         assert exec_resp["exit_code"] == 0, exec_resp
-        output = (exec_resp.get("stdout") or "") + (exec_resp.get("stderr") or "")
+        output = exec_output_text(exec_resp) + exec_output_text(exec_resp, "stderr")
         assert "capsem_test_codex_cli_key" not in output
         result_line = next(
             (
