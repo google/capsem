@@ -69,8 +69,9 @@ it('carries validated file-list MIME metadata into preview blobs', async () => {
 it.each(['binary', 'text'] as const)('uploads %s without changing its bytes', async kind => {
   const bytes = kind === 'binary' ? new Uint8Array([0, 255, 65]) : new TextEncoder().encode('café');
   const body = kind === 'binary' ? new Blob([bytes]) : 'café';
-  mockFetch.mockResolvedValueOnce(json({ success: true, size: bytes.length }));
-  expect(await api.uploadFile('vm 1', '/dir/data.bin', body)).toEqual({ success: true, size: bytes.length });
+  const ack = { success: true, size: bytes.length, vm_path: '/root/dir/data.bin' };
+  mockFetch.mockResolvedValueOnce(json(ack));
+  expect(await api.uploadFile('vm 1', '/dir/data.bin', body)).toEqual(ack);
   const [url, options] = mockFetch.mock.calls[0]!;
   expect(new URL(String(url)).searchParams.get('path')).toBe('dir/data.bin');
   expect(options?.body).toEqual(bytes);
@@ -81,8 +82,8 @@ it.each(['binary', 'text'] as const)('uploads %s without changing its bytes', as
 it('retries binary upload once after token refresh with identical bytes', async () => {
   const bytes = new Uint8Array([0, 255, 65]);
   mockFetch.mockResolvedValueOnce(json({}, 401)).mockResolvedValueOnce(json({ token: 'rotated' }))
-    .mockResolvedValueOnce(json({ success: true, size: 3 }));
-  expect(await api.uploadFile('vm 1', 'data.bin', new Blob([bytes]))).toEqual({ success: true, size: 3 });
+    .mockResolvedValueOnce(json({ success: true, size: 3, vm_path: '/root/data.bin' }));
+  expect(await api.uploadFile('vm 1', 'data.bin', new Blob([bytes]))).toEqual({ success: true, size: 3, vm_path: '/root/data.bin' });
   expect(mockFetch).toHaveBeenCalledTimes(3);
   expect(mockFetch.mock.calls[0]?.[1]?.body).toEqual(bytes);
   expect(mockFetch.mock.calls[2]?.[1]?.body).toEqual(bytes);
