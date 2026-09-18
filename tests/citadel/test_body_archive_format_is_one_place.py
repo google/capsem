@@ -31,6 +31,9 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FORMAT = Path("crates/capsem-archive/src/format.rs")
+# Version 2 of the format, beside version 1 while the logger moves over; it
+# replaces format.rs, and this entry goes, once nothing writes version 1.
+FORMAT_V2 = Path("crates/capsem-archive/src/v2/format.rs")
 
 # The four facts, and what *defining* one looks like. Using them is the point
 # of their being public -- `use capsem_archive::BLOCK_HEADER_BYTES` is how a
@@ -87,7 +90,7 @@ def tracked_sources() -> list[Path]:
 
 def format_copies(path: Path, text: str) -> list[str]:
     """Pure predicate over (path, text): facts restated outside their home."""
-    if path == FORMAT or path in ALLOWLIST:
+    if path in (FORMAT, FORMAT_V2) or path in ALLOWLIST:
         return []
     # format.rs's own tests are part of the definition's home.
     if path.parts[:3] == ("crates", "capsem-archive", "src") and "tests" in path.name:

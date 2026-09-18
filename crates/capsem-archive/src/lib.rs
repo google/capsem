@@ -17,6 +17,7 @@ compile_error!("capsem-archive relies on O_NOFOLLOW and mode 0600");
 pub mod format;
 pub mod reader;
 pub mod retain;
+pub mod v2;
 pub mod warc;
 pub mod writer;
 
@@ -36,6 +37,16 @@ pub enum ArchiveError {
     BadFileHeader,
     #[error("bad block header at offset {0}")]
     BadBlockHeader(u64),
+    /// A block written with a codec, flag or reserved bit this reader does
+    /// not know. Refused by name: inflating it as deflate would be reading a
+    /// later writer's bytes as something they are not.
+    #[error("block at offset {block_offset} uses unsupported codec {codec}")]
+    UnsupportedCodec { block_offset: u64, codec: u8 },
+    /// A segment header that is not one, or that fails its bounds: wrong
+    /// magic or flags, a raw extent that does not continue the block, a
+    /// length past the ceilings, or an extent that does not end on a segment.
+    #[error("bad segment at offset {0}")]
+    BadSegment(u64),
     #[error("block at offset {0} failed integrity check")]
     Integrity(u64),
     #[error("block at offset {0} did not inflate: {1}")]
