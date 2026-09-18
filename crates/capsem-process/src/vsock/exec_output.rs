@@ -23,6 +23,15 @@ pub(super) struct ExecCapture {
 }
 
 pub(super) fn deposit(job_store: &JobStore, id: u64, capture: ExecCapture) -> Option<Arc<tokio::sync::Notify>> {
+    // One line per exec at the EXEC-port boundary: whether the guest's output
+    // reached the host at all, and how much.
+    tracing::debug!(
+        exec_id = id,
+        stdout_bytes = capture.stdout_bytes,
+        stderr_bytes = capture.stderr_bytes,
+        error = ?capture.error,
+        "exec output read"
+    );
     let mut active = job_store.active_execs.lock().unwrap();
     let Some(exec) = active.get_mut(&id) else {
         // The exec already completed without this output; say so rather than
