@@ -734,7 +734,10 @@ match = 'http.host == "api.openai.com"'
         1_789_000_000_270,
     )
     .unwrap();
-    let unresolved = emission.enforcement.with_ask_resolution(&pending);
+    let unresolved =
+        emission
+            .enforcement
+            .with_ask_resolution(&pending.ask_id, pending.status, pending.reason.as_deref());
     assert!(unresolved.unwrap_err().to_string().contains("still pending"));
     let pending_error = materialize_http_request_for_upstream_after_enforcement(&event, &emission.enforcement)
         .expect_err("pending ask must block materialization");
@@ -764,7 +767,10 @@ match = 'http.host == "api.openai.com"'
     assert_eq!(latest.event_id, event_id.as_str());
     assert_eq!(latest.rule_id, "profiles.rules.ask_openai");
 
-    let approved = emission.enforcement.with_ask_resolution(&latest).unwrap();
+    let approved = emission
+        .enforcement
+        .with_ask_resolution(&latest.ask_id, latest.status, latest.reason.as_deref())
+        .unwrap();
     assert_eq!(approved.action, SecurityEnforcementAction::Allow);
     materialize_http_request_for_upstream_after_enforcement(&event, &approved)
         .expect("approved ask should materialize like allow");

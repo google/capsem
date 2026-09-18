@@ -22,7 +22,9 @@ fn denied_ask_resolution_blocks_like_block() {
     .with_status(capsem_logger::SecurityAskStatus::Denied)
     .with_resolver("tester")
     .with_reason("denied for test");
-    let resolved = decision.with_ask_resolution(&denied).unwrap();
+    let resolved = decision
+        .with_ask_resolution(&denied.ask_id, denied.status, denied.reason.as_deref())
+        .unwrap();
     let event =
         SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(HttpRequestSecurityEvent::new(
             "api.openai.com",
