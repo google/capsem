@@ -420,7 +420,7 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert any(row["summary"] == "POST 127.0.0.1/echo" for row in timeline_rows)
 
         security_latest = _eventually(
-            lambda: client.get(f"/vms/{session_id}/security/latest?limit=50", timeout=30),
+            lambda: client.get(f"/vms/{session_id}/security/latest?limit=2000", timeout=30),
             lambda rows: any(
                 row["event_id"] == event_id
                 and row["rule_id"] == "corp.rules.allow_ironbank_mock_http"
@@ -797,7 +797,7 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
             assert {row["decision"] for row in uds_rows} == {"allowed"}
             assert any(row["conn_type"] == "https-mitm" for row in uds_rows)
 
-            security_latest = client.get(f"/vms/{session_id}/security/latest?limit=100", timeout=30)
+            security_latest = client.get(f"/vms/{session_id}/security/latest?limit=2000", timeout=30)
             latest_rows = [
                 row
                 for row in security_latest
@@ -1315,7 +1315,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             ), broker_info["inventory"]
 
             security_latest = client.get(
-                f"/vms/{session_id}/security/latest?limit=50",
+                f"/vms/{session_id}/security/latest?limit=2000",
                 timeout=30,
             )
             latest_echo = [
@@ -1576,7 +1576,7 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert uds_rows[0]["request_body_preview"] == result["request_body"]
         assert uds_rows[0]["response_body_preview"] == result["body"]
 
-        security_latest = client.get(f"/vms/{session_id}/security/latest?limit=50", timeout=30)
+        security_latest = client.get(f"/vms/{session_id}/security/latest?limit=2000", timeout=30)
         latest_row = next(
             row
             for row in security_latest
@@ -1880,7 +1880,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
             }
         ]
 
-        security_latest = client.get(f"/vms/{session_id}/security/latest?limit=50", timeout=30)
+        security_latest = client.get(f"/vms/{session_id}/security/latest?limit=2000", timeout=30)
         latest_row = next(
             row
             for row in security_latest

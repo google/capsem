@@ -977,7 +977,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert "IRONBANK_SDK_RESULT" in history_text
         assert RAW_SDK_SECRET not in history_text
 
-        security_latest = client.get(f"/vms/{vm_id}/security/latest?limit=50", timeout=30)
+        security_latest = client.get(f"/vms/{vm_id}/security/latest?limit=2000", timeout=30)
         assert isinstance(security_latest, list)
         assert security_latest
         assert all(set(row) == EXPECTED_SECURITY_LATEST_FIELDS for row in security_latest)
