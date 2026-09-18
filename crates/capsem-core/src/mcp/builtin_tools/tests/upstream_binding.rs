@@ -156,7 +156,7 @@ async fn an_explicit_allow_rule_reaches_loopback_through_the_tool() {
         &allow_localhost,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "{resp:?}");
@@ -184,9 +184,8 @@ async fn the_pinned_client_connects_only_to_the_judged_address() {
 }
 
 #[tokio::test]
-async fn refusals_are_recorded_as_denied_net_events() {
-    let dir = tempfile::tempdir().unwrap();
-    let db = Arc::new(DbWriter::open(&dir.path().join("session.db"), 16).unwrap());
+async fn refusals_are_recorded_as_denied_requests() {
+    let mut ledger = Vec::new();
     let resp = call_builtin_tool(
         "fetch_http",
         &serde_json::json!({ "url": "http://localhost:1/" }),
@@ -194,13 +193,14 @@ async fn refusals_are_recorded_as_denied_net_events() {
         &default_dev_security_rules(),
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &db,
+        &mut ledger,
     )
     .await;
     assert!(is_tool_error(&resp), "{resp:?}");
-    db.flush().await;
-    let events = db.reader().unwrap().recent_net_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].decision, Decision::Denied);
-    assert_eq!(events[0].domain, "localhost");
+    let [BuiltinLedgerRecord::HttpRequest(request)] = ledger.as_slice() else {
+        panic!("a refusal owes exactly one request record: {ledger:?}");
+    };
+    assert_eq!(request.decision, HttpDecision::Denied);
+    assert_eq!(request.domain, "localhost");
+    assert_eq!(request.policy_action, "block");
 }

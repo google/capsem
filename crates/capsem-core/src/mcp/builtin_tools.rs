@@ -7,14 +7,13 @@
 
 use std::collections::BTreeMap;
 use std::net::IpAddr;
-use std::sync::Arc;
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
 use std::net::SocketAddr;
 
 use serde_json::Value;
 
-use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
+use capsem_proto::mcp_contracts::builtin_ledger::{BuiltinLedgerRecord, HttpDecision, HttpRequestRecord};
 use capsem_proto::mcp_contracts::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
 use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
@@ -37,7 +36,6 @@ const BUILTIN_TOOL_NAMES: &[&str] = &["fetch_http", "grep_http", "http_headers"]
 pub(crate) const DEFAULT_MAX_LENGTH: u64 = 5000;
 const DEFAULT_CONTEXT_LINES: u64 = 3;
 const DEFAULT_MAX_MATCHES: u64 = 50;
-const BUILTIN_PROCESS_NAME: &str = "mcp_builtin";
 
 /// Ceilings for guest-supplied pagination and grep parameters. The values
 /// arrive as `u64` straight from the tool call; without a clamp
@@ -263,62 +261,47 @@ pub async fn call_builtin_tool(
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     request_id: Option<Value>,
-    db: &Arc<DbWriter>,
+    ledger: &mut Vec<BuiltinLedgerRecord>,
 ) -> JsonRpcResponse {
     match local_name {
-        "fetch_http" => handle_fetch_http(arguments, http, security_rules, plugin_policy, request_id, db).await,
-        "grep_http" => handle_grep_http(arguments, http, security_rules, plugin_policy, request_id, db).await,
-        "http_headers" => handle_http_headers(arguments, http, security_rules, plugin_policy, request_id, db).await,
+        "fetch_http" => handle_fetch_http(arguments, http, security_rules, plugin_policy, request_id, ledger).await,
+        "grep_http" => handle_grep_http(arguments, http, security_rules, plugin_policy, request_id, ledger).await,
+        "http_headers" => handle_http_headers(arguments, http, security_rules, plugin_policy, request_id, ledger).await,
         _ => JsonRpcResponse::err(request_id, -32602, format!("unknown builtin tool: {local_name}")),
     }
 }
 
-/// Emit a NetEvent for a builtin tool HTTP request.
+/// Record a builtin tool HTTP request for capsem-process to write.
+///
+/// The builtin server holds no ledger writer: capsem-process is the session
+/// ledger's one writer, and it receives these with the tool result.
 #[allow(clippy::too_many_arguments)]
-async fn emit_net_event(
-    db: &Arc<DbWriter>,
+fn record_http(
+    ledger: &mut Vec<BuiltinLedgerRecord>,
     domain: &str,
     method: &str,
     path: &str,
-    decision: Decision,
+    decision: HttpDecision,
     status_code: Option<u16>,
     bytes_sent: u64,
     bytes_received: u64,
     duration_ms: u64,
     enforcement: &SecurityEnforcementDecision,
 ) {
-    crate::security_engine::emit_security_write(
-        db,
-        WriteOp::NetEvent(NetEvent {
-            event_id: None,
-            timestamp: SystemTime::now(),
-            domain: domain.to_string(),
-            port: 443,
-            decision,
-            process_name: Some(BUILTIN_PROCESS_NAME.to_string()),
-            pid: None,
-            method: Some(method.to_string()),
-            path: Some(path.to_string()),
-            query: None,
-            status_code,
-            bytes_sent,
-            bytes_received,
-            duration_ms,
-            matched_rule: None,
-            request_headers: None,
-            response_headers: None,
-            request_body: None,
-            response_body: None,
-            conn_type: Some(BUILTIN_PROCESS_NAME.to_string()),
-            policy_mode: Some("security_event".to_string()),
-            policy_action: Some(enforcement.action.as_str().to_string()),
-            policy_rule: enforcement.rule_id.clone(),
-            policy_reason: enforcement.reason.clone(),
-            trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
-            credential_ref: None,
-        }),
-    )
-    .await;
+    ledger.push(BuiltinLedgerRecord::HttpRequest(HttpRequestRecord {
+        timestamp_unix_ms: super::builtin_ledger::now_unix_ms(),
+        domain: domain.to_string(),
+        method: method.to_string(),
+        path: path.to_string(),
+        decision,
+        status_code,
+        bytes_sent,
+        bytes_received,
+        duration_ms,
+        policy_action: enforcement.action.as_str().to_string(),
+        policy_rule: enforcement.rule_id.clone(),
+        policy_reason: enforcement.reason.clone(),
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -331,7 +314,7 @@ async fn handle_fetch_http(
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     id: Option<Value>,
-    db: &Arc<DbWriter>,
+    ledger: &mut Vec<BuiltinLedgerRecord>,
 ) -> JsonRpcResponse {
     let url = match args.get("url").and_then(|v| v.as_str()) {
         Some(u) => u,
@@ -345,19 +328,18 @@ async fn handle_fetch_http(
             let path = reqwest::Url::parse(url)
                 .map(|u| u.path().to_string())
                 .unwrap_or_default();
-            emit_net_event(
-                db,
+            record_http(
+                ledger,
                 &extract_domain(url),
                 "GET",
                 &path,
-                Decision::Denied,
+                HttpDecision::Denied,
                 None,
                 0,
                 0,
                 0,
                 &blocked,
-            )
-            .await;
+            );
             return tool_error(id, &e);
         }
     };
@@ -399,19 +381,18 @@ async fn handle_fetch_http(
     let path = reqwest::Url::parse(url)
         .map(|u| u.path().to_string())
         .unwrap_or_default();
-    emit_net_event(
-        db,
+    record_http(
+        ledger,
         &domain,
         "GET",
         &path,
-        Decision::Allowed,
+        HttpDecision::Allowed,
         Some(status_code),
         0,
         bytes_received,
         duration_ms,
         &checked.decision,
-    )
-    .await;
+    );
 
     let text = match format {
         "raw" => body,
@@ -482,7 +463,7 @@ async fn handle_grep_http(
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     id: Option<Value>,
-    db: &Arc<DbWriter>,
+    ledger: &mut Vec<BuiltinLedgerRecord>,
 ) -> JsonRpcResponse {
     let url = match args.get("url").and_then(|v| v.as_str()) {
         Some(u) => u,
@@ -507,19 +488,18 @@ async fn handle_grep_http(
             let path = reqwest::Url::parse(url)
                 .map(|u| u.path().to_string())
                 .unwrap_or_default();
-            emit_net_event(
-                db,
+            record_http(
+                ledger,
                 &extract_domain(url),
                 "GET",
                 &path,
-                Decision::Denied,
+                HttpDecision::Denied,
                 None,
                 0,
                 0,
                 0,
                 &blocked,
-            )
-            .await;
+            );
             return tool_error(id, &e);
         }
     };
@@ -562,19 +542,18 @@ async fn handle_grep_http(
     let url_path = reqwest::Url::parse(url)
         .map(|u| u.path().to_string())
         .unwrap_or_default();
-    emit_net_event(
-        db,
+    record_http(
+        ledger,
         &extract_domain(url),
         "GET",
         &url_path,
-        Decision::Allowed,
+        HttpDecision::Allowed,
         Some(status_code),
         0,
         bytes_received,
         duration_ms,
         &checked.decision,
-    )
-    .await;
+    );
 
     let text = if raw { body } else { extract_text_from_html(&body) };
 
@@ -611,7 +590,7 @@ async fn handle_http_headers(
     security_rules: &SecurityRuleSet,
     plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
     id: Option<Value>,
-    db: &Arc<DbWriter>,
+    ledger: &mut Vec<BuiltinLedgerRecord>,
 ) -> JsonRpcResponse {
     let url = match args.get("url").and_then(|v| v.as_str()) {
         Some(u) => u,
@@ -627,19 +606,18 @@ async fn handle_http_headers(
             let path = reqwest::Url::parse(url)
                 .map(|u| u.path().to_string())
                 .unwrap_or_default();
-            emit_net_event(
-                db,
+            record_http(
+                ledger,
                 &extract_domain(url),
                 "HEAD",
                 &path,
-                Decision::Denied,
+                HttpDecision::Denied,
                 None,
                 0,
                 0,
                 0,
                 &blocked,
-            )
-            .await;
+            );
             return tool_error(id, &e);
         }
     };
@@ -669,19 +647,18 @@ async fn handle_http_headers(
     let url_path = reqwest::Url::parse(url)
         .map(|u| u.path().to_string())
         .unwrap_or_default();
-    emit_net_event(
-        db,
+    record_http(
+        ledger,
         &extract_domain(url),
         method,
         &url_path,
-        Decision::Allowed,
+        HttpDecision::Allowed,
         Some(status_code),
         0,
         output.len() as u64,
         duration_ms,
         &checked.decision,
-    )
-    .await;
+    );
 
     let (chunk, _total, _has_more) = paginate(&output, start_index, max_length);
     tool_ok(id, &chunk)

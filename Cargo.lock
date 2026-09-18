@@ -1052,7 +1052,6 @@ dependencies = [
  "capsem-core",
  "capsem-foundation",
  "capsem-guard",
- "capsem-logger",
  "capsem-proto",
  "regex",
  "reqwest 0.12.28",

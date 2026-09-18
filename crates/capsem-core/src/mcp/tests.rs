@@ -375,24 +375,41 @@ fn build_profile_server_list_respects_local_builtin_enablement() {
 }
 
 #[test]
-fn build_profile_server_list_disables_builtin_pool_when_session_db_is_shared() {
+fn build_profile_server_list_runs_one_builtin_peer_per_session() {
     let dir = tempfile::tempdir().unwrap();
     let builtin = dir.path().join("capsem-mcp-builtin");
     std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
     let mut env = HashMap::new();
-    env.insert(
-        "CAPSEM_SESSION_DB".to_string(),
-        dir.path().join("session.db").display().to_string(),
-    );
+    env.insert("CAPSEM_SESSION_DIR".to_string(), dir.path().display().to_string());
 
     let list = build_profile_server_list(&McpProfileConfig::default(), Some(&builtin), env);
 
     let local = list.iter().find(|server| server.name == "local").unwrap();
-    assert_eq!(
-        local.pool_size,
-        Some(1),
-        "pooled builtin peers cannot share one session DB writer safely"
+    assert_eq!(local.pool_size, Some(1), "a session's builtin runs one peer");
+    assert!(
+        !local.env.contains_key("CAPSEM_SESSION_DB"),
+        "the builtin is given no ledger to write"
     );
+}
+
+#[test]
+fn only_the_builtin_definition_is_named_as_builtin() {
+    let dir = tempfile::tempdir().unwrap();
+    let builtin = dir.path().join("capsem-mcp-builtin");
+    std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
+    let mut profile = McpProfileConfig::default();
+    profile.servers.push(McpManualServer {
+        name: "github".to_string(),
+        url: "https://example.com/mcp".to_string(),
+        headers: HashMap::new(),
+        auth: None,
+        enabled: true,
+    });
+
+    let list = build_profile_server_list(&profile, Some(&builtin), HashMap::new());
+
+    assert_eq!(list.len(), 2);
+    assert_eq!(builtin_server_names(&list), BTreeSet::from(["local".to_string()]));
 }
 
 #[test]

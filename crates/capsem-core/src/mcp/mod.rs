@@ -1,8 +1,9 @@
+pub mod builtin_ledger;
 pub mod builtin_tools;
 pub mod file_tools;
 pub mod policy;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -30,17 +31,36 @@ pub fn resolve_inflight_cap() -> usize {
         .unwrap_or_else(default_inflight_cap)
 }
 
+/// The `source` of the one server definition that is Capsem's own builtin.
+///
+/// It is the only server whose tool results may carry ledger records (see
+/// `capsem_proto::mcp_contracts::builtin_ledger`), so it is identified by this
+/// field, which only `local_builtin_server_def` sets, and never by a name a
+/// profile could also choose.
+pub const BUILTIN_SERVER_SOURCE: &str = "builtin";
+
+/// The names of the servers in `servers` that are Capsem's own builtin.
+pub fn builtin_server_names(servers: &[McpServerDef]) -> BTreeSet<String> {
+    servers
+        .iter()
+        .filter(|server| server.source == BUILTIN_SERVER_SOURCE)
+        .map(|server| server.name.clone())
+        .collect()
+}
+
 fn local_builtin_server_def(bin: &Path, builtin_env: HashMap<String, String>, enabled: bool) -> McpServerDef {
     // Stateless builtin tools that are safe to round-robin across pool
-    // peers when the builtin is not writing a shared session ledger.
-    // Snapshot tools (`snapshots_*`) mutate per-process state and therefore
-    // pin to peers[0].
+    // peers. Snapshot tools (`snapshots_*`) mutate per-process state and
+    // therefore pin to peers[0].
     let pool_safe_tools: Vec<String> = ["echo", "fetch_http", "grep_http", "http_headers"]
         .iter()
         .map(|s| (*s).to_string())
         .collect();
 
-    let pool_size = if builtin_env.contains_key("CAPSEM_SESSION_DB") {
+    // A session's builtin runs one peer. It once wrote the session ledger
+    // itself, which is why this used to key on the ledger's path; it no
+    // longer does, and widening the pool is a separate decision.
+    let pool_size = if builtin_env.contains_key("CAPSEM_SESSION_DIR") {
         Some(1)
     } else {
         let default_pool = std::thread::available_parallelism()
@@ -62,7 +82,7 @@ fn local_builtin_server_def(bin: &Path, builtin_env: HashMap<String, String>, en
         headers: std::collections::HashMap::new(),
         auth: None,
         enabled,
-        source: "builtin".to_string(),
+        source: BUILTIN_SERVER_SOURCE.to_string(),
         pool_size,
         pool_safe_tools,
     }

@@ -787,6 +787,8 @@ pub(crate) async fn handle_ipc_connection(
                         }
                     };
                     let servers = runtime_config.mcp_servers(mcp_builtin_binary.as_deref(), mcp_builtin_env);
+                    mcp.endpoint
+                        .set_builtin_servers(capsem_core::mcp::builtin_server_names(&servers));
                     match mcp.aggregator.refresh(servers).await {
                         Ok(()) => {
                             capsem_core::try_send!(

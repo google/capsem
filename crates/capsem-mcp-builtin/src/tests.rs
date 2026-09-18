@@ -22,7 +22,6 @@ fn loopback_allowed_rules() -> SecurityRuleSet {
 fn handler_without_snapshots() -> BuiltinHandler {
     BuiltinHandler {
         http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),
-        db: Arc::new(DbWriter::open_in_memory(8).expect("in-memory DB")),
         security_rules: Arc::new(SecurityRuleSet::new(Vec::new())),
         plugin_policy: Arc::new(BTreeMap::new()),
         scheduler: None,
@@ -139,13 +138,14 @@ async fn snapshot_handlers_operate_on_real_scheduler_state() {
         }))
         .await;
     assert!(created.is_ok(), "manual snapshot failed: {created:?}");
-    assert!(handler
+    let missing = handler
         .snapshots_revert(Parameters(SnapshotRevertParams {
             path: "missing.txt".to_string(),
             checkpoint: None,
         }))
-        .await
-        .is_err());
+        .await;
+    assert_eq!(missing.is_error, Some(true), "{missing:?}");
+    assert!(missing.meta.is_none(), "a revert that did nothing records nothing");
     assert!(handler
         .snapshots_delete(Parameters(SnapshotDeleteParams {
             checkpoint: "cp-missing".to_string(),
@@ -255,40 +255,112 @@ async fn builtin_http_client_times_out_while_reading_a_stalled_body() {
     }
 }
 
+/// The records a tool result carries for capsem-process to write.
+fn ledger_records(result: &CallToolResult) -> Vec<BuiltinLedgerRecord> {
+    let value = result
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.get(BUILTIN_LEDGER_META_KEY))
+        .cloned()
+        .expect("the result carries ledger records");
+    builtin_ledger::decode(value).expect("the records decode")
+}
+
+fn text_of(result: &CallToolResult) -> String {
+    result
+        .content
+        .iter()
+        .filter_map(|content| content.as_text().map(|text| text.text.clone()))
+        .collect()
+}
+
+/// The builtin writes no ledger: the request it made goes back to
+/// capsem-process on the result itself.
 #[tokio::test]
-async fn http_builtin_flushes_net_event_before_tool_response_returns() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let db_path = tmp.path().join("session.db");
-    let db = Arc::new(DbWriter::open(&db_path, 16).expect("open test db"));
+async fn an_http_tool_hands_its_request_back_on_the_result() {
     let handler = BuiltinHandler {
-        http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),
-        db: Arc::clone(&db),
         security_rules: Arc::new(loopback_allowed_rules()),
-        plugin_policy: Arc::new(BTreeMap::new()),
-        scheduler: None,
-        workspace_dir: None,
+        ..handler_without_snapshots()
     };
     let url = spawn_one_response_http_server().await;
 
-    let text = call_builtin(
+    let result = call_builtin(
         &handler,
         "http_headers",
         serde_json::json!({"url": url, "method": "HEAD"}),
     )
-    .await
-    .expect("builtin call succeeds");
-    assert!(text.contains("Status: 200"), "{text}");
+    .await;
+    assert_eq!(result.is_error, Some(false), "{result:?}");
+    assert!(text_of(&result).contains("Status: 200"), "{result:?}");
 
-    let rows = db
-        .reader()
-        .expect("reader")
-        .recent_net_events(10)
-        .expect("recent net events");
-    assert!(
-        rows.iter().any(|row| row.domain == "127.0.0.1"
-            && row.method.as_deref() == Some("HEAD")
-            && row.decision == capsem_logger::Decision::Allowed),
-        "net event must be durable before returning tool response: {rows:?}"
+    let records = ledger_records(&result);
+    let [BuiltinLedgerRecord::HttpRequest(request)] = records.as_slice() else {
+        panic!("one request, one record: {result:?}");
+    };
+    assert_eq!(request.domain, "127.0.0.1");
+    assert_eq!(request.method, "HEAD");
+    assert_eq!(request.decision, builtin_ledger::HttpDecision::Allowed);
+    assert_eq!(request.status_code, Some(200));
+}
+
+/// A refusal is the row an investigator most wants, so it rides on the error
+/// result exactly as a success rides on a success.
+#[tokio::test]
+async fn a_refused_request_is_recorded_on_the_error_result() {
+    let result = handler_without_snapshots()
+        .fetch_http(Parameters(FetchHttpParams {
+            url: "http://127.0.0.1:1/".to_string(),
+            format: None,
+            start_index: None,
+            max_length: None,
+        }))
+        .await;
+    assert_eq!(result.is_error, Some(true), "{result:?}");
+
+    let records = ledger_records(&result);
+    let [BuiltinLedgerRecord::HttpRequest(request)] = records.as_slice() else {
+        panic!("one refusal, one record: {result:?}");
+    };
+    assert_eq!(request.decision, builtin_ledger::HttpDecision::Denied);
+    assert_eq!(request.policy_action, "block");
+}
+
+/// A revert that changed the workspace hands back what it did, with the
+/// checkpoint it came from.
+#[tokio::test]
+async fn a_revert_hands_its_file_record_back_on_the_result() {
+    let root = tempfile::tempdir().unwrap();
+    let handler = handler_with_snapshots(root.path());
+    let workspace = root.path().join("workspace");
+    std::fs::write(workspace.join("notes.txt"), "baseline").unwrap();
+    handler
+        .scheduler
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .take_snapshot()
+        .unwrap();
+    std::fs::write(workspace.join("notes.txt"), "changed").unwrap();
+
+    let result = handler
+        .snapshots_revert(Parameters(SnapshotRevertParams {
+            path: "notes.txt".to_string(),
+            checkpoint: Some("cp-0".to_string()),
+        }))
+        .await;
+    assert_eq!(result.is_error, Some(false), "{result:?}");
+
+    let records = ledger_records(&result);
+    let [BuiltinLedgerRecord::FileReverted(revert)] = records.as_slice() else {
+        panic!("one revert, one record: {result:?}");
+    };
+    assert_eq!(revert.path, "notes.txt");
+    assert_eq!(revert.checkpoint, "cp-0");
+    assert_eq!(revert.action, builtin_ledger::RevertAction::Restored);
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("notes.txt")).unwrap(),
+        "baseline"
     );
 }
 
@@ -469,44 +541,5 @@ async fn builtin_http_client_does_not_follow_redirects() {
         resp.status().as_u16(),
         302,
         "redirects must not be followed -- a 3xx to another host would bypass the domain policy check"
-    );
-}
-
-// -- Startup: the session ledger is required --
-
-/// Unset is a startup error that names the variable.
-///
-/// The builtin server used to fall back to an in-memory writer here, so a
-/// missing `CAPSEM_SESSION_DB` produced a server that ran normally and
-/// recorded nothing.
-#[test]
-fn startup_without_a_session_ledger_refuses_and_names_the_variable() {
-    let Err(error) = open_session_ledger(None) else {
-        panic!("a builtin server with nowhere to record must refuse");
-    };
-    let message = format!("{error:#}");
-    assert!(
-        message.contains(SESSION_DB_ENV),
-        "the refusal must name what is missing: {message}"
-    );
-}
-
-/// A configured path that cannot be opened is a startup error naming the path.
-#[test]
-fn startup_with_an_unopenable_ledger_refuses_and_names_the_path() {
-    let dir = tempfile::tempdir().unwrap();
-    // A regular file where a directory would have to be: the ledger path is
-    // unopenable for a reason no retry can clear.
-    let blocker = dir.path().join("not-a-directory");
-    std::fs::write(&blocker, b"").unwrap();
-    let ledger = blocker.join("session.db");
-
-    let Err(error) = open_session_ledger(Some(ledger.display().to_string())) else {
-        panic!("an unopenable ledger must refuse, not degrade to memory");
-    };
-    let message = format!("{error:#}");
-    assert!(
-        message.contains(&ledger.display().to_string()),
-        "the refusal must name the path it could not open: {message}"
     );
 }

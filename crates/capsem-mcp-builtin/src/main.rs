@@ -7,7 +7,11 @@
 //! Config via environment variables:
 //! - CAPSEM_ACTIVE_PROFILE: Session active profile whose security rules/plugins govern tools.
 //! - CAPSEM_SESSION_DIR: Session directory (parent of workspace). Enables snapshot tools.
-//! - CAPSEM_SESSION_DB: Path to session DB for telemetry (optional)
+//!
+//! It writes no ledger. capsem-process is the one writer of a session's
+//! ledger, so what these tools do that only this process can see -- the HTTP
+//! requests it makes, the files a revert puts back -- goes back to it as
+//! records on each tool result (see `capsem_proto::mcp_contracts::builtin_ledger`).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -16,7 +20,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use rmcp::handler::server::{router::Router, wrapper::Parameters, ServerHandler};
-use rmcp::model::{Implementation, InitializeResult, ServerCapabilities};
+use rmcp::model::{CallToolResult, Content, Implementation, InitializeResult, Meta, ServerCapabilities};
 use rmcp::schemars::{self, JsonSchema};
 use rmcp::{tool, tool_router, ServiceExt};
 use serde::{Deserialize, Serialize};
@@ -27,7 +31,7 @@ use capsem_core::auto_snapshot::AutoSnapshotScheduler;
 use capsem_core::mcp::builtin_tools::BuiltinHttpClient;
 use capsem_core::mcp::{builtin_tools, file_tools};
 use capsem_core::net::policy_config::{ActiveProfileFile, SecurityPluginConfig, SecurityRuleSet};
-use capsem_logger::DbWriter;
+use capsem_proto::mcp_contracts::builtin_ledger::{self, BuiltinLedgerRecord, BUILTIN_LEDGER_META_KEY};
 use capsem_proto::mcp_contracts::JsonRpcResponse;
 
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -154,7 +158,6 @@ struct SnapshotCompactParams {
 #[derive(Clone)]
 struct BuiltinHandler {
     http_client: BuiltinHttpClient,
-    db: Arc<DbWriter>,
     security_rules: Arc<SecurityRuleSet>,
     plugin_policy: Arc<BTreeMap<String, SecurityPluginConfig>>,
     scheduler: Option<Arc<Mutex<AutoSnapshotScheduler>>>,
@@ -202,7 +205,7 @@ impl BuiltinHandler {
             open_world_hint = true
         )
     )]
-    async fn fetch_http(&self, Parameters(params): Parameters<FetchHttpParams>) -> Result<String, String> {
+    async fn fetch_http(&self, Parameters(params): Parameters<FetchHttpParams>) -> CallToolResult {
         call_builtin(self, "fetch_http", to_args(&params)).await
     }
 
@@ -217,7 +220,7 @@ impl BuiltinHandler {
             open_world_hint = true
         )
     )]
-    async fn grep_http(&self, Parameters(params): Parameters<GrepHttpParams>) -> Result<String, String> {
+    async fn grep_http(&self, Parameters(params): Parameters<GrepHttpParams>) -> CallToolResult {
         call_builtin(self, "grep_http", to_args(&params)).await
     }
 
@@ -232,7 +235,7 @@ impl BuiltinHandler {
             open_world_hint = true
         )
     )]
-    async fn http_headers(&self, Parameters(params): Parameters<HttpHeadersParams>) -> Result<String, String> {
+    async fn http_headers(&self, Parameters(params): Parameters<HttpHeadersParams>) -> CallToolResult {
         call_builtin(self, "http_headers", to_args(&params)).await
     }
 
@@ -275,23 +278,23 @@ impl BuiltinHandler {
         name = "snapshots_revert",
         description = "Restore a file from a checkpoint to the current workspace."
     )]
-    async fn snapshots_revert(&self, Parameters(params): Parameters<SnapshotRevertParams>) -> Result<String, String> {
-        let (sched, ws) = self.snapshot_state()?;
+    async fn snapshots_revert(&self, Parameters(params): Parameters<SnapshotRevertParams>) -> CallToolResult {
+        let (sched, ws) = match self.snapshot_state() {
+            Ok(state) => state,
+            Err(error) => return tool_result(Err(error), &[]),
+        };
         let args = to_args(&params);
-        let (resp, file_event) = run_snapshot_blocking(move || {
+        let reverted = run_snapshot_blocking(move || {
             let sched = sched.lock().unwrap_or_else(|e| e.into_inner());
-            file_tools::handle_revert_file_with_security_event(&args, &sched, &ws, None)
+            file_tools::handle_revert_file_with_record(&args, &sched, &ws, None)
         })
-        .await?;
-        if let Some(file_event) = file_event {
-            capsem_core::security_engine::emit_file_security_write_and_rules(
-                &self.db,
-                &self.security_rules,
-                file_event,
-            )
-            .await;
-        }
-        extract_text(resp)
+        .await;
+        let (resp, record) = match reverted {
+            Ok(reverted) => reverted,
+            Err(error) => return tool_result(Err(error), &[]),
+        };
+        let records: Vec<_> = record.map(BuiltinLedgerRecord::FileReverted).into_iter().collect();
+        tool_result(extract_text(resp), &records)
     }
 
     #[tool(
@@ -390,7 +393,8 @@ fn to_args<T: serde::Serialize>(params: &T) -> serde_json::Value {
     serde_json::to_value(params).unwrap_or(serde_json::Value::Object(Default::default()))
 }
 
-async fn call_builtin(handler: &BuiltinHandler, name: &str, args: serde_json::Value) -> Result<String, String> {
+async fn call_builtin(handler: &BuiltinHandler, name: &str, args: serde_json::Value) -> CallToolResult {
+    let mut ledger = Vec::new();
     let resp = builtin_tools::call_builtin_tool(
         name,
         &args,
@@ -398,11 +402,27 @@ async fn call_builtin(handler: &BuiltinHandler, name: &str, args: serde_json::Va
         &handler.security_rules,
         &handler.plugin_policy,
         None,
-        &handler.db,
+        &mut ledger,
     )
     .await;
-    handler.db.flush().await;
-    extract_text(resp)
+    tool_result(extract_text(resp), &ledger)
+}
+
+/// The tool result, carrying the ledger records capsem-process writes.
+///
+/// A refusal is recorded as surely as a success -- a denied request is the
+/// row an investigator most wants -- so records ride on error results too.
+fn tool_result(outcome: Result<String, String>, records: &[BuiltinLedgerRecord]) -> CallToolResult {
+    let mut result = match outcome {
+        Ok(text) => CallToolResult::success(vec![Content::text(text)]),
+        Err(text) => CallToolResult::error(vec![Content::text(text)]),
+    };
+    if !records.is_empty() {
+        let mut meta = Meta::new();
+        meta.insert(BUILTIN_LEDGER_META_KEY.to_string(), builtin_ledger::encode(records));
+        result.meta = Some(meta);
+    }
+    result
 }
 
 fn extract_text(resp: JsonRpcResponse) -> Result<String, String> {
@@ -433,35 +453,6 @@ fn extract_text(resp: JsonRpcResponse) -> Result<String, String> {
 }
 
 // -- Main --
-
-/// The environment variable naming the session ledger this server records to.
-const SESSION_DB_ENV: &str = "CAPSEM_SESSION_DB";
-
-/// Open the session ledger, or refuse to start.
-///
-/// This used to fall back to `DbWriter::open_in_memory` when the variable was
-/// unset or the file could not be opened. An in-memory writer accepts every
-/// row and keeps none, so a misconfigured builtin server answered tool calls
-/// normally and recorded nothing -- a session ledger showing no builtin tool
-/// calls, indistinguishable from a session that made none. The only sign was
-/// one warn line in a stderr nobody reads.
-///
-/// Recording is part of this server's job, so having nowhere to record it is a
-/// startup failure that names what is missing.
-///
-/// Takes the configured value rather than reading the environment itself, so
-/// both refusals are testable without a process-global mutation.
-fn open_session_ledger(configured: Option<String>) -> Result<DbWriter> {
-    let path = configured.ok_or_else(|| {
-        anyhow::anyhow!(
-            "{SESSION_DB_ENV} is required: capsem-mcp-builtin records every tool call to the \
-             session ledger and will not run without one"
-        )
-    })?;
-    DbWriter::open(std::path::Path::new(&path), 256)
-        .map_err(anyhow::Error::new)
-        .with_context(|| format!("open session ledger {path}"))
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -529,9 +520,6 @@ async fn main() -> Result<()> {
     let security_rules = Arc::new(active_profile.compile_security_rule_set().map_err(anyhow::Error::msg)?);
     let plugin_policy = Arc::new(active_profile.plugins.clone());
 
-    // Session DB writer. Required, not optional: see `open_session_ledger`.
-    let db = Arc::new(open_session_ledger(std::env::var(SESSION_DB_ENV).ok())?);
-
     // Snapshot scheduler (optional, requires CAPSEM_SESSION_DIR).
     let (scheduler, workspace_dir) = match std::env::var("CAPSEM_SESSION_DIR") {
         Ok(session_dir) => {
@@ -564,7 +552,6 @@ async fn main() -> Result<()> {
 
     let handler = BuiltinHandler {
         http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),
-        db,
         security_rules,
         plugin_policy,
         scheduler,

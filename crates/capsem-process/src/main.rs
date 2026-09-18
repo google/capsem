@@ -512,8 +512,6 @@ async fn run_async_main_loop(
         .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
     let mut builtin_env = std::collections::HashMap::new();
     builtin_env.insert("CAPSEM_SESSION_DIR".into(), session_dir.to_string_lossy().to_string());
-    let db_path = session_dir.join("session.db");
-    builtin_env.insert("CAPSEM_SESSION_DB".into(), db_path.to_string_lossy().to_string());
     builtin_env.insert(
         "CAPSEM_ACTIVE_PROFILE".into(),
         runtime_config.active_profile_path.to_string_lossy().to_string(),
@@ -590,6 +588,8 @@ async fn run_async_main_loop(
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
     let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
         aggregator_client.clone(),
+        Arc::clone(&db),
+        capsem_core::mcp::builtin_server_names(&mcp_servers),
         Arc::clone(&security_rules),
         Arc::clone(&plugin_policy),
         Arc::clone(&mcp_inflight),

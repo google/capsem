@@ -145,7 +145,7 @@ The guest MCP path is not a single process. `capsem-process` (the per-VM host pr
 | Crate | Role | Privileges |
 |-------|------|-----------|
 | `capsem-mcp-aggregator` | Manages connections to **external** MCP servers (GitHub, Slack, custom HTTP/stdio servers). Receives msgpack frames from `capsem-process` on stdin, routes tool calls. | Network only; no access to the VM, session DB, filesystem, or service socket. |
-| `capsem-mcp-builtin` | Stdio MCP server that implements **built-in** tools: HTTP (`fetch_http`, `grep_http`, `http_headers`) and file/snapshot tools (when `CAPSEM_SESSION_DIR` is set). Managed by the aggregator as just another MCP server. | Scoped by environment variables: `CAPSEM_SESSION_DIR`, `CAPSEM_DOMAIN_ALLOW`, `CAPSEM_DOMAIN_BLOCK`, `CAPSEM_SESSION_DB`. |
+| `capsem-mcp-builtin` | Stdio MCP server that implements **built-in** tools: HTTP (`fetch_http`, `grep_http`, `http_headers`) and file/snapshot tools (when `CAPSEM_SESSION_DIR` is set). Managed by the aggregator as just another MCP server. | Scoped by environment variables: `CAPSEM_SESSION_DIR`, `CAPSEM_ACTIVE_PROFILE`. Holds no ledger writer: what it did goes back to `capsem-process` as records under the reserved `_meta` key `dev.capsem/ledger` (see `capsem_proto::mcp_contracts::builtin_ledger`). |
 
 Rationale: isolating external-server connections in a low-privilege subprocess means a compromised third-party MCP server cannot reach the host filesystem or the session DB. The built-in tool server runs in its own process for the same reason.
 
