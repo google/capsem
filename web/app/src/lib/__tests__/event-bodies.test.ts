@@ -229,7 +229,8 @@ describe('body content', () => {
     const pane = recordingView();
     const loader = createDetailLoader(pane.view, {
       indexRowsFor: () => [
-        { direction: 'payload', content_type: 'application/json', original_bytes: 2400, stored_bytes: 2400, truncated: 0, body_hash: 'blake3:abc' },
+        // Shaped as the stats-detail route sends it, which always names the table.
+        { source_table: 'security_rule_events', direction: 'payload', content_type: 'application/json', original_bytes: 2400, stored_bytes: 2400, truncated: 0, body_hash: 'blake3:abc' },
       ],
       fetchBodies: () => Promise.reject(new Error('gateway went away')),
     });
@@ -299,5 +300,37 @@ describe('body content', () => {
     const row = withFetchedBodies({}, [body({ direction: 'trailer', content: 'hello' })]);
     expect(row.trailer_body).toBeUndefined();
     expect(withIndexMetadata({}, [{ direction: 'trailer', body_hash: 'blake3:abc' }])).toEqual({});
+  });
+
+  it('shows the rule match\'s payload, not a decision\'s or an ask\'s for the same event', () => {
+    // All three archive a `payload` for one event id and the route returns
+    // every body an event has. The pane that renders a payload is the rule
+    // match's; the others must not overwrite it, whatever order they arrive in.
+    const payload = (source_table: string, body_hash: string) =>
+      body({ source_table, direction: 'payload', body_hash, content: `{"from":"${source_table}"}` });
+    for (const order of [
+      ['security_rule_events', 'security_decision_events', 'security_ask_events'],
+      ['security_decision_events', 'security_ask_events', 'security_rule_events'],
+    ]) {
+      const bodies = order.map(table => payload(table, `blake3:${table}`));
+      const row = withFetchedBodies({}, bodies);
+      expect(row.payload_body).toBe('{"from":"security_rule_events"}');
+      expect(row.payload_body_hash).toBe('blake3:security_rule_events');
+
+      const indexed = withIndexMetadata(
+        {},
+        order.map(table => ({ source_table: table, direction: 'payload', body_hash: `blake3:${table}` })),
+      );
+      expect(indexed.payload_body_hash).toBe('blake3:security_rule_events');
+    }
+  });
+
+  it('still shows request and response bodies from whichever table holds them', () => {
+    // Only the payload is shared across tables; the other directions stay as
+    // they were, so a model call's request is not filtered away.
+    const row = withFetchedBodies({}, [
+      body({ source_table: 'model_calls', direction: 'request', content: '{"model":"m"}' }),
+    ]);
+    expect(row.request_body).toBe('{"model":"m"}');
   });
 });

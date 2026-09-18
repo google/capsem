@@ -58,6 +58,16 @@ function isBodyDirection(value: string): value is (typeof BODY_DIRECTIONS)[numbe
   return (BODY_DIRECTIONS as readonly string[]).includes(value);
 }
 
+// The one pane that renders a payload is a rule match's. A decision and an ask
+// archive a payload for the same event too, and the route returns every body
+// an event has -- so without this, whichever of the three came last wrote its
+// hash and size under the rule's heading.
+const PAYLOAD_SOURCE_TABLE = 'security_rule_events';
+
+function belongsInPane(direction: string, sourceTable: unknown): boolean {
+  return direction !== 'payload' || sourceTable === PAYLOAD_SOURCE_TABLE;
+}
+
 /**
  * How many bytes of the archived body this response actually carried.
  *
@@ -87,7 +97,7 @@ export function withIndexMetadata(row: DetailRow, indexRows: DetailRow[]): Detai
   const enriched: DetailRow = { ...row };
   for (const indexRow of indexRows) {
     const direction = indexRow.direction == null ? '' : String(indexRow.direction);
-    if (!isBodyDirection(direction)) continue;
+    if (!isBodyDirection(direction) || !belongsInPane(direction, indexRow.source_table)) continue;
     enriched[`${direction}_body_content_type`] = indexRow.content_type;
     enriched[`${direction}_body_original_bytes`] = indexRow.original_bytes;
     enriched[`${direction}_body_stored_bytes`] = indexRow.stored_bytes;
@@ -101,7 +111,7 @@ export function withIndexMetadata(row: DetailRow, indexRows: DetailRow[]): Detai
 export function withFetchedBodies(row: DetailRow, bodies: EventBody[]): DetailRow {
   const withBodies: DetailRow = { ...row };
   for (const body of bodies) {
-    if (!isBodyDirection(body.direction)) continue;
+    if (!isBodyDirection(body.direction) || !belongsInPane(body.direction, body.source_table)) continue;
     const key = `${body.direction}_body`;
     withBodies[key] = bodyContent(body);
     withBodies[`${key}_content_type`] = body.content_type;
