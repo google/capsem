@@ -5,7 +5,20 @@ description: Debugging session.db and the telemetry pipeline. Use when inspectin
 
 # Session Database Debugging
 
-Every Capsem VM session produces a SQLite database at `~/.capsem/run/sessions/<id>/session.db` with ledger tables capturing telemetry. A global `~/.capsem/sessions/main.db` aggregates stats across sessions.
+Every Capsem VM session produces a ledger in its session directory:
+`~/.capsem/run/sessions/<id>/` for an ephemeral VM, `~/.capsem/run/persistent/<name>/`
+for a named one. The ledger is two files that only make sense together:
+
+- `session.db` -- SQLite, every telemetry table plus the index of captured bodies.
+- `session.bodies` -- the append-only body archive: HTTP, model, tool, exec and
+  security payloads, deflated in blocks of about 256 KiB. SQLite never holds
+  body bytes.
+
+Copy, fork or delete them as a pair; either one alone is useless. A global
+`~/.capsem/sessions/main.db` aggregates stats across sessions.
+
+The session ledger has no migrations. A `session.db` written by an older build
+fails to open, loudly and by name, rather than being upgraded in place.
 
 ## Session identity invariant
 
@@ -29,31 +42,46 @@ identity bug until proven otherwise.
 
 ### Listing sessions
 
+Python here means the build-system environment:
+`uv run --project build_system --frozen python ...` (a bare `python3` may be a
+system interpreter without the packages these need).
+
 ```bash
-python3 build_system/scripts/doctor/list_sessions.py                    # Recent non-vacuumed sessions
-python3 build_system/scripts/doctor/list_sessions.py -n 20              # Show more
-python3 build_system/scripts/doctor/list_sessions.py --with-model       # Only sessions with AI model calls
-python3 build_system/scripts/doctor/list_sessions.py --with-db          # Only sessions with session.db on disk
-python3 build_system/scripts/doctor/list_sessions.py --with-net         # Only sessions with network events
-python3 build_system/scripts/doctor/list_sessions.py --with-mcp         # Only sessions with MCP calls
-python3 build_system/scripts/doctor/list_sessions.py --min-cost 0.01    # Only sessions that cost money
-python3 build_system/scripts/doctor/list_sessions.py --all              # Include vacuumed sessions
-python3 build_system/scripts/doctor/list_sessions.py --all --with-model # Combine filters
+python3 build_system/scripts/doctor/list_sessions.py                     # Recent sessions
+python3 build_system/scripts/doctor/list_sessions.py -n 20               # Show more
+python3 build_system/scripts/doctor/list_sessions.py --with-model        # Only sessions with AI model calls
+python3 build_system/scripts/doctor/list_sessions.py --with-db           # Only sessions whose ledger is still on disk
+python3 build_system/scripts/doctor/list_sessions.py --with-net          # Only sessions with network events
+python3 build_system/scripts/doctor/list_sessions.py --with-tools        # Only sessions with tool calls
+python3 build_system/scripts/doctor/list_sessions.py --min-cost 0.01     # Only sessions that cost money
+python3 build_system/scripts/doctor/list_sessions.py --with-db --with-model # Combine filters
 ```
 
-Output columns: ID, Created (MM-DD HH:MM:SS), Duration, Cost, net events, tokens (in+out), tool calls, MCP calls, fs events. Sessions with `*` after the ID still have a `session.db` on disk (queryable).
+Output columns: ID, Created (MM-DD HH:MM:SS), Duration, Cost, net events, tokens (in+out), tool calls, fs events. Sessions with `*` after the ID still have a `session.db` on disk (queryable).
 
-Stats come from the main.db rollup, so they're always available even after the session DB is vacuumed.
+Stats come from the main.db rollup, so they're available after the session directory is gone.
 
 ### Deep inspection
 
 ```bash
-python3 build_system/scripts/doctor/check_session.py              # Full integrity check on latest session
-python3 build_system/scripts/doctor/check_session.py <id>         # Specific session (use full ID from list)
-python3 build_system/scripts/doctor/check_session.py -n 10        # Show 10 preview rows per table
+python3 build_system/scripts/doctor/check_session.py                   # Full integrity check on latest session
+python3 build_system/scripts/doctor/check_session.py <id>              # Specific session or named VM
+python3 build_system/scripts/doctor/check_session.py --db path/session.db  # A ledger file directly
+python3 build_system/scripts/doctor/check_session.py --verify-bodies   # Also read every body back through its hash
+python3 build_system/scripts/doctor/check_session.py -n 10             # Show 10 preview rows per table
 ```
 
-Checks: table existence, row counts, tool lifecycle integrity (orphaned tool_calls/tool_responses), AI provider correlation (net_events vs model_calls), NULL detection in critical fields, and optional MCP transport correlation.
+Checks: table existence, row counts, body archive integrity (below), file-monitor
+overflow windows, tool lifecycle integrity (orphaned tool_calls/tool_responses),
+AI provider correlation (net_events vs model_calls), and NULL detection in
+critical fields. It exits 1 when the ledger is damaged.
+
+The body archive check compares the index with the file without trusting
+either: every `event_body_blobs.block_offset` exists in `body_blocks`; every
+`body_offset + body_len` fits in its block's `raw_len`; `session.bodies` is at
+least as long as the largest `block_offset + 44 + comp_len` (44 is the block
+header) and starts with the archive's file header. `--verify-bodies` then reads
+every body, inflating each block once, and checks it against `body_hash`.
 
 ## Session database tables (session.db)
 
@@ -88,7 +116,7 @@ flowchart TD
     McpFacts["MCP transport facts<br/>origin/type enrichment<br/>same tool_call_id, no duplicate ledger"]
 
     EventRows["event_id rows<br/>http, dns, model, tool, file, process, credential, security"]
-    BodyBlobs["event_body_blobs<br/>full request/response bodies by event_id"]
+    BodyBlobs["event_body_blobs<br/>index by event_id into session.bodies"]
     SecurityRows["security_rule_events<br/>rule matches by event_id"]
     ProviderIds["provider response_id / message_id / transport ids<br/>metadata only"]
 
@@ -296,10 +324,76 @@ or join `event_body_blobs` on `source_table = 'security_rule_events'` and
 `direction = 'payload'` to see what is stored. Use `tool_calls` for
 product/user/security tool activity.
 
-Full HTTP/model/MCP request and response bodies live in `event_body_blobs`,
-keyed by `event_id`, `source_table`, and `direction`. When debugging payload
-content, query that table first; preview columns are for fast UI scans and are
-not the forensic source of truth.
+### Bodies: event_body_blobs, body_blocks and session.bodies
+
+Full bodies -- HTTP and model requests and responses, tool results, exec
+stdout/stderr, security rule payloads -- live in `session.bodies`, not in
+SQLite. `session.db` holds the index:
+
+```sql
+CREATE TABLE body_blocks (             -- one row per sealed archive block
+    block_offset INTEGER PRIMARY KEY,  -- byte offset of the block header in session.bodies
+    raw_len INTEGER NOT NULL,          -- inflated size of the block
+    comp_len INTEGER NOT NULL,         -- deflated payload size after the 44-byte header
+    sealed_at TEXT NOT NULL            -- retention cuts by this
+);
+
+CREATE TABLE event_body_blobs (        -- one row per archived body; no bytes
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL,            -- 12 hex, the row in source_table
+    event_type TEXT NOT NULL,
+    source_table TEXT NOT NULL,        -- net_events, model_calls, tool_calls, tool_responses,
+                                       -- exec_events, security_rule_events
+    direction TEXT NOT NULL,           -- request, response, payload, stdout, stderr
+    content_type TEXT,
+    original_bytes INTEGER NOT NULL,   -- what the boundary saw
+    stored_bytes INTEGER NOT NULL,     -- what was archived (10 MiB cap per direction)
+    truncated INTEGER NOT NULL,        -- 1 when stored_bytes < original_bytes
+    body_hash TEXT NOT NULL,           -- blake3 of the ARCHIVED bytes
+    block_offset INTEGER NOT NULL REFERENCES body_blocks(block_offset),
+    body_offset INTEGER NOT NULL,      -- start inside the block's inflated bytes
+    body_len INTEGER NOT NULL,         -- always = stored_bytes
+    trace_id TEXT, turn_id TEXT, created_at TEXT NOT NULL,
+    UNIQUE(event_id, source_table, direction)
+);
+```
+
+A body is found by one index lookup, one seek, one inflate of its block and a
+slice. Every read verifies the block's own blake3 and then the body's
+`body_hash`; bytes that do not match the row that named them are refused, never
+served. There is no `body` column any more: SQL tells you *what* was captured
+and how big it was, not the bytes.
+
+To get the bytes:
+
+- In Rust, `DbHandle::read_body(event_id, BodyDirection::Response)` for one
+  direction and `DbHandle::read_bodies(event_id)` for every body of an event
+  (`read_bodies_for_events` for a page, with a byte budget). Route and helper
+  code never opens the archive itself.
+- Over HTTP, `GET /vms/{id}/bodies/{event_id}` returns every body of one event,
+  1 MiB each by default (`?max_bytes=` up to 16 MiB). `truncated` says the
+  capture was cut; `truncated_for_transport` says this response was.
+- The whole session as a WARC 1.1 file: `GET /vms/{id}/bodies/export.warc.gz`.
+  One `resource` record per body, id `urn:capsem:{session}:{event_id}:{direction}`,
+  bracketed by two `warcinfo` records; the closing one counts skipped bodies by
+  reason, and a file without it is an export that did not finish. Readable by
+  `warcio`/`pywb` with no Capsem code.
+- Offline, from a copy of a session: `tests/helpers/body_archive.py` (the one
+  allowlisted Python reader of the format).
+
+Preview columns (`*_preview`) are compact display copies for list views. They
+are not the forensic source of truth: when a preview and the archive disagree,
+the archive is the ledger.
+
+Retention (`vm.resources.retention_days`, default 30): at service start,
+failed-session directories older than the period are deleted; when a
+persistent VM stops, blocks sealed before the cutoff are dropped, the archive
+is compacted and the index rows are rewritten. Ephemeral sessions are deleted
+whole and never trimmed.
+
+Guest exec output reaches the ledger already cut to 1 KiB of stdout per
+command, so an `exec_events` body holds at most that much while `stdout_bytes`
+records the true size (google/capsem#220).
 
 ### fs_events -- filesystem changes in guest workspace
 
@@ -313,6 +407,10 @@ CREATE TABLE fs_events (
     kind TEXT NOT NULL DEFAULT 'file'  -- "file", "dir", "symlink", "other"
 );
 ```
+
+`kind` says what the path is. Security rules read it as `file.kind`, and a
+directory event reports no size (the directory inode's size is not a file
+size). A symlink is recorded as a symlink and never followed or descended.
 
 An `overflow` row names no path: it is the marker the monitor writes when one
 scan produced more changes than it emits in a single window. The events it
@@ -357,9 +455,36 @@ Rollup happens when a session ends.
 - `python3 build_system/scripts/doctor/check_session.py` reports orphaned tool_calls automatically
 
 ### Empty fs_events
-- `capsem-fs-watch` didn't start (check boot logs for `[capsem-fs-watch] starting`)
-- Vsock port 5005 connection failed
-- VM shut down before 100ms debouncer flushed (add `sleep 1`)
+- The host file monitor (`crates/capsem-core/src/fs_monitor.rs`) polls the
+  VirtioFS workspace; there is no guest watcher. Check the process log for the
+  monitor starting on the session's workspace directory.
+- The VM stopped before the next scan. The interval adapts to scan cost
+  (500ms to 10s), so a write in the last second before shutdown may not have
+  been seen.
+
+### A file event seems late or missing
+- Look for `action = 'overflow'` rows: one scan saw more changes than a window
+  emits and held the rest for the next scan. `size` is how many were held.
+  `check_session.py` reports them.
+- Nothing under the workspace is excluded. If `.git/`, `node_modules/` or
+  `target/` paths are absent, the monitor did not see them; it did not filter
+  them.
+
+### Bodies missing
+- Check `body_blocks` first. No rows means no block was ever sealed: the
+  session stored no bodies, or the archive writer was disabled at open.
+- An index row that names a block past the end of `session.bodies` is refused
+  at open by design: the writer stores no further bodies for that session and
+  logs `session body index names bytes past the end of the archive`, and the
+  stale rows fail their hash check rather than answer with another block's
+  bytes. It means the index and the file no longer describe the same archive,
+  most likely a crash during retention compaction, or `session.db` copied
+  without its `session.bodies`.
+- `check_session.py --verify-bodies` names every row that does not read back.
+- A persistent VM trims bodies older than `vm.resources.retention_days` when it
+  stops; a body older than that is gone by design, and its index row with it.
+- Exec output is cut to 1 KiB before the ledger sees it; a short stdout body
+  with a large `stdout_bytes` is that, not archive damage.
 
 ### Empty tool_calls
 - No AI agent invoked tools during the session, or model/MCP tool evidence failed to parse.
@@ -379,7 +504,8 @@ Rollup happens when a session ends.
 **Always** run `python3 build_system/scripts/doctor/check_session.py` after changes to:
 - Guest MCP endpoint (tool routing, policy, response format)
 - MITM proxy (SSE parsing, body preview, Content-Encoding)
-- File monitor (VirtioFS events, debouncer)
+- File monitor (VirtioFS poll loop, kinds, overflow windows)
+- Body archive or its index (`session.bodies`, `event_body_blobs`, `body_blocks`, retention) -- add `--verify-bodies`
 - Snapshot system (create, revert, compact, list)
 - Telemetry pipeline (model_calls extraction, tool_calls, cost)
 
@@ -387,32 +513,38 @@ The inspect output now includes a tool usage breakdown from `tool_calls` plus MC
 
 ## Ad-hoc SQL queries
 
-Use `sqlite3 "$HOME/.capsem/sessions/<id>/session.db"` to run SQL against session DBs. Auto-selects the latest non-vacuumed session with a DB on disk. Pass a session ID as second argument to target a specific session.
+Use `sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db"` to run SQL against a session DB (a named VM's is under `run/persistent/<name>/`). Open it read-only (`-readonly`) while the VM runs: the owning `capsem-process` is the only writer. SQL answers what was captured and where; the bytes of a body are in `session.bodies` (see Bodies above).
 
 ```bash
 # Decisions breakdown
-sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT decision, COUNT(*) FROM net_events GROUP BY decision"
+sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT decision, COUNT(*) FROM net_events GROUP BY decision"
 
 # Token totals by provider
-sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT provider, SUM(input_tokens) as in_tok, SUM(output_tokens) as out_tok, SUM(estimated_cost_usd) as cost FROM model_calls GROUP BY provider"
+sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT provider, SUM(input_tokens) as in_tok, SUM(output_tokens) as out_tok, SUM(estimated_cost_usd) as cost FROM model_calls GROUP BY provider"
 
 # Find orphaned tool calls
-sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT tc.call_id, tc.tool_name FROM tool_calls tc LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id WHERE tr.id IS NULL"
+sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT tc.call_id, tc.tool_name FROM tool_calls tc LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id WHERE tr.id IS NULL"
 
 # MCP-origin user tool usage breakdown (snapshot, http, etc.)
-sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT tool_name, decision, COUNT(*) as cnt, ROUND(AVG(duration_ms),1) as avg_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name IS NOT NULL GROUP BY tool_name, decision ORDER BY cnt DESC"
+sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT tool_name, decision, COUNT(*) as cnt, ROUND(AVG(duration_ms),1) as avg_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name IS NOT NULL GROUP BY tool_name, decision ORDER BY cnt DESC"
 
 # MCP-origin tool usage breakdown
-sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT method, tool_name, decision, COUNT(*) as cnt FROM tool_calls WHERE origin = 'mcp' GROUP BY method, tool_name, decision ORDER BY cnt DESC"
+sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT method, tool_name, decision, COUNT(*) as cnt FROM tool_calls WHERE origin = 'mcp' GROUP BY method, tool_name, decision ORDER BY cnt DESC"
 
 # Check fs_events actions
-sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT action, COUNT(*) FROM fs_events GROUP BY action"
+sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT action, COUNT(*) FROM fs_events GROUP BY action"
 
 # Trace a tool call chain
-sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT id, model, stop_reason, trace_id FROM model_calls WHERE trace_id = '<trace_id>' ORDER BY timestamp"
+sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT id, model, stop_reason, trace_id FROM model_calls WHERE trace_id = '<trace_id>' ORDER BY timestamp"
 
-# Query a specific session (use full ID from python3 build_system/scripts/doctor/list_sessions.py)
-sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT COUNT(*) FROM net_events" 20260327-154418-f907
+# What bodies an event has, and how big they were
+sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT source_table, direction, content_type, original_bytes, stored_bytes, truncated FROM event_body_blobs WHERE event_id = '<event_id>'"
+
+# Archive health at a glance: blocks, bytes, and any body pointing at an unrecorded block
+sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT COUNT(*), SUM(raw_len), SUM(comp_len), MIN(sealed_at) FROM body_blocks; SELECT COUNT(*) FROM event_body_blobs b LEFT JOIN body_blocks k USING (block_offset) WHERE k.block_offset IS NULL"
+
+# File-monitor overflow windows and what kinds of paths changed
+sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT kind, action, COUNT(*) FROM fs_events GROUP BY kind, action"
 ```
 
 Tip: use `python3 build_system/scripts/doctor/list_sessions.py --with-db --with-model` to find sessions worth querying.

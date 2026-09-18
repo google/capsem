@@ -5,7 +5,9 @@ sidebar:
   order: 20
 ---
 
-Every Capsem VM gets its own SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, security rule matches, credential substitutions, and snapshots. The database lives in the session directory and follows the VM lifecycle; retained/forked VMs keep their database for forensic review.
+Every Capsem VM gets its own session ledger: a SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, security rule matches, credential substitutions, and snapshots, and beside it a body archive (`session.bodies`) that holds the full request, response, tool, exec and security payloads those rows describe. The two files live in the session directory and follow the VM lifecycle; retained and forked VMs keep both for forensic review, and one without the other is not a ledger.
+
+The session ledger has no migrations. A ledger written by an older build fails to open, by name, instead of being upgraded in place.
 
 ## Session Identity
 
@@ -90,9 +92,15 @@ erDiagram
         text source_table
         text direction
         text body_hash
-        int block_offset
+        int block_offset FK
         int body_offset
         int body_len
+    }
+    body_blocks {
+        int block_offset PK
+        int raw_len
+        int comp_len
+        text sealed_at
     }
     security_rule_events {
         int id PK
@@ -130,6 +138,7 @@ erDiagram
     fs_events {
         int id PK
         text action
+        text kind
         text path
         int size
     }
@@ -141,6 +150,10 @@ erDiagram
     net_events ||--o{ event_body_blobs : "event_id"
     model_calls ||--o{ event_body_blobs : "event_id"
     tool_calls ||--o{ event_body_blobs : "event_id"
+    tool_responses ||--o{ event_body_blobs : "event_id"
+    exec_events ||--o{ event_body_blobs : "event_id"
+    security_rule_events ||--o{ event_body_blobs : "event_id"
+    body_blocks ||--o{ event_body_blobs : "block_offset"
     dns_events ||--o{ security_rule_events : "event_id"
     security_rule_events ||--o{ security_ask_events : "event_id"
 ```
@@ -187,7 +200,7 @@ flowchart TD
     McpFacts["MCP transport facts<br/>origin/type enrichment<br/>same tool_call_id, no duplicate ledger"]
 
     EventRows["event_id rows<br/>http, dns, model, tool, file, process, credential, security"]
-    BodyBlobs["event_body_blobs<br/>full request/response bodies by event_id"]
+    BodyBlobs["event_body_blobs<br/>index by event_id into session.bodies"]
     SecurityRows["security_rule_events<br/>rule matches by event_id"]
     ProviderIds["provider response_id / message_id / transport ids<br/>metadata only"]
 
@@ -325,33 +338,50 @@ AI provider API calls with parsed response metadata.
 ### event_body_blobs
 
 The index into `session.bodies`, the compressed block archive that holds full
-captured request and response bodies for HTTP, model, and tool events. The bytes
-are not in SQLite: each row names the block they sit in and their span inside
-it. The primary protocol tables keep compact display fields for table scans;
+captured bodies: HTTP and model requests and responses, tool results, exec
+stdout and stderr, and security rule payloads. The bytes are not in SQLite:
+each row names the block they sit in and their span inside it. The primary
+protocol tables keep compact display fields (2 KB previews) for table scans;
 forensic body truth lives in the archive and joins by `event_id` plus
 `direction`.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER PK | Auto-increment |
-| `event_id` | TEXT | 12-hex event id from `net_events`, `model_calls`, or `tool_calls` |
+| `event_id` | TEXT | 12-hex event id of the row in `source_table` |
 | `event_type` | TEXT | Canonical event type such as `http.request`, `model.call`, or `mcp.tool_call` |
 | `source_table` | TEXT | `net_events`, `model_calls`, `tool_calls`, `tool_responses`, `exec_events`, or `security_rule_events` |
 | `direction` | TEXT | `request`, `response`, `payload` (a security rule match's forensic event), `stdout` or `stderr` |
 | `content_type` | TEXT | MIME type or protocol content type, when known |
 | `original_bytes` | INTEGER | Full body byte count observed at the boundary |
-| `stored_bytes` | INTEGER | Bytes actually archived, after the 10 MB per-direction cap |
+| `stored_bytes` | INTEGER | Bytes actually archived, after the 10 MiB per-direction cap |
 | `truncated` | INTEGER | `1` when the persisted body hit the capture limit |
 | `body_hash` | TEXT | `blake3:*` hash of the **archived** bytes, so a read can verify what it got against the row that named it |
 | `block_offset` | INTEGER | Offset of the `session.bodies` block holding this body, keyed to `body_blocks` |
 | `body_offset` | INTEGER | Offset of this body inside that block's inflated bytes |
 | `body_len` | INTEGER | Length of this body inside that block, always equal to `stored_bytes` |
 | `trace_id` | TEXT | Cross-table correlation ID |
+| `turn_id` | TEXT | User-visible agent turn |
 | `created_at` | TEXT | Insert timestamp |
+
+`UNIQUE(event_id, source_table, direction)`: one event has at most one body per
+direction.
 
 The UI and debug routes may render parsed JSON, text, or binary summaries from
 the archived bytes, but they must not invent a second body source. If a compact
 preview and an archived body disagree, the archive is the ledger.
+
+### body_blocks
+
+One row per sealed block of `session.bodies`, so a reader seeks straight to a
+block instead of scanning the file.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `block_offset` | INTEGER PK | Byte offset of the block's header in `session.bodies` |
+| `raw_len` | INTEGER | Inflated size of the block |
+| `comp_len` | INTEGER | Deflated size of the block's payload, after its 44-byte header |
+| `sealed_at` | TEXT | When the block was sealed; retention cuts by this |
 
 ### tool_calls
 
@@ -434,7 +464,7 @@ The normalized `SecurityEvent` payload the rule matched is **not** a column
 here. It is a body like any other: stored in the `session.bodies` archive and
 indexed by `event_body_blobs` with `source_table = 'security_rule_events'` and
 `direction = 'payload'`. It averaged a kilobyte and peaked at 297 KB in one
-real session, and every row of this table is also mirrored in RAM, so the row
+real session, and the owning process mirrors this table in RAM, so the row
 keeps what the views filter and group on and the payload is fetched by event id
 when someone actually wants it.
 
@@ -471,8 +501,8 @@ Commands executed through Capsem service APIs and MCP tools.
 | `command` | TEXT | Command string |
 | `exit_code` | INTEGER | Process exit code, when complete |
 | `duration_ms` | INTEGER | Runtime duration, when complete |
-| `stdout_preview` | TEXT | Truncated stdout |
-| `stderr_preview` | TEXT | Truncated stderr |
+| `stdout_preview` | TEXT | Display excerpt of stdout; the archived body is in `event_body_blobs` (`direction = 'stdout'`) |
+| `stderr_preview` | TEXT | Display excerpt of stderr (`direction = 'stderr'`) |
 | `stdout_bytes` | INTEGER | Full stdout byte count |
 | `stderr_bytes` | INTEGER | Full stderr byte count |
 | `source` | TEXT | Source path, usually `api` or MCP |
@@ -480,6 +510,10 @@ Commands executed through Capsem service APIs and MCP tools.
 | `process_name` | TEXT | Guest process name, when known |
 | `pid` | INTEGER | Guest process ID, when known |
 | `credential_ref` | TEXT | Brokered credential reference, when present |
+
+Guest exec output currently reaches the ledger cut to 1 KiB of stdout per
+command, so the archived body holds at most that much while `stdout_bytes`
+records the true size ([#220](https://github.com/google/capsem/issues/220)).
 
 ### audit_events
 
@@ -506,18 +540,33 @@ Kernel audit `execve` records streamed from the guest over vsock:5006.
 
 ### fs_events
 
-File system changes in the workspace (tracked by VirtioFS).
+Every change under the workspace, found by the host file monitor polling the
+VirtioFS share.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER PK | Auto-increment |
 | `event_id` | TEXT | 12-hex primary event id for ledger joins |
 | `timestamp` | TEXT | ISO 8601 |
-| `action` | TEXT | `created`, `modified`, `deleted`, `restored` |
-| `path` | TEXT | File path relative to workspace |
-| `size` | INTEGER | File size in bytes |
+| `action` | TEXT | `created`, `modified`, `deleted`, `restored`, or `overflow` |
+| `path` | TEXT | Path relative to the workspace (empty for `overflow`) |
+| `size` | INTEGER | File size in bytes; none for directories and deletes; for `overflow`, the number of changes deferred |
+| `kind` | TEXT | `file`, `dir`, `symlink`, or `other`; security rules read it as `file.kind` |
 | `trace_id` | TEXT | Cross-table correlation ID |
 | `credential_ref` | TEXT | Brokered credential reference, when present |
+
+**There is no exclusion list.** `.git/hooks`, `.git/config`, `node_modules`,
+`.venv` and `target/` are where a compromise persists, so every path is
+recorded and evaluated by the profile's file rules like any other. Symlinks are
+recorded as symlinks and never followed. A change is detected by size, mtime,
+inode change time and inode number, so rewriting a file and restoring its
+timestamp does not hide the write.
+
+The cost of watching everything is paid in poll cadence, not in dropped events:
+each scan times itself and the next one runs ten scan-durations later, between
+500ms and 10s. If one scan sees more changes than a window emits, the rest are
+held for the next scan and the window is marked by an `overflow` row whose
+`size` is how many were held back.
 
 ### Snapshot State
 
@@ -547,6 +596,7 @@ graph LR
         CH["tokio mpsc channel"]
         WT["Dedicated writer thread<br/>(capsem-db-writer)"]
         DB["session.db<br/>(SQLite WAL)"]
+        BODIES["session.bodies<br/>(block archive)"]
     end
 
     MITM -->|"WriteOp::NetEvent<br/>WriteOp::ModelCall"| CH
@@ -558,7 +608,74 @@ graph LR
     SNAP -->|"in-memory IPC status"| SNAPAPI
     CH --> WT
     WT --> DB
+    WT -->|"bodies, sealed in blocks"| BODIES
 ```
+
+The writer thread owns both files. A body is staged into the open block and its
+index row is written with the event row; a sealed block is appended to
+`session.bodies` and recorded in `body_blocks`.
+
+## Body archive
+
+`session.bodies` is append-only: a 16-byte file header, then blocks. Each block
+is a 44-byte header (magic, `raw_len`, `comp_len`, and the blake3 of the raw
+bytes) followed by the raw-deflated bytes of the bodies staged into it, sealed
+at about 256 KiB. Bodies that belong together -- the request and response of
+one exchange -- are staged together and almost always share a block, so they
+share one inflate. The format is defined once, in
+`crates/capsem-archive/src/format.rs`.
+
+Reading a body is one index lookup, one seek, one inflate and a slice. Every
+read checks the block against its own hash and the body against the
+`body_hash` of the row that named it, so an edited index row or a damaged block
+is refused rather than served as someone else's bytes.
+
+The writer checks at open that every block the index names is inside the file.
+If the index names bytes past the end of `session.bodies` -- a crash between
+retention's compaction and its index rewrite, or a `session.db` copied without
+its archive -- the session stores no further bodies and says so in its log;
+the stale rows fail their hash check instead of answering with the wrong bytes.
+
+| Access | What it returns |
+|--------|-----------------|
+| `DbHandle::read_body(event_id, direction)` | One archived body of one event |
+| `DbHandle::read_bodies(event_id)` | Every archived body of one event |
+| `DbHandle::read_bodies_for_events(...)` | One direction for a page of events, bounded by a byte budget |
+| `GET /vms/{id}/bodies/{event_id}` | Every body of one event as JSON, 1 MiB each by default (`?max_bytes=` up to 16 MiB); `truncated` means the capture was cut, `truncated_for_transport` that this response was |
+| `GET /vms/{id}/bodies/export.warc.gz` | The whole session as a WARC 1.1 file |
+
+### WARC export
+
+The export writes one gzip-member-framed `resource` record per archived body,
+so `warcio`, `pywb` and the rest of the web-archive toolchain can read it and
+seek within it without Capsem code. It is streamed, not buffered.
+
+- **Record id**: `urn:capsem:{session}:{event_id}:{direction}`. The session
+  names the ledger and the event id names the row, so an id is unique across
+  sessions merged into one collection and points straight back at its source.
+- **Target URI**: the real `https://` URI for network and model traffic, and a
+  `capsem://` URI naming the tool, exec stream or security rule otherwise.
+- **Date**: the source row's time. `tool_responses` has no timestamp of its
+  own, so its records carry the time the body was archived.
+- **Digest**: `WARC-Block-Digest` is blake3, the digest the ledger already
+  records; tools that expect base32 sha1 will not verify it.
+- **What is left out**: a body whose source row is gone, whose timestamp does
+  not parse, whose URI carries a line break, whose bytes fail their hash, or
+  that the archive cannot produce is skipped and counted, never described with
+  a guess. The file opens and closes with a `warcinfo` record; the closing one
+  counts the skips by reason. **A file with no closing `warcinfo` is an export
+  that did not finish**, and its records are not the whole session.
+
+### Retention
+
+`vm.resources.retention_days` (default 30) bounds how long bodies are kept:
+
+- At service start, failed-session directories older than the period are
+  deleted.
+- When a persistent VM stops, its `capsem-process` drops the blocks sealed
+  before the cutoff, compacts `session.bodies`, and rewrites the index rows.
+  Only the process that owns the ledger's writes does this.
+- Ephemeral sessions are deleted whole and are not trimmed.
 
 ### Write operations
 
@@ -576,14 +693,17 @@ graph LR
 
 ## Security Rule Audit
 
-Use `just query-session` to prove that a security rule matched, which primary
-event it matched, and which normalized payload the rule saw. The ledger is
-`security_rule_events`; protocol tables provide the boundary-specific details.
+Query the session database directly to prove that a security rule matched and
+which primary event it matched, and read the normalized payload the rule saw
+from the body archive. The ledger is `security_rule_events`; protocol tables
+provide the boundary-specific details. The queries below set
+`SESSION_DB=~/.capsem/run/sessions/<id>/session.db` (a named VM's ledger is
+under `~/.capsem/run/persistent/<name>/`).
 
 ### Latest Rule Matches
 
 ```bash
-just query-session "
+sqlite3 -readonly "$SESSION_DB" "
 SELECT event_id, event_type, rule_id, rule_action, detection_level, trace_id
 FROM security_rule_events
 ORDER BY timestamp_unix_ms DESC
@@ -593,7 +713,7 @@ LIMIT 20;"
 For forensic review, inspect the stored rule snapshot:
 
 ```bash
-just query-session "
+sqlite3 -readonly "$SESSION_DB" "
 SELECT rule_id, rule_action, detection_level, rule_json, trace_id, credential_ref
 FROM security_rule_events
 WHERE event_id = '<event_id>'
@@ -604,20 +724,21 @@ The matched event's payload is not a column and no SQL recipe returns it: it is
 archive-backed, and `event_body_blobs` says where:
 
 ```bash
-just query-session "
+sqlite3 -readonly "$SESSION_DB" "
 SELECT direction, content_type, original_bytes, stored_bytes, truncated, body_hash
 FROM event_body_blobs
 WHERE event_id = '<event_id>' AND source_table = 'security_rule_events';"
 ```
 
-The bytes come back through the body route once Task 7 lands. Offline, from a
-copy of a session, `tests/helpers/body_archive.py` reads `session.bodies` the
-way the product does and verifies both hashes on the way out.
+The bytes come back through `GET /vms/{id}/bodies/{event_id}`, with their size
+and hash. Offline, from a copy of a session, `tests/helpers/body_archive.py`
+reads `session.bodies` the way the product does and verifies both hashes on the
+way out.
 
 ### HTTP Join
 
 ```bash
-just query-session "
+sqlite3 -readonly "$SESSION_DB" "
 SELECT n.event_id, n.domain, n.method, n.path, n.decision,
        s.rule_id, s.rule_action, s.detection_level
 FROM net_events n
@@ -629,7 +750,7 @@ LIMIT 20;"
 ### DNS Join
 
 ```bash
-just query-session "
+sqlite3 -readonly "$SESSION_DB" "
 SELECT d.event_id, d.qname, d.qtype, d.rcode, d.decision,
        s.rule_id, s.rule_action, s.detection_level
 FROM dns_events d
@@ -641,7 +762,7 @@ LIMIT 20;"
 ### MCP-Origin Tool Join
 
 ```bash
-just query-session "
+sqlite3 -readonly "$SESSION_DB" "
 SELECT t.event_id, t.server_name, t.method, t.tool_name, t.decision,
        s.rule_id, s.rule_action, s.detection_level, t.error_message
 FROM tool_calls t
@@ -654,7 +775,7 @@ LIMIT 20;"
 ### Ask Lifecycle
 
 ```bash
-just query-session "
+sqlite3 -readonly "$SESSION_DB" "
 SELECT ask_id, event_id, rule_id, rule_name, status, resolver, reason
 FROM security_ask_events
 ORDER BY timestamp_unix_ms DESC
@@ -678,7 +799,7 @@ The `DbWriter` spawns a dedicated thread that owns the SQLite connection:
 
 This **block-then-drain** pattern batches writes for efficiency while keeping the async callers non-blocking. The channel has configurable backpressure capacity.
 
-SQLite pragmas: WAL journal mode, NORMAL synchronous. Field values are defensively capped at 256 KB.
+SQLite pragmas: WAL journal mode, NORMAL synchronous. Text fields are defensively capped at 256 KB, headers at 16 KB and display previews at 2 KB; full bodies go to the archive, capped at 10 MiB per direction.
 
 **Drop order is critical:** `Drop::drop()` takes `tx` before joining the thread. Without this, the join would deadlock (thread waits for all senders to drop, but `tx` drops after the join).
 
@@ -732,8 +853,9 @@ The `DbReader` provides pre-built aggregate queries:
 | MCP logs/triage tools | MCP -> typed service routes | Logs, panic triage, and operational diagnostics |
 
 Capsem does not expose arbitrary SQL over HTTP, gateway, frontend, or MCP.
-`session.db` is the durable ledger and can be inspected directly by a developer
-when doing local forensics, but product routes use typed logger/database APIs.
+`session.db` and `session.bodies` are the durable ledger and can be inspected
+directly by a developer when doing local forensics, but product routes use
+typed logger/database APIs.
 Any hot `mem`/disk split belongs inside the logger DB object, never in service
 route state.
 
@@ -764,19 +886,23 @@ projection.
 
 | Property | Value |
 |----------|-------|
-| Location | `~/.capsem/sessions/{id}/session.db` |
-| Lifetime | Created at VM boot and retained or deleted with the VM's lifecycle state |
-| Access | Only the owning capsem-process can write; service reads via IPC |
-| VirtioFS boundary | `session.db` is outside the VirtioFS share; guest cannot access it |
-| Concurrent access | WAL mode allows concurrent reader + writer |
-| Fork behavior | `capsem fork` checkpoints and copies session.db into the image |
+| Location | `~/.capsem/run/sessions/{id}/` (ephemeral) or `~/.capsem/run/persistent/{name}/` (named): `session.db` and `session.bodies` |
+| Lifetime | Created at VM boot and retained or deleted with the VM's lifecycle state; a persistent VM's bodies are trimmed to the retention period at stop |
+| Access | Only the owning capsem-process writes, retention included; the service reads the files directly through SQLite's WAL |
+| VirtioFS boundary | The ledger is outside the VirtioFS share; the guest cannot access it |
+| Concurrent access | WAL mode allows concurrent readers and one writer |
+| Fork behavior | `capsem fork` checkpoints and copies both files |
 
 ## Key source files
 
 | File | Purpose |
 |------|---------|
-| `capsem-logger/src/schema.rs` | Table DDL, pragmas, migrations |
+| `capsem-logger/src/schema.rs` | Table DDL and pragmas |
+| `capsem-archive/src/format.rs` | The `session.bodies` byte format |
+| `capsem-archive/src/warc.rs` | WARC record writer |
+| `capsem-logger/src/db/bodies.rs` | `read_body`, `read_bodies`, retention entry point |
+| `capsem-logger/src/db/warc_export.rs` | Session-to-WARC mapping |
 | `capsem-logger/src/events.rs` | Event structs (NetEvent, ModelCall, McpCall, etc.) |
 | `capsem-logger/src/writer.rs` | DbWriter, WriteOp, block-then-drain loop |
 | `capsem-logger/src/reader.rs` | DbReader, aggregation queries, raw SQL |
-| `capsem-logger/src/db.rs` | SessionDb convenience wrapper |
+| `capsem-logger/src/db.rs` | `DbHandle`, the async handle routes and processes use; `SessionDb` wrapper |
