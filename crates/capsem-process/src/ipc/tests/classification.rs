@@ -17,6 +17,7 @@ pub(super) fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         | ServiceToProcess::RevokeExposure { .. }
         | ServiceToProcess::ListPublications { .. }
         | ServiceToProcess::CreatePreviewSession { .. }
+        | ServiceToProcess::RevokePreviewSessions { .. }
         | ServiceToProcess::ExchangePreviewBootstrap { .. }
         | ServiceToProcess::AdmitPreviewConnection { .. }
         | ServiceToProcess::AdmitContainerPull { .. }

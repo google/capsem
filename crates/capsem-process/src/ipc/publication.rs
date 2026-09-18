@@ -87,7 +87,28 @@ pub(super) async fn create_session(
             .send(ProcessToService::PreviewSessionCreated {
                 id,
                 bootstrap_token: result.as_ref().ok().cloned(),
-                expires_in_seconds: 30,
+                expires_in_seconds: capsem_proto::PREVIEW_BOOTSTRAP_LIFETIME_SECS,
+                error: result.err().map(|error| format!("{error:#}")),
+            })
+            .await
+    );
+}
+
+pub(super) async fn revoke_sessions(
+    jobs: &JobStore,
+    output: &mpsc::Sender<ProcessToService>,
+    id: u64,
+    exposure_id: &str,
+) {
+    let result = jobs.publisher.revoke_preview_sessions(exposure_id);
+    capsem_core::try_send!(
+        "preview_sessions_revoked",
+        output
+            .send(ProcessToService::PreviewSessionsRevoked {
+                id,
+                revoked: result
+                    .as_ref()
+                    .map_or(0, |&count| u32::try_from(count).unwrap_or(u32::MAX)),
                 error: result.err().map(|error| format!("{error:#}")),
             })
             .await

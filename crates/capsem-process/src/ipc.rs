@@ -353,6 +353,9 @@ pub(crate) async fn handle_ipc_connection(
             ServiceToProcess::CreatePreviewSession { id, exposure_id } => {
                 publication::create_session(&job_store, &ipc_tx_out, id, &exposure_id).await;
             }
+            ServiceToProcess::RevokePreviewSessions { id, exposure_id } => {
+                publication::revoke_sessions(&job_store, &ipc_tx_out, id, &exposure_id).await;
+            }
             ServiceToProcess::ExchangePreviewBootstrap {
                 id,
                 exposure_id,
