@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Request and response bodies are readable again in the stats view. The bodies
+  left SQLite for the session archive and the detail pane had been showing only
+  metadata; expanding an event now fetches the bytes on demand from
+  `GET /vms/{id}/bodies/{event_id}`, so a list of two hundred rows no longer
+  has to carry two hundred remote servers' worth of payload to show one. The
+  route sends a mebibyte per body by default (`?max_bytes=` raises it to 16
+  MiB) and says when it cut one, which is a separate statement from whether the
+  capture itself was truncated.
 - A session's captured bodies can be exported as a standard WARC 1.1 file, one
   `resource` record per stored body, gzip-member framed so `warcio`, `pywb` and
   the rest of the web-archive toolchain can read it -- and seek within it --

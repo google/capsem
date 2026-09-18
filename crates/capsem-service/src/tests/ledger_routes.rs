@@ -1,5 +1,6 @@
 use super::*;
 
+mod bodies;
 mod freshness;
 
 #[tokio::test]

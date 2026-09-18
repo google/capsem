@@ -1,7 +1,9 @@
 use super::*;
 
+pub(crate) mod bodies;
 mod security;
 
+pub(super) use bodies::{body_blob_map, handle_event_bodies, STATS_DETAIL_BODY_BLOBS_SQL};
 pub(super) use security::{
     is_detection_rule_event, read_profile_security_ledgers, read_security_session_ledger, security_latest_for_vm,
     security_stats_for_vm,
@@ -822,25 +824,6 @@ ORDER BY id DESC
 LIMIT 100
 "#;
 
-// Metadata only: bodies are archive-backed, read through the DB handle.
-const STATS_DETAIL_BODY_BLOBS_SQL: &str = r#"
-SELECT event_id, source_table, direction, content_type, original_bytes, stored_bytes, truncated, body_hash
-FROM event_body_blobs
-WHERE event_id IN (
-    SELECT event_id FROM net_events WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
-)
-OR event_id IN (
-    SELECT event_id FROM model_calls WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
-)
-OR event_id IN (
-    SELECT event_id FROM tool_calls WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
-)
-OR event_id IN (
-    SELECT event_id FROM security_rule_events ORDER BY id DESC LIMIT 200
-)
-ORDER BY event_id, direction
-"#;
-
 pub(super) async fn stats_detail_query_objects(
     vm_id: &str,
     db_path: &StdPath,
@@ -849,22 +832,6 @@ pub(super) async fn stats_detail_query_objects(
     sql: &str,
 ) -> Result<Vec<serde_json::Value>, AppError> {
     query_route_objects(vm_id, "stats_detail", query_name, db_path, db, sql, &[]).await
-}
-
-pub(super) fn body_blob_map(rows: Vec<serde_json::Value>) -> serde_json::Value {
-    let mut by_event = serde_json::Map::new();
-    for row in rows {
-        let Some(event_id) = row.get("event_id").and_then(|value| value.as_str()) else {
-            continue;
-        };
-        let entry = by_event
-            .entry(event_id.to_string())
-            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
-        if let serde_json::Value::Array(rows) = entry {
-            rows.push(row);
-        }
-    }
-    serde_json::Value::Object(by_event)
 }
 
 pub(super) async fn read_stats_detail_payload_from_session_db(
