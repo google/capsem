@@ -28,7 +28,7 @@ async def main() -> None:
         assert isinstance(await hv.debug.triage(since="1h", limit=2), models.TriageResponse)
         inventory = await hv.list()
         assert any(entry.id == expected_id for entry in inventory.sandboxes)
-        files = await vm.files.list("/")
+        files = await vm.files.list()
         assert vm.id == expected_id
         assert {entry.name for entry in files.entries} >= {"modified.txt", "created.txt"}
         snapshots = await vm.snapshots.list()
@@ -39,7 +39,7 @@ async def main() -> None:
             ("modified.txt", models.FileChangeKind.MODIFIED),
             ("deleted.txt", models.FileChangeKind.DELETED),
         }
-        for call in (lambda: vm.files.read("/created.txt"), lambda: vm.files.write("/refused.txt", b"new")):
+        for call in (lambda: vm.files.read("/root/created.txt"), lambda: vm.files.write("/root/refused.txt", b"new")):
             try:
                 await call()
             except HttpError as error:

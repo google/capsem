@@ -107,6 +107,8 @@ def test_name_is_resolved_once_and_each_vm_interface_returns_typed_results() -> 
             assert isinstance(await vm.files.list("/work", depth=2), models.FileListResponse)
             await vm.files.list()
             assert state.requests[-1][1] == "/vms/vm-0/files/list"
+            await vm.files.list("/root", exact=True)
+            assert state.requests[-1][1] == "/vms/vm-0/files/list?path=%2Froot&exact=true"
             assert isinstance(await vm.files.history("cp-10", limit=3, offset=1), models.ChangesResponse)
             assert isinstance(await vm.stats.summary(), models.VmStatsSummaryResponse)
             assert isinstance(await vm.stats.details(), models.VmStatsDetailResponse)
@@ -114,6 +116,8 @@ def test_name_is_resolved_once_and_each_vm_interface_returns_typed_results() -> 
             assert isinstance(await vm.snapshots.status(), models.SnapshotsStatus)
             assert isinstance(await vm.files.write("/work/bytes", b"\x00\xff"), models.UploadResponse)
             assert await vm.files.read("/work/bytes") == b"\x00\xff"
+            assert await vm.files.read("/work/bytes", exact=True) == b"\x00\xff"
+            assert state.requests[-1][1] == "/vms/vm-0/files/content?path=%2Fwork%2Fbytes&exact=true"
             with pytest.raises(HttpError) as error:
                 await vm.files.read("/missing")
             assert error.value.status == 404

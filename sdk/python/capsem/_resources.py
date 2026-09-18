@@ -17,16 +17,25 @@ class Resource:
 
 
 class Files(Resource):
-    async def read(self, path: str) -> bytes:
-        return await api.download_vm_file(self._vm._transport, id=await self._vm._resolve(), path=path)
+    """Paths are the guest's: `/root/x` in a VM, `/workspace/x` in its container,
+    or `x` relative to the workspace. `exact=True` takes a path literally,
+    relative to the workspace root, even when it is absolute."""
 
-    async def write(self, path: str, data: bytes) -> models.UploadResponse:
-        return await api.upload_vm_file(self._vm._transport, id=await self._vm._resolve(), path=path, body=data)
+    async def read(self, path: str, *, exact: bool = False) -> bytes:
+        return await api.download_vm_file(
+            self._vm._transport, id=await self._vm._resolve(), path=path, exact=exact or None,
+        )
 
-    async def list(self, path: str = "/", *, depth: int | None = None) -> models.FileListResponse:
+    async def write(self, path: str, data: bytes, *, exact: bool = False) -> models.UploadResponse:
+        return await api.upload_vm_file(
+            self._vm._transport, id=await self._vm._resolve(), path=path, exact=exact or None, body=data,
+        )
+
+    async def list(self, path: str = "", *, depth: int | None = None, exact: bool = False) -> models.FileListResponse:
+        """An empty `path` lists the workspace root."""
         return await api.list_vm_files(
             self._vm._transport, id=await self._vm._resolve(),
-            path=None if path == "/" else path, depth=depth,
+            path=path or None, depth=depth, exact=exact or None,
         )
 
     async def history(self, checkpoint: str, *, limit: int | None = None,
