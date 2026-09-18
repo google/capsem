@@ -78,13 +78,13 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/db/handle_tests/bodies.rs"),
     Path("crates/capsem-logger/src/db/handle_tests/external_reader.rs"),
     Path("crates/capsem-logger/src/db/handle_tests/query.rs"),
+    Path("crates/capsem-logger/src/db/handle_tests/retention.rs"),
     Path("crates/capsem-logger/src/db/maintenance.rs"),
     Path("crates/capsem-logger/src/db/reader_worker.rs"),
     Path("crates/capsem-logger/src/network_db.rs"),
     Path("crates/capsem-logger/src/reader.rs"),
     Path("crates/capsem-logger/src/reader/open.rs"),
     Path("crates/capsem-logger/src/schema.rs"),
-    Path("crates/capsem-logger/src/schema/memory_sync.rs"),
     Path("crates/capsem-logger/src/schema/pragmas.rs"),
     Path("crates/capsem-logger/src/schema/security_event_types.rs"),
     Path("crates/capsem-logger/src/schema/transport.rs"),
@@ -94,33 +94,52 @@ LOGGER_DB_INTERNALS = {
     # connection and are handed it as an argument; they do not open one.
     Path("crates/capsem-logger/src/writer/barriers.rs"),
     Path("crates/capsem-logger/src/writer/bodies.rs"),
-    Path("crates/capsem-logger/src/writer/event_rows.rs"),
     Path("crates/capsem-logger/src/writer/model_rows.rs"),
     Path("crates/capsem-logger/src/writer/retention.rs"),
-    Path("crates/capsem-logger/src/writer/traffic_rows.rs"),
     Path("crates/capsem-logger/src/writer/tests.rs"),
 }
 
 
-BRACED_IMPORT = re.compile(r"rusqlite::\{([^{}]*)\}", re.S)
+IMPORT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+BRACED_IMPORT_START = "rusqlite::{"
 
 
 def named_paths(source: str) -> str:
-    """The source, plus every braced `rusqlite::{...}` import written out.
+    """The source, plus every name any `rusqlite::{...}` import brings in.
 
     `use rusqlite::{params, Connection}` names `rusqlite::Connection` as surely
     as spelling it out does, and it is how Rust imports are ordinarily written
     once a module needs two things from a crate. Matching the literal string
-    alone let four of capsem-logger's own writer modules hold a connection
+    alone let two of capsem-logger's own writer modules hold a connection
     without ever being listed as owners of one -- not because anyone decided
     they could, but because of how their `use` line was formatted. A guard that
     a rustfmt-idiomatic import walks past is not guarding anything.
+
+    The group is scanned with a brace counter rather than a regex, because a
+    regex for "braces with no braces inside" does not match a nested group at
+    all: `use rusqlite::{types::{Value}, Connection};` produced *nothing*, so
+    the file read as though it imported nothing from rusqlite -- a stricter
+    result than the plain-text match it was meant to improve on.
+
+    Every identifier in the group is emitted, at any depth, including `types`
+    and `params`. The result is matched against a fixed list of forbidden
+    strings, so a name that is not on it costs nothing; missing one that is
+    costs the guard.
     """
-    expanded = BRACED_IMPORT.sub(
-        lambda match: " ".join(f"rusqlite::{name.strip()}" for name in match.group(1).split(",") if name.strip()),
-        source,
-    )
-    return f"{source}\n{expanded}"
+    names: list[str] = []
+    index = source.find(BRACED_IMPORT_START)
+    while index != -1:
+        cursor = index + len(BRACED_IMPORT_START)
+        depth = 1
+        while cursor < len(source) and depth:
+            depth += {"{": 1, "}": -1}.get(source[cursor], 0)
+            cursor += 1
+        if depth:
+            break  # An unbalanced group: nothing to say about it.
+        group = source[index + len(BRACED_IMPORT_START) : cursor - 1]
+        names.extend(f"rusqlite::{name}" for name in IMPORT_NAME.findall(group))
+        index = source.find(BRACED_IMPORT_START, cursor)
+    return source if not names else f"{source}\n{' '.join(names)}"
 
 
 def rust_sources() -> list[Path]:
@@ -166,6 +185,37 @@ def test_logger_is_the_only_database_execution_boundary() -> None:
             )
 
     assert not violations, DB_BOUNDARY_RATIONALE + "\n" + "\n".join(violations)
+
+
+def test_every_named_owner_actually_holds_a_connection() -> None:
+    """An exemption is for a violation that exists, not a file that is nearby.
+
+    Membership is exact-set and blanket: a path on the list is excused from
+    every pattern above, not only the one it was added for. Three files were
+    once added alongside two that genuinely needed it -- they only reached
+    `Connection` through `use super::*` -- and each of them silently gained a
+    permanent pass on `Connection::open`, `DbReader::open`, the projection
+    caches and the missing-schema fallbacks.
+
+    So the list has to earn itself: every entry must still match something.
+    An entry that stops matching is not harmless, it is a carve-out with
+    nothing under it, and it goes.
+    """
+    unnecessary: list[str] = []
+    for relative_path in sorted(LOGGER_DB_INTERNALS | BENCHMARK_DB_INTERNALS):
+        path = PROJECT_ROOT / relative_path
+        assert path.is_file(), f"{relative_path} is named as a database owner but does not exist"
+        source = named_paths(path.read_text())
+        matched = [needle for needle, _ in FORBIDDEN_PATTERNS if needle in source]
+        if not matched:
+            unnecessary.append(str(relative_path))
+
+    assert not unnecessary, (
+        "These files are exempted from the DB boundary and do not need to be. "
+        "An exemption nobody needs is a carve-out waiting to be used by accident; "
+        "remove them from LOGGER_DB_INTERNALS / BENCHMARK_DB_INTERNALS:\n"
+        + "\n".join(unnecessary)
+    )
 
 
 def test_only_one_module_owns_the_benchmark_database() -> None:
