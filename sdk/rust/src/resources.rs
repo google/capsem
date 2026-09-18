@@ -2,7 +2,9 @@ use crate::client::Client;
 
 use crate::{models, operations as api, DiagnosticOptions, NetworkLogOptions, PageOptions, Result, TriageOptions, VM};
 
-pub struct Files<'a>(pub(crate) &'a VM);
+/// Paths are the guest's: `/root/x` in a VM, `/workspace/x` in its container,
+/// or `x` relative to the workspace; see [`Files::exact`].
+pub struct Files<'a>(pub(crate) &'a VM, pub(crate) bool);
 pub struct Snapshots<'a>(pub(crate) &'a VM);
 pub struct Stats<'a>(pub(crate) &'a VM);
 pub struct Container<'a>(pub(crate) &'a VM);
@@ -27,10 +29,22 @@ pub struct McpTools<'a> {
 }
 
 impl Files<'_> {
+    /// Take every path literally, relative to the workspace root, even when it
+    /// is absolute: `/root/x` is then the workspace's `root/x`.
+    #[must_use]
+    pub const fn exact(self) -> Self {
+        Self(self.0, true)
+    }
+
+    fn exact_param(&self) -> Option<bool> {
+        self.1.then_some(true)
+    }
+
     pub async fn read(&self, path: &str) -> Result<Vec<u8>> {
         let params = api::DownloadVmFileParams {
             id: self.0.resolve().await?,
             path: path.into(),
+            exact: self.exact_param(),
         };
         api::download_vm_file(&self.0.client.transport, &params, self.0.client.options).await
     }
@@ -39,16 +53,19 @@ impl Files<'_> {
         let params = api::UploadVmFileParams {
             id: self.0.resolve().await?,
             path: path.into(),
+            exact: self.exact_param(),
             body: data,
         };
         api::upload_vm_file(&self.0.client.transport, &params, self.0.client.options).await
     }
 
+    /// An empty `path` lists the workspace root.
     pub async fn list(&self, path: &str, depth: Option<i64>) -> Result<models::FileListResponse> {
         let params = api::ListVmFilesParams {
             id: self.0.resolve().await?,
-            path: (path != "/").then(|| path.to_owned()),
+            path: (!path.is_empty()).then(|| path.to_owned()),
             depth,
+            exact: self.exact_param(),
         };
         api::list_vm_files(&self.0.client.transport, &params, self.0.client.options).await
     }

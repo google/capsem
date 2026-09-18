@@ -6,6 +6,7 @@ pub struct ListVmFilesParams {
     pub id: String,
     pub path: Option<String>,
     pub depth: Option<i64>,
+    pub exact: Option<bool>,
 }
 
 pub async fn list_vm_files(
@@ -19,6 +20,9 @@ pub async fn list_vm_files(
     }
     if let Some(value) = &input.depth {
         query.push(("depth", value.to_string()));
+    }
+    if let Some(value) = &input.exact {
+        query.push(("exact", value.to_string()));
     }
     let path_id = input.id.to_string();
     let request = Request {

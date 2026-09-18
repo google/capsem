@@ -33,7 +33,7 @@ impl VM {
     }
 
     pub fn files(&self) -> Files<'_> {
-        Files(self)
+        Files(self, false)
     }
 
     pub fn networks(&self) -> VmNetworks<'_> {

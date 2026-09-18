@@ -5,6 +5,7 @@ use crate::transport::{CallOptions, Request, Transport};
 pub struct DownloadVmFileParams {
     pub id: String,
     pub path: String,
+    pub exact: Option<bool>,
 }
 
 pub async fn download_vm_file(
@@ -12,7 +13,10 @@ pub async fn download_vm_file(
     input: &DownloadVmFileParams,
     options: CallOptions,
 ) -> crate::Result<Vec<u8>> {
-    let query = [("path", input.path.to_string())];
+    let mut query = vec![("path", input.path.to_string())];
+    if let Some(value) = &input.exact {
+        query.push(("exact", value.to_string()));
+    }
     let path_id = input.id.to_string();
     let request = Request {
         parameters: &[("id", path_id.as_str())],

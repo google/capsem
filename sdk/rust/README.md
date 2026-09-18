@@ -27,10 +27,10 @@ async fn example(url: &str, token: &str) -> Result<()> {
     hv.networks().logs(&network, Default::default()).await?;
     let result = vm.exec("echo hello", Some(60)).await?;
     println!("{} (exit {})", result.stdout.data, result.exit_code);
-    vm.files().write("/hello.txt", b"hello\n".to_vec()).await?;
-    let contents = vm.files().read("/hello.txt").await?;
+    vm.files().write("/workspace/hello.txt", b"hello\n".to_vec()).await?;
+    let contents = vm.files().read("/workspace/hello.txt").await?;
     assert_eq!(contents, b"hello\n");
-    vm.files().list("/", None).await?;
+    vm.files().list("", None).await?;
     vm.snapshots().list().await?;
     vm.stats().details().await?;
     vm.persist("saved-workspace").await?;

@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vm = hv.vm(VmSelector::Name("route-workspace".into()))?;
     assert!(vm
         .files()
-        .list("/", None)
+        .list("", None)
         .await?
         .entries
         .iter()
@@ -55,16 +55,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .any(|entry| entry.path == path && entry.kind == kind));
     }
     assert!(
-        matches!(vm.files().read("/created.txt").await, Err(Error::Http { status: 409, body })
+        matches!(vm.files().read("/root/created.txt").await, Err(Error::Http { status: 409, body })
         if String::from_utf8_lossy(&body).contains("running sandbox security ledger"))
     );
     assert!(
-        matches!(vm.files().write("/refused.txt", vec![1]).await, Err(Error::Http { status: 409, body })
+        matches!(vm.files().write("/root/refused.txt", vec![1]).await, Err(Error::Http { status: 409, body })
         if String::from_utf8_lossy(&body).contains("running sandbox security ledger"))
     );
     assert!(!vm
         .files()
-        .list("/", None)
+        .list("", None)
         .await?
         .entries
         .iter()
