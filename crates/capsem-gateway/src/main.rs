@@ -241,7 +241,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/{id}/exposures/{exposure_id}", delete(proxy::handle_proxy))
         .route(
             "/vms/{id}/exposures/{exposure_id}/preview-session",
-            post(preview::create_session),
+            post(preview::create_session).delete(proxy::handle_proxy),
         )
         .route("/vms/{id}/snapshots/status", get(proxy::handle_proxy))
         .route("/vms/{id}/snapshots/list", get(proxy::handle_proxy))
