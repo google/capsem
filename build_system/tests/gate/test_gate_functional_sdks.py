@@ -12,6 +12,7 @@ checkout an earlier phase had happened to warm.
 from __future__ import annotations
 
 from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import host
 from helpers.gate import PROJECT_ROOT, gate_plan
 
 PREPARED = ("sdk.python.sync", "functional.sdk.rust.example", "functional.sdk.typescript.bundle")
@@ -49,3 +50,20 @@ def test_sdk_preparation_stays_offline_inside_the_sandbox() -> None:
     assert "--no-build-isolation" in sync, "an isolated build fetches its backend from the network"
     example = plan.step_named("functional.sdk.rust.example").actions[0].render()
     assert "--frozen" in example, "cargo must not reach the registry from inside the sandbox"
+
+
+def test_the_managed_restart_proof_runs_under_real_launchd_not_the_sandbox() -> None:
+    """launchd refuses `bootstrap` from a Seatbelt-sandboxed caller, so the
+    managed-restart suite is kept out of the sandboxed suites and run by the
+    macOS glow-up lane outside the sandbox, after the SDK it drives is ready."""
+    config = gate_config.load(PROJECT_ROOT)
+    managed = config.suites.pytest.managed_restart
+    assert managed in config.suites.pytest.broad_ignores
+    plan = gate_plan("test-glowup")
+    label = "glowup.pytest.managed-restart"
+    if not host.on_macos():
+        assert label not in plan.labels
+        return
+    rendered = plan.step_named(label).actions[0].render()
+    assert managed in rendered and "[outside kernel sandbox]" in rendered
+    assert {"sdk.python.sync", "prepare.sign"} <= _ancestors(plan, label)

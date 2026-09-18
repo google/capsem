@@ -2211,6 +2211,7 @@ coverage_finish_flags = ["--cov=build_system/builder", "--cov-append", "--cov-re
 #                    them here too would run them a second time an hour later,
 #                    and a guard with two owners has none
 broad_ignores = [
+    "tests/ironbank/test_sdk_restart.py",
     "tests/ironbank/kingslanding",
     "tests/ironbank/greyjoy",
     "tests/capsem-recipes",
@@ -2235,6 +2236,12 @@ serial_paths = [
     "tests/ironbank/test_route_health.py",
 ]
 benchmark_baseline = "tests/capsem-serial/test_capsem_bench_baseline.py"
+# The SDKs surviving a launchd KeepAlive restart. launchd refuses `bootstrap`
+# from any Seatbelt-sandboxed caller (exit 5, Input/output error, even under
+# `(allow default)`), so this cannot run in the sandboxed suites above; the
+# macOS glow-up lane, which installs and drives launchd for real, runs it
+# outside the sandbox instead.
+managed_restart = "tests/ironbank/test_sdk_restart.py"
 benchmark_deselect = "not test_capsem_bench_baseline"
 # Namespaces tests/conftest.py's leak ledger per step, so suites running at the
 # same time neither erase nor inherit each other's attribution.
