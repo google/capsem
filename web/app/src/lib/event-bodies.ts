@@ -13,6 +13,11 @@
  * pick an event, then pick a row that has no event id, and the first fetch
  * still believed it was current and painted its bodies over the second row
  * when it landed. The stale error banner outlived its event the same way.
+ *
+ * Closing the pane is a selection too -- of nothing. It was the fourth face of
+ * the same bug: a tab switch or the close button set the selection to `null`
+ * without taking a token, so a fetch already out landed, found itself current,
+ * and reopened the pane on the event the user had just dismissed.
  */
 
 import type { EventBody } from './api';
@@ -23,10 +28,17 @@ export type DetailSelection = { type: string; data: Record<string, unknown> };
 
 /** What the loader does to the pane. The component supplies the writes. */
 export type DetailView = {
-  /** Show this selection, replacing whatever was there. */
-  show(selection: DetailSelection): void;
+  /** Show this selection, or close the pane when it is `null`. */
+  show(selection: DetailSelection | null): void;
   /** Say why the bodies are missing, or withdraw a previous complaint. */
   setError(message: string | null): void;
+};
+
+/** The pane's two verbs. Nothing else may write the selection. */
+export type DetailLoader = {
+  show(type: string, row: DetailRow): Promise<void>;
+  /** Close the pane, and with it whatever it had in flight. */
+  dismiss(): void;
 };
 
 export type DetailSources = {
@@ -105,42 +117,57 @@ export function withFetchedBodies(row: DetailRow, bodies: EventBody[]): DetailRo
 }
 
 /**
- * The pane's one way to open a row.
+ * The pane's only way to open or close a row.
  *
- * Every row in every tab goes through the returned function. A second path
- * that wrote the selection directly would be a selection no fetch in flight
- * knew about, and the stale response would win -- which is the same bug as the
- * late token, reached from the other side.
+ * Every row in every tab, every tab switch and the close button go through
+ * these two. A path that wrote the selection directly would be a selection no
+ * fetch in flight knew about, and the stale response would win -- which is one
+ * bug with four faces. Three of them were writing an object; the fourth was
+ * writing `null`, and closing the pane while a fetch was out let that fetch
+ * reopen it on the event the user had just dismissed.
+ *
+ * `dismiss` therefore takes a token like any other selection. Closing the pane
+ * *is* a selection: the selection of nothing.
  */
-export function createDetailLoader(
-  view: DetailView,
-  sources: DetailSources,
-): (type: string, row: DetailRow) => Promise<void> {
+export function createDetailLoader(view: DetailView, sources: DetailSources): DetailLoader {
   let current = 0;
 
-  return async function showDetail(type: string, row: DetailRow): Promise<void> {
-    // First, and before anything can return. See the module comment.
+  /** Supersede everything in flight and withdraw any standing complaint. */
+  function begin(): number {
     const token = ++current;
     view.setError(null);
-    view.show({ type, data: row });
+    return token;
+  }
 
-    const eventId = safeEventId(row.event_id);
-    if (!eventId) return;
+  return {
+    async show(type: string, row: DetailRow): Promise<void> {
+      // First, and before anything can return. See the module comment.
+      const token = begin();
+      view.show({ type, data: row });
 
-    const enriched = withIndexMetadata(row, sources.indexRowsFor(eventId));
-    view.show({ type, data: enriched });
+      const eventId = safeEventId(row.event_id);
+      if (!eventId) return;
 
-    let fetched: EventBody[];
-    try {
-      fetched = await sources.fetchBodies(eventId);
-    } catch (e) {
-      // Only the open selection may complain. A failure for an event the user
-      // has already left is not this event's failure.
-      if (token === current) view.setError(e instanceof Error ? e.message : 'Failed to load event bodies');
-      return;
-    }
-    if (token !== current) return;
+      const enriched = withIndexMetadata(row, sources.indexRowsFor(eventId));
+      view.show({ type, data: enriched });
 
-    view.show({ type, data: withFetchedBodies(enriched, fetched) });
+      let fetched: EventBody[];
+      try {
+        fetched = await sources.fetchBodies(eventId);
+      } catch (e) {
+        // Only the open selection may complain. A failure for an event the
+        // user has already left is not this event's failure.
+        if (token === current) view.setError(e instanceof Error ? e.message : 'Failed to load event bodies');
+        return;
+      }
+      if (token !== current) return;
+
+      view.show({ type, data: withFetchedBodies(enriched, fetched) });
+    },
+
+    dismiss(): void {
+      begin();
+      view.show(null);
+    },
   };
 }

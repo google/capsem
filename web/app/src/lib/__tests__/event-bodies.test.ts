@@ -30,7 +30,7 @@ function body(overrides: Partial<EventBody> = {}): EventBody {
 
 /** A pane that records what it was told, in order. */
 function recordingView() {
-  const shown: DetailSelection[] = [];
+  const shown: (DetailSelection | null)[] = [];
   const errors: (string | null)[] = [];
   return {
     shown,
@@ -42,7 +42,7 @@ function recordingView() {
       return errors.at(-1) ?? null;
     },
     view: {
-      show: (selection: DetailSelection) => { shown.push(selection); },
+      show: (selection: DetailSelection | null) => { shown.push(selection); },
       setError: (message: string | null) => { errors.push(message); },
     },
   };
@@ -76,13 +76,13 @@ describe('detail selection sequencing', () => {
     const first = deferred<EventBody[]>();
     const second = deferred<EventBody[]>();
     const pending = [first, second];
-    const showDetail = createDetailLoader(pane.view, {
+    const loader = createDetailLoader(pane.view, {
       ...NO_INDEX_ROWS,
       fetchBodies: () => pending.shift()!.promise,
     });
 
-    const a = showDetail('http', { event_id: 'aaaaaaaaaaaa' });
-    const b = showDetail('http', { event_id: 'bbbbbbbbbbbb' });
+    const a = loader.show('http', { event_id: 'aaaaaaaaaaaa' });
+    const b = loader.show('http', { event_id: 'bbbbbbbbbbbb' });
 
     second.settle([body({ event_id: 'bbbbbbbbbbbb', content: 'second' })]);
     await b;
@@ -99,13 +99,13 @@ describe('detail selection sequencing', () => {
     // fetch painted its bodies over a row that has no bodies at all.
     const pane = recordingView();
     const first = deferred<EventBody[]>();
-    const showDetail = createDetailLoader(pane.view, {
+    const loader = createDetailLoader(pane.view, {
       ...NO_INDEX_ROWS,
       fetchBodies: () => first.promise,
     });
 
-    const a = showDetail('http', { event_id: 'aaaaaaaaaaaa' });
-    await showDetail('dns', { qname: 'example.test' });
+    const a = loader.show('http', { event_id: 'aaaaaaaaaaaa' });
+    await loader.show('dns', { qname: 'example.test' });
 
     first.settle([body({ event_id: 'aaaaaaaaaaaa', content: 'first' })]);
     await a;
@@ -118,13 +118,13 @@ describe('detail selection sequencing', () => {
   it('does not let a failed fetch complain about an event the user has left', async () => {
     const pane = recordingView();
     const first = deferred<EventBody[]>();
-    const showDetail = createDetailLoader(pane.view, {
+    const loader = createDetailLoader(pane.view, {
       ...NO_INDEX_ROWS,
       fetchBodies: () => first.promise,
     });
 
-    const a = showDetail('http', { event_id: 'aaaaaaaaaaaa' });
-    await showDetail('dns', { qname: 'example.test' });
+    const a = loader.show('http', { event_id: 'aaaaaaaaaaaa' });
+    await loader.show('dns', { qname: 'example.test' });
 
     first.fail(new Error('gateway went away'));
     await a;
@@ -136,31 +136,84 @@ describe('detail selection sequencing', () => {
     // The second regression: the early return skipped the reset, so a failed
     // event's banner sat over the next, unrelated selection.
     const pane = recordingView();
-    const showDetail = createDetailLoader(pane.view, {
+    const loader = createDetailLoader(pane.view, {
       ...NO_INDEX_ROWS,
       fetchBodies: () => Promise.reject(new Error('gateway went away')),
     });
 
-    await showDetail('http', { event_id: 'aaaaaaaaaaaa' });
+    await loader.show('http', { event_id: 'aaaaaaaaaaaa' });
     expect(pane.error).toBe('gateway went away');
 
-    await showDetail('dns', { qname: 'example.test' });
+    await loader.show('dns', { qname: 'example.test' });
     expect(pane.error).toBeNull();
 
-    await showDetail('http', { event_id: 'aaaaaaaaaaaa' });
+    await loader.show('http', { event_id: 'aaaaaaaaaaaa' });
     expect(pane.error).toBe('gateway went away');
+  });
+
+  it('does not let a dismissed pane be reopened by its own fetch', async () => {
+    // The fourth face of the same bug, and the one the contract test could not
+    // see: closing the pane writes `null`, not an object, so `dismiss` taking
+    // no token meant an in-flight fetch landed, found itself current, and
+    // reopened the pane on the event the user had just closed.
+    const pane = recordingView();
+    const first = deferred<EventBody[]>();
+    const loader = createDetailLoader(pane.view, {
+      ...NO_INDEX_ROWS,
+      fetchBodies: () => first.promise,
+    });
+
+    const a = loader.show('http', { event_id: 'aaaaaaaaaaaa' });
+    loader.dismiss();
+
+    first.settle([body({ event_id: 'aaaaaaaaaaaa', content: 'first' })]);
+    await a;
+
+    expect(pane.selection).toBeNull();
+  });
+
+  it('does not let a dismissed pane be given an error by its own fetch', async () => {
+    const pane = recordingView();
+    const first = deferred<EventBody[]>();
+    const loader = createDetailLoader(pane.view, {
+      ...NO_INDEX_ROWS,
+      fetchBodies: () => first.promise,
+    });
+
+    const a = loader.show('http', { event_id: 'aaaaaaaaaaaa' });
+    loader.dismiss();
+
+    first.fail(new Error('gateway went away'));
+    await a;
+
+    expect(pane.error).toBeNull();
+  });
+
+  it('withdraws a standing error banner when the pane is dismissed', async () => {
+    const pane = recordingView();
+    const loader = createDetailLoader(pane.view, {
+      ...NO_INDEX_ROWS,
+      fetchBodies: () => Promise.reject(new Error('gateway went away')),
+    });
+
+    await loader.show('http', { event_id: 'aaaaaaaaaaaa' });
+    expect(pane.error).toBe('gateway went away');
+
+    loader.dismiss();
+    expect(pane.error).toBeNull();
+    expect(pane.selection).toBeNull();
   });
 
   it('shows the row immediately and the bodies when they arrive', async () => {
     const pane = recordingView();
-    const showDetail = createDetailLoader(pane.view, {
+    const loader = createDetailLoader(pane.view, {
       indexRowsFor: () => [
         { direction: 'response', content_type: 'application/json', original_bytes: 16, stored_bytes: 16, truncated: 0, body_hash: 'blake3:abc' },
       ],
       fetchBodies: async () => [body()],
     });
 
-    await showDetail('http', { event_id: '0123456789ab', status_code: 200 });
+    await loader.show('http', { event_id: '0123456789ab', status_code: 200 });
 
     // Row, then row plus index metadata, then row plus bytes: the pane is
     // never blank while the fetch is out.
@@ -174,14 +227,14 @@ describe('detail selection sequencing', () => {
 describe('body content', () => {
   it('keeps the index metadata when the fetch fails, so the pane can still describe the body', async () => {
     const pane = recordingView();
-    const showDetail = createDetailLoader(pane.view, {
+    const loader = createDetailLoader(pane.view, {
       indexRowsFor: () => [
         { direction: 'payload', content_type: 'application/json', original_bytes: 2400, stored_bytes: 2400, truncated: 0, body_hash: 'blake3:abc' },
       ],
       fetchBodies: () => Promise.reject(new Error('gateway went away')),
     });
 
-    await showDetail('security', { event_id: '0123456789ab' });
+    await loader.show('security', { event_id: '0123456789ab' });
 
     expect(pane.selection?.data.payload_body_hash).toBe('blake3:abc');
     expect(pane.selection?.data.payload_body_original_bytes).toBe(2400);
@@ -211,9 +264,40 @@ describe('body content', () => {
     expect(bodyContent(body())).toBe('{"answer":"yes"}');
   });
 
+  it('renders a guest command\'s output, which the archive has held all along', () => {
+    // `update_exec_event` stages "stdout" and "stderr" as string literals, so
+    // a grep for the read-side `BodyDirection::Stdout` finds nothing and the
+    // bodies were there regardless. The pane had no section, so an exec event
+    // showed its exit code and nothing it printed.
+    const row = withFetchedBodies({}, [
+      body({
+        direction: 'stdout',
+        source_table: 'exec_events',
+        content_type: 'text/plain',
+        content: 'Compiling capsem-core\n',
+        // capsem-process truncates guest output to 1 KiB before the writer
+        // sees it, and `original_bytes` is what the command actually produced.
+        stored_bytes: 1024,
+        original_bytes: 40960,
+        truncated: true,
+      }),
+      body({ direction: 'stderr', source_table: 'exec_events', content: 'warning: unused\n' }),
+    ]);
+
+    expect(row.stdout_body).toBe('Compiling capsem-core\n');
+    expect(row.stderr_body).toBe('warning: unused\n');
+    // The excerpt must not read as the whole output.
+    expect(row.stdout_body_truncated).toBe(1);
+    expect(row.stdout_body_original_bytes).toBe(40960);
+    expect(row.stdout_body_stored_bytes).toBe(1024);
+  });
+
   it('ignores directions the detail pane has no section for', () => {
-    const row = withFetchedBodies({}, [body({ direction: 'stdout', content: 'hello' })]);
-    expect(row.stdout_body).toBeUndefined();
-    expect(withIndexMetadata({}, [{ direction: 'stdout', body_hash: 'blake3:abc' }])).toEqual({});
+    // Still pinned, against a direction that genuinely has none -- the point
+    // is that an unknown direction is dropped rather than rendered under a
+    // key nothing displays, not that `stdout` in particular is unknown.
+    const row = withFetchedBodies({}, [body({ direction: 'trailer', content: 'hello' })]);
+    expect(row.trailer_body).toBeUndefined();
+    expect(withIndexMetadata({}, [{ direction: 'trailer', body_hash: 'blake3:abc' }])).toEqual({});
   });
 });

@@ -22,6 +22,8 @@ const DETAIL_PAYLOAD_KEYS = new Set([
   'request_body',
   'response_body',
   'payload_body',
+  'stdout_body',
+  'stderr_body',
   'context_json',
 ]);
 
@@ -29,7 +31,19 @@ const DETAIL_STRUCTURED_KEYS = new Set([
   'rule_json',
 ]);
 
-export const BODY_DIRECTIONS = ['request', 'response', 'payload'] as const;
+// The directions the archive stores and this pane knows how to render.
+//
+// `stdout` and `stderr` are a guest command's output, staged by
+// `capsem-logger`'s `update_exec_event`. They were in the archive all along and
+// the pane simply had no section for them, so exec events showed their exit
+// code and nothing they printed.
+//
+// Their bodies are nearly always partial, and by a lot: `capsem-process`
+// truncates guest output to 1 KiB before the writer ever sees it, and
+// `original_bytes` carries the true total the command produced. That is what
+// the Original/Stored/Truncated rows are for -- a 1 KiB excerpt of 40 KiB of
+// build output must not read as the whole thing.
+export const BODY_DIRECTIONS = ['request', 'response', 'payload', 'stdout', 'stderr'] as const;
 
 // Everything the body index and the body route say *about* a body, as opposed
 // to the body. These render as the small grid above each payload section and

@@ -58,12 +58,17 @@
   let securityStatus = $state<api.SecurityRuleStats | null>(null);
   let bodyBlobs = $state<Record<string, Row[]>>({});
 
-  // Every row in every tab opens the pane through here. The rules about which
-  // selection is the open one, and what a response that lands after the user
-  // has moved on is allowed to do, live in `event-bodies.ts` where they can be
-  // tested -- they had two bugs in them that reading the source could not have
-  // found. The component supplies the two writes and the two sources.
-  const showDetail = createDetailLoader(
+  // Every row in every tab opens the pane through `showDetail`, and every way
+  // of closing it goes through `dismissDetail` -- including the tab switch,
+  // which used to set the selection to null without telling the loader, so a
+  // fetch still out would reopen the pane on the event just dismissed.
+  //
+  // The rules about which selection is the open one, and what a response that
+  // lands after the user has moved on may do, live in `event-bodies.ts` where
+  // they can be tested: they had four bugs in them that reading the source
+  // could not have found. The component supplies the two writes and the two
+  // sources and nothing else.
+  const { show: showDetail, dismiss: dismissDetail } = createDetailLoader(
     {
       show: selection => { detail = selection; },
       setError: message => { bodyError = message; },
@@ -239,7 +244,7 @@
             {activeTab === item.id
               ? 'bg-muted text-foreground font-medium'
               : 'text-muted-foreground-1 hover:text-foreground hover:bg-muted-hover'}"
-          onclick={() => { activeTab = item.id; detail = null; }}
+          onclick={() => { activeTab = item.id; dismissDetail(); }}
         >
           <item.icon size={18} />
           {item.label}
@@ -455,7 +460,7 @@
     <div class="w-[560px] shrink-0 border-s border-line-2 flex flex-col overflow-hidden bg-background">
       <div class="flex items-center gap-2 px-3 py-2 border-b border-line-2 bg-surface">
         <span class="text-xs font-semibold flex-1 truncate capitalize text-foreground">{detail.type}</span>
-        <button class="p-1 rounded hover:bg-muted-hover text-muted-foreground-1 hover:text-foreground" onclick={() => { detail = null; bodyError = null; }} aria-label="Close detail panel">
+        <button class="p-1 rounded hover:bg-muted-hover text-muted-foreground-1 hover:text-foreground" onclick={dismissDetail} aria-label="Close detail panel">
           <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>

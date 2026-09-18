@@ -181,16 +181,31 @@ describe('StatsView detail drawer contract', () => {
     expect(source).not.toContain('text_content');
   });
 
-  it('opens every row through the one loader, so no selection is invisible to a fetch', () => {
-    // A row that assigned `detail` directly was a selection no fetch in flight
-    // knew about, and the stale response won when it landed. The sequencing
-    // itself is tested for real in event-bodies.test.ts; what is asserted here
-    // is that the template has no second way in.
+  it('opens and closes the pane only through the loader', () => {
+    // Any write to the selection that the loader does not know about is a
+    // selection no fetch in flight knows about, and the stale response wins
+    // when it lands. Three of those wrote an object; the fourth wrote `null`
+    // from the tab switch and the close button, which the object-shaped
+    // assertion below could not see -- so the rule is now "no bare assignment
+    // to `detail` at all, in either direction".
+    //
+    // The sequencing itself is tested for real in event-bodies.test.ts; this
+    // is the half about the template having no second way in or out.
     expect(source).toContain('createDetailLoader(');
+    expect(source).toContain('dismiss: dismissDetail');
+    // The only assignment left is the loader's own `show` callback. The
+    // declaration is not an assignment, hence the lookbehind.
+    expect(source.match(/(?<!let )\bdetail = /g) ?? []).toHaveLength(1);
+    expect(source).toContain('show: selection => { detail = selection; }');
     expect(source).not.toMatch(/detail = \{ type: '/);
+    expect(source).not.toMatch(/detail = null/);
+    expect(source).not.toMatch(/bodyError = null/);
     for (const kind of ['model', 'tool', 'http', 'dns', 'file', 'process', 'security', 'detection', 'enforcement']) {
       expect(source).toContain(`void showDetail('${kind}'`);
     }
+    // Both ways out of the pane.
+    expect(source).toContain('dismissDetail();');
+    expect(source).toContain('onclick={dismissDetail}');
   });
 
   it('keeps body ledger metadata out of the generic field grid', () => {

@@ -221,6 +221,35 @@ describe('archived body metadata', () => {
     expect(detailPayloadSections({ rule_id: 'profiles.rules.x' })).toEqual([]);
   });
 
+  it('gives guest command output its own sections', () => {
+    const sections = detailPayloadSections({
+      exit_code: 0,
+      stdout_body: 'Compiling capsem-core\n',
+      stderr_body: 'warning: unused\n',
+    });
+    expect(sections.map(section => [section.key, section.lang, section.hasContent])).toEqual([
+      ['stdout_body', 'text', true],
+      ['stderr_body', 'text', true],
+    ]);
+  });
+
+  it('says how much of a command\'s output it has, since the guest cap takes most of it', () => {
+    // capsem-process truncates guest output to 1 KiB before the ledger sees
+    // it, so these rows are nearly always partial and `original_bytes` is the
+    // true total. Rendering 1 KiB of 40 KiB with no note would be the pane
+    // claiming a build printed forty lines.
+    const rows = payloadSectionMeta({ key: 'stdout_body' }, {
+      stdout_body_content_type: 'text/plain',
+      stdout_body_original_bytes: 40960,
+      stdout_body_stored_bytes: 1024,
+      stdout_body_truncated: 1,
+      stdout_body_hash: `blake3:${'0'.repeat(64)}`,
+    });
+    expect(rows.find(row => row.label === 'Truncated')?.value).toBe('yes');
+    expect(rows.find(row => row.label === 'Original')?.value).toBe('40.0 KB');
+    expect(rows.find(row => row.label === 'Stored')?.value).toBe('1.0 KB');
+  });
+
   it('does not duplicate a body that has both content and metadata', () => {
     const sections = detailPayloadSections({
       response_body: '{"ok":true}',
