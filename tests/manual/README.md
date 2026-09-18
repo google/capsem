@@ -79,6 +79,31 @@ CAPSEM_GYM_PROMPT="In one sentence, say hello and name the capital of France." \
 
 Defaults: `CAPSEM_GYM_MODEL=gemma4`, a short built-in prompt.
 
+### `ledger_economics.py` — bytes per request under a local model
+
+Boots one sandboxed VM and runs a 30-minute fetch-and-summarise loop against
+the host's Gemma through capsem's egress. Every five minutes it samples
+`session.db` (and its WAL), `session.bodies`, the ledger row counts, and the
+RSS of this VM's `capsem-process` and this run's `capsem-service`, then
+asserts the storage budget: under 6 KB per request on disk, under 2 KB per
+request of `capsem-process` RSS growth from the 10-minute mark, a flat
+`capsem-service`, and `capsem-process` as the only writer of the archive.
+
+The numbers come from the ledger and process RSS, not from exec output, so
+the run also fails if the request count ever stops growing between samples
+or no model call was recorded: a loop that silently did nothing must not
+pass. It prints the per-sample request counts, the marginal disk cost per
+request without the empty schema's fixed floor, and the compression actually
+achieved (indexed body bytes against the size of `session.bodies`).
+
+```bash
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 2700 \
+    -- uv run --project build_system --frozen python tests/manual/ledger_economics.py
+```
+
+Env: `CAPSEM_ECON_MODEL` (default `gemma4`), `CAPSEM_ECON_MINUTES` (default
+30; at least 15 for the RSS check).
+
 ### `ctf_gemma.py` — a local model drives an attack the sandbox observes
 
 Closes the loop between the two scenarios above: a local model is the brain, a
