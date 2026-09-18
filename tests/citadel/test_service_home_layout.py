@@ -37,7 +37,7 @@ def _shared_layouts(source: str) -> list[str]:
         if not (isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant)):
             continue
         key = target.slice.value
-        if key in ("CAPSEM_RUN_DIR", "CAPSEM_HOME"):
+        if isinstance(key, str) and key in ("CAPSEM_RUN_DIR", "CAPSEM_HOME"):
             values.setdefault(key, []).append(ast.unparse(node.value))
     return sorted(set(values.get("CAPSEM_RUN_DIR", [])) & set(values.get("CAPSEM_HOME", [])))
 
