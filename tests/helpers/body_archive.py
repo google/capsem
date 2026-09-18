@@ -46,6 +46,14 @@ MAX_BLOCK_RAW_BYTES = 16 * 1024 * 1024
 MAX_BLOCK_COMP_BYTES = MAX_BLOCK_RAW_BYTES + 64 * 1024
 
 
+# The ledgers that archive the event they are about as a ``payload``. They share
+# the event id -- a rule match, the decision it drove, the ask it raised -- so a
+# payload read names the table as well as the event.
+SECURITY_PAYLOAD_TABLES = frozenset(
+    {"security_rule_events", "security_decision_events", "security_ask_events"}
+)
+
+
 def archive_path_for_db(db_path: Path | str) -> Path:
     """``session.bodies`` beside ``session.db``."""
     return Path(db_path).with_suffix(".bodies")
@@ -121,11 +129,20 @@ class SessionArchive:
             )
         return body
 
-    def security_payload(self, event_id: str) -> dict[str, Any]:
-        """The forensic payload of one ``security_rule_events`` match, parsed."""
-        body = self.read(event_id, "security_rule_events", "payload")
+    def security_payload(
+        self, event_id: str, source_table: str = "security_rule_events"
+    ) -> dict[str, Any]:
+        """The forensic payload one security ledger archived for an event, parsed.
+
+        Rule matches, decisions and asks each archive the event they are about
+        under their own table, so the table is part of the question: all three
+        name the same event with a ``payload``.
+        """
+        if source_table not in SECURITY_PAYLOAD_TABLES:
+            raise AssertionError(f"{source_table} does not archive a security payload")
+        body = self.read(event_id, source_table, "payload")
         if body is None:
-            raise AssertionError(f"security rule match {event_id} has no archived payload")
+            raise AssertionError(f"{source_table} has no archived payload for {event_id}")
         return json.loads(body.decode())
 
     def _verify_file_header(self) -> None:
@@ -189,6 +206,38 @@ class SessionArchive:
         return raw
 
 
+def archived_bodies(db_path: Path | str) -> list[tuple[str, str, str, bytes]]:
+    """Every body the session archived, as (source_table, event_id, direction, bytes).
+
+    For the checks that have to see *everything* a session stored. A raw-secret
+    scan that walks SQLite's text columns stopped seeing request and response
+    bodies when they moved to the archive, and security payloads when those
+    followed; it has to walk this too, or it passes by not looking.
+    """
+    with contextlib.closing(sqlite3.connect(f"file:{Path(db_path)}?mode=ro", uri=True)) as conn:
+        has_index = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_body_blobs'"
+        ).fetchone()
+        if not has_index:
+            return []
+        keys = conn.execute(
+            """
+            SELECT source_table, event_id, direction FROM event_body_blobs
+            ORDER BY block_offset, body_offset
+            """
+        ).fetchall()
+    if not keys:
+        return []
+    with SessionArchive(db_path) as archive:
+        bodies = []
+        for source_table, event_id, direction in keys:
+            body = archive.read(event_id, source_table, direction)
+            if body is None:
+                raise AssertionError(f"{source_table}/{direction} of {event_id} vanished mid-scan")
+            bodies.append((source_table, event_id, direction, body))
+        return bodies
+
+
 def read_archived_body(
     db_path: Path | str,
     event_id: str,
@@ -200,8 +249,10 @@ def read_archived_body(
         return archive.read(event_id, source_table, direction)
 
 
-def security_payload_at(db_path: Path | str, event_id: str) -> dict[str, Any]:
-    """The forensic payload of one ``security_rule_events`` match, parsed.
+def security_payload_at(
+    db_path: Path | str, event_id: str, source_table: str = "security_rule_events"
+) -> dict[str, Any]:
+    """The forensic payload one security ledger archived for an event, parsed.
 
     The payload is archive-backed rather than a column, so a test that used to
     read ``event_json`` off the row reads it here instead. A match with no
@@ -211,7 +262,7 @@ def security_payload_at(db_path: Path | str, event_id: str) -> dict[str, Any]:
     the block those rows share is inflated once.
     """
     with SessionArchive(db_path) as archive:
-        return archive.security_payload(event_id)
+        return archive.security_payload(event_id, source_table)
 
 
 def _main_db_path(conn: sqlite3.Connection) -> Path:
@@ -223,11 +274,18 @@ def _main_db_path(conn: sqlite3.Connection) -> Path:
     raise AssertionError("connection has no main database")
 
 
+def ledger_path(conn: sqlite3.Connection) -> Path:
+    """The file a test's open session connection reads, for a path-based helper."""
+    return _main_db_path(conn)
+
+
 def session_archive(conn: sqlite3.Connection) -> SessionArchive:
     """The archive beside the session a test already has open."""
     return SessionArchive(_main_db_path(conn))
 
 
-def security_payload(conn: sqlite3.Connection, event_id: str) -> dict[str, Any]:
+def security_payload(
+    conn: sqlite3.Connection, event_id: str, source_table: str = "security_rule_events"
+) -> dict[str, Any]:
     """`security_payload_at`, for a test that already holds the connection."""
-    return security_payload_at(_main_db_path(conn), event_id)
+    return security_payload_at(_main_db_path(conn), event_id, source_table)

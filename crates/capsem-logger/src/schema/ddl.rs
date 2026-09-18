@@ -95,8 +95,8 @@ pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS event_body_blobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask')),
-        source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls', 'tool_responses', 'exec_events', 'security_rule_events')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.decision', 'security.ask')),
+        source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls', 'tool_responses', 'exec_events', 'security_rule_events', 'security_decision_events', 'security_ask_events')),
         direction TEXT NOT NULL CHECK (direction IN ('request', 'response', 'payload', 'stdout', 'stderr')),
         content_type TEXT,
         original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
@@ -420,7 +420,11 @@ pub const CREATE_SCHEMA: &str = "
         requested_decision TEXT NOT NULL CHECK (requested_decision IN ('allow', 'ask', 'block')),
         effective_decision TEXT NOT NULL CHECK (effective_decision IN ('allow', 'ask', 'block')),
         reason TEXT,
-        event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+        -- The event this decision was made about is archive-backed, like a
+        -- rule match's: `event_body_blobs` with direction 'payload'. Roughly
+        -- 25 decisions a request, each carrying the same event a rule match
+        -- does, made this the largest table in a session and all of it
+        -- mirrored in RAM.
         trace_id TEXT,
         turn_id TEXT,
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
@@ -442,7 +446,8 @@ pub const CREATE_SCHEMA: &str = "
         rule_name TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied')),
         rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
-        event_json TEXT NOT NULL CHECK (json_valid(event_json)),
+        -- The asked-about event is archive-backed, one way for every security
+        -- payload: `event_body_blobs` with direction 'payload'.
         resolver TEXT,
         reason TEXT,
         trace_id TEXT,

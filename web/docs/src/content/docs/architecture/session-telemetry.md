@@ -111,6 +111,14 @@ erDiagram
         text detection_level
         text rule_json
     }
+    security_decision_events {
+        int id PK
+        text event_id
+        text event_type
+        text stage
+        text actor
+        text effective_decision
+    }
     security_ask_events {
         int id PK
         text ask_id
@@ -119,7 +127,6 @@ erDiagram
         text rule_id
         text status
         text rule_json
-        text event_json
     }
     exec_events {
         int id PK
@@ -153,6 +160,8 @@ erDiagram
     tool_responses ||--o{ event_body_blobs : "event_id"
     exec_events ||--o{ event_body_blobs : "event_id"
     security_rule_events ||--o{ event_body_blobs : "event_id"
+    security_decision_events ||--o{ event_body_blobs : "event_id"
+    security_ask_events ||--o{ event_body_blobs : "event_id"
     body_blocks ||--o{ event_body_blobs : "block_offset"
     dns_events ||--o{ security_rule_events : "event_id"
     security_rule_events ||--o{ security_ask_events : "event_id"
@@ -350,8 +359,8 @@ forensic body truth lives in the archive and joins by `event_id` plus
 | `id` | INTEGER PK | Auto-increment |
 | `event_id` | TEXT | 12-hex event id of the row in `source_table` |
 | `event_type` | TEXT | Canonical event type such as `http.request`, `model.call`, or `mcp.tool_call` |
-| `source_table` | TEXT | `net_events`, `model_calls`, `tool_calls`, `tool_responses`, `exec_events`, or `security_rule_events` |
-| `direction` | TEXT | `request`, `response`, `payload` (a security rule match's forensic event), `stdout` or `stderr` |
+| `source_table` | TEXT | `net_events`, `model_calls`, `tool_calls`, `tool_responses`, `exec_events`, `security_rule_events`, `security_decision_events`, or `security_ask_events` |
+| `direction` | TEXT | `request`, `response`, `payload` (the event a rule match, decision or ask is about), `stdout` or `stderr` |
 | `content_type` | TEXT | MIME type or protocol content type, when known |
 | `original_bytes` | INTEGER | Full body byte count observed at the boundary |
 | `stored_bytes` | INTEGER | Bytes actually archived, after the 10 MiB per-direction cap |
@@ -468,9 +477,36 @@ real session, and the owning process mirrors this table in RAM, so the row
 keeps what the views filter and group on and the payload is fetched by event id
 when someone actually wants it.
 
+### security_decision_events
+
+Append-only decision transitions: what a stage wanted and what the effective
+decision became. Roughly 25 of these a request, most of them `process.audit`.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PK | Auto-increment |
+| `timestamp_unix_ms` | INTEGER | Transition timestamp |
+| `event_id` | TEXT | 12-hex primary event id |
+| `event_type` | TEXT | Canonical security event type |
+| `stage` | TEXT | `preprocess`, `rule`, `rewrite`, `postprocess`, or `ask_resolution` |
+| `actor` | TEXT | Rule or plugin that requested the decision |
+| `rule_id` / `plugin_id` | TEXT | Which one it was, when known |
+| `previous_decision` / `requested_decision` / `effective_decision` | TEXT | `allow`, `ask`, or `block` |
+| `reason` | TEXT | Why, when stated |
+| `trace_id` / `turn_id` / `credential_ref` | TEXT | Correlation and brokered credential |
+
+The event the decision was made about is not a column. It was, and at about
+6 KB a row it made this the largest table in a measured session -- 7.5 MB of a
+10.5 MB ledger, all of it also mirrored in the owning process's RAM. It is
+archived like every other security payload, under
+`source_table = 'security_decision_events'`, `direction = 'payload'`.
+
 ### security_ask_events
 
-Append-only lifecycle rows for `ask` decisions.
+Append-only lifecycle rows for `ask` decisions. The asked-about event is
+archived under `source_table = 'security_ask_events'`, `direction = 'payload'`;
+the pending row and its resolution carry the same event, and it is archived
+once.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -483,7 +519,6 @@ Append-only lifecycle rows for `ask` decisions.
 | `rule_name` | TEXT | Rule telemetry name |
 | `status` | TEXT | `pending`, `approved`, or `denied` |
 | `rule_json` | TEXT | JSON rule snapshot |
-| `event_json` | TEXT | JSON normalized `SecurityEvent` payload |
 | `resolver` | TEXT | Approver/resolver identity, when present |
 | `reason` | TEXT | Resolution reason, when present |
 | `trace_id` | TEXT | Cross-table correlation ID |
@@ -638,7 +673,7 @@ the stale rows fail their hash check instead of answering with the wrong bytes.
 
 | Access | What it returns |
 |--------|-----------------|
-| `DbHandle::read_body(event_id, direction)` | One archived body of one event |
+| `DbHandle::read_body(event_id, source_table, direction)` | One archived body, named by the index's whole key |
 | `DbHandle::read_bodies(event_id)` | Every archived body of one event |
 | `DbHandle::read_bodies_for_events(...)` | One direction for a page of events, bounded by a byte budget |
 | `GET /vms/{id}/bodies/{event_id}` | Every body of one event as JSON, 1 MiB each by default (`?max_bytes=` up to 16 MiB); `truncated` means the capture was cut, `truncated_for_transport` that this response was |
@@ -650,11 +685,18 @@ The export writes one gzip-member-framed `resource` record per archived body,
 so `warcio`, `pywb` and the rest of the web-archive toolchain can read it and
 seek within it without Capsem code. It is streamed, not buffered.
 
-- **Record id**: `urn:capsem:{session}:{event_id}:{direction}`. The session
-  names the ledger and the event id names the row, so an id is unique across
-  sessions merged into one collection and points straight back at its source.
+- **Record id**: `urn:capsem:{session}:{source_table}:{event_id}:{direction}`.
+  The session names the ledger and the rest is the body index's unique key, so
+  an id is unique across sessions merged into one collection and points
+  straight back at its source. The table is needed: a rule match, the decision
+  it drove and an ask it raised each archive a `payload` for the same event.
+- **One record per body**: a body several rows share -- every rule a request
+  matched, an ask's pending row and its resolution -- is one record, named by
+  the first of them.
 - **Target URI**: the real `https://` URI for network and model traffic, and a
-  `capsem://` URI naming the tool, exec stream or security rule otherwise.
+  `capsem://` URI otherwise: the tool, the exec stream, the security rule
+  (`capsem://security/{rule_id}`), the decision's actor
+  (`capsem://security-decision/{actor}`) or the ask (`capsem://security-ask/{ask_id}`).
 - **Date**: the source row's time. `tool_responses` has no timestamp of its
   own, so its records carry the time the body was archived.
 - **Digest**: `WARC-Block-Digest` is blake3, the digest the ledger already
@@ -689,6 +731,7 @@ seek within it without Capsem code. It is streamed, not buffered.
 | `WriteOp::FileEvent` | VirtioFS watcher | `fs_events` |
 | `WriteOp::DnsEvent` | DNS proxy | `dns_events` |
 | `WriteOp::SecurityRuleEvent` | Security engine | `security_rule_events` |
+| `WriteOp::SecurityDecisionEvent` | Security engine | `security_decision_events` |
 | `WriteOp::SecurityAskEvent` | Security engine | `security_ask_events` |
 
 ## Security Rule Audit

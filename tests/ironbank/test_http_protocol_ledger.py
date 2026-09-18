@@ -98,7 +98,6 @@ EXPECTED_SECURITY_ASK_COLUMNS = {
     "rule_name",
     "status",
     "rule_json",
-    "event_json",
     "resolver",
     "reason",
     "trace_id",
@@ -1839,7 +1838,9 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
             ask_rule_json = json.loads(ask_row["rule_json"])
             assert ask_rule_json["rule_action"] == "ask"
             assert ask_rule_json["detection_level"] == "medium"
-            ask_event_json = json.loads(ask_row["event_json"])
+            # The asked-about event is archive-backed, like every security
+            # payload; the ask row keeps the lifecycle.
+            ask_event_json = security_payload(conn, ask_row["event_id"], "security_ask_events")
             assert ask_event_json["event_type"] == "http.request"
             assert ask_event_json["http"]["path"] == "/ask-target"
 

@@ -233,10 +233,7 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
         "security_decision_events",
         &["event_id", "stage", "effective_decision", "credential_ref"],
     ),
-    (
-        "security_ask_events",
-        &["event_id", "ask_id", "status", "event_json", "trace_id"],
-    ),
+    ("security_ask_events", &["event_id", "ask_id", "status", "trace_id"]),
     ("profile_mutation_events", &["mutation_id", "profile_id", "status"]),
     (
         "transport_events",

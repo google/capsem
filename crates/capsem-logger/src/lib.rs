@@ -14,10 +14,10 @@ pub use db::{
 pub use events::{
     credential_reference, is_credential_reference, AuditEvent, Decision, DnsEvent, ExecEvent, ExecEventComplete,
     FileAction, FileEvent, FileKind, McpCall, MembershipState, ModelCall, NetEvent, NetworkMembership, NetworkRecord,
-    NetworkState, ProfileMutationEvent, ProfileMutationStatus, SecurityAskEvent, SecurityAskPending, SecurityAskStatus,
-    SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage, SecurityDetectionLevel, SecurityRuleAction,
-    SecurityRuleEvent, SecurityRuleMatch, SubstitutionEvent, ToolCallEntry, ToolResponseEntry, TransportEvent,
-    TransportEventKind, CREDENTIAL_REF_PREFIX,
+    NetworkState, ProfileMutationEvent, ProfileMutationStatus, SecurityAskEvent, SecurityAskPending, SecurityAskRecord,
+    SecurityAskStatus, SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage, SecurityDetectionLevel,
+    SecurityRuleAction, SecurityRuleEvent, SecurityRuleMatch, SubstitutionEvent, ToolCallEntry, ToolResponseEntry,
+    TransportEvent, TransportEventKind, CREDENTIAL_REF_PREFIX,
 };
 pub use reader::{
     validate_select_only, BrokeredCredentialStat, DbReader, DomainCount, FileEventStats, HistoryCounts, HistoryEntry,

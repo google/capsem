@@ -8,7 +8,7 @@ use rusqlite::{params, Connection, OpenFlags, Row};
 use serde::{Deserialize, Serialize};
 
 use crate::events::{
-    AuditEvent, Decision, ExecEvent, FileAction, FileEvent, FileKind, ModelCall, NetEvent, SecurityAskEvent,
+    AuditEvent, Decision, ExecEvent, FileAction, FileEvent, FileKind, ModelCall, NetEvent, SecurityAskRecord,
     SecurityAskStatus, SecurityDetectionLevel, SecurityRuleAction, SecurityRuleMatch, ToolCallEntry, ToolResponseEntry,
 };
 use crate::schema;
@@ -474,10 +474,10 @@ impl DbReader {
     }
 
     /// Query recent ask lifecycle records, newest first.
-    pub fn recent_security_ask_events(&self, limit: usize) -> rusqlite::Result<Vec<SecurityAskEvent>> {
+    pub fn recent_security_ask_events(&self, limit: usize) -> rusqlite::Result<Vec<SecurityAskRecord>> {
         let mut stmt = self.conn.prepare(
             "SELECT timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
-                    rule_name, status, rule_json, event_json, resolver, reason, trace_id
+                    rule_name, status, rule_json, resolver, reason, trace_id
              FROM security_ask_events
              ORDER BY timestamp_unix_ms DESC, id DESC
              LIMIT ?1",
@@ -487,10 +487,10 @@ impl DbReader {
     }
 
     /// Return the latest lifecycle row for an ask id.
-    pub fn latest_security_ask_event(&self, ask_id: &str) -> rusqlite::Result<Option<SecurityAskEvent>> {
+    pub fn latest_security_ask_event(&self, ask_id: &str) -> rusqlite::Result<Option<SecurityAskRecord>> {
         let mut stmt = self.conn.prepare(
             "SELECT timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
-                    rule_name, status, rule_json, event_json, resolver, reason, trace_id
+                    rule_name, status, rule_json, resolver, reason, trace_id
              FROM security_ask_events
              WHERE ask_id = ?1
              ORDER BY timestamp_unix_ms DESC, id DESC

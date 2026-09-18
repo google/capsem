@@ -12,7 +12,13 @@ import sys
 from pathlib import Path
 
 import pytest
-from helpers.body_archive import SessionArchive, security_payload, session_archive
+from helpers.body_archive import (
+    SessionArchive,
+    archived_bodies,
+    ledger_path,
+    security_payload,
+    session_archive,
+)
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -151,6 +157,14 @@ def _assert_no_raw_secret_markers_in_session_db(conn: sqlite3.Connection) -> Non
                     continue
                 leaked = [marker for marker in RAW_SECRET_MARKERS if marker in value]
                 assert not leaked, f"raw secret marker leaked in {table}.{column}: {leaked}"
+    # Bodies left SQLite for the archive -- request and response bodies, then
+    # the security ledgers' payloads -- so a scan of text columns alone passes
+    # by not looking. The archive is walked too, every body hash-verified.
+    for source_table, event_id, direction, body in archived_bodies(ledger_path(conn)):
+        leaked = [marker for marker in RAW_SECRET_MARKERS if marker.encode() in body]
+        assert not leaked, (
+            f"raw secret marker leaked in the archived {source_table}/{direction} body of {event_id}: {leaked}"
+        )
 
 
 def _post_bytes_with_status(

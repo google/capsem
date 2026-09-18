@@ -319,10 +319,13 @@ the tool result back to the model. The same `call_id` must match a
 
 MCP initialize/list/resource protocol evidence is in the forensic payload of
 the matching `security_rule_events` row. That payload is archive-backed, not a
-column: read it with `DbHandle::read_body(event_id, BodyDirection::Payload)`,
+column: read it with
+`DbHandle::read_body(event_id, "security_rule_events", BodyDirection::Payload)`,
 or join `event_body_blobs` on `source_table = 'security_rule_events'` and
-`direction = 'payload'` to see what is stored. Use `tool_calls` for
-product/user/security tool activity.
+`direction = 'payload'` to see what is stored. Decisions and asks archive the
+same way under `security_decision_events` and `security_ask_events`, and all
+three name the same event, so a payload read always names its table. Use
+`tool_calls` for product/user/security tool activity.
 
 ### Bodies: event_body_blobs, body_blocks and session.bodies
 
@@ -366,15 +369,15 @@ and how big it was, not the bytes.
 
 To get the bytes:
 
-- In Rust, `DbHandle::read_body(event_id, BodyDirection::Response)` for one
-  direction and `DbHandle::read_bodies(event_id)` for every body of an event
+- In Rust, `DbHandle::read_body(event_id, source_table, direction)` for one
+  body and `DbHandle::read_bodies(event_id)` for every body of an event
   (`read_bodies_for_events` for a page, with a byte budget). Route and helper
   code never opens the archive itself.
 - Over HTTP, `GET /vms/{id}/bodies/{event_id}` returns every body of one event,
   1 MiB each by default (`?max_bytes=` up to 16 MiB). `truncated` says the
   capture was cut; `truncated_for_transport` says this response was.
 - The whole session as a WARC 1.1 file: `GET /vms/{id}/bodies/export.warc.gz`.
-  One `resource` record per body, id `urn:capsem:{session}:{event_id}:{direction}`,
+  One `resource` record per body, id `urn:capsem:{session}:{source_table}:{event_id}:{direction}`,
   bracketed by two `warcinfo` records; the closing one counts skipped bodies by
   reason, and a file without it is an export that did not finish. Readable by
   `warcio`/`pywb` with no Capsem code.

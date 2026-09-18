@@ -101,6 +101,20 @@ async fn security_ask_event_roundtrip_preserves_lifecycle_rows() {
     assert_eq!(rows[1].rule_id, "profiles.rules.ask_openai");
     let latest = reader.latest_security_ask_event("abcdef123456").unwrap().unwrap();
     assert_eq!(latest.status, crate::events::SecurityAskStatus::Approved);
+
+    // The asked-about event is archived beside the lifecycle rows, once: the
+    // pending row and its resolution name the same event and carry the same
+    // bytes, and the index holds one body per (event, table, direction).
+    let db = crate::DbHandle::open_external_reader(&db_path).unwrap();
+    let payload = db
+        .read_body("111111abcdef", "security_ask_events", crate::BodyDirection::Payload)
+        .await
+        .unwrap()
+        .expect("the asked-about event is archived");
+    assert_eq!(payload.bytes, br#"{"http":{"host":"api.openai.com"}}"#);
+    assert_eq!(payload.content_type.as_deref(), Some("application/json"));
+    let bodies = db.read_bodies("111111abcdef").await.unwrap();
+    assert_eq!(bodies.len(), 1, "two lifecycle rows of one ask index one body, not two");
 }
 
 #[tokio::test]
@@ -166,6 +180,22 @@ async fn security_decision_event_roundtrip_preserves_explicit_transition() {
             crate::events::credential_reference("github", "ghp-test"),
         )
     );
+    drop(conn);
+
+    // The transition's row keeps what projections filter on; the event it was
+    // made about is archived, and the roundtrip holds only if it reads back.
+    let payload = crate::DbHandle::open_external_reader(&db_path)
+        .unwrap()
+        .read_body(
+            "abcdef123456",
+            "security_decision_events",
+            crate::BodyDirection::Payload,
+        )
+        .await
+        .unwrap()
+        .expect("the decided-about event is archived");
+    assert_eq!(payload.bytes, br#"{"file":{"import":{"name":"eicar.txt"}}}"#);
+    assert_eq!(payload.source_table, "security_decision_events");
 }
 
 #[tokio::test]

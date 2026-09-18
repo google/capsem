@@ -32,8 +32,8 @@ fn fresh_security_ledgers_accept_network_events_but_reject_unknown_types() {
         "network.probe_result",
     ] {
         insert_rule(&conn, event_type).unwrap();
-        conn.execute("INSERT INTO security_decision_events(timestamp_unix_ms,event_id,event_type,stage,actor,previous_decision,requested_decision,effective_decision,event_json) VALUES(1,'abcdef123456',?1,'rule','fixture','allow','block','block','{}')", [event_type]).unwrap();
-        conn.execute("INSERT INTO security_ask_events(timestamp_unix_ms,ask_id,event_id,event_type,rule_id,rule_name,status,rule_json,event_json) VALUES(1,'abcdef123456','abcdef123456',?1,'fixture','fixture','pending','{}','{}')", [event_type]).unwrap();
+        conn.execute("INSERT INTO security_decision_events(timestamp_unix_ms,event_id,event_type,stage,actor,previous_decision,requested_decision,effective_decision) VALUES(1,'abcdef123456',?1,'rule','fixture','allow','block','block')", [event_type]).unwrap();
+        conn.execute("INSERT INTO security_ask_events(timestamp_unix_ms,ask_id,event_id,event_type,rule_id,rule_name,status,rule_json) VALUES(1,'abcdef123456','abcdef123456',?1,'fixture','fixture','pending','{}')", [event_type]).unwrap();
     }
     assert!(insert_rule(&conn, "network.typo").is_err());
 }
@@ -134,4 +134,47 @@ fn a_missing_security_table_is_left_to_readiness() {
     assert!(super::assert_current(&conn).is_ok());
     let error = crate::schema::validate_ready_schema(&conn, false).unwrap_err();
     assert!(error.contains("security_ask_events"), "{error}");
+}
+
+/// A ledger whose security tables still keep the payload inline, built the way
+/// the previous build wrote them: the current declaration plus the column.
+fn ledger_with_inline_payloads(conn: &Connection) {
+    create_tables(conn).unwrap();
+    for table in super::TABLES {
+        conn.execute_batch(&format!(
+            "ALTER TABLE {table} ADD COLUMN event_json TEXT NOT NULL DEFAULT '{{}}'"
+        ))
+        .unwrap();
+    }
+}
+
+/// The payload moved to the archive, and a ledger that still keeps it inline
+/// is refused at open, naming every table that does. Accepting it would fail
+/// the session's first security write instead -- a decision made and not
+/// recorded, which is the outcome a forensic ledger exists to rule out.
+#[test]
+fn a_ledger_that_keeps_security_payloads_inline_is_refused_by_name() {
+    let conn = Connection::open_in_memory().unwrap();
+    ledger_with_inline_payloads(&conn);
+
+    let error = super::assert_current(&conn)
+        .expect_err("a ledger that keeps security payloads inline must not open")
+        .to_string();
+    for table in super::TABLES {
+        assert!(error.contains(table), "the refusal must name {table}: {error}");
+    }
+    assert!(error.contains("event_json"), "and say what is wrong with it: {error}");
+
+    let readiness = crate::schema::validate_ready_schema(&conn, false)
+        .expect_err("readiness must refuse it too, since column presence alone would pass it");
+    assert!(readiness.contains("event_json"), "{readiness}");
+}
+
+/// The current declaration is not mistaken for the old one.
+#[test]
+fn a_fresh_ledger_keeps_no_security_payload_inline() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    assert!(super::assert_current(&conn).is_ok());
+    assert!(super::inline_payloads(&conn, "main").unwrap().is_empty());
 }

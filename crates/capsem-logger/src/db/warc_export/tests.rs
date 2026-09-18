@@ -64,7 +64,10 @@ fn the_query_covers_every_source_table_the_schema_allows() {
         .split(',')
         .map(|name| name.trim().trim_matches('\''))
         .collect();
-    assert_eq!(allowed.len(), 6, "{allowed:?}");
+    // Counted from the CHECK, not spelled: the list grows whenever a ledger
+    // starts archiving bodies, and a hardcoded count is one more place to
+    // forget. The two sides must simply agree.
+    assert_eq!(allowed.len(), SOURCE_BRANCHES.len(), "{allowed:?}");
 
     let sql = export_sql();
     for table in &allowed {
@@ -76,7 +79,7 @@ fn the_query_covers_every_source_table_the_schema_allows() {
     }
     assert_eq!(
         sql.matches("LEFT JOIN").count(),
-        6,
+        allowed.len(),
         "every branch must left-join, so a body with no source row is counted rather than dropped"
     );
     assert!(
@@ -86,7 +89,7 @@ fn the_query_covers_every_source_table_the_schema_allows() {
 }
 
 #[test]
-fn a_records_id_names_the_session_the_event_and_the_direction() {
+fn a_records_id_names_the_session_the_table_the_event_and_the_direction() {
     let row = IndexRow {
         event_id: "0123456789ab".into(),
         source_table: "net_events".into(),
@@ -103,6 +106,6 @@ fn a_records_id_names_the_session_the_event_and_the_direction() {
     };
     assert_eq!(
         record_id("a-session", &row),
-        "urn:capsem:a-session:0123456789ab:response"
+        "urn:capsem:a-session:net_events:0123456789ab:response"
     );
 }

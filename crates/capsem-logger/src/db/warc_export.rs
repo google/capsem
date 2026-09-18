@@ -170,12 +170,23 @@ impl fmt::Display for SkipReason {
 /// WARC requires record ids to be globally unique, and an event id is only
 /// unique within its ledger: twelve hex digits the session assigns, so two
 /// sessions merged into one collection can carry the same one. The session
-/// names the ledger and the event id names the row in it -- the
-/// `UNIQUE(event_id, source_table, direction)` index on `event_body_blobs`
-/// gives one event at most one body per direction -- so the id is unique
-/// across sessions and still points straight back at what it came from.
+/// names the ledger, and the rest is the index's own unique key --
+/// `UNIQUE(event_id, source_table, direction)` on `event_body_blobs` -- so the
+/// id is unique by construction and still points straight back at the row.
+///
+/// The source table is not decoration. This id used to leave it out, on the
+/// stated grounds that one event has at most one body per direction; that was
+/// never what the index says, and it stopped being true in practice when the
+/// security ledgers began archiving their payloads: a rule match, the decision
+/// it drove and an ask it raised all name the same event, each with a
+/// `payload`, and without the table the three records shared one id.
 fn record_id(session: &str, row: &IndexRow) -> String {
-    format!("urn:capsem:{session}:{}:{}", row.event_id, row.direction.as_str())
+    format!(
+        "urn:capsem:{session}:{}:{}:{}",
+        row.source_table,
+        row.event_id,
+        row.direction.as_str()
+    )
 }
 
 /// One body's index row plus the two facts only its source row can supply.
@@ -220,6 +231,16 @@ const SOURCE_BRANCHES: &[(&str, &str, &str)] = &[
         "'capsem://security/' || s.rule_id",
         "NULL, s.timestamp_unix_ms",
     ),
+    (
+        "security_decision_events",
+        "'capsem://security-decision/' || s.actor",
+        "NULL, s.timestamp_unix_ms",
+    ),
+    (
+        "security_ask_events",
+        "'capsem://security-ask/' || s.ask_id",
+        "NULL, s.timestamp_unix_ms",
+    ),
 ];
 
 /// One `SELECT` per source table, unioned and then ordered as a whole.
@@ -229,8 +250,15 @@ const SOURCE_BRANCHES: &[(&str, &str, &str)] = &[
 /// left join brings it back with a NULL URI, which is what gets counted as a
 /// skip with a reason.
 ///
-/// `source_table` is CHECK-constrained to exactly these six, so the union
-/// covers every row in the table.
+/// And joined to *one* source row per event, the first by id. Several rows can
+/// share an event's body: every rule a request matched, the pending ask and
+/// its resolution. A plain join on `event_id` turned one archived body into a
+/// record per such row -- the same bytes under the same id, which WARC forbids
+/// and which counted each body more than once. The first row is the one that
+/// raised it: the first rule matched, the ask as it was raised.
+///
+/// `source_table` is CHECK-constrained to exactly the tables listed here, and
+/// the coverage test parses that CHECK, so the union covers every row.
 fn export_sql() -> String {
     let branches: Vec<String> = SOURCE_BRANCHES
         .iter()
@@ -238,7 +266,10 @@ fn export_sql() -> String {
             format!(
                 "SELECT {columns}, {uri} AS target_uri, {dates}
                  FROM event_body_blobs AS b
-                 LEFT JOIN {table} AS s ON s.event_id = b.event_id
+                 LEFT JOIN (
+                     SELECT * FROM {table}
+                     WHERE id IN (SELECT MIN(id) FROM {table} GROUP BY event_id)
+                 ) AS s ON s.event_id = b.event_id
                  WHERE b.source_table = '{table}'",
                 columns = INDEX_COLUMNS
                     .split(", ")

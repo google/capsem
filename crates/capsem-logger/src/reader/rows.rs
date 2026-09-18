@@ -31,9 +31,9 @@ pub(super) fn read_security_rule_event_row(row: &Row<'_>) -> rusqlite::Result<Se
     })
 }
 
-pub(super) fn read_security_ask_event_row(row: &Row<'_>) -> rusqlite::Result<SecurityAskEvent> {
+pub(super) fn read_security_ask_event_row(row: &Row<'_>) -> rusqlite::Result<SecurityAskRecord> {
     let status: String = row.get(6)?;
-    Ok(SecurityAskEvent {
+    Ok(SecurityAskRecord {
         timestamp_unix_ms: row.get(0)?,
         ask_id: row.get(1)?,
         event_id: row.get(2)?,
@@ -48,10 +48,9 @@ pub(super) fn read_security_ask_event_row(row: &Row<'_>) -> rusqlite::Result<Sec
             )
         })?,
         rule_json: row.get(7)?,
-        event_json: row.get(8)?,
-        resolver: row.get(9)?,
-        reason: row.get(10)?,
-        trace_id: row.get(11)?,
+        resolver: row.get(8)?,
+        reason: row.get(9)?,
+        trace_id: row.get(10)?,
     })
 }
 

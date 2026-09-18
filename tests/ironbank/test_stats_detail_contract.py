@@ -363,7 +363,6 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             event_id TEXT NOT NULL,
             ask_id TEXT NOT NULL,
             status TEXT NOT NULL,
-            event_json TEXT NOT NULL,
             trace_id TEXT
         );
         CREATE TABLE profile_mutation_events (

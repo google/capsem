@@ -592,12 +592,11 @@ fn create_tables_includes_security_ask_events_contract() {
     conn.execute(
         "INSERT INTO security_ask_events (
                 timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
-                rule_name, status, rule_json, event_json
+                rule_name, status, rule_json
              ) VALUES (
                 1789000000000, 'abcdef123456', '111111abcdef',
                 'http.request', 'profiles.rules.ask_openai', 'ask_openai',
-                'pending', '{\"name\":\"ask_openai\"}',
-                '{\"http\":{\"host\":\"api.openai.com\"}}'
+                'pending', '{\"name\":\"ask_openai\"}'
              )",
         [],
     )
@@ -607,11 +606,11 @@ fn create_tables_includes_security_ask_events_contract() {
         .execute(
             "INSERT INTO security_ask_events (
                     timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
-                    rule_name, status, rule_json, event_json
+                    rule_name, status, rule_json
                  ) VALUES (
                     1789000000000, 'abcdef123457', '111111abcdeg',
                     'http.request', 'profiles.rules.ask_openai', 'ask_openai',
-                    'maybe', '{}', '{}'
+                    'maybe', '{}'
                  )",
             [],
         )
@@ -672,11 +671,11 @@ fn security_decision_events_record_explicit_decisions_and_reject_magic_outcome()
         "INSERT INTO security_decision_events (
                 timestamp_unix_ms, event_id, event_type, stage, actor,
                 rule_id, plugin_id, previous_decision, requested_decision,
-                effective_decision, reason, event_json
+                effective_decision, reason
              ) VALUES (
                 1789000000000, 'abcdef123456', 'file.import', 'rewrite',
                 'dummy_pre_eicar', 'profiles.rules.scan_eicar', 'dummy_pre_eicar',
-                'allow', 'block', 'block', 'EICAR test seed observed', '{}'
+                'allow', 'block', 'block', 'EICAR test seed observed'
              )",
         [],
     )
@@ -686,11 +685,10 @@ fn security_decision_events_record_explicit_decisions_and_reject_magic_outcome()
         .execute(
             "INSERT INTO security_decision_events (
                     timestamp_unix_ms, event_id, event_type, stage, actor,
-                    previous_decision, requested_decision, effective_decision,
-                    event_json
+                    previous_decision, requested_decision, effective_decision
                  ) VALUES (
                     1789000000001, 'abcdef123457', 'file.import', 'rewrite',
-                    'dummy_pre_eicar', 'allow', 'outcome', 'block', '{}'
+                    'dummy_pre_eicar', 'allow', 'outcome', 'block'
                  )",
             [],
         )
@@ -704,11 +702,10 @@ fn security_decision_events_record_explicit_decisions_and_reject_magic_outcome()
         .execute(
             "INSERT INTO security_decision_events (
                     timestamp_unix_ms, event_id, event_type, stage, actor,
-                    previous_decision, requested_decision, effective_decision,
-                    event_json
+                    previous_decision, requested_decision, effective_decision
                  ) VALUES (
                     1789000002, 'abcdef123458', 'file.import', 'mystery',
-                    'dummy_pre_eicar', 'allow', 'block', 'block', '{}'
+                    'dummy_pre_eicar', 'allow', 'block', 'block'
                  )",
             [],
         )
@@ -776,11 +773,11 @@ fn security_ask_events_reject_unknown_event_type() {
         .execute(
             "INSERT INTO security_ask_events (
                     timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
-                    rule_name, status, rule_json, event_json
+                    rule_name, status, rule_json
                  ) VALUES (
                     1789000000000, 'abcdef123456', '111111abcdef',
                     'model.request', 'profiles.rules.ask_model', 'ask_model',
-                    'pending', '{}', '{}'
+                    'pending', '{}'
                  )",
             [],
         )

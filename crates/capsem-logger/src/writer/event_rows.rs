@@ -159,19 +159,24 @@ pub(super) fn insert_security_rule_event(
     Ok(())
 }
 
+/// An ask's row, with the asked-about event archived beside it the way every
+/// security payload is. The pending row and its resolution carry the same
+/// event, and both are staged: the index holds one body per event, so the
+/// second names the same bytes the first did.
 pub(super) fn insert_security_ask_event(
     conn: &Connection,
     event: &SecurityAskEvent,
     target: WriteTarget,
+    bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
     execute_cached(
         conn,
         &format!(
             "INSERT INTO {} (
             timestamp_unix_ms, ask_id, event_id, event_type, rule_id, rule_name,
-            status, rule_json, event_json, resolver, reason, trace_id
+            status, rule_json, resolver, reason, trace_id
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             target.table("security_ask_events")
         ),
         params![
@@ -183,19 +188,34 @@ pub(super) fn insert_security_ask_event(
             event.rule_name,
             event.status.as_str(),
             event.rule_json,
-            event.event_json,
             event.resolver,
             event.reason,
             event.trace_id,
         ],
     )?;
+    bodies.stage(EventBodyBlob {
+        event_id: &event.event_id,
+        event_type: "security.ask",
+        source_table: "security_ask_events",
+        direction: "payload",
+        content_type: Some("application/json"),
+        body: Some(event.event_json.as_bytes()),
+        original_bytes: None,
+        trace_id: event.trace_id.as_deref(),
+        turn_id: event.trace_id.as_deref(),
+    });
     Ok(())
 }
 
+/// A decision transition's row, and the event it was made about in the
+/// archive. The row is what a projection filters on -- stage, actor, the three
+/// decisions -- and it is small; the event was the other 5-6 KB of every row, in
+/// the table a session writes most often and mirrors in RAM.
 pub(super) fn insert_security_decision_event(
     conn: &Connection,
     event: &SecurityDecisionEvent,
     target: WriteTarget,
+    bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
     execute_cached(
         conn,
@@ -203,9 +223,9 @@ pub(super) fn insert_security_decision_event(
             "INSERT INTO {} (
             timestamp_unix_ms, event_id, event_type, stage, actor,
             rule_id, plugin_id, previous_decision, requested_decision,
-            effective_decision, reason, event_json, trace_id, turn_id, credential_ref
+            effective_decision, reason, trace_id, turn_id, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             target.table("security_decision_events")
         ),
         params![
@@ -220,12 +240,22 @@ pub(super) fn insert_security_decision_event(
             event.requested_decision.as_str(),
             event.effective_decision.as_str(),
             event.reason,
-            event.event_json,
             event.trace_id,
             event.turn_id,
             event.credential_ref,
         ],
     )?;
+    bodies.stage(EventBodyBlob {
+        event_id: &event.event_id,
+        event_type: "security.decision",
+        source_table: "security_decision_events",
+        direction: "payload",
+        content_type: Some("application/json"),
+        body: Some(event.event_json.as_bytes()),
+        original_bytes: None,
+        trace_id: event.trace_id.as_deref(),
+        turn_id: event.turn_id.as_deref(),
+    });
     Ok(())
 }
 

@@ -92,13 +92,13 @@ pub(super) async fn export_to_bytes(db: &DbHandle, db_path: &std::path::Path) ->
 
 /// The `WARC-Record-ID` header a body of the ledger at `db_path` is exported
 /// under, angle brackets included. The session is the ledger's directory.
-pub(super) fn body_record_id(db_path: &std::path::Path, event_id: &str, direction: &str) -> String {
+pub(super) fn body_record_id(db_path: &std::path::Path, source_table: &str, event_id: &str, direction: &str) -> String {
     let session = db_path
         .parent()
         .and_then(std::path::Path::file_name)
         .expect("a ledger lives in a session directory")
         .to_string_lossy();
-    format!("<urn:capsem:{session}:{event_id}:{direction}>")
+    format!("<urn:capsem:{session}:{source_table}:{event_id}:{direction}>")
 }
 
 /// Close the owning handle, edit the ledger on disk, and reopen it as an
@@ -205,28 +205,33 @@ async fn every_archived_body_becomes_one_record_named_by_where_it_came_from() {
         .collect();
     assert_eq!(
         described
-            .get(&body_record_id(&p, "0123456789ab", "response"))
+            .get(&body_record_id(&p, "net_events", "0123456789ab", "response"))
             .map(String::as_str),
         Some("https://answers.example/api"),
         "{described:?}"
     );
     assert_eq!(
         described
-            .get(&body_record_id(&p, "0123456789ac", "request"))
+            .get(&body_record_id(&p, "model_calls", "0123456789ac", "request"))
             .map(String::as_str),
         Some("https://api.model.example/v1/messages"),
         "{described:?}"
     );
     assert_eq!(
         described
-            .get(&body_record_id(&p, "0123456789ad", "payload"))
+            .get(&body_record_id(&p, "security_rule_events", "0123456789ad", "payload"))
             .map(String::as_str),
         Some("capsem://security/block-secrets"),
         "{described:?}"
     );
     assert_eq!(
         described
-            .get(&body_record_id(&p, &tool_response_event_id, "response"))
+            .get(&body_record_id(
+                &p,
+                "tool_responses",
+                &tool_response_event_id,
+                "response"
+            ))
             .map(String::as_str),
         Some("capsem://tool-response/warc-tool-call-1"),
         "{described:?}"
@@ -241,7 +246,9 @@ async fn every_archived_body_becomes_one_record_named_by_where_it_came_from() {
 
     let net = members
         .iter()
-        .find(|member| header(member, "WARC-Record-ID") == Some(body_record_id(&p, "0123456789ab", "response")))
+        .find(|member| {
+            header(member, "WARC-Record-ID") == Some(body_record_id(&p, "net_events", "0123456789ab", "response"))
+        })
         .expect("the net event's record");
     assert_eq!(block(net), br#"{"answer":"yes"}"#, "the block is the archived body");
 }
@@ -273,10 +280,10 @@ async fn two_sessions_with_the_same_event_id_export_distinct_record_ids() {
         assert_eq!(
             id,
             format!(
-                "<urn:capsem:{}:0123456789ab:response>",
+                "<urn:capsem:{}:net_events:0123456789ab:response>",
                 dir.file_name().unwrap().to_string_lossy()
             ),
-            "the id names the session, then the event, then the direction"
+            "the id names the session, then the table, the event and the direction"
         );
         ids.push(id);
         drop(db);
@@ -822,4 +829,136 @@ async fn an_empty_session_exports_an_empty_file_rather_than_failing() {
     );
     assert_eq!(warcinfo_records(&out).len(), 2, "which still say so for themselves");
     assert_eq!(summary.bytes_written, out.len() as u64);
+}
+
+/// A request that matches two rules has two rule rows and one archived
+/// payload. The export joined the body to every row sharing its event id, so
+/// one body became two records under one id -- which WARC forbids, and which
+/// counted the body twice. One body, one record, named by the first rule.
+#[tokio::test]
+async fn a_body_several_rows_share_is_exported_once() {
+    let p = temp_db_path("warc-export-shared-body");
+    let db = DbHandle::open(&p).expect("open handle");
+    for rule_id in ["first-rule", "second-rule"] {
+        let mut security = make_correctness_security_event(&credential_reference("test", "warc-shared"));
+        security.event_id = "0123456789ae".into();
+        security.rule_id = rule_id.into();
+        security.event_json = r#"{"matched":"twice"}"#.into();
+        db.write(WriteOp::SecurityRuleEvent(security))
+            .await
+            .expect("write security rule event");
+    }
+    db.flush().await.expect("flush");
+    assert_eq!(
+        count(&db, "SELECT COUNT(*) FROM security_rule_events").await,
+        2,
+        "the fixture needs two rows naming one event"
+    );
+
+    let (summary, out) = export_to_bytes(&db, &p).await;
+    assert!(summary.skipped.is_empty(), "{:?}", summary.skipped);
+    assert_eq!(summary.records, 1, "one archived body is one record");
+    let members = body_members(&out);
+    assert_eq!(members.len(), 1);
+    assert_eq!(
+        header(&members[0], "WARC-Target-URI").as_deref(),
+        Some("capsem://security/first-rule"),
+        "the payload is named by the first rule that matched it"
+    );
+    assert_eq!(block(&members[0]), br#"{"matched":"twice"}"#);
+}
+
+/// A rule match, the decision it drove and the ask it raised all archive a
+/// `payload` for one event. Each is its own record, and the ids stay distinct
+/// because the id carries the table: without it the three shared one id.
+#[tokio::test]
+async fn decision_and_ask_payloads_are_exported_under_their_own_ids() {
+    use crate::events::{
+        SecurityAskEvent, SecurityAskPending, SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage,
+    };
+
+    let p = temp_db_path("warc-export-security-payloads");
+    let db = DbHandle::open(&p).expect("open handle");
+    let event_id = "0123456789af";
+
+    let mut rule = make_correctness_security_event(&credential_reference("test", "warc-security"));
+    rule.event_id = event_id.into();
+    rule.rule_id = "ask-rule".into();
+    rule.event_json = r#"{"seen_by":"rule"}"#.into();
+    db.write(WriteOp::SecurityRuleEvent(rule)).await.expect("write rule");
+    db.write(WriteOp::SecurityDecisionEvent(SecurityDecisionEvent {
+        timestamp_unix_ms: 1_789_000_000_000,
+        event_id: event_id.into(),
+        event_type: "http.request".into(),
+        stage: SecurityDecisionStage::Rule,
+        actor: "profiles.rules.ask_rule".into(),
+        rule_id: Some("profiles.rules.ask_rule".into()),
+        plugin_id: None,
+        previous_decision: SecurityDecision::Allow,
+        requested_decision: SecurityDecision::Ask,
+        effective_decision: SecurityDecision::Ask,
+        reason: None,
+        event_json: r#"{"seen_by":"decision"}"#.into(),
+        trace_id: None,
+        turn_id: None,
+        credential_ref: None,
+    }))
+    .await
+    .expect("write decision");
+    db.write(WriteOp::SecurityAskEvent(SecurityAskEvent::pending(
+        SecurityAskPending {
+            timestamp_unix_ms: 1_789_000_000_001,
+            ask_id: "0123456789b0".into(),
+            event_id: event_id.into(),
+            event_type: "http.request".into(),
+            rule_id: "profiles.rules.ask_rule".into(),
+            rule_name: "ask_rule".into(),
+            rule_json: "{}".into(),
+            event_json: r#"{"seen_by":"ask"}"#.into(),
+        },
+    )))
+    .await
+    .expect("write ask");
+    db.flush().await.expect("flush");
+
+    let (summary, out) = export_to_bytes(&db, &p).await;
+    assert!(summary.skipped.is_empty(), "{:?}", summary.skipped);
+    assert_eq!(summary.records, 3, "three archived payloads, three records");
+
+    let members = body_members(&out);
+    let ids: BTreeSet<String> = members
+        .iter()
+        .map(|member| header(member, "WARC-Record-ID").expect("every record has an id"))
+        .collect();
+    assert_eq!(ids.len(), 3, "the three records must not share an id: {ids:?}");
+
+    for (table, uri, bytes) in [
+        (
+            "security_rule_events",
+            "capsem://security/ask-rule",
+            br#"{"seen_by":"rule"}"#.as_slice(),
+        ),
+        (
+            "security_decision_events",
+            "capsem://security-decision/profiles.rules.ask_rule",
+            br#"{"seen_by":"decision"}"#.as_slice(),
+        ),
+        (
+            "security_ask_events",
+            "capsem://security-ask/0123456789b0",
+            br#"{"seen_by":"ask"}"#.as_slice(),
+        ),
+    ] {
+        let id = body_record_id(&p, table, event_id, "payload");
+        let member = members
+            .iter()
+            .find(|member| header(member, "WARC-Record-ID").as_deref() == Some(id.as_str()))
+            .unwrap_or_else(|| panic!("{table}'s payload is exported as {id}"));
+        assert_eq!(header(member, "WARC-Target-URI").as_deref(), Some(uri), "{table}");
+        assert_eq!(
+            block(member),
+            bytes,
+            "{table}: the record's block is the archived payload"
+        );
+    }
 }

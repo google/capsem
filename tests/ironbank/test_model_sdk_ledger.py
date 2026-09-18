@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from helpers.body_archive import security_payload, session_archive
+from helpers.body_archive import archived_bodies, ledger_path, security_payload, session_archive
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -126,6 +126,14 @@ def _assert_raw_secret_not_in_db(conn: sqlite3.Connection) -> None:
                     assert raw_secret not in str(value), (
                         f"raw secret leaked in {table}.{column}"
                     )
+    # Bodies left SQLite for the archive -- request and response bodies, then
+    # the security ledgers' payloads -- so a scan of text columns alone passes
+    # by not looking. The archive is walked too, every body hash-verified.
+    for source_table, event_id, direction, body in archived_bodies(ledger_path(conn)):
+        for raw_secret in raw_secrets:
+            assert raw_secret.encode() not in body, (
+                f"raw secret leaked in the archived {source_table}/{direction} body of {event_id}"
+            )
 
 def _sdk_probe_script(base_url: str) -> str:
     payload = {
@@ -2511,7 +2519,10 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                     assert row["previous_decision"] == "ask"
                     assert row["requested_decision"] == "allow"
                     assert row["effective_decision"] == "ask"
-                assert json.loads(row["event_json"])
+            # The decided-about event is archive-backed, like a rule match's.
+            with session_archive(conn) as archive:
+                for row in security_decision_rows:
+                    assert archive.security_payload(row["event_id"], "security_decision_events")
             _assert_raw_secret_not_in_db(conn)
         finally:
             conn.close()

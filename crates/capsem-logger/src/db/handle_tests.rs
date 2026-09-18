@@ -21,6 +21,7 @@ mod external_reader;
 mod external_warc_reader;
 mod query;
 mod retention;
+mod security_payloads;
 mod warc_export;
 
 #[test]

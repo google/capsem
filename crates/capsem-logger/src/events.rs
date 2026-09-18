@@ -214,6 +214,28 @@ pub struct SecurityRuleMatch {
     pub credential_ref: Option<String>,
 }
 
+/// A stored ask lifecycle row as the ledger holds it: `SecurityAskEvent` minus
+/// the payload, for the same reason as `SecurityRuleMatch`. The asked-about
+/// event is archive-backed and read by event id with `BodyDirection::Payload`;
+/// every security payload is stored one way.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecurityAskRecord {
+    pub timestamp_unix_ms: i64,
+    pub ask_id: String,
+    pub event_id: String,
+    pub event_type: String,
+    pub rule_id: String,
+    pub rule_name: String,
+    pub status: SecurityAskStatus,
+    pub rule_json: String,
+    #[serde(default)]
+    pub resolver: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub trace_id: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileMutationEvent {
     pub timestamp_unix_ms: i64,

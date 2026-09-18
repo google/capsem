@@ -157,6 +157,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before and show each payload's size and hash, fetching the payload itself on
   demand. Forking a session, or anything else that copies a session ledger,
   copies both files.
+- Security decisions and asks store the event they are about in the body
+  archive too, the way rule matches do. The decision ledger was the largest
+  table in a session -- about 6 KB a row and ~25 rows a request, most of them
+  process audits, 7.5 MB of a 10.5 MB ledger in a 30-minute session -- and the
+  per-VM process also held all of it in memory; the row is now a few hundred
+  bytes. A ledger that still keeps any security payload inline is refused at
+  open by name instead of failing its first security write. In the WARC export,
+  record ids now include the source table (`urn:capsem:{session}:{table}:{event}:{direction}`),
+  because a rule match, the decision it drove and an ask it raised name the
+  same event, and a body several rows share is exported once rather than once
+  per row.
 - A session ledger written by an earlier build is refused rather than upgraded
   in place: opening it fails and names what it lacks. The old upgrade path
   discarded its own errors and could produce a ledger matching neither build,

@@ -145,7 +145,7 @@ async fn warcio_reads_every_record_the_export_wrote() {
 
     let known = bodies
         .iter()
-        .find(|record| record["id"] == body_record_id(&p, "0123456789ab", "response"))
+        .find(|record| record["id"] == body_record_id(&p, "net_events", "0123456789ab", "response"))
         .expect("the net event's record, as warcio identifies it");
     assert_eq!(known["uri"], "https://answers.example/api");
     assert_eq!(
