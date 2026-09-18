@@ -19,9 +19,11 @@ pub const BLOCK_MAGIC: &[u8; 4] = b"BLK1";
 /// magic(4) + raw_len(4) + comp_len(4) + blake3(32)
 pub const BLOCK_HEADER_BYTES: usize = 44;
 /// Raw bytes a block accumulates before it seals. Large enough that
-/// same-provider bodies share dictionary context, small enough that reading
-/// one body inflates well under a millisecond of data.
-pub const TARGET_BLOCK_BYTES: usize = 256 * 1024;
+/// same-provider bodies share dictionary context and that identical bodies
+/// written close together land in one block, where the logger stores them
+/// once; small enough that reading one body inflates about a millisecond of
+/// data.
+pub const TARGET_BLOCK_BYTES: usize = 1024 * 1024;
 /// Hard ceiling on one block's raw size, so a hostile `raw_len` cannot
 /// make a reader allocate without bound. One body may be up to 10 MiB
 /// (`MAX_BODY_BLOB_BYTES` in capsem-logger), so a block holds at least one.
@@ -30,7 +32,7 @@ pub const TARGET_BLOCK_BYTES: usize = 256 * 1024;
 /// compressed payload and the inflated bytes at once -- about twice this
 /// ceiling transiently -- and retains one inflated block, about this ceiling,
 /// in the one-block cache. In practice blocks seal at `TARGET_BLOCK_BYTES`,
-/// two orders of magnitude below, and only a forged header or a body near the
+/// sixteen times below, and only a forged header or a body near the
 /// 10 MiB cap approaches it.
 pub const MAX_BLOCK_RAW_BYTES: usize = 16 * 1024 * 1024;
 /// Deflate never expands 16 MiB by more than a few KiB; anything beyond

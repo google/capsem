@@ -663,7 +663,7 @@ index row is written with the event row; a sealed block is appended to
 `session.bodies` is append-only: a 16-byte file header, then blocks. Each block
 is a 44-byte header (magic, `raw_len`, `comp_len`, and the blake3 of the raw
 bytes) followed by the raw-deflated bytes of the bodies staged into it, sealed
-at about 256 KiB. Bodies that belong together -- the request and response of
+at about 1 MiB. Bodies that belong together -- the request and response of
 one exchange -- are staged together and almost always share a block, so they
 share one inflate. The format is defined once, in
 `crates/capsem-archive/src/format.rs`.

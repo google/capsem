@@ -11,7 +11,7 @@ for a named one. The ledger is two files that only make sense together:
 
 - `session.db` -- SQLite, every telemetry table plus the index of captured bodies.
 - `session.bodies` -- the append-only body archive: HTTP, model, tool, exec and
-  security payloads, deflated in blocks of about 256 KiB. SQLite never holds
+  security payloads, deflated in blocks of about 1 MiB. SQLite never holds
   body bytes.
 
 Copy, fork or delete them as a pair; either one alone is useless. A global
