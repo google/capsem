@@ -94,6 +94,13 @@ pub struct PreviewSessionResponse {
     pub expires_in_seconds: u16,
 }
 
+/// How many preview sessions a revoke ended. Every flow they admitted closes;
+/// the exposure stays, so a legitimate user bootstraps a fresh session.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
+pub struct PreviewSessionsRevokedResponse {
+    pub revoked: u32,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct PreviewSessionMaterial {
     pub exposure: ExposureInfo,

@@ -1630,6 +1630,54 @@
             }
           }
         }
+      },
+      "delete": {
+        "operationId": "revokeVmPreviewSessions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exposure_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewSessionsRevokedResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/vms/{id}/files/content": {
@@ -5019,6 +5067,20 @@
           },
           "url": {
             "type": "string"
+          }
+        }
+      },
+      "PreviewSessionsRevokedResponse": {
+        "type": "object",
+        "description": "How many preview sessions a revoke ended. Every flow they admitted closes;\nthe exposure stays, so a legitimate user bootstraps a fresh session.",
+        "required": [
+          "revoked"
+        ],
+        "properties": {
+          "revoked": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },

@@ -161,6 +161,9 @@ impl Document {
             "/vms/{id}/exposures/{exposure_id}/preview-session",
             "createVmPreviewSession",
         );
+        let sessions = "/vms/{id}/exposures/{exposure_id}/preview-session";
+        let revoke_sessions = self.operation::<PreviewSessionsRevokedResponse>(sessions, "revokeVmPreviewSessions");
+        self.add(sessions, HttpMethod::Delete, revoke_sessions);
     }
 
     fn networks(&mut self) {
