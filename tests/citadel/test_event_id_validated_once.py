@@ -44,8 +44,15 @@ CRATES = PROJECT_ROOT / "crates"
 VALIDATOR = "validate_event_id("
 
 # axum 0.8 spells a path capture `{event_id}`; 0.7 spelled it `:event_id`.
+#
+# `rest` stops at the next `.route(`. It used to run to the statement's
+# semicolon, which in a builder chain is the end of the whole router: every
+# handler registered after the `{event_id}` route was read as a handler *of*
+# it. That is how a reverse proxy in another crate, which never sees an event
+# id, came to be reported as a handler that reads one unvalidated.
 ROUTE = re.compile(
-    r"""\.route\(\s*(?P<q>["'])(?P<path>[^"']*(?:\{event_id\}|:event_id\b)[^"']*)(?P=q)\s*,(?P<rest>[^;]*)"""
+    r"""\.route\(\s*(?P<q>["'])(?P<path>[^"']*(?:\{event_id\}|:event_id\b)[^"']*)(?P=q)\s*,"""
+    r"""(?P<rest>(?:(?!\.route\s*\()[^;])*)"""
 )
 # Any captured segment, in either spelling: used only to prove the scanner can
 # still see routes when no {event_id} one exists.
@@ -64,6 +71,12 @@ FN_START = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)", re.M
 DB_CALLS = (".query(", ".query_many(", ".query_one(", ".write(", ".ready(", ".bodies(")
 USES_ID = re.compile(r"(?P<callee>\w+)\s*\([^)]*?&?\s*\bevent_id\b")
 
+# Receivers whose method of the same name is not the ledger's. `Uri::query`
+# returns the query string of the request being served; a handler that reads
+# its own URI has not read the database, and reporting it would leave the
+# handler no shape it could be written in.
+NOT_A_RECEIVER = ("uri()",)
+
 # Callees that take the id and are not a use of it: the validator itself, and
 # axum's extractor binding it.
 NOT_A_USE = frozenset({"validate_event_id", "Path"})
@@ -78,6 +91,19 @@ def statements_of(function: str) -> str:
     """
     opened = function.find("{")
     return function[opened + 1 :] if opened != -1 else function
+
+
+def first_db_call(body: str) -> int | None:
+    """Where the body first reaches the database, skipping look-alikes."""
+    earliest: list[int] = []
+    for call in DB_CALLS:
+        at = 0
+        while (hit := body.find(call, at)) != -1:
+            if not body[:hit].rstrip().endswith(NOT_A_RECEIVER):
+                earliest.append(hit)
+                break
+            at = hit + 1
+    return min(earliest, default=None)
 
 
 def first_handoff(body: str) -> int | None:
@@ -162,7 +188,7 @@ def unvalidated_handlers(sources: dict[str, str]) -> list[str]:
             continue
         body = statements_of(found[0][1])
 
-        direct = min((at for at in (body.find(call) for call in DB_CALLS) if at != -1), default=None)
+        direct = first_db_call(body)
         passed_on = first_handoff(body)
         first_use = min(
             [at for at in (direct, passed_on) if at is not None],
@@ -325,6 +351,80 @@ async fn handle_event_bodies(event_id: String) -> Response {
     )
     assert len(found) == 1, found
     assert "more than one place" in found[0], found
+
+
+def test_a_later_route_in_the_same_chain_is_not_this_routes_handler() -> None:
+    """A builder chain is many routes, not one with many handlers.
+
+    `rest` ran to the semicolon, so every handler registered after the
+    `{event_id}` route in the same chain was read as one of its handlers. The
+    gateway's reverse proxy -- which never sees an event id and serves a
+    hundred paths through one function -- was reported that way.
+    """
+    router = '''
+fn routes() -> Router {
+    Router::new()
+        .route("/events/{event_id}/bodies", get(handle_event_bodies))
+        .route("/networks/{id}/logs", get(handle_network_logs))
+}
+'''
+    validated = '''
+async fn handle_event_bodies(Path(event_id): Path<String>, db: DbHandle) -> Response {
+    let event_id = validate_event_id(&event_id)?;
+    Json(db.query("SELECT 1", &[]).await).into_response()
+}
+'''
+    unrelated = '''
+async fn handle_network_logs(db: DbHandle) -> Response {
+    Json(db.query("SELECT 1", &[]).await).into_response()
+}
+'''
+    found = unvalidated_handlers(
+        {"router.rs": router, "a.rs": validated, "b.rs": unrelated}
+    )
+    assert found == [], found
+
+
+def test_a_uri_accessor_is_not_a_database_call() -> None:
+    """`Uri::query` shares a name with `DbHandle::query` and nothing else.
+
+    A reverse proxy registered on the body route reads its own request URI. It
+    never touches the ledger and never names an event id, and there is no shape
+    it could be rewritten in that would satisfy a guard counting that as a
+    read.
+    """
+    router = '''
+fn routes() -> Router {
+    Router::new().route("/events/{event_id}/bodies", get(handle_proxy))
+}
+'''
+    proxy = '''
+async fn handle_proxy(State(state): State<Arc<AppState>>, req: Request) -> Response {
+    let query_present = req.uri().query().is_some();
+    forward(state, req, query_present).await
+}
+'''
+    assert unvalidated_handlers({"router.rs": router, "proxy.rs": proxy}) == []
+
+
+def test_a_real_database_call_is_still_a_database_call() -> None:
+    """The narrowing above is by receiver, not by method name."""
+    router = '''
+fn routes() -> Router {
+    Router::new().route("/events/{event_id}/bodies", get(handle_event_bodies))
+}
+'''
+    handler = '''
+async fn handle_event_bodies(Path(event_id): Path<String>, db: DbHandle) -> Response {
+    let unused = req.uri().query().is_some();
+    let rows = db.query("SELECT 1", &[]).await;
+    validate_event_id(&event_id)?;
+    Json(rows).into_response()
+}
+'''
+    found = unvalidated_handlers({"router.rs": router, "handler.rs": handler})
+    assert len(found) == 1, found
+    assert "after it reaches the database" in found[0], found
 
 
 def test_a_route_without_an_event_id_is_out_of_scope() -> None:
