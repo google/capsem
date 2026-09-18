@@ -327,11 +327,11 @@ async fn db_handle_query_many_result_from_before_an_invalidation_is_not_cached()
     db.invalidate_read_cache();
     db.store_query_many_cache(epoch_before, key.clone(), stale);
     assert!(
-        db.inner.query_many_cache.lock().unwrap().is_none(),
+        db.inner.query_many_cache.lock().unwrap().is_empty(),
         "a result older than the last invalidation must not be cached"
     );
 
     let epoch_now = db.read_cache_epoch(ReadCacheDomain::All);
     db.store_query_many_cache(epoch_now, key, vec![DbQueryJson::from("{}".to_string())]);
-    assert!(db.inner.query_many_cache.lock().unwrap().is_some());
+    assert!(!db.inner.query_many_cache.lock().unwrap().is_empty());
 }

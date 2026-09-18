@@ -232,3 +232,80 @@ async fn external_reader_observes_no_change_on_an_idle_poll() {
         "a poll with nothing committed must observe no change. {DB_BOUNDARY_RATIONALE}"
     );
 }
+
+/// Two polled routes share one session handle, so the batch cache has to hold
+/// more than one batch to hold anything at all.
+///
+/// With a single slot, `stats/summary` and `security/status` evicted each
+/// other on every poll: each one arrived, found the other's entry, missed,
+/// re-executed, and stored over it. The cache existed and never hit once.
+#[tokio::test]
+async fn two_polled_batches_are_cached_side_by_side() {
+    let p = temp_db_path("external-two-batches-side-by-side");
+    let writer = DbHandle::open(&p).expect("open owning writer handle");
+    writer
+        .write(WriteOp::NetEvent(make_net_event("two.example", Decision::Allowed)))
+        .await
+        .expect("first write");
+    writer.flush().await.expect("flush writer");
+
+    let reader = DbHandle::open_external_reader(&p).expect("open service external reader");
+    reader.ready().await.expect("external reader ready");
+
+    // Two batches that no more resemble each other than the two routes do.
+    let summary = || vec![("SELECT COUNT(*) AS n FROM net_events".to_string(), Vec::new())];
+    let security = || {
+        vec![
+            (
+                "SELECT COUNT(*) AS total FROM security_rule_events".to_string(),
+                Vec::new(),
+            ),
+            (
+                "SELECT rule_action, COUNT(*) FROM security_rule_events GROUP BY rule_action".to_string(),
+                Vec::new(),
+            ),
+        ]
+    };
+
+    let first_summary = reader.query_many(summary()).await.expect("summary batch");
+    let first_security = reader.query_many(security()).await.expect("security batch");
+    let executed = reader.queries_executed_for_tests().await.expect("read counter");
+
+    // A second poll of each, in the order the routes would arrive.
+    assert_eq!(reader.query_many(summary()).await.expect("summary poll"), first_summary);
+    assert_eq!(
+        reader.query_many(security()).await.expect("security poll"),
+        first_security
+    );
+    assert_eq!(
+        reader.queries_executed_for_tests().await.expect("read counter"),
+        executed,
+        "both batches must survive the other's poll; a one-slot cache made each poll evict the \
+         answer the next one was about to ask for. {DB_BOUNDARY_RATIONALE}"
+    );
+
+    writer
+        .write(WriteOp::NetEvent(make_net_event("two.example", Decision::Allowed)))
+        .await
+        .expect("second write");
+    writer.flush().await.expect("flush writer");
+
+    // One commit expires the whole cache, not the entry that happens to be
+    // looked up first: every entry was read from the ledger state it moved past.
+    assert_eq!(
+        query_json(&reader.query_many(summary()).await.expect("summary after commit")[0])["rows"],
+        json!([[2]]),
+        "a commit must invalidate the summary batch. {DB_BOUNDARY_RATIONALE}"
+    );
+    let executed_after_commit = reader.queries_executed_for_tests().await.expect("read counter");
+    assert!(
+        executed_after_commit > executed,
+        "the summary batch must re-execute after a commit. {DB_BOUNDARY_RATIONALE}"
+    );
+    reader.query_many(security()).await.expect("security after commit");
+    assert!(
+        reader.queries_executed_for_tests().await.expect("read counter") > executed_after_commit,
+        "the same commit must invalidate the security batch too, not only the batch that was \
+         asked for first. {DB_BOUNDARY_RATIONALE}"
+    );
+}

@@ -51,7 +51,29 @@ pub type DbQueryParams = [serde_json::Value];
 /// execution and schema failures remain DB-owned.
 pub type DbQueryJson = String;
 type DbQueryOwned = (String, Vec<serde_json::Value>);
-type DbQueryManyCache = Option<(Vec<DbQueryOwned>, Vec<DbQueryJson>)>;
+/// Recently answered `query_many` batches, newest first.
+///
+/// One slot was enough while a single route used the batch rail. It stopped
+/// being enough the moment two polled routes shared a session handle -- and
+/// they do share one, exactly one per session -- because each poll evicted the
+/// other's answer and neither ever hit: the handle paid the bookkeeping of a
+/// cache and got the behaviour of none.
+///
+/// A `Vec` rather than a map because a batch's bound parameters are
+/// `serde_json::Value`, which is neither `Hash` nor `Ord`. At this size,
+/// comparing the batch outright is cheaper than the fingerprint that would let
+/// us avoid it, and it cannot collide.
+type DbQueryManyCache = Vec<(Vec<DbQueryOwned>, Vec<DbQueryJson>)>;
+
+/// How many distinct batches one handle keeps answers for.
+///
+/// Two polled routes read a session handle -- `stats/summary` and
+/// `security/status` -- so four leaves room for one more without anyone
+/// having to come back here. The bound is on memory as much as on lookups:
+/// an entry holds a whole JSON result set. Nothing in here outlives the
+/// ledger state it was read from; the whole cache is dropped when the read
+/// epoch moves.
+const QUERY_MANY_CACHE_ENTRIES: usize = 4;
 
 /// Typed invalidation domains for DB-owned data consumed by cached readers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -272,7 +294,7 @@ impl DbHandle {
                 writer: None,
                 ready_cache: Mutex::new(None),
                 archive_reader: Mutex::new(None),
-                query_many_cache: Mutex::new(None),
+                query_many_cache: Mutex::new(DbQueryManyCache::new()),
                 read_cache_epoch: AtomicU64::new(0),
                 session_summary_cache_epoch: AtomicU64::new(0),
                 external,
@@ -431,13 +453,7 @@ impl DbHandle {
         let started = Instant::now();
         let query_count = queries.len();
         let params_count: usize = queries.iter().map(|(_, params)| params.len()).sum();
-        let cached = self
-            .inner
-            .query_many_cache
-            .lock()
-            .unwrap()
-            .clone()
-            .and_then(|(cached_queries, cached_result)| (cached_queries == queries).then_some(cached_result));
+        let cached = self.cached_query_many(&queries);
         if !self.inner.external {
             // An in-process handle owns the writer, so anything that could
             // invalidate this entry already has; the entry stands on its own.
@@ -591,6 +607,20 @@ impl DbHandle {
         Ok(self.introspect_reader().await?.busy_timeout_ms)
     }
 
+    /// The cached answer to exactly this batch, if this handle holds one.
+    ///
+    /// A hit moves its entry to the front, so the batches a route actually
+    /// polls keep each other alive and a one-off batch is what falls off the
+    /// end.
+    fn cached_query_many(&self, queries: &[DbQueryOwned]) -> Option<Vec<DbQueryJson>> {
+        let mut cache = self.inner.query_many_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let position = cache.iter().position(|(key, _)| key == queries)?;
+        let entry = cache.remove(position);
+        let result = entry.1.clone();
+        cache.insert(0, entry);
+        Some(result)
+    }
+
     /// Cache a `query_many` result unless the read epoch moved while the
     /// query ran, in which case the result may predate a write and is dropped.
     pub(crate) fn store_query_many_cache(&self, epoch_before: u64, key: Vec<DbQueryOwned>, result: Vec<DbQueryJson>) {
@@ -603,19 +633,29 @@ impl DbHandle {
             );
             return;
         }
-        *cache = Some((key, result));
+        cache.retain(|(existing, _)| existing != &key);
+        cache.insert(0, (key, result));
+        cache.truncate(QUERY_MANY_CACHE_ENTRIES);
     }
 
     /// Invalidate DB-owned read caches after external logger lifecycle helpers
     /// mutate the same database.
     pub fn invalidate_read_cache(&self) {
-        *self.inner.query_many_cache.lock().unwrap() = None;
+        self.inner
+            .query_many_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.inner.read_cache_epoch.fetch_add(1, Ordering::AcqRel);
         self.inner.session_summary_cache_epoch.fetch_add(1, Ordering::AcqRel);
     }
 
     fn invalidate_after_write(&self, affects_session_summary: bool) {
-        *self.inner.query_many_cache.lock().unwrap() = None;
+        self.inner
+            .query_many_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.inner.read_cache_epoch.fetch_add(1, Ordering::AcqRel);
         if affects_session_summary {
             self.inner.session_summary_cache_epoch.fetch_add(1, Ordering::AcqRel);
