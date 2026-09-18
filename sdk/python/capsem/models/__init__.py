@@ -101,6 +101,9 @@ from .panics_response import PanicsResponse as PanicsResponse
 from .persist_request import PersistRequest as PersistRequest
 from .persist_response import PersistResponse as PersistResponse
 from .preview_session_response import PreviewSessionResponse as PreviewSessionResponse
+from .preview_sessions_revoked_response import (
+    PreviewSessionsRevokedResponse as PreviewSessionsRevokedResponse,
+)
 from .process_event import ProcessEvent as ProcessEvent
 from .profile_artifact_issue import ProfileArtifactIssue as ProfileArtifactIssue
 from .profile_availability_summary import (

@@ -52,6 +52,9 @@ from .refresh_profile_mcp_server import (
 )
 from .restart_hypervisor import restart_hypervisor as restart_hypervisor
 from .resume_vm import resume_vm as resume_vm
+from .revoke_vm_preview_sessions import (
+    revoke_vm_preview_sessions as revoke_vm_preview_sessions,
+)
 from .run_vm import run_vm as run_vm
 from .start_vm import start_vm as start_vm
 from .stop_vm import stop_vm as stop_vm
