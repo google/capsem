@@ -226,13 +226,26 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
 }
 
 async fn fetch_profiles_status(state: &AppState) -> Option<ProfileCatalogStatus> {
-    let body = uds_get(&state.service_client, "/profiles/status").await.ok()?;
-    serde_json::from_slice::<ProfileCatalogStatus>(&body).ok()
+    parse_section(
+        "/profiles/status",
+        &uds_get(&state.service_client, "/profiles/status").await.ok()?,
+    )
 }
 
 async fn fetch_update_status(state: &AppState) -> Option<UpdateStatusResponse> {
-    let body = uds_get(&state.service_client, "/update/status").await.ok()?;
-    serde_json::from_slice(&body).ok()
+    parse_section(
+        "/update/status",
+        &uds_get(&state.service_client, "/update/status").await.ok()?,
+    )
+}
+
+/// A section the service answered but this gateway cannot read is left out of
+/// `/status`, which must still answer. It is said out loud: dropping it
+/// silently hid a renamed enum variant behind a missing section.
+fn parse_section<T: serde::de::DeserializeOwned>(path: &str, body: &[u8]) -> Option<T> {
+    serde_json::from_slice(body)
+        .map_err(|error| tracing::warn!(path, %error, "service status section does not parse; omitting it"))
+        .ok()
 }
 
 /// One GET to the service over the pooled client, bounded in time and size.
