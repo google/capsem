@@ -142,62 +142,7 @@ async fn read_security_ledger(
         &[json!(SECURITY_LATEST_LIMIT)],
     )
     .await?;
-    let total_row = query_route_objects(
-        vm_id,
-        "security",
-        "stats_total",
-        db_path,
-        &db,
-        SECURITY_STATS_TOTAL_SQL,
-        &[],
-    )
-    .await?
-    .into_iter()
-    .next()
-    .unwrap_or_else(|| json!({ "total": 0 }));
-    let stats = capsem_logger::SecurityRuleStats {
-        total: total_row.get("total").and_then(serde_json::Value::as_u64).unwrap_or(0),
-        by_action: query_route_typed_rows(
-            vm_id,
-            "security",
-            "stats_by_action",
-            db_path,
-            &db,
-            SECURITY_STATS_BY_ACTION_SQL,
-            &[],
-        )
-        .await?,
-        by_event_type: query_route_typed_rows(
-            vm_id,
-            "security",
-            "stats_by_event_type",
-            db_path,
-            &db,
-            SECURITY_STATS_BY_EVENT_TYPE_SQL,
-            &[],
-        )
-        .await?,
-        by_level: query_route_typed_rows(
-            vm_id,
-            "security",
-            "stats_by_level",
-            db_path,
-            &db,
-            SECURITY_STATS_BY_LEVEL_SQL,
-            &[],
-        )
-        .await?,
-        by_rule: query_route_typed_rows(
-            vm_id,
-            "security",
-            "stats_by_rule",
-            db_path,
-            &db,
-            SECURITY_STATS_BY_RULE_SQL,
-            &[],
-        )
-        .await?,
-    };
+    let stats = security_stats(vm_id, db_path, &db).await?;
     let brokered_credentials = query_route_typed_rows(
         vm_id,
         "security",
@@ -316,15 +261,98 @@ pub(crate) async fn security_latest_for_vm(
         .collect())
 }
 
+/// The five aggregates behind `GET /vms/{id}/security/status`, as one batch.
+///
+/// The handle caches a batch whole and keyed by its statements, so a poll of a
+/// session whose ledger has not moved is answered without the reader thread
+/// touching the file. Five separate queries could not be: each would be its
+/// own round trip, and none of them is what the handle caches.
+///
+/// `capsem-logger`'s `security_rule_aggregates_run_on_indexes` guards the
+/// shape these need from `security_rule_events`; this crate's
+/// `security_status_aggregates_run_on_indexes` guards these exact strings
+/// against it.
+pub(crate) fn security_stats_batch() -> Vec<(String, Vec<serde_json::Value>)> {
+    vec![
+        (SECURITY_STATS_TOTAL_SQL.to_string(), Vec::new()),
+        (SECURITY_STATS_BY_ACTION_SQL.to_string(), Vec::new()),
+        (SECURITY_STATS_BY_EVENT_TYPE_SQL.to_string(), Vec::new()),
+        (SECURITY_STATS_BY_LEVEL_SQL.to_string(), Vec::new()),
+        (SECURITY_STATS_BY_RULE_SQL.to_string(), Vec::new()),
+    ]
+}
+
+/// The security ledger's aggregates alone.
+///
+/// This used to read the whole ledger and throw away all but `stats`: two
+/// thousand matched rows and a hundred brokered-credential rows fetched,
+/// decoded and dropped on a route that is polled on a timer and reports six
+/// counts. It reads what it reports.
 pub(crate) async fn security_stats_for_vm(
     state: &ServiceState,
     vm_id: &str,
 ) -> Result<capsem_logger::SecurityRuleStats, AppError> {
     let session_dir = resolve_session_dir(state, vm_id)?;
-    Ok(
-        read_security_session_ledger(state, vm_id, &session_dir.join("session.db"))
-            .await?
-            .map(|session| session.stats)
-            .unwrap_or_else(empty_security_rule_stats),
-    )
+    let db_path = session_dir.join("session.db");
+    let db = open_ready_session_db(state, vm_id, "security", &db_path).await?;
+    security_stats(vm_id, &db_path, &db).await
+}
+
+/// Run `security_stats_batch` on an open handle and read the stats out of it.
+///
+/// The one way this crate computes `SecurityRuleStats`: the status poll and
+/// the full ledger read both come here, so they cannot disagree about the
+/// numbers, and a full read right after a poll finds the batch already cached.
+async fn security_stats(
+    vm_id: &str,
+    db_path: &StdPath,
+    db: &capsem_logger::DbHandle,
+) -> Result<capsem_logger::SecurityRuleStats, AppError> {
+    let raw = db
+        .query_many(security_stats_batch())
+        .await
+        .map_err(|error| query_route_error(vm_id, "security", "query", "stats", db_path, &error))?;
+    let [total, by_action, by_event_type, by_level, by_rule] = raw.as_slice() else {
+        return Err(query_route_error(
+            vm_id,
+            "security",
+            "query",
+            "stats",
+            db_path,
+            &format!("stats batch returned {} results, expected 5", raw.len()),
+        ));
+    };
+    Ok(capsem_logger::SecurityRuleStats {
+        total: stats_objects(vm_id, db_path, "stats_total", total)?
+            .first()
+            .and_then(|row| row.get("total"))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0),
+        by_action: stats_rows(vm_id, db_path, "stats_by_action", by_action)?,
+        by_event_type: stats_rows(vm_id, db_path, "stats_by_event_type", by_event_type)?,
+        by_level: stats_rows(vm_id, db_path, "stats_by_level", by_level)?,
+        by_rule: stats_rows(vm_id, db_path, "stats_by_rule", by_rule)?,
+    })
+}
+
+/// One statement's result out of a batch, as row objects, failing the way a
+/// single read of the same statement would.
+fn stats_objects(
+    vm_id: &str,
+    db_path: &StdPath,
+    query_name: &'static str,
+    raw: &str,
+) -> Result<Vec<serde_json::Value>, AppError> {
+    parse_query_json(vm_id, "security", query_name, db_path, raw).map(query_json_to_objects)
+}
+
+/// The same, decoded onto the ledger type the statement describes.
+fn stats_rows<T: DeserializeOwned>(
+    vm_id: &str,
+    db_path: &StdPath,
+    query_name: &'static str,
+    raw: &str,
+) -> Result<Vec<T>, AppError> {
+    let objects = stats_objects(vm_id, db_path, query_name, raw)?;
+    decode_query_rows(vm_id, "security", query_name, db_path, objects)
 }

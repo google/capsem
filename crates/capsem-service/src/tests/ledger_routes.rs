@@ -3,6 +3,7 @@ use super::*;
 mod bodies;
 mod bodies_export;
 mod freshness;
+mod query_plan;
 
 #[tokio::test]
 async fn security_routes_read_security_ledger_from_session_db() {

@@ -155,6 +155,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `stats/summary` and `security/status`, which the TUI and the desktop UI poll
+  per VM, are answered from the session handle's cache while the ledger has
+  not changed, instead of re-running their aggregates over the file on every
+  poll.
 - The forensic payload of a security rule match is stored compressed in the
   session body archive instead of inside every row of `security_rule_events`.
   It averaged a kilobyte and peaked at 297 KB in a real session, on a table the
