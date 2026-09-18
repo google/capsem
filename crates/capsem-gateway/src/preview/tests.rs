@@ -194,9 +194,15 @@ async fn bootstrap_is_posted_once_on_its_scoped_origin_and_becomes_an_http_only_
         response.contains("Set-Cookie: capsem_preview=scoped-session; Path=/; HttpOnly; SameSite=Lax; Max-Age=900"),
         "{response}"
     );
-    assert!(exchange(EXPOSURE).await.is_empty(), "bootstrap replay must fail closed");
+    // Fail closed means no session is minted. A refusal is answered with a
+    // status rather than a dropped socket, which a browser shows as an empty
+    // response instead of an expired preview.
+    let refused = |response: &str| response.starts_with("HTTP/1.1 4") && !response.contains("Set-Cookie");
+    let replay = exchange(EXPOSURE).await;
+    assert!(refused(&replay), "bootstrap replay must fail closed: {replay}");
+    let foreign = exchange("1199df26-d0f2-74f2-a304-ef67b79d1217").await;
     assert!(
-        exchange("1199df26-d0f2-74f2-a304-ef67b79d1217").await.is_empty(),
-        "another exposure origin must not share this scope"
+        refused(&foreign),
+        "another exposure origin must not share this scope: {foreign}"
     );
 }
