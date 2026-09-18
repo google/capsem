@@ -23,6 +23,10 @@ from tests.helpers import service as svc_mod
 def artifact_env(tmp_path, monkeypatch, request):
     """Point ARTIFACTS_ROOT at tmp_path and seed a single failed nodeid."""
     monkeypatch.setattr(svc_mod.failures, "ARTIFACTS_ROOT", tmp_path / "test-artifacts")
+    # The skip rules are the subject here, so the ambient escape hatches that
+    # override them must not leak in from whoever launched the run.
+    monkeypatch.delenv("CAPSEM_TEST_PRESERVE_ALWAYS", raising=False)
+    monkeypatch.delenv("CAPSEM_TEST_ARTIFACTS_ROOT", raising=False)
     # Replace, don't mutate -- other tests may run in the same process.
     monkeypatch.setattr(svc_mod.failures, "FAILED_NODEIDS", [request.node.nodeid])
     return tmp_path / "test-artifacts"
