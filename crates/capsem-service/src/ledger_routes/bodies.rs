@@ -31,10 +31,16 @@ use super::*;
 /// are bound to [`STATS_DETAIL_PROCESS_EVENTS_LIMIT`] as `?1`, the same number
 /// the process list is bound to, so the two cannot drift into metadata for
 /// rows the response does not carry or rows with none.
+///
+/// Decisions and asks archive a payload under the same event id as the rule
+/// match they came from, and no list here carries a decision or an ask row, so
+/// their index rows annotate nothing -- and left in, three `payload` rows for
+/// one event would leave the pane to guess which was the rule's.
 pub(crate) const STATS_DETAIL_BODY_BLOBS_SQL: &str = r#"
 SELECT event_id, source_table, direction, content_type, original_bytes, stored_bytes, truncated, body_hash
 FROM event_body_blobs
-WHERE event_id IN (
+WHERE source_table NOT IN ('security_decision_events', 'security_ask_events')
+AND (event_id IN (
     SELECT event_id FROM net_events WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
 )
 OR event_id IN (
@@ -48,7 +54,7 @@ OR event_id IN (
 )
 OR event_id IN (
     SELECT event_id FROM security_rule_events ORDER BY id DESC LIMIT 200
-)
+))
 ORDER BY event_id, direction
 "#;
 
