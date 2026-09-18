@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   STREAM_SUBPROTOCOL,
@@ -6,6 +7,7 @@ import {
   encodeControl,
   encodeStdin,
   streamUrl,
+  type StreamControl,
 } from '../terminal/stream-protocol';
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -70,4 +72,53 @@ it('refuses a frame past the protocol ceiling', () => {
   const largest = new Uint8Array(MAX_STREAM_FRAME_BYTES);
   largest[0] = 1;
   expect(decodeServerFrame(largest.buffer).kind).toBe('output');
+});
+
+// Finding 32: this codec is a TypeScript copy of capsem-api's stream module.
+// The fixture is generated from the Rust codec, so any drift -- a renamed
+// field, a moved channel, a changed bound -- fails here instead of in a
+// browser terminal.
+interface GoldenFrames {
+  subprotocol: string;
+  max_frame_bytes: number;
+  client: Array<{ control?: StreamControl; stdin?: number[]; frame: number[] }>;
+  server: Array<{ frame: number[]; expect: { kind: string; bytes?: number[]; status?: unknown } }>;
+  oversized_frame_bytes: number;
+}
+
+const golden: GoldenFrames = JSON.parse(
+  readFileSync(new URL('../../../../../sdk/specification/stream-v1.json', import.meta.url), 'utf8'),
+);
+
+describe('capsem.stream.v1 against the Rust golden frames', () => {
+  it('shares the protocol name and frame bound', () => {
+    expect(STREAM_SUBPROTOCOL).toBe(golden.subprotocol);
+    expect(MAX_STREAM_FRAME_BYTES).toBe(golden.max_frame_bytes);
+  });
+
+  it('encodes every client frame the way Rust decodes it', () => {
+    for (const { control, stdin, frame } of golden.client) {
+      if (control) {
+        // The server parses control JSON by value, so key order is not part of
+        // the contract; the channel byte and the parsed object are.
+        const encoded = encodeControl(control);
+        expect(encoded[0]).toBe(frame[0]);
+        expect(JSON.parse(text(encoded.subarray(1)))).toEqual(JSON.parse(text(Uint8Array.from(frame.slice(1)))));
+      } else {
+        expect(Array.from(encodeStdin(Uint8Array.from(stdin ?? [])))).toEqual(frame);
+      }
+    }
+  });
+
+  it('decodes every server frame the way Rust does, refusals included', () => {
+    for (const { frame, expect: want } of golden.server) {
+      const decoded = decodeServerFrame(Uint8Array.from(frame).buffer);
+      expect(decoded.kind).toBe(want.kind);
+      if (decoded.kind === 'output') expect(Array.from(decoded.bytes)).toEqual(want.bytes);
+      if (decoded.kind === 'status') expect(decoded.status).toEqual(want.status);
+    }
+    const oversized = new Uint8Array(golden.oversized_frame_bytes);
+    oversized[0] = 1;
+    expect(decodeServerFrame(oversized.buffer).kind).toBe('invalid');
+  });
 });
