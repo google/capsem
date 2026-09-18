@@ -57,6 +57,14 @@ MCP_TO_CLI: dict[str, str | tuple[None, str]] = {
         None,
         "host log reader for AI diagnostics; CLI users can inspect log files directly",
     ),
+    "capsem_panics": (
+        None,
+        "host panic reader for AI diagnostics; CLI users read the log files directly",
+    ),
+    "capsem_triage": (
+        None,
+        "correlates host failures with a session for AI diagnostics; no CLI analog",
+    ),
     "capsem_timeline": (
         None,
         "session timeline query for AI diagnostics; CLI users can inspect session DB directly",
