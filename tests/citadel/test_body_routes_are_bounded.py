@@ -32,6 +32,7 @@ See CLAUDE.md 'Logger DB Boundary' and skills/dev-session-debug.
 
 from __future__ import annotations
 
+import itertools
 import re
 from pathlib import Path
 
@@ -94,9 +95,8 @@ def _functions(text: str) -> list[tuple[str, str, str]]:
     starts = [m.start() for m in FN_START.finditer(text)]
     if not starts:
         return []
-    bounds = starts + [len(text)]
     out: list[tuple[str, str, str]] = []
-    for begin, end in zip(starts, bounds[1:]):
+    for begin, end in itertools.pairwise([*starts, len(text)]):
         chunk = text[begin:end]
         signature = FN_SIGNATURE.search(chunk)
         if not signature:

@@ -27,6 +27,7 @@ See CLAUDE.md 'Logger DB Boundary' and skills/dev-session-debug.
 
 from __future__ import annotations
 
+import itertools
 import re
 from pathlib import Path
 
@@ -71,9 +72,8 @@ def _functions(text: str) -> list[tuple[str, str]]:
     starts = [m.start() for m in re.finditer(r"^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+\w+", text, re.M)]
     if not starts:
         return []
-    bounds = starts + [len(text)]
     out = []
-    for begin, end in zip(starts, bounds[1:]):
+    for begin, end in itertools.pairwise([*starts, len(text)]):
         body = text[begin:end]
         name = re.search(r"fn\s+(\w+)", body)
         out.append((name.group(1) if name else "?", body))

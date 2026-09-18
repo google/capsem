@@ -84,7 +84,7 @@ def enclosing_item_is_test_gated(lines: list[str], index: int) -> bool:
         above = cursor - 1
         while above >= 0:
             stripped = lines[above].strip()
-            if not (stripped.startswith("#[") or stripped.startswith("//") or stripped == ""):
+            if not (stripped.startswith(("#[", "//")) or stripped == ""):
                 break
             if TEST_GATE_RE.search(stripped):
                 return True
