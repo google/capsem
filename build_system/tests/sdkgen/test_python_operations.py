@@ -90,7 +90,11 @@ def test_operation_matches_the_wire_contract(route: Route, outcome: str, package
         if parameter.location == "path":
             expected_path = expected_path.replace("{" + parameter.name + "}", quote(str(value), safe="").replace(".", "%2E"))
         elif value is not None:
-            expected_query[parameter.name] = ",".join(map(str, value)) if isinstance(value, list) else str(value)
+            expected_query[parameter.name] = (
+                ",".join(map(str, value)) if isinstance(value, list)
+                # The wire spells booleans as serde reads them.
+                else str(value).lower() if isinstance(value, bool) else str(value)
+            )
     expected_body = b""
     if operation.request_body:
         if operation.request_body.media_type == "application/octet-stream":
