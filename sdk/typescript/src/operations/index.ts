@@ -46,6 +46,7 @@ export {purgeVms} from "./purgeVms.js";
 export {refreshProfileMcpServer} from "./refreshProfileMcpServer.js";
 export {restartHypervisor} from "./restartHypervisor.js";
 export {resumeVm} from "./resumeVm.js";
+export {revokeVmPreviewSessions} from "./revokeVmPreviewSessions.js";
 export {runVm} from "./runVm.js";
 export {startVm} from "./startVm.js";
 export {stopVm} from "./stopVm.js";

@@ -93,6 +93,7 @@ export {PanicsResponseSchema} from "./PanicsResponse.js";
 export {PersistRequestSchema} from "./PersistRequest.js";
 export {PersistResponseSchema} from "./PersistResponse.js";
 export {PreviewSessionResponseSchema} from "./PreviewSessionResponse.js";
+export {PreviewSessionsRevokedResponseSchema} from "./PreviewSessionsRevokedResponse.js";
 export {ProcessEventSchema} from "./ProcessEvent.js";
 export {ProfileArtifactIssueSchema} from "./ProfileArtifactIssue.js";
 export {ProfileAvailabilitySummarySchema} from "./ProfileAvailabilitySummary.js";

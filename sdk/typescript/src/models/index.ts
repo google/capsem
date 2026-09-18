@@ -93,6 +93,7 @@ export type { PanicsResponse } from "./PanicsResponse.js";
 export type { PersistRequest } from "./PersistRequest.js";
 export type { PersistResponse } from "./PersistResponse.js";
 export type { PreviewSessionResponse } from "./PreviewSessionResponse.js";
+export type { PreviewSessionsRevokedResponse } from "./PreviewSessionsRevokedResponse.js";
 export type { ProcessEvent } from "./ProcessEvent.js";
 export type { ProfileArtifactIssue } from "./ProfileArtifactIssue.js";
 export type { ProfileAvailabilitySummary } from "./ProfileAvailabilitySummary.js";
