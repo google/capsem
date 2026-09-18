@@ -4,6 +4,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
 mod security;
+mod sessions;
 
 fn source_fixture() -> Arc<Source> {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
@@ -689,8 +690,11 @@ fn preview_bootstrap_and_handoff_credentials_are_scoped_and_single_use() {
         .admit(&session, capsem_proto::PreviewAdmissionKind::WebsocketUpgrade)
         .unwrap();
     assert_eq!(
-        preview.redeem(handoff),
+        preview.redeem(handoff).map(|(kind, _)| kind),
         Some(capsem_proto::PreviewAdmissionKind::WebsocketUpgrade)
     );
-    assert_eq!(preview.redeem(handoff), None, "a descriptor handoff must not replay");
+    assert!(
+        preview.redeem(handoff).is_none(),
+        "a descriptor handoff must not replay"
+    );
 }

@@ -94,6 +94,9 @@ pub struct Incoming {
     /// The request shape a preview connection was admitted for; `None` for a
     /// published host port.
     pub preview: Option<capsem_proto::PreviewAdmissionKind>,
+    /// The session a preview connection was admitted under: the flow ends
+    /// when it expires or is revoked. `None` for a published host port.
+    pub session: Option<SessionLease>,
 }
 
 struct GuestFlow {
@@ -158,8 +161,31 @@ const MAX_PREVIEW_CREDENTIALS: usize = 128;
 
 struct PreviewCredentials {
     bootstraps: HashMap<String, Instant>,
-    sessions: HashMap<String, Instant>,
-    handoffs: HashMap<u64, (Instant, capsem_proto::PreviewAdmissionKind)>,
+    sessions: HashMap<String, SessionLease>,
+    handoffs: HashMap<u64, (Instant, capsem_proto::PreviewAdmissionKind, SessionLease)>,
+}
+
+/// What an admitted preview flow knows about its session: when it expires,
+/// and whether it has been revoked. Admission was once the only check, so a
+/// WebSocket opened a minute before expiry kept working indefinitely.
+#[derive(Debug, Clone)]
+pub struct SessionLease {
+    expires: Instant,
+    revoked: CancellationToken,
+}
+
+impl SessionLease {
+    /// Why a flow admitted under this session must end by `now`, if it must.
+    pub fn ended(&self, now: Instant) -> Option<crate::security_engine::network::NetworkReason> {
+        use crate::security_engine::network::NetworkReason;
+        if self.revoked.is_cancelled() {
+            Some(NetworkReason::SessionRevoked)
+        } else if now >= self.expires {
+            Some(NetworkReason::SessionExpired)
+        } else {
+            None
+        }
+    }
 }
 
 struct PreviewState {
@@ -207,15 +233,19 @@ impl PreviewState {
             .remove(token)
             .context("unknown, reused or expired preview bootstrap")?;
         ensure!(expires > now, "unknown, reused or expired preview bootstrap");
-        credentials.sessions.retain(|_, expires| *expires > now);
+        credentials.sessions.retain(|_, lease| lease.expires > now);
         ensure!(
             credentials.sessions.len() < MAX_PREVIEW_CREDENTIALS,
             "preview session quota reached"
         );
         let session = Self::secret();
-        credentials
-            .sessions
-            .insert(session.clone(), now + PREVIEW_SESSION_LIFETIME);
+        credentials.sessions.insert(
+            session.clone(),
+            SessionLease {
+                expires: now + PREVIEW_SESSION_LIFETIME,
+                revoked: CancellationToken::new(),
+            },
+        );
         drop(credentials);
         Ok(session)
     }
@@ -223,12 +253,13 @@ impl PreviewState {
     fn admit(&self, session: &str, kind: capsem_proto::PreviewAdmissionKind) -> Result<u64> {
         let now = Instant::now();
         let mut credentials = self.credentials.lock().unwrap();
-        credentials.sessions.retain(|_, expires| *expires > now);
-        ensure!(
-            credentials.sessions.contains_key(session),
-            "unknown or expired preview session"
-        );
-        credentials.handoffs.retain(|_, (expires, _)| *expires > now);
+        credentials.sessions.retain(|_, lease| lease.expires > now);
+        let lease = credentials
+            .sessions
+            .get(session)
+            .cloned()
+            .context("unknown or expired preview session")?;
+        credentials.handoffs.retain(|_, (expires, _, _)| *expires > now);
         ensure!(
             credentials.handoffs.len() < MAX_PREVIEW_CREDENTIALS,
             "preview handoff quota reached"
@@ -242,15 +273,25 @@ impl PreviewState {
         }
         credentials
             .handoffs
-            .insert(token, (now + PREVIEW_HANDOFF_LIFETIME, kind));
+            .insert(token, (now + PREVIEW_HANDOFF_LIFETIME, kind, lease));
         drop(credentials);
         Ok(token)
     }
 
-    fn redeem(&self, token: u64) -> Option<capsem_proto::PreviewAdmissionKind> {
+    fn redeem(&self, token: u64) -> Option<(capsem_proto::PreviewAdmissionKind, SessionLease)> {
         let now = Instant::now();
-        let (expires, kind) = self.credentials.lock().unwrap().handoffs.remove(&token)?;
-        (expires > now).then_some(kind)
+        let (expires, kind, lease) = self.credentials.lock().unwrap().handoffs.remove(&token)?;
+        (expires > now).then_some((kind, lease))
+    }
+
+    /// End every session of this exposure, which stays declared: a legitimate
+    /// user bootstraps again, a leaked session does not come back.
+    fn revoke_all(&self) -> usize {
+        let sessions: Vec<_> = self.credentials.lock().unwrap().sessions.drain().collect();
+        for (_, lease) in &sessions {
+            lease.revoked.cancel();
+        }
+        sessions.len()
     }
 }
 
@@ -686,6 +727,17 @@ impl Publisher {
             .context("preview exposure not found")?
     }
 
+    /// End every session of preview exposure `id` and, through the broker,
+    /// every flow they admitted. The exposure stays declared.
+    pub fn revoke_preview_sessions(&self, id: &str) -> Result<usize> {
+        self.declared
+            .with(id, |entry| {
+                entry.handle.preview.as_ref().map(|preview| preview.revoke_all())
+            })
+            .flatten()
+            .context("preview exposure not found")
+    }
+
     pub fn exchange_preview_bootstrap(&self, id: &str, token: &str) -> Result<String> {
         self.declared
             .with(id, |entry| {
@@ -716,16 +768,17 @@ impl Publisher {
     pub async fn accept_preview_handoff(self: &Arc<Self>, token: u64, source: Source) -> Result<()> {
         let found = self.declared.find_map(|entry| {
             let preview = entry.handle.preview.as_ref()?;
-            let kind = preview.redeem(token)?;
+            let (kind, lease) = preview.redeem(token)?;
             Some((
                 preview.clone(),
                 entry.handle.publication_id,
                 entry.guest_port,
                 entry.target,
                 kind,
+                lease,
             ))
         });
-        let (preview, publication_id, guest_port, target, kind) =
+        let (preview, publication_id, guest_port, target, kind, lease) =
             found.context("unknown, reused or expired preview handoff")?;
         let authority = self.security.clone().context("publication security context missing")?;
         let listener = source.0.local_addr()?;
@@ -739,6 +792,7 @@ impl Publisher {
                 port: guest_port,
                 target,
                 preview: Some(kind),
+                session: Some(lease),
             })
             .await
             .context("preview broker closed")
@@ -794,6 +848,7 @@ impl Publisher {
                     port: guest_port,
                     target,
                     preview: None,
+                    session: None,
                 };
                 if feed.send(arrival).await.is_err() {
                     return;

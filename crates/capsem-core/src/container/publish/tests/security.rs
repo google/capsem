@@ -156,6 +156,7 @@ async fn preview_denial_never_opens_a_guest_destination() {
             port: 8080,
             target: capsem_proto::PublicationTarget::Container,
             preview: Some(capsem_proto::PreviewAdmissionKind::Request),
+            session: None,
         })
         .await
         .unwrap();
@@ -418,7 +419,7 @@ async fn the_link_audit_is_this_vms_own_portless_private_flow() {
 }
 
 /// A ledger-backed engine with `rules`, for exposure lifecycle tests.
-fn lifecycle_engine(dir: &tempfile::TempDir, rules: &str) -> (Arc<NetworkSecurity>, std::path::PathBuf) {
+pub(super) fn lifecycle_engine(dir: &tempfile::TempDir, rules: &str) -> (Arc<NetworkSecurity>, std::path::PathBuf) {
     let path = dir.path().join("session.db");
     let rules = SecurityRuleSet::compile_profile(
         &SecurityRuleProfile::parse_toml(rules).unwrap(),

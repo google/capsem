@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- A browser-preview session now bounds the connections it admitted, not only
+  their admission. An open WebSocket or keep-alive connection closes when its
+  session expires, instead of outliving it indefinitely, and
+  `DELETE /vms/{id}/exposures/{exposure_id}/preview-session` revokes every
+  session of an exposure and closes their connections without deleting the
+  exposure, so a leaked session can be cut off while legitimate users simply
+  bootstrap again. The network ledger records these closes as
+  `session_expired` and `session_revoked` (google/capsem#222).
+
 - The Rust, Python and TypeScript SDKs no longer print a preview port's
   bootstrap token: Rust `Debug` and Python `repr` show `<redacted>`, and the
   TypeScript `bootstrapToken` is non-enumerable, so logging or serializing a

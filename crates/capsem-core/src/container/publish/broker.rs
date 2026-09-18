@@ -18,6 +18,10 @@ struct Active {
     accepted: bool,
     close_deadline: Option<Instant>,
     preview: Option<capsem_proto::PreviewAdmissionKind>,
+    /// The preview session that admitted this flow; it bounds the flow.
+    session: Option<SessionLease>,
+    /// Why the broker is ending this flow itself, recorded at its close.
+    ending: Option<NetworkReason>,
 }
 impl Drop for Active {
     fn drop(&mut self) {
@@ -62,7 +66,7 @@ pub(super) async fn serve(
                 _ = cancellation.cancelled() => return Ok(()),
                 _ = router.closed.cancelled() => anyhow::bail!("VM router closed"),
                 arrival = incoming.recv(), if active.len() + connecting.len() < MAX_CONNECTIONS => {
-                    let Some(Incoming { source, audit, port: guest_port, target, preview }) = arrival else {
+                    let Some(Incoming { source, audit, port: guest_port, target, preview, session }) = arrival else {
                         return Ok(());
                     };
                     let Ok(permit) = ingress.clone().try_acquire_owned() else {
@@ -120,7 +124,7 @@ pub(super) async fn serve(
                         (id, result, reason)
                     });
                     tracing::debug!(connection_id = id, guest_port, "publication connection accepted");
-                    connecting.insert(id, Active { audit, guest: flow, _pending: pending, graceful: false, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false, close_deadline: None, preview });
+                    connecting.insert(id, Active { audit, guest: flow, _pending: pending, graceful: false, _permit: permit, setup, source, connection: None, acknowledgement: None, accepted: false, close_deadline: None, preview, session, ending: None });
                 }
                 Some((guest, report)) = guest_records.recv() => {
                     if report.reason != capsem_proto::router::CloseReason::Complete {
@@ -149,8 +153,9 @@ pub(super) async fn serve(
                             from_source = report.from_source, to_source = report.to_source, "publication closed");
                         let guest = flow.guest;
                         let audit = flow.audit.clone();
+                        let reason = flow.ending.unwrap_or_else(|| close_reason(report.reason));
                         drop(flow);
-                        audit.record(Type::NetworkClose, close_reason(report.reason), report.from_source, report.to_source).await?;
+                        audit.record(Type::NetworkClose, reason, report.from_source, report.to_source).await?;
                         if report.reason != capsem_proto::router::CloseReason::Complete {
                             abort_guest(&control, vec![guest]).await?;
                         }
@@ -172,6 +177,17 @@ pub(super) async fn serve(
                     let mut flow = connecting.remove(&id).context("completed unknown publication setup")?;
                     match result {
                         Ok(connection) => {
+                            // A session that ended while the guest leg was being
+                            // set up admits nothing: refuse rather than grant.
+                            if let Some(reason) = flow.session.as_ref().and_then(|session| session.ended(std::time::Instant::now())) {
+                                let guest = flow.guest;
+                                let audit = flow.audit.clone();
+                                drop(connection);
+                                drop(flow);
+                                abort_guest(&control, vec![guest]).await?;
+                                audit.record(Type::NetworkConnectResult, reason, 0, 0).await?;
+                                continue;
+                            }
                             if flow._pending.lease.as_ref().is_none_or(|lease| lease.is_cancelled()) {
                                 let guest = flow.guest;
                                 let audit = flow.audit.clone();
@@ -220,6 +236,23 @@ pub(super) async fn serve(
                     }
                 }
                 _ = acknowledgements.tick() => {
+                    // A preview flow lives no longer than the session that
+                    // admitted it: expiry and revocation end open connections,
+                    // not only admission (google/capsem#222).
+                    let now = std::time::Instant::now();
+                    let ended: Vec<(u64, NetworkReason)> = active
+                        .iter()
+                        .filter(|(_, flow)| flow.accepted && flow.ending.is_none())
+                        .filter_map(|(&id, flow)| Some((id, flow.session.as_ref()?.ended(now)?)))
+                        .collect();
+                    for (id, reason) in ended {
+                        {
+                            let flow = active.get_mut(&id).context("ending an unknown connection")?;
+                            flow.ending = Some(reason);
+                            flow.close_deadline = Some(Instant::now() + Duration::from_secs(2));
+                        }
+                        router.cancel(id).await?;
+                    }
                     ensure!(!active.values().any(|flow| flow.acknowledgement.is_some_and(|deadline| deadline <= Instant::now())),
                         "router acknowledgement timed out");
                     ensure!(!active.values().any(|flow| flow.close_deadline.is_some_and(|deadline| deadline <= Instant::now())),

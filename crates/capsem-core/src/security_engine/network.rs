@@ -126,6 +126,10 @@ pub enum NetworkReason {
     Cancelled,
     Io,
     Unreachable,
+    /// A preview flow outlived the session that admitted it.
+    SessionExpired,
+    /// The session that admitted a preview flow was revoked.
+    SessionRevoked,
 }
 
 /// Never exposed through CEL: child reports cannot authorize a connection.
