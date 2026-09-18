@@ -205,3 +205,94 @@ pub(crate) async fn handle_event_bodies(
         bodies,
     }))
 }
+
+/// Chunks in flight between the blocking export and the HTTP response.
+///
+/// Small on purpose: the channel is backpressure, not a buffer. A slow client
+/// stalls the export thread instead of letting a whole session's bodies pile
+/// up in the service's memory.
+const EXPORT_CHANNEL_CHUNKS: usize = 4;
+
+/// The export's writer: each `write` hands a chunk to the response stream and
+/// blocks while the client is behind.
+///
+/// `blocking_send` is correct here because `export_warc` moves its writer onto
+/// a blocking task; this never runs on the async runtime.
+struct ExportChannelWriter {
+    chunks: tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>,
+}
+
+impl std::io::Write for ExportChannelWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.chunks
+            .blocking_send(Ok(Bytes::copy_from_slice(buf)))
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the export client went away"))?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// `GET /vms/{id}/bodies/export.warc.gz` -- the whole session's archived
+/// bodies as a WARC 1.1 file any web-archive tool can read.
+///
+/// Streamed rather than buffered: the export runs on a blocking task writing
+/// into a small bounded channel and the response *is* that channel. A session
+/// with a gigabyte of bodies costs a few chunks of resident memory, and a
+/// client that reads slowly stalls the export rather than the service.
+///
+/// There is no event id to check here. The VM id is resolved exactly as every
+/// other session route resolves it, and nothing else in the path is caller
+/// input.
+///
+/// No `content-encoding: gzip`: the gzip framing is part of the WARC file the
+/// caller asked for, not a transfer encoding, and announcing it would have
+/// browsers hand the client a decompressed file under a `.gz` name.
+///
+/// **A failure after the first byte cannot be reported.** HTTP has no way to
+/// send a status once the body has begun, so an export that fails midway ends
+/// the stream and logs at error level; the client sees a truncated file. That
+/// is the honest outcome available -- the WARC stops after its last complete
+/// record rather than carrying a wrong one -- and the service log is the only
+/// place the reason exists.
+pub(crate) async fn handle_bodies_warc_export(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<axum::response::Response, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    let db = open_ready_session_db(&state, &id, "bodies_warc_export", &db_path).await?;
+
+    let (chunks, receiver) = tokio::sync::mpsc::channel(EXPORT_CHANNEL_CHUNKS);
+    let vm_id = id.clone();
+    tokio::spawn(async move {
+        match db.export_warc(ExportChannelWriter { chunks }).await {
+            Ok(summary) => info!(
+                route = "/vms/{id}/bodies/export.warc.gz",
+                vm_id = vm_id.as_str(),
+                records = summary.records,
+                bytes_written = summary.bytes_written,
+                skipped = summary.skipped.len(),
+                "bodies_warc_export"
+            ),
+            Err(error) => error!(
+                route = "/vms/{id}/bodies/export.warc.gz",
+                vm_id = vm_id.as_str(),
+                error = %error,
+                "session body WARC export failed after the response began; the client has a truncated file"
+            ),
+        }
+    });
+
+    let stream = tokio_stream::wrappers::ReceiverStream::new(receiver);
+    axum::response::Response::builder()
+        .header(axum::http::header::CONTENT_TYPE, "application/warc")
+        .header(
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"capsem-session-{id}.warc.gz\""),
+        )
+        .body(axum::body::Body::from_stream(stream))
+        .map_err(|error| ledger_route_error(&id, "bodies", "build the export response", &db_path, error))
+}

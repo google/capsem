@@ -138,7 +138,7 @@ fn bytes_that_are_not_text_come_back_as_base64() {
 }
 
 /// A session with one net event carrying both a request and a response body.
-async fn session_with_bodies(state: &ServiceState, vm_id: &str, session_dir: &std::path::Path) {
+pub(super) async fn session_with_bodies(state: &ServiceState, vm_id: &str, session_dir: &std::path::Path) {
     std::fs::create_dir_all(session_dir).unwrap();
     insert_fake_instance_with_session_dir(state, vm_id, std::process::id(), session_dir.to_path_buf());
 

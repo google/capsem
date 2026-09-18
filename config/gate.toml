@@ -2986,6 +2986,13 @@ unmeasured = [
     "/vms/{id}/status",
     "/vms/{id}/stop",
     "/vms/{id}/timeline",
+    # The body routes join their neighbours here rather than in `measured`:
+    # every session-ledger read route is unmeasured, and the routes collector
+    # has no dimension for one. Both are worth measuring -- an archived-body
+    # read is an inflate and a hash check, and the WARC export is the whole
+    # session -- and they belong in the same pass that covers the rest.
+    "/vms/{id}/bodies/{event_id}",
+    "/vms/{id}/bodies/export.warc.gz",
 ]
 
 # Release-blocking route ceilings and the margin they must retain. The budget

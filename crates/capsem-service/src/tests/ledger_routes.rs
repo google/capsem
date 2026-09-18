@@ -1,6 +1,7 @@
 use super::*;
 
 mod bodies;
+mod bodies_export;
 mod freshness;
 
 #[tokio::test]

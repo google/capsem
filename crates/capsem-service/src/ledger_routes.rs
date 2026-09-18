@@ -3,7 +3,7 @@ use super::*;
 pub(crate) mod bodies;
 mod security;
 
-pub(super) use bodies::{body_blob_map, handle_event_bodies, STATS_DETAIL_BODY_BLOBS_SQL};
+pub(super) use bodies::{body_blob_map, handle_bodies_warc_export, handle_event_bodies, STATS_DETAIL_BODY_BLOBS_SQL};
 pub(super) use security::{
     is_detection_rule_event, read_profile_security_ledgers, read_security_session_ledger, security_latest_for_vm,
     security_stats_for_vm,
