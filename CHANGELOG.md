@@ -155,6 +155,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The stats view lists exec output bodies with the rest. The process detail
+  section now renders its stdout/stderr metadata -- size, truncation, hash --
+  from the list response instead of waiting on its own body fetch, and still
+  shows it when that fetch fails. Each stats list response grows by up to two
+  small index rows per listed exec.
 - `stats/summary` and `security/status`, which the TUI and the desktop UI poll
   per VM, are answered from the session handle's cache while the ledger has
   not changed, instead of re-running their aggregates over the file on every

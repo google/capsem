@@ -20,6 +20,16 @@ use super::*;
 /// Body index metadata for the stats detail view: what was captured for the
 /// recent events of each layer, never the bytes. The bytes are read one event
 /// at a time through [`handle_event_bodies`].
+///
+/// Every kind the detail pane can render a body section for belongs here,
+/// `exec_events` included. A kind left out has no metadata in the list
+/// response, so its section can only appear once its own body fetch resolves
+/// -- and when that fetch fails there is nothing at all to key on, not even
+/// the hash that would say a body was captured. The cost is a slightly larger
+/// list response, which is the trade for the section rendering from the list
+/// like every other one. Each window matches the list it annotates: exec rows
+/// are `STATS_DETAIL_PROCESS_EVENTS_SQL`'s hundred, not two hundred of which
+/// half would describe rows the response does not carry.
 pub(crate) const STATS_DETAIL_BODY_BLOBS_SQL: &str = r#"
 SELECT event_id, source_table, direction, content_type, original_bytes, stored_bytes, truncated, body_hash
 FROM event_body_blobs
@@ -31,6 +41,9 @@ OR event_id IN (
 )
 OR event_id IN (
     SELECT event_id FROM tool_calls WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
+)
+OR event_id IN (
+    SELECT event_id FROM exec_events ORDER BY id DESC LIMIT 100
 )
 OR event_id IN (
     SELECT event_id FROM security_rule_events ORDER BY id DESC LIMIT 200

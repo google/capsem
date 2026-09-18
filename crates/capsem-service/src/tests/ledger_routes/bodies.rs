@@ -280,3 +280,64 @@ async fn the_route_honours_max_bytes_and_says_it_cut_the_body() {
         assert!(body.original_bytes > 4, "the true size is still reported");
     }
 }
+
+/// The stats list carries body metadata for exec output, like every other kind.
+///
+/// It used to leave `exec_events` out, so the process detail section had
+/// nothing to render from until its own body fetch resolved -- and when that
+/// fetch failed, not even the hash that says output was captured.
+#[tokio::test]
+async fn the_stats_list_names_exec_output_bodies() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("exec-bodies-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "exec-bodies-vm", std::process::id(), session_dir.clone());
+
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    writer
+        .write(capsem_logger::WriteOp::ExecEvent(capsem_logger::ExecEvent {
+            event_id: Some("0123456789ec".to_string()),
+            timestamp: std::time::SystemTime::now(),
+            exec_id: 7,
+            command: "echo hi".to_string(),
+            source: "api".to_string(),
+            trace_id: None,
+            process_name: Some("bash".to_string()),
+            credential_ref: None,
+        }))
+        .await;
+    writer
+        .write(capsem_logger::WriteOp::ExecEventComplete(
+            capsem_logger::ExecEventComplete {
+                exec_id: 7,
+                exit_code: 0,
+                duration_ms: 3,
+                stdout_preview: Some("hi\n".to_string()),
+                stderr_preview: Some("warn\n".to_string()),
+                stdout_bytes: 3,
+                stderr_bytes: 5,
+                pid: Some(42),
+            },
+        ))
+        .await;
+    tokio::task::spawn_blocking(move || writer.shutdown_blocking())
+        .await
+        .unwrap();
+
+    let (status, detail) = route_request(app, axum::http::Method::GET, "/vms/exec-bodies-vm/stats/detail", None).await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    let blobs = detail["body_blobs"]["0123456789ec"]
+        .as_array()
+        .unwrap_or_else(|| panic!("exec output must be named in the stats list: {detail}"));
+    let directions: Vec<&str> = blobs.iter().filter_map(|blob| blob["direction"].as_str()).collect();
+    assert_eq!(directions, vec!["stderr", "stdout"], "{detail}");
+    for blob in blobs {
+        assert_eq!(blob["source_table"], "exec_events");
+        assert!(
+            blob.get("body").is_none(),
+            "the list names bodies, it does not carry them"
+        );
+    }
+}
