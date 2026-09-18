@@ -235,7 +235,7 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
             upload_body,
             timeout=30,
         )
-        assert upload == {"success": True, "size": len(upload_body)}
+        assert upload == {"success": True, "size": len(upload_body), "vm_path": f"/root/{upload_path}"}
 
         read_status, read_body = client.get_bytes(
             f"/vms/{session_id}/files/content?path={upload_path}",
@@ -259,7 +259,7 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
             script,
             timeout=30,
         )
-        assert script_upload == {"success": True, "size": len(script)}
+        assert script_upload == {"success": True, "size": len(script), "vm_path": f"/root/{script_path}"}
 
         exec_resp = client.post(
             f"/vms/{session_id}/exec",

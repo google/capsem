@@ -59,5 +59,5 @@ def test_sdk_receives_managed_restart_and_reconnects_explicitly(language: str) -
             }, capture_output=True, text=True, timeout=30, check=False,
         )
         assert reconnect.returncode == 0, reconnect.stdout + reconnect.stderr
-        assert "SDK_GATEWAY_ACCEPTANCE_OK" in reconnect.stdout
+        assert "BRAAVOS_SDK_ACCEPTANCE_OK" in reconnect.stdout
         print(f"{language}: acknowledgement delivered; service and gateway PIDs changed; token rotated; stopped VM unchanged")

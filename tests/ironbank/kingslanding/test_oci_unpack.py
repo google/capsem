@@ -24,10 +24,12 @@ def test_packaged_umoci_unpacks_layer_semantics(oci_vm, tmp_path):
             response = client.post_bytes(
                 f"/vms/{name}/files/content?path=oci-unpack/{path.relative_to(layout)}", data
             )
-            assert response == {"success": True, "size": len(data)}
+            assert response == {
+                "success": True, "size": len(data), "vm_path": f"/root/oci-unpack/{path.relative_to(layout)}",
+            }
     probe = (FIXTURES / "unpack_probe.py").read_bytes()
     assert client.post_bytes(f"/vms/{name}/files/content?path=unpack_probe.py", probe) == {
-        "success": True, "size": len(probe)
+        "success": True, "size": len(probe), "vm_path": "/root/unpack_probe.py"
     }
     result = client.post(
         f"/vms/{name}/exec",

@@ -321,7 +321,7 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             script_bytes,
             timeout=30,
         )
-        assert upload == {"success": True, "size": len(script_bytes)}
+        assert upload == {"success": True, "size": len(script_bytes), "vm_path": f"/root/{script_name}"}
 
         exec_resp = client.post(
             f"/vms/{session_id}/exec",

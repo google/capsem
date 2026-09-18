@@ -176,6 +176,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             model_call_id INTEGER NOT NULL,
             call_id TEXT NOT NULL,
             content_preview TEXT,
+            is_error INTEGER DEFAULT 0,
             trace_id TEXT,
             credential_ref TEXT
         );

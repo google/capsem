@@ -75,7 +75,7 @@ def test_offline_oci_adversarial_suite(oci_vm, tmp_path):
         result = client.post_bytes(
             f"/vms/{name}/files/content?path=oci/{filename}", payload
         )
-        assert result == {"success": True, "size": len(payload)}
+        assert result == {"success": True, "size": len(payload), "vm_path": f"/root/oci/{filename}"}
     payload = bytes(range(256))
     assert client.post_bytes(
         f"/vms/{name}/files/content?path=oci/input.bin", payload
