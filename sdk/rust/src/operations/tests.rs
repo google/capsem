@@ -105,6 +105,11 @@ operation!(
     "createVmPreviewSession",
     CreateVmPreviewSessionParams
 );
+operation!(
+    revoke_vm_preview_sessions,
+    "revokeVmPreviewSessions",
+    RevokeVmPreviewSessionsParams
+);
 operation!(stop_vm, "stopVm", StopVmParams);
 operation!(get_vm_timeline, "getVmTimeline", GetVmTimelineParams);
 

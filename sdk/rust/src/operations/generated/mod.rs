@@ -91,6 +91,8 @@ mod restart_hypervisor;
 pub use restart_hypervisor::restart_hypervisor;
 mod resume_vm;
 pub use resume_vm::{resume_vm, ResumeVmParams};
+mod revoke_vm_preview_sessions;
+pub use revoke_vm_preview_sessions::{revoke_vm_preview_sessions, RevokeVmPreviewSessionsParams};
 mod run_vm;
 pub use run_vm::{run_vm, RunVmParams};
 mod start_vm;
