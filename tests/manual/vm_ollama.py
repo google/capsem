@@ -48,15 +48,21 @@ PROMPT = os.environ.get(
 )
 
 
-def boot(service, tmp_path, reference, certificate, name):
-    """Boot one container VM under `name`; return its /vms/list row."""
-    stdout = tmp_path / f"{name}.stdout"
-    stderr = tmp_path / f"{name}.stderr"
-    out, err = stdout.open("wb"), stderr.open("wb")
+def boot(service, tmp_path, reference, certificate, name, *options):
+    """Create one named Redis container VM; return its /vms/list row once Redis is up.
+
+    `capsem create --image` starts the workload detached, the way the
+    kingslanding suite does (`tests/ironbank/kingslanding/test_run.py`), so the
+    container's output lands on the guest console rather than on a pipe.
+    `capsem run` used to take `-n NAME REFERENCE` and stay attached; it now
+    destroys its VM on exit and takes the image as `--image`, which is why
+    every manual scenario booting through the old spelling stopped at argv
+    parsing. `options` go before `--image`, which consumes everything after it.
+    """
     command = [
         str(BIN_DIR / "capsem"), "--uds-path", str(service.uds_path),
-        "run", "--profile", CODE_PROFILE_ID, "--registry-ca", str(certificate),
-        "-n", name, reference,
+        "create", "--profile", CODE_PROFILE_ID, "--registry-ca", str(certificate),
+        "-n", name, *options, "--image", reference,
     ]
     env = {
         **os.environ,
@@ -64,20 +70,20 @@ def boot(service, tmp_path, reference, certificate, name):
         "CAPSEM_RUN_DIR": str(service.tmp_dir),
         "CAPSEM_PROFILES_DIR": str(service.profiles_dir),
     }
-    process = subprocess.Popen(command, env=env, stdout=out, stderr=err)
-    deadline = time.time() + 180
-    while time.time() < deadline:
-        if process.poll() is not None:
-            raise RuntimeError(f"{name} exited early:\n{stderr.read_text()}")
-        if b"Ready to accept connections tcp" in stdout.read_bytes():
-            break
-        time.sleep(0.5)
-    else:
-        raise RuntimeError(f"{name} never became ready:\n{stdout.read_text()}")
+    result = subprocess.run(command, env=env, capture_output=True, timeout=240, check=False)
+    (tmp_path / f"{name}.stderr").write_bytes(result.stderr)
+    if result.returncode != 0:
+        raise RuntimeError(f"{name} create failed:\n{result.stderr.decode(errors='replace')}")
     rows = [r for r in service.client().get("/vms/list")["sandboxes"] if r.get("name") == name]
     if len(rows) != 1:
         raise RuntimeError(f"expected one {name} VM, saw {rows}")
-    return rows[0]
+    deadline = time.time() + 180
+    while time.time() < deadline:
+        serial = service.client().get(f"/vms/{rows[0]['id']}/logs").get("serial_logs") or ""
+        if "Ready to accept connections tcp" in serial:
+            return rows[0]
+        time.sleep(0.5)
+    raise RuntimeError(f"{name} never became ready:\n{serial[-2000:]}")
 
 
 def guest(service, vm_id, shell, timeout=180):

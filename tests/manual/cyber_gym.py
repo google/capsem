@@ -33,7 +33,6 @@ from __future__ import annotations
 import contextlib
 import os
 import shlex
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -45,10 +44,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from helpers.constants import BIN_DIR, CODE_PROFILE_ID
 from helpers.service import ServiceInstance
 
 from tests.fixtures.oci.registry import registry
+from tests.manual.vm_ollama import boot
 
 # The ironbank suite sets this in tests/conftest.py; a standalone run must too,
 # or capsem-service starts a tray on the macOS menu bar.
@@ -87,41 +86,6 @@ class Report:
     def ok(self) -> bool:
         return all(ok for ok, _ in self.rows)
 
-
-def boot(service, tmp_path, reference, certificate, name, *publish):
-    """Boot one Redis container VM under `name`; return its /vms/list row."""
-    stdout = tmp_path / f"{name}.stdout"
-    stderr = tmp_path / f"{name}.stderr"
-    out, err = stdout.open("wb"), stderr.open("wb")
-    command = [
-        str(BIN_DIR / "capsem"),
-        "--uds-path", str(service.uds_path),
-        "run", "--profile", CODE_PROFILE_ID,
-        "--registry-ca", str(certificate),
-        "-n", name, *publish, reference,
-    ]
-    env = {
-        **os.environ,
-        "CAPSEM_HOME": str(service.home_dir),
-        "CAPSEM_RUN_DIR": str(service.tmp_dir),
-        "CAPSEM_PROFILES_DIR": str(service.profiles_dir),
-    }
-    process = subprocess.Popen(command, env=env, stdout=out, stderr=err)
-
-    deadline = time.time() + 180
-    while time.time() < deadline:
-        if process.poll() is not None:
-            raise RuntimeError(f"{name} exited early:\n{stderr.read_text()}")
-        if b"Ready to accept connections tcp" in stdout.read_bytes():
-            break
-        time.sleep(0.5)
-    else:
-        raise RuntimeError(f"{name} never became ready:\n{stdout.read_text()}")
-
-    rows = [r for r in service.client().get("/vms/list")["sandboxes"] if r.get("name") == name]
-    if len(rows) != 1:
-        raise RuntimeError(f"expected one {name} VM, saw {rows}")
-    return process, rows[0]
 
 
 def guest(service, vm_id, shell, timeout=40):
@@ -173,8 +137,8 @@ def main() -> int:
     try:
         with registry(tmp_path) as (reference, certificate, _requests):
             print("\n== boot two members on one private network ==")
-            _, target = boot(service, tmp_path, reference, certificate, "target")
-            _, agent = boot(service, tmp_path, reference, certificate, "agent")
+            target = boot(service, tmp_path, reference, certificate, "target")
+            agent = boot(service, tmp_path, reference, certificate, "agent")
             booted += [target["id"], agent["id"]]
             network = client.post("/networks", {"name": NETWORK})
             for vm in (target, agent):
@@ -218,7 +182,7 @@ def main() -> int:
             report.check(addr in resolved, f"{name} resolves to the target's address", resolved.strip() or "no answer")
 
             print("\n== isolation: a VM off the network ==")
-            _, outsider = boot(service, tmp_path, reference, certificate, "outsider")
+            outsider = boot(service, tmp_path, reference, certificate, "outsider")
             booted.append(outsider["id"])
             blocked = not probe_once(service, outsider["id"], addr_port, timeout=15)
             report.check(blocked, "a VM that never joined the network reaches nothing")
