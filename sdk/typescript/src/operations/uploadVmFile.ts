@@ -10,6 +10,7 @@ export async function uploadVmFile(
   parameters: {
     "id": string;
     "path": string;
+    "exact"?: boolean;
     "body": Uint8Array;
   },
   options: CallOptions = {},
@@ -17,12 +18,13 @@ export async function uploadVmFile(
   const input = z.object({
   "id": z.string(),
   "path": z.string(),
+  "exact": z.boolean().exactOptional(),
   "body": z.instanceof(Uint8Array),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/vms/{id}/files/content", {
     signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
-    query: {"path": input["path"]},
+    query: {"path": input["path"], "exact": input["exact"]},
     body: input.body, contentType: MediaType.BINARY,
   });
   return z.lazy(() => UploadResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

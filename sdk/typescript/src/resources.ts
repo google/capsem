@@ -8,18 +8,25 @@ class Resource {
   constructor(protected readonly context: (options: CallOptions) => Promise<VmContext>) {}
 }
 
+/** Paths are the guest's: `/root/x` in a VM, `/workspace/x` in its container,
+ * or `x` relative to the workspace. `exact` takes a path literally, relative to
+ * the workspace root, even when it is absolute. */
+export type FileOptions = CallOptions & {exact?: boolean};
+const exactParam = ({exact}: FileOptions) => (exact ? {exact} : {});
 export class Files extends Resource {
-  async read(path: string, options: CallOptions = {}): Promise<Uint8Array> {
+  async read(path: string, options: FileOptions = {}): Promise<Uint8Array> {
     const {transport, id} = await this.context(options);
-    return api.downloadVmFile(transport, {id, path}, options);
+    return api.downloadVmFile(transport, {id, path, ...exactParam(options)}, options);
   }
-  async write(path: string, data: Uint8Array, options: CallOptions = {}): Promise<models.UploadResponse> {
+  async write(path: string, data: Uint8Array, options: FileOptions = {}): Promise<models.UploadResponse> {
     const {transport, id} = await this.context(options);
-    return api.uploadVmFile(transport, {id, path, body: data}, options);
+    return api.uploadVmFile(transport, {id, path, body: data, ...exactParam(options)}, options);
   }
-  async list(path = '/', options: CallOptions & {depth?: number} = {}): Promise<models.FileListResponse> {
+  /** An empty `path` lists the workspace root. */
+  async list(path = '', options: FileOptions & {depth?: number} = {}): Promise<models.FileListResponse> {
     const {transport, id} = await this.context(options);
-    return api.listVmFiles(transport, {...options, id, ...(path === '/' ? {} : {path})}, options);
+    const {depth} = options;
+    return api.listVmFiles(transport, {id, ...(path ? {path} : {}), ...(depth === undefined ? {} : {depth}), ...exactParam(options)}, options);
   }
   async history(checkpoint: string, options: PageOptions = {}): Promise<models.ChangesResponse> {
     const {transport, id} = await this.context(options);

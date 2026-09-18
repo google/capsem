@@ -22,8 +22,8 @@ try {
   await hv.networks.logs(network, {vm: vm.id});
   const result = await vm.exec('uname -a', {timeout_secs: 60});
   console.log(result);
-  await vm.files.write('/hello.txt', new TextEncoder().encode('hello'));
-  const bytes = await vm.files.read('/hello.txt');
+  await vm.files.write('/workspace/hello.txt', new TextEncoder().encode('hello'));
+  const bytes = await vm.files.read('/workspace/hello.txt');
   const info = await vm.info(); // includes AI, network and files
   const stats = await vm.stats.details();
   await vm.persist('saved-workspace');
@@ -37,7 +37,7 @@ try {
 }
 
 const vm = new VM(url, token, {name: 'work'}); // or {id: canonicalId}
-try { const files = await vm.files.list('/'); }
+try { const files = await vm.files.list(); }
 finally { vm.close(); }
 ```
 

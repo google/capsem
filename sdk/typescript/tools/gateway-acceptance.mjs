@@ -25,7 +25,7 @@ try {
   assert(Array.isArray((await hv.debug.panics({limit: 2})).panics));
   assert.equal(typeof (await hv.debug.triage({since: '1h', limit: 2})).session, 'object');
   assert((await hv.list()).sandboxes.some(entry => entry.id === id));
-  const files = await vm.files.list('/');
+  const files = await vm.files.list();
   assert.equal(vm.id, id);
   assert(files.entries.some(entry => entry.name === 'created.txt'));
   const snapshots = await vm.snapshots.list();
@@ -36,7 +36,7 @@ try {
     ['created.txt', FileChangeKind.CREATED], ['modified.txt', FileChangeKind.MODIFIED],
     ['deleted.txt', FileChangeKind.DELETED],
   ]));
-  for (const call of [() => vm.files.read('/created.txt'), () => vm.files.write('/refused.txt', new Uint8Array([1]))]) {
+  for (const call of [() => vm.files.read('/root/created.txt'), () => vm.files.write('/root/refused.txt', new Uint8Array([1]))]) {
     await assert.rejects(call, error => error instanceof HttpError && error.status === 409
       && error.body.includes('running sandbox security ledger'));
   }

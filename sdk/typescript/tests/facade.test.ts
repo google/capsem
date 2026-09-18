@@ -60,6 +60,7 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       await vm.log({grep: 'hello', tail: 2, max_bytes: 100});
       await vm.log();
       await vm.files.list(); await vm.files.list('/nested', {depth: 2});
+      await vm.files.list('/root', {exact: true});
       await vm.files.history('cp-10', {limit: 2}); await vm.files.history('cp-10');
       const fork = await vm.fork('copy', {description: 'checkpoint'});
       expect(fork.id).toBe('fork-0'); expect(fork.name).toBe('copy');
@@ -79,6 +80,7 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       expect(received.slice(0, expected.length).map(request => request.url.split('?')[0])).toEqual(expected);
       expect(received.filter(request => request.url === '/vms/list')).toHaveLength(1);
       expect(received.some(request => request.url === '/vms/vm-0/files/list')).toBe(true);
+      expect(received.some(request => request.url === '/vms/vm-0/files/list?path=%2Froot&exact=true')).toBe(true);
       expect(received.some(request => request.url.includes('layers=fs%2Cexec'))).toBe(true);
       await hv.info(); await hv.list(); await hv.log();
       await hv.log({source: HostLogSource.GATEWAY, tail: 2});

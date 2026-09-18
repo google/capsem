@@ -11,6 +11,7 @@ export async function listVmFiles(
     "id": string;
     "path"?: string;
     "depth"?: number;
+    "exact"?: boolean;
   },
   options: CallOptions = {},
 ): Promise<FileListResponse> {
@@ -18,11 +19,12 @@ export async function listVmFiles(
   "id": z.string(),
   "path": z.string().exactOptional(),
   "depth": z.int().exactOptional(),
+  "exact": z.boolean().exactOptional(),
 }).parse(parameters);
   const payload = await transport.request(Method.GET, "/vms/{id}/files/list", {
     signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
-    query: {"path": input["path"], "depth": input["depth"]},
+    query: {"path": input["path"], "depth": input["depth"], "exact": input["exact"]},
   });
   return z.lazy(() => FileListResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));
 }

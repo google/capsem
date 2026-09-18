@@ -8,16 +8,18 @@ export async function downloadVmFile(
   parameters: {
     "id": string;
     "path": string;
+    "exact"?: boolean;
   },
   options: CallOptions = {},
 ): Promise<Uint8Array> {
   const input = z.object({
   "id": z.string(),
   "path": z.string(),
+  "exact": z.boolean().exactOptional(),
 }).parse(parameters);
   return await transport.request(Method.GET, "/vms/{id}/files/content", {
     signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.BINARY,
     parameters: {"id": input["id"]},
-    query: {"path": input["path"]},
+    query: {"path": input["path"], "exact": input["exact"]},
   });
 }
