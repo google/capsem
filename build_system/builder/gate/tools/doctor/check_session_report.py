@@ -5,6 +5,12 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from capsem_builder.gate.tools.doctor.check_session_archive import (
+    ARCHIVE_TABLES,
+    check_body_archive,
+    fs_overflow,
+)
+
 SESSION_TABLES = {
     "net_events": [
         "id",
@@ -29,7 +35,7 @@ SESSION_TABLES = {
     ],
     "tool_calls": ["id", "model_call_id", "tool_name", "call_id", "origin"],
     "tool_responses": ["id", "model_call_id", "call_id", "is_error"],
-    "fs_events": ["id", "timestamp", "action", "path", "size"],
+    "fs_events": ["id", "timestamp", "action", "kind", "path", "size"],
 }
 
 BOLD = "\033[1m"
@@ -39,6 +45,8 @@ GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RED = "\033[31m"
 RESET = "\033[0m"
+#: How many failing rows a report names before it only counts them.
+SHOWN_PROBLEMS = 5
 
 
 def table(headers: list[str], rows: list[list], color: str = DIM) -> str:
@@ -187,8 +195,49 @@ def _previews(conn: sqlite3.Connection, existing: set[str], limit: int) -> None:
         print(table(columns, preview))
 
 
-def check_session(db_path: Path, preview_rows: int = 5) -> None:
-    """Run all checks on a session DB and print results."""
+def _body_archive(
+    conn: sqlite3.Connection, db_path: Path, existing: set[str], verify: bool
+) -> bool:
+    print(f"{BOLD}Body archive:{RESET}")
+    if not ARCHIVE_TABLES.issubset(existing):
+        print(f"  {RED}No body index: this ledger predates the body archive{RESET}\n")
+        return False
+    found = check_body_archive(conn, db_path, verify_bodies=verify)
+    print(f"  {found.bodies} bodies indexed in {found.blocks} blocks")
+    if found.archive is not None and found.archive_bytes is not None:
+        print(
+            f"  {found.archive.name}: {found.archive_bytes} bytes, blocks end at {found.blocks_end}"
+        )
+    for problem in found.problems[:SHOWN_PROBLEMS]:
+        print(f"  {RED}{problem}{RESET}")
+    if len(found.problems) > SHOWN_PROBLEMS:
+        print(f"  {RED}... and {len(found.problems) - SHOWN_PROBLEMS} more{RESET}")
+    if not found.problems:
+        print(f"  {GREEN}Index and archive agree{RESET}")
+    if found.verified is not None:
+        print(
+            f"  {GREEN if not found.problems else RED}{found.verified}/{found.bodies}"
+            f" bodies read back and match their hashes{RESET}"
+        )
+    elif not found.problems:
+        print(f"  {DIM}(--verify-bodies reads every body back through its hash){RESET}")
+    print()
+    return not found.problems
+
+
+def _fs_overflow(conn: sqlite3.Connection, existing: set[str]) -> None:
+    if "fs_events" not in existing:
+        return
+    windows, deferred = fs_overflow(conn)
+    if windows:
+        print(
+            f"  {YELLOW}File monitor held {deferred} changes over to a later scan in"
+            f" {windows} overflowing windows (fs_events action 'overflow'){RESET}\n"
+        )
+
+
+def check_session(db_path: Path, preview_rows: int = 5, *, verify_bodies: bool = False) -> bool:
+    """Run all checks on a session DB and print results; ``False`` on damage."""
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
@@ -204,9 +253,12 @@ def check_session(db_path: Path, preview_rows: int = 5) -> None:
         else:
             print(f"  {GREEN}All expected tables present{RESET}\n")
         _event_counts(conn, existing)
+        intact = _body_archive(conn, db_path, existing, verify_bodies)
+        _fs_overflow(conn, existing)
         _cross_checks(conn, existing)
         _model_quality(conn, existing)
         _tool_usage(conn, existing)
         _previews(conn, existing, preview_rows)
     finally:
         conn.close()
+    return intact and not missing
