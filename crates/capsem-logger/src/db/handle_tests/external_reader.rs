@@ -309,3 +309,51 @@ async fn two_polled_batches_are_cached_side_by_side() {
          asked for first. {DB_BOUNDARY_RATIONALE}"
     );
 }
+
+/// `stats/summary` is a poll like any other, so it is answered from the cache
+/// like any other.
+///
+/// It used to be a worker request of its own, which meant every poll of every
+/// running session re-ran three aggregates over the file no matter how long
+/// the ledger had stood still.
+#[tokio::test]
+async fn session_stats_are_served_from_the_batch_cache() {
+    let p = temp_db_path("external-session-stats-cached");
+    let writer = DbHandle::open(&p).expect("open owning writer handle");
+    writer
+        .write(WriteOp::NetEvent(make_net_event("stats.example", Decision::Allowed)))
+        .await
+        .expect("first write");
+    writer.flush().await.expect("flush writer");
+
+    let reader = DbHandle::open_external_reader(&p).expect("open service external reader");
+    reader.ready().await.expect("external reader ready");
+
+    let first = reader.session_stats().await.expect("first session stats");
+    assert_eq!(first.net_total, 1);
+    assert_eq!(first.net_allowed, 1);
+    let executed = reader.queries_executed_for_tests().await.expect("read counter");
+
+    let second = reader.session_stats().await.expect("second session stats");
+    assert_eq!(second.net_total, first.net_total);
+    assert_eq!(
+        reader.queries_executed_for_tests().await.expect("read counter"),
+        executed,
+        "an unchanged ledger must answer a summary poll without re-running its aggregates. \
+         {DB_BOUNDARY_RATIONALE}"
+    );
+
+    writer
+        .write(WriteOp::NetEvent(make_net_event("stats.example", Decision::Denied)))
+        .await
+        .expect("second write");
+    writer.flush().await.expect("flush writer");
+
+    let third = reader.session_stats().await.expect("session stats after commit");
+    assert_eq!(third.net_total, 2, "a commit must be visible to the next poll");
+    assert_eq!(third.net_denied, 1);
+    assert!(
+        reader.queries_executed_for_tests().await.expect("read counter") > executed,
+        "a changed ledger must re-run the aggregates. {DB_BOUNDARY_RATIONALE}"
+    );
+}

@@ -1339,7 +1339,7 @@ impl DbReader {
 
 mod rawquery;
 mod rows;
-mod session_stats;
+pub(crate) mod session_stats;
 use rows::{
     read_audit_history_row, read_exec_history_row, read_file_event_row, read_security_ask_event_row,
     read_security_rule_event_row,

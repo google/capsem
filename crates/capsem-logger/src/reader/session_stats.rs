@@ -59,64 +59,99 @@ pub(crate) fn tool_calls_sql() -> String {
     format!("SELECT COUNT(*) FROM tool_calls WHERE {TOOL_CALL_LEDGER_FILTER}")
 }
 
+/// The three statements as one batch for `DbHandle::query_many`.
+///
+/// One batch, not three queries, and not a request of its own: the handle
+/// caches a batch whole and keyed by its statements, so an idle session's
+/// `stats/summary` poll is answered without the reader thread touching the
+/// file. A private worker request would have needed its own copy of the
+/// freshness protocol -- observe `data_version`, decide, commit the
+/// observation -- and a second copy of that is a second chance to get it
+/// wrong.
+pub(crate) fn session_stats_batch() -> Vec<(String, Vec<serde_json::Value>)> {
+    vec![
+        (NET_TOTALS_SQL.to_string(), Vec::new()),
+        (MODEL_TOTALS_SQL.to_string(), Vec::new()),
+        (tool_calls_sql(), Vec::new()),
+    ]
+}
+
+/// The single row of a `{"columns":[...],"rows":[[...]]}` result.
+///
+/// Each of these statements is an unfiltered aggregate, so SQLite returns one
+/// row even for an empty ledger. No row at all is a broken result, not a
+/// session that recorded nothing, and says so rather than reporting zeros.
+fn aggregate_row(raw: &str, label: &str) -> Result<Vec<serde_json::Value>, String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(raw).map_err(|error| format!("{label} returned invalid json: {error}"))?;
+    parsed
+        .get("rows")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|rows| rows.first())
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .ok_or_else(|| format!("{label} returned no aggregate row"))
+}
+
+fn count_at(row: &[serde_json::Value], index: usize, label: &str) -> Result<u64, String> {
+    row.get(index)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| format!("{label} column {index} is not a count"))
+}
+
+impl SessionStats {
+    /// Read the aggregates back out of one `session_stats_batch` result.
+    ///
+    /// This is the only place the columns are named, so the direct reader and
+    /// the cached handle cannot drift into reporting different numbers for the
+    /// same ledger.
+    pub(crate) fn from_query_batch(raw: &[String]) -> Result<Self, String> {
+        let [net, model, tools] = raw else {
+            return Err(format!(
+                "session stats batch returned {} results, expected 3",
+                raw.len()
+            ));
+        };
+        let net = aggregate_row(net, "net totals")?;
+        let model = aggregate_row(model, "model totals")?;
+        let tools = aggregate_row(tools, "tool call count")?;
+        let total_usage_details: BTreeMap<String, u64> = model
+            .get(5)
+            .and_then(serde_json::Value::as_str)
+            .and_then(|merged| serde_json::from_str(merged).ok())
+            .unwrap_or_default();
+        Ok(Self {
+            net_total: count_at(&net, 0, "net totals")?,
+            net_allowed: count_at(&net, 1, "net totals")?,
+            net_denied: count_at(&net, 2, "net totals")?,
+            net_error: count_at(&net, 3, "net totals")?,
+            net_bytes_sent: count_at(&net, 4, "net totals")?,
+            net_bytes_received: count_at(&net, 5, "net totals")?,
+            model_call_count: count_at(&model, 0, "model totals")?,
+            total_input_tokens: count_at(&model, 1, "model totals")?,
+            total_output_tokens: count_at(&model, 2, "model totals")?,
+            total_usage_details,
+            total_model_duration_ms: count_at(&model, 3, "model totals")?,
+            total_tool_calls: count_at(&tools, 0, "tool call count")?,
+            total_estimated_cost_usd: model
+                .get(4)
+                .and_then(serde_json::Value::as_f64)
+                .ok_or_else(|| "model totals column 4 is not a cost".to_string())?,
+        })
+    }
+}
+
 impl DbReader {
     /// Compute aggregate session statistics from all tables.
-    pub fn session_stats(&self) -> rusqlite::Result<SessionStats> {
-        // Net event aggregates.
-        let (net_total, net_allowed, net_denied, net_error, net_bytes_sent, net_bytes_received) =
-            self.conn.query_row(NET_TOTALS_SQL, [], |row| {
-                Ok((
-                    row.get::<_, i64>(0)? as u64,
-                    row.get::<_, i64>(1)? as u64,
-                    row.get::<_, i64>(2)? as u64,
-                    row.get::<_, i64>(3)? as u64,
-                    row.get::<_, i64>(4)? as u64,
-                    row.get::<_, i64>(5)? as u64,
-                ))
-            })?;
-
-        // Model call aggregates.
-        let (
-            model_call_count,
-            total_input_tokens,
-            total_output_tokens,
-            total_model_duration_ms,
-            total_estimated_cost_usd,
-            usage_details_json,
-        ) = self.conn.query_row(MODEL_TOTALS_SQL, [], |row| {
-            Ok((
-                row.get::<_, i64>(0)? as u64,
-                row.get::<_, i64>(1)? as u64,
-                row.get::<_, i64>(2)? as u64,
-                row.get::<_, i64>(3)? as u64,
-                row.get::<_, f64>(4)?,
-                row.get::<_, Option<String>>(5)?,
-            ))
-        })?;
-
-        let total_usage_details: BTreeMap<String, u64> = usage_details_json
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-
-        // Total tool calls.
-        let total_tool_calls: u64 = self
-            .conn
-            .query_row(&tool_calls_sql(), [], |row| row.get::<_, i64>(0).map(|n| n as u64))?;
-
-        Ok(SessionStats {
-            net_total,
-            net_allowed,
-            net_denied,
-            net_error,
-            net_bytes_sent,
-            net_bytes_received,
-            model_call_count,
-            total_input_tokens,
-            total_output_tokens,
-            total_usage_details,
-            total_model_duration_ms,
-            total_tool_calls,
-            total_estimated_cost_usd,
-        })
+    ///
+    /// The handle reads these through `query_many` so an unchanged ledger is
+    /// answered from its cache; this runs the same statements directly, for
+    /// callers that already hold a reader.
+    pub fn session_stats(&self) -> Result<SessionStats, String> {
+        let raw = session_stats_batch()
+            .iter()
+            .map(|(sql, params)| self.query_raw_with_params(sql, params))
+            .collect::<Result<Vec<String>, String>>()?;
+        SessionStats::from_query_batch(&raw)
     }
 }

@@ -173,9 +173,6 @@ enum ReadRequest {
         cache_valid: bool,
         reply: tokio::sync::oneshot::Sender<DbResult<QueryManyReply>>,
     },
-    SessionStats {
-        reply: tokio::sync::oneshot::Sender<DbResult<Observed<SessionStats>>>,
-    },
     #[cfg(test)]
     Introspect {
         reply: tokio::sync::oneshot::Sender<DbResult<ReaderIntrospection>>,
@@ -548,15 +545,17 @@ impl DbHandle {
     }
 
     /// Read the compact canonical session aggregates through the DB worker.
+    ///
+    /// These go down the batch rail rather than a request of their own, so
+    /// `stats/summary` -- polled per VM, on a timer, by the TUI and the
+    /// desktop UI both -- is answered from this handle's cache whenever the
+    /// ledger has not moved. A private request would have needed a second copy
+    /// of the freshness protocol to earn the same thing.
     pub async fn session_stats(&self) -> DbResult<SessionStats> {
-        let (reply, rx) = tokio::sync::oneshot::channel();
-        self.inner
-            .reader_tx
-            .send(ReadRequest::SessionStats { reply })
-            .map_err(|error| format!("db reader worker closed: {error}"))?;
-        rx.await
-            .map_err(|error| format!("db reader worker dropped session stats reply: {error}"))?
-            .map(|observed| self.take_observed(observed))
+        let raw = self
+            .query_many(crate::reader::session_stats::session_stats_batch())
+            .await?;
+        SessionStats::from_query_batch(&raw)
     }
 
     /// Unwrap a worker reply, expiring this handle's read caches first when the
@@ -615,9 +614,9 @@ impl DbHandle {
     fn cached_query_many(&self, queries: &[DbQueryOwned]) -> Option<Vec<DbQueryJson>> {
         let mut cache = self.inner.query_many_cache.lock().unwrap_or_else(|e| e.into_inner());
         let position = cache.iter().position(|(key, _)| key == queries)?;
-        let entry = cache.remove(position);
-        let result = entry.1.clone();
-        cache.insert(0, entry);
+        cache[..=position].rotate_right(1);
+        let result = cache[0].1.clone();
+        drop(cache);
         Some(result)
     }
 

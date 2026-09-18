@@ -136,16 +136,6 @@ pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, extern
                 }
                 let _ = reply.send(result);
             }
-            ReadRequest::SessionStats { reply } => {
-                let result = observe_change(&reader, external).and_then(|observed| {
-                    let stats = reader.session_stats().map_err(|error| error.to_string())?;
-                    Ok(Observed {
-                        changed: commit(&reader, observed),
-                        value: stats,
-                    })
-                });
-                let _ = reply.send(result);
-            }
             #[cfg(test)]
             ReadRequest::Introspect { reply } => {
                 let result = reader
