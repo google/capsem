@@ -2,8 +2,8 @@ use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::sync::{Arc, Barrier};
 
 use super::{
-    atomic_write_private, ensure_private_dir, filesystem_space, open_private_append_no_follow,
-    open_regular_file_no_follow, read_regular_file_no_follow, write_new_regular_file_no_follow,
+    atomic_write_private, create_private_sibling, ensure_private_dir, filesystem_space, open_private_append_no_follow,
+    open_regular_file_no_follow, read_regular_file_no_follow, rename_private_sibling, write_new_regular_file_no_follow,
 };
 
 #[test]
@@ -188,4 +188,41 @@ fn regular_file_open_refuses_a_symlink_and_a_directory() {
     assert!(open_regular_file_no_follow(&link).is_err());
     assert!(open_regular_file_no_follow(root.path()).is_err());
     assert!(open_regular_file_no_follow(&target).is_ok());
+}
+
+/// A temporary exists to become another file. Every way of not getting there
+/// must take it with them, including the one nobody writes cleanup for.
+#[test]
+fn a_private_sibling_removes_itself_unless_it_is_renamed() {
+    let dir = tempfile::tempdir().unwrap();
+    let destination = dir.path().join("secrets");
+
+    let abandoned = {
+        let sibling = create_private_sibling(&destination).unwrap();
+        sibling.path().to_path_buf()
+    };
+    assert!(!abandoned.exists(), "a dropped sibling takes its file with it");
+
+    let panicked = std::sync::Mutex::new(None);
+    let result = std::panic::catch_unwind(|| {
+        let sibling = create_private_sibling(&destination).unwrap();
+        *panicked.lock().unwrap() = Some(sibling.path().to_path_buf());
+        panic!("the caller fell over mid-write");
+    });
+    assert!(result.is_err());
+    let panicked = panicked.lock().unwrap().clone().expect("the path was recorded");
+    assert!(
+        !panicked.exists(),
+        "an unwind past a temporary must not leave it beside the file it was to become"
+    );
+
+    let mut sibling = create_private_sibling(&destination).unwrap();
+    std::io::Write::write_all(sibling.file(), b"kept").unwrap();
+    rename_private_sibling(sibling, &destination).unwrap();
+    assert_eq!(std::fs::read(&destination).unwrap(), b"kept");
+    assert_eq!(
+        std::fs::read_dir(dir.path()).unwrap().flatten().count(),
+        1,
+        "and nothing is left beside it"
+    );
 }

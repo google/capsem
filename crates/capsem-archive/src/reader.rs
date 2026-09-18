@@ -19,7 +19,8 @@
 use std::cell::{Cell, RefCell};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 
 use capsem_foundation::unix::fs as unix_fs;
 
@@ -35,21 +36,46 @@ use crate::{ArchiveError, Result};
 /// out for the duration of a read.
 pub struct BodyLogReader {
     file: RefCell<File>,
+    /// The path this reader was opened on, and the file that was there at the
+    /// time. Retention replaces the archive by renaming a compacted copy over
+    /// it, which leaves this handle reading a file that no longer has a name
+    /// -- see `file_was_replaced`.
+    path: PathBuf,
+    identity: FileIdentity,
     /// The last inflated block. Bodies from one exchange land in one block,
     /// so a UI walking a session's rows in order hits this nearly every time.
     last: RefCell<Option<(u64, Vec<u8>)>>,
     inflated: Cell<u64>,
 }
 
+/// Which file a handle is on, as the filesystem answers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+}
+
+impl FileIdentity {
+    fn of(metadata: &std::fs::Metadata) -> Self {
+        Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        }
+    }
+}
+
 impl BodyLogReader {
     pub fn open(path: &Path) -> Result<Self> {
         refuse_symlink(path)?;
         let mut file = unix_fs::open_regular_file_no_follow(path)?;
+        let identity = FileIdentity::of(&file.metadata()?);
         let mut header = [0u8; FILE_HEADER_BYTES];
         file.read_exact(&mut header).map_err(|_| ArchiveError::BadFileHeader)?;
         format::decode_file_header(&header)?;
         Ok(Self {
             file: RefCell::new(file),
+            path: path.to_path_buf(),
+            identity,
             last: RefCell::new(None),
             inflated: Cell::new(0),
         })
@@ -113,6 +139,25 @@ impl BodyLogReader {
     #[must_use]
     pub fn blocks_inflated(&self) -> u64 {
         self.inflated.get()
+    }
+
+    /// Whether something replaced the archive since this reader opened it.
+    ///
+    /// Retention renames a compacted copy over the file, so a reader that was
+    /// already open keeps a descriptor on the old, now-nameless inode -- and
+    /// every block in it has moved. Its cached block and its offsets are both
+    /// stale, and the index it is being asked about is the new one, so the
+    /// bodies it returns would fail their hash check. The owner asks this
+    /// before a read and reopens when it is true.
+    ///
+    /// Identity rather than a version counter kept beside the file: this is
+    /// the filesystem answering which file the handle is on, so it cannot
+    /// disagree with the file the way a counter someone forgot to bump can.
+    /// A path that cannot be stat'd counts as replaced -- the reopen that
+    /// follows is where that failure belongs, with the path in its message.
+    #[must_use]
+    pub fn file_was_replaced(&self) -> bool {
+        std::fs::metadata(&self.path).map_or(true, |metadata| FileIdentity::of(&metadata) != self.identity)
     }
 }
 

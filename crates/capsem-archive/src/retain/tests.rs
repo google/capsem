@@ -30,6 +30,15 @@ fn file_len(path: &Path) -> u64 {
     std::fs::metadata(path).unwrap().len()
 }
 
+/// Stage and commit in one step, for the tests whose subject is what
+/// retention keeps rather than when it becomes visible.
+fn retain_blocks(path: &Path, keep: &[u64]) -> Result<BTreeMap<u64, u64>> {
+    let staging = stage_retained_blocks(path, keep)?;
+    let moved = staging.map().clone();
+    commit_retained(staging)?;
+    Ok(moved)
+}
+
 #[test]
 fn keeping_a_later_block_moves_it_to_the_front_and_shrinks_the_file() {
     let dir = tempfile::tempdir().unwrap();
@@ -212,5 +221,86 @@ fn a_retained_archive_reopens_and_accepts_new_blocks() {
             .unwrap(),
         b"after retention",
         "and so do the ones written afterwards"
+    );
+}
+
+#[test]
+fn staging_leaves_the_original_in_place_until_it_is_committed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = archive(&dir);
+    let placed = write_one_body_per_block(&path, &[b"first body", b"second body"]);
+    let before = std::fs::read(&path).unwrap();
+
+    let staging = stage_retained_blocks(&path, &[placed[1].block_offset]).unwrap();
+
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        before,
+        "the archive is still the old one while the replacement waits"
+    );
+    assert_eq!(
+        staging.map()[&placed[1].block_offset],
+        FILE_HEADER_BYTES as u64,
+        "the map is known before anything is replaced, so the index can be written first"
+    );
+    assert!(staging.bytes_freed() > 0, "and so is what the commit will reclaim");
+    let reader = BodyLogReader::open(&path).unwrap();
+    assert_eq!(
+        reader.read(placed[1]).unwrap(),
+        b"second body",
+        "every body still reads at its old offset"
+    );
+
+    commit_retained(staging).unwrap();
+
+    assert!(file_len(&path) < before.len() as u64);
+    let reader = BodyLogReader::open(&path).unwrap();
+    assert_eq!(
+        reader
+            .read(BodyRef {
+                block_offset: FILE_HEADER_BYTES as u64,
+                ..placed[1]
+            })
+            .unwrap(),
+        b"second body"
+    );
+}
+
+#[test]
+fn an_abandoned_staging_removes_itself_and_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = archive(&dir);
+    let placed = write_one_body_per_block(&path, &[b"first body", b"second body"]);
+    let before = std::fs::read(&path).unwrap();
+
+    let temporary = {
+        let staging = stage_retained_blocks(&path, &[placed[1].block_offset]).unwrap();
+        staging.temporary_path().to_path_buf()
+        // Dropped here: the caller decided not to go through with it.
+    };
+
+    assert!(!temporary.exists(), "the replacement is removed with the staging");
+    assert_eq!(std::fs::read(&path).unwrap(), before, "and the archive is untouched");
+}
+
+#[test]
+fn a_reader_open_before_a_commit_knows_its_file_was_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = archive(&dir);
+    let placed = write_one_body_per_block(&path, &[b"first body", b"second body"]);
+    let reader = BodyLogReader::open(&path).unwrap();
+    assert_eq!(reader.read(placed[0]).unwrap(), b"first body");
+    assert!(!reader.file_was_replaced(), "nothing has happened yet");
+
+    let staging = stage_retained_blocks(&path, &[placed[1].block_offset]).unwrap();
+    assert!(
+        !reader.file_was_replaced(),
+        "staging alone does not replace the archive"
+    );
+    commit_retained(staging).unwrap();
+
+    assert!(
+        reader.file_was_replaced(),
+        "after the rename this handle is on an inode that is no longer the archive"
     );
 }

@@ -172,7 +172,7 @@ fn appended_blocks_are_flushed_before_their_index_rows_commit() {
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
-    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now);
+    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
     archive.stage(body_blob("0f1f2f3f4f5f", "a body worth flushing"));
     archive.seal_pending();
     archive.commit_index_rows(&conn).unwrap();
@@ -200,7 +200,7 @@ fn a_body_that_does_not_fit_the_pending_block_seals_and_retries() {
     crate::schema::create_tables(&conn).unwrap();
 
     let big = "z".repeat(MAX_BODY_BLOB_BYTES);
-    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now);
+    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
     archive.stage(body_blob("aaaaaaaaaaa1", &big));
     archive.stage(body_blob("aaaaaaaaaaa2", &big));
     archive.seal_pending();
@@ -247,7 +247,7 @@ fn a_poisoned_archive_drops_its_uncommitted_blocks_instead_of_retrying_forever()
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
-    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now);
+    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
     archive.stage(body_blob("0b0b0b0b0b0b", "a body whose writer dies after it"));
     archive.seal_pending();
     assert_eq!(archive.appended_len_for_tests(), 1, "the block is appended");
@@ -301,7 +301,7 @@ fn giving_up_drops_the_rows_that_can_no_longer_be_placed() {
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
-    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now);
+    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
     archive.stage(body_blob("0c0c0c0c0c0c", "a body staged before the writer died"));
     assert!(archive.has_work(), "the row and its bytes are pending");
 
@@ -335,9 +335,13 @@ fn the_body_lost_to_a_failed_seal_is_counted() {
     // Two bodies at the logger's cap overflow a 16 MiB block, which is the
     // only thing that makes `stage` seal and retry.
     let body = "b".repeat(MAX_BODY_BLOB_BYTES);
+    // The archive checks its index against the file before opening, so it
+    // needs a ledger to check even when the test never writes an index row.
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    crate::schema::create_tables(&conn).unwrap();
 
     metrics::with_local_recorder(&recorder, || {
-        let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now);
+        let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
         archive.stage(body_blob("0e0e0e0e0e0e", &body));
         archive.fail_next_append_for_tests();
         archive.stage(body_blob("0f0f0f0f0f0f", &body));

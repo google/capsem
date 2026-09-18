@@ -210,10 +210,14 @@ type RetainReply = tokio::sync::oneshot::Sender<Result<RetainOutcome, String>>;
 /// options: every payload combination it can hold is now one the loop has to
 /// name, which is how a third kind of request arrives without an
 /// `unreachable!` standing between it and the code that runs it.
-// A ledger event is 568 bytes and a barrier is a handful. Boxing the write to
-// even them out would put a heap allocation and a copy on the path every
-// telemetry event takes, to save moving bytes that the old `Option<WriteOp>`
-// field moved anyway.
+// A ledger event is a few hundred bytes and a barrier is a handful. Boxing
+// the write to even them out would put a heap allocation and a copy on the
+// path every telemetry event takes, to save moving bytes that the old
+// `Option<WriteOp>` field moved anyway.
+//
+// The size is asserted below rather than stated here, because a justification
+// that rests on a number nobody rechecks is how an enum quietly grows into
+// something the reasoning no longer covers.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 enum WriterMessage {
@@ -239,6 +243,11 @@ impl WriterMessage {
     }
 }
 
+/// What the argument above assumes. Not a budget anyone chose -- it is the
+/// size at which "moving this is cheaper than boxing it" was weighed, and a
+/// message that outgrows it by a lot deserves the question asked again.
+const _: () = assert!(std::mem::size_of::<WriterMessage>() <= 1024);
+
 type WriterSender = mpsc::SyncSender<WriterMessage>;
 
 fn writer_channel(capacity: usize) -> (WriterSender, mpsc::Receiver<WriterMessage>) {
@@ -249,6 +258,9 @@ mod barriers;
 mod operation;
 mod recording;
 mod retention;
+mod retention_faults;
+#[cfg(test)]
+pub(crate) use retention_faults::{fail_retention_for_path_for_tests, RetentionFault};
 
 use barriers::Barriers;
 use recording::{batch_size_bucket, record_batch, record_enqueue};
@@ -578,7 +590,7 @@ fn writer_loop(
     // The writer thread owns the archive for as long as it owns the
     // connection: bodies are staged here and their index rows commit in the
     // same transaction that moves the memory tables to disk.
-    let mut bodies = BodyArchive::open(db_path.as_deref(), now);
+    let mut bodies = BodyArchive::open(db_path.as_deref(), now, &conn);
 
     // 1. Block until at least one op arrives. Returns None when all
     //    Senders are dropped (clean shutdown) and ends the loop.

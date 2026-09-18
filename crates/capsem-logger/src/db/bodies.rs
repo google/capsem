@@ -206,11 +206,11 @@ impl DbHandle {
             );
             return Err(error);
         };
-        let outcome = writer.retain_bodies_since(cutoff).await?;
-        // Every surviving block moved, and this handle's reader is holding a
-        // descriptor on the file that no longer exists plus a block from it.
-        self.archive_reader_reset();
-        Ok(outcome)
+        // The cached reader is not reset here. Retention replaces the
+        // archive file, and `read_archived_blocking` notices that for every
+        // handle rather than only for the one that asked -- the handles that
+        // most need noticing are in the other process.
+        writer.retain_bodies_since(cutoff).await
     }
 
     async fn body_index_rows(&self, sql: &str, params: &[Value]) -> DbResult<Vec<IndexRow>> {
@@ -242,8 +242,26 @@ impl DbHandle {
     fn read_archived_blocking(&self, rows: Vec<IndexRow>) -> DbResult<Vec<StoredBody>> {
         let cached = self.take_archive_reader();
         let reader = match cached {
-            Some(reader) => reader,
-            None => open_archive(&crate::writer::archive_path_for_db(&self.inner.path))?,
+            // A cached reader that is still on the archive, which is every
+            // read but the first one after a retention.
+            //
+            // This handle may be an external reader in the service, watching
+            // a ledger `capsem-process` owns. That process compacts the
+            // archive when a persistent VM stops, by renaming the new file
+            // over the old one, and this handle's descriptor stays on the old
+            // inode -- where every surviving block has moved and the index it
+            // is about to be asked with names the new offsets. Without this
+            // check its next read returns another body's bytes and fails the
+            // hash comparison below: correct, in that nothing wrong is
+            // served, and useless, in that the body is there and readable.
+            //
+            // One `stat` per read batch, against the file identity the reader
+            // recorded when it opened, so the one-block cache survives
+            // everything except an actual replacement. Keying it to the
+            // ledger's own change signal instead would throw that cache away
+            // on every commit during a live session.
+            Some(reader) if !reader.file_was_replaced() => reader,
+            _ => open_archive(&crate::writer::archive_path_for_db(&self.inner.path))?,
         };
         let bodies = rows
             .into_iter()
@@ -269,13 +287,11 @@ impl DbHandle {
             .unwrap_or_else(|error| error.into_inner()) = Some(reader);
     }
 
-    /// Drop the cached archive reader.
+    /// Drop the cached archive reader, so the next read opens the file again.
     ///
-    /// Retention is the one thing that rewrites the archive, and it moves
-    /// every surviving block. A reader that opened the file before then holds
-    /// a descriptor on the replaced inode and a cached block from it, so both
-    /// go: the next read reopens the compacted file. `retain_bodies_since`
-    /// calls this, which is why it is not a test-only seam.
+    /// Test-only: production discards a stale reader by noticing the archive
+    /// was replaced, which needs no one to remember to call anything.
+    #[cfg(test)]
     pub(crate) fn archive_reader_reset(&self) {
         *self
             .inner

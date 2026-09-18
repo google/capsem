@@ -288,8 +288,12 @@ pub(super) async fn run_service() -> Result<()> {
     hydrate_startup_route_caches(&state).map_err(|AppError(_, message)| anyhow!("{message}"))?;
     state.hydrate_session_db_handles();
     // The count cap only ran when a new failure landed, so a machine that
-    // stopped failing kept its last 32 post-mortems forever. Start is the one
-    // moment the service knows nothing is writing them.
+    // stopped failing kept its last 32 post-mortems forever; this is where a
+    // service that is simply running again gets to notice. It is deliberately
+    // not a claim that nothing is writing to sessions/ -- orphans from a
+    // previous run are reaped below, and they own live session dirs. What
+    // makes this safe is the name: only a `-failed-` directory is considered,
+    // and those are renamed once, when their session is already dead.
     match state.cull_failed_sessions() {
         Ok(0) => {}
         Ok(culled) => info!(culled, "culled failed session dirs past the retention period"),

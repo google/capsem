@@ -146,27 +146,88 @@ pub fn ensure_private_dir(path: &Path) -> io::Result<()> {
 /// reader therefore observes either the previous complete file or the new
 /// complete file, never a partial write or a permissive chmod window.
 pub fn atomic_write_private(path: &Path, data: &[u8]) -> io::Result<()> {
-    let parent = path
+    let mut sibling = create_private_sibling(path)?;
+    let write_result = (|| {
+        sibling.file().write_all(data)?;
+        sibling.file().sync_all()?;
+        rename_private_sibling(sibling, path)
+    })();
+    write_result.map_err(|error| context(error, "atomically write private file", path))
+}
+
+/// Rename a private sibling over `destination` and make the rename durable.
+///
+/// The directory entry is fsynced, not only the file's contents. Without it
+/// the rename can still be in the page cache when a caller that committed
+/// something *else* durably -- a SQLite transaction naming the new file's
+/// contents -- has already returned: after a power loss the commit is there
+/// and the rename is not, and nothing afterwards would ever notice.
+///
+/// Consumes the sibling, so a caller cannot both rename it and have it
+/// removed by the guard; a failed rename removes it, leaving the destination
+/// exactly as it was.
+pub fn rename_private_sibling(sibling: PrivateSibling, destination: &Path) -> io::Result<()> {
+    let parent = destination
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("{} has no parent directory", path.display()),
+                format!("{} has no parent directory", destination.display()),
             )
-        })?;
-    let (mut file, temporary) = create_private_sibling(path)?;
-    let write_result = (|| {
-        file.write_all(data)?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&temporary, path)?;
-        File::open(parent)?.sync_all()
-    })();
-    if write_result.is_err() {
+        })?
+        .to_path_buf();
+    let temporary = sibling.keep();
+    let renamed = std::fs::rename(&temporary, destination).and_then(|()| File::open(&parent)?.sync_all());
+    if renamed.is_err() {
         let _ = std::fs::remove_file(&temporary);
     }
-    write_result.map_err(|error| context(error, "atomically write private file", path))
+    renamed
+}
+
+/// A unique, owner-only sibling file, removed when dropped.
+///
+/// The guard is the point: a temporary is created to become some other file,
+/// and every path that does not reach the rename -- an error, an early
+/// return, a panic unwinding through the caller -- must not leave it behind.
+/// Cleanup written as an `if result.is_err()` at the end of a function is
+/// cleanup that a panic walks straight past.
+#[derive(Debug)]
+pub struct PrivateSibling {
+    file: File,
+    path: PathBuf,
+    /// Set by `keep`, which hands the path to a caller that is about to
+    /// rename it into place.
+    kept: bool,
+}
+
+impl PrivateSibling {
+    /// The open handle, for writing and syncing the contents.
+    pub fn file(&mut self) -> &mut File {
+        &mut self.file
+    }
+
+    /// Where it is, while it is still a temporary.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Give up ownership: the file is no longer removed on drop, and the
+    /// caller owns the path. Used by whoever is about to rename it.
+    #[must_use]
+    pub fn keep(mut self) -> PathBuf {
+        self.kept = true;
+        std::mem::take(&mut self.path)
+    }
+}
+
+impl Drop for PrivateSibling {
+    fn drop(&mut self) {
+        if !self.kept {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 }
 
 /// Create a unique, owner-only, write-only sibling of `path`, ready to be
@@ -174,11 +235,11 @@ pub fn atomic_write_private(path: &Path, data: &[u8]) -> io::Result<()> {
 ///
 /// Public so that callers who rewrite a large file cannot be forced to hold
 /// its whole contents in memory to get `atomic_write_private`'s guarantees:
-/// they stream into this handle and rename it themselves. The name is
-/// dot-prefixed and carries the pid and a process-unique sequence, and the
-/// open is `O_EXCL | O_NOFOLLOW`, so two concurrent writers never share one.
-/// The caller owns the temporary from here: it must remove it on any error.
-pub fn create_private_sibling(path: &Path) -> io::Result<(File, PathBuf)> {
+/// they stream into this handle and rename it with `rename_private_sibling`.
+/// The name is dot-prefixed and carries the pid and a process-unique
+/// sequence, and the open is `O_EXCL | O_NOFOLLOW`, so two concurrent writers
+/// never share one. The temporary removes itself unless it is renamed.
+pub fn create_private_sibling(path: &Path) -> io::Result<PrivateSibling> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -209,12 +270,18 @@ pub fn create_private_sibling(path: &Path) -> io::Result<(File, PathBuf)> {
             .open(&temporary);
         match opened {
             Ok(file) => {
-                if let Err(error) = file.set_permissions(std::fs::Permissions::from_mode(PRIVATE_FILE_MODE)) {
-                    drop(file);
-                    let _ = std::fs::remove_file(&temporary);
-                    return Err(error);
-                }
-                return Ok((file, temporary));
+                let sibling = PrivateSibling {
+                    file,
+                    path: temporary,
+                    kept: false,
+                };
+                // Through the handle, and before the guard could hand it out:
+                // a mode the filesystem refuses fails the create, and the
+                // guard removes the file on the way out.
+                sibling
+                    .file
+                    .set_permissions(std::fs::Permissions::from_mode(PRIVATE_FILE_MODE))?;
+                return Ok(sibling);
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error),

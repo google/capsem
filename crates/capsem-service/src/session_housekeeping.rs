@@ -125,6 +125,13 @@ impl ServiceState {
             if !name.contains("-failed-") {
                 continue;
             }
+            // The directory's mtime is when a file was last created in it,
+            // which for a failed session is when its logs stopped being
+            // written -- the moment the evidence was produced. The rename
+            // into `-failed-` does not touch it and nothing writes there
+            // afterwards, so it neither drifts forward nor needs the
+            // timestamp in the name parsed back out of UTC to be trusted.
+            //
             // If we can't stat, skip rather than fail the whole cull --
             // we'd rather leave one undateable dir than abort the prune.
             if let Ok(metadata) = entry.metadata() {

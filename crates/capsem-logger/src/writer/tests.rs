@@ -1134,7 +1134,7 @@ fn mcp_protocol_only_event_does_not_claim_tool_storage() {
         credential_ref: None,
     });
 
-    let mut bodies = BodyArchive::open(None, SystemTime::now);
+    let mut bodies = BodyArchive::open(None, SystemTime::now, &conn);
     let outcome = metrics::with_local_recorder(&recorder, || {
         execute_memory_batch(&conn, &[event], &mut bodies).unwrap()
     });

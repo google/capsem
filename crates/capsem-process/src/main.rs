@@ -155,6 +155,11 @@ struct Args {
     /// Days of archived bodies to keep when this session's ledger outlives
     /// the process. The service passes it for a persistent VM and omits it
     /// for an ephemeral one, whose directory it deletes outright.
+    ///
+    /// Taken as given, including `0`, which drops every archived body. The
+    /// setting's floor of 1 is the service's to enforce -- it is the side
+    /// that reads the setting -- and a process told to keep nothing is a
+    /// process being told something, not one being misconfigured.
     #[arg(long)]
     retention_days: Option<u64>,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)

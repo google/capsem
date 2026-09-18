@@ -16,7 +16,7 @@
 
 use std::path::{Path, PathBuf};
 
-use capsem_archive::{ArchiveError, BodyLogWriter, BodyRef, SealedBlock};
+use capsem_archive::{ArchiveError, BodyLogWriter, BodyRef, SealedBlock, BLOCK_HEADER_BYTES};
 use rusqlite::{params, Connection};
 use tracing::warn;
 
@@ -107,6 +107,67 @@ pub(crate) fn archive_path_for_db(db_path: &Path) -> PathBuf {
     db_path.with_extension("bodies")
 }
 
+/// Whether every block the index names is inside the archive file.
+///
+/// Retention replaces the archive and rewrites the index, and the two cannot
+/// commit together -- there is one `rename(2)` between them. A crash in that
+/// width leaves the index naming offsets the file on disk does not have, and
+/// until this check existed nothing noticed: the writer reopened whichever
+/// file was there and appended into it, and every stale row stayed in the
+/// index, answering reads with another block's bytes until its hash check
+/// refused them, one body at a time, forever.
+///
+/// So it is checked once, at open, where it can be said plainly and where
+/// refusing costs only this session's new bodies. A false answer here is
+/// treated as a false one: a `body_blocks` that cannot be read is broken
+/// schema, not an empty table.
+fn index_fits_the_file(conn: &Connection, archive_path: &Path) -> bool {
+    let indexed_end: Option<i64> =
+        match conn.query_row("SELECT MAX(block_offset + comp_len) FROM body_blocks", [], |row| {
+            row.get(0)
+        }) {
+            Ok(end) => end,
+            Err(error) => {
+                warn!(
+                    archive_path = %archive_path.display(),
+                    error = %error,
+                    "session body index could not be read; bodies will not be stored"
+                );
+                return false;
+            }
+        };
+    let Some(indexed_end) = indexed_end else {
+        // No blocks indexed: nothing to disagree with, including for a
+        // session whose archive file does not exist yet.
+        return true;
+    };
+    let indexed_end = indexed_end.saturating_add(BLOCK_HEADER_BYTES as i64);
+    let archive_bytes = match std::fs::metadata(archive_path) {
+        Ok(metadata) => metadata.len() as i64,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(error) => {
+            warn!(
+                archive_path = %archive_path.display(),
+                error = %error,
+                "session body archive could not be measured; bodies will not be stored"
+            );
+            return false;
+        }
+    };
+    if indexed_end > archive_bytes {
+        warn!(
+            archive_path = %archive_path.display(),
+            indexed_end,
+            archive_bytes,
+            "session body index names bytes past the end of the archive, so the two no longer \
+             describe the same file -- most likely a crash during retention; bodies will not be \
+             stored and existing rows will fail their integrity check rather than answer wrongly"
+        );
+        return false;
+    }
+    true
+}
+
 /// Open the archive writer, or warn and store no bodies. Shared by `open` and
 /// by the reopen retention needs: a compacted file has a new end, and a writer
 /// still holding the old one would append over a kept block.
@@ -125,9 +186,14 @@ fn open_writer(archive_path: &Path) -> Option<BodyLogWriter> {
 }
 
 impl BodyArchive {
-    pub(super) fn open(db_path: Option<&Path>, now: LedgerClock) -> Self {
+    /// Open the session's archive, after checking that the index and the
+    /// file still describe the same thing.
+    pub(super) fn open(db_path: Option<&Path>, now: LedgerClock, conn: &Connection) -> Self {
         let path = db_path.map(archive_path_for_db);
-        let writer = path.as_deref().and_then(open_writer);
+        let writer = path
+            .as_deref()
+            .filter(|path| index_fits_the_file(conn, path))
+            .and_then(open_writer);
         Self {
             path,
             writer,
@@ -408,7 +474,7 @@ impl BodyArchive {
             // one is to leave it alone -- and because REPLACE is a delete
             // followed by an insert, which would take every index row
             // referencing the block with it under enforced foreign keys.
-            execute_cached(
+            let inserted = execute_cached(
                 conn,
                 "INSERT OR IGNORE INTO body_blocks (block_offset, raw_len, comp_len, sealed_at)
                  VALUES (?1, ?2, ?3, ?4)",
@@ -419,6 +485,21 @@ impl BodyArchive {
                     format_timestamp((self.now)()),
                 ],
             )?;
+            if inserted == 0 {
+                // IGNORE is what keeps a retried flush idempotent, and it is
+                // also the one way a *new* block could be filed under a row
+                // describing a different one -- its index rows would then
+                // resolve against the wrong bytes. Nothing reaches this
+                // today; saying so out loud is what stops it being silent if
+                // something ever does.
+                warn!(
+                    block_offset = block.block_offset,
+                    raw_len = block.raw_len,
+                    comp_len = block.comp_len,
+                    "session body index already holds a block at this offset; its rows may name \
+                     bytes that belong to another block"
+                );
+            }
             for row in rows.iter() {
                 execute_cached(
                     conn,

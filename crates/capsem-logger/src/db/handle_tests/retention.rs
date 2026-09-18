@@ -9,6 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 use super::*;
 use crate::db::BodyDirection;
 use crate::writer::archive_path_for_db;
+use crate::writer::{fail_retention_for_path_for_tests, RetentionFault};
 
 use super::correctness::make_correctness_security_event;
 
@@ -238,4 +239,293 @@ async fn a_failed_compaction_leaves_the_index_and_the_bodies_alone() {
         .expect("read the oldest body")
         .expect("it is still archived");
     assert_eq!(body.bytes, br#"{"old":1}"#);
+}
+
+/// The whole reason retention stages the file and renames it last: a failure
+/// in the index transaction must leave the archive exactly as it was, with
+/// every body still findable through the index that still names it.
+#[tokio::test]
+async fn a_failed_index_transaction_leaves_the_archive_and_the_index_untouched() {
+    let p = temp_db_path("retention-index-failure");
+    let db = DbHandle::open(&p).expect("open handle");
+    write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
+    write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
+    let sealed = blocks(&db).await;
+    let archive_before = std::fs::read(archive_path_for_db(&p)).expect("read the archive");
+
+    fail_retention_for_path_for_tests(&p, RetentionFault::IndexTransaction);
+    let error = db
+        .retain_bodies_since(&sealed[1].1)
+        .await
+        .expect_err("the injected failure must fail the retention");
+
+    assert!(
+        error.contains("left the archive") && error.contains("untouched"),
+        "the failure must say the archive was not replaced: {error}"
+    );
+    assert_eq!(
+        std::fs::read(archive_path_for_db(&p)).expect("read the archive"),
+        archive_before,
+        "the archive is still the pre-retention file, byte for byte"
+    );
+    assert_eq!(blocks(&db).await, sealed, "and no index row moved or went away");
+    for (event_id, payload) in [("0000000000ab", r#"{"old":1}"#), ("0000000000cd", r#"{"new":2}"#)] {
+        let body = db
+            .read_body(event_id, BodyDirection::Payload)
+            .await
+            .expect("read a body")
+            .expect("every body is still archived");
+        assert_eq!(body.bytes, payload.as_bytes(), "{event_id} still reads");
+    }
+    // This ledger's own staging only: the temp directory is shared, and other
+    // tests have their own retentions in flight.
+    let staging_prefix = format!(
+        ".{}",
+        archive_path_for_db(&p)
+            .file_name()
+            .expect("the archive has a name")
+            .to_string_lossy()
+    );
+    assert!(
+        std::fs::read_dir(p.parent().expect("a parent"))
+            .expect("list the directory")
+            .flatten()
+            .all(|entry| !entry.file_name().to_string_lossy().starts_with(&staging_prefix)),
+        "the staged replacement is removed with the staging"
+    );
+}
+
+/// The one syscall the ordering cannot make atomic. The index has committed
+/// the new offsets and the rename did not happen, so the file still holds the
+/// old ones -- and the remap is reversed, which puts the ledger back to
+/// readable rather than merely loud.
+#[tokio::test]
+async fn a_failed_rename_puts_the_old_offsets_back_and_every_body_still_reads() {
+    let p = temp_db_path("retention-rename-failure");
+    let db = DbHandle::open(&p).expect("open handle");
+    write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
+    write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
+    let sealed = blocks(&db).await;
+    let archive_before = std::fs::read(archive_path_for_db(&p)).expect("read the archive");
+
+    fail_retention_for_path_for_tests(&p, RetentionFault::Rename);
+    let error = db
+        .retain_bodies_since(&sealed[1].1)
+        .await
+        .expect_err("the injected failure must fail the retention");
+
+    assert!(
+        error.contains("the index was put back"),
+        "the failure must say the ledger was restored, not merely that it broke: {error}"
+    );
+    assert_eq!(
+        std::fs::read(archive_path_for_db(&p)).expect("read the archive"),
+        archive_before,
+        "the rename never happened, so the archive is the old file"
+    );
+    assert_eq!(
+        blocks(&db).await,
+        vec![sealed[1].clone()],
+        "the surviving block is back at the offset the unreplaced file still holds it at"
+    );
+    // The point of the restore: this reads, rather than failing its hash check
+    // against bytes that belong to the block the compaction would have dropped.
+    let kept = db
+        .read_body("0000000000cd", BodyDirection::Payload)
+        .await
+        .expect("read the kept body")
+        .expect("the newer body is still archived");
+    assert_eq!(kept.bytes, br#"{"new":2}"#);
+    // Its rows are gone and its bytes are unreferenced in the file, which is
+    // the archive's documented cost -- and it was the body retention was asked
+    // to forget, so this is the intended outcome reached by an unintended road.
+    assert!(db
+        .read_body("0000000000ab", BodyDirection::Payload)
+        .await
+        .expect("read the dropped body")
+        .is_none());
+    assert_eq!(foreign_key_violations(&db).await, 0);
+    db.ready().await.expect("a restored ledger is still a ready ledger");
+}
+
+/// The service reads session ledgers `capsem-process` writes, and holds its
+/// archive reader open across a persistent VM's stop. Retention renames a
+/// compacted file over the archive, so that reader is left on an inode where
+/// every surviving block has moved.
+#[tokio::test]
+async fn an_external_reader_follows_the_archive_across_a_retention() {
+    let p = temp_db_path("retention-external-reader-follows");
+    let writer = DbHandle::open(&p).expect("open handle");
+    write_block(&writer, "0000000000ab", r#"{"old":1}"#).await;
+    write_block(&writer, "0000000000cd", r#"{"new":2}"#).await;
+    let sealed = blocks(&writer).await;
+
+    let reader = DbHandle::open_external_reader(&p).expect("open external reader");
+    // Opens the archive and caches both the descriptor and the block.
+    assert_eq!(
+        reader
+            .read_body("0000000000cd", BodyDirection::Payload)
+            .await
+            .expect("read a body")
+            .expect("the body is archived")
+            .bytes,
+        br#"{"new":2}"#
+    );
+
+    writer.retain_bodies_since(&sealed[1].1).await.expect("retain bodies");
+
+    let kept = reader
+        .read_body("0000000000cd", BodyDirection::Payload)
+        .await
+        .expect("a reader that notices the archive moved does not fail here")
+        .expect("the surviving body is still archived");
+    assert_eq!(
+        kept.bytes, br#"{"new":2}"#,
+        "the same read returns the same bytes from the compacted file"
+    );
+    assert!(
+        reader
+            .read_body("0000000000ab", BodyDirection::Payload)
+            .await
+            .expect("read the dropped body")
+            .is_none(),
+        "and a dropped body is absent rather than stale bytes from the old inode"
+    );
+}
+
+/// `pragma_foreign_key_check` is only evidence if it can fail, and the other
+/// retention tests never plant a violation for it to find. This one does --
+/// an index row naming a block that is not there -- proves the check reports
+/// it, removes it, and only then asserts that a retention leaves none.
+///
+/// What it cannot show is the remap surviving enforcement, because a test on
+/// this side cannot see the transaction from inside. `writer/retention/tests.rs`
+/// does that against `reindex` directly.
+#[tokio::test]
+async fn a_retention_leaves_no_orphan_index_rows() {
+    let p = temp_db_path("retention-foreign-keys");
+    let db = DbHandle::open(&p).expect("open handle");
+    write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
+    write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
+    let sealed = blocks(&db).await;
+
+    // The check is a check: plant an orphan and watch it be found. Enforcement
+    // is off for the insert, because with it on the insert is simply refused
+    // -- which is the other half of the same proof.
+    {
+        let conn = rusqlite::Connection::open(&p).expect("open disk verifier");
+        conn.execute_batch("PRAGMA foreign_keys = OFF")
+            .expect("the planted orphan needs enforcement out of the way");
+        conn.execute(
+            "INSERT INTO event_body_blobs (
+                event_id, event_type, source_table, direction, content_type,
+                original_bytes, stored_bytes, truncated, body_hash,
+                block_offset, body_offset, body_len, trace_id, turn_id, created_at
+             ) VALUES ('deadbeef0000', 'security.rule', 'security_rule_events', 'payload', NULL,
+                       1, 1, 0,
+                       'blake3:0000000000000000000000000000000000000000000000000000000000000000',
+                       999999, 0, 1, NULL, NULL, '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .expect("an orphan row goes in while nothing is enforcing the reference");
+        let violations: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| row.get(0))
+            .expect("check keys");
+        assert_eq!(violations, 1, "the check must actually find a planted orphan");
+        conn.execute("DELETE FROM event_body_blobs WHERE event_id = 'deadbeef0000'", [])
+            .expect("remove the orphan");
+    }
+
+    db.retain_bodies_since(&sealed[1].1).await.expect("retain bodies");
+
+    assert_eq!(
+        foreign_key_violations(&db).await,
+        0,
+        "no index row may be left naming a block the remap moved or deleted"
+    );
+    assert_eq!(
+        db.read_body("0000000000cd", BodyDirection::Payload)
+            .await
+            .expect("read the kept body")
+            .expect("the newer body survives")
+            .bytes,
+        br#"{"new":2}"#
+    );
+}
+
+/// The unrecoverable state, and the only response to it: stop archiving.
+///
+/// The rename failed *and* the index could not be put back, so the ledger
+/// names offsets the file does not have. Appending more bodies into that
+/// archive would add rows to a ledger whose existing ones already lie, and a
+/// later reopen would carry the disagreement forward.
+#[tokio::test]
+async fn an_unrecoverable_retention_takes_the_archive_out_of_service() {
+    let p = temp_db_path("retention-unrecoverable");
+    let db = DbHandle::open(&p).expect("open handle");
+    write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
+    write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
+    let sealed = blocks(&db).await;
+
+    fail_retention_for_path_for_tests(&p, RetentionFault::Rename);
+    fail_retention_for_path_for_tests(&p, RetentionFault::Restore);
+    let error = db
+        .retain_bodies_since(&sealed[1].1)
+        .await
+        .expect_err("a retention that cannot be undone must fail");
+    assert!(
+        error.contains("no further bodies will be stored"),
+        "the failure must say the archive is out of service: {error}"
+    );
+
+    // Written after the archive gave up: accepted as a ledger row, with no
+    // body archived, rather than appended into a file the index disagrees with.
+    write_block(&db, "0000000000ef", r#"{"after":3}"#).await;
+    assert!(
+        db.read_body("0000000000ef", BodyDirection::Payload)
+            .await
+            .expect("read the later body")
+            .is_none(),
+        "a retired archive stores no bodies, and says so through the drop counter"
+    );
+}
+
+/// Reopening a ledger whose index outran its archive.
+///
+/// This is what a crash inside retention's one-syscall window leaves behind,
+/// and it is the state the writer used to reopen and append into: the index
+/// names a block past the end of the file, so its rows resolve against bytes
+/// that are not there or, worse, against a later block's.
+#[tokio::test]
+async fn an_index_naming_bytes_past_the_archive_refuses_to_open() {
+    let p = temp_db_path("retention-index-past-eof");
+    let db = DbHandle::open(&p).expect("open handle");
+    write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
+    db.flush().await.expect("flush");
+    drop(db);
+
+    // The file as a failed retention would leave it: compacted away, with the
+    // index still describing what used to be there.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(archive_path_for_db(&p))
+        .expect("open the archive")
+        .set_len(capsem_archive::FILE_HEADER_BYTES as u64)
+        .expect("truncate to the header");
+
+    let db = DbHandle::open(&p).expect("the ledger still opens; it is the archive that is refused");
+    write_block(&db, "0000000000cd", r#"{"after":2}"#).await;
+
+    assert!(
+        db.read_body("0000000000cd", BodyDirection::Payload)
+            .await
+            .expect("read the new body")
+            .is_none(),
+        "a writer that cannot trust the archive must not append into it"
+    );
+    assert_eq!(
+        blocks(&db).await.len(),
+        1,
+        "and must not add a block row beside the one it refused to believe"
+    );
 }

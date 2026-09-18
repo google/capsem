@@ -237,3 +237,92 @@ fn resolved_retention_days(
         history: Vec::new(),
     }
 }
+
+/// The service keeps a session's DB handle registered until the reaper
+/// unregisters it, and that is not always before the VM's own process has
+/// finished shutting down: on the normal stop path the handle goes first, but
+/// a persistent process that exits on its own is reaped afterwards. Retention
+/// runs during that shutdown and replaces the archive file, so for that window
+/// the service is holding a reader on an inode that is no longer the archive.
+///
+/// A route reading a body in that window must get the body, not an integrity
+/// failure about data that is perfectly intact.
+#[tokio::test]
+async fn a_registered_session_handle_reads_bodies_after_the_process_trims_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().to_path_buf());
+    let session_dir = state.run_dir.join("sessions").join("persistent-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    // The ledger as capsem-process owns it.
+    let owner = capsem_logger::DbHandle::open(&session_dir.join("session.db")).expect("open the owning handle");
+    let write_body = |event_id: &'static str, payload: &'static str| {
+        let owner = &owner;
+        async move {
+            owner
+                .write(capsem_logger::WriteOp::SecurityRuleEvent(
+                    capsem_logger::SecurityRuleEvent::new(
+                        1_789_000_223_456,
+                        event_id,
+                        "model.call",
+                        "profiles.rules.example",
+                        r#"{"name":"example"}"#,
+                        payload,
+                    ),
+                ))
+                .await
+                .expect("write a rule event");
+            owner.flush().await.expect("flush");
+        }
+    };
+    write_body("0000000000ab", r#"{"old":1}"#).await;
+    write_body("0000000000cd", r#"{"new":2}"#).await;
+
+    // The service registers its external reader and serves a body from it,
+    // which is what leaves it holding the archive open.
+    let handle = state
+        .register_session_db_handle("persistent-vm", &session_dir)
+        .expect("register the session handle");
+    assert_eq!(
+        handle
+            .read_body("0000000000cd", capsem_logger::BodyDirection::Payload)
+            .await
+            .expect("read a body")
+            .expect("the body is archived")
+            .bytes,
+        br#"{"new":2}"#
+    );
+
+    // The VM's process trims on its way out. The handle above is still
+    // registered: this is the window the reaper leaves open.
+    let cutoff = {
+        let raw = handle
+            .query("SELECT sealed_at FROM body_blocks ORDER BY block_offset", &[])
+            .await
+            .expect("read the block seal times");
+        let value: serde_json::Value = serde_json::from_str(&raw).expect("rows");
+        value["rows"][1][0].as_str().expect("the newer seal time").to_string()
+    };
+    owner.retain_bodies_since(&cutoff).await.expect("trim archived bodies");
+
+    assert_eq!(
+        handle
+            .read_body("0000000000cd", capsem_logger::BodyDirection::Payload)
+            .await
+            .expect("a still-registered handle must follow the archive, not fail on it")
+            .expect("the surviving body is still archived")
+            .bytes,
+        br#"{"new":2}"#,
+        "the same read returns the same bytes after the file was replaced under it"
+    );
+    assert!(
+        handle
+            .read_body("0000000000ab", capsem_logger::BodyDirection::Payload)
+            .await
+            .expect("read the dropped body")
+            .is_none(),
+        "and a dropped body is absent rather than stale bytes from the old inode"
+    );
+
+    state.unregister_session_db_handle("persistent-vm");
+}

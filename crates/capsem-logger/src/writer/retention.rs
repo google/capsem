@@ -1,7 +1,7 @@
 //! Dropping archived bodies whose blocks have aged past a cutoff.
 //!
 //! Retention runs on the writer thread, because `capsem-process` owns every
-//! write to `session.db` and `session.bodies` and this rewrites both. The
+//! write to `session.db` and the archive beside it and this rewrites both. The
 //! service holds external, disk-only readers and must ask rather than act --
 //! see `DbHandle::retain_bodies_since`, which refuses a handle with no writer.
 //!
@@ -16,24 +16,32 @@
 //!    whose rows have not committed is invisible to the keep query, so it
 //!    would be compacted away and its rows inserted afterwards pointing at
 //!    offsets that no longer exist.
-//! 2. `retain_blocks` rewrites the file. It is atomic -- a temporary renamed
-//!    over the original -- so the file is either wholly the old one or wholly
-//!    the new one.
+//! 2. The compacted archive is **staged**: written and flushed beside the
+//!    original, which stays the live file.
 //! 3. One transaction deletes the rows of the dropped blocks and remaps the
-//!    survivors' offsets.
+//!    survivors' offsets, and commits.
+//! 4. Only then is the staged file renamed over the original.
 //!
-//! Between 2 and 3 the index names offsets the file no longer has. That
-//! window is a SQLite transaction wide, and it is not silent: every body read
-//! verifies blake3 over the bytes the row's span selected, so a stale offset
-//! fails the read loudly instead of returning some other body's bytes. A
-//! failure in step 3 leaves the ledger in exactly that state, which is why it
-//! is reported as an error rather than swallowed.
+//! The index and the file cannot commit together, so the question is not
+//! whether a window exists but how wide it is and which way it falls. Between
+//! 3 and 4 it is a single `rename(2)`; the old ordering -- rename first, then
+//! the transaction -- made it a whole transaction, most of which is the index
+//! work itself.
+//!
+//! And within this process the window closes rather than merely being narrow.
+//! A rename that fails leaves the file holding the old offsets, so the
+//! remap is reversed and every surviving body is readable again at the offset
+//! it always had. What is not recoverable is a crash in that one syscall's
+//! width, and even then nothing is served wrongly: every body read verifies
+//! blake3 over the bytes its row's span selected, so a stale offset fails the
+//! read loudly instead of returning some other body's bytes.
 
 use std::collections::BTreeMap;
 
 use rusqlite::{params, Connection};
 
 use super::bodies::BodyArchive;
+use super::retention_faults::{take_retention_failure_for_tests, RetentionFault};
 
 /// What one retention pass did.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +52,7 @@ pub struct RetainOutcome {
     pub blocks_kept: u64,
     /// `event_body_blobs` rows deleted with their blocks.
     pub rows_dropped: u64,
-    /// How much shorter `session.bodies` is.
+    /// How much shorter the archive file is.
     pub bytes_reclaimed: u64,
 }
 
@@ -57,7 +65,7 @@ pub struct RetainOutcome {
 /// The archive being closed, unflushed work still in hand, a block the file
 /// cannot produce, and any SQLite failure all surface here; none of them
 /// leave a body readable that should have gone, and none of them delete an
-/// index row whose block is still in the file.
+/// index row whose block is still the one the archive holds.
 pub(super) fn retain_bodies(
     conn: &Connection,
     bodies: &mut BodyArchive,
@@ -71,39 +79,96 @@ pub(super) fn retain_bodies(
         .ok_or("session body archive is not open; nothing was retained")?
         .to_path_buf();
 
-    let before = std::fs::metadata(&path)
-        .map_err(|error| format!("session body archive {} could not be measured: {error}", path.display()))?
-        .len();
     let keep = kept_block_offsets(conn, cutoff)?;
-    let moved = capsem_archive::retain_blocks(&path, &keep).map_err(|error| {
+    // The original is still the live archive after this returns.
+    let staging = capsem_archive::stage_retained_blocks(&path, &keep).map_err(|error| {
         format!(
             "session body archive {} could not be compacted: {error}",
             path.display()
         )
     })?;
-    // The writer's idea of the file's end is now the old length; the next
-    // append would land on top of a block the index still names.
-    bodies.reopen_after_retention();
-    let after = std::fs::metadata(&path)
-        .map_err(|error| format!("session body archive {} could not be measured: {error}", path.display()))?
-        .len();
+    let moved = staging.map().clone();
+    let bytes_reclaimed = staging.bytes_freed();
 
-    let dropped = reindex(conn, cutoff, &moved).map_err(|error| {
+    let dropped = reindex(conn, cutoff, &moved, &path).map_err(|error| {
         format!(
-            "session body archive {} was compacted but its index could not be rewritten, \
-             so body reads will fail their integrity check until it is: {error}",
+            "session body retention left the archive {} untouched: its index could not be rewritten: {error}",
             path.display()
         )
     })?;
+
+    commit_staging(conn, bodies, staging, &moved, &path)?;
+    // The writer's idea of the file's end is the old file's length, and every
+    // block in the new one sits somewhere else.
+    bodies.reopen_after_retention();
+
     Ok(RetainOutcome {
         blocks_dropped: dropped.blocks,
         blocks_kept: moved.len() as u64,
         rows_dropped: dropped.rows,
-        bytes_reclaimed: before.saturating_sub(after),
+        bytes_reclaimed,
     })
 }
 
+/// Put the compacted archive in place, or put the index back.
+///
+/// A failed rename means the file still holds the old offsets, and the index
+/// was committed a moment ago naming the new ones. Reversing the remap is
+/// what makes that recoverable rather than merely loud: every surviving body
+/// goes back to naming the offset it still occupies.
+///
+/// The rows of the dropped blocks stay deleted. Their bytes are in the file
+/// and now unreferenced, which is the archive's own documented cost for a
+/// crash between a block and its index rows -- and those bodies were the ones
+/// retention was asked to forget, so forgetting them is not the failure.
+fn commit_staging(
+    conn: &Connection,
+    bodies: &mut BodyArchive,
+    staging: capsem_archive::RetainedStaging,
+    moved: &BTreeMap<u64, u64>,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let committed = if take_retention_failure_for_tests(path, RetentionFault::Rename) {
+        drop(staging);
+        Err("injected rename failure".to_string())
+    } else {
+        capsem_archive::commit_retained(staging).map_err(|error| error.to_string())
+    };
+    let Err(error) = committed else {
+        return Ok(());
+    };
+    let restored = if take_retention_failure_for_tests(path, RetentionFault::Restore) {
+        Err(rusqlite::Error::InvalidParameterName(
+            "injected offset restore failure".to_string(),
+        ))
+    } else {
+        restore_offsets(conn, moved)
+    };
+    match restored {
+        Ok(()) => Err(format!(
+            "session body archive {} could not be replaced ({error}); \
+             the index was put back and every surviving body still reads",
+            path.display()
+        )),
+        Err(restore_error) => {
+            // The index names offsets the file does not have and nothing here
+            // can reach them again. Appending more bodies would add rows to a
+            // ledger whose existing ones already lie; the session stops
+            // archiving, and the bodies it was holding are counted as dropped.
+            bodies.give_up("retention");
+            Err(format!(
+                "session body archive {} could not be replaced ({error}) \
+                 and the index could not be put back ({restore_error}); \
+                 no further bodies will be stored, and body reads will fail \
+                 their integrity check rather than answer wrongly",
+                path.display()
+            ))
+        }
+    }
+}
+
 /// What the deletes removed.
+#[derive(Debug)]
 struct Dropped {
     blocks: u64,
     rows: u64,
@@ -146,13 +211,19 @@ fn kept_block_offsets(conn: &Connection, cutoff: &str) -> Result<Vec<u64>, Strin
 /// `body_blocks`' primary key, so `UPDATE` raises a constraint failure and
 /// rolls the whole transaction back. Nothing here is an upsert; two blocks
 /// can never be quietly merged into one row.
-fn reindex(conn: &Connection, cutoff: &str, moved: &BTreeMap<u64, u64>) -> rusqlite::Result<Dropped> {
+fn reindex(
+    conn: &Connection,
+    cutoff: &str,
+    moved: &BTreeMap<u64, u64>,
+    path: &std::path::Path,
+) -> rusqlite::Result<Dropped> {
     let tx = conn.unchecked_transaction()?;
     // The index rows reference `body_blocks(block_offset)`. Remapping moves
     // parent and child one pair at a time, so the two are briefly out of step
-    // even though the committed state is consistent. Deferring makes that
-    // correct under enforced foreign keys rather than correct only because
-    // this ledger does not enable them.
+    // even though the committed state is consistent. Enforcement is on --
+    // rusqlite turns it on for every connection it opens, which
+    // `the_writer_connection_enforces_foreign_keys` pins -- so without this
+    // the very first pair would be refused.
     tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
     let rows = tx.execute(
         "DELETE FROM event_body_blobs
@@ -163,27 +234,21 @@ fn reindex(conn: &Connection, cutoff: &str, moved: &BTreeMap<u64, u64>) -> rusql
 
     let survivors: i64 = tx.query_row("SELECT COUNT(*) FROM body_blocks", [], |row| row.get(0))?;
     if survivors != moved.len() as i64 {
-        // The file was compacted to hold exactly `moved`, so an index that
-        // disagrees would leave rows naming blocks that are no longer there.
+        // The staged file holds exactly `moved`, so an index that disagrees
+        // would name blocks it does not have.
         return Err(rusqlite::Error::InvalidParameterName(format!(
-            "retention kept {} blocks in the archive but {survivors} in the index",
+            "retention staged {} blocks but the index holds {survivors}",
             moved.len()
         )));
     }
 
     for (old, new) in moved {
-        if old == new {
-            continue;
-        }
-        let (old, new) = (*old as i64, *new as i64);
-        tx.execute(
-            "UPDATE body_blocks SET block_offset = ?2 WHERE block_offset = ?1",
-            params![old, new],
-        )?;
-        tx.execute(
-            "UPDATE event_body_blobs SET block_offset = ?2 WHERE block_offset = ?1",
-            params![old, new],
-        )?;
+        move_block(&tx, *old, *new)?;
+    }
+    if take_retention_failure_for_tests(path, RetentionFault::IndexTransaction) {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "injected retention index failure".to_string(),
+        ));
     }
     tx.commit()?;
     Ok(Dropped {
@@ -191,3 +256,39 @@ fn reindex(conn: &Connection, cutoff: &str, moved: &BTreeMap<u64, u64>) -> rusql
         rows: rows as u64,
     })
 }
+
+/// Undo the remap after the rename failed, putting every surviving block back
+/// at the offset the unreplaced file still holds it at.
+///
+/// **Descending order of the new offset**, which is the mirror of the forward
+/// pass and collision-free for the mirror reason: writing `n_i -> o_i` from
+/// the top down, every offset already written is an `o` above this one, and
+/// every offset not yet moved is an `n` below `n_i`, which is at most `o_i`.
+fn restore_offsets(conn: &Connection, moved: &BTreeMap<u64, u64>) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
+    for (old, new) in moved.iter().rev() {
+        move_block(&tx, *new, *old)?;
+    }
+    tx.commit()
+}
+
+/// Move one block's rows from `from` to `to`, in both tables.
+fn move_block(tx: &rusqlite::Transaction<'_>, from: u64, to: u64) -> rusqlite::Result<()> {
+    if from == to {
+        return Ok(());
+    }
+    let (from, to) = (from as i64, to as i64);
+    tx.execute(
+        "UPDATE body_blocks SET block_offset = ?2 WHERE block_offset = ?1",
+        params![from, to],
+    )?;
+    tx.execute(
+        "UPDATE event_body_blobs SET block_offset = ?2 WHERE block_offset = ?1",
+        params![from, to],
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

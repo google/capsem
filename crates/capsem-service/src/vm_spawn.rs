@@ -22,8 +22,14 @@ impl ServiceState {
         } = options;
         validate_profile_route_id(profile_id.clone()).map_err(|error| anyhow!("invalid profile_id: {}", error.1))?;
 
-        let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
+        // One resolution, two answers. This used to load and merge the
+        // settings files for the VM shape and then do it again for the
+        // retention period, which is two reads of the same files on the path
+        // every VM creation takes.
+        let resolved_settings = capsem_core::net::policy_config::load_merged_settings();
+        let vm_settings = capsem_core::net::policy_config::settings_to_vm_settings(&resolved_settings);
         let max_concurrent_vms = vm_settings.max_concurrent_vms.unwrap_or(10) as usize;
+        let retention_days = session_housekeeping::retention_days_from_resolved(&resolved_settings);
 
         if !(1..=8).contains(&cpus) {
             return Err(anyhow!("cpus must be between 1 and 8"));
@@ -191,9 +197,7 @@ impl ServiceState {
         // its archived bodies trimmed on stop. An ephemeral session directory
         // is deleted whole.
         if persistent {
-            child_cmd
-                .arg("--retention-days")
-                .arg(session_housekeeping::retention_days().to_string());
+            child_cmd.arg("--retention-days").arg(retention_days.to_string());
         }
         let mut child = match process_spawn_span.in_scope(|| {
             child_cmd
