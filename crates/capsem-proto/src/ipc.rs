@@ -145,6 +145,12 @@ pub enum ServiceToProcess {
         id: u64,
         exposure_id: String,
     },
+    /// End every session of a preview exposure and the flows they admitted;
+    /// the exposure itself stays declared.
+    RevokePreviewSessions {
+        id: u64,
+        exposure_id: String,
+    },
     ExchangePreviewBootstrap {
         id: u64,
         exposure_id: String,
@@ -319,6 +325,12 @@ pub enum ProcessToService {
         expires_in_seconds: u16,
         error: Option<String>,
     },
+    /// Response to RevokePreviewSessions: how many sessions ended.
+    PreviewSessionsRevoked {
+        id: u64,
+        revoked: u32,
+        error: Option<String>,
+    },
     PreviewBootstrapExchanged {
         id: u64,
         session_token: Option<String>,
@@ -378,6 +390,7 @@ impl ServiceToProcess {
             | Self::RevokeExposure { id, .. }
             | Self::ListPublications { id }
             | Self::CreatePreviewSession { id, .. }
+            | Self::RevokePreviewSessions { id, .. }
             | Self::ExchangePreviewBootstrap { id, .. }
             | Self::AdmitPreviewConnection { id, .. }
             | Self::LinkAttach { id, .. }
@@ -409,6 +422,7 @@ impl ProcessToService {
             | Self::ExposureRevoked { id, .. }
             | Self::PublicationList { id, .. }
             | Self::PreviewSessionCreated { id, .. }
+            | Self::PreviewSessionsRevoked { id, .. }
             | Self::PreviewBootstrapExchanged { id, .. }
             | Self::PreviewConnectionAdmitted { id, .. }
             | Self::LinkAttachResult { id, .. }
