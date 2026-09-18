@@ -423,3 +423,20 @@ def test_preserve_works_when_conftest_names_another_suite(artifact_env, tmp_path
     tmp = _seed_tmp_dir(tmp_path)
     svc_mod.preserve_tmp_dir_on_failure(tmp, force=True)
     assert list(artifact_env.rglob("service.log")), "a suite's own conftest must not disable evidence"
+
+
+def test_a_failure_preserves_live_service_homes_before_teardown(artifact_env, tmp_path, monkeypatch):
+    """Evidence must be taken when a test fails, not at session teardown.
+
+    A module-scoped VM fixture deletes its VM -- and with it process.log,
+    serial.log and session.db -- before the session-scoped service preserves
+    its home, so a failing exec left only the service log behind.
+    """
+    home = _seed_tmp_dir(tmp_path)
+    monkeypatch.setattr(svc_mod.failures, "LIVE_HOMES", {home})
+    monkeypatch.setattr(svc_mod.failures, "FAILED_NODEIDS", [])
+
+    svc_mod.record_failure("tests/x.py::test_y")
+
+    assert svc_mod.failures.FAILED_NODEIDS == ["tests/x.py::test_y"]
+    assert list(artifact_env.rglob("process.log")), "the live VM's own log is kept at failure time"

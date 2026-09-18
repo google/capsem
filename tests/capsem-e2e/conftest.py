@@ -20,6 +20,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from helpers import failures
 from helpers.constants import ASSETS_DIR, EXEC_READY_TIMEOUT, PROFILES_DIR
 from helpers.http_transport import Transport
 from helpers.service import make_service_home_run_dirs, preserve_tmp_dir_on_failure
@@ -57,6 +58,7 @@ class RealService:
         self._stderr_file = None
 
     def start(self):
+        failures.LIVE_HOMES.add(self.home_dir)
         sign_binary(PROCESS_BINARY)
         sign_binary(SERVICE_BINARY)
 
@@ -129,6 +131,7 @@ class RealService:
         # The service is session-scoped; its home belongs to every test this
         # worker ran, not only to the last PYTEST_CURRENT_TEST value.
         preserve_tmp_dir_on_failure(self.home_dir, any_worker_failure=True)
+        failures.LIVE_HOMES.discard(self.home_dir)
         shutil.rmtree(self.home_dir, ignore_errors=True)
 
     def cli(self, *args, timeout=60):

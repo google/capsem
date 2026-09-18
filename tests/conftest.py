@@ -36,10 +36,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 from capsem_builder.gate import config as gate_config
 from helpers.constants import ASSETS_DIR as _SELECTED_ASSETS_DIR
 
-# The failure registry the makereport hook appends to lives in helpers:
-# `conftest` is not a unique module name once a suite has its own conftest.py.
-from helpers.failures import FAILED_NODEIDS
-
 _PROJECT_ROOT = Path(__file__).parent.parent
 _GATE_CONFIG = gate_config.load(_PROJECT_ROOT)
 
@@ -386,7 +382,10 @@ def pytest_runtest_makereport(item, call):
     outcome = yield
     rep = outcome.get_result()
     if rep.when in ("setup", "call") and rep.failed:
-        FAILED_NODEIDS.append(rep.nodeid)
+        # Preserves live service homes now, before fixtures tear VMs down.
+        from helpers.service import record_failure
+
+        record_failure(rep.nodeid)
 
 
 def _ancestry(pid: int) -> set[int]:

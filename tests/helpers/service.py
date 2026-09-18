@@ -287,6 +287,13 @@ def materialize_test_profiles(tmp_dir: Path) -> Path:
     return profiles_dir
 
 
+def record_failure(nodeid: str) -> None:
+    """Record a failed test and keep every live service home as it is now."""
+    failures.FAILED_NODEIDS.append(nodeid)
+    for home in sorted(failures.LIVE_HOMES):
+        preserve_tmp_dir_on_failure(home, force=True)
+
+
 def preserve_tmp_dir_on_failure(
     tmp_dir, *, force: bool = False, any_worker_failure: bool = False
 ):
@@ -496,6 +503,7 @@ class ServiceInstance:
         self._failure_evidence_preserved = False
 
     def start(self):
+        failures.LIVE_HOMES.add(self.home_dir)
         # Sign binaries before spawning (macOS needs virtualization entitlement)
         if self.sign_binaries:
             sign_binary(PROCESS_BINARY)
@@ -626,6 +634,7 @@ class ServiceInstance:
             else:
                 preserve_tmp_dir_on_failure(self.home_dir)
 
+        failures.LIVE_HOMES.discard(self.home_dir)
         if self.home_dir.exists():
             shutil.rmtree(self.home_dir, ignore_errors=True)
 

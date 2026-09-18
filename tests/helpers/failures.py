@@ -17,6 +17,11 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 #: Appended by the root conftest's makereport hook; read at teardown.
 FAILED_NODEIDS: list[str] = []
 
+#: Homes of the services running right now. A failure preserves them at once:
+#: a module-scoped VM fixture deletes its VM, and with it process.log,
+#: serial.log and session.db, long before the service's own teardown.
+LIVE_HOMES: set[Path] = set()
+
 #: cache/target/tests/evidence/: gitignored, so service.log,
 #: sessions/<vm>/process.log, serial.log and session.db survive the rmtree.
 ARTIFACTS_ROOT = _PROJECT_ROOT / gate_config.load(_PROJECT_ROOT).outputs.test_artifacts
