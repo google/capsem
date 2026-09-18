@@ -813,8 +813,7 @@ fn run_bridge(
     eprintln!("[capsem-agent] bridge exited");
 }
 
-/// Guest workspace root (VirtioFS mount point).
-const GUEST_WORKSPACE_ROOT: &str = "/root";
+use capsem_proto::GUEST_WORKSPACE as GUEST_WORKSPACE_ROOT;
 
 // ---------------------------------------------------------------------------
 // Symlink-safe file I/O (O_NOFOLLOW on final component)
