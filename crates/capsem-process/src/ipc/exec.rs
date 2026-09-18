@@ -32,6 +32,7 @@ pub(super) fn install(
     active.insert(id, state);
     drop(active);
     pending.insert(id, tx);
+    drop(pending);
     Some(rx)
 }
 
