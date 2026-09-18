@@ -153,9 +153,7 @@ def _size(path: Path) -> int:
     return path.stat().st_size if path.exists() else 0
 
 
-# One snapshot of the ledger: request and model-call counts, and the body
-# archive seen from both sides -- raw/compressed bytes per sealed block, and
-# the original/stored bytes of every indexed body.
+# Request/model counts, and the body archive from the block side and the index side.
 LEDGER_SQL = """SELECT
     (SELECT COUNT(*) FROM net_events) AS reqs,
     (SELECT COUNT(*) FROM model_calls) AS models,
@@ -223,9 +221,13 @@ def judge(samples: list[dict], failures: list[str]) -> None:
         if svc > 512:
             fail(f"capsem-service grows {svc:.0f} B per request (should be flat)")
 
-    for s in samples:
-        if any(w != "capsem-process" for w in s["writers"]):
-            fail(f"session.bodies open for write by {s['writers']}; only capsem-process may")
+    extra = sorted({w for s in samples for w in s["writers"]} - {"capsem-process"})
+    if extra:
+        seen = sum(1 for s in samples if set(s["writers"]) - {"capsem-process"})
+        fail(
+            f"session.bodies open for write by {extra} in {seen}/{len(samples)} samples; "
+            "only capsem-process may"
+        )
 
 
 def main() -> int:
