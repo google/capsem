@@ -62,7 +62,7 @@ describe('host-tools', () => {
         return response.end('hello');
       }
       if (path === '/vms/vm-1/files/content' && record.method === 'POST') {
-        return json(response, {success: true, size: record.body.byteLength});
+        return json(response, {success: true, size: record.body.byteLength, vm_path: '/root/b.bin', container_path: '/workspace/b.bin'});
       }
       if (path === '/host-logs/service') return json(response, {source: 'service', text: 'ready'});
       if (path === '/host-logs/mcp') return json(response, {error: 'must-not-leak gateway-secret'}, 403);
@@ -244,7 +244,7 @@ describe('host-tools', () => {
       name: 'capsem_write_file',
       arguments: {vm_id: 'vm-1', path: '/workspace/b.bin', encoding: 'base64', content: 'AAEC'},
     });
-    expect(structured(write)).toEqual({success: true, size: 3});
+    expect(structured(write)).toEqual({success: true, size: 3, vm_path: '/root/b.bin', container_path: '/workspace/b.bin'});
     expect(requests.at(-1)?.body).toEqual(Buffer.from([0, 1, 2]));
   });
 

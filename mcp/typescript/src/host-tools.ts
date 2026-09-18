@@ -7,6 +7,8 @@ const vmId = z.string().min(1).describe('Immutable VM ID returned by capsem_list
 const positiveInt = z.number().int().positive();
 /** Largest file window one tool call returns; the transfer itself is whole-file. */
 const MAX_READ_BYTES = 256 * 1024;
+const GUEST_PATHS = 'Paths are the guest\'s: /root/x in a VM, /workspace/x in its container, '
+  + 'or x relative to the workspace; other absolute paths are refused.';
 const page = {
   limit: positiveInt.optional(),
   offset: z.number().int().nonnegative().optional(),
@@ -129,12 +131,12 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
   }, (args, extra) => toolCall(() => hypervisor.purge({...defined(args), signal: extra.signal})));
 
   server.registerTool('capsem_list_files', {
-    description: 'List files in a VM using the gateway file API.',
-    inputSchema: {vm_id: vmId, path: z.string().default('/'), depth: positiveInt.optional()},
+    description: `List files in a VM using the gateway file API. ${GUEST_PATHS} An empty path lists the workspace root.`,
+    inputSchema: {vm_id: vmId, path: z.string().default(''), depth: positiveInt.optional()},
   }, ({vm_id, path, depth}, extra) => toolCall(() =>
     vm(hypervisor, vm_id).files.list(path, {...defined({depth}), signal: extra.signal})));
   server.registerTool('capsem_read_file', {
-    description: 'Read a bounded window of a VM file as UTF-8 text or base64 through the gateway file API.',
+    description: `Read a bounded window of a VM file as UTF-8 text or base64 through the gateway file API. ${GUEST_PATHS}`,
     inputSchema: {
       vm_id: vmId, path: z.string().min(1), encoding: z.enum(['utf8', 'base64']).default('utf8'),
       offset: z.number().int().nonnegative().default(0),
@@ -150,7 +152,7 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
     };
   }));
   server.registerTool('capsem_write_file', {
-    description: 'Write UTF-8 text or base64 bytes to a VM through the gateway file API.',
+    description: `Write UTF-8 text or base64 bytes to a VM through the gateway file API. ${GUEST_PATHS} Returns the path the guest sees it at.`,
     inputSchema: {
       vm_id: vmId, path: z.string().min(1), content: z.string(), encoding: z.enum(['utf8', 'base64']).default('utf8'),
     },
