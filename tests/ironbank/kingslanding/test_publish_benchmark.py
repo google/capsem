@@ -119,10 +119,16 @@ def guest(service, vm_id, shell, timeout=40, check=True):
     )
     if check:
         assert response.get("exit_code") == 0, response
+    # An exec that never answered carries no streams (or no body at all); with
+    # check=False the caller keeps that response as the evidence.
+    response = response or {}
     return {
         **response,
-        "stdout": exec_output_text(response),
-        "stderr": exec_output_text(response, "stderr"),
+        **{
+            stream: exec_output_text(response, stream)
+            for stream in ("stdout", "stderr")
+            if stream in response
+        },
     }
 
 

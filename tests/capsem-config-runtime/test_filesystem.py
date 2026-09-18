@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import wait_exec_ready
+from helpers.service import exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.config_runtime
 
@@ -22,7 +22,7 @@ def test_workspace_writable(config_svc):
         resp = client.post(f"/vms/{name}/exec", {
             "command": "echo test_data > /root/write_test.txt && cat /root/write_test.txt"
         })
-        stdout = resp.get("stdout", "") if resp else ""
+        stdout = exec_output_text(resp) if resp else ""
         assert "test_data" in stdout, f"Workspace not writable: {stdout}"
 
     finally:

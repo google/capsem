@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.isolation
 
@@ -44,7 +44,7 @@ def test_resume_after_neighbor_delete():
 
         # VM-A exec should still work
         resp = client.post(f"/vms/{vm_a_id}/exec", {"command": "echo alive"})
-        assert "alive" in resp.get("stdout", "")
+        assert "alive" in exec_output_text(resp)
 
         # VM-B should be gone from list
         list_resp = client.get("/vms/list")

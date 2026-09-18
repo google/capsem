@@ -32,7 +32,7 @@ from helpers.package_probe import (
     FORK_PROBE_OUTPUT,
     install_fork_probe_with_service_client,
 )
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.serial
 
@@ -112,7 +112,7 @@ def _run_lifecycle(client):
     t0 = time.monotonic()
     resp = client.post(f"/vms/{name}/exec", {"command": "echo ok", "timeout_secs": 10}, timeout=15)
     exec_ms = (time.monotonic() - t0) * 1000
-    assert resp is not None and "ok" in resp.get("stdout", "")
+    assert resp is not None and "ok" in exec_output_text(resp)
 
     t0 = time.monotonic()
     client.delete(f"/vms/{name}/delete")
@@ -181,7 +181,7 @@ def _run_fork_benchmark(client):
         pkg_survived = (
             resp is not None
             and resp.get("exit_code") == 0
-            and resp.get("stdout", "").strip() == FORK_PROBE_OUTPUT
+            and exec_output_text(resp).strip() == FORK_PROBE_OUTPUT
         )
 
         # Verify workspace survived
@@ -193,7 +193,7 @@ def _run_fork_benchmark(client):
             },
             timeout=15,
         )
-        ws_survived = resp is not None and "fork-benchmark-marker" in resp.get("stdout", "")
+        ws_survived = resp is not None and "fork-benchmark-marker" in exec_output_text(resp)
 
         return {
             "fork_ms": round(fork_ms, 1),

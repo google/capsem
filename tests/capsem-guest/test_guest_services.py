@@ -1,6 +1,7 @@
 """Verify expected guest services are running after boot."""
 
 import pytest
+from helpers.service import exec_output_text
 
 pytestmark = pytest.mark.guest
 
@@ -15,7 +16,7 @@ class TestGuestServices:
             {"command": "ps -eo args= | grep '^/run/capsem-pty-agent$' || true"},
         )
         assert resp is not None
-        stdout = resp.get("stdout", "").strip()
+        stdout = exec_output_text(resp).strip()
         assert len(stdout) > 0, "capsem-pty-agent not found running"
 
     def test_net_proxy_running(self, guest_env):
@@ -26,7 +27,7 @@ class TestGuestServices:
             {"command": "ps -eo args= | grep '^/run/capsem-net-proxy$' || true"},
         )
         assert resp is not None
-        stdout = resp.get("stdout", "").strip()
+        stdout = exec_output_text(resp).strip()
         assert len(stdout) > 0, "capsem-net-proxy not found running"
 
     def test_dns_proxy_running(self, guest_env):
@@ -37,5 +38,5 @@ class TestGuestServices:
             {"command": "ps -eo args= | grep '^/run/capsem-dns-proxy$' || true"},
         )
         assert resp is not None
-        stdout = resp.get("stdout", "").strip()
+        stdout = exec_output_text(resp).strip()
         assert len(stdout) > 0, "capsem-dns-proxy not found running"

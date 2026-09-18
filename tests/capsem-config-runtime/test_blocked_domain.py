@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import wait_exec_ready
+from helpers.service import exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.config_runtime
 
@@ -32,7 +32,7 @@ def test_blocked_domain_denied(config_svc):
         resp = client.post(f"/vms/{name}/exec", {
             "command": "curl -s -o /dev/null -w '%{http_code}' --max-time 5 https://malware.example.com 2>&1; echo exit=$?"
         })
-        stdout = resp.get("stdout", "") if resp else ""
+        stdout = exec_output_text(resp) if resp else ""
         # Should either fail (exit!=0), get blocked (403/502), or connection refused
         assert (
             "exit=0" not in stdout

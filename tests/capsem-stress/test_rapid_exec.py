@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.stress
 
@@ -29,7 +29,7 @@ def test_rapid_exec_sequence():
         # All should have returned
         for i, resp in enumerate(results):
             assert resp is not None, f"Exec {i} returned None"
-            assert f"seq-{i}" in resp.get("stdout", ""), f"Exec {i} missing output"
+            assert f"seq-{i}" in exec_output_text(resp), f"Exec {i} missing output"
 
     finally:
         with contextlib.suppress(Exception):

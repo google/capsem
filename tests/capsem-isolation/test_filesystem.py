@@ -3,6 +3,7 @@
 import uuid
 
 import pytest
+from helpers.service import exec_output_text
 
 pytestmark = pytest.mark.isolation
 
@@ -50,5 +51,5 @@ def test_exec_isolation(multi_vm_env):
     client.post(f"/vms/{vm_a}/exec", {"command": "export ISO_VAR=secret && echo $ISO_VAR > /tmp/env.txt"})
 
     resp = client.post(f"/vms/{vm_b}/exec", {"command": "cat /tmp/env.txt 2>/dev/null || echo MISSING"})
-    stdout = resp.get("stdout", "")
+    stdout = exec_output_text(resp)
     assert "secret" not in stdout
