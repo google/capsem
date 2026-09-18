@@ -21,8 +21,11 @@ fn stage_plan_writes_parts_then_the_files_the_launcher_reads() {
     };
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(options).unwrap(),
-        serde_json::json!({"args": ["serve"], "env": {"LANG": "C"}})
+        // The launcher mounts the VM workspace where the service says the
+        // container sees it: one owner for that path, not two.
+        serde_json::json!({"args": ["serve"], "env": {"LANG": "C"}, "workspace": super::super::CONTAINER_WORKSPACE})
     );
+    assert_eq!(super::super::CONTAINER_WORKSPACE, "/workspace");
     assert!(matches!(&plan[3].content, StagedContent::Bytes(bytes) if bytes.as_slice() == LAUNCHER));
 }
 

@@ -28,6 +28,10 @@ impl std::str::FromStr for PortMapping {
 
 pub const LAUNCHER: &[u8] = include_bytes!("../../../guest/artifacts/container/launch.py");
 pub const STAGE: &str = ".capsem-image";
+/// Where a container sees the VM workspace (the VM's /root share). The
+/// launcher mounts it there with the stage hidden, and the files API maps
+/// absolute container paths under it back to the workspace.
+pub const CONTAINER_WORKSPACE: &str = "/workspace";
 pub const LAUNCH_COMMAND: &str = "chmod 555 /root/.capsem-image/launch.py && chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py /root/.capsem-image'";
 
 /// The launcher in the background, the way a boot of a configured VM starts
