@@ -238,3 +238,35 @@ fn not_directory_errno_is_classified_without_exposing_nix() {
     let error = tree.root.descend(OsStr::new("file")).unwrap_err();
     assert!(is_not_directory(&error));
 }
+
+/// A writer controls mtime; it cannot control ctime or the inode. So an entry's
+/// identity must move on a same-size edit even when mtime is put back, or a
+/// comparison that trusts identity would miss the edit.
+#[test]
+fn entry_identity_moves_on_an_edit_even_when_mtime_is_restored() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("file");
+    std::fs::write(&path, "before").unwrap();
+    let dir = ContainedDir::open_root(root.path()).unwrap();
+    let identity = |dir: &ContainedDir| {
+        dir.entries()
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.name == "file")
+            .unwrap()
+            .identity
+    };
+    let before = identity(&dir);
+    // Past the filesystem's timestamp granularity, so ctime can move.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    std::fs::write(&path, "after!").unwrap();
+    let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+    file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::new(before.mtime.0 as u64, before.mtime.1 as u32))
+        .unwrap();
+    let after = identity(&dir);
+
+    assert_eq!(after.size, before.size, "a same-size edit");
+    assert_eq!(after.mtime, before.mtime, "with mtime restored");
+    assert_ne!(after, before, "still changes the identity, through ctime");
+}

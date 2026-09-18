@@ -81,6 +81,20 @@ pub struct ContainedEntry {
     pub kind: EntryKind,
     pub size: u64,
     pub mtime_secs: u64,
+    pub identity: EntryIdentity,
+}
+
+/// What changes whenever an entry's content or metadata does. A writer can set
+/// mtime back after an edit; it cannot set ctime or choose the inode, so two
+/// equal identities mean the entry was not touched in between -- provided its
+/// ctime is strictly older than the moment the first identity was taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EntryIdentity {
+    pub ino: u64,
+    pub size: u64,
+    /// (seconds, nanoseconds) since the epoch.
+    pub mtime: (i64, i64),
+    pub ctime: (i64, i64),
 }
 
 /// `O_NOFOLLOW` on a symlink fails with `ELOOP` on Linux and macOS alike.
@@ -257,9 +271,19 @@ impl ContainedDir {
                 kind: kind_of(stat.st_mode),
                 size: u64::try_from(stat.st_size).unwrap_or(0),
                 mtime_secs: u64::try_from(stat.st_mtime).unwrap_or(0),
+                identity: identity_of(&stat),
             });
         }
         Ok(entries)
+    }
+}
+
+fn identity_of(stat: &nix::sys::stat::FileStat) -> EntryIdentity {
+    EntryIdentity {
+        ino: stat.st_ino,
+        size: u64::try_from(stat.st_size).unwrap_or(0),
+        mtime: (stat.st_mtime, stat.st_mtime_nsec),
+        ctime: (stat.st_ctime, stat.st_ctime_nsec),
     }
 }
 
