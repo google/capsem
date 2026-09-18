@@ -11,7 +11,7 @@ This file is a second implementation of a format whose first implementation is
 version, the header widths, the deflate variant and the two size ceilings below
 are copied from there, and a change on that side that is not made here reads
 garbage or refuses a valid archive. It is the only copy that is allowed to
-exist -- Task 14's ``test_body_archive_format_is_one_place`` allowlists exactly
+exist -- ``tests/citadel/test_body_archive_format_is_one_place.py`` allowlists exactly
 this path, for exactly that reason, so that a third parser cannot appear
 quietly.
 

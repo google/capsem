@@ -14,8 +14,9 @@ indistinguishable from "the column is already there".
 The session ledger does not need it. `session.db` is created per session by
 the writer that owns it, from `schema/ddl.rs`, and is never carried across
 builds. A file an older build wrote fails at `create_tables`/`ready()` naming
-the column it lacks -- which is how Task 5 already detects a pre-archive ledger
-missing `block_offset`.
+the column it lacks -- which is how a pre-archive ledger missing
+`block_offset` is already refused (`a_pre_archive_body_table_fails_to_open_by_name`
+in `schema/tests.rs`).
 
 There is no exemption. `schema/` has no `ALTER TABLE` of any form.
 
