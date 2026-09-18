@@ -56,7 +56,7 @@ pub struct WarcRecord<'a> {
     /// for a record about the file.
     pub record_type: &'a str,
     /// The record's identity, written inside angle brackets. A URI by the
-    /// spec; the exporter uses `urn:capsem:{session}:{event_id}:{direction}`.
+    /// spec; the exporter uses `urn:capsem:{session}:{source_table}:{event_id}:{direction}`.
     pub record_id: &'a str,
     /// What the body is a capture of. `None` omits the header, which is what a
     /// `warcinfo` record wants: the spec makes `WARC-Target-URI` mandatory for
