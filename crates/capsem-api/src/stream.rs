@@ -180,5 +180,82 @@ pub fn encode_status(status: &StreamStatus) -> Vec<u8> {
     encode_json(StreamChannel::Status, status)
 }
 
+/// The frames every other implementation of this protocol is held to,
+/// exported as `sdk/specification/stream-v1.json`. Client frames are what this
+/// module encodes; each server frame's expectation is this module's own
+/// decoding of it, refusals included, so the fixture cannot disagree with Rust.
+pub fn golden_frames() -> serde_json::Value {
+    use serde_json::json;
+    let controls = [
+        StreamControl::Start {
+            kind: StreamKind::Terminal,
+            command: None,
+        },
+        StreamControl::Start {
+            kind: StreamKind::Container,
+            command: None,
+        },
+        StreamControl::Start {
+            kind: StreamKind::Exec,
+            command: Some("echo hi".into()),
+        },
+        StreamControl::Resize { cols: 120, rows: 40 },
+        StreamControl::CloseStdin,
+    ];
+    let mut client: Vec<_> = controls
+        .iter()
+        .map(|control| json!({ "control": control, "frame": encode_control(control) }))
+        .collect();
+    let stdin = [b'l', b's', 0, 255, b'\n'];
+    client.push(json!({ "stdin": stdin, "frame": encode_data(StreamChannel::Stdin, &stdin) }));
+
+    let statuses = [
+        StreamStatus::Started,
+        StreamStatus::Exit {
+            code: 0,
+            truncated: false,
+        },
+        StreamStatus::Exit {
+            code: 137,
+            truncated: true,
+        },
+        StreamStatus::Error {
+            message: "VM owner closed".into(),
+        },
+    ];
+    let mut frames = vec![
+        encode_data(StreamChannel::Stdout, b"hello\n"),
+        encode_data(StreamChannel::Stderr, &[0, 255, 10]),
+    ];
+    frames.extend(statuses.iter().map(encode_status));
+    frames.extend([
+        Vec::new(),
+        vec![StreamChannel::Status as u8 + 1],
+        encode_data(StreamChannel::Stdin, b"ls"),
+        encode_control(&StreamControl::CloseStdin),
+        encode_json(StreamChannel::Status, &json!({ "type": "unknown" })),
+    ]);
+    let server: Vec<_> = frames
+        .iter()
+        .map(|frame| {
+            let expect = match decode_server_frame(frame) {
+                Ok(ServerFrame::Stdout(bytes) | ServerFrame::Stderr(bytes)) => {
+                    json!({ "kind": "output", "bytes": bytes })
+                }
+                Ok(ServerFrame::Status(status)) => json!({ "kind": "status", "status": status }),
+                Err(_) => json!({ "kind": "invalid" }),
+            };
+            json!({ "frame": frame, "expect": expect })
+        })
+        .collect();
+    json!({
+        "subprotocol": STREAM_SUBPROTOCOL,
+        "max_frame_bytes": MAX_STREAM_FRAME_BYTES,
+        "client": client,
+        "server": server,
+        "oversized_frame_bytes": MAX_STREAM_FRAME_BYTES + 1,
+    })
+}
+
 #[cfg(test)]
 mod tests;
