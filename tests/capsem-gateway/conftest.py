@@ -218,7 +218,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         elif path_only == "/profiles/status":
             self._send_json(
                 {
-                    "source": "directory",
+                    "source": "profile",
                     "profile_count": 2,
                     "ready_count": 1,
                     "asset_manifest": {
