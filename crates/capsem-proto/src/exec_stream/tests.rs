@@ -43,3 +43,56 @@ fn declared_and_actual_oversized_frames_are_rejected() {
         io::ErrorKind::InvalidData
     );
 }
+
+/// Each `write` on the guest's vsock socket is a syscall.
+#[derive(Default)]
+struct CountedWrites {
+    bytes: Vec<u8>,
+    calls: usize,
+}
+
+impl Write for CountedWrites {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.calls += 1;
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Finding 31: the header and the payload went out as two writes per frame.
+#[test]
+fn one_output_frame_leaves_in_one_write() {
+    let mut writer = CountedWrites::default();
+    let frame = ExecOutputFrame {
+        channel: ExecOutputChannel::Stdout,
+        data: b"chunk".to_vec(),
+    };
+    write_exec_output(&mut writer, &frame).unwrap();
+    assert_eq!(writer.calls, 1, "header and payload leave together");
+    assert_eq!(read_exec_output(&mut writer.bytes.as_slice()).unwrap(), frame);
+}
+
+/// The guest frames the bytes it just read without first copying them into an
+/// owned frame, and the wire stays exactly what the owned frame encodes to.
+#[test]
+fn borrowed_output_data_encodes_exactly_like_an_owned_frame() {
+    for channel in [ExecOutputChannel::Stdout, ExecOutputChannel::Stderr] {
+        let data = [0_u8, 255, 10, 13];
+        let mut owned = Vec::new();
+        write_exec_output(
+            &mut owned,
+            &ExecOutputFrame {
+                channel,
+                data: data.to_vec(),
+            },
+        )
+        .unwrap();
+        let mut borrowed = Vec::new();
+        write_exec_output_data(&mut borrowed, channel, &data).unwrap();
+        assert_eq!(borrowed, owned);
+    }
+}

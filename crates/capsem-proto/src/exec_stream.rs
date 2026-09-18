@@ -59,7 +59,19 @@ pub fn read_exec_input(reader: &mut impl Read) -> io::Result<ExecInputFrame> {
 }
 
 pub fn write_exec_output(writer: &mut impl Write, frame: &ExecOutputFrame) -> io::Result<()> {
-    write_frame(writer, frame, frame.data.len())
+    write_exec_output_data(writer, frame.channel, &frame.data)
+}
+
+/// Frame bytes the caller just read, without first copying them into an owned
+/// frame. Encodes exactly what the equivalent `ExecOutputFrame` does.
+pub fn write_exec_output_data(writer: &mut impl Write, channel: ExecOutputChannel, data: &[u8]) -> io::Result<()> {
+    #[derive(Serialize)]
+    struct Borrowed<'a> {
+        channel: ExecOutputChannel,
+        #[serde(with = "serde_bytes")]
+        data: &'a [u8],
+    }
+    write_frame(writer, &Borrowed { channel, data }, data.len())
 }
 
 pub fn read_exec_output(reader: &mut impl Read) -> io::Result<ExecOutputFrame> {
@@ -74,13 +86,16 @@ fn write_frame(writer: &mut impl Write, frame: &impl Serialize, data_len: usize)
     if data_len > MAX_EXEC_DATA_BYTES {
         return Err(too_large("exec frame data"));
     }
-    let payload = rmp_serde::to_vec_named(frame).map_err(|error| invalid("encode exec frame", error))?;
-    let len = u32::try_from(payload.len()).map_err(|error| invalid("measure exec frame", error))?;
+    // Encode behind a reserved header so the frame leaves in one write: each
+    // write on the vsock socket is a syscall.
+    let mut encoded = vec![0_u8; 4];
+    rmp_serde::encode::write_named(&mut encoded, frame).map_err(|error| invalid("encode exec frame", error))?;
+    let len = u32::try_from(encoded.len() - 4).map_err(|error| invalid("measure exec frame", error))?;
     if len > MAX_EXEC_FRAME_BYTES {
         return Err(too_large("encoded exec frame"));
     }
-    writer.write_all(&len.to_be_bytes())?;
-    writer.write_all(&payload)
+    encoded[..4].copy_from_slice(&len.to_be_bytes());
+    writer.write_all(&encoded)
 }
 
 fn read_frame<T: DeserializeOwned>(reader: &mut impl Read) -> io::Result<T> {

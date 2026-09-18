@@ -48,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   identity moved are read. The check keys on ctime, which a guest cannot set,
   so an edit that keeps the size and puts mtime back is still listed.
 
+- Large command output leaves the VM in 64 KiB frames written in one
+  syscall each, and the VM owner reads them through a buffer, instead of
+  8 KiB frames copied several times, written as two syscalls, and read with a
+  one-byte probe per frame. The wire format is unchanged.
+
 - Piping a large stdin into a command that does not read it (for example
   `capsem exec 'sleep 600' < big-file`) no longer wedges the VM owner's IPC
   connection: streaming exec stdin is flow-controlled, so cancellation and

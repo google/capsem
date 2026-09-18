@@ -23,8 +23,8 @@ pub mod router;
 mod wire_bytes;
 
 pub use exec_stream::{
-    read_exec_input, read_exec_output, write_exec_input, write_exec_output, ExecInputFrame, ExecOutputChannel,
-    ExecOutputFrame, EXEC_STDIN_WINDOW, MAX_EXEC_DATA_BYTES,
+    read_exec_input, read_exec_output, write_exec_input, write_exec_output, write_exec_output_data, ExecInputFrame,
+    ExecOutputChannel, ExecOutputFrame, EXEC_STDIN_WINDOW, MAX_EXEC_DATA_BYTES,
 };
 pub use handshake::{HandshakeError, Hello};
 
