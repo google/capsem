@@ -65,16 +65,26 @@ async fn run_command(client: &UdsClient, args: &RunArgs) -> Result<i32> {
     };
     let response: ApiResponse<ExecResponse> = client.post("/run", request).await?;
     let response = response.into_result()?;
-    let mut stdout = tokio::io::stdout();
+    write_exec_output(&mut tokio::io::stdout(), &mut tokio::io::stderr(), &response).await?;
+    Ok(response.exit_code)
+}
+
+/// Print a command's output before its caller exits with the command's code.
+/// Tokio's stdout hands a write to a blocking thread and returns; only the
+/// flush waits for it, so without one `process::exit` could discard the output.
+pub(super) async fn write_exec_output(
+    stdout: &mut (impl tokio::io::AsyncWrite + Unpin),
+    stderr: &mut (impl tokio::io::AsyncWrite + Unpin),
+    response: &ExecResponse,
+) -> Result<()> {
     stdout.write_all(&response.stdout.decode()?).await?;
     stdout.flush().await?;
-    let mut stderr = tokio::io::stderr();
     stderr.write_all(&response.stderr.decode()?).await?;
-    stderr.flush().await?;
     if let Some(notice) = response.truncation_notice() {
-        eprintln!("{notice}");
+        stderr.write_all(format!("{notice}\n").as_bytes()).await?;
     }
-    Ok(response.exit_code)
+    stderr.flush().await?;
+    Ok(())
 }
 
 /// The image's workload attached, in a VM destroyed however the run ends:

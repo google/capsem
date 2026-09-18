@@ -1604,13 +1604,7 @@ async fn main() -> Result<()> {
             };
             let resp: ApiResponse<ExecResponse> = client.post(&format!("/vms/{}/exec", session_id), req).await?;
             let resp = resp.into_result()?;
-            let stdout_bytes = resp.stdout.decode()?;
-            let stderr_bytes = resp.stderr.decode()?;
-            tokio::io::stdout().write_all(&stdout_bytes).await?;
-            tokio::io::stderr().write_all(&stderr_bytes).await?;
-            if let Some(notice) = resp.truncation_notice() {
-                eprintln!("{notice}");
-            }
+            container_run::write_exec_output(&mut tokio::io::stdout(), &mut tokio::io::stderr(), &resp).await?;
             std::process::exit(resp.exit_code);
         }
         Commands::Session(SessionCommands::Run(args)) => {

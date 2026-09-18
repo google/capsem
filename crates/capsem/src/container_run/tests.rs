@@ -198,3 +198,62 @@ mod against_the_service {
         assert!(format!("{error:#}").contains("profile assets missing"), "{error:#}");
     }
 }
+
+/// Like tokio's stdout, which hands a write to a blocking thread and returns:
+/// bytes reach the terminal only once flushed. `capsem exec` wrote its output
+/// this way and then called `process::exit`, so under load the command's
+/// stdout vanished while its exit code survived.
+#[derive(Default)]
+struct CommitsOnFlush {
+    pending: Vec<u8>,
+    committed: Vec<u8>,
+}
+
+impl tokio::io::AsyncWrite for CommitsOnFlush {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        data: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.pending.extend_from_slice(data);
+        std::task::Poll::Ready(Ok(data.len()))
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let pending = std::mem::take(&mut self.pending);
+        self.committed.extend_from_slice(&pending);
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        self.poll_flush(cx)
+    }
+}
+
+#[tokio::test]
+async fn exec_output_is_committed_before_the_caller_exits() {
+    let response = ExecResponse {
+        stdout: capsem_api::ExecOutput::from_bytes(b"AQIDBA==\n".to_vec()),
+        stderr: capsem_api::ExecOutput::from_bytes(b"warn\n".to_vec()),
+        exit_code: 0,
+        truncated: true,
+    };
+    let (mut out, mut err) = (CommitsOnFlush::default(), CommitsOnFlush::default());
+    write_exec_output(&mut out, &mut err, &response).await.unwrap();
+    assert_eq!(
+        out.committed, b"AQIDBA==\n",
+        "stdout must be flushed, not just handed off"
+    );
+    let err = String::from_utf8(err.committed).unwrap();
+    assert!(err.starts_with("warn\n"), "{err}");
+    assert!(
+        err.contains("exceeded the capture limit"),
+        "the notice follows the guest's stderr: {err}"
+    );
+}

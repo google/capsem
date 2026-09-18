@@ -50,6 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem exec` no longer loses a command's output under load. It handed
+  the output to tokio's stdout, which writes on a background thread, and
+  then exited with the command's code before that write ran: the exit code
+  arrived, the output did not. It now flushes both streams first, through
+  the same writer `capsem run` uses.
+
 - The files API now speaks the guest's paths. An absolute path is where the
   guest sees the file: `/root/x` in a VM, `/workspace/x` in its container.
   Uploading `/root/x` used to land at the workspace's `root/x`, so the
