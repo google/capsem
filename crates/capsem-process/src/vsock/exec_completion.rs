@@ -27,8 +27,27 @@ pub(super) async fn complete(
             _ = deposited.notified() => {},
             _ = sender.closed() => {},
         }
-    } else {
-        let _ = tokio::time::timeout(EXEC_OUTPUT_DEPOSIT_TIMEOUT, deposited.notified()).await;
+    } else if tokio::time::timeout(EXEC_OUTPUT_DEPOSIT_TIMEOUT, deposited.notified())
+        .await
+        .is_err()
+    {
+        // The reader deposits at EOF even for a command that printed nothing,
+        // so no deposit means the output was lost, not that it was empty.
+        // Reporting an empty success here made lost output indistinguishable
+        // from silence.
+        warn!(
+            exec_id = id,
+            bound_ms = EXEC_OUTPUT_DEPOSIT_TIMEOUT.as_millis() as u64,
+            "exec finished but its output never reached the host"
+        );
+        if let Some(active) = js.active_execs.lock().unwrap().get_mut(&id) {
+            active.output_error.get_or_insert_with(|| {
+                format!(
+                    "exec output did not reach the host within {}s of the command finishing",
+                    EXEC_OUTPUT_DEPOSIT_TIMEOUT.as_secs()
+                )
+            });
+        }
     }
     let Some(active) = js.active_execs.lock().unwrap().remove(&id) else {
         return;

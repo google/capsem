@@ -24,7 +24,17 @@ pub(super) struct ExecCapture {
 
 pub(super) fn deposit(job_store: &JobStore, id: u64, capture: ExecCapture) -> Option<Arc<tokio::sync::Notify>> {
     let mut active = job_store.active_execs.lock().unwrap();
-    let exec = active.get_mut(&id)?;
+    let Some(exec) = active.get_mut(&id) else {
+        // The exec already completed without this output; say so rather than
+        // dropping the bytes without a trace.
+        tracing::warn!(
+            exec_id = id,
+            stdout_bytes = capture.stdout_bytes,
+            stderr_bytes = capture.stderr_bytes,
+            "exec output arrived after its exec completed; discarding it"
+        );
+        return None;
+    };
     exec.captured = capture.stdout;
     exec.captured_stderr = capture.stderr;
     exec.total_bytes = capture.stdout_bytes;
