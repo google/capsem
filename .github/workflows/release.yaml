@@ -898,13 +898,15 @@ jobs:
             web/app/pnpm-lock.yaml
             build_system/release_site/pnpm-lock.yaml
             sdk/typescript/pnpm-lock.yaml
-      # The functional suites run with no network, and the Braavos suite drives
-      # every SDK, so each one's locked dependencies are materialized here.
+            mcp/typescript/pnpm-lock.yaml
+      # The functional suites run with no network, and they drive every SDK and
+      # pack the npm MCP, so each one's locked dependencies are materialized here.
       - name: Install shared functional web and SDK dependencies
         run: |
           (cd web/app && pnpm install --frozen-lockfile)
           (cd build_system/release_site && pnpm install --frozen-lockfile)
           (cd sdk/typescript && pnpm install --frozen-lockfile)
+          (cd mcp/typescript && pnpm install --frozen-lockfile)
           uv sync --project sdk/python --frozen --no-install-project
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:

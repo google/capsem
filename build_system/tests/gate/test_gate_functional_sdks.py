@@ -37,9 +37,10 @@ def test_every_functional_suite_starts_after_the_sdks_are_prepared() -> None:
         assert not missing, f"{suite} can start before {missing}"
 
 
-def test_the_typescript_sdk_is_among_the_installed_workspaces() -> None:
+def test_the_packages_the_suites_drive_are_among_the_installed_workspaces() -> None:
     config = gate_config.load(PROJECT_ROOT)
-    assert config.sdk_typescript.project in config.functional.node_workspaces
+    for project in (config.sdk_typescript.project, config.mcp_typescript.project):
+        assert project in config.functional.node_workspaces, project
 
 
 def test_sdk_preparation_stays_offline_inside_the_sandbox() -> None:

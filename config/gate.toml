@@ -2264,11 +2264,12 @@ config_root = "cache/target/config"
 # module needs and more than a release lane has warmed: the docs and site
 # stores are not populated there, so installing them reached the network from
 # inside a namespace that has none. The TypeScript SDK is here because the
-# Braavos suite builds and drives it; like the Python SDK environment and the
+# SDK suites drive it, and the npm MCP because the MCP ledger suite packs it;
+# like the Python SDK environment and the
 # Rust SDK example below, it is prepared before the suites, which run with no
 # network: installing or compiling from inside a test failed on DNS or timed
 # out, and only ever passed on a checkout an earlier phase had warmed.
-node_workspaces = ["build_system/release_site", "sdk/typescript"]
+node_workspaces = ["build_system/release_site", "sdk/typescript", "mcp/typescript"]
 sdk_rust_example = ["cargo", "build", "--frozen", "-p", "capsem-sdk", "--example", "gateway_acceptance"]
 profiles_subdir = "profiles"
 # Overridable so a release lane can point the same proof at pulled artifacts
