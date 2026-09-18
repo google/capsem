@@ -6,7 +6,7 @@ use super::*;
 use capsem_api::{
     ExposureAccess, ExposureInfo, ExposureListResponse, ExposureRequest, ExposureTarget,
     PreviewBootstrapExchangeRequest, PreviewBootstrapExchangeResponse, PreviewConnectionAdmissionRequest,
-    PreviewConnectionAdmissionResponse, PreviewSessionMaterial,
+    PreviewConnectionAdmissionResponse, PreviewSessionMaterial, PreviewSessionsRevokedResponse,
 };
 use capsem_proto::{PublicationAccess, PublicationTarget};
 
@@ -232,6 +232,32 @@ pub(crate) async fn handle_create_preview_session(
         })),
         ProcessToService::PreviewSessionCreated { error: Some(error), .. } => {
             Err(AppError(StatusCode::UNAUTHORIZED, error))
+        }
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// End every session of a preview exposure and the flows they admitted,
+/// without deleting the exposure (google/capsem#222).
+pub(crate) async fn handle_revoke_preview_sessions(
+    State(state): State<Arc<ServiceState>>,
+    Path((vm_id, exposure_id)): Path<(String, String)>,
+) -> Result<Json<PreviewSessionsRevokedResponse>, AppError> {
+    match ask_owner(
+        &state,
+        &vm_id,
+        ServiceToProcess::RevokePreviewSessions {
+            id: state.next_job_id(),
+            exposure_id,
+        },
+    )
+    .await?
+    {
+        ProcessToService::PreviewSessionsRevoked {
+            revoked, error: None, ..
+        } => Ok(Json(PreviewSessionsRevokedResponse { revoked })),
+        ProcessToService::PreviewSessionsRevoked { error: Some(error), .. } => {
+            Err(AppError(StatusCode::NOT_FOUND, error))
         }
         other => Err(unexpected(&other)),
     }

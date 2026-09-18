@@ -288,3 +288,48 @@ async fn exposures_on_a_vm_that_is_not_running_do_not_reach_any_owner() {
     let (status, _) = call(&state, axum::http::Method::GET, "/vms/ghost/exposures", None).await;
     assert!(status.is_client_error(), "{status}");
 }
+
+/// Finding 11 (google/capsem#222): a leaked preview session could only be cut
+/// by deleting the whole exposure. Revoking its sessions keeps the exposure
+/// and ends every flow they admitted.
+#[tokio::test]
+async fn revoking_preview_sessions_asks_the_owner_and_reports_the_count() {
+    let (state, uds_path, _dir) = fixture();
+    let owner = spawn_fake_process(&uds_path, 2, |message| {
+        let ServiceToProcess::RevokePreviewSessions { id, exposure_id } = message else {
+            panic!("unexpected {message:?}")
+        };
+        let reply = if exposure_id == "preview-1" {
+            ProcessToService::PreviewSessionsRevoked {
+                id: *id,
+                revoked: 2,
+                error: None,
+            }
+        } else {
+            ProcessToService::PreviewSessionsRevoked {
+                id: *id,
+                revoked: 0,
+                error: Some("preview exposure not found".into()),
+            }
+        };
+        Box::pin(async move { Some(reply) })
+    });
+    let (status, body) = call(
+        &state,
+        axum::http::Method::DELETE,
+        "/vms/box/exposures/preview-1/preview-session",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["revoked"], 2);
+    let (status, _) = call(
+        &state,
+        axum::http::Method::DELETE,
+        "/vms/box/exposures/ghost/preview-session",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    owner.await.unwrap();
+}

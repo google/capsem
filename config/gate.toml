@@ -3000,6 +3000,7 @@ unmeasured = [
     "/vms/{id}/container",
     "/vms/{id}/delete",
     "/vms/{id}/exposures/{exposure_id}",
+    "/vms/{id}/exposures/{exposure_id}/preview-session",
     "/vms/{id}/detection/latest",
     "/vms/{id}/detection/status",
     "/vms/{id}/enforcement/latest",

@@ -48,6 +48,10 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             delete(exposures::handle_delete_exposure),
         )
         .route(
+            "/vms/{id}/exposures/{exposure_id}/preview-session",
+            delete(exposures::handle_revoke_preview_sessions),
+        )
+        .route(
             "/internal/vms/{id}/exposures/{exposure_id}/preview-session",
             post(exposures::handle_create_preview_session),
         )
