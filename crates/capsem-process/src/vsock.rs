@@ -1016,6 +1016,15 @@ fn dispatch_aux_connection(
                             exec_output::ExecCapture::default()
                         }
                     };
+                    // One line per exec at the EXEC-port boundary: whether the
+                    // guest's output reached the host at all, and how much.
+                    tracing::debug!(
+                        id,
+                        stdout_bytes = capture.stdout_bytes,
+                        stderr_bytes = capture.stderr_bytes,
+                        error = ?capture.error,
+                        "exec output read"
+                    );
                     let total_seen = capture.stdout_bytes.saturating_add(capture.stderr_bytes);
                     let retained = capture.stdout.len().saturating_add(capture.stderr.len());
                     if total_seen > retained as u64 {
