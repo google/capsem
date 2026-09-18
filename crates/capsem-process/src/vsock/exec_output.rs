@@ -54,15 +54,20 @@ pub(super) fn read_exec_output(reader: &mut impl std::io::Read) -> ExecCapture {
     read_output(reader, |_, _| Ok(()), false, MAX_EXEC_OUTPUT_BYTES).expect("capture has no fallible forwarding")
 }
 
+/// Bytes buffered per read of the EXEC socket: frames are read from memory, not
+/// one syscall for a length and another for each payload.
+const EXEC_OUTPUT_READ_BUFFER: usize = 64 * 1024;
+
 fn read_output(
     reader: &mut impl std::io::Read,
-    mut forward: impl FnMut(ExecOutputChannel, &[u8]) -> std::io::Result<()>,
+    mut forward: impl FnMut(ExecOutputChannel, Vec<u8>) -> std::io::Result<()>,
     strict: bool,
     retain_per_lane: usize,
 ) -> std::io::Result<ExecCapture> {
+    let mut reader = std::io::BufReader::with_capacity(EXEC_OUTPUT_READ_BUFFER, reader);
     let mut capture = ExecCapture::default();
     loop {
-        let frame = match read_frame(reader) {
+        let frame = match read_frame(&mut reader) {
             Ok(Some(frame)) => frame,
             Ok(None) => break,
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -72,7 +77,6 @@ fn read_output(
                 break;
             }
         };
-        forward(frame.channel, &frame.data)?;
         let combined = capture.stdout.len().saturating_add(capture.stderr.len());
         let combined_room = MAX_EXEC_OUTPUT_BYTES.saturating_sub(combined);
         let (retained, total) = match frame.channel {
@@ -83,23 +87,19 @@ fn read_output(
         let lane_room = retain_per_lane.saturating_sub(retained.len());
         let keep = frame.data.len().min(combined_room).min(lane_room);
         retained.extend_from_slice(&frame.data[..keep]);
+        // Retain first, then hand the bytes on: a streamed chunk moves, never clones.
+        forward(frame.channel, frame.data)?;
     }
     Ok(capture)
 }
 
-/// Distinguish clean socket EOF between frames from a truncated frame. The
-/// shared codec reads a complete four-byte header, so consume one byte here
-/// before delegating and prepend it back through `chain`.
-fn read_frame(reader: &mut impl std::io::Read) -> std::io::Result<Option<capsem_proto::ExecOutputFrame>> {
-    let mut first = [0_u8; 1];
+/// Distinguish clean socket EOF between frames from a truncated frame: an
+/// empty buffer after a refill is EOF; anything else must be a whole frame.
+fn read_frame(reader: &mut impl std::io::BufRead) -> std::io::Result<Option<capsem_proto::ExecOutputFrame>> {
     loop {
-        match reader.read(&mut first) {
-            Ok(0) => return Ok(None),
-            Ok(1) => {
-                let mut frame = std::io::Read::chain(first.as_slice(), reader);
-                return capsem_proto::read_exec_output(&mut frame).map(Some);
-            }
-            Ok(_) => unreachable!("one-byte read returned more than one byte"),
+        match reader.fill_buf() {
+            Ok([]) => return Ok(None),
+            Ok(_) => return capsem_proto::read_exec_output(reader).map(Some),
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(error) => return Err(error),
         }
@@ -117,11 +117,7 @@ pub(super) fn stream_exec_output(
         |channel, data| {
             if attached {
                 attached = sender
-                    .blocking_send(capsem_proto::ipc::ProcessToService::ExecOutput {
-                        id,
-                        channel,
-                        data: data.to_vec(),
-                    })
+                    .blocking_send(capsem_proto::ipc::ProcessToService::ExecOutput { id, channel, data })
                     .is_ok();
             }
             Ok(())

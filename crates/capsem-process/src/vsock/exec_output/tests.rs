@@ -156,3 +156,38 @@ fn detached_stream_drains_with_bounded_capture() {
     assert_eq!(capture.stdout_bytes, total as u64);
     assert_eq!(capture.stdout.len(), EXEC_LEDGER_PREVIEW_BYTES);
 }
+
+/// Each `read` on the vsock fd is a syscall.
+struct CountedReads<'a> {
+    inner: &'a [u8],
+    calls: usize,
+}
+
+impl std::io::Read for CountedReads<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.calls += 1;
+        std::io::Read::read(&mut self.inner, buf)
+    }
+}
+
+/// Finding 31: every frame cost a one-byte EOF probe, a header read and a
+/// payload read on an unbuffered fd.
+#[test]
+fn a_run_of_frames_is_read_in_bulk_not_per_frame() {
+    let mut wire = Vec::new();
+    for index in 0..100_u8 {
+        capsem_proto::write_exec_output(
+            &mut wire,
+            &capsem_proto::ExecOutputFrame {
+                channel: capsem_proto::ExecOutputChannel::Stdout,
+                data: vec![index],
+            },
+        )
+        .unwrap();
+    }
+    let mut reader = CountedReads { inner: &wire, calls: 0 };
+    let capture = read_exec_output(&mut reader);
+    assert_eq!(capture.stdout, (0..100).collect::<Vec<u8>>());
+    assert!(capture.error.is_none(), "{:?}", capture.error);
+    assert!(reader.calls <= 3, "{} reads for 100 frames", reader.calls);
+}
