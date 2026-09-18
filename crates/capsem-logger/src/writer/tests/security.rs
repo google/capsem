@@ -54,7 +54,7 @@ async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
     // body, and the roundtrip holds only if it reads back whole.
     let payload = crate::DbHandle::open_external_reader(&db_path)
         .unwrap()
-        .read_body("abcdef123456", crate::BodyDirection::Payload)
+        .read_body("abcdef123456", "security_rule_events", crate::BodyDirection::Payload)
         .await
         .unwrap()
         .expect("the matched event payload is archived");

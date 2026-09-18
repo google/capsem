@@ -354,7 +354,7 @@ match = 'file.read.path.contains("skills/") && file.read.ext == "md" && file.rea
     let mut payloads = Vec::new();
     for rule in &rules {
         let body = db
-            .read_body(&rule.2, capsem_logger::BodyDirection::Payload)
+            .read_body(&rule.2, "security_rule_events", capsem_logger::BodyDirection::Payload)
             .await
             .unwrap()
             .unwrap_or_else(|| panic!("the payload of {} must be archived", rule.0));

@@ -48,7 +48,7 @@ async fn security_rule_payload_is_archived_not_inlined() {
     );
 
     let body = db
-        .read_body("0123456789ab", BodyDirection::Payload)
+        .read_body("0123456789ab", "security_rule_events", BodyDirection::Payload)
         .await
         .expect("read the archived payload")
         .expect("a rule match's payload is archived");
@@ -251,7 +251,7 @@ async fn bodies_live_in_the_archive_and_read_back_through_the_handle() {
     db.flush().await.expect("flush");
 
     let stored = db
-        .read_body("0123456789ab", BodyDirection::Response)
+        .read_body("0123456789ab", "net_events", BodyDirection::Response)
         .await
         .expect("read response body")
         .expect("the response body is archived");
@@ -289,7 +289,7 @@ async fn bodies_live_in_the_archive_and_read_back_through_the_handle() {
     );
     assert_eq!(count(&db, "SELECT COUNT(*) FROM body_blocks").await, 1);
     assert!(
-        db.read_body("0123456789ab", BodyDirection::Request)
+        db.read_body("0123456789ab", "net_events", BodyDirection::Request)
             .await
             .expect("read request body")
             .is_none(),
@@ -335,7 +335,7 @@ async fn external_reader_reads_bodies_another_process_wrote() {
     let reader = DbHandle::open_external_reader(&p).expect("open external reader");
     reader.ready().await.expect("external reader ready");
     let stored = reader
-        .read_body("0123456789ad", BodyDirection::Response)
+        .read_body("0123456789ad", "net_events", BodyDirection::Response)
         .await
         .expect("read body")
         .expect("the body another process wrote is readable");
@@ -377,7 +377,7 @@ async fn every_index_row_points_inside_a_recorded_block() {
 
     for i in [0_usize, 36, 37, 299] {
         let stored = db
-            .read_body(&format!("{i:012x}"), BodyDirection::Response)
+            .read_body(&format!("{i:012x}"), "net_events", BodyDirection::Response)
             .await
             .expect("read body")
             .unwrap_or_else(|| panic!("body {i} is archived"));
@@ -400,7 +400,7 @@ async fn a_body_missing_from_the_file_fails_loudly_not_empty() {
 
     let reader = DbHandle::open_external_reader(&p).expect("open external reader");
     reader
-        .read_body("0123456789ae", BodyDirection::Response)
+        .read_body("0123456789ae", "net_events", BodyDirection::Response)
         .await
         .expect("read body")
         .expect("the body is archived before the file loses it");
@@ -417,7 +417,7 @@ async fn a_body_missing_from_the_file_fails_loudly_not_empty() {
     reader.archive_reader_reset();
 
     let error = reader
-        .read_body("0123456789ae", BodyDirection::Response)
+        .read_body("0123456789ae", "net_events", BodyDirection::Response)
         .await
         .expect_err("a body the file cannot produce is a broken ledger, not an empty one");
     assert!(error.contains("archive"), "{error}");
@@ -566,7 +566,7 @@ async fn tool_response_and_exec_output_are_archived_and_previewed() {
 
     for direction in [BodyDirection::Stdout, BodyDirection::Stderr] {
         let stored = db
-            .read_body("0123456789b1", direction)
+            .read_body("0123456789b1", "exec_events", direction)
             .await
             .expect("read exec output")
             .unwrap_or_else(|| panic!("exec {} is archived", direction.as_str()));
@@ -600,7 +600,7 @@ async fn ledger_snapshot_copies_the_archive_the_db_references() {
     let forked = DbHandle::open_external_reader(&dst_dir.join("session.db")).expect("open the forked ledger");
     forked.ready().await.expect("forked ledger ready");
     let stored = forked
-        .read_body("0123456789af", BodyDirection::Response)
+        .read_body("0123456789af", "net_events", BodyDirection::Response)
         .await
         .expect("read forked body")
         .expect("the fork carries the body its index references");
@@ -766,7 +766,7 @@ async fn a_failed_flush_retries_bodies_with_the_rows() {
     crate::writer::fail_disk_flushes_for_tests(0);
 
     let stored = db
-        .read_body("0123456789c0", BodyDirection::Response)
+        .read_body("0123456789c0", "net_events", BodyDirection::Response)
         .await
         .expect("read body")
         .expect("the retried flush indexes the body the first one rolled back");
@@ -870,7 +870,7 @@ async fn exec_output_rows_report_the_size_the_output_was_cut_from() {
     assert_eq!(row["rows"][0][2], json!(1), "and the row says so");
 
     let stored = db
-        .read_body("0123456789c2", BodyDirection::Stdout)
+        .read_body("0123456789c2", "exec_events", BodyDirection::Stdout)
         .await
         .expect("read exec stdout")
         .expect("the excerpt is archived");
@@ -920,7 +920,7 @@ async fn a_body_that_does_not_match_its_index_hash_fails_the_read() {
 
     let reader = DbHandle::open_external_reader(&p).expect("reopen the ledger");
     let error = reader
-        .read_body("0123456789d0", BodyDirection::Response)
+        .read_body("0123456789d0", "net_events", BodyDirection::Response)
         .await
         .expect_err("bytes that do not match the row must not be served as the row's body");
     assert!(
@@ -964,7 +964,7 @@ async fn the_retry_survives_enforced_foreign_keys() {
     drop(conn);
 
     let stored = db
-        .read_body("0123456789d2", BodyDirection::Response)
+        .read_body("0123456789d2", "net_events", BodyDirection::Response)
         .await
         .expect("read body")
         .expect("the retried body is still indexed");

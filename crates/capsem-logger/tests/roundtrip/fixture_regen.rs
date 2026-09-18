@@ -595,7 +595,7 @@ fn replay_bodies_come_from_the_archive_not_the_preview_column() {
     let replayed = block_on(async {
         capsem_logger::DbHandle::open_external_reader(&rebuilt_path)
             .unwrap()
-            .read_body("0123456789ab", capsem_logger::BodyDirection::Response)
+            .read_body("0123456789ab", "net_events", capsem_logger::BodyDirection::Response)
             .await
             .unwrap()
     })

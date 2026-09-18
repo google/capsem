@@ -114,7 +114,7 @@ async fn a_cutoff_past_everything_empties_the_archive() {
     );
     assert!(blocks(&db).await.is_empty(), "no block row survives its bytes");
     assert!(
-        db.read_body("0000000000ab", BodyDirection::Payload)
+        db.read_body("0000000000ab", "security_rule_events", BodyDirection::Payload)
             .await
             .expect("read the dropped body")
             .is_none(),
@@ -154,13 +154,13 @@ async fn a_cutoff_between_two_blocks_keeps_the_newer_one() {
     // `read_body` verifies blake3 over the span the index row named, so this
     // passing is the remap being right and not merely in range.
     let kept = db
-        .read_body("0000000000cd", BodyDirection::Payload)
+        .read_body("0000000000cd", "security_rule_events", BodyDirection::Payload)
         .await
         .expect("read the kept body")
         .expect("the newer body survives");
     assert_eq!(kept.bytes, br#"{"new":2}"#);
     assert!(db
-        .read_body("0000000000ab", BodyDirection::Payload)
+        .read_body("0000000000ab", "security_rule_events", BodyDirection::Payload)
         .await
         .expect("read the dropped body")
         .is_none());
@@ -189,7 +189,7 @@ async fn writes_after_retention_append_to_the_compacted_archive() {
     );
     for (event_id, payload) in [("0000000000cd", r#"{"new":2}"#), ("0000000000ef", r#"{"later":3}"#)] {
         let body = db
-            .read_body(event_id, BodyDirection::Payload)
+            .read_body(event_id, "security_rule_events", BodyDirection::Payload)
             .await
             .expect("read a body")
             .expect("both bodies are archived");
@@ -234,7 +234,7 @@ async fn a_failed_compaction_leaves_the_index_and_the_bodies_alone() {
     assert_eq!(blocks(&db).await, sealed, "no index row moved or went away");
     assert_eq!(archive_len(&p), before, "and no byte left the archive");
     let body = db
-        .read_body("0000000000ab", BodyDirection::Payload)
+        .read_body("0000000000ab", "security_rule_events", BodyDirection::Payload)
         .await
         .expect("read the oldest body")
         .expect("it is still archived");
@@ -271,7 +271,7 @@ async fn a_failed_index_transaction_leaves_the_archive_and_the_index_untouched()
     assert_eq!(blocks(&db).await, sealed, "and no index row moved or went away");
     for (event_id, payload) in [("0000000000ab", r#"{"old":1}"#), ("0000000000cd", r#"{"new":2}"#)] {
         let body = db
-            .read_body(event_id, BodyDirection::Payload)
+            .read_body(event_id, "security_rule_events", BodyDirection::Payload)
             .await
             .expect("read a body")
             .expect("every body is still archived");
@@ -331,7 +331,7 @@ async fn a_failed_rename_puts_the_old_offsets_back_and_every_body_still_reads() 
     // The point of the restore: this reads, rather than failing its hash check
     // against bytes that belong to the block the compaction would have dropped.
     let kept = db
-        .read_body("0000000000cd", BodyDirection::Payload)
+        .read_body("0000000000cd", "security_rule_events", BodyDirection::Payload)
         .await
         .expect("read the kept body")
         .expect("the newer body is still archived");
@@ -340,7 +340,7 @@ async fn a_failed_rename_puts_the_old_offsets_back_and_every_body_still_reads() 
     // the archive's documented cost -- and it was the body retention was asked
     // to forget, so this is the intended outcome reached by an unintended road.
     assert!(db
-        .read_body("0000000000ab", BodyDirection::Payload)
+        .read_body("0000000000ab", "security_rule_events", BodyDirection::Payload)
         .await
         .expect("read the dropped body")
         .is_none());
@@ -364,7 +364,7 @@ async fn an_external_reader_follows_the_archive_across_a_retention() {
     // Opens the archive and caches both the descriptor and the block.
     assert_eq!(
         reader
-            .read_body("0000000000cd", BodyDirection::Payload)
+            .read_body("0000000000cd", "security_rule_events", BodyDirection::Payload)
             .await
             .expect("read a body")
             .expect("the body is archived")
@@ -375,7 +375,7 @@ async fn an_external_reader_follows_the_archive_across_a_retention() {
     writer.retain_bodies_since(&sealed[1].1).await.expect("retain bodies");
 
     let kept = reader
-        .read_body("0000000000cd", BodyDirection::Payload)
+        .read_body("0000000000cd", "security_rule_events", BodyDirection::Payload)
         .await
         .expect("a reader that notices the archive moved does not fail here")
         .expect("the surviving body is still archived");
@@ -385,7 +385,7 @@ async fn an_external_reader_follows_the_archive_across_a_retention() {
     );
     assert!(
         reader
-            .read_body("0000000000ab", BodyDirection::Payload)
+            .read_body("0000000000ab", "security_rule_events", BodyDirection::Payload)
             .await
             .expect("read the dropped body")
             .is_none(),
@@ -444,7 +444,7 @@ async fn a_retention_leaves_no_orphan_index_rows() {
         "no index row may be left naming a block the remap moved or deleted"
     );
     assert_eq!(
-        db.read_body("0000000000cd", BodyDirection::Payload)
+        db.read_body("0000000000cd", "security_rule_events", BodyDirection::Payload)
             .await
             .expect("read the kept body")
             .expect("the newer body survives")
@@ -482,7 +482,7 @@ async fn an_unrecoverable_retention_takes_the_archive_out_of_service() {
     // body archived, rather than appended into a file the index disagrees with.
     write_block(&db, "0000000000ef", r#"{"after":3}"#).await;
     assert!(
-        db.read_body("0000000000ef", BodyDirection::Payload)
+        db.read_body("0000000000ef", "security_rule_events", BodyDirection::Payload)
             .await
             .expect("read the later body")
             .is_none(),
@@ -517,7 +517,7 @@ async fn an_index_naming_bytes_past_the_archive_refuses_to_open() {
     write_block(&db, "0000000000cd", r#"{"after":2}"#).await;
 
     assert!(
-        db.read_body("0000000000cd", BodyDirection::Payload)
+        db.read_body("0000000000cd", "security_rule_events", BodyDirection::Payload)
             .await
             .expect("read the new body")
             .is_none(),

@@ -8,7 +8,7 @@ use crate::security_engine::forensics::SecurityRuleTraceLabels;
 async fn archived_payload(db_path: &std::path::Path, event_id: &str) -> String {
     let body = capsem_logger::DbHandle::open_external_reader(db_path)
         .unwrap()
-        .read_body(event_id, capsem_logger::BodyDirection::Payload)
+        .read_body(event_id, "security_rule_events", capsem_logger::BodyDirection::Payload)
         .await
         .unwrap()
         .unwrap_or_else(|| panic!("the payload of {event_id} must be archived"));

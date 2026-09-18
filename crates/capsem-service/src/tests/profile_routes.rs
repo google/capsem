@@ -1,4 +1,5 @@
 use super::*;
+use capsem_logger::BodyDirection;
 
 mod plugin_runtime;
 
@@ -2061,13 +2062,11 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
     // The route hands back the row; the matched event's payload is archived.
     let payload = capsem_logger::DbHandle::open_external_reader(&session_dir.join("session.db"))
         .unwrap()
-        .read_body("abcdef123456", capsem_logger::BodyDirection::Payload)
+        .read_body("abcdef123456", "security_rule_events", BodyDirection::Payload)
         .await
         .unwrap()
         .expect("the matched event payload is archived");
-    assert!(String::from_utf8(payload.bytes)
-        .unwrap()
-        .contains(r#""api.openai.com""#));
+    assert!(String::from_utf8_lossy(&payload.bytes).contains(r#""api.openai.com""#));
 
     let detection_response = app
         .oneshot(

@@ -285,7 +285,11 @@ async fn a_registered_session_handle_reads_bodies_after_the_process_trims_them()
         .expect("register the session handle");
     assert_eq!(
         handle
-            .read_body("0000000000cd", capsem_logger::BodyDirection::Payload)
+            .read_body(
+                "0000000000cd",
+                "security_rule_events",
+                capsem_logger::BodyDirection::Payload
+            )
             .await
             .expect("read a body")
             .expect("the body is archived")
@@ -307,7 +311,11 @@ async fn a_registered_session_handle_reads_bodies_after_the_process_trims_them()
 
     assert_eq!(
         handle
-            .read_body("0000000000cd", capsem_logger::BodyDirection::Payload)
+            .read_body(
+                "0000000000cd",
+                "security_rule_events",
+                capsem_logger::BodyDirection::Payload
+            )
             .await
             .expect("a still-registered handle must follow the archive, not fail on it")
             .expect("the surviving body is still archived")
@@ -317,7 +325,11 @@ async fn a_registered_session_handle_reads_bodies_after_the_process_trims_them()
     );
     assert!(
         handle
-            .read_body("0000000000ab", capsem_logger::BodyDirection::Payload)
+            .read_body(
+                "0000000000ab",
+                "security_rule_events",
+                capsem_logger::BodyDirection::Payload
+            )
             .await
             .expect("read the dropped body")
             .is_none(),

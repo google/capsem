@@ -484,7 +484,11 @@ match = 'file.create.path == "openai-two.txt"'
     // reference inside it is read from the archive rather than from the row.
     let payload = capsem_logger::DbHandle::open_external_reader(&db_path)
         .unwrap()
-        .read_body(&rule_event_id, capsem_logger::BodyDirection::Payload)
+        .read_body(
+            &rule_event_id,
+            "security_rule_events",
+            capsem_logger::BodyDirection::Payload,
+        )
         .await
         .unwrap()
         .expect("the matched event payload is archived");

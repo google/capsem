@@ -70,7 +70,11 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
     // if the archive gives it back.
     let payload = capsem_logger::DbHandle::open_external_reader(&session_db)
         .unwrap()
-        .read_body("abcd1234ef56", capsem_logger::BodyDirection::Payload)
+        .read_body(
+            "abcd1234ef56",
+            "security_rule_events",
+            capsem_logger::BodyDirection::Payload,
+        )
         .await
         .unwrap()
         .expect("the matched event payload is archived");
@@ -169,7 +173,11 @@ async fn credential_broker_plugin_runtime_reports_security_ledger_activity() {
     // if the archive gives it back.
     let payload = capsem_logger::DbHandle::open_external_reader(&session_db)
         .unwrap()
-        .read_body("abc123def456", capsem_logger::BodyDirection::Payload)
+        .read_body(
+            "abc123def456",
+            "security_rule_events",
+            capsem_logger::BodyDirection::Payload,
+        )
         .await
         .unwrap()
         .expect("the matched event payload is archived");

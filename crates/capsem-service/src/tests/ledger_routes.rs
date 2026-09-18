@@ -60,7 +60,11 @@ async fn security_routes_read_security_ledger_from_session_db() {
     // is read by event id, not carried by every row of a list view.
     let payload = capsem_logger::DbHandle::open_external_reader(&db_path)
         .unwrap()
-        .read_body("abcdef123456", capsem_logger::BodyDirection::Payload)
+        .read_body(
+            "abcdef123456",
+            "security_rule_events",
+            capsem_logger::BodyDirection::Payload,
+        )
         .await
         .unwrap()
         .expect("the matched event payload is archived");

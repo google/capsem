@@ -104,12 +104,26 @@ const INDEX_ORDER: &str = "ORDER BY block_offset, body_offset";
 
 impl DbHandle {
     /// Read one archived body, or `None` when the ledger has no such row.
-    pub async fn read_body(&self, event_id: &str, direction: BodyDirection) -> DbResult<Option<StoredBody>> {
+    ///
+    /// Named by the index's whole unique key. It used to take only the event
+    /// and the direction and return the first match, which was one row until
+    /// the security ledgers each began archiving a `payload`: a rule match, the
+    /// decision it drove and the ask it raised name the same event, and "the
+    /// payload of this event" stopped meaning one body. A read that could hand
+    /// back the decision's bytes to a caller asking for the rule's is a read
+    /// that answers a different question than it was asked.
+    pub async fn read_body(
+        &self,
+        event_id: &str,
+        source_table: &str,
+        direction: BodyDirection,
+    ) -> DbResult<Option<StoredBody>> {
         let sql = format!(
-            "SELECT {INDEX_COLUMNS} FROM event_body_blobs WHERE event_id = ?1 AND direction = ?2 {INDEX_ORDER}"
+            "SELECT {INDEX_COLUMNS} FROM event_body_blobs
+             WHERE event_id = ?1 AND source_table = ?2 AND direction = ?3 {INDEX_ORDER}"
         );
         let rows = self
-            .body_index_rows(&sql, &[event_id.into(), direction.as_str().into()])
+            .body_index_rows(&sql, &[event_id.into(), source_table.into(), direction.as_str().into()])
             .await?;
         Ok(self.read_archived(rows).await?.into_iter().next())
     }
