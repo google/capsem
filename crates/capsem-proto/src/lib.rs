@@ -22,6 +22,10 @@ pub mod privatelink;
 pub mod router;
 mod wire_bytes;
 
+/// Where the guest mounts the host-visible workspace share: every VM sees its
+/// workspace at this path.
+pub const GUEST_WORKSPACE: &str = "/root";
+
 pub use exec_stream::{
     read_exec_input, read_exec_output, write_exec_input, write_exec_output, write_exec_output_data, ExecInputFrame,
     ExecOutputChannel, ExecOutputFrame, EXEC_STDIN_WINDOW, MAX_EXEC_DATA_BYTES,
