@@ -110,8 +110,8 @@ pub(crate) async fn handle_vm_changes(
                     format!("checkpoint not found: {}", params.checkpoint),
                 )
             })?;
-            let changes = capsem_core::auto_snapshot::changes::workspace_changes(&snapshot.workspace_path, &workspace)
-                .map_err(|error| {
+            let changes =
+                capsem_core::auto_snapshot::changes::changes_since(&snapshot, &workspace).map_err(|error| {
                     AppError(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         format!("workspace comparison failed: {error}"),
