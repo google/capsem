@@ -96,11 +96,11 @@ def test_sdk_checks_are_in_the_real_fast_plan() -> None:
 
 def test_python_sdk_build_backend_is_warmed_before_sealed_sync() -> None:
     plan = gate_plan("test-fast")
-    prewarm = plan.step_named("fast.sdk.python.prewarm")
-    synced = plan.step_named("fast.sdk.python.sync")
+    prewarm = plan.step_named("sdk.python.prewarm")
+    synced = plan.step_named("sdk.python.sync")
     built = plan.step_named("fast.sdk.python.build")
 
-    assert plan.after_of("fast.sdk.python.sync") >= {prewarm.label}, SDK_RATIONALE
+    assert plan.after_of("sdk.python.sync") >= {prewarm.label}, SDK_RATIONALE
     assert prewarm.needs == frozenset({Needs.DISK, Needs.NETWORK}), SDK_RATIONALE
     assert prewarm.render() == [
         "uv sync --project sdk/python --frozen --no-install-project [outside kernel sandbox]"

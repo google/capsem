@@ -2015,6 +2015,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_observation_propagation.py",
     "build_system/tests/gate/test_gate_initrd.py",
     "build_system/tests/gate/test_gate_plan_purity.py",
+    "build_system/tests/gate/test_gate_functional_sdks.py",
     "build_system/tests/gate/test_gate_docker_boundary.py",
     "build_system/tests/gate/test_gate_linuxrust_hermetic.py",
     "build_system/tests/gate/test_gate_prefix.py",
@@ -2262,8 +2263,13 @@ config_root = "cache/target/config"
 # installs every workspace the local gate exercises, which is more than this
 # module needs and more than a release lane has warmed: the docs and site
 # stores are not populated there, so installing them reached the network from
-# inside a namespace that has none.
-node_workspaces = ["build_system/release_site"]
+# inside a namespace that has none. The TypeScript SDK is here because the
+# Braavos suite builds and drives it; like the Python SDK environment and the
+# Rust SDK example below, it is prepared before the suites, which run with no
+# network: installing or compiling from inside a test failed on DNS or timed
+# out, and only ever passed on a checkout an earlier phase had warmed.
+node_workspaces = ["build_system/release_site", "sdk/typescript"]
+sdk_rust_example = ["cargo", "build", "--frozen", "-p", "capsem-sdk", "--example", "gateway_acceptance"]
 profiles_subdir = "profiles"
 # Overridable so a release lane can point the same proof at pulled artifacts
 # instead of source-built ones.
@@ -2785,6 +2791,15 @@ reason = """
 The SDK and npm MCP are distinct package roots that share the basename
 `typescript`; the plan renderer shortens both working directories to that
 basename, so their separate dependency fetch and install actions render alike.
+"""
+
+[[boundary.repeated_actions]]
+subject = "(in typescript) pnpm run build"
+reason = """
+Two different builds that render alike: the npm MCP builds `mcp/typescript` in
+the fast lane, and the functional module bundles the SDK in `sdk/typescript`
+for the SDK suites, whose acceptance tools import its `dist`. The renderer
+shortens both working directories to the shared basename.
 """
 
 # ---------------------------------------------------------------------------

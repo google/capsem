@@ -5,34 +5,47 @@ from __future__ import annotations
 from .actions import Run
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
+from .phase import Phase
 from .plan import Plan
 from .pythonenv import uv_run
+
+
+def python_environment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+    """The Python SDK's environment, shared by every lane that uses it:
+    dependencies fetched outside the sandbox, then the project built inside it
+    without an isolated build, which would fetch its backend from the network."""
+    project = config.sdk_python.project
+    prewarm = plan.shared(step(
+        "sdk.python.prewarm",
+        Run(["uv", "sync", "--project", project, "--frozen", "--no-install-project"], outside_sandbox=True),
+        kind=Kind.COMPILE,
+        needs=frozenset({Needs.DISK, Needs.NETWORK}),
+        speed=Speed.FAST,
+    ), after=after)
+    return plan.shared(step(
+        "sdk.python.sync",
+        Run(["uv", "sync", "--project", project, "--frozen", "--no-build-isolation"]),
+        kind=Kind.COMPILE, needs=frozenset({Needs.DISK}), speed=Speed.FAST,
+    ), after=(prewarm,))
+
+
+def braavos(plan: Plan, phase: Phase, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:
+    """Every SDK the SDK suites drive, usable before the suites start with no
+    network. `after` carries the `toolchain.node` install the bundle builds from."""
+    example = phase.add(step(
+        "sdk.rust.example", Run(list(config.functional.sdk_rust_example)),
+        contends=(config.exclusive("workspace_binaries"),),
+        kind=Kind.COMPILE, needs=frozenset({Needs.DISK}), speed=Speed.SLOW,
+    ), after=after)
+    bundle = phase.add(typescript_bundle(config), after=after)
+    return python_environment(plan, config), example, bundle
 
 
 def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:
     settings = config.sdk_python
     phase = plan.phase("fast.sdk.python")
     prefix = ["uv", "run", "--project", settings.project, "--frozen", "--no-sync"]
-    prewarmed = phase.add(step(
-        "prewarm",
-        Run(
-            [
-                "uv", "sync", "--project", settings.project, "--frozen",
-                "--no-install-project",
-            ],
-            outside_sandbox=True,
-        ),
-        kind=Kind.COMPILE,
-        needs=frozenset({Needs.DISK, Needs.NETWORK}),
-        speed=Speed.FAST,
-    ), after=after)
-    synced = phase.add(step(
-        "sync", Run([
-            "uv", "sync", "--project", settings.project, "--frozen",
-            "--no-build-isolation",
-        ]),
-        kind=Kind.COMPILE, needs=frozenset({Needs.DISK}), speed=Speed.FAST,
-    ), after=(prewarmed,))
+    synced = python_environment(plan, config, after=after)
     commands = {
         "generate": uv_run(config, "python", "-m", "capsem_builder.sdkgen", "--check",
                            "--specification", settings.specification, "--python-package", settings.source),

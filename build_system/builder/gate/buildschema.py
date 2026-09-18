@@ -11,12 +11,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import (
-    PositiveFloat,
-    PositiveInt,
-    StringConstraints,
-    model_validator,
-)
+from pydantic import PositiveFloat, PositiveInt, StringConstraints, model_validator
 
 from ..cache.tools import CachedToolPolicy
 from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
@@ -105,6 +100,7 @@ class FunctionalConfig(Strict):
     config_root: str
     profiles_subdir: str
     node_workspaces: tuple[str, ...]
+    sdk_rust_example: tuple[str, ...]
     binary_variable: str
     assets_variable: str
     config_root_variable: str

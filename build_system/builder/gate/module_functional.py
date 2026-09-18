@@ -12,6 +12,7 @@ from . import (
     profiles,
     pytestsuite,
     runtimeprepare,
+    sdkchecks,
     toolchain,
     vmproofs,
 )
@@ -153,6 +154,7 @@ def functional(
             phase.add(toolchain.node(config, config.functional.node_workspaces), after=(agreed,)),
         )
     )
+    prepared = (*prepared, *sdkchecks.braavos(plan, phase, config, after=prepared))
     # The third module to need this, for the reason its own docstring gives:
     # the generated mock is gitignored, so it is never part of the source a run
     # is given, and the broad suite checks it for staleness. In the fast lane

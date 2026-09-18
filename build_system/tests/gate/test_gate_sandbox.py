@@ -72,7 +72,7 @@ ONLINE_FAST = {
     "fast.audit.cargo",
     # Exact lockfile dependency materialization. The paired install is
     # explicitly offline and stays inside the kernel boundary.
-    "fast.sdk.python.prewarm",
+    "sdk.python.prewarm",
     "fast.toolchain.node",
     "fast.toolchain.ort",
     "fast.toolchain.rust",
