@@ -47,6 +47,11 @@ pub struct FileListResponse {
 pub struct UploadResponse {
     pub success: bool,
     pub size: u64,
+    /// Where the file is in the VM, whatever form the request named it in.
+    pub vm_path: String,
+    /// Where the container sees it, when the VM runs one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_path: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]

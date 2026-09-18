@@ -253,6 +253,13 @@ impl Document {
     }
 
     fn files(&mut self) {
+        // Absolute paths resolve against what the VM (or its container) sees;
+        // `exact` keeps `path` literal, relative to the workspace root.
+        let exact = ParameterBuilder::new()
+            .name("exact")
+            .parameter_in(ParameterIn::Query)
+            .schema(Some(ObjectBuilder::new().schema_type(Type::Boolean)))
+            .build();
         let path = "/vms/{id}/files/list";
         let operation = self
             .operation::<FileListResponse>(path, "listVmFiles")
@@ -267,7 +274,8 @@ impl Document {
                     .name("depth")
                     .parameter_in(ParameterIn::Query)
                     .schema(Some(ObjectBuilder::new().schema_type(Type::Integer))),
-            );
+            )
+            .parameter(exact.clone());
         self.add(path, HttpMethod::Get, operation);
 
         let path = "/vms/{id}/files/content";
@@ -287,6 +295,7 @@ impl Document {
         let download = self
             .operation::<UploadResponse>(path, "downloadVmFile")
             .parameter(query.clone())
+            .parameter(exact.clone())
             .response(
                 "200",
                 ResponseBuilder::new()
@@ -297,6 +306,7 @@ impl Document {
         let upload = self
             .operation::<UploadResponse>(path, "uploadVmFile")
             .parameter(query)
+            .parameter(exact)
             .request_body(Some(
                 RequestBodyBuilder::new()
                     .required(Some(Required::True))

@@ -1699,6 +1699,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "exact",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -1747,6 +1755,14 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "exact",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -1816,6 +1832,14 @@
             "required": false,
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "name": "exact",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -6914,9 +6938,17 @@
         "description": "Response for POST /vms/{id}/files/content.",
         "required": [
           "success",
-          "size"
+          "size",
+          "vm_path"
         ],
         "properties": {
+          "container_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the container sees it, when the VM runs one."
+          },
           "size": {
             "type": "integer",
             "format": "int64",
@@ -6924,6 +6956,10 @@
           },
           "success": {
             "type": "boolean"
+          },
+          "vm_path": {
+            "type": "string",
+            "description": "Where the file is in the VM, whatever form the request named it in."
           }
         }
       },
