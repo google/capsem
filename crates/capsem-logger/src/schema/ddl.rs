@@ -181,6 +181,26 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id
         ON model_calls(trace_id);
 
+    -- The indexes the polled session summary runs on. `stats/summary` is asked
+    -- for on a timer, per VM, by the TUI and the desktop UI, and the service
+    -- answers it from the file rather than a RAM mirror -- so these three
+    -- aggregates are the most repeated reads in the product. Each is covering:
+    -- SQLite sums the counters out of the index and never touches a table row,
+    -- which matters because `net_events` and `model_calls` carry headers, body
+    -- previews and assistant text that the summary has no use for.
+    -- `reader/tests/query_plan.rs` fails if any of them stops being used.
+    CREATE INDEX IF NOT EXISTS idx_net_events_decision_bytes
+        ON net_events(decision, bytes_sent, bytes_received);
+    CREATE INDEX IF NOT EXISTS idx_model_calls_usage_totals
+        ON model_calls(input_tokens, output_tokens, duration_ms, estimated_cost_usd);
+    -- Partial, because the `json_each` walk that merges usage details selects
+    -- exactly the rows that have any: an index over the NULLs would be one
+    -- entry per call for nothing.
+    CREATE INDEX IF NOT EXISTS idx_model_calls_usage_details
+        ON model_calls(usage_details) WHERE usage_details IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_origin
+        ON tool_calls(origin);
+
     CREATE TABLE IF NOT EXISTS model_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
@@ -373,6 +393,18 @@ pub const CREATE_SCHEMA: &str = "
         ON security_rule_events(rule_id);
     CREATE INDEX IF NOT EXISTS idx_security_rule_events_event_type
         ON security_rule_events(event_type);
+    -- The indexes `security/status` groups on. That route is polled beside
+    -- `stats/summary`, and its worst statement is the per-rule breakdown: for
+    -- each (rule, action, level) group it asks for the newest match, which
+    -- without this index is a scan of the whole table per group plus a sort.
+    -- The column order is what makes one index serve three statements: the
+    -- action count groups on the leading column, the per-rule breakdown scans
+    -- it as a covering index, and its correlated lookup meets all three
+    -- equalities and then reads the ordering columns in the order it wants.
+    CREATE INDEX IF NOT EXISTS idx_security_rule_events_rule_stats
+        ON security_rule_events(rule_action, detection_level, rule_id, timestamp_unix_ms, id, event_id);
+    CREATE INDEX IF NOT EXISTS idx_security_rule_events_detection_level
+        ON security_rule_events(detection_level);
 
     CREATE TABLE IF NOT EXISTS security_decision_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

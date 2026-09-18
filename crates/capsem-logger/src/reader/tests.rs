@@ -2,6 +2,8 @@ use super::*;
 use serde_json::{json, Value};
 use std::time::Duration;
 
+mod query_plan;
+
 fn setup_reader_with_data() -> DbReader {
     let reader = DbReader::open_in_memory().unwrap();
     reader

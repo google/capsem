@@ -674,94 +674,6 @@ impl DbReader {
         rows.collect()
     }
 
-    /// Compute aggregate session statistics from all tables.
-    pub fn session_stats(&self) -> rusqlite::Result<SessionStats> {
-        // Net event aggregates.
-        let (net_total, net_allowed, net_denied, net_error, net_bytes_sent, net_bytes_received) = self.conn.query_row(
-            "SELECT
-                    COUNT(*),
-                    COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
-                    COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0),
-                    COALESCE(SUM(CASE WHEN decision = 'error' THEN 1 ELSE 0 END), 0),
-                    COALESCE(SUM(bytes_sent), 0),
-                    COALESCE(SUM(bytes_received), 0)
-                 FROM net_events",
-            [],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)? as u64,
-                    row.get::<_, i64>(1)? as u64,
-                    row.get::<_, i64>(2)? as u64,
-                    row.get::<_, i64>(3)? as u64,
-                    row.get::<_, i64>(4)? as u64,
-                    row.get::<_, i64>(5)? as u64,
-                ))
-            },
-        )?;
-
-        // Model call aggregates.
-        let (
-            model_call_count,
-            total_input_tokens,
-            total_output_tokens,
-            total_model_duration_ms,
-            total_estimated_cost_usd,
-            usage_details_json,
-        ) = self.conn.query_row(
-            "SELECT
-                    COUNT(*),
-                    COALESCE(SUM(COALESCE(input_tokens, 0)), 0),
-                    COALESCE(SUM(COALESCE(output_tokens, 0)), 0),
-                    COALESCE(SUM(duration_ms), 0),
-                    COALESCE(SUM(estimated_cost_usd), 0.0),
-                    (SELECT json_group_object(je.key, je.total) FROM (
-                        SELECT je.key, SUM(je.value) as total
-                        FROM model_calls mc2, json_each(mc2.usage_details) je
-                        WHERE mc2.usage_details IS NOT NULL
-                        GROUP BY je.key
-                    ) je)
-                 FROM model_calls",
-            [],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)? as u64,
-                    row.get::<_, i64>(1)? as u64,
-                    row.get::<_, i64>(2)? as u64,
-                    row.get::<_, i64>(3)? as u64,
-                    row.get::<_, f64>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                ))
-            },
-        )?;
-
-        let total_usage_details: BTreeMap<String, u64> = usage_details_json
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-
-        // Total tool calls.
-        let total_tool_calls: u64 = self.conn.query_row(
-            &format!("SELECT COUNT(*) FROM tool_calls WHERE {TOOL_CALL_LEDGER_FILTER}"),
-            [],
-            |row| row.get::<_, i64>(0).map(|n| n as u64),
-        )?;
-
-        Ok(SessionStats {
-            net_total,
-            net_allowed,
-            net_denied,
-            net_error,
-            net_bytes_sent,
-            net_bytes_received,
-            model_call_count,
-            total_input_tokens,
-            total_output_tokens,
-            total_usage_details,
-            total_model_duration_ms,
-            total_tool_calls,
-            total_estimated_cost_usd,
-        })
-    }
-
     /// Top domains by request count.
     pub fn top_domains(&self, limit: usize) -> rusqlite::Result<Vec<DomainCount>> {
         let mut stmt = self.conn.prepare(
@@ -1427,6 +1339,7 @@ impl DbReader {
 
 mod rawquery;
 mod rows;
+mod session_stats;
 use rows::{
     read_audit_history_row, read_exec_history_row, read_file_event_row, read_security_ask_event_row,
     read_security_rule_event_row,
