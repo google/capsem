@@ -13,15 +13,21 @@ impl ImageSource for RefusingImages {
 
 /// A create whose container fails after the VM is registered used to answer
 /// 500 and leave the VM running: the caller never learned its id, and a named
-/// VM kept its name, so the retry got 409. The failed create is discarded.
+/// VM kept its name, so the retry got 409. The failed create is discarded --
+/// but not its ledger and logs: deleting them erased the security record of
+/// the very refusal that failed it (a policy-blocked pull), so the session is
+/// kept for post-mortem the way any failed session is.
 #[tokio::test]
-async fn a_failed_container_create_discards_the_vm_and_frees_its_name() {
+async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
     let dir = tempfile::tempdir().unwrap();
     let mut state = crate::tests::make_test_state_owned();
     state.containers = ContainerSetups::with_source(Box::new(RefusingImages));
     let state = Arc::new(state);
     let session_dir = state.run_dir.join("persistent").join("box");
     std::fs::create_dir_all(session_dir.join("guest/workspace")).unwrap();
+    // Not SQLite: the rollup into main.db fails, and the ledger must be kept anyway.
+    std::fs::write(session_dir.join("session.db"), b"ledger").unwrap();
+    std::fs::write(session_dir.join("process.log"), b"log").unwrap();
     // pid 0: teardown must not signal a real process.
     insert_fake_instance_with_session_dir(&state, "box", 0, session_dir.clone());
     let mut entry = crate::tests::test_persistent_entry("named-box", session_dir.clone());
@@ -71,6 +77,9 @@ async fn a_failed_container_create_discards_the_vm_and_frees_its_name() {
             .contains_key("named-box"),
         "the name stays taken"
     );
-    assert!(!session_dir.exists(), "the failed VM's session survives");
+    assert!(!session_dir.exists(), "the failed VM keeps its live session dir");
+    let kept = find_failed_session_dir(&state.run_dir, "box").expect("the failed create's ledger and logs are kept");
+    assert_eq!(std::fs::read(kept.join("session.db")).unwrap(), b"ledger");
+    assert_eq!(std::fs::read(kept.join("process.log")).unwrap(), b"log");
     drop(dir);
 }

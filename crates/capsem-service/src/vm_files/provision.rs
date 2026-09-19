@@ -211,10 +211,32 @@ async fn complete_create(
     Ok(response)
 }
 
+/// The VM goes and its name is freed, but its ledger and logs are kept as a
+/// failed session: they hold the record of why the create failed -- a
+/// policy-refused pull's audit row lives in this VM's own ledger. Retain, not
+/// Discard: the owner exits cleanly so that ledger is flushed before it moves.
 async fn discard_failed_create(state: &Arc<ServiceState>, id: &str) {
-    if let Err(error) = handle_delete(State(Arc::clone(state)), Path(id.to_owned())).await {
-        error!(vm_id = id, error = %error.1, "failed create was not discarded");
+    // Resolved first: a teardown that fails -- a ledger too damaged to roll up
+    // into main.db -- must not also lose the ledger it could not read.
+    let session_dir = resolve_session_dir(state, id).ok();
+    if let Err(error) = shutdown_vm_process(state, id, ShutdownMode::Retain).await {
+        error!(vm_id = id, error = %error.1, "failed create did not shut down cleanly");
     }
+    if let Some(session_dir) = session_dir {
+        let (owner, vm_id) = (Arc::clone(state), id.to_owned());
+        let kept = tokio::task::spawn_blocking(move || owner.preserve_failed_session_dir(&session_dir, &vm_id)).await;
+        if !matches!(kept, Ok(Some(_))) {
+            warn!(vm_id = id, "failed create's session could not be kept for post-mortem");
+        }
+    }
+    if let Some(key) = persistent_registry_key_for_route_id(state, id) {
+        match state.off_worker(move |state| state.forget_persistent_entry(&key)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => error!(vm_id = id, error = %error, "failed create kept its name"),
+            Err(error) => error!(vm_id = id, error = %error.1, "failed create kept its name"),
+        }
+    }
+    network_routes::vm_deleted(state, id).await;
 }
 
 #[cfg(test)]

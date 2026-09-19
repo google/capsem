@@ -50,6 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A create that fails after its VM exists, such as a container pull refused
+  by policy, no longer deletes the evidence of why. The VM is still
+  discarded and its name freed, but its ledger and logs are kept as a
+  failed session (`run/sessions/<id>-failed-*`) the way a crashed session's
+  are, so the refusal's audit record survives. Keeping them no longer
+  depends on the ledger rolling up cleanly, and a missing sessions
+  directory no longer turns "keep for post-mortem" into "delete".
+
 - `capsem exec` no longer loses a command's output under load. It handed
   the output to tokio's stdout, which writes on a background thread, and
   then exited with the command's code before that write ran: the exit code
