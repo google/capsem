@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 from pathlib import Path
@@ -178,6 +179,20 @@ def test_bounded_diagnostics_inherit_the_repository_cache_authority() -> None:
         encoding="utf-8"
     )
 
-    assert "env=_contained_environment()" in wrapper, RATIONALE
+    # Asked of the tree: the child's `env=` must be built from the contained
+    # environment, whatever else is layered over it. The spelling is free.
+    spawns = [
+        node
+        for node in ast.walk(ast.parse(wrapper))
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "subprocess.Popen"
+    ]
+    assert spawns, RATIONALE
+    for spawn in spawns:
+        env = next((keyword.value for keyword in spawn.keywords if keyword.arg == "env"), None)
+        assert env is not None, RATIONALE
+        assert any(
+            isinstance(node, ast.Call) and ast.unparse(node.func) == "_contained_environment"
+            for node in ast.walk(env)
+        ), RATIONALE
     assert "gatelaunch.contained_environment(root)" in wrapper, RATIONALE
     assert "sys.dont_write_bytecode = True" in launcher, RATIONALE

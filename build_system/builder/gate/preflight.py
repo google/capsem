@@ -24,6 +24,7 @@ from .errors import GateError
 from .lifecycle import Resource, held
 from .locks import ExclusiveLock
 from .proc import Runner
+from .reaper import StaleProcesses
 
 
 def refuse_inside_a_run(config: GateConfig, name: str, *, exclusive: bool) -> None:
@@ -82,6 +83,7 @@ def holdings(
     if not exclusive:
         return declared
     return (
+        StaleProcesses(config, runner),
         CheckoutBuildRoot(config, runner),
         CompilerCache(config, runner),
         *declared,

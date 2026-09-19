@@ -12,7 +12,9 @@ import os
 import signal
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Protocol, cast
 
 from capsem_builder.gate import processgroup
@@ -20,16 +22,19 @@ from capsem_builder.gate import processgroup
 TIMEOUT_EXIT = 124
 
 
+def _repository_root() -> Path | None:
+    raw_root = os.environ.get("CAPSEM_REPOSITORY_ROOT")
+    if not raw_root:
+        return None
+    root = Path(raw_root).resolve()
+    return root if (root / "config/cache.toml").is_file() else None
+
+
 def _contained_environment() -> dict[str, str]:
     """Route direct language tools through the repository cache policy."""
     inherited = dict(os.environ)
-    raw_root = inherited.get("CAPSEM_REPOSITORY_ROOT")
-    if not raw_root:
-        return inherited
-    from pathlib import Path
-
-    root = Path(raw_root).resolve()
-    if not (root / "config/cache.toml").is_file():
+    root = _repository_root()
+    if root is None:
         return inherited
 
     from capsem_builder import gatelaunch
@@ -102,9 +107,45 @@ def run(argv: Sequence[str]) -> int:
     if not command:
         _parser().error("a command is required after --")
 
+    try:
+        with _machine(command, _repository_root()) as exported:
+            return _run(command, exported, args)
+    except _MachineBusy as busy:
+        print(f"bounded command never started: {busy}", file=sys.stderr)
+        return busy.exit_code
+
+
+class _MachineBusy(Exception):
+    def __init__(self, reason: str, exit_code: int) -> None:
+        super().__init__(reason)
+        self.exit_code = exit_code
+
+
+@contextmanager
+def _machine(command: Sequence[str], root: Path | None) -> Iterator[dict[str, str]]:
+    """The machine lease, when `command` is machine work. Waiting is not running:
+    it happens before the child exists, so it never spends the command's timeout."""
+    if root is None:
+        yield {}
+        return
+    from capsem_builder.gate import boundedlease, config
+    from capsem_builder.gate.errors import GateError
+
+    lease = boundedlease.leased(command, root, os.environ)
+    try:
+        exported = lease.__enter__()
+    except GateError as refused:
+        raise _MachineBusy(str(refused), config.load(root).locks.bounded.wait_exit_code) from None
+    try:
+        yield exported
+    finally:
+        lease.__exit__(None, None, None)
+
+
+def _run(command: Sequence[str], exported: dict[str, str], args: argparse.Namespace) -> int:
     process = subprocess.Popen(
         command,
-        env=_contained_environment(),
+        env={**_contained_environment(), **exported},
         stdin=subprocess.DEVNULL,
         start_new_session=True,
     )

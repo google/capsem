@@ -19,6 +19,8 @@ LAUNCHERS = {
     "run-bounded-command.py": "run_bounded_command",
 }
 IMPORT_ADAPTERS = {"justfile-graph.py": "justfile_graph"}
+# Run by the gate as `python -m`, so they need no launcher and add no script.
+MODULE_ENTRYPOINTS = {"reap_stale_processes"}
 
 
 def test_ci_tools_have_one_exact_gate_owned_package() -> None:
@@ -26,6 +28,7 @@ def test_ci_tools_have_one_exact_gate_owned_package() -> None:
         "__init__",
         *LAUNCHERS.values(),
         *IMPORT_ADAPTERS.values(),
+        *MODULE_ENTRYPOINTS,
     }
     project = tomllib.loads(
         (BUILD_SYSTEM_ROOT / "pyproject.toml").read_text(encoding="utf-8")
