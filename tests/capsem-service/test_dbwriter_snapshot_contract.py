@@ -151,7 +151,14 @@ def test_snapshot_routes_are_file_backed_and_ignore_session_db() -> None:
 
 def test_dbwriter_and_snapshot_source_boundaries_are_single_rail() -> None:
     service_main = (ROOT / "crates/capsem-service/src/main.rs").read_text()
-    service_routes = (ROOT / "crates/capsem-service/src/vm_files.rs").read_text()
+    # The route module and its submodules, not their test files: a move into a
+    # submodule (snapshots.rs) must not read as the rail disappearing.
+    routes = ROOT / "crates/capsem-service/src/vm_files"
+    service_routes = "\n".join(
+        path.read_text()
+        for path in [routes.with_suffix(".rs"), *sorted(routes.rglob("*.rs"))]
+        if "tests" not in path.relative_to(routes.parent).parts and path.name != "tests.rs"
+    )
     service_prod = (
         service_main.split("\n#[cfg(test)]\nmod tests;", 1)[0] + service_routes
     )

@@ -19,6 +19,10 @@ fn a_seat_frame_names_its_kind_and_token_and_refuses_others() {
     let frame = seat_frame(SEAT_LINK, 0x00ff_00ff_00ff_00ff);
     assert_eq!(frame, [1, 5, 0, 0xff, 0, 0xff, 0, 0xff, 0, 0xff]);
     assert_eq!(decode_seat_frame(&frame).unwrap(), (SEAT_LINK, 0x00ff_00ff_00ff_00ff));
+    assert_eq!(
+        decode_seat_frame(&seat_frame(SEAT_PREVIEW, 71)).unwrap(),
+        (SEAT_PREVIEW, 71)
+    );
     assert!(
         decode_seat_frame(&seat_frame(4, 7)).is_err(),
         "the retired private TCP handoff kind is not a seat frame"

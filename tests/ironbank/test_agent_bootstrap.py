@@ -17,7 +17,13 @@ import uuid
 
 import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
+from helpers.service import (
+    ServiceInstance,
+    exec_output_text,
+    vm_name,
+    vm_session_db_path,
+    wait_exec_ready,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -298,11 +304,11 @@ def test_profile_agent_bootstrap_pays_ledger_debt_blackbox():
         )
         assert exec_resp is not None, "exec returned no body"
         assert exec_resp.get("exit_code") == 0, exec_resp
-        combined = exec_resp.get("stdout", "") + exec_resp.get("stderr", "")
+        combined = exec_output_text(exec_resp) + exec_output_text(exec_resp, "stderr")
         assert "IRONBANK_AGENT_BOOTSTRAP_RESULT=" in combined
         assert not SECRET_MARKER_RE.search(combined), combined
         result_line = next(
-            line for line in exec_resp.get("stdout", "").splitlines()
+            line for line in exec_output_text(exec_resp).splitlines()
             if line.startswith("IRONBANK_AGENT_BOOTSTRAP_RESULT=")
         )
         probe = json.loads(result_line.split("=", 1)[1])

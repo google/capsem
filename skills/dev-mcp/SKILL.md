@@ -1,142 +1,101 @@
 ---
 name: dev-mcp
-description: MCP for Capsem: the host server, the guest relay, and tool routing. Use when working on MCP servers, tool policy, or telemetry, or to debug quickly inside a VM.
+description: MCP for Capsem: the SDK-backed npm host server, guest relay, and tool routing. Use when working on MCP servers, tool policy, telemetry, or in-VM debugging.
 ---
 
 # MCP in Capsem
 
-Capsem has two MCP components:
+Capsem has two MCP entry points:
 
-1. **capsem-mcp** (host): MCP server over stdio that lets AI agents (Claude Code, Gemini CLI) control sandboxes -- create/delete VMs, exec commands, read/write files, and read typed telemetry routes. Bridges to capsem-service HTTP API over UDS.
-2. **Guest MCP relay + MITM MCP endpoint**: bridges AI agents running inside a guest VM to external MCP servers on the host via framed MCP records over vsock port 5002.
+1. **`@capsem/mcp`** (host): a standalone TypeScript stdio server. It presents typed tools and uses `@capsem/sdk` for authenticated gateway HTTP. It does not open the service UDS, discover local services, or read VM runtime state.
+2. **Guest MCP relay + MITM MCP endpoint**: bridges AI agents inside a VM to built-in and external MCP servers through bounded framed records on vsock port 5002.
 
-## Using capsem MCP tools for fast debugging
+The native installer does not install Node.js or download the npm host package.
+The guest relay, aggregator, and built-in Rust components remain native product
+components.
 
-When the capsem MCP server is configured in your AI CLI, you have direct VM control without leaving the conversation. This is the fastest debug loop for any in-VM work.
+## Using the npm MCP tools for fast debugging
 
-### Available tools
+Install and register the package with an explicit gateway URL, bearer token, and
+transport timeout:
 
-| Tool | Parameters | What it does |
-|------|-----------|-------------|
-| `capsem_create` | name?, ramMb?, cpuCount?, env?, from? | Create a profile-owned session. env = `{"KEY": "VALUE"}` for guest injection. from = clone from another session. |
-| `capsem_run` | command, timeout? | One-shot: ask the service to create a fresh profile-owned session, exec command, and return output |
-| `capsem_list` | -- | List sessions |
-| `capsem_info` | id | Session profile, status, resources, version, telemetry |
-| `capsem_exec` | id, command, timeout? | Run command in guest, get stdout/stderr/exit_code. No default command timeout; pass `timeout` only when the user asked for a deadline. |
-| `capsem_stop` | id | Stop a session |
-| `capsem_resume` | name | Resume a stopped session or return the running session id |
-| `capsem_purge` | all? | Purge stopped, broken, incompatible, or otherwise purgeable sessions |
-| `capsem_read_file` | id, path | Read file content from guest |
-| `capsem_write_file` | id, path, content | Write file into guest |
-| `capsem_vm_logs` | id, grep?, tail? | Serial + process logs. grep filters lines, tail limits to last N. |
-| `capsem_terminal_snapshot` | id, source?, grep?, tail? | Render a text snapshot of a session terminal/log surface from serial/process logs with ANSI cleanup. |
-| `capsem_service_logs` | grep?, tail? | Service daemon logs (last ~100KB). grep + tail filters. |
-| `capsem_delete` | id | Destroy VM and wipe all state |
-| `capsem_version` | -- | MCP server version + service connectivity status |
-| `capsem_fork` | id, name, description? | Fork a running/stopped session into a new stopped session. |
-| `capsem_mcp_connectors` | profile? | List Profile V2 `mcpServers` entries for the selected or requested profile. |
-| `capsem_mcp_add` | id, profile?, disabled?, type?, command?, args?, env?, url?, headers?, bearerToken?, credential_refs?, allowed_tools? | Add a standard MCP server entry plus Capsem governance metadata to a user profile. |
-| `capsem_mcp_delete` | id, profile? | Delete a direct user Profile V2 MCP server entry. |
-| `capsem_panics` | since?, limit? | **Run FIRST when investigating an unexplained failure.** Structured panic + backtrace extractor across `~/.capsem/run/{service,mcp,gateway,tray}.log` and capsem-app's latest jsonl. Returns `[{ ts, binary, thread, location, message, frames }]` with home-dir paths redacted. |
-| `capsem_triage` | id?, since?, limit? | Opinionated ranked summary of recent panics, dropped IPC frames (`target=ipc` warns from W1), 4xx/5xx server errors (`target=service`), and slow operations (>500ms). With `id`: also queries session.db for denied net + mcp errors + exec failures. |
-| `capsem_host_logs` | name, grep?, tail?, maxBytes? | Read a host log by symbolic name. Names: `service`, `mcp`, `gateway`, `tray`, `app` (latest jsonl in `~/.capsem/logs/`). Hard-coded allowlist; no path traversal. |
-| `capsem_timeline` | id, traceId?, since?, limit?, layers? | Unified time-ordered event stream for a session, joining exec/tool/net/fs/model events. Filter by `traceId` to follow one logical operation across layers. |
+```sh
+npm install --global @capsem/mcp
+CAPSEM_GATEWAY_TOKEN="$(cat ~/.capsem/run/gateway.token)" \
+  capsem-mcp --gateway-url http://127.0.0.1:19222 --timeout-ms 30000
+```
+
+The token comes from `CAPSEM_GATEWAY_TOKEN` or `--token-file`; `--token` is
+refused because argv is world-readable. The bearer token belongs only to
+the host MCP process; never copy it into a VM, container, guest tool argument,
+or workload. stdout is protocol-only and sanitized diagnostics use stderr.
+
+The current registry is defined in `mcp/typescript/src/host-tools.ts`,
+`network-tools.ts`, and `profile-tools.ts`. Parameters follow the TypeScript
+SDK names, including `vm_id`, `vcpu`, `memory`, `env`, and
+`timeout_secs`. Canonical tools include `capsem_pause` and
+`capsem_status`; the retired `capsem_suspend`, `capsem_version`, and
+duplicate `capsem_service_logs` names are not exposed.
+
+The host tools cover:
+
+- VM lifecycle, one-shot execution, persistence, files, snapshots, statistics,
+  logs, timelines, panic extraction, and triage.
+- Private network lifecycle, membership, and cursor-based audit logs.
+- Typed profile MCP discovery, refresh, permission inspection, and invocation
+  through the running VM's existing relay and security engine.
 
 ### Debug workflow
 
-```
--- Quick one-shot (no VM management needed):
-capsem_run { command: "capsem-doctor -k net" }
-
--- Iterative debugging (long-lived VM):
-1. capsem_create        -- boot a fresh sandbox
-2. capsem_exec          -- run the thing you want to test
-3. capsem_read_file     -- check config, logs, state
-4. capsem_timeline      -- inspect typed telemetry without raw SQL
-5. (fix code on host, rebuild with `just build`)
-6. capsem_delete        -- tear down
-7. repeat from 1
+```text
+1. capsem_create
+2. capsem_exec { vm_id: "...", command: "capsem-doctor -k net" }
+3. capsem_read_file { vm_id: "...", path: "/tmp/capsem-init.log" }
+4. capsem_timeline { vm_id: "...", layers: "net,tool,fs", limit: 50 }
+5. Fix and rebuild the owning native component when required.
+6. capsem_delete { vm_id: "..." }
 ```
 
-### Common debug patterns
-
-**Verify a guest command works:**
-```
-capsem_exec { id: "vm-1", command: "capsem-doctor -k net" }
-```
-
-**Check network policy enforcement:**
-```
-capsem_exec { id: "vm-1", command: "curl -s https://blocked-domain.com" }
-capsem_timeline { id: "vm-1", layers: "net", limit: 10 }
-```
-
-**Verify telemetry pipeline:**
-```
-capsem_timeline { id: "vm-1", layers: "tool,fs", limit: 50 }
-```
-
-**Read guest runtime state:**
-```
-capsem_read_file { id: "vm-1", path: "/etc/resolv.conf" }
-capsem_read_file { id: "vm-1", path: "/tmp/capsem-init.log" }
-```
-
-**Write a test script and run it:**
-```
-capsem_write_file { id: "vm-1", path: "/tmp/test.sh", content: "#!/bin/bash\necho hello" }
-capsem_exec { id: "vm-1", command: "chmod +x /tmp/test.sh && /tmp/test.sh" }
-```
+The `--timeout-ms` option bounds the SDK HTTP request.
+`timeout_secs` on execution tools bounds the guest command. Cancellation
+closes the local request; it does not delete the VM or undo an accepted
+mutation. The SDK does not retry mutations.
 
 ### When to use MCP tools vs just recipes
 
 | Scenario | Use |
-|----------|-----|
-| Quick check: "does this work in the guest?" | `capsem_exec` |
-| Read a guest file to understand state | `capsem_read_file` |
-| Verify telemetry was recorded | typed telemetry routes or Ironbank direct ledger reads |
-| Run capsem-doctor diagnostics | `capsem_exec` with `capsem-doctor` |
+| --- | --- |
+| Targeted guest behavior | `capsem_exec` |
+| Read a guest file | `capsem_read_file` |
+| Inspect typed audit evidence | `capsem_timeline`, statistics, and network logs |
+| Run capsem-doctor | `capsem_exec` |
 | Full regression suite | `just test` |
-| Build + boot + focused developer validation | `just focus-test functional` |
-| Benchmark performance | `just test` |
+| Focused native validation | `just focus-test functional` |
 
-MCP tools are for fast, targeted checks during development. Just recipes are for comprehensive validation before committing.
+## npm host MCP server
 
-## capsem-mcp (host MCP server)
-
-### Architecture
-
-```
-AI Agent (Claude Code) <-> capsem-mcp (stdio, rmcp) <-> HTTP/UDS <-> capsem-service
+```text
+Host AI agent -> @capsem/mcp (stdio) -> @capsem/sdk
+  -> authenticated capsem-gateway HTTP -> capsem-service
 ```
 
-Uses the `rmcp` crate with `#[tool_router]` macro for tool definitions. Stateless -- creates a fresh HTTP connection to `~/.capsem/run/service.sock` per request.
-
-### Parameter conventions
-
-MCP tools use **camelCase** on the wire (ramMb, cpuCount) because that is the MCP/JSON convention. The capsem-service HTTP API uses **snake_case** (ram_mb, cpus). The conversion happens inside each tool method -- the `#[serde(rename)]` attributes on param structs handle deserialization, and the tool builds a new JSON body with the service's field names.
+The npm process owns tool presentation and typed input/output only. The gateway
+authenticates control requests. The service, VM owner, security engine, and
+logger retain lifecycle, trusted identity, policy, credentials, and audit
+storage. The npm process receives no virtualization entitlement, registry
+credential, CA private key, direct database access, or service socket access.
 
 ### Key source files
 
 | File | Purpose |
-|------|---------|
-| `crates/capsem-mcp/src/main.rs` | rmcp tool router, UDS HTTP client, tool implementations |
-| `crates/capsem-mcp/Cargo.toml` | Dependencies (rmcp, hyper, capsem-core, capsem-logger) |
-
-### Configuration
-
-Registered in AI CLI settings:
-```json
-{ "mcpServers": { "capsem": { "command": "cache/target/cargo/debug/capsem-mcp" } } }
-```
-
-### Environment variables
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `CAPSEM_RUN_DIR` | `~/.capsem/run` | Where to find service socket and write mcp.log |
-| `CAPSEM_UDS_PATH` | `$CAPSEM_RUN_DIR/service.sock` | Override service socket path |
-| `RUST_LOG` | `info` | Logging level |
+| --- | --- |
+| `mcp/typescript/src/cli.ts` | Protocol-only stdio executable |
+| `mcp/typescript/src/server.ts` | SDK client and tool registration |
+| `mcp/typescript/src/host-tools.ts` | VM, file, and diagnostic tools |
+| `mcp/typescript/src/network-tools.ts` | Private network tools |
+| `mcp/typescript/src/profile-tools.ts` | Profile MCP discovery and calls |
+| `mcp/typescript/src/results.ts` | Structured results and sanitized errors |
+| `sdk/typescript/src/` | Typed gateway client and validators |
 
 ## MCP subprocess architecture
 
@@ -271,57 +230,26 @@ Read `references/mcp-wire.md` for the full wire format details.
 
 ## Testing
 
-### Unit tests
+The npm package owns its unit, type, coverage, and package-build checks:
 
-`cargo test -p capsem-mcp` -- param serde roundtrips, UDS path resolution, tool router registration, schema constants.
-
-`cargo test -p capsem-core mcp` -- gateway, policy, server manager, type serialization.
-
-### Integration tests (Python)
-
-The MCP integration tests (`tests/capsem-mcp/`) are black-box tests that boot a real service + VM and exercise the full MCP protocol over stdio.
-
-**Run with:** `uv run --project build_system --frozen pytest tests/capsem-mcp/ -m mcp -v`
-
-**Test files:**
-
-| File | What it covers |
-|------|---------------|
-| `test_discovery.py` | Tool listing, schema validation |
-| `test_lifecycle.py` | Create, delete, list, info, error paths |
-| `test_exec.py` | Command execution, stdout/stderr, exit codes |
-| `test_file_io.py` | Read/write, unicode, large payloads, edge cases |
-| `test_inspect.py` | DB schema query, SQL execution, error cases |
-| `test_errors.py` | Deleted VM ops, concurrent isolation, error mapping |
-| `test_fork_images.py` | Fork lifecycle, image CRUD, create-from-image, error cases |
-| `test_winter_is_coming.py` | Full fork e2e: install packages + write workspace, fork, verify survival, assert fork < 500ms and image < 12MB |
-
-**Fixture architecture:**
-
-- `capsem_service` (session scope) -- spawns capsem-service on isolated temp socket, codesigns binaries on macOS
-- `mcp_session` (per-test) -- fresh capsem-mcp subprocess with JSON-RPC handshake, returns `McpSession` helper
-- `shared_vm` (session scope) -- one long-lived VM for non-destructive tests, avoids repeated boot overhead
-- `fresh_vm` (per-test factory) -- creates uniquely named VMs with auto-cleanup for destructive tests
-
-**McpSession helper** (`tests/capsem-mcp/conftest.py`): wraps capsem-mcp subprocess with JSON-RPC 2.0 protocol. Key methods:
-- `request(method, params)` -- send NDJSON, read response
-- `call_tool(name, args)` -- call tool, assert success, parse JSON content
-- `call_tool_raw(name, args)` -- raw response (no assertions)
-
-### In-VM diagnostics
-
-`just exec "capsem-doctor -k mcp"` -- tests tool routing and domain blocking inside the guest.
-
-### Manual validation
-
-Boot interactively, run a workload, then inspect telemetry:
-```bash
-just shell
-# (in another terminal)
-python3 build_system/scripts/doctor/check_session.py <vm_id> "SELECT * FROM tool_calls WHERE origin = 'mcp'"
+```sh
+pnpm --dir mcp/typescript test
+pnpm --dir mcp/typescript pack
 ```
 
-Or use MCP tools directly (see "Fast debugging" section above) for the same workflow without leaving Claude Code.
+`tests/capsem-sdk/test_mcp_cli_parity.py` guards canonical CLI/MCP behavior.
+`tests/ironbank/test_mcp_profile_ledger.py` packs the npm artifact, launches it
+over stdio with fixture-issued gateway credentials, drives a real VM and guest
+MCP path, and verifies correlated tool, network, and security ledger evidence.
+`tests/capsem-installed/test_winterfell_gateway.py` verifies the installed
+native HTTP cohort without requiring Node.js.
+
+The guest path retains its Rust tests and real-VM diagnostics:
+
+```sh
+cargo test -p capsem-core mcp
+just exec "capsem-doctor -k mcp"
+```
 
 ## Lessons learned
 

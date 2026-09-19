@@ -14,6 +14,14 @@ const detailSource = readFileSync(
   new URL('../stats-detail.ts', import.meta.url),
   'utf8',
 );
+const interactionSource = readFileSync(
+  new URL('../components/views/stats/InteractionViewer.svelte', import.meta.url),
+  'utf8',
+);
+const interactionModelSource = readFileSync(
+  new URL('../interaction-viewer.ts', import.meta.url),
+  'utf8',
+);
 
 describe('StatsView process contract', () => {
   it('distinguishes command executions from process observations', () => {
@@ -52,16 +60,31 @@ describe('StatsView tool-call contract', () => {
   it('exposes one user-facing tool-call ledger instead of an MCP activity panel', () => {
     expect(source).toContain("type StatsTab = 'model' | 'tools'");
     expect(source).toContain("label: 'Tools'");
-    expect(source).toContain('toolRows = detailRows.tool_events');
+    expect(source).toContain('interactions = detailRows.interactions');
     expect(source).toContain('Tool Calls');
     expect(source).toContain('Model Origin');
     expect(source).toContain('Protocol Origin');
     expect(source).toContain("MODEL_TOOL_ORIGINS.includes(text(row.source))");
     expect(source).toContain("PROTOCOL_TOOL_ORIGINS.includes(text(row.source))");
-    expect(source).toContain("void showDetail('tool', row)");
+    expect(source).toContain('title="Tool Interactions"');
+    expect(source).toContain('scope="tools"');
     expect(source).not.toContain("label: 'MCP'");
     expect(source).not.toContain("activeTab === 'mcp'");
     expect(source).not.toContain('MCP Events');
+  });
+
+  it('renders model and MCP activity from shared typed interaction variants', () => {
+    expect(source).toContain('type { EventBody, InteractionReport, ModelUsage, ToolEvent }');
+    expect(source).toContain('interactions = detailRows.interactions');
+    expect(source).toContain('title="Model and Tool Interactions"');
+    expect(interactionSource).toContain('report: InteractionReport');
+    expect(interactionSource).toContain('InteractionRequestKind.REQUEST_PREVIEW');
+    expect(interactionSource).toContain('InteractionMessageKind.MESSAGE');
+    expect(interactionSource).toContain('InteractionToolCallKind.TOOL_CALL');
+    expect(interactionSource).toContain('InteractionToolResultKind.TOOL_RESULT');
+    expect(interactionModelSource).not.toContain('Record<string, any>');
+    expect(interactionSource).not.toContain('Record<string, any>');
+    expect(source).not.toContain('modelRows = detailRows.model_events');
   });
 });
 
@@ -157,14 +180,14 @@ describe('StatsView detail drawer contract', () => {
     expect(source).not.toContain("lang: 'json',");
   });
 
-  it('loads body payloads from event_body_blobs instead of preview columns', () => {
+  it('uses typed interaction bodies for model/tools and event bodies for HTTP', () => {
     expect(source).toContain('api.getVmStatsDetail(vmId)');
     expect(source).toContain('bodyBlobs = detailRows.body_blobs');
+    expect(source).toContain('interactions = detailRows.interactions');
+    expect(interactionSource).toContain('interactionBodies(report, item.event_id)');
     expect(detailSource).toContain("'request_body'");
     expect(detailSource).toContain("'response_body'");
     expect(source).toContain('`${direction}_body`');
-    expect(source).toContain("void showDetail('model', row)");
-    expect(source).toContain("void showDetail('tool', row)");
     expect(source).toContain("void showDetail('http', row)");
     expect(source).not.toContain('request_body_preview');
     expect(source).not.toContain('response_body_preview');

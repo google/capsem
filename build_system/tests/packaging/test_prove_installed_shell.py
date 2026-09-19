@@ -15,6 +15,8 @@ PROOF_SCRIPT = (
     PROJECT_ROOT / "build_system" / "tests" / "helpers" / "prove_installed_shell.py"
 )
 CLI_CLIENT = PROJECT_ROOT / "crates" / "capsem" / "src" / "client.rs"
+# The lifecycle enum SessionInfo serializes; the CLI re-exports it from the API crate.
+API_LIFECYCLE = PROJECT_ROOT / "crates" / "capsem-api" / "src" / "lifecycle.rs"
 
 
 def _proof_module():
@@ -75,9 +77,11 @@ def test_fail_fast_reads_the_fields_capsem_info_actually_serializes() -> None:
 
     for field in ("pub status:", "pub can_resume:", "pub last_error:", "pub resume_blocked_reason:"):
         assert field in client, f"SessionInfo no longer serializes {field}"
-    assert "pub enum VmLifecycleState {" in client
+    assert "VmLifecycleState" in client, "SessionInfo no longer carries the API lifecycle state"
+    lifecycle = production(API_LIFECYCLE)
+    assert "pub enum VmLifecycleState {" in lifecycle
     for variant in ("Running", "Defunct", "Incompatible"):
-        assert f"    {variant},\n" in client, f"VmLifecycleState no longer spells {variant}"
+        assert f"    {variant},\n" in lifecycle, f"VmLifecycleState no longer spells {variant}"
 
     module = _proof_module()
     assert {"Running", "Stopped", "Suspended", "Defunct", "Incompatible"} >= module.FATAL_SESSION_STATUSES

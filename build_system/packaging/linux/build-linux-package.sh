@@ -51,8 +51,11 @@ if ! rustup target list --toolchain "$RUST_TOOLCHAIN" --installed \
 fi
 
 echo "--- Build frontend ---"
-(cd web/app && CI=true pnpm install --offline --frozen-lockfile \
-    --store-dir "$CAPSEM_PNPM_STORE")
+CI=true pnpm --dir sdk/typescript install --offline --frozen-lockfile \
+    --store-dir "$CAPSEM_PNPM_STORE"
+CI=true pnpm --dir web/app install --offline --frozen-lockfile \
+    --store-dir "$CAPSEM_PNPM_STORE"
+pnpm --dir sdk/typescript run build
 bash build_system/scripts/web/check-web-surface.sh frontend-build
 
 echo "--- Build agent binaries ---"
@@ -67,7 +70,7 @@ cp "$RELEASE_DIR/capsem-pty-agent" \
 
 echo "--- Build companion host binaries ---"
 cargo build --release --locked --offline --target "$RUST_TARGET" \
-    -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp \
+    -p capsem -p capsem-service -p capsem-process -p capsem-tui \
     -p capsem-router -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway \
     -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench
 bash build_system/scripts/build/check-build-provenance.sh "$RELEASE_DIR/capsem" \
@@ -104,7 +107,7 @@ bash "$SCRIPT_DIR/repack-deb.sh" --manifest "$CAPSEM_INSTALL_MANIFEST_URL" "$DEB
 
 echo "--- Validate artifacts ---"
 dpkg-deb --info "$DEB"
-dpkg-deb --contents "$DEB" | grep -E 'usr/bin/(capsem|capsem-service|capsem-process|capsem-tui|capsem-mcp|capsem-router|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin|capsem-mock-server|capsem-bench-rs)$'
+dpkg-deb --contents "$DEB" | grep -E 'usr/bin/(capsem|capsem-service|capsem-process|capsem-tui|capsem-router|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin|capsem-mock-server|capsem-bench-rs)$'
 
 cp "$DEB" "$OUT/"
 # Record the exact package this run produced, so a stale cache/target/packages entry

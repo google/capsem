@@ -104,7 +104,7 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
             .any(|reference| reference.name == "github_attestations_vm_assets"),
         "asset rail attestation reference should be explicit"
     );
-    assert_eq!(status.validation_status.as_deref(), Some("valid"));
+    assert_eq!(status.validation_status, Some(api::ValidationStatus::Valid));
     assert_eq!(status.validation_error, None);
     assert_eq!(status.last_error, None);
     assert_eq!(status.binary.current.as_deref(), Some("1.3.1782582155"));
@@ -399,7 +399,7 @@ fn update_status_uses_only_manifest_metadata_for_provenance_and_check_state() {
         status.channel_url.as_deref(),
         Some("https://release.capsem.org/assets/stable/manifest.json")
     );
-    assert_eq!(status.validation_status.as_deref(), Some("valid"));
+    assert_eq!(status.validation_status, Some(api::ValidationStatus::Valid));
     assert_eq!(status.validation_error, None);
     assert_eq!(
         status.channel_hash.as_deref(),
@@ -456,7 +456,7 @@ fn update_status_reports_cached_channel_validation_errors() {
         status.channel_hash.as_deref(),
         Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
     );
-    assert_eq!(status.validation_status.as_deref(), Some("fetch_error"));
+    assert_eq!(status.validation_status, Some(api::ValidationStatus::FetchError));
     assert_eq!(
         status.validation_error.as_deref(),
         Some("GET https://release.capsem.org/health.json timed out")

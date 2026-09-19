@@ -7,6 +7,24 @@ use nix::sys::stat::Mode;
 
 use super::*;
 
+#[test]
+fn link_reads_are_relative_to_the_open_directory_after_an_ancestor_is_replaced() {
+    let tree = tree();
+    let original = tree.root_path.join("child");
+    std::fs::create_dir(&original).unwrap();
+    symlink("original-target", original.join("link")).unwrap();
+    symlink("outside-target", tree.outside.join("link")).unwrap();
+    let child = tree.root.descend(OsStr::new("child")).unwrap();
+    std::fs::rename(&original, tree.root_path.join("saved")).unwrap();
+    symlink(&tree.outside, &original).unwrap();
+    assert_eq!(
+        child.read_link(OsStr::new("link")).unwrap(),
+        Some("original-target".into())
+    );
+    assert!(child.read_link(OsStr::new("../link")).is_err());
+    assert_eq!(tree.root.read_link(OsStr::new("saved")).unwrap(), None);
+}
+
 struct Tree {
     _temporary: tempfile::TempDir,
     root: ContainedDir,
@@ -219,4 +237,36 @@ fn not_directory_errno_is_classified_without_exposing_nix() {
     std::fs::write(tree.root_path.join("file"), b"data").unwrap();
     let error = tree.root.descend(OsStr::new("file")).unwrap_err();
     assert!(is_not_directory(&error));
+}
+
+/// A writer controls mtime; it cannot control ctime or the inode. So an entry's
+/// identity must move on a same-size edit even when mtime is put back, or a
+/// comparison that trusts identity would miss the edit.
+#[test]
+fn entry_identity_moves_on_an_edit_even_when_mtime_is_restored() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("file");
+    std::fs::write(&path, "before").unwrap();
+    let dir = ContainedDir::open_root(root.path()).unwrap();
+    let identity = |dir: &ContainedDir| {
+        dir.entries()
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.name == "file")
+            .unwrap()
+            .identity
+    };
+    let before = identity(&dir);
+    // Past the filesystem's timestamp granularity, so ctime can move.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    std::fs::write(&path, "after!").unwrap();
+    let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+    file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::new(before.mtime.0 as u64, before.mtime.1 as u32))
+        .unwrap();
+    let after = identity(&dir);
+
+    assert_eq!(after.size, before.size, "a same-size edit");
+    assert_eq!(after.mtime, before.mtime, "with mtime restored");
+    assert_ne!(after, before, "still changes the identity, through ctime");
 }

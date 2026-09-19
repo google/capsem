@@ -35,7 +35,7 @@ from types import SimpleNamespace
 import psutil
 import pytest
 from helpers.http_transport import Transport
-from helpers.service import ServiceInstance
+from helpers.service import ServiceInstance, make_service_home_run_dirs
 from helpers.sign import sign_binary
 
 pytestmark = pytest.mark.integration
@@ -700,7 +700,9 @@ class TestRapidServiceRestartIsRobust:
         # Use a high, process-specific port to avoid colliding with any
         # other test or the real :19222 that the user may have bound.
         port = 30000 + (os.getpid() % 5000)
-        shared_tmp = Path(tempfile.mkdtemp(prefix="capsem-rapid-restart-"))
+        # One home/run pair shared by every consecutive service, in the
+        # installed layout so sessions/main.db stays inside this test.
+        shared_home, shared_tmp = make_service_home_run_dirs()
         spawned: list[subprocess.Popen] = []
         try:
             prev_proc: subprocess.Popen | None = None
@@ -725,7 +727,7 @@ class TestRapidServiceRestartIsRobust:
                             f"{self.COMPANION_DEATH_BUDGET_SECS}s after SIGTERM"
                         )
 
-                proc = _spawn_service_on_fixed_port(shared_tmp, port)
+                proc = _spawn_service_on_fixed_port(shared_home, shared_tmp, port)
                 spawned.append(proc)
                 try:
                     _wait_for_gateway_port_file(shared_tmp, port, timeout=5.0)
@@ -765,10 +767,11 @@ class TestRapidServiceRestartIsRobust:
                 log_file = getattr(proc, "_log_file", None)
                 if log_file is not None and not log_file.closed:
                     log_file.close()
-            shutil.rmtree(shared_tmp, ignore_errors=True)
+            shutil.rmtree(shared_home, ignore_errors=True)
 
 
 def _spawn_service_on_fixed_port(
+    home_dir: Path,
     tmp_dir: Path,
     gateway_port: int,
 ) -> subprocess.Popen:
@@ -799,9 +802,9 @@ def _spawn_service_on_fixed_port(
     env = os.environ.copy()
     env["RUST_LOG"] = "info"
     env["CAPSEM_RUN_DIR"] = str(tmp_dir)
-    env["CAPSEM_HOME"] = str(tmp_dir)
+    env["CAPSEM_HOME"] = str(home_dir)
     env["CAPSEM_PROFILES_DIR"] = str(materialize_test_profiles(tmp_dir))
-    env["HOME"] = str(tmp_dir)
+    env["HOME"] = str(home_dir)
     env["CAPSEM_TRAY_HEADLESS"] = "1"
     log_file = open(log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
     proc = subprocess.Popen(

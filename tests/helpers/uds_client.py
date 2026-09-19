@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from urllib.parse import quote
 
 from helpers.constants import CODE_PROFILE_ID
 from helpers.http_transport import Transport
@@ -126,3 +127,15 @@ class UdsHttpClient:
     def get_bytes(self, path, timeout=60):
         """GET returning raw bytes and status code (for binary downloads). Returns (status, body)."""
         return self._raw("GET", path, timeout=timeout)
+
+    def upload_file(self, vm_id, path, content, timeout=60):
+        data = content.encode() if isinstance(content, str) else content
+        return self.post_bytes(
+            f"/vms/{vm_id}/files/content?path={quote(path, safe='')}", data, timeout,
+        )
+
+    def download_file(self, vm_id, path, timeout=60):
+        status, data = self.get_bytes(
+            f"/vms/{vm_id}/files/content?path={quote(path, safe='')}", timeout,
+        )
+        return data if status == 200 else None

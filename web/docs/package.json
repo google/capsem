@@ -23,7 +23,7 @@
       "js-yaml": "^4.3.2",
       "dompurify": "^3.4.13",
       "svgo": "^4.1.0",
-      "smol-toml": "^1.7.1"
+      "smol-toml": "1.7.1"
     }
   }
 }

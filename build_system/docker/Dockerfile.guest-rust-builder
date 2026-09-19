@@ -32,6 +32,11 @@ ENV RUSTUP_AUTO_INSTALL=0
 WORKDIR /prefetch
 COPY Cargo.toml Cargo.lock rust-toolchain.toml /prefetch/
 COPY crates /prefetch/crates
+# Cargo loads every workspace member before fetching. Members outside crates/
+# contribute their manifest and an empty stub target, never their source: the
+# runtime build mounts the real tree, and the stub is deleted with /prefetch.
+COPY sdk/rust/Cargo.toml /prefetch/sdk/rust/Cargo.toml
+RUN mkdir -p /prefetch/sdk/rust/src && : > /prefetch/sdk/rust/src/lib.rs
 
 # The compiler itself is never installed: the base carries the checked-in
 # channel or this fails, whichever shape is being built.

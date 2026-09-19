@@ -69,7 +69,7 @@ cargo build --release \
     -p capsem-service \
     -p capsem-process \
     -p capsem-tui \
-    -p capsem-mcp \
+    \
     -p capsem-router \
     -p capsem-mcp-aggregator \
     -p capsem-mcp-builtin \
@@ -98,7 +98,7 @@ import sys
 
 expected = {
     "capsem", "capsem-admin", "capsem-app", "capsem-gateway",
-    "capsem-mcp", "capsem-router", "capsem-mcp-aggregator", "capsem-mcp-builtin",
+    "capsem-router", "capsem-mcp-aggregator", "capsem-mcp-builtin",
     "capsem-process", "capsem-service", "capsem-tray", "capsem-tui",
     "capsem-mock-server", "capsem-bench-rs",
 }

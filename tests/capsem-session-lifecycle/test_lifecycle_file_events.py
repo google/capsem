@@ -26,11 +26,8 @@ def test_file_write_creates_durable_fs_event(lifecycle_env):
 
         filename = f"file-ledger-{uuid.uuid4().hex[:8]}.txt"
         content = "durable file-event proof"
-        response = client.post(
-            f"/vms/{vm_id}/files/write",
-            {"path": f"/root/{filename}", "content": content},
-        )
-        assert response == {"success": True}
+        response = client.upload_file(vm_id, f"/root/{filename}", content)
+        assert response == {"success": True, "size": len(content), "vm_path": f"/root/{filename}"}
         db_path = vm_session_db_path(tmp_dir, client, vm_id)
 
         client.post(f"/vms/{vm_id}/stop", {})

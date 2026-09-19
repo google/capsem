@@ -50,6 +50,9 @@ pub const SEAT_FRAME_BYTES: usize = 10;
 pub const SEAT_FRAME_VERSION: u8 = 1;
 /// The service asks a cable's guest stream under a LinkAttach token.
 pub const SEAT_LINK: u8 = 5;
+/// The gateway presents a one-time owner-issued token with one accepted
+/// browser TCP descriptor.
+pub const SEAT_PREVIEW: u8 = 6;
 
 pub fn seat_frame(kind: u8, token: u64) -> [u8; SEAT_FRAME_BYTES] {
     let mut frame = [0u8; SEAT_FRAME_BYTES];
@@ -64,8 +67,8 @@ pub fn decode_seat_frame(bytes: &[u8; SEAT_FRAME_BYTES]) -> Result<(u8, u64), St
     if bytes[0] != SEAT_FRAME_VERSION {
         return Err(format!("seat frame version {} is not {SEAT_FRAME_VERSION}", bytes[0]));
     }
-    if bytes[1] != SEAT_LINK {
-        return Err(format!("seat frame kind {} is not a plug request", bytes[1]));
+    if !matches!(bytes[1], SEAT_LINK | SEAT_PREVIEW) {
+        return Err(format!("seat frame kind {} is not a private handoff", bytes[1]));
     }
     Ok((bytes[1], u64::from_be_bytes(bytes[2..].try_into().unwrap())))
 }

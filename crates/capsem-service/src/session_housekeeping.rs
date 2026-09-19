@@ -24,7 +24,11 @@ impl ServiceState {
     pub(crate) fn preserve_failed_session_dir(&self, session_dir: &std::path::Path, id: &str) -> Option<PathBuf> {
         let failed_id = format!("{}-failed-{}", id, capsem_core::session::generate_session_id(),);
         let failed_dir = self.run_dir.join("sessions").join(&failed_id);
-        match std::fs::rename(session_dir, &failed_dir) {
+        // A missing destination made the rename fail and the fallback below
+        // delete the logs this exists to keep.
+        let moved = std::fs::create_dir_all(self.run_dir.join("sessions"))
+            .and_then(|()| std::fs::rename(session_dir, &failed_dir));
+        match moved {
             Ok(()) => {
                 info!(
                     id,

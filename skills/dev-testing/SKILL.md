@@ -431,7 +431,7 @@ All Python integration tests live under `tests/capsem-*/` and use pytest markers
 |-------|-----------|--------|-----|---------------|
 | Service API | `capsem-service/` | `integration` | Yes | HTTP endpoints: provision, list, info, exec, logs, file I/O, delete |
 | CLI | `capsem-cli/` | `integration` | Yes | CLI subcommands via subprocess |
-| MCP | `capsem-mcp/` | `mcp` | Yes | MCP server black-box (stdio, tool routing) |
+| npm MCP | `ironbank/test_mcp_profile_ledger.py` | `ironbank` | Yes | Packed npm stdio -> authenticated gateway -> guest MCP ledger proof |
 | Session DB | `capsem-session/` | `session` | Yes | Telemetry: net/model/tool/mcp/fs/snapshot events |
 | Snapshots | `capsem-snapshots/` | `snapshot` | Yes | Auto/manual snapshots, revert |
 | Isolation | `capsem-isolation/` | `isolation` | Yes | Multi-VM filesystem + network isolation |

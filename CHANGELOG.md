@@ -7,7 +7,391 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- A browser-preview session now bounds the connections it admitted, not only
+  their admission. An open WebSocket or keep-alive connection closes when its
+  session expires, instead of outliving it indefinitely, and
+  `DELETE /vms/{id}/exposures/{exposure_id}/preview-session` revokes every
+  session of an exposure and closes their connections without deleting the
+  exposure, so a leaked session can be cut off while legitimate users simply
+  bootstrap again. The network ledger records these closes as
+  `session_expired` and `session_revoked` (google/capsem#222).
+
+- The Rust, Python and TypeScript SDKs no longer print a preview port's
+  bootstrap token: Rust `Debug` and Python `repr` show `<redacted>`, and the
+  TypeScript `bootstrapToken` is non-enumerable, so logging or serializing a
+  `Port` omits it. `capsem_port_open` still returns it to the calling agent.
+
+- `capsem-mcp` no longer accepts the gateway bearer token on the command line,
+  where any local process could read it from the process list. It reads
+  `CAPSEM_GATEWAY_TOKEN` or `--token-file <path>`; `--token` is refused.
+  Startup failures now say which option is wrong without echoing values.
+
+- A browser preview connection is now held to the request shape its policy
+  admitted: a keep-alive connection admitted for plain requests can no longer
+  upgrade to a WebSocket (bypassing a `preview_upgrade` denial and mislabeling
+  the ledger), and an upgrade-admitted connection refuses plain requests.
+
+- Browser previews use exposure-specific localhost origins, single-use POST
+  bootstrap tokens, scoped HttpOnly cookies, owner-generation admission, and
+  the existing confined router. Capsem credentials are removed before guest
+  HTTP or WebSocket traffic, policy denial opens no guest destination, and
+  lifecycle plus byte outcomes remain in the network security ledger.
+
+- Service-to-VM-owner IPC now rejects frames above 16 MiB before allocation
+  and uses explicit big-endian MessagePack framing. Binary IPC, guest control,
+  and DNS payloads use MessagePack byte strings instead of expanded integers.
+
+- Container image pulls are admitted and audited by the VM's effective policy
+  before the service opens a registry connection. Rules can match the registry,
+  image reference, and pinned digest without exposing registry credentials to
+  the VM owner or session ledger.
+
+### Fixed
+
+- A create that fails after its VM exists, such as a container pull refused
+  by policy, no longer deletes the evidence of why. The VM is still
+  discarded and its name freed, but its ledger and logs are kept as a
+  failed session (`run/sessions/<id>-failed-*`) the way a crashed session's
+  are, so the refusal's audit record survives. Keeping them no longer
+  depends on the ledger rolling up cleanly, and a missing sessions
+  directory no longer turns "keep for post-mortem" into "delete".
+
+- `capsem exec` no longer loses a command's output under load. It handed
+  the output to tokio's stdout, which writes on a background thread, and
+  then exited with the command's code before that write ran: the exit code
+  arrived, the output did not. It now flushes both streams first, through
+  the same writer `capsem run` uses.
+
+- The files API now speaks the guest's paths. An absolute path is where the
+  guest sees the file: `/root/x` in a VM, `/workspace/x` in its container.
+  Uploading `/root/x` used to land at the workspace's `root/x`, so the
+  file was missing when read back with `cat /root/x` in the VM. Any other
+  absolute path is refused with a 400 naming the reachable root, instead of
+  being silently rehomed under the workspace. `exact=true` (Python/TS
+  `exact`, Rust `files().exact()`) takes a path literally, relative to the
+  workspace. Uploads return `vm_path`, plus `container_path` when the VM
+  runs a container, and downloads carry `x-capsem-vm-path`. `capsem cp`
+  prints the true path, and in the SDKs and MCP an empty path, not `/`,
+  lists the workspace root.
+
+- A container workload now sees the VM's workspace, mounted read-write at
+  `/workspace`, so files written through the files API reach it. The
+  launcher's own stage directory stays masked inside that mount.
+
+- Listing a VM's changes since a checkpoint (`GET /vms/{id}/changes`, the
+  UI's change view) no longer hashes every file of the workspace and the
+  checkpoint on each page. A checkpoint now records each file's identity
+  (inode, size, mtime and ctime) before cloning, and only files whose
+  identity moved are read. The check keys on ctime, which a guest cannot set,
+  so an edit that keeps the size and puts mtime back is still listed.
+
+- Large command output leaves the VM in 64 KiB frames written in one
+  syscall each, and the VM owner reads them through a buffer, instead of
+  8 KiB frames copied several times, written as two syscalls, and read with a
+  one-byte probe per frame. The wire format is unchanged.
+
+- Piping a large stdin into a command that does not read it (for example
+  `capsem exec 'sleep 600' < big-file`) no longer wedges the VM owner's IPC
+  connection: streaming exec stdin is flow-controlled, so cancellation and
+  output keep flowing, and a client that leaves while stdin is blocked still
+  cancels its command.
+
+- `capsem_read_file` takes `offset` and `max_bytes` and reports `size` and
+  `truncated`, so one call can no longer pull an unbounded file into an
+  agent's context, and large structured results are no longer mirrored into
+  the tool result's text. An unknown profile is reported as invalid input
+  rather than an internal error.
+
+- SDK `exec`/`run` calls no longer abort after 30 seconds while the command
+  keeps running server-side: the Python, TypeScript and Rust clients stretch
+  each call's HTTP deadline to the service's command timeout plus the
+  gateway's request budget. The desktop app waits as long as the gateway does
+  for fork, update and image create, and reports a client-side timeout as an
+  error saying the operation may still be running.
+
+- A VM create that fails after the VM is registered (a refused or failed
+  container image, or a failed network attach) now removes the VM instead of
+  leaving it running with its name taken, so a retry no longer gets 409.
+
+- Detached container creation (`POST /vms/create` with a container,
+  `capsem create --image`, SDK `create(image=...)`) returns once the guest
+  reports the workload running instead of waiting out the 110-second
+  deadline and answering 504 while the workload was already up.
+
+- `capsem-mcp` now registers the documented `capsem_panics` and
+  `capsem_triage` diagnostics tools, and the MCP tools page lists
+  `capsem_file_history` (the workspace-changes tool) instead of a
+  nonexistent `capsem_changes`.
+
+- The desktop app no longer reports the gateway offline on macOS 14.0-14.3:
+  the TypeScript SDK links request cancellation by hand where
+  `AbortSignal.any` is missing. `@capsem/sdk` and `@capsem/mcp` now declare
+  Node 20 as their minimum engine.
+
+- Streaming exec and terminal sessions no longer end with "VM owner closed"
+  when client input arrives while a large output frame is half read: the
+  VM-owner IPC receiver now resumes a partially read frame after cancellation.
+
+- Guest exec now drains stdout and stderr before waking a blocked stdin reader,
+  preventing AF_VSOCK shutdown from turning successful command output into an
+  empty HTTP result.
+
+- The npm MCP now keeps panic and triage diagnostics behind the SDK `debug`
+  namespace and exposes the reviewed container, file-history, and port tools.
+
+- The npm MCP now propagates client cancellation through every SDK-backed
+  lifecycle, file, diagnostic, network, profile, container, and port request.
+
+- Profile MCP access now starts from a typed profile and resolves a scoped
+  server handle before listing, calling, or refreshing its tools.
+
+- Python and TypeScript port closure now require the typed `Port` returned by
+  `open` or `list`, matching Rust and preventing raw exposure IDs from leaking
+  into the public SDK facade.
+
+- Global network resources now return and accept typed network objects for
+  list, delete, and audit operations; immutable IDs remain the explicit lookup
+  boundary.
+
+- Host panic and triage diagnostics now live under the explicit `debug`
+  namespace instead of the normal hypervisor lifecycle surface.
+
+- Private-network membership now lives under `vm.networks`; list, attach, and
+  detach use typed network objects while global network resources retain
+  create, inspect, delete, and audit operations.
+
+- VM file operations now live under one `vm.files` resource with
+  `list/read/write/history`; the top-level file list/changes methods and copy
+  helper were removed.
+
+- Friendly SDK creation now accepts a `Registry` object and no longer exposes
+  the container stream `attach` wire flag. Python and Rust debug output redacts
+  registry fields, and HTTP creation always owns workload readiness.
+
+- SDK creation and one-shot execution now default to the standard profile.
+  Explicit profile selection accepts typed catalog objects returned directly by
+  `profiles.list()` instead of raw profile IDs.
+
+- SDK creation now accepts typed network objects and top-level container
+  workload settings. Ports use `open/list/close`, infer their workload target,
+  and enable browser authentication with `authenticate=true`; Python execution
+  results print their stdout directly.
+
+- Container-backed HTTP creation now waits for service-owned workload readiness
+  with bounded exponential backoff. SDK and MCP callers no longer orchestrate
+  a separate container wait.
+
+- Container-backed SDK creation now treats the container as the workload:
+  top-level create environment variables configure it, and the public container
+  options no longer expose a second environment field.
+
+- REST command execution preserves arbitrary stdout and stderr bytes with an
+  explicit UTF-8 or base64 encoding. File transfer now has one byte-safe HTTP
+  path at `/vms/{id}/files/content`; the ambiguous JSON read/write routes were
+  removed before the SDK contract reaches v1.
+
 ### Added
+
+- The profile catalog names its own defaults, one per runtime: a profile
+  ledger claims them with `default_for = ["vm", "container"]`, `GET /status`
+  publishes them as `profiles.defaults.vm` and `profiles.defaults.container`,
+  and the Python, TypeScript and Rust SDKs plus the npm MCP server resolve
+  them from the gateway (once per client) when a call names no profile,
+  instead of compiling a profile name into each client. Creating a container
+  takes the container default, so the two may diverge as a container's needs
+  part from a VM's. A catalog naming no default for that runtime asks the
+  caller to pass one.
+
+- Typed Rust, Python, and TypeScript port resources open plain loopback ports by
+  default and can opt into the authenticated browser flow. That flow supports
+  request bodies, redirects, workload cookies, and WebSocket upgrades without
+  opening a direct workload port.
+
+- Streaming exec and attached containers accept bounded stdin with explicit
+  EOF, preserve separate stdout and stderr lanes, and cancel the guest process
+  group when the authenticated stream disconnects.
+
+- Guest agents can publish a VM or container port through the scoped
+  `capsem__expose_port` MCP tool. The existing relay supplies trusted VM
+  identity; the tool accepts no gateway credential and keeps MCP plus exposure
+  policy and audit admission ahead of forwarding.
+
+- `GET /vms/{id}/stream` is one authenticated WebSocket (subprotocol
+  `capsem.stream.v1`) for the VM terminal, streaming command execution and
+  attached container workloads. Frames carry raw bytes on a channel byte and
+  typed JSON control/status, so output is never lossy text. The gateway
+  authenticates and tunnels it to the service unparsed. A container created
+  with `attach` stages its image and starts only when a container stream claims
+  it, which returns the workload's exit code.
+
+- Port exposure is an authenticated HTTP API: `POST /vms/{id}/exposures` listens
+  on a host loopback port for a guest port in the container (default) or the
+  VM's own namespace, `GET /vms/{id}/exposures` lists what the VM owner holds,
+  and `DELETE /vms/{id}/exposures/{exposure_id}` closes one for good. Capsem's
+  guest DNS and interception ports cannot be exposed from the VM namespace.
+
+- VM creation accepts a `container` workload. The service pulls and verifies
+  the OCI image on the host with one-pull registry credentials that are never
+  stored, stages it into the VM through the file import ledger and starts the
+  guest launcher. `GET /vms/{id}/container` reports pulling, staging, starting,
+  running (guest-reported), or failed with the reason, and survives a service
+  restart. Deleting or stopping the VM cancels an in-flight setup.
+
+- `@capsem/mcp` provides a standalone stdio MCP executable backed by the typed
+  TypeScript SDK and explicit authenticated gateway HTTP configuration, with VM
+  lifecycle, execution, file transfer, host/guest logs, timeline, statistics,
+  snapshots, panic and triage tools.
+
+- `@capsem/mcp` exposes private-network lifecycle, membership, and cursor-based
+  audit tools through the typed SDK network resource.
+
+- `@capsem/mcp` creates typed OCI workloads, reads container diagnostics, and
+  manages policy-checked workload ports with automatic VM/container target
+  selection and optional browser authentication through the TypeScript SDK and
+  gateway HTTP.
+
+- `@capsem/mcp` provides typed profile MCP discovery and invocation, canonical
+  tool names and SDK-aligned parameters, plus redacted machine-readable errors.
+
+- The packed `@capsem/mcp` artifact carries a publishable SDK dependency and
+  preserves authenticated stdio discovery, isolation, denial, and cancellation.
+
+- Python, TypeScript and Rust SDK facades expose typed one-shot execution,
+  persistence, purge, panic/triage diagnostics, and profile MCP discovery and
+  invocation over authenticated gateway HTTP.
+
+- Python, TypeScript and Rust SDK network resources provide typed create, list,
+  inspect, delete, member attach/detach and cursor-based audit operations over
+  authenticated gateway HTTP. VM creation accepts the returned network objects.
+
+- Python, TypeScript and Rust VM resources expose typed container diagnostics,
+  plus simple workload port opening, listing and closing through authenticated
+  gateway HTTP.
+
+- SDK detailed statistics expose shared model/MCP interaction objects with typed
+  messages, content blocks, calls and results, structured tool JSON, stable ledger
+  references, and explicit complete, truncated or unknown capture status.
+
+- Python, TypeScript and Rust `Hypervisor.restart()` methods return the typed
+  gateway acknowledgement and its fresh-credential reconnection requirement.
+
+- Gateway `POST /restart` acknowledges an idle managed-service restart with a
+  typed HTTP 202 response. Active launches/VMs and unmanaged processes are refused;
+  the response requires fresh credentials after gateway token rotation.
+
+- UI profile discovery and update status/application use the typed SDK contract,
+  including profile update semantics and validated update evidence and results.
+
+- UI file browsing and transfers use typed SDK operations, including validated
+  file metadata, byte-preserving uploads/downloads and bounded token refresh.
+
+- UI logs, detailed stats, snapshot inspection and command execution use typed
+  SDK operations. Invalid responses are rejected without discarding the connection.
+
+- UI overview, VM information and stats summaries use SDK response validation and
+  shared enum types. Invalid payloads surface as errors instead of offline results.
+
+- TypeScript SDK `NetworkError` distinguishes connection failures from invalid
+  gateway responses while preserving cancellation reasons and request deadlines.
+
+- UI VM lifecycle calls use validated TypeScript SDK responses and preserve
+  bounded gateway token refresh. Fork confirmation keeps the entered name and
+  opens the returned canonical VM ID.
+
+- TypeScript SDK operation and transport package exports, with explicit SDK
+  build prerequisites for the UI's local, development and CI build paths.
+
+- TUI overview and profile discovery use the Rust SDK's shared gateway types,
+  including combined update status and explicit incompatible-VM state.
+
+- TUI VM actions use the Rust SDK's typed gateway contract; forks focus the
+  returned canonical VM ID and unnamed TUI workspaces retain service-generated names.
+
+- Rust `Hypervisor` and `VM` clients with shared HTTP connections, canonical name
+  resolution, profile defaults, and typed lifecycle/copy/snapshots/stats helpers.
+
+- Generated Rust SDK operations for the gateway OpenAPI contract, with shared typed
+  responses, enum parameters, binary transfers, and enforced generation drift checks.
+
+- Rust SDK HTTP transport with shared gateway DTOs, explicit bearer authentication,
+  bounded requests, cancellation by dropping futures, and typed HTTP errors.
+
+- Async TypeScript `Hypervisor` and `VM` clients with typed lifecycle results,
+  canonical name resolution, profile defaults, and copy/snapshots/stats helpers.
+
+- Generated async TypeScript HTTP operations with validated inputs and responses
+  for every endpoint in the gateway OpenAPI contract.
+
+- TypeScript SDK HTTP transport with explicit bearer authentication, request
+  cancellation and deadlines, binary bodies, and no mutation retries or redirects.
+
+- TypeScript gateway models and runtime validators, with strict package checks,
+  enforced coverage, generation drift checks, and clean package builds.
+
+- Async Python `Hypervisor` and `VM` clients with typed lifecycle results,
+  name/id selection, profile resource defaults, and copy/snapshots/stats helpers.
+
+- Generated Python models and async HTTP operations for the gateway's OpenAPI
+  contract, with runtime validation and enforced generation drift checks.
+
+- Python SDK transport foundation with authenticated HTTP, typed request handling,
+  isolated package builds, and enforced line and branch coverage.
+
+- Typed stop, pause, and delete acknowledgements in the gateway OpenAPI contract.
+
+- Typed detailed VM statistics, including model costs, activity events, and
+  captured bodies with boolean flags and enum categories for gateway SDKs.
+
+- Typed history details and timeline events for gateway SDKs. Timeline returns
+  named event objects; history and timeline filters reject unknown layers.
+- Typed snapshot listings and checkpoint-based workspace changes through the
+  gateway, with stable pagination and symlink-safe file comparison.
+- VM information includes typed model/MCP usage, network totals, and filesystem
+  activity summaries from the session ledger, with explicit readiness errors.
+- Typed JSON host logs and shared grep, tail, and byte-limit options for host
+  and VM logs, including retained serial/process logs after failed boots.
+- The gateway overview includes typed profile readiness and update availability
+  alongside VM state, resources, and binary version information.
+- Authenticated gateway OpenAPI export for the initial SDK operations, derived
+  from shared Rust request and response contracts.
+
+### Removed
+
+- VM create and resume responses no longer carry `uds_path`. It named the
+  VM owner's host-local socket, the gateway relayed it to remote clients, and
+  no client needs it now that containers, exposures and streams are service
+  routes.
+
+- The gateway `/terminal/{id}` WebSocket relay and the per-VM owner terminal
+  socket (`instances/<id>-ws.sock`) are gone. Terminals, `capsem doctor` and
+  container attach use `GET /vms/{id}/stream`; no client connects to a VM
+  owner socket, and the gateway no longer derives per-VM socket paths.
+
+- The duplicate Rust host MCP crate has been retired in favor of `@capsem/mcp`;
+  the Rust guest relay, aggregator, and built-in MCP components remain.
+
+### Changed
+
+- `capsem create --image` and `capsem run --image` are clients of the service
+  HTTP API: the service pulls and stages the image, `-p` publishes through
+  `/vms/{id}/exposures`, and `run` attaches through `/vms/{id}/stream`. The CLI
+  no longer pulls on the host or connects to the VM owner, and the
+  `Published` line no longer names the router process.
+
+- The VM Stats model and tool views render the shared typed SDK interaction
+  report, including request previews, assistant blocks, tool calls/results,
+  capture status, and event-owned request/response bodies.
+
+- Native installation and installed-package acceptance no longer require the
+  retired Rust host MCP binary or install Node.js; `@capsem/mcp` is configured
+  separately with explicit authenticated gateway HTTP credentials.
+
+- Python SDK workspace listings treat `/` as the gateway's workspace root.
+
+- Stopped persistent VM file listings resolve canonical VM IDs consistently
+  with other gateway routes; file transfer still requires the running security ledger.
 
 - `capsem run --image IMAGE --network NAME` joins the container's VM to a named
   network at creation, like `capsem create --network`.
@@ -70,6 +454,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Both profiles include `umoci` for OCI image layer unpacking inside the VM.
 
 ### Security
+
+- Opening a port exposure is now a `network.lifecycle` event the VM owner
+  evaluates against the VM's current rules before its listener accepts
+  anything, with the audit row admitted first: a block, an ask, or an audit
+  that cannot be written refuses the exposure (HTTP 403 for a policy refusal).
+  Saved exposures the rules now refuse are forgotten on restore, and revoking
+  records the close. Rules read the new `network.action` and `network.target`
+  fields; `network.action != "revoked"` keeps an exposure from existing.
 
 - rustls moves to 0.23.45 for RUSTSEC-2026-0285: TLS 1.3 handshake messages
   were accepted across encryption level boundaries on the host's TLS paths.
@@ -332,6 +724,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   itself, so it is computed rather than maintained.
 
 ### Fixed
+
+- The desktop terminal no longer types a newline into the VM each time it
+  reconnects, which submitted half-typed commands and inserted lines in editors.
+
+- VM creation no longer treats the legacy `image` request field as a clone source;
+  callers must use the typed `from` field explicitly.
+
+- `exec` and `run` commands longer than two minutes now return their result
+  through the gateway instead of 502 while the command kept running. The
+  service bounds every exec at one hour (the default when `timeout_secs` is
+  omitted, which previously waited forever) and refuses `timeout_secs` of 0 or
+  above 3600 with 400; the gateway waits for that ceiling on exec and run.
+
+- Workspace file uploads between 2 MiB and 10 MiB succeed. The service router
+  kept axum's implicit 2 MiB body limit while the gateway and file routes
+  allowed 10 MiB; all three now share one limit.
+
+- `capsem doctor` no longer panics when invalid UTF-8 in the guest's terminal
+  output lands where it trims its result-sentinel buffer.
+
+- VM exec, file, snapshot and network routes no longer fail with "unexpected
+  IPC response" when a shutdown or suspend broadcast from the VM reaches the
+  service before the command's reply; replies are matched by request id.
+
+- VM security, detection and history routes show rows committed since the last
+  read. Their response cache keyed on `session.db` size and modification time,
+  which a commit that only reaches the write-ahead log leaves unchanged, so new
+  denials stayed invisible until the next checkpoint. The cache now follows the
+  logger's own change generation.
+
+- Service shutdown drains pending replies before gracefully stopping its gateway,
+  with bounded cleanup for stalled requests and unresponsive companion processes.
 
 - `capsem stop` no longer reports "Service stopped." while another capsem
   service still answers on the socket: it names the socket and fails instead.

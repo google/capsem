@@ -151,9 +151,30 @@ struct DbHandleInner {
     writer: Option<Arc<DbWriter>>,
     ready_cache: Mutex<Option<DbResult<()>>>,
     query_many_cache: Mutex<DbQueryManyCache>,
-    read_cache_epoch: AtomicU64,
-    session_summary_cache_epoch: AtomicU64,
+    epochs: Arc<ReadCacheEpochs>,
     sync_from_disk_before_query: bool,
+}
+
+/// Read-cache generations, shared with the reader worker.
+///
+/// A handle advances them when it accepts a write. An external reader's worker
+/// advances them when a disk sync observes another connection's commit, before
+/// it replies -- whichever request (`ready`, `query`, ...) happened to sync. A
+/// caller that reads an epoch after its `ready().await` therefore sees every
+/// commit the worker has absorbed.
+#[derive(Default)]
+struct ReadCacheEpochs {
+    all: AtomicU64,
+    session_summary: AtomicU64,
+}
+
+impl ReadCacheEpochs {
+    fn advance(&self, affects_session_summary: bool) {
+        self.all.fetch_add(1, Ordering::AcqRel);
+        if affects_session_summary {
+            self.session_summary.fetch_add(1, Ordering::AcqRel);
+        }
+    }
 }
 
 impl Drop for DbHandleInner {
@@ -210,9 +231,11 @@ impl DbHandle {
     fn open_reader(db_path: PathBuf, sync_from_disk_before_query: bool) -> rusqlite::Result<Self> {
         let (reader_tx, reader_rx) = mpsc::channel();
         let reader_path = db_path.clone();
+        let epochs = Arc::new(ReadCacheEpochs::default());
+        let reader_epochs = sync_from_disk_before_query.then(|| Arc::clone(&epochs));
         let reader_join = std::thread::Builder::new()
             .name("capsem-db-reader".into())
-            .spawn(move || reader_loop(reader_path, reader_rx, sync_from_disk_before_query))
+            .spawn(move || reader_loop(reader_path, reader_rx, reader_epochs))
             .expect("failed to spawn db reader thread");
 
         Ok(Self {
@@ -223,8 +246,7 @@ impl DbHandle {
                 writer: None,
                 ready_cache: Mutex::new(None),
                 query_many_cache: Mutex::new(None),
-                read_cache_epoch: AtomicU64::new(0),
-                session_summary_cache_epoch: AtomicU64::new(0),
+                epochs,
                 sync_from_disk_before_query,
             }),
         })
@@ -260,7 +282,14 @@ impl DbHandle {
     /// internal storage strategy.
     pub async fn ready(&self) -> DbResult<()> {
         let started = Instant::now();
-        if let Some(cached) = self.inner.ready_cache.lock().unwrap().clone() {
+        // An external reader's readiness is also its disk sync, so it always
+        // reaches the worker; only a writer-owned handle may answer from cache.
+        let cached = if self.inner.sync_from_disk_before_query {
+            None
+        } else {
+            self.inner.ready_cache.lock().unwrap().clone()
+        };
+        if let Some(cached) = cached {
             tracing::debug!(
                 db_path = %self.inner.path.display(),
                 operation = "ready",
@@ -306,7 +335,7 @@ impl DbHandle {
         // when an external reader first checks readiness.  Cache only success:
         // a transient partial-schema error must be retryable on the same
         // DB-owned handle, while a real broken schema still fails loudly.
-        if result.is_ok() {
+        if !self.inner.sync_from_disk_before_query && result.is_ok() {
             *self.inner.ready_cache.lock().unwrap() = Some(Ok(()));
         }
         result
@@ -473,24 +502,22 @@ impl DbHandle {
     /// Invalidate DB-owned read caches after external logger lifecycle helpers
     /// mutate the same database.
     pub fn invalidate_read_cache(&self) {
-        *self.inner.query_many_cache.lock().unwrap() = None;
-        self.inner.read_cache_epoch.fetch_add(1, Ordering::AcqRel);
-        self.inner.session_summary_cache_epoch.fetch_add(1, Ordering::AcqRel);
+        self.invalidate_after_write(true);
     }
 
     fn invalidate_after_write(&self, affects_session_summary: bool) {
         *self.inner.query_many_cache.lock().unwrap() = None;
-        self.inner.read_cache_epoch.fetch_add(1, Ordering::AcqRel);
-        if affects_session_summary {
-            self.inner.session_summary_cache_epoch.fetch_add(1, Ordering::AcqRel);
-        }
+        self.inner.epochs.advance(affects_session_summary);
     }
 
     /// Monotonic generation for one typed DB read domain.
+    ///
+    /// For an external reader this moves whenever the reader worker observes
+    /// another connection's commit; read it after `ready().await`.
     pub fn read_cache_epoch(&self, domain: ReadCacheDomain) -> u64 {
         match domain {
-            ReadCacheDomain::All => self.inner.read_cache_epoch.load(Ordering::Acquire),
-            ReadCacheDomain::SessionSummary => self.inner.session_summary_cache_epoch.load(Ordering::Acquire),
+            ReadCacheDomain::All => self.inner.epochs.all.load(Ordering::Acquire),
+            ReadCacheDomain::SessionSummary => self.inner.epochs.session_summary.load(Ordering::Acquire),
         }
     }
 
@@ -619,7 +646,21 @@ impl DbHandle {
     }
 }
 
-fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, sync_from_disk_before_query: bool) {
+/// Sync an external reader's memory tables from disk, advancing the shared
+/// read epochs when another connection's commit was absorbed. `None` means
+/// the handle owns its writes and never syncs.
+fn sync_external(reader: &DbReader, epochs: Option<&ReadCacheEpochs>) -> DbResult<()> {
+    let Some(epochs) = epochs else {
+        return Ok(());
+    };
+    if reader.sync_from_disk().map_err(|error| error.to_string())? {
+        epochs.advance(true);
+    }
+    Ok(())
+}
+
+fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, epochs: Option<Arc<ReadCacheEpochs>>) {
+    let epochs = epochs.as_deref();
     let started = Instant::now();
     let reader = match DbReader::open(&path) {
         Ok(reader) => reader,
@@ -644,14 +685,7 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, sync_from_disk_be
         match request {
             ReadRequest::Ready { reply } => {
                 let started = Instant::now();
-                let result = if sync_from_disk_before_query {
-                    reader
-                        .sync_from_disk()
-                        .map_err(|error| error.to_string())
-                        .and_then(|()| reader.ready())
-                } else {
-                    reader.ready()
-                };
+                let result = sync_external(&reader, epochs).and_then(|()| reader.ready());
                 match &result {
                     Ok(()) => tracing::debug!(
                         db_path = %path.display(),
@@ -673,14 +707,7 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, sync_from_disk_be
                 let started = Instant::now();
                 let sql_hash = sql_fingerprint(&sql);
                 let params_count = params.len();
-                let result = if sync_from_disk_before_query {
-                    reader
-                        .sync_from_disk()
-                        .map_err(|error| error.to_string())
-                        .and_then(|()| reader.query_raw_with_params(&sql, &params))
-                } else {
-                    reader.query_raw_with_params(&sql, &params)
-                };
+                let result = sync_external(&reader, epochs).and_then(|()| reader.query_raw_with_params(&sql, &params));
                 record_query_metrics("execute", started, params_count, &result);
                 match &result {
                     Ok(_) => tracing::debug!(
@@ -707,14 +734,7 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, sync_from_disk_be
                 let started = Instant::now();
                 let query_count = queries.len();
                 let params_count: usize = queries.iter().map(|(_, params)| params.len()).sum();
-                let result = if sync_from_disk_before_query {
-                    reader
-                        .sync_from_disk()
-                        .map_err(|error| error.to_string())
-                        .and_then(|()| execute_query_many(&reader, queries))
-                } else {
-                    execute_query_many(&reader, queries)
-                };
+                let result = sync_external(&reader, epochs).and_then(|()| execute_query_many(&reader, queries));
                 match &result {
                     Ok(_) => tracing::debug!(
                         db_path = %path.display(),
@@ -737,14 +757,8 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, sync_from_disk_be
                 let _ = reply.send(result);
             }
             ReadRequest::SessionStats { reply } => {
-                let result = if sync_from_disk_before_query {
-                    reader
-                        .sync_from_disk()
-                        .map_err(|error| error.to_string())
-                        .and_then(|()| reader.session_stats().map_err(|error| error.to_string()))
-                } else {
-                    reader.session_stats().map_err(|error| error.to_string())
-                };
+                let result = sync_external(&reader, epochs)
+                    .and_then(|()| reader.session_stats().map_err(|error| error.to_string()));
                 let _ = reply.send(result);
             }
             ReadRequest::Shutdown => {

@@ -19,7 +19,7 @@ from helpers.constants import (
     EXEC_READY_TIMEOUT,
     EXEC_TIMEOUT_SECS,
 )
-from helpers.service import vm_name, wait_exec_ready
+from helpers.service import exec_output_text, vm_name, wait_exec_ready
 
 pytestmark = pytest.mark.integration
 
@@ -143,14 +143,11 @@ class TestResumeLifecycle:
 
         # 2. Write a file inside the VM
         marker = f"persistence-test-{uuid.uuid4().hex[:8]}"
-        client.post(f"/vms/{name}/files/write", {
-            "path": f"/root/{marker}",
-            "content": f"hello from {marker}",
-        })
+        client.upload_file(name, f"/root/{marker}", f"hello from {marker}")
 
         # 3. Verify file exists
-        read_resp = client.post(f"/vms/{name}/files/read", {"path": f"/root/{marker}"})
-        assert marker in str(read_resp), f"File not found before stop: {read_resp}"
+        read_resp = client.download_file(name, f"/root/{marker}")
+        assert read_resp is not None and marker.encode() in read_resp, f"File not found before stop: {read_resp}"
 
         # 4. Stop the VM (preserves state)
         client.post(f"/vms/{name}/stop", {})
@@ -162,8 +159,8 @@ class TestResumeLifecycle:
         wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT)
 
         # 6. Read the file back -- it must survive
-        read_resp2 = client.post(f"/vms/{resumed_id}/files/read", {"path": f"/root/{marker}"})
-        assert marker in str(read_resp2), (
+        read_resp2 = client.download_file(resumed_id, f"/root/{marker}")
+        assert read_resp2 is not None and marker.encode() in read_resp2, (
             f"File did not survive stop+resume! Before: had marker. After: {read_resp2}"
         )
 
@@ -330,7 +327,7 @@ class TestRunEndpoint:
             "timeout_secs": EXEC_TIMEOUT_SECS,
         })
         assert resp is not None
-        assert "hello-from-run" in resp.get("stdout", ""), f"Unexpected response: {resp}"
+        assert "hello-from-run" in exec_output_text(resp), f"Unexpected response: {resp}"
         assert resp.get("exit_code") == 0
 
     def test_run_nonzero_exit(self, client):
@@ -365,8 +362,8 @@ class TestRunEndpoint:
         })
         assert check is not None
         assert check.get("exit_code") == 0, check
-        assert "CAPSEM_RUN_FRESH" in check.get("stdout", "")
-        assert marker not in check.get("stdout", "")
+        assert "CAPSEM_RUN_FRESH" in exec_output_text(check)
+        assert marker not in exec_output_text(check)
 
 
 class TestListPersistence:

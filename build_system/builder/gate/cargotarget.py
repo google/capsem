@@ -32,6 +32,8 @@ from typing import NamedTuple
 from . import cachelayout
 from .config import GateConfig
 from .errors import GateError
+from .lifecycle import Resource
+from .proc import Runner
 
 #: Bytes in a gibibyte, so the cap reads in the unit the config states it in.
 _GIB = 1024**3
@@ -160,6 +162,34 @@ def link_prefix_trees(config: GateConfig, prefix: Path) -> None:
     staged = _generated_root(config.root) / "config"
     if staged.is_dir():
         link_pulled_tree(config, prefix, "config", staged.resolve())
+
+
+class CheckoutBuildRoot(Resource, name="checkout-build-root"):
+    """Make a checkout's profile directories resolve to the shared build root.
+
+    Every exclusive command compiles into `path(config)`, but a linked
+    worktree's checked-in step paths name `cache/target/cargo/<profile>` under
+    the worktree, which is a different directory: `just bench` built its
+    binaries into one and hashed the other ("cannot hash ... it is not a
+    file"). A prefix links these directories when it is made; a checkout that
+    does not own the build root gets the same links here. The checkout that
+    owns it, a pulled release lane, and plan observation are left alone.
+    """
+
+    def __init__(self, config: GateConfig, runner: Runner) -> None:
+        self._config = config
+        self._runner = runner
+
+    def acquire(self) -> None:
+        if self._runner.observing or os.environ.get(self._config.modules.release_bin_dir):
+            return
+        own = _generated_root(self._config.root) / "cargo"
+        if own.resolve() == path(self._config).resolve():
+            return
+        link_profiles(self._config, self._config.root)
+
+    def release(self) -> None:
+        """The links are how the tree resolves, not something this run holds."""
 
 
 def link_pulled_tree(config: GateConfig, prefix: Path, relative: str, target: Path) -> None:

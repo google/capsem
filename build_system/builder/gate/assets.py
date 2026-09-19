@@ -129,8 +129,8 @@ class AssetGate:
             / self._config.install.capsem_home
         )
         make_dir(home)
-        # AF_UNIX paths must stay under macOS SUN_LEN once the gateway appends
-        # `instances/<uuid>-ws.sock` -- 54 characters -- and test_root is
+        # AF_UNIX paths must stay under macOS SUN_LEN once a VM owner appends
+        # `instances/<uuid>-handoff.sock` -- 59 characters -- and test_root is
         # already too long. The template names the *directory*, not just a
         # prefix: `mkdtemp` without `dir=` uses $TMPDIR, which on macOS is
         # `/var/folders/<11>/<24>/T/` and blows the 104-byte limit on its own.

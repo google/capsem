@@ -1,6 +1,8 @@
 use super::*;
 
+mod provision;
 mod resume;
+mod resume_process;
 mod session_dirs;
 pub(crate) use resume::handle_resume;
 #[cfg(test)]
@@ -9,6 +11,14 @@ mod transcript;
 pub(crate) use session_dirs::settle_persistent_session_dir;
 use session_dirs::{claim_persistent_name, remove_purged_session_dir};
 pub(super) use transcript::handle_history_transcript;
+
+/// Wall-clock milliseconds for network membership rows.
+pub(super) fn unix_time_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
 
 // History endpoints
 
@@ -102,16 +112,9 @@ pub(super) async fn handle_history(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Query(params): Query<api::HistoryQuery>,
-) -> Result<axum::response::Response, AppError> {
+) -> Result<Json<api::HistoryResponse>, AppError> {
     let session = history_ledger_for_vm(&state, &id).await?;
-    let response = query_history_ledger(&session, &params);
-    let body = serde_json::to_vec(&response).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize history response: {error}"),
-        )
-    })?;
-    Ok(json_bytes_response(Bytes::from(body)))
+    Ok(Json(query_history_ledger(&session, &params)))
 }
 
 /// GET /vms/{id}/history/processes -- process-centric view of audit events.
@@ -119,6 +122,12 @@ pub(super) async fn handle_history_processes(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    let slot = match session_response_cache_lookup(&state, &id, "history_processes", "history", &db_path).await? {
+        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
+        SessionResponseCache::Miss(slot) => slot,
+    };
     let session = history_ledger_for_vm(&state, &id).await?;
     let processes = session.processes.into_iter().take(100).collect();
     let response = api::HistoryProcessesResponse { processes };
@@ -128,6 +137,7 @@ pub(super) async fn handle_history_processes(
             format!("failed to serialize history processes response: {error}"),
         )
     })?;
+    slot.store(&state, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -136,6 +146,12 @@ pub(super) async fn handle_history_counts(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    let slot = match session_response_cache_lookup(&state, &id, "history_counts", "history", &db_path).await? {
+        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
+        SessionResponseCache::Miss(slot) => slot,
+    };
     let session = history_ledger_for_vm(&state, &id).await?;
     let response = api::HistoryCountsResponse {
         exec_count: session.counts.exec_count,
@@ -147,6 +163,7 @@ pub(super) async fn handle_history_counts(
             format!("failed to serialize history counts response: {error}"),
         )
     })?;
+    slot.store(&state, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -255,8 +272,10 @@ pub(super) async fn shutdown_vm_process(
     id: &str,
     mode: ShutdownMode,
 ) -> Result<Option<(PathBuf, bool, u32)>, AppError> {
+    // A container setup must not keep pulling or staging into a VM going away.
+    state.containers.cancel(id);
     // Teardown must not overlap save/restore, but independent cold starts may.
-    let _vz_guard = state.save_restore_lock.read().await;
+    let _vz_guard = state.lifecycle.vz.read().await;
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
 
     // Serialize teardown: VZ, WAL checkpoint, and socket cleanup contend; a
@@ -346,10 +365,10 @@ pub(super) async fn shutdown_vm_process(
 pub(super) async fn handle_suspend(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<api::VmActionResponse>, AppError> {
     // Apple VZ can corrupt a sibling VirtioFS overlay when save/restore calls
     // overlap. Hold the service-wide lock until exit and checkpoint durability.
-    let _vz_guard = state.save_restore_lock.write().await;
+    let _vz_guard = state.lifecycle.vz.write().await;
     // The host-wide flock also serializes pytest-xdist service processes.
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
 
@@ -442,7 +461,7 @@ pub(super) async fn handle_suspend(
             process_control::send_or_log(pid, process_control::Signal::Kill, "failed-suspend-cleanup");
         }
         tracing::warn!(id, outcome, "handle_suspend removing failed instance");
-        state.evict_instance(&id);
+        state.instances.lock().unwrap().remove(&id);
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
         return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, error));
@@ -455,7 +474,7 @@ pub(super) async fn handle_suspend(
     wait_for_process_exit(pid, std::time::Duration::from_millis(500)).await;
 
     tracing::warn!(id, "handle_suspend (success) removing instance");
-    state.evict_instance(&id);
+    state.instances.lock().unwrap().remove(&id);
     state.unregister_session_db_handle(&id);
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
@@ -477,13 +496,13 @@ pub(super) async fn handle_suspend(
             .await?;
     }
 
-    Ok(Json(serde_json::json!({ "success": true })))
+    Ok(Json(api::VmActionResponse { success: true }))
 }
 
 pub(super) async fn handle_stop(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<api::StopResponse>, AppError> {
     // shutdown_vm_process now waits for actual process exit and cleans the
     // socket inline -- when it returns, resume can immediately reuse the
     // path without a SO_REUSEADDR-style race. Graceful so persistent VMs
@@ -495,24 +514,19 @@ pub(super) async fn handle_stop(
                 let _ = std::fs::remove_dir_all(&dir);
             });
         }
-        Ok(Json(json!({ "success": true, "persistent": persistent })))
+        Ok(Json(api::StopResponse {
+            success: true,
+            persistent,
+        }))
     } else {
         Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
     }
 }
 
-/// Wall-clock milliseconds for network membership rows.
-pub(super) fn unix_time_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
-
 pub(super) async fn handle_delete(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<api::VmActionResponse>, AppError> {
     // Delete fast-paths through direct process teardown: the session dir is
     // about to be removed, so guest sync() and bash history don't matter.
     let session_dir =
@@ -563,19 +577,11 @@ pub(super) async fn handle_delete(
             })?;
     }
 
-    // A deleted VM leaves every network it was in; the memberships are
-    // history in each network's own database, never resurrected, and a
-    // network it leaves empty retires with it.
     network_routes::vm_deleted(&state, &id).await;
-
-    Ok(Json(json!({ "success": true })))
+    Ok(Json(api::VmActionResponse { success: true }))
 }
 
-pub(super) fn provision_response_for_running(
-    state: &ServiceState,
-    id: String,
-    uds_path: std::path::PathBuf,
-) -> Result<ProvisionResponse, AppError> {
+pub(super) fn provision_response_for_running(state: &ServiceState, id: String) -> Result<ProvisionResponse, AppError> {
     let instances = state.instances.lock().unwrap();
     let instance = instances.get(&id).ok_or_else(|| {
         AppError(
@@ -592,7 +598,6 @@ pub(super) fn provision_response_for_running(
         persistent: instance.persistent,
         can_resume: false,
         available_actions: status.available_actions(false),
-        uds_path: Some(uds_path),
     };
     drop(instances);
     Ok(response)
@@ -602,7 +607,7 @@ pub(super) async fn handle_persist(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Json(payload): Json<PersistRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<PersistResponse>, AppError> {
     let name = &payload.name;
     validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
@@ -699,7 +704,10 @@ pub(super) async fn handle_persist(
         }
     }
 
-    Ok(Json(json!({ "success": true, "name": name })))
+    Ok(Json(PersistResponse {
+        success: true,
+        name: name.clone(),
+    }))
 }
 
 pub(super) async fn handle_purge(
@@ -804,6 +812,12 @@ pub(super) async fn handle_run(
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<RunRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
+    let timeout_secs =
+        capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    let _launch = state
+        .lifecycle
+        .admit()
+        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
     let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
     if let Some(reason) = vm_asset_block_reason(&state, &profile_id) {
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
@@ -832,7 +846,7 @@ pub(super) async fn handle_run(
     let version = state.current_version.clone();
     let env = payload.env.clone();
     {
-        let _vz_guard = state.save_restore_lock.read().await;
+        let _vz_guard = state.lifecycle.vz.read().await;
         let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
         let provision_result = tokio::task::spawn_blocking(move || {
             state_clone.provision_sandbox(ProvisionOptions {
@@ -889,7 +903,7 @@ pub(super) async fn handle_run(
             id: job_id,
             command: payload.command,
         },
-        payload.timeout_secs,
+        Some(timeout_secs),
     )
     .await;
 
@@ -909,8 +923,8 @@ pub(super) async fn handle_run(
             truncated,
             ..
         }) => Ok(Json(ExecResponse {
-            stdout: String::from_utf8(stdout).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-            stderr: String::from_utf8(stderr).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
+            stdout: ExecOutput::from_bytes(stdout),
+            stderr: ExecOutput::from_bytes(stderr),
             exit_code,
             truncated,
         })),

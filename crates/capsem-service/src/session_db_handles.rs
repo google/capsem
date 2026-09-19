@@ -68,6 +68,7 @@ impl ServiceState {
 
     pub(crate) fn unregister_session_db_handle(&self, vm_id: &str) {
         let removed = self.session_db_handles.lock().unwrap().remove(vm_id);
+        forget_session_responses(self, vm_id);
         if removed.is_some() {
             info!(
                 vm_id,

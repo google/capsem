@@ -12,6 +12,7 @@ from . import (
     hostpackage,
     install,
     installplan,
+    managedrestart,
     module_artifacts,
     platformproof,
     runtimeprepare,
@@ -53,12 +54,15 @@ class GlowupModule(
             glowup(plan, self._config, qualification=self.qualification)
         else:
             built = module_artifacts.artifacts(plan, self._config, qualification=self.qualification)
+            runtime = None
+            if host.on_macos():  # the managed-restart proof runs the signed host binaries
+                runtime = runtimeprepare.prepare(plan, self._config, guest=False, after=(built,)).ready
             glowup(
                 plan, self._config, qualification=self.qualification, after=(built,),
                 local_content=ProfileContent.built_profile(
                     self._config, self._config.suites.pytest.base_profile,
                 ),
-                materialized=built,
+                materialized=built, runtime=runtime,
             )
         return plan
 
@@ -72,6 +76,7 @@ def glowup(
     staged: ProfileContent | None = None,
     local_content: ProfileContent | None = None,
     materialized: Step | None = None,
+    runtime: Step | None = None,
 ) -> Step:
     """Build the release packages and prove an install upgrades cleanly."""
     phase = plan.phase("glowup")
@@ -86,6 +91,7 @@ def glowup(
         after,
         content=content,
         materialized=materialized,
+        runtime=runtime,
     )
 
 
@@ -233,6 +239,7 @@ def _build_and_prove(
     *,
     content: ProfileContent,
     materialized: Step | None,
+    runtime: Step | None = None,
 ) -> Step:
     # `previous` chains each architecture behind the last; the first has
     # nothing before it beyond whatever this phase was given.
@@ -281,6 +288,7 @@ def _build_and_prove(
                 after=previous,
             ),
         )
+        previous = (managedrestart.fragment(plan, config, after=(*previous, *filter(None, (runtime,)))),)
 
     sbom = phase.add(hostpackage.sbom_step(config), after=previous)
     exact_install_image = installplan.fragment(plan, config)

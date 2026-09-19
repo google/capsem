@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "sdk/rust",
+    "crates/capsem-api",
     "crates/capsem-assets",
     "crates/capsem-config",
     "crates/capsem-credentials",
@@ -16,7 +18,6 @@ members = [
     "crates/capsem",
     "crates/capsem-bench",
     "crates/capsem-tui",
-    "crates/capsem-mcp",
     "crates/capsem-mcp-aggregator",
     "crates/capsem-mcp-builtin",
     "crates/capsem-mock-server",
@@ -160,6 +161,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
 serde_json = { version = "1", features = ["raw_value"] }
 serde_yaml = "0.9"
 rmp-serde = "1.3.0"
@@ -201,7 +203,6 @@ regex = "1"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 ratatui = "0.30.2"
-tokio-unix-ipc = "0.4"
 rmcp = { version = "1.3", features = ["client", "server"] }
 # Low-level DNS protocol (wire-format codec). Used host-side by the
 # capsem DNS proxy (T3) to parse guest queries, build NXDOMAIN

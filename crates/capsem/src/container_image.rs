@@ -1,17 +1,24 @@
-//! An OCI image as a VM's workload: pulled and verified on the host, the VM
-//! provisioned from a profile, the blobs uploaded, and the guest launcher
-//! started. `create --image` starts it detached; `run --image` attaches to it
-//! and destroys the VM when it ends.
+//! An OCI image as a VM's workload, set up by the service: the VM is created
+//! with the image, the service pulls, verifies and stages it, and the CLI
+//! follows its status, publishes ports through the exposure API, and for
+//! `run --image` attaches through the VM stream. The CLI never reaches the
+//! VM owner directly.
+
+use std::time::Duration;
 
 use anyhow::{ensure, Context, Result};
-use capsem_assets::oci::{ImageLayout, Puller, RegistryAuth};
+use capsem_api::stream::{StreamControl, StreamKind};
+use capsem_api::{
+    ContainerSpec, ContainerState, ContainerStatusResponse, ExposureAccess, ExposureInfo, ExposureRequest,
+    ExposureTarget, RegistryAccess,
+};
 use capsem_core::container;
-use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::client::{self, ApiResponse, ExecResponse, ProvisionRequest, ProvisionResponse, UdsClient};
+use crate::client::{self, ApiResponse, ProvisionRequest, ProvisionResponse, StreamEvent, UdsClient};
 
-mod upload;
+/// How often the CLI reads the setup status while the service works.
+const STATUS_POLL: Duration = Duration::from_millis(250);
 
 /// The flags that make a VM an image's: shared by `create` and `run`.
 #[derive(clap::Args, Debug, Default)]
@@ -59,92 +66,51 @@ impl<'a> Workload<'a> {
             args,
         }))
     }
-}
 
-/// A pulled image, its staging directory held for as long as it is uploaded.
-pub(super) struct Pulled {
-    layout: ImageLayout,
-    _staging: tempfile::TempDir,
-}
-
-impl Pulled {
-    pub(super) fn blobs(&self) -> Blobs<'_> {
-        Blobs {
-            root: self.layout.path(),
-            files: self.layout.files(),
-        }
+    /// The service's container spec. A reference that cannot name an image,
+    /// or a registry user without a password, is refused before any VM exists.
+    pub(super) async fn spec(&self, attach: bool) -> Result<ContainerSpec> {
+        capsem_assets::oci::image_reference(self.reference)
+            .context("--image expects docker://IMAGE or registry/repository:tag")?;
+        let username = self.image.registry_user.clone();
+        let password = match &username {
+            Some(_) => Some(
+                std::env::var("CAPSEM_REGISTRY_PASSWORD")
+                    .context("--registry-user requires CAPSEM_REGISTRY_PASSWORD")?,
+            ),
+            None => None,
+        };
+        let ca_pem = match &self.image.registry_ca {
+            Some(path) => Some(tokio::fs::read_to_string(path).await.context("read registry CA")?),
+            None => None,
+        };
+        let registry = (username.is_some() || ca_pem.is_some()).then_some(RegistryAccess {
+            username,
+            password,
+            ca_pem,
+        });
+        Ok(ContainerSpec {
+            image: self.reference.to_string(),
+            args: self.args.to_vec(),
+            env: client::parse_env_vars(self.env)?
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+            registry,
+            attach,
+        })
     }
 }
 
-/// The verified files of an image layout, relative to its root.
-#[derive(Clone, Copy)]
-pub(super) struct Blobs<'a> {
-    pub root: &'a std::path::Path,
-    pub files: &'a [std::path::PathBuf],
-}
-
-pub(super) async fn pull(workload: &Workload<'_>) -> Result<Pulled> {
-    capsem_assets::oci::image_reference(workload.reference)
-        .context("--image expects docker://IMAGE or registry/repository:tag")?;
-    let architecture = match std::env::consts::ARCH {
-        "aarch64" => "arm64",
-        "x86_64" => "amd64",
-        other => anyhow::bail!("unsupported container architecture: {other}"),
-    };
-    let authentication = match &workload.image.registry_user {
-        Some(user) => RegistryAuth::Basic(
-            user.clone(),
-            std::env::var("CAPSEM_REGISTRY_PASSWORD").context("--registry-user requires CAPSEM_REGISTRY_PASSWORD")?,
-        ),
-        None => RegistryAuth::Anonymous,
-    };
-    let certificate = match &workload.image.registry_ca {
-        Some(path) => Some(tokio::fs::read(path).await.context("read registry CA")?),
-        None => None,
-    };
-    let puller = Puller::new_with_root_certificate(architecture, authentication, certificate.as_deref())?;
-    let staging = tempfile::tempdir()?;
-    eprintln!("Pulling {}", workload.reference);
-    let layout = puller.pull(workload.reference, staging.path()).await?;
-    eprintln!("Image {}", layout.source_digest);
-    Ok(Pulled {
-        layout,
-        _staging: staging,
-    })
-}
-
+/// Create the VM. With a container workload the service pulls the image and
+/// waits for it before answering, so the pull is announced here: a pull that
+/// fails comes back as this call's error, before anything could follow it.
 pub(super) async fn provision(client: &UdsClient, request: &ProvisionRequest) -> Result<ProvisionResponse> {
+    if let Some(container) = &request.container {
+        eprintln!("Pulling {}", container.image);
+    }
     let response: ApiResponse<ProvisionResponse> = client.post("/vms/create", request).await?;
     response.into_result()
-}
-
-/// Wait for the guest, upload the image and its options, and publish its
-/// ports. The IPC channel that published them comes back for an attach.
-pub(super) async fn stage(
-    client: &UdsClient,
-    vm: &ProvisionResponse,
-    blobs: Blobs<'_>,
-    workload: &Workload<'_>,
-) -> Result<Channel> {
-    // Create may return at the launch signal, before guest boot finishes.
-    // The existing exec route owns readiness and its transport deadline.
-    let ready: ApiResponse<ExecResponse> = client
-        .post(
-            &format!("/vms/{}/exec", vm.id),
-            client::ExecRequest {
-                command: "true".into(),
-                timeout_secs: Some(30),
-            },
-        )
-        .await?;
-    let ready = ready.into_result()?;
-    ensure!(ready.exit_code == 0, "guest readiness check failed: {}", ready.stderr);
-    upload::image(client, &vm.id, blobs, workload).await?;
-    let channel = Channel::open(vm).await?;
-    for mapping in &workload.image.publish {
-        channel.publish(*mapping).await?;
-    }
-    Ok(channel)
 }
 
 pub(super) async fn destroy(client: &UdsClient, id: &str) -> Result<()> {
@@ -152,109 +118,95 @@ pub(super) async fn destroy(client: &UdsClient, id: &str) -> Result<()> {
     response.into_result().map(drop)
 }
 
-/// Start the launcher detached, as a boot of this VM would: its output goes
-/// to the console `capsem logs` reads.
-pub(super) async fn launch_detached(client: &UdsClient, vm: &ProvisionResponse) -> Result<()> {
-    let launched: ApiResponse<ExecResponse> = client
-        .post(
-            &format!("/vms/{}/exec", vm.id),
-            client::ExecRequest {
-                command: container::detached_launch_command(),
-                timeout_secs: Some(30),
-            },
-        )
-        .await?;
-    let launched = launched.into_result()?;
-    ensure!(launched.exit_code == 0, "container launch failed: {}", launched.stderr);
+/// Follow the service's setup of VM `id` until its state is one `done`
+/// accepts, reporting the verified digest when it is known. A failed setup is
+/// an error carrying the service's reason.
+pub(super) async fn follow(
+    client: &UdsClient,
+    id: &str,
+    done: impl Fn(ContainerState) -> bool,
+) -> Result<ContainerStatusResponse> {
+    let mut reported_digest = false;
+    loop {
+        let status: ApiResponse<ContainerStatusResponse> = client.get(&format!("/vms/{id}/container")).await?;
+        let status = status.into_result()?;
+        if let (false, Some(digest)) = (reported_digest, &status.digest) {
+            eprintln!("Image {digest}");
+            reported_digest = true;
+        }
+        match status.state {
+            ContainerState::Failed => {
+                anyhow::bail!(
+                    "container setup failed: {}",
+                    status.error.as_deref().unwrap_or("no reason given")
+                )
+            }
+            state if done(state) => return Ok(status),
+            _ => tokio::time::sleep(STATUS_POLL).await,
+        }
+    }
+}
+
+/// Publish every `-p` mapping on the host loopback. Exposures belong to the
+/// VM owner and outlive this command.
+pub(super) async fn expose(client: &UdsClient, id: &str, mappings: &[container::PortMapping]) -> Result<()> {
+    for mapping in mappings {
+        let request = ExposureRequest {
+            guest_port: mapping.guest,
+            host_port: mapping.host,
+            target: ExposureTarget::Container,
+            access: ExposureAccess::LoopbackTcp,
+        };
+        let exposed: ApiResponse<ExposureInfo> = client.post(&format!("/vms/{id}/exposures"), request).await?;
+        let exposed = exposed.into_result().context("publish port")?;
+        eprintln!(
+            "Published 127.0.0.1:{} -> {}/tcp",
+            exposed
+                .host_port
+                .context("loopback exposure did not return a host port")?,
+            exposed.guest_port
+        );
+    }
     Ok(())
 }
 
-/// An IPC connection to the VM's owner.
-pub(super) struct Channel {
-    sender: capsem_foundation::ipc_channel::Sender<ServiceToProcess>,
-    receiver: capsem_foundation::ipc_channel::Receiver<ProcessToService>,
-}
-
-impl Channel {
-    async fn open(vm: &ProvisionResponse) -> Result<Self> {
-        let path = vm
-            .uds_path
-            .as_ref()
-            .context("service did not return the VM IPC socket")?;
-        let socket = tokio::net::UnixStream::connect(path).await?.into_std()?;
-        let (socket, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
-            socket,
-            "capsem-cli",
-            capsem_foundation::telemetry::current_parent_traceparent(),
-        )
-        .await?;
-        let (sender, receiver) =
-            capsem_foundation::ipc_channel::channel_from_std::<ServiceToProcess, ProcessToService>(socket)?;
-        Ok(Self { sender, receiver })
-    }
-
-    /// Publications belong to the VM, not to this connection: they outlive it.
-    async fn publish(&self, mapping: container::PortMapping) -> Result<()> {
-        self.sender
-            .send(ServiceToProcess::PublishPort {
-                id: 0,
-                host_port: mapping.host,
-                guest_port: mapping.guest,
-            })
-            .await?;
-        loop {
-            if let ProcessToService::PortPublished {
-                id: 0,
-                host_port,
-                router_pid,
-                error,
-            } = self.receiver.recv().await?
-            {
-                if let Some(error) = error {
-                    anyhow::bail!("publish port: {error}");
+/// Start the staged workload attached: its output streams here and its exit
+/// code is the container's.
+pub(super) async fn attach(client: &UdsClient, id: &str) -> Result<i32> {
+    let start = StreamControl::Start {
+        kind: StreamKind::Container,
+        command: None,
+    };
+    let mut attached = client.open_stream(id, start).await.context("attach container")?;
+    let mut stdin = tokio::io::stdin();
+    let mut stdout = tokio::io::stdout();
+    let mut stderr = tokio::io::stderr();
+    let mut input = [0_u8; 8192];
+    let mut stdin_closed = false;
+    loop {
+        tokio::select! {
+            read = stdin.read(&mut input), if !stdin_closed => {
+                let read = read.context("read container stdin")?;
+                if read == 0 {
+                    stdin_closed = true;
+                    attached.close_stdin().await?;
+                } else {
+                    attached.send_stdin(&input[..read]).await?;
                 }
-                eprintln!(
-                    "Published 127.0.0.1:{host_port} -> {}/tcp (router {router_pid})",
-                    mapping.guest
-                );
-                return Ok(());
             }
-        }
-    }
-
-    /// Run the launcher attached: its output streams here and its exit code
-    /// is the container's.
-    pub(super) async fn attach(self) -> Result<i32> {
-        // Service job ids count upward; this private attached command has its own
-        // connection and uses the reserved high end, with duplicate refusal in process.
-        let id = i64::MAX as u64;
-        self.sender
-            .send(ServiceToProcess::ExecStream {
-                id,
-                command: container::LAUNCH_COMMAND.into(),
-            })
-            .await?;
-        let mut stdout = tokio::io::stdout();
-        loop {
-            match self.receiver.recv().await? {
-                ProcessToService::ExecOutput { id: job, data } if job == id => {
+            event = attached.next() => match event? {
+                StreamEvent::Output(data) => {
                     stdout.write_all(&data).await?;
                     stdout.flush().await?;
                 }
-                ProcessToService::ExecResult {
-                    id: job,
-                    exit_code,
-                    stderr,
-                    truncated,
-                    ..
-                } if job == id => {
-                    let mut output = tokio::io::stderr();
-                    output.write_all(&stderr).await?;
-                    output.flush().await?;
-                    ensure!(!truncated && exit_code >= 0, "container exec transport failed");
-                    return Ok(exit_code);
+                StreamEvent::ErrorOutput(data) => {
+                    stderr.write_all(&data).await?;
+                    stderr.flush().await?;
                 }
-                _ => {}
+                StreamEvent::Exit { code, truncated } => {
+                    ensure!(!truncated && code >= 0, "container exec transport failed");
+                    return Ok(code);
+                }
             }
         }
     }

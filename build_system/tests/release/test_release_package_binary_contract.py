@@ -20,7 +20,7 @@ EXPECTED_BINARY_COHORT = {
     "capsem-admin",
     "capsem-app",
     "capsem-gateway",
-    "capsem-mcp",
+
     "capsem-mcp-aggregator",
     "capsem-mcp-builtin",
     "capsem-process",

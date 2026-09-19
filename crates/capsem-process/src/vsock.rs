@@ -19,6 +19,7 @@ use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, per
 mod guest_report;
 use guest_report::{ackable_id, ackable_response_id, is_guest_liveness_message};
 mod exec_completion;
+mod exec_input;
 mod exec_output;
 mod shutdown;
 use exec_output::{read_exec_output, MAX_EXEC_OUTPUT_BYTES};
@@ -493,10 +494,10 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 ServiceToProcess::TerminalResize { cols, rows } => {
                     capsem_core::try_send!("hub_resize", hub_tx.send(HostToGuest::Resize { cols, rows }).await);
                 }
-                ServiceToProcess::ConnectPort { flow, port } => {
+                ServiceToProcess::ConnectPort { flow, port, target } => {
                     capsem_core::try_send!(
                         "hub_publication",
-                        hub_tx.send(HostToGuest::ConnectPort { flow, port }).await
+                        hub_tx.send(HostToGuest::ConnectPort { flow, port, target }).await
                     );
                 }
                 ServiceToProcess::AbortPorts { flows } => {
@@ -562,6 +563,15 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         }
                     }
                     capsem_core::try_send!("hub_exec", hub_tx.send(HostToGuest::Exec { id, command }).await);
+                }
+                ServiceToProcess::CancelExec { id } => {
+                    let cancellation_id = js_for_cmd
+                        .next_control_id
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    capsem_core::try_send!(
+                        "hub_cancel_exec",
+                        hub_tx.send(HostToGuest::CancelExec { id, cancellation_id }).await
+                    );
                 }
                 ServiceToProcess::WriteFile { id, path, data } => {
                     js_for_cmd.active_file_ops.lock().unwrap().insert(
@@ -985,29 +995,33 @@ fn dispatch_aux_connection(
                 };
                 if let Ok(GuestToHost::ExecStarted { id }) = read_control_msg(&mut file) {
                     info!(id, "exec port: received ExecStarted");
-                    let stream = js
+                    let (stream, input) = js
                         .active_execs
                         .lock()
                         .unwrap()
-                        .get(&id)
-                        .and_then(|active| active.stream.clone());
+                        .get_mut(&id)
+                        .map(|active| (active.stream.clone(), active.input_rx.take()))
+                        .unwrap_or((None, None));
+                    let _input_handle = exec_input::spawn(&conn, id, input, stream.clone());
                     let result = match stream {
                         Some(sender) => exec_output::stream_exec_output(&mut file, id, &sender),
                         None => Ok(read_exec_output(&mut file)),
                     };
-                    let (local_buf, total_seen) = match result {
+                    let capture = match result {
                         Ok(output) => output,
                         Err(error) => {
                             if let Some(active) = js.active_execs.lock().unwrap().get_mut(&id) {
                                 active.output_error = Some(format!("exec output transport failed: {error}"));
                             }
-                            (Vec::new(), 0)
+                            exec_output::ExecCapture::default()
                         }
                     };
-                    if total_seen > local_buf.len() as u64 {
+                    let total_seen = capture.stdout_bytes.saturating_add(capture.stderr_bytes);
+                    let retained = capture.stdout.len().saturating_add(capture.stderr.len());
+                    if total_seen > retained as u64 {
                         warn!(
                             id,
-                            retained = local_buf.len(),
+                            retained,
                             total_bytes = total_seen,
                             cap = MAX_EXEC_OUTPUT_BYTES,
                             "exec output exceeded the cap; retaining the prefix"
@@ -1017,7 +1031,7 @@ fn dispatch_aux_connection(
                     // proceed. notify_one stores a permit if ExecDone is
                     // not yet parked, so the common "deposit finishes
                     // first" path wakes ExecDone immediately.
-                    let notify = deposit_exec_output(&js, id, local_buf, total_seen);
+                    let notify = exec_output::deposit(&js, id, capture);
                     if let Some(n) = notify {
                         n.notify_one();
                     }
@@ -1260,24 +1274,6 @@ fn rewritten_file_content(
     } else {
         Some(content.as_bytes().to_vec())
     }
-}
-
-fn deposit_exec_output(
-    job_store: &JobStore,
-    id: u64,
-    captured: Vec<u8>,
-    total_bytes: u64,
-) -> Option<Arc<tokio::sync::Notify>> {
-    let mut guard = job_store.active_execs.lock().unwrap();
-    let Some(active) = guard.get_mut(&id) else {
-        drop(guard);
-        return None;
-    };
-    active.captured = captured;
-    active.total_bytes = total_bytes;
-    let deposited = Arc::clone(&active.deposited);
-    drop(guard);
-    Some(deposited)
 }
 
 async fn handle_guest_msg(

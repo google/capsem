@@ -71,6 +71,7 @@ pub(super) fn security_event_forensic_json(event: &SecurityEvent) -> serde_json:
         "decision": event.decision,
         "detections": event.detections,
         "plugin_executions": event.plugin_executions,
+        "container": event.container,
         "http_request": event.http_request.as_ref().map(http_request_forensic_json),
         "http": event.http,
         "dns": event.dns,

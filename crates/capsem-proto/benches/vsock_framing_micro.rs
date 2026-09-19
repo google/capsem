@@ -4,6 +4,7 @@ use capsem_proto::{
     decode_dns_request, decode_guest_msg, decode_host_msg, decode_mcp_frame_body, encode_dns_request, encode_guest_msg,
     encode_host_msg, encode_mcp_frame, DnsRequest, GuestToHost, HostToGuest,
 };
+use serde::{Deserialize, Serialize};
 
 const ITERS: usize = 1_000_000;
 
@@ -13,6 +14,14 @@ struct Measurement {
     iterations: usize,
     elapsed_ms: f64,
     ops_per_sec: f64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct LegacyDnsRequest {
+    id: u32,
+    raw: Vec<u8>,
+    proto: String,
+    process_name: Option<String>,
 }
 
 fn measure(name: &'static str, iterations: usize, mut f: impl FnMut()) -> Measurement {
@@ -49,6 +58,13 @@ fn main() {
     };
     let dns_frame = encode_dns_request(&dns_request).unwrap();
     let dns_payload = &dns_frame[4..];
+    let legacy_dns = LegacyDnsRequest {
+        id: dns_request.id,
+        raw: dns_request.raw.clone(),
+        proto: dns_request.proto.clone(),
+        process_name: dns_request.process_name.clone(),
+    };
+    let legacy_dns_payload = rmp_serde::to_vec_named(&legacy_dns).unwrap();
 
     let mcp_frame = encode_mcp_frame(
         7,
@@ -60,6 +76,10 @@ fn main() {
     let mcp_body = &mcp_frame[4..];
 
     let results = [
+        measure("legacy_dns_int_array_decode_payload_1m", ITERS, || {
+            let _: LegacyDnsRequest =
+                std::hint::black_box(rmp_serde::from_slice(std::hint::black_box(&legacy_dns_payload)).unwrap());
+        }),
         measure("host_control_decode_payload_1m", ITERS, || {
             std::hint::black_box(decode_host_msg(std::hint::black_box(host_payload)).unwrap());
         }),
@@ -79,6 +99,11 @@ fn main() {
     ];
 
     println!("vsock/framing microbench");
+    println!(
+        "legacy 96-byte DNS payload frame bytes: {}",
+        legacy_dns_payload.len() + 4
+    );
+    println!("MessagePack binary DNS payload frame bytes: {}", dns_frame.len());
     println!("| bench | iterations | elapsed ms | ops/sec |");
     println!("|---|---:|---:|---:|");
     for result in results {

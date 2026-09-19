@@ -8,6 +8,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::client::{self, ApiResponse, ExecResponse, ProvisionRequest, RunRequest, UdsClient};
 use crate::container_image::{self, ImageArgs, Workload};
+use capsem_api::ContainerState;
 
 #[derive(clap::Args)]
 pub(super) struct RunArgs {
@@ -64,16 +65,26 @@ async fn run_command(client: &UdsClient, args: &RunArgs) -> Result<i32> {
     };
     let response: ApiResponse<ExecResponse> = client.post("/run", request).await?;
     let response = response.into_result()?;
-    let mut stdout = tokio::io::stdout();
-    stdout.write_all(response.stdout.as_bytes()).await?;
-    stdout.flush().await?;
-    let mut stderr = tokio::io::stderr();
-    stderr.write_all(response.stderr.as_bytes()).await?;
-    stderr.flush().await?;
-    if let Some(notice) = response.truncation_notice() {
-        eprintln!("{notice}");
-    }
+    write_exec_output(&mut tokio::io::stdout(), &mut tokio::io::stderr(), &response).await?;
     Ok(response.exit_code)
+}
+
+/// Print a command's output before its caller exits with the command's code.
+/// Tokio's stdout hands a write to a blocking thread and returns; only the
+/// flush waits for it, so without one `process::exit` could discard the output.
+pub(super) async fn write_exec_output(
+    stdout: &mut (impl tokio::io::AsyncWrite + Unpin),
+    stderr: &mut (impl tokio::io::AsyncWrite + Unpin),
+    response: &ExecResponse,
+) -> Result<()> {
+    stdout.write_all(&response.stdout.decode()?).await?;
+    stdout.flush().await?;
+    stderr.write_all(&response.stderr.decode()?).await?;
+    if let Some(notice) = response.truncation_notice() {
+        stderr.write_all(format!("{notice}\n").as_bytes()).await?;
+    }
+    stderr.flush().await?;
+    Ok(())
 }
 
 /// The image's workload attached, in a VM destroyed however the run ends:
@@ -85,10 +96,6 @@ async fn run_image(client: &UdsClient, args: &RunArgs, workload: &Workload<'_>) 
         tokio::select! { _ = interrupt.recv() => 130, _ = terminate.recv() => 143 }
     };
     tokio::pin!(cancel);
-    let pulled = tokio::select! {
-        pulled = container_image::pull(workload) => pulled?,
-        code = &mut cancel => return Ok(code),
-    };
     let request = ProvisionRequest {
         name: None,
         profile_id: args.profile.clone(),
@@ -98,15 +105,15 @@ async fn run_image(client: &UdsClient, args: &RunArgs, workload: &Workload<'_>) 
         env: None,
         from: None,
         networks: args.network.clone(),
+        container: Some(workload.spec(true).await?),
     };
     // Signals stay queued while the create request returns the VM to destroy.
     let vm = container_image::provision(client, &request).await?;
     eprintln!("Running {} ({})", vm.name, vm.id);
     let work = async {
-        container_image::stage(client, &vm, pulled.blobs(), workload)
-            .await?
-            .attach()
-            .await
+        container_image::follow(client, &vm.id, |state| state == ContainerState::Staged).await?;
+        container_image::expose(client, &vm.id, &workload.image.publish).await?;
+        container_image::attach(client, &vm.id).await
     };
     let deadline = async {
         match args.timeout {

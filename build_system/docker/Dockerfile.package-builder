@@ -15,6 +15,9 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml /prefetch/
 COPY .cargo/config.toml /prefetch/.cargo/config.toml
 COPY --chmod=555 build_system/scripts/build/rustc-workspace-wrapper.sh /prefetch/build_system/scripts/build/rustc-workspace-wrapper.sh
 COPY crates /prefetch/crates
+COPY sdk/rust/Cargo.toml /prefetch/sdk/rust/Cargo.toml
+RUN mkdir -p /prefetch/sdk/rust/src && : > /prefetch/sdk/rust/src/lib.rs
+COPY sdk/typescript/package.json sdk/typescript/pnpm-lock.yaml /prefetch/sdk/typescript/
 COPY web/app/package.json web/app/pnpm-lock.yaml web/app/pnpm-workspace.yaml /prefetch/web/app/
 COPY build_system/builder/image/tools/build/materialize_package_ort.py /usr/local/bin/materialize-package-ort.py
 
@@ -37,6 +40,7 @@ RUN selected="$(sed -n 's/^channel = \"\(.*\)\"/\1/p' rust-toolchain.toml)" \
 RUN mkdir -p /capsem-deps/cargo/registry /capsem-deps/cargo/git \
     && CARGO_HOME=/capsem-deps/cargo cargo fetch --locked --target "${RUST_TARGET}" \
     && CARGO_HOME=/capsem-deps/cargo cargo fetch --locked --target "${HOST_RUST_TARGET}"
+RUN cd sdk/typescript && pnpm fetch --frozen-lockfile --store-dir /capsem-deps/pnpm
 RUN cd web/app && pnpm fetch --frozen-lockfile --store-dir /capsem-deps/pnpm
 RUN python3 /usr/local/bin/materialize-package-ort.py \
     --url "${ORT_URL}" --sha256 "${ORT_SHA256}" --output /capsem-deps/ort

@@ -10,7 +10,7 @@ description: The native package installer: install, update, uninstall, service r
 ```
 ~/.capsem/
   bin/capsem, capsem-service, capsem-process, capsem-tui,
-      capsem-mcp, capsem-mcp-aggregator, capsem-mcp-builtin,
+      capsem-mcp-aggregator, capsem-mcp-builtin,
       capsem-gateway, capsem-tray, capsem-admin, capsem-mock-server
   assets/manifest.json, manifest-metadata.json, {asset-name}-{hash16}.{ext}
   run/service.sock, service.pid, instances/, persistent/
@@ -36,7 +36,7 @@ These commands dispatch before UdsClient creation -- they work without the servi
 
 1. `current_exe().parent()` -> bin_dir -> the packaged host binary cohort:
    `capsem`, `capsem-service`, `capsem-process`, `capsem-tui`,
-   `capsem-mcp`, `capsem-mcp-aggregator`, `capsem-mcp-builtin`,
+   `capsem-mcp-aggregator`, `capsem-mcp-builtin`,
    `capsem-gateway`, `capsem-tray`, `capsem-admin`, `capsem-mock-server`
 2. Assets: `~/.capsem/assets/` (the only installed layout -- packages install
    manifest URL provenance, then postinstall hydrates the live manifest and
@@ -53,6 +53,9 @@ These commands dispatch before UdsClient creation -- they work without the servi
 4. Poll socket for 5s
 
 The `request()` method wraps all HTTP calls with retry-on-connect-fail.
+
+The host MCP server is the separately installed `@capsem/mcp` npm package.
+Native installation must not install Node.js or download that package.
 
 ## Service registration (service_install.rs)
 

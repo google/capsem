@@ -29,7 +29,7 @@ REQUIRED_LINUX_RELEASE_BINARIES = frozenset(
         "capsem-app",
         "capsem-bench-rs",
         "capsem-gateway",
-        "capsem-mcp",
+
         "capsem-router",
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",

@@ -38,9 +38,16 @@ def host_bin_root(environment: Mapping[str, str] | None = None) -> Path:
 
     That cost the tenth binary-release dispatch, which died on
     `cache/target/cargo/debug/capsem-service` after every other job in the run had passed.
+
+    Without a lane, the debug binaries are wherever Cargo wrote them: the
+    bounded wrapper points `CARGO_TARGET_DIR` at the shared cache authority, so
+    a worktree's build is not under its own checkout.
     """
     source = os.environ if environment is None else environment
-    return Path(source.get(BIN_VARIABLE) or PROJECT_ROOT / "cache" / "target" / "cargo" / "debug")
+    if release := source.get(BIN_VARIABLE):
+        return Path(release)
+    target = source.get("CARGO_TARGET_DIR") or PROJECT_ROOT / "cache" / "target" / "cargo"
+    return Path(target) / "debug"
 
 
 ASSETS_DIR = content_assets_root()

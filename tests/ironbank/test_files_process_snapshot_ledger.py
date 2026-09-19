@@ -21,6 +21,7 @@ from helpers.constants import (
 )
 from helpers.service import (
     ServiceInstance,
+    exec_output_text,
     vm_name,
     vm_session_db_path,
     vm_session_dir,
@@ -186,11 +187,6 @@ def _extract_json_line(output: str, prefix: str) -> dict:
     raise AssertionError(f"{prefix!r} missing from output:\n{output}")
 
 
-def _columnar_rows(payload: dict) -> list[dict]:
-    assert set(payload) == {"columns", "rows"}
-    columns = payload["columns"]
-    assert columns == ["timestamp", "layer", "ref", "summary", "status", "duration_ms", "trace_id"]
-    return [dict(zip(columns, row, strict=True)) for row in payload["rows"]]
 
 
 def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
@@ -239,7 +235,7 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
             upload_body,
             timeout=30,
         )
-        assert upload == {"success": True, "size": len(upload_body)}
+        assert upload == {"success": True, "size": len(upload_body), "vm_path": f"/root/{upload_path}"}
 
         read_status, read_body = client.get_bytes(
             f"/vms/{session_id}/files/content?path={upload_path}",
@@ -263,7 +259,7 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
             script,
             timeout=30,
         )
-        assert script_upload == {"success": True, "size": len(script)}
+        assert script_upload == {"success": True, "size": len(script), "vm_path": f"/root/{script_path}"}
 
         exec_resp = client.post(
             f"/vms/{session_id}/exec",
@@ -272,7 +268,7 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
         )
         assert exec_resp is not None
         assert exec_resp["exit_code"] == 0, exec_resp
-        result = _extract_json_line(exec_resp["stdout"], "IRONBANK_FILE_PROCESS=")
+        result = _extract_json_line(exec_output_text(exec_resp), "IRONBANK_FILE_PROCESS=")
         assert result["nonce"] == nonce
         assert result["created_text"] == nonce
         assert result["modified_text"] == f"base:{nonce}\nchanged:{nonce}"
@@ -403,12 +399,12 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
                     timeout=30,
                 ),
                 lambda payload: (
-                    len(_columnar_rows(payload)) >= len(paths)
+                    len(payload["events"]) >= len(paths)
                     and {"fs", "exec"}
-                    <= {event["layer"] for event in _columnar_rows(payload)}
+                    <= {event["layer"] for event in payload["events"]}
                 ),
             )
-            timeline_rows = _columnar_rows(timeline)
+            timeline_rows = timeline["events"]
             assert len(timeline_rows) >= len(paths)
             layers = {event["layer"] for event in timeline_rows}
             assert {"fs", "exec"} <= layers

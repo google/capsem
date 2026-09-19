@@ -334,7 +334,7 @@ pub async fn run(grants: Receiver, mut events: UnixStream, port_limit: usize) ->
                     }
                     Grant::Unplug { port } => state.unplug(port),
                     Grant::Hello => return Err(invalid("duplicate switch hello")),
-                    Grant::Connected { id, .. } | Grant::Abort { id } => {
+                    Grant::Connected { id, .. } | Grant::Preview { id, .. } | Grant::Abort { id } => {
                         tracing::debug!(connection_id = id, "relay grant to a switch");
                         Event::Refused(id).write(&mut events).await?;
                     }

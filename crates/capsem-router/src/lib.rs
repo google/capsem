@@ -20,10 +20,15 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::time::{timeout, Duration};
 
+mod preview;
+
 pub const MAX_CONNECTIONS: usize = 128;
 /// The default ceiling on a relay's pairs and on a switch's ports.
 pub const CONNECTION_LIMIT: usize = 64;
-const VERSION: u8 = 5;
+const VERSION: u8 = 7;
+/// Preview grant kinds: the admitted request shape is part of the grant.
+const PREVIEW_REQUEST: u8 = 3;
+const PREVIEW_UPGRADE: u8 = 4;
 
 pub enum Grant<Socket = OwnedFd> {
     Hello,
@@ -31,6 +36,16 @@ pub enum Grant<Socket = OwnedFd> {
     /// framed VSOCK leg (`destination`).
     Connected {
         id: u64,
+        source: Socket,
+        destination: Socket,
+    },
+    /// An authenticated browser socket and its guest leg. HTTP parsing and
+    /// control-header filtering happen inside this confined process.
+    /// `admission` is the request shape the parent's policy admitted; the
+    /// router refuses any other shape on the same connection.
+    Preview {
+        id: u64,
+        admission: capsem_proto::PreviewAdmissionKind,
         source: Socket,
         destination: Socket,
     },
@@ -134,6 +149,20 @@ impl Grant {
                 })
             }
             ((2, id), 0) if id != 0 => Ok(Self::Abort { id }),
+            ((kind @ (PREVIEW_REQUEST | PREVIEW_UPGRADE), id), 2) if id != 0 => {
+                let destination = frame.fds.pop().unwrap();
+                let source = frame.fds.pop().unwrap();
+                Ok(Self::Preview {
+                    id,
+                    admission: if kind == PREVIEW_UPGRADE {
+                        capsem_proto::PreviewAdmissionKind::WebsocketUpgrade
+                    } else {
+                        capsem_proto::PreviewAdmissionKind::Request
+                    },
+                    source,
+                    destination,
+                })
+            }
             ((5, port), 1) if port_generation(port) != 0 => Ok(Self::Plug {
                 port,
                 socket: frame.fds.pop().unwrap(),
@@ -156,6 +185,20 @@ pub async fn send_grant(sender: &Sender, grant: Grant<BorrowedFd<'_>>) -> io::Re
                 .await?
         }
         Grant::Abort { id } => sender.send(&encode(2, id), &[]).await?,
+        Grant::Preview {
+            id,
+            admission,
+            source,
+            destination,
+        } => {
+            let kind = match admission {
+                capsem_proto::PreviewAdmissionKind::Request => PREVIEW_REQUEST,
+                capsem_proto::PreviewAdmissionKind::WebsocketUpgrade => PREVIEW_UPGRADE,
+            };
+            sender
+                .send(&encode(kind, id), &[source.as_raw_fd(), destination.as_raw_fd()])
+                .await?
+        }
         Grant::Plug { port, socket } => sender.send(&encode(5, port), &[socket.as_raw_fd()]).await?,
         Grant::Unplug { port } => sender.send(&encode(6, port), &[]).await?,
     };
@@ -326,7 +369,12 @@ pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionL
         loop {
             tokio::select! {
                 message = messages.recv() => match message.ok_or_else(|| invalid("router grant channel closed"))?? {
-                    Grant::Connected { id, source, destination } => {
+                    grant @ (Grant::Connected { .. } | Grant::Preview { .. }) => {
+                        let (id, source, destination, preview) = match grant {
+                            Grant::Connected { id, source, destination } => (id, source, destination, None),
+                            Grant::Preview { id, admission, source, destination } => (id, source, destination, Some(admission)),
+                            _ => unreachable!(),
+                        };
                         if id <= last_id { return Err(invalid("reused router connection id")); }
                         last_id = id;
                         let permit = match slots.clone().try_acquire_owned() {
@@ -356,9 +404,21 @@ pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionL
                         };
                         jobs.spawn(async move {
                             let _permit = permit;
-                            let result = router_stream::copy_until(&mut source.socket, &mut destination.socket, framings, router_stream::Limits::default(), async {
-                                let _ = stopped.await;
-                            }).await;
+                            let result = if let Some(admission) = preview {
+                                preview::relay(&mut source.socket, &mut destination.socket, admission, async {
+                                    let _ = stopped.await;
+                                })
+                                .await
+                            } else {
+                                router_stream::copy_until(
+                                    &mut source.socket,
+                                    &mut destination.socket,
+                                    framings,
+                                    router_stream::Limits::default(),
+                                    async { let _ = stopped.await; },
+                                )
+                                .await
+                            };
                             if result.reason == CloseReason::Complete {
                                 source.graceful = true;
                                 destination.graceful = true;

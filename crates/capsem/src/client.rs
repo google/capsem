@@ -22,89 +22,10 @@ use crate::{paths, service_install};
 // Request / Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ProvisionRequest {
-    pub name: Option<String>,
-    pub profile_id: String,
-    /// Absent: the profile's RAM.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ram_mb: Option<u64>,
-    /// Absent: the profile's CPU count.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpus: Option<u32>,
-    #[serde(default)]
-    pub persistent: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub env: Option<HashMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub from: Option<String>,
-    /// Named networks to join at create.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub networks: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ProvisionResponse {
-    pub id: String,
-    pub name: String,
-    pub profile_id: String,
-    pub status: VmLifecycleState,
-    #[serde(default)]
-    pub persistent: bool,
-    #[serde(default)]
-    pub can_resume: bool,
-    pub available_actions: Vec<VmAction>,
-    /// Where the per-VM `capsem-process` listens. Returned by the service
-    /// so clients never have to recompute the SUN_LEN fallback. `None` only
-    /// when talking to an older service that pre-dates this field.
-    #[serde(default)]
-    pub uds_path: Option<std::path::PathBuf>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ForkRequest {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ForkResponse {
-    pub name: String,
-    pub size_bytes: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VmLifecycleState {
-    Running,
-    Stopped,
-    Suspended,
-    Defunct,
-    Incompatible,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum VmAction {
-    Pause,
-    Stop,
-    Start,
-    Resume,
-    Fork,
-    Delete,
-}
-
-impl std::fmt::Display for VmLifecycleState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Running => f.write_str("Running"),
-            Self::Stopped => f.write_str("Stopped"),
-            Self::Suspended => f.write_str("Suspended"),
-            Self::Defunct => f.write_str("Defunct"),
-            Self::Incompatible => f.write_str("Incompatible"),
-        }
-    }
-}
+/// The wire contract is `capsem-api`'s. The CLI used to mirror these types by
+/// hand, which is how `ForkResponse` lost its `id` and `env`/`from` lost their
+/// serde defaults.
+pub use capsem_api::{ForkRequest, ForkResponse, ProvisionRequest, ProvisionResponse, VmLifecycleState};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SessionInfo {
@@ -224,36 +145,7 @@ pub struct HistoryResponse {
     pub has_more: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ExecRequest {
-    pub command: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_secs: Option<u64>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ExecResponse {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-    /// The guest produced more output than the per-exec capture limit, so
-    /// `stdout` is a prefix. Defaulted so an older service still decodes.
-    #[serde(default)]
-    pub truncated: bool,
-}
-
-impl ExecResponse {
-    /// Warning to print when the result was capped, or `None` when complete.
-    ///
-    /// The caller sends this to stderr: stdout stays byte-exact so piping and
-    /// programmatic consumers are unaffected by the notice. The limit itself
-    /// is deliberately not repeated here -- it lives in capsem-process, and
-    /// restating the number invites the two drifting apart.
-    pub fn truncation_notice(&self) -> Option<&'static str> {
-        self.truncated
-            .then_some("capsem: guest output exceeded the capture limit; showing the retained prefix")
-    }
-}
+pub use capsem_api::{ExecRequest, ExecResponse};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AssetEntry {
@@ -984,7 +876,9 @@ impl UdsClient {
 // ---------------------------------------------------------------------------
 
 mod networks;
+mod stream;
 pub use networks::*;
+pub use stream::StreamEvent;
 
 #[cfg(test)]
 pub(crate) mod tests;

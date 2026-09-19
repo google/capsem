@@ -705,7 +705,7 @@ def run_docker_binary_transition_smoke(
                 "capsem",
                 "capsem-admin",
                 "capsem-gateway",
-                "capsem-mcp",
+
                 "capsem-router",
                 "capsem-mcp-aggregator",
                 "capsem-mcp-builtin",
@@ -802,7 +802,7 @@ def run_docker_install_smoke(
             "capsem",
             "capsem-admin",
             "capsem-gateway",
-            "capsem-mcp",
+
             "capsem-router",
             "capsem-mcp-aggregator",
             "capsem-mcp-builtin",

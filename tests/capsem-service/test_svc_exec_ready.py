@@ -19,6 +19,7 @@ from helpers.constants import (
     EXEC_TIMEOUT_SECS,
     HTTP_TIMEOUT,
 )
+from helpers.service import exec_output_text
 
 pytestmark = pytest.mark.integration
 
@@ -54,7 +55,7 @@ class TestExecImmediatelyAfterProvision:
             timeout=HTTP_TIMEOUT,
         )
         assert exec_resp is not None, "exec returned None"
-        assert "ready-no-wait" in exec_resp.get("stdout", ""), (
+        assert "ready-no-wait" in exec_output_text(exec_resp), (
             f"expected 'ready-no-wait' in stdout, got: {exec_resp}"
         )
         assert exec_resp.get("exit_code") == 0
@@ -62,7 +63,7 @@ class TestExecImmediatelyAfterProvision:
         client.delete(f"/vms/{vm_id}/delete")
 
     def test_write_file_immediately_after_provision(self, service_env):
-        """POST /vms/{id}/files/write must succeed right after POST /vms/create."""
+        """POST /vms/{id}/files/content must succeed right after POST /vms/create."""
         client = service_env.client()
         name = vm_name("wi")
         resp = client.post(
@@ -78,11 +79,7 @@ class TestExecImmediatelyAfterProvision:
         vm_id = resp.get("id", name)
 
         # Immediately write -- server must wait for VM readiness.
-        write_resp = client.post(
-            f"/vms/{vm_id}/files/write",
-            {"path": "/root/race-test.txt", "content": "race-check"},
-            timeout=HTTP_TIMEOUT,
-        )
+        write_resp = client.upload_file(vm_id, "/root/race-test.txt", "race-check", timeout=HTTP_TIMEOUT)
         assert write_resp is not None, "write_file returned None"
         assert write_resp.get("success") is True, f"write_file failed: {write_resp}"
 
@@ -105,20 +102,12 @@ class TestExecImmediatelyAfterProvision:
         vm_id = resp.get("id", name)
 
         # Immediately write then read -- server must wait for VM readiness.
-        write_resp = client.post(
-            f"/vms/{vm_id}/files/write",
-            {"path": "/root/read-probe.txt", "content": "probe-data"},
-            timeout=HTTP_TIMEOUT,
-        )
+        write_resp = client.upload_file(vm_id, "/root/read-probe.txt", "probe-data", timeout=HTTP_TIMEOUT)
         assert write_resp is not None, "write_file returned None"
 
-        read_resp = client.post(
-            f"/vms/{vm_id}/files/read",
-            {"path": "/root/read-probe.txt"},
-            timeout=HTTP_TIMEOUT,
-        )
+        read_resp = client.download_file(vm_id, "/root/read-probe.txt", timeout=HTTP_TIMEOUT)
         assert read_resp is not None, "read_file returned None"
-        assert "content" in read_resp, f"read_file missing content: {read_resp}"
+        assert read_resp == b"probe-data", f"download returned unexpected bytes: {read_resp}"
 
         client.delete(f"/vms/{vm_id}/delete")
 
@@ -148,7 +137,7 @@ class TestExecImmediatelyAfterResume:
             {"command": "echo setup-ok", "timeout_secs": EXEC_TIMEOUT_SECS},
             timeout=HTTP_TIMEOUT,
         )
-        assert setup_resp is not None and "setup-ok" in setup_resp.get("stdout", ""), (
+        assert setup_resp is not None and "setup-ok" in exec_output_text(setup_resp), (
             f"VM {name} never became exec-ready after provision: {setup_resp}"
         )
 
@@ -166,7 +155,7 @@ class TestExecImmediatelyAfterResume:
             timeout=HTTP_TIMEOUT,
         )
         assert exec_resp is not None, "exec after resume returned None"
-        assert "resumed-no-wait" in exec_resp.get("stdout", ""), (
+        assert "resumed-no-wait" in exec_output_text(exec_resp), (
             f"expected 'resumed-no-wait' in stdout, got: {exec_resp}"
         )
         assert exec_resp.get("exit_code") == 0

@@ -83,13 +83,18 @@ fn test_profile_mutation_db(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
     ServiceState::open_profile_mutation_db_handle(run_dir).unwrap()
 }
 
-fn make_test_state() -> Arc<ServiceState> {
+pub(crate) fn make_test_state() -> Arc<ServiceState> {
+    Arc::new(make_test_state_owned())
+}
+
+/// The test state before it is shared, for tests that replace an owner.
+pub(crate) fn make_test_state_owned() -> ServiceState {
     let test_tempdir = tempfile::tempdir().unwrap();
     let run_dir = test_tempdir.path().join("run");
     std::fs::create_dir_all(&run_dir).unwrap();
     let registry_path = run_dir.join("persistent_registry.json");
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
-    Arc::new(ServiceState {
+    ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(PersistentRegistry::load(registry_path).expect("registry loads")),
@@ -119,6 +124,8 @@ fn make_test_state() -> Arc<ServiceState> {
         profile_mutation_db: test_profile_mutation_db(&run_dir),
         last_defunct_reconcile_ms: AtomicU64::new(0),
         stats_response_cache: Mutex::new(None),
+        stats_detail_response_cache: Mutex::new(HashMap::new()),
+        containers: Default::default(),
         storage_diagnostics_cache: Mutex::new(HashMap::new()),
         persistent_resume_state_cache: Mutex::new(HashMap::new()),
         evaluate_rule_cache: Mutex::new(HashMap::new()),
@@ -127,12 +134,12 @@ fn make_test_state() -> Arc<ServiceState> {
         evaluate_response_cache: Mutex::new(HashMap::new()),
         list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
-        save_restore_lock: tokio::sync::RwLock::new(()),
+        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
         update_restart: tokio::sync::Notify::new(),
         _test_tempdir: Some(test_tempdir),
-    })
+    }
 }
 
 pub(crate) async fn route_request(
@@ -202,6 +209,8 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         profile_mutation_db: test_profile_mutation_db(&run_dir),
         last_defunct_reconcile_ms: AtomicU64::new(0),
         stats_response_cache: Mutex::new(None),
+        stats_detail_response_cache: Mutex::new(HashMap::new()),
+        containers: Default::default(),
         storage_diagnostics_cache: Mutex::new(HashMap::new()),
         persistent_resume_state_cache: Mutex::new(HashMap::new()),
         evaluate_rule_cache: Mutex::new(HashMap::new()),
@@ -210,7 +219,7 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         evaluate_response_cache: Mutex::new(HashMap::new()),
         list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
-        save_restore_lock: tokio::sync::RwLock::new(()),
+        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
         update_restart: tokio::sync::Notify::new(),
@@ -249,6 +258,8 @@ fn insert_fake_instance(state: &ServiceState, id: &str, pid: u32) {
 pub(crate) type FakeProcessReply =
     std::pin::Pin<Box<dyn std::future::Future<Output = Option<ProcessToService>> + Send>>;
 
+const FAKE_PROCESS_ACCEPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// A stand-in capsem-process listening on `uds_path`: accepts `expected`
 /// service connections one at a time, answers each message through
 /// `handler` (no reply closes the connection), and returns everything it
@@ -264,8 +275,14 @@ pub(crate) fn spawn_fake_process(
     std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
     tokio::spawn(async move {
         let mut messages = Vec::new();
-        for _ in 0..expected {
-            let (stream, _) = listener.accept().await.unwrap();
+        for received in 0..expected {
+            // A route that stops talking to its VM used to hang the whole
+            // binary here: tests serialized on SETTINGS_ENV_LOCK stalled
+            // behind the one waiting forever. Fail with what was missing.
+            let (stream, _) = tokio::time::timeout(FAKE_PROCESS_ACCEPT_TIMEOUT, listener.accept())
+                .await
+                .unwrap_or_else(|_| panic!("fake capsem-process got {received} of {expected} expected IPC connections"))
+                .unwrap();
             let std_stream = stream.into_std().unwrap();
             let std_stream = tokio::task::spawn_blocking(move || {
                 let mut std_stream = std_stream;
@@ -412,7 +429,7 @@ fn install_test_profile_catalog(state: &ServiceState, profile: &ProfileConfigFil
     super::set_test_profile_dir_override(Some(config_root.join("profiles")));
 }
 
-fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
+pub(crate) fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
     PersistentVmEntry {
         id: new_persistent_vm_id(),
         name: name.into(),
@@ -685,6 +702,8 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         profile_mutation_db: test_profile_mutation_db(&run_dir),
         last_defunct_reconcile_ms: AtomicU64::new(0),
         stats_response_cache: Mutex::new(None),
+        stats_detail_response_cache: Mutex::new(HashMap::new()),
+        containers: Default::default(),
         storage_diagnostics_cache: Mutex::new(HashMap::new()),
         persistent_resume_state_cache: Mutex::new(HashMap::new()),
         evaluate_rule_cache: Mutex::new(HashMap::new()),
@@ -693,7 +712,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         evaluate_response_cache: Mutex::new(HashMap::new()),
         list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
-        save_restore_lock: tokio::sync::RwLock::new(()),
+        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
         update_restart: tokio::sync::Notify::new(),
@@ -706,17 +725,25 @@ mod assets_registry;
 mod async_io_contract;
 mod db_handle_ownership;
 mod files_api;
+mod files_paths;
+mod inspection;
+mod interactions;
+mod ipc_command;
 mod ledger_routes;
 mod lifecycle;
+mod logs_api;
 mod network_routes;
 mod persist_purge;
 mod profile_mutations;
 mod profile_routes;
+mod restart;
 mod session_identity;
 mod settings_files;
+mod snapshots_api;
 mod system_contracts;
 mod transcript;
 mod update_routes;
+mod vm_info;
 
 pub(crate) use assets_registry::make_state_in;
 use settings_files::{

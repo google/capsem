@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.build_chain
 
@@ -27,7 +27,7 @@ def test_full_chain_boot_exec_delete(signed_binaries):
 
         resp = client.post(f"/vms/{name}/exec", {"command": "echo chain-works"})
         assert resp is not None
-        assert "chain-works" in resp.get("stdout", ""), (
+        assert "chain-works" in exec_output_text(resp), (
             f"Expected 'chain-works' in stdout, got: {resp}"
         )
 

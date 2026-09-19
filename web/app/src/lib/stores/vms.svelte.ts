@@ -37,7 +37,7 @@ class VmStore {
       const prevCount = this.vms.length;
       const prevService = this.serviceStatus;
       this.vms = status.vms;
-      this.resourceSummary = status.resource_summary;
+      this.resourceSummary = status.resource_summary ?? null;
       this.serviceStatus = status.service;
       this.polled = true;
       this.error = null;

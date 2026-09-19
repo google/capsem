@@ -28,7 +28,7 @@ from helpers.constants import (
     EXEC_READY_TIMEOUT,
     EXEC_TIMEOUT_SECS,
 )
-from helpers.service import vm_name, wait_exec_ready
+from helpers.service import exec_output_text, vm_name, wait_exec_ready
 
 pytestmark = pytest.mark.integration
 
@@ -76,8 +76,8 @@ class TestSuspendOverlayDurability:
             missing = []
             for p in paths:
                 r = _exec(client, resumed, f"cat {p} 2>&1")
-                if marker not in r.get("stdout", ""):
-                    missing.append((p, r.get("exit_code"), r.get("stdout", "")[:200]))
+                if marker not in exec_output_text(r):
+                    missing.append((p, r.get("exit_code"), exec_output_text(r)[:200]))
             assert not missing, "overlay files lost after suspend+resume:\n" + "\n".join(
                 f"  {p}: exit={ec} out={out!r}" for p, ec, out in missing
             )
@@ -116,7 +116,7 @@ class TestSuspendOverlayDurability:
                 f"`cd /root && ls -la` failed after resume: exit={r.get('exit_code')} "
                 f"stdout={r.get('stdout')!r} stderr={r.get('stderr')!r}"
             )
-            assert "before.txt" in r.get("stdout", ""), \
+            assert "before.txt" in exec_output_text(r), \
                 f"before.txt missing after resume: {r}"
 
             # Qualification once caught a subtler EXT4 inode failure where
@@ -127,7 +127,7 @@ class TestSuspendOverlayDurability:
             link = _exec(client, resumed, "readlink /root/.venv")
             assert link.get("exit_code") == 0, \
                 f".venv readlink failed after resume: {link}"
-            assert link.get("stdout", "").strip() == "/run/capsem-venv", \
+            assert exec_output_text(link).strip() == "/run/capsem-venv", \
                 f".venv target corrupted after resume: {link}"
         finally:
             client.delete(f"/vms/{name}/delete")
@@ -197,7 +197,7 @@ printf '%s\n' "$entries"
 cat /root/held-open.txt""",
             )
             assert result.get("exit_code") == 0, f"restored open FDs failed: {result}"
-            lines = result.get("stdout", "").splitlines()
+            lines = exec_output_text(result).splitlines()
             assert "held-open.txt" in lines[0].split(","), result
             assert lines[1:] == ["before", "after"], result
         finally:

@@ -34,14 +34,29 @@ MATCH_GUARDS = (
         ("web/app/src/lib/components",),
     ),
     (
-        "MCP request bypasses its explicit profile parameter",
-        r"['\"]profile_id['\"]\s*:\s*DEFAULT_PROFILE_ID",
-        ("crates/capsem-mcp/src/main.rs",),
+        "SDK or MCP surface compiles in a profile name instead of asking the gateway "
+        "catalog for its default",
+        rf"['\"]{PROFILE_TERMS}['\"]",
+        (
+            "sdk/python/capsem",
+            "sdk/typescript/src",
+            "mcp/typescript/src",
+            # The Rust SDK keeps its tests under src/, so its production
+            # modules are named rather than walked.
+            "sdk/rust/src/client.rs",
+            "sdk/rust/src/error.rs",
+            "sdk/rust/src/hypervisor.rs",
+            "sdk/rust/src/lib.rs",
+            "sdk/rust/src/options.rs",
+            "sdk/rust/src/resources.rs",
+            "sdk/rust/src/transport.rs",
+            "sdk/rust/src/vm.rs",
+        ),
     ),
     (
         "profile-scoped MCP route silently uses the default profile",
         r"['\"]/profiles/\{\}/mcp[^;]{0,240}DEFAULT_PROFILE_ID",
-        ("crates/capsem/src/main.rs", "crates/capsem-mcp/src/main.rs"),
+        ("crates/capsem/src/main.rs",),
     ),
     (
         "workflow input silently defaults a profile or public release channel",

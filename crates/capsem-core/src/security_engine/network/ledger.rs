@@ -44,10 +44,11 @@ impl NetworkSecurity {
             .ok_or_else(|| SecurityActionError::new("network routing facts missing"))?;
         let (network_id, connection_id) = match network {
             NetworkSecurityEvent::Lifecycle { network, .. } => (Some(network.id), None),
+            NetworkSecurityEvent::Exposure(_) | NetworkSecurityEvent::ContainerPull { .. } => (None, None),
             NetworkSecurityEvent::Flow(flow) => {
                 let network_id = match &flow.route {
                     NetworkRoute::Private { network } => Some(network.id),
-                    NetworkRoute::Expose { .. } => None,
+                    NetworkRoute::Expose { .. } | NetworkRoute::Preview { .. } => None,
                 };
                 (network_id, Some(flow.connection_id))
             }

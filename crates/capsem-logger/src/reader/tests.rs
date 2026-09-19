@@ -726,10 +726,13 @@ async fn disk_sync_runs_only_when_another_connection_committed() {
     writer.flush().await;
 
     let reader = DbReader::open(&path).expect("external reader opens");
-    reader.sync_from_disk().expect("first sync copies the tables");
+    assert!(reader.sync_from_disk().expect("first sync copies the tables"));
     assert_eq!(reader.disk_syncs(), 1);
     for _ in 0..5 {
-        reader.sync_from_disk().expect("no-op sync");
+        assert!(
+            !reader.sync_from_disk().expect("no-op sync"),
+            "no commit means no change"
+        );
     }
     assert_eq!(reader.disk_syncs(), 1, "polls with nothing committed must copy nothing");
     let before = reader.query_raw("SELECT COUNT(*) FROM dns_events").unwrap();
@@ -737,7 +740,7 @@ async fn disk_sync_runs_only_when_another_connection_committed() {
 
     writer.write(crate::WriteOp::DnsEvent(dns_fixture(2))).await;
     writer.flush().await;
-    reader.sync_from_disk().expect("sync after a commit");
+    assert!(reader.sync_from_disk().expect("sync after a commit"));
     assert_eq!(
         reader.disk_syncs(),
         2,

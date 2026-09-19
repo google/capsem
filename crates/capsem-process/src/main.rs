@@ -24,7 +24,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info, warn};
 
 use job_store::JobStore;
-use mcp_runtime::McpRuntime;
+use mcp_runtime::{GuestExposureTools, McpRuntime};
 use vsock::VsockOptions;
 
 /// Owns the background-thread resources that MUST drain before the main
@@ -454,7 +454,7 @@ async fn run_async_main_loop(
         .restore(ctrl_tx.clone())
         .await
         .context("restore published ports")?;
-    *job_store.publications.lock().unwrap() = restored;
+    info!(restored, "restored published ports");
     let model_trace_state = Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new()));
 
     // Start host file monitor to record fs_events.
@@ -562,13 +562,19 @@ async fn run_async_main_loop(
     info!(inflight_cap, "MITM MCP endpoint in-flight handler cap");
     let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.model_endpoints.clone())));
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
-    let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
-        aggregator_client.clone(),
-        Arc::clone(&security_rules),
-        Arc::clone(&plugin_policy),
-        Arc::clone(&mcp_inflight),
-        capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
-    ));
+    let mcp_endpoint = Arc::new(
+        capsem_core::net::mitm_proxy::McpEndpointState::new(
+            aggregator_client.clone(),
+            Arc::clone(&security_rules),
+            Arc::clone(&plugin_policy),
+            Arc::clone(&mcp_inflight),
+            capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
+        )
+        .with_scoped_tools(Arc::new(GuestExposureTools::new(
+            Arc::clone(&job_store.publisher),
+            ctrl_tx.clone(),
+        ))),
+    );
     let mcp_runtime = Arc::new(McpRuntime {
         aggregator: aggregator_client,
         endpoint: Arc::clone(&mcp_endpoint),
@@ -679,7 +685,6 @@ async fn run_async_main_loop(
 
     let ctrl_tx_ipc = ctrl_tx.clone();
     let uds_path = args.uds_path.clone();
-    let vm_id_ws = args.id.clone();
     let is_restore = args.checkpoint_path.is_some();
     let vm_for_vsock = Arc::clone(&vm);
     let vm_ready_vsock = Arc::clone(&vm_ready);
@@ -756,58 +761,14 @@ async fn run_async_main_loop(
         std::fs::set_permissions(&launched_path, std::fs::Permissions::from_mode(0o600))?;
     }
 
-    // Through `capsem_foundation::uds`, which owns the length rule -- the gateway
-    // derives this same path independently, so both must apply it identically
-    // *and* start from the same run directory. The fallback keeps the old
-    // derivation for a caller that passes no run directory; it is only correct
-    // when the IPC path was not itself shortened, which is why the service
-    // passes one.
-    let walked_up = uds_path
-        .parent()
-        .and_then(|instances| instances.parent())
-        .unwrap_or_else(|| std::path::Path::new("/tmp"));
-    let ws_run_dir = args.run_dir.as_deref().unwrap_or(walked_up);
-    let ws_sock_path = capsem_foundation::uds::terminal_socket_path(ws_run_dir, &vm_id_ws)?;
-    if ws_sock_path.exists() {
-        std::fs::remove_file(&ws_sock_path)?;
-    }
-    let ws_listener = tokio::net::UnixListener::bind(&ws_sock_path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&ws_sock_path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    info!(socket = %ws_sock_path.display(), "listening for terminal WS (mode 0600)");
-
-    // Terminal relay: fan-out broadcast + ring buffer so a newly-connecting
-    // WS client sees the shell's startup banner (printed before it joined).
+    // Terminal relay: fan-out broadcast + ring buffer so a newly-attached
+    // terminal stream sees the shell's startup banner (printed before it joined).
     let term_relay = terminal::TerminalRelay::new(1024);
     let term_c_bcast = Arc::clone(&terminal_output);
     let term_relay_pump = Arc::clone(&term_relay);
     tokio::spawn(async move {
         while let Some(data) = term_c_bcast.poll().await {
             term_relay_pump.publish(data);
-        }
-    });
-
-    let ctrl_tx_ws = ctrl_tx_ipc.clone();
-    let term_relay_app = Arc::clone(&term_relay);
-
-    let ws_app =
-        axum::Router::new().route(
-            "/terminal",
-            axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade| {
-                let ctrl_tx = ctrl_tx_ws.clone();
-                let (replay, term_rx) = term_relay_app.subscribe();
-                async move {
-                    ws.on_upgrade(move |socket| terminal::handle_terminal_socket(socket, ctrl_tx, replay, term_rx))
-                }
-            }),
-        );
-
-    tokio::spawn(async move {
-        if let Err(e) = axum::serve(ws_listener, ws_app).await {
-            error!("WS server error: {}", e);
         }
     });
 

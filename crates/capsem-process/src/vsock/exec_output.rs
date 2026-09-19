@@ -1,79 +1,138 @@
-/// Maximum guest exec output retained in memory.
-///
-/// The Exec vsock port is a raw stream, so the `MAX_FRAME_SIZE` bound that
-/// `read_control_msg` applies to length-prefixed control frames never reaches
-/// it. Without a cap here, a guest running `yes` grows this process until the
-/// OOM killer takes it and every in-flight job with it.
-///
-/// 10 MiB matches capsem-gateway's `MAX_BODY_SIZE`: output past that already
-/// cannot traverse the gateway to a remote client, so this moves an existing
-/// ceiling to before the allocation instead of after it.
+use capsem_proto::ExecOutputChannel;
+use std::sync::Arc;
+
+use crate::job_store::JobStore;
+
+/// Maximum combined guest exec output retained in memory.
 pub(super) const MAX_EXEC_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
 
-/// Drain one exec-output stream through EOF, retaining at most
-/// [`MAX_EXEC_OUTPUT_BYTES`].
-///
-/// Returns the retained bytes and the total number of bytes seen, which differ
-/// exactly when the guest exceeded the cap. Reading continues past the cap so
-/// the guest is not left blocked on a full socket and so the reported total is
-/// the real one; only the retained buffer stops growing.
-///
-/// Signals can interrupt a blocking socket read. `Interrupted` is not EOF:
-/// treating it as completion publishes an empty/partial buffer before the
-/// guest's `ExecDone`, while still returning the child's successful exit code.
-pub(super) fn read_exec_output(reader: &mut impl std::io::Read) -> (Vec<u8>, u64) {
-    read_output(reader, |_: &[u8]| Ok(()), false).expect("capture has no fallible forwarding")
+/// Output kept per lane for the exec ledger preview. A streamed exec delivers
+/// its output to the client, so this is all it retains.
+pub(super) const EXEC_LEDGER_PREVIEW_BYTES: usize = 1024;
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct ExecCapture {
+    pub(super) stdout: Vec<u8>,
+    pub(super) stderr: Vec<u8>,
+    pub(super) stdout_bytes: u64,
+    pub(super) stderr_bytes: u64,
+    /// Why the output stopped early, when it did. A malformed or truncated
+    /// frame used to read as a clean EOF: a non-streaming exec then returned
+    /// partial output with the guest's exit code and nothing said so.
+    pub(super) error: Option<String>,
 }
+
+pub(super) fn deposit(job_store: &JobStore, id: u64, capture: ExecCapture) -> Option<Arc<tokio::sync::Notify>> {
+    // One line per exec at the EXEC-port boundary: whether the guest's output
+    // reached the host at all, and how much.
+    tracing::debug!(
+        exec_id = id,
+        stdout_bytes = capture.stdout_bytes,
+        stderr_bytes = capture.stderr_bytes,
+        error = ?capture.error,
+        "exec output read"
+    );
+    let mut active = job_store.active_execs.lock().unwrap();
+    let Some(exec) = active.get_mut(&id) else {
+        // The exec already completed without this output; say so rather than
+        // dropping the bytes without a trace.
+        tracing::warn!(
+            exec_id = id,
+            stdout_bytes = capture.stdout_bytes,
+            stderr_bytes = capture.stderr_bytes,
+            "exec output arrived after its exec completed; discarding it"
+        );
+        return None;
+    };
+    exec.captured = capture.stdout;
+    exec.captured_stderr = capture.stderr;
+    exec.total_bytes = capture.stdout_bytes;
+    exec.stderr_bytes = capture.stderr_bytes;
+    if let Some(error) = capture.error {
+        exec.output_error.get_or_insert(error);
+    }
+    let deposited = Arc::clone(&exec.deposited);
+    drop(active);
+    Some(deposited)
+}
+
+/// Drain framed exec output through EOF. Reading continues after the retained
+/// cap so the guest cannot block on a full socket and telemetry records the
+/// actual byte volume.
+pub(super) fn read_exec_output(reader: &mut impl std::io::Read) -> ExecCapture {
+    read_output(reader, |_, _| Ok(()), false, MAX_EXEC_OUTPUT_BYTES).expect("capture has no fallible forwarding")
+}
+
+/// Bytes buffered per read of the EXEC socket: frames are read from memory, not
+/// one syscall for a length and another for each payload.
+const EXEC_OUTPUT_READ_BUFFER: usize = 64 * 1024;
 
 fn read_output(
     reader: &mut impl std::io::Read,
-    mut forward: impl FnMut(&[u8]) -> std::io::Result<()>,
+    mut forward: impl FnMut(ExecOutputChannel, Vec<u8>) -> std::io::Result<()>,
     strict: bool,
-) -> std::io::Result<(Vec<u8>, u64)> {
-    let mut output = Vec::new();
-    let mut total_seen: u64 = 0;
-    let mut read_buf = [0u8; 8192];
+    retain_per_lane: usize,
+) -> std::io::Result<ExecCapture> {
+    let mut reader = std::io::BufReader::with_capacity(EXEC_OUTPUT_READ_BUFFER, reader);
+    let mut capture = ExecCapture::default();
     loop {
-        match reader.read(&mut read_buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                forward(&read_buf[..n])?;
-                total_seen = total_seen.saturating_add(n as u64);
-                let room = MAX_EXEC_OUTPUT_BYTES.saturating_sub(output.len());
-                if room > 0 {
-                    output.extend_from_slice(&read_buf[..n.min(room)]);
-                }
-            }
+        let frame = match read_frame(&mut reader) {
+            Ok(Some(frame)) => frame,
+            Ok(None) => break,
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(error) if strict => return Err(error),
-            Err(_) => break,
+            Err(error) => {
+                capture.error = Some(format!("exec output transport failed: {error}"));
+                break;
+            }
+        };
+        let combined = capture.stdout.len().saturating_add(capture.stderr.len());
+        let combined_room = MAX_EXEC_OUTPUT_BYTES.saturating_sub(combined);
+        let (retained, total) = match frame.channel {
+            ExecOutputChannel::Stdout => (&mut capture.stdout, &mut capture.stdout_bytes),
+            ExecOutputChannel::Stderr => (&mut capture.stderr, &mut capture.stderr_bytes),
+        };
+        *total = total.saturating_add(frame.data.len() as u64);
+        let lane_room = retain_per_lane.saturating_sub(retained.len());
+        let keep = frame.data.len().min(combined_room).min(lane_room);
+        retained.extend_from_slice(&frame.data[..keep]);
+        // Retain first, then hand the bytes on: a streamed chunk moves, never clones.
+        forward(frame.channel, frame.data)?;
+    }
+    Ok(capture)
+}
+
+/// Distinguish clean socket EOF between frames from a truncated frame: an
+/// empty buffer after a refill is EOF; anything else must be a whole frame.
+fn read_frame(reader: &mut impl std::io::BufRead) -> std::io::Result<Option<capsem_proto::ExecOutputFrame>> {
+    loop {
+        match reader.fill_buf() {
+            Ok([]) => return Ok(None),
+            Ok(_) => return capsem_proto::read_exec_output(reader).map(Some),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
         }
     }
-    Ok((output, total_seen))
 }
 
 pub(super) fn stream_exec_output(
     reader: &mut impl std::io::Read,
     id: u64,
     sender: &tokio::sync::mpsc::Sender<capsem_proto::ipc::ProcessToService>,
-) -> std::io::Result<(Vec<u8>, u64)> {
+) -> std::io::Result<ExecCapture> {
     let mut attached = true;
     read_output(
         reader,
-        |data| {
+        |channel, data| {
             if attached {
                 attached = sender
-                    .blocking_send(capsem_proto::ipc::ProcessToService::ExecOutput {
-                        id,
-                        data: data.to_vec(),
-                    })
+                    .blocking_send(capsem_proto::ipc::ProcessToService::ExecOutput { id, channel, data })
                     .is_ok();
             }
-            // A detached client owns no guest lifetime. Keep draining with the
-            // same capture bound so logs cannot block or SIGPIPE the workload.
             Ok(())
         },
         true,
+        EXEC_LEDGER_PREVIEW_BYTES,
     )
 }
 

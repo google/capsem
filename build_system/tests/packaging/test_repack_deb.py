@@ -37,7 +37,7 @@ REQUIRED_BINARIES = [
     "capsem-process",
     "capsem-router",
     "capsem-tui",
-    "capsem-mcp",
+
     "capsem-mcp-aggregator",
     "capsem-mcp-builtin",
     "capsem-gateway",

@@ -60,6 +60,7 @@ pub(super) fn ackable_id(msg: &HostToGuest) -> Option<u64> {
         | HostToGuest::FileWrite { id, .. }
         | HostToGuest::FileRead { id, .. }
         | HostToGuest::FileDelete { id, .. } => Some(*id),
+        HostToGuest::CancelExec { cancellation_id, .. } => Some(*cancellation_id),
         _ => None,
     }
 }
