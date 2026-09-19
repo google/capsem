@@ -67,7 +67,9 @@ def test_container_pull_policy_stops_before_registry_egress_and_redacts_credenti
         assert "policy refused" in refusal, created
         assert not requests, requests
         assert password not in refusal and username not in refusal
-        vm_id = re.search(r"for VM ([0-9a-f-]{36})", refusal).group(1)
+        named = re.search(r"for VM ([0-9a-f-]{36})", refusal)
+        assert named is not None, f"the refusal names the discarded VM: {refusal}"
+        vm_id = named.group(1)
         assert all(vm["id"] != vm_id for vm in client.get("/vms/list")["sandboxes"])
 
         kept = sorted((service.tmp_dir / "sessions").glob(f"{vm_id}-failed-*"))
