@@ -198,12 +198,23 @@ struct Dropped {
     rows: u64,
 }
 
+/// A block is kept while its newest segment is inside the window, or while
+/// any row still inside the window names it: dedup lets a new row point at
+/// bytes in an older block, and that row's body must outlive the block's own
+/// age. The keep set and the deletes both read this one predicate, so they
+/// cannot disagree about which blocks survive.
+const KEPT_BLOCK: &str = "sealed_at >= ?1 OR EXISTS (
+    SELECT 1 FROM event_body_blobs AS kept
+    WHERE kept.block_offset = body_blocks.block_offset AND kept.created_at >= ?1)";
+
 /// `(block_offset, disk_len)` of every block to keep: the offset to find it
 /// and the committed extent to copy.
 fn kept_block_offsets(conn: &Connection, cutoff: &str) -> Result<Vec<(u64, u64)>, String> {
     let read_error = |error: rusqlite::Error| format!("session body retention could not read body_blocks: {error}");
     let mut statement = conn
-        .prepare_cached("SELECT block_offset, disk_len FROM body_blocks WHERE sealed_at >= ?1 ORDER BY block_offset")
+        .prepare_cached(&format!(
+            "SELECT block_offset, disk_len FROM body_blocks WHERE {KEPT_BLOCK} ORDER BY block_offset"
+        ))
         .map_err(read_error)?;
     let rows = statement
         .query_map(params![cutoff], |row| {
@@ -226,7 +237,7 @@ fn kept_block_offsets(conn: &Connection, cutoff: &str) -> Result<Vec<(u64, u64)>
 /// Delete the aged-out rows and move the survivors to their new offsets, in
 /// one transaction.
 ///
-/// The deletes use the same `sealed_at` predicate the keep set came from
+/// The deletes use the same `KEPT_BLOCK` predicate the keep set came from
 /// rather than a list of offsets: the writer thread is the only writer and is
 /// the one running this, so the two evaluations cannot disagree -- and the
 /// count check below refuses to go on if they somehow did.
@@ -257,11 +268,16 @@ fn reindex(
     // the very first pair would be refused.
     tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
     let rows = tx.execute(
-        "DELETE FROM event_body_blobs
-         WHERE block_offset IN (SELECT block_offset FROM body_blocks WHERE sealed_at < ?1)",
+        &format!(
+            "DELETE FROM event_body_blobs
+             WHERE block_offset IN (SELECT block_offset FROM body_blocks WHERE NOT ({KEPT_BLOCK}))"
+        ),
         params![cutoff],
     )?;
-    let blocks = tx.execute("DELETE FROM body_blocks WHERE sealed_at < ?1", params![cutoff])?;
+    let blocks = tx.execute(
+        &format!("DELETE FROM body_blocks WHERE NOT ({KEPT_BLOCK})"),
+        params![cutoff],
+    )?;
 
     let survivors: i64 = tx.query_row("SELECT COUNT(*) FROM body_blocks", [], |row| row.get(0))?;
     if survivors != moved.len() as i64 {

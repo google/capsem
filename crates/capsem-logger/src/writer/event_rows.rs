@@ -145,17 +145,20 @@ pub(super) fn insert_security_rule_event(
             event.credential_ref,
         ],
     )?;
-    bodies.stage(EventBodyBlob {
-        event_id: &event.event_id,
-        event_type: "security.rule",
-        source_table: "security_rule_events",
-        direction: "payload",
-        content_type: Some("application/json"),
-        body: Some(event.event_json.as_bytes()),
-        original_bytes: None,
-        trace_id: event.trace_id.as_deref(),
-        turn_id: event.turn_id.as_deref(),
-    });
+    bodies.stage(
+        conn,
+        EventBodyBlob {
+            event_id: &event.event_id,
+            event_type: "security.rule",
+            source_table: "security_rule_events",
+            direction: "payload",
+            content_type: Some("application/json"),
+            body: Some(event.event_json.as_bytes()),
+            original_bytes: None,
+            trace_id: event.trace_id.as_deref(),
+            turn_id: event.turn_id.as_deref(),
+        },
+    );
     Ok(())
 }
 
@@ -193,17 +196,20 @@ pub(super) fn insert_security_ask_event(
             event.trace_id,
         ],
     )?;
-    bodies.stage(EventBodyBlob {
-        event_id: &event.event_id,
-        event_type: "security.ask",
-        source_table: "security_ask_events",
-        direction: "payload",
-        content_type: Some("application/json"),
-        body: Some(event.event_json.as_bytes()),
-        original_bytes: None,
-        trace_id: event.trace_id.as_deref(),
-        turn_id: event.trace_id.as_deref(),
-    });
+    bodies.stage(
+        conn,
+        EventBodyBlob {
+            event_id: &event.event_id,
+            event_type: "security.ask",
+            source_table: "security_ask_events",
+            direction: "payload",
+            content_type: Some("application/json"),
+            body: Some(event.event_json.as_bytes()),
+            original_bytes: None,
+            trace_id: event.trace_id.as_deref(),
+            turn_id: event.trace_id.as_deref(),
+        },
+    );
     Ok(())
 }
 
@@ -245,17 +251,20 @@ pub(super) fn insert_security_decision_event(
             event.credential_ref,
         ],
     )?;
-    bodies.stage(EventBodyBlob {
-        event_id: &event.event_id,
-        event_type: "security.decision",
-        source_table: "security_decision_events",
-        direction: "payload",
-        content_type: Some("application/json"),
-        body: Some(event.event_json.as_bytes()),
-        original_bytes: None,
-        trace_id: event.trace_id.as_deref(),
-        turn_id: event.turn_id.as_deref(),
-    });
+    bodies.stage(
+        conn,
+        EventBodyBlob {
+            event_id: &event.event_id,
+            event_type: "security.decision",
+            source_table: "security_decision_events",
+            direction: "payload",
+            content_type: Some("application/json"),
+            body: Some(event.event_json.as_bytes()),
+            original_bytes: None,
+            trace_id: event.trace_id.as_deref(),
+            turn_id: event.turn_id.as_deref(),
+        },
+    );
     Ok(())
 }
 

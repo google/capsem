@@ -90,7 +90,8 @@ pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
 /// Bodies the archive gave up on, by the step that gave up: the only place a
 /// poisoned archive surfaces besides a log line.
 pub const DB_ARCHIVE_BODIES_DROPPED_TOTAL: &str = "db.archive_bodies_dropped_total";
-/// Bodies indexed against identical bytes already in the open block.
+/// Bodies indexed against identical bytes already stored, labelled by
+/// scope: `block` (the open block) or `archive` (a committed earlier segment).
 pub const DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL: &str = "db.archive_bodies_deduplicated_total";
 /// Ops the writer holds in memory waiting for a disk flush. It falls to zero
 /// on every flush that lands; a value that only climbs is a disk the writer
@@ -113,7 +114,7 @@ fn new_event_id() -> String {
     value[..12].to_string()
 }
 
-fn format_timestamp(timestamp: SystemTime) -> String {
+pub(crate) fn format_timestamp(timestamp: SystemTime) -> String {
     format_ledger_timestamp(timestamp)
 }
 

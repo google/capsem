@@ -62,31 +62,37 @@ pub(super) fn insert_model_call(
         ],
     )?;
     let model_call_id = conn.last_insert_rowid();
-    bodies.stage(EventBodyBlob {
-        event_id: &event_id,
-        event_type: "model.call",
-        source_table: "model_calls",
-        direction: "request",
-        content_type: Some("application/json"),
-        body: call.request_body.as_deref(),
-        original_bytes: None,
-        trace_id: call.trace_id.as_deref(),
-        turn_id: call.trace_id.as_deref(),
-    });
-    bodies.stage(EventBodyBlob {
-        event_id: &event_id,
-        event_type: "model.call",
-        source_table: "model_calls",
-        direction: "response",
-        content_type: None,
-        body: call
-            .response_body
-            .as_deref()
-            .or_else(|| call.text_content.as_deref().map(str::as_bytes)),
-        original_bytes: None,
-        trace_id: call.trace_id.as_deref(),
-        turn_id: call.trace_id.as_deref(),
-    });
+    bodies.stage(
+        conn,
+        EventBodyBlob {
+            event_id: &event_id,
+            event_type: "model.call",
+            source_table: "model_calls",
+            direction: "request",
+            content_type: Some("application/json"),
+            body: call.request_body.as_deref(),
+            original_bytes: None,
+            trace_id: call.trace_id.as_deref(),
+            turn_id: call.trace_id.as_deref(),
+        },
+    );
+    bodies.stage(
+        conn,
+        EventBodyBlob {
+            event_id: &event_id,
+            event_type: "model.call",
+            source_table: "model_calls",
+            direction: "response",
+            content_type: None,
+            body: call
+                .response_body
+                .as_deref()
+                .or_else(|| call.text_content.as_deref().map(str::as_bytes)),
+            original_bytes: None,
+            trace_id: call.trace_id.as_deref(),
+            turn_id: call.trace_id.as_deref(),
+        },
+    );
     insert_model_items(conn, model_call_id, call, &timestamp, target)?;
 
     for tc in &call.tool_calls {
@@ -133,19 +139,22 @@ pub(super) fn insert_model_call(
         // excerpt, reached from the same event_id the archive row carries.
         let tr_content_preview = cap_preview(&tr.content_preview);
         let tr_event_id = tr.event_id.clone().unwrap_or_else(new_event_id);
-        bodies.stage(EventBodyBlob {
-            event_id: &tr_event_id,
-            // A tool result is part of the model exchange it continues;
-            // `source_table` is what distinguishes it from the call body.
-            event_type: "model.call",
-            source_table: "tool_responses",
-            direction: "response",
-            content_type: None,
-            body: tr.content_preview.as_deref().map(str::as_bytes),
-            original_bytes: None,
-            trace_id: tr_trace.as_deref(),
-            turn_id: call.trace_id.as_deref(),
-        });
+        bodies.stage(
+            conn,
+            EventBodyBlob {
+                event_id: &tr_event_id,
+                // A tool result is part of the model exchange it continues;
+                // `source_table` is what distinguishes it from the call body.
+                event_type: "model.call",
+                source_table: "tool_responses",
+                direction: "response",
+                content_type: None,
+                body: tr.content_preview.as_deref().map(str::as_bytes),
+                original_bytes: None,
+                trace_id: tr_trace.as_deref(),
+                turn_id: call.trace_id.as_deref(),
+            },
+        );
         super::execute_cached(
             conn,
             &format!(

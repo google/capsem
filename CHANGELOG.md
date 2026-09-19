@@ -195,8 +195,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rule match, the decision it drove and an ask it raised carry the same event,
   and an event matching several rules used to store its payload once per rule
   with only one copy indexed; on recorded sessions the security payloads now take
-  22-61% less archive space. Bodies are only shared inside one block, so
-  retention still drops every row with the block it points into.
+  22-61% less archive space. A body of 512 bytes or more that is already
+  stored in an earlier block is not stored again; retention keeps that block
+  while any retained row still reads from it.
 - The session archive compresses bodies about 1.7x better. Every five-second
   disk flush used to seal the block being written, so blocks averaged about
   85 KiB and the flush timer, not the data, capped compression. A block now

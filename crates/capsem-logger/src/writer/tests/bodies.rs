@@ -173,7 +173,7 @@ fn appended_blocks_are_flushed_before_their_index_rows_commit() {
     crate::schema::create_tables(&conn).unwrap();
 
     let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
-    archive.stage(body_blob("0f1f2f3f4f5f", "a body worth flushing"));
+    archive.stage(&conn, body_blob("0f1f2f3f4f5f", "a body worth flushing"));
     archive.flush_segment();
     archive.commit_index_rows(&conn).unwrap();
 
@@ -204,8 +204,8 @@ fn a_body_that_does_not_fit_the_open_block_closes_it_and_retries() {
     let first = "y".repeat(MAX_BODY_BLOB_BYTES);
     let second = "z".repeat(MAX_BODY_BLOB_BYTES);
     let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
-    archive.stage(body_blob("aaaaaaaaaaa1", &first));
-    archive.stage(body_blob("aaaaaaaaaaa2", &second));
+    archive.stage(&conn, body_blob("aaaaaaaaaaa1", &first));
+    archive.stage(&conn, body_blob("aaaaaaaaaaa2", &second));
     archive.flush_segment();
     archive.commit_index_rows(&conn).unwrap();
     archive.sync();
@@ -248,7 +248,7 @@ fn a_poisoned_archive_drops_its_uncommitted_blocks_instead_of_retrying_forever()
     crate::schema::create_tables(&conn).unwrap();
 
     let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
-    archive.stage(body_blob("0b0b0b0b0b0b", "a body whose writer dies after it"));
+    archive.stage(&conn, body_blob("0b0b0b0b0b0b", "a body whose writer dies after it"));
     archive.flush_segment();
     assert_eq!(archive.appended_len_for_tests(), 1, "the segment is written");
 
@@ -302,13 +302,13 @@ fn giving_up_drops_the_rows_that_can_no_longer_be_placed() {
     crate::schema::create_tables(&conn).unwrap();
 
     let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
-    archive.stage(body_blob("0c0c0c0c0c0c", "a body staged before the writer died"));
+    archive.stage(&conn, body_blob("0c0c0c0c0c0c", "a body staged before the writer died"));
     assert!(archive.has_work(), "the row and its bytes are pending");
 
     archive.give_up("stage");
 
     assert!(!archive.has_work(), "nothing may be left for a flush to insert or seal");
-    archive.stage(body_blob("0d0d0d0d0d0d", "a body staged after"));
+    archive.stage(&conn, body_blob("0d0d0d0d0d0d", "a body staged after"));
     assert!(!archive.has_work(), "and nothing new is accepted either");
 
     archive.commit_index_rows(&conn).unwrap();
@@ -345,9 +345,9 @@ fn the_body_lost_to_a_failed_close_is_counted() {
 
     metrics::with_local_recorder(&recorder, || {
         let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
-        archive.stage(body_blob("0e0e0e0e0e0e", &body));
+        archive.stage(&conn, body_blob("0e0e0e0e0e0e", &body));
         archive.fail_next_append_for_tests();
-        archive.stage(body_blob("0f0f0f0f0f0f", &other));
+        archive.stage(&conn, body_blob("0f0f0f0f0f0f", &other));
     });
 
     let dropped: Vec<(String, u64)> = snapshotter
@@ -400,11 +400,11 @@ fn identical_bytes_share_a_span_only_inside_the_open_block() {
         let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
         let payload = r#"{"event":"matched by three rules"}"#;
 
-        archive.stage(body_blob("0e0e0e0e0e01", payload));
+        archive.stage(&conn, body_blob("0e0e0e0e0e01", payload));
         let one_copy = archive.pending_bytes();
         assert_eq!(one_copy, payload.len());
         for event_id in ["0e0e0e0e0e02", "0e0e0e0e0e03"] {
-            archive.stage(body_blob(event_id, payload));
+            archive.stage(&conn, body_blob(event_id, payload));
         }
         assert_eq!(archive.pending_bytes(), one_copy, "repeats append nothing");
 
@@ -412,19 +412,19 @@ fn identical_bytes_share_a_span_only_inside_the_open_block() {
         // prefix would not.
         let same_length: String = payload.chars().rev().collect();
         assert_eq!(same_length.len(), payload.len());
-        archive.stage(body_blob("0e0e0e0e0e04", &same_length));
+        archive.stage(&conn, body_blob("0e0e0e0e0e04", &same_length));
         assert_eq!(archive.pending_bytes(), one_copy * 2, "different content is stored");
 
         archive.flush_segment();
         assert_eq!(archive.pending_bytes(), 0);
-        archive.stage(body_blob("0e0e0e0e0e05", payload));
+        archive.stage(&conn, body_blob("0e0e0e0e0e05", payload));
         assert_eq!(
             archive.pending_bytes(),
             0,
             "a flush leaves the block open, and its spans reusable"
         );
         archive.close_block();
-        archive.stage(body_blob("0e0e0e0e0e06", payload));
+        archive.stage(&conn, body_blob("0e0e0e0e0e06", payload));
         assert_eq!(
             archive.pending_bytes(),
             payload.len(),
@@ -491,17 +491,17 @@ fn a_crash_between_a_segment_and_its_commit_strands_bytes_and_nothing_else() {
     crate::schema::create_tables(&conn).unwrap();
 
     let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
-    archive.stage(body_blob("0a0a0a0a0a01", "committed before the crash"));
+    archive.stage(&conn, body_blob("0a0a0a0a0a01", "committed before the crash"));
     archive.flush_segment();
     commit(&mut archive, &conn);
-    archive.stage(body_blob("0a0a0a0a0a02", "written, never committed"));
+    archive.stage(&conn, body_blob("0a0a0a0a0a02", "written, never committed"));
     archive.flush_segment();
     // The crash: the segment is in the file, its row never commits.
     drop(archive);
     let stranded_end = std::fs::metadata(archive_path_for_db(&db_path)).unwrap().len();
 
     let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
-    archive.stage(body_blob("0a0a0a0a0a03", "after the restart"));
+    archive.stage(&conn, body_blob("0a0a0a0a0a03", "after the restart"));
     archive.flush_segment();
     commit(&mut archive, &conn);
 
@@ -549,13 +549,13 @@ fn a_block_open_longer_than_its_age_limit_closes_before_the_next_body() {
     crate::schema::create_tables(&conn).unwrap();
 
     let mut archive = BodyArchive::open(Some(&db_path), test_clock, &conn);
-    archive.stage(body_blob("0a0a0a0a0b01", "opens the block"));
+    archive.stage(&conn, body_blob("0a0a0a0a0b01", "opens the block"));
     archive.flush_segment();
     advance_test_clock(MAX_BLOCK_AGE.saturating_sub(std::time::Duration::from_secs(60)));
-    archive.stage(body_blob("0a0a0a0a0b02", "still inside the age limit"));
+    archive.stage(&conn, body_blob("0a0a0a0a0b02", "still inside the age limit"));
     archive.flush_segment();
     advance_test_clock(std::time::Duration::from_secs(120));
-    archive.stage(body_blob("0a0a0a0a0b03", "past it"));
+    archive.stage(&conn, body_blob("0a0a0a0a0b03", "past it"));
     archive.flush_segment();
     commit(&mut archive, &conn);
 

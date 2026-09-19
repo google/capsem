@@ -61,28 +61,34 @@ pub(super) fn insert_net_event(
             event.credential_ref,
         ],
     )?;
-    bodies.stage(EventBodyBlob {
-        event_id: &event_id,
-        event_type: "http.request",
-        source_table: "net_events",
-        direction: "request",
-        content_type: event.request_headers.as_deref().and_then(content_type_from_headers),
-        body: event.request_body.as_deref(),
-        original_bytes: None,
-        trace_id: event.trace_id.as_deref(),
-        turn_id: event.trace_id.as_deref(),
-    });
-    bodies.stage(EventBodyBlob {
-        event_id: &event_id,
-        event_type: "http.request",
-        source_table: "net_events",
-        direction: "response",
-        content_type: event.response_headers.as_deref().and_then(content_type_from_headers),
-        body: event.response_body.as_deref(),
-        original_bytes: None,
-        trace_id: event.trace_id.as_deref(),
-        turn_id: event.trace_id.as_deref(),
-    });
+    bodies.stage(
+        conn,
+        EventBodyBlob {
+            event_id: &event_id,
+            event_type: "http.request",
+            source_table: "net_events",
+            direction: "request",
+            content_type: event.request_headers.as_deref().and_then(content_type_from_headers),
+            body: event.request_body.as_deref(),
+            original_bytes: None,
+            trace_id: event.trace_id.as_deref(),
+            turn_id: event.trace_id.as_deref(),
+        },
+    );
+    bodies.stage(
+        conn,
+        EventBodyBlob {
+            event_id: &event_id,
+            event_type: "http.request",
+            source_table: "net_events",
+            direction: "response",
+            content_type: event.response_headers.as_deref().and_then(content_type_from_headers),
+            body: event.response_body.as_deref(),
+            original_bytes: None,
+            trace_id: event.trace_id.as_deref(),
+            turn_id: event.trace_id.as_deref(),
+        },
+    );
     Ok(())
 }
 
@@ -176,28 +182,34 @@ pub(super) fn insert_mcp_call(
                 call.credential_ref.as_deref(),
             ],
         )?;
-        bodies.stage(EventBodyBlob {
-            event_id: &event_id,
-            event_type: "mcp.tool_call",
-            source_table: "tool_calls",
-            direction: "request",
-            content_type: Some("application/json"),
-            body: call.request_preview.as_deref().map(str::as_bytes),
-            original_bytes: None,
-            trace_id: call.trace_id.as_deref(),
-            turn_id: call.trace_id.as_deref(),
-        });
-        bodies.stage(EventBodyBlob {
-            event_id: &event_id,
-            event_type: "mcp.tool_call",
-            source_table: "tool_calls",
-            direction: "response",
-            content_type: Some("application/json"),
-            body: call.response_preview.as_deref().map(str::as_bytes),
-            original_bytes: None,
-            trace_id: call.trace_id.as_deref(),
-            turn_id: call.trace_id.as_deref(),
-        });
+        bodies.stage(
+            conn,
+            EventBodyBlob {
+                event_id: &event_id,
+                event_type: "mcp.tool_call",
+                source_table: "tool_calls",
+                direction: "request",
+                content_type: Some("application/json"),
+                body: call.request_preview.as_deref().map(str::as_bytes),
+                original_bytes: None,
+                trace_id: call.trace_id.as_deref(),
+                turn_id: call.trace_id.as_deref(),
+            },
+        );
+        bodies.stage(
+            conn,
+            EventBodyBlob {
+                event_id: &event_id,
+                event_type: "mcp.tool_call",
+                source_table: "tool_calls",
+                direction: "response",
+                content_type: Some("application/json"),
+                body: call.response_preview.as_deref().map(str::as_bytes),
+                original_bytes: None,
+                trace_id: call.trace_id.as_deref(),
+                turn_id: call.trace_id.as_deref(),
+            },
+        );
         return Ok(());
     }
     let _ = (event_id, timestamp, req_preview, resp_preview);
@@ -282,17 +294,20 @@ pub(super) fn update_exec_event(
             complete.stderr_bytes,
         ),
     ] {
-        bodies.stage(EventBodyBlob {
-            event_id: &start.event_id,
-            event_type: "process.exec_complete",
-            source_table: "exec_events",
-            direction,
-            content_type: Some("text/plain"),
-            body,
-            original_bytes: Some(produced),
-            trace_id: start.trace_id.as_deref(),
-            turn_id: start.trace_id.as_deref(),
-        });
+        bodies.stage(
+            conn,
+            EventBodyBlob {
+                event_id: &start.event_id,
+                event_type: "process.exec_complete",
+                source_table: "exec_events",
+                direction,
+                content_type: Some("text/plain"),
+                body,
+                original_bytes: Some(produced),
+                trace_id: start.trace_id.as_deref(),
+                turn_id: start.trace_id.as_deref(),
+            },
+        );
     }
     let exec_events = start.table;
     execute_cached(

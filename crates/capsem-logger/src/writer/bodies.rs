@@ -25,16 +25,17 @@
 //! matches three rules archives its payload three times over, and the
 //! decision it drives and an ask it raises repeat it again; a body whose
 //! stored bytes hash to one already in the open block is indexed against that
-//! span and adds nothing to the file. The reuse stays inside one block:
-//! retention drops blocks whole, so every row naming a block shares that
-//! block's lifetime.
+//! span and adds nothing to the file. A body of at least 512 bytes whose
+//! bytes already sit in a committed segment of any earlier block is indexed
+//! against that span too. Retention keeps a block while any row it retains
+//! names it, so a shared span lives as long as its newest reader.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use capsem_archive::{ArchiveError, BodyLogWriter, BodyRef, SegmentWritten};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use tracing::warn;
 
 use super::{
@@ -125,6 +126,9 @@ pub(super) struct BodyArchive {
     block_opened_at: Option<SystemTime>,
     /// Rows whose bytes are staged but not yet in a written segment.
     staged: Vec<BodyIndexRow>,
+    /// Rows pointing at bytes an earlier transaction already committed. No
+    /// segment carries them; they commit with the next flush.
+    reused: Vec<BodyIndexRow>,
     /// Where each distinct body in the open block sits, by the hash of its
     /// stored bytes -- the same `blake3:` string the index row records, so it
     /// is computed once. Cleared when the block closes: a span is reusable
@@ -145,6 +149,45 @@ pub(super) struct BodyArchive {
     /// the archive is flushed before the rows that name it are written.
     #[cfg(test)]
     steps: Vec<&'static str>,
+}
+
+/// Bodies shorter than this are not looked up in the archive index. Deflate's
+/// window already finds a repeat that small inside the block, and the lookup
+/// would cost more than the bytes it saves.
+const MIN_ARCHIVE_DEDUP_BYTES: usize = 512;
+
+/// Where identical stored bytes already sit in a committed segment, if they
+/// do. Committed spans are immutable and synced, so pointing a new row at one
+/// is as safe as pointing at fresh bytes; retention keeps a block while any
+/// row it retains names it. A failed lookup is a missed saving, not an error.
+fn committed_span(conn: &Connection, len: usize, body_hash: &str) -> Option<BodyRef> {
+    if len < MIN_ARCHIVE_DEDUP_BYTES {
+        return None;
+    }
+    let found = conn
+        .prepare_cached(
+            "SELECT block_offset, body_offset, body_len FROM main.event_body_blobs
+             WHERE body_hash = ?1 LIMIT 1",
+        )
+        .and_then(|mut statement| {
+            statement
+                .query_row(params![body_hash], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+                })
+                .optional()
+        });
+    match found {
+        Ok(Some((block_offset, offset, body_len))) if usize::try_from(body_len).ok() == Some(len) => Some(BodyRef {
+            block_offset: u64::try_from(block_offset).ok()?,
+            offset: u32::try_from(offset).ok()?,
+            len: u32::try_from(body_len).ok()?,
+        }),
+        Ok(_) => None,
+        Err(error) => {
+            warn!(error = %error, "archive dedup lookup failed; storing the body again");
+            None
+        }
+    }
 }
 
 /// Whether a staging error is about this body or about the writer.
@@ -254,6 +297,7 @@ impl BodyArchive {
             now,
             block_opened_at: None,
             staged: Vec::new(),
+            reused: Vec::new(),
             block_spans: HashMap::new(),
             next_seq: 0,
             appended: Vec::new(),
@@ -266,7 +310,7 @@ impl BodyArchive {
 
     /// Stage one body: its bytes into the open block, its index row beside
     /// them. Empty and absent bodies produce neither.
-    pub(super) fn stage(&mut self, blob: EventBodyBlob<'_>) {
+    pub(super) fn stage(&mut self, conn: &Connection, blob: EventBodyBlob<'_>) {
         if self.writer.is_none() {
             return;
         }
@@ -287,12 +331,15 @@ impl BodyArchive {
         // anything, and a reader that verifies what it read is how a corrupted
         // index row stops being a body. It is also what finds a repeat.
         let body_hash = blake3_bytes_ref(stored);
-        let Some(reference) = self.stage_bytes(stored, &body_hash) else {
+        let Some((reference, committed)) = self.stage_bytes(conn, stored, &body_hash) else {
             return;
         };
         let seq = self.next_seq;
         self.next_seq += 1;
-        self.staged.push(BodyIndexRow {
+        // A row naming bytes already committed and synced waits for no
+        // segment: it joins the next transaction as it is.
+        let pending = if committed { &mut self.reused } else { &mut self.staged };
+        pending.push(BodyIndexRow {
             seq,
             event_id: blob.event_id.to_string(),
             event_type: blob.event_type,
@@ -331,16 +378,20 @@ impl BodyArchive {
     /// archive out of service here, because the rows staged beside it would
     /// name bytes no file received. In no case may a body take down the
     /// writer thread that owns the whole session ledger.
-    fn stage_bytes(&mut self, bytes: &[u8], body_hash: &str) -> Option<BodyRef> {
+    fn stage_bytes(&mut self, conn: &Connection, bytes: &[u8], body_hash: &str) -> Option<(BodyRef, bool)> {
         if self.block_is_stale() {
             self.close_block();
         }
         if let Some(reference) = self.block_spans.get(body_hash) {
-            ::metrics::counter!(DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL).increment(1);
-            return Some(*reference);
+            ::metrics::counter!(DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL, "scope" => "block").increment(1);
+            return Some((*reference, false));
+        }
+        if let Some(reference) = committed_span(conn, bytes.len(), body_hash) {
+            ::metrics::counter!(DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL, "scope" => "archive").increment(1);
+            return Some((reference, true));
         }
         match self.stage_into_open_block(bytes, body_hash)? {
-            Ok(reference) => return Some(reference),
+            Ok(reference) => return Some((reference, false)),
             Err(ArchiveError::BlockFull) => {}
             Err(error) => {
                 self.refuse_body(&error, bytes.len(), "stage");
@@ -349,7 +400,7 @@ impl BodyArchive {
         }
         self.close_block();
         match self.stage_into_open_block(bytes, body_hash) {
-            Some(Ok(reference)) => Some(reference),
+            Some(Ok(reference)) => Some((reference, false)),
             Some(Err(error)) => {
                 self.refuse_body(&error, bytes.len(), "stage_after_close");
                 None
@@ -463,6 +514,7 @@ impl BodyArchive {
     /// behind a segment that was written mid-transaction go with the rest.
     pub(super) fn rollback_staged(&mut self, mark: u64) {
         self.staged.retain(|row| row.seq < mark);
+        self.reused.retain(|row| row.seq < mark);
         for (_, rows) in &mut self.appended {
             rows.retain(|row| row.seq < mark);
         }
@@ -487,7 +539,7 @@ impl BodyArchive {
     /// were dropped by a rollback -- they still have to reach the file, or the
     /// writer closes holding them.
     pub(super) fn has_work(&self) -> bool {
-        !self.appended.is_empty() || !self.staged.is_empty() || self.pending_bytes() > 0
+        !self.appended.is_empty() || !self.staged.is_empty() || !self.reused.is_empty() || self.pending_bytes() > 0
     }
 
     /// Write everything staged since the last flush as one segment of the
@@ -583,10 +635,10 @@ impl BodyArchive {
     /// beside it and the commit after it; all three roll back every row, and
     /// the next flush retries these with them.
     pub(super) fn commit_index_rows(&mut self, conn: &Connection) -> rusqlite::Result<()> {
-        if self.appended.is_empty() {
+        if self.appended.is_empty() && self.reused.is_empty() {
             return Ok(());
         }
-        if !self.sync_appended_segments() {
+        if !self.appended.is_empty() && !self.sync_appended_segments() {
             return Ok(());
         }
         // Recorded here, where the first row is actually written, and not
@@ -598,7 +650,7 @@ impl BodyArchive {
         for (segment, _) in &self.appended {
             upsert_block(conn, segment, &sealed_at)?;
         }
-        for row in self.appended.iter().flat_map(|(_, rows)| rows) {
+        for row in self.appended.iter().flat_map(|(_, rows)| rows).chain(&self.reused) {
             execute_cached(
                 conn,
                 "INSERT OR REPLACE INTO event_body_blobs (
@@ -634,6 +686,7 @@ impl BodyArchive {
     /// those segments are indexed and this archive is done with them.
     pub(super) fn index_rows_committed(&mut self) {
         self.appended.clear();
+        self.reused.clear();
     }
 
     /// Flush the written segments to the device before their rows commit.
@@ -677,9 +730,11 @@ impl BodyArchive {
     /// and the rows of bytes not yet written are equally unreachable once the
     /// archive stops vouching for its own file.
     pub(super) fn abandon_uncommitted(&mut self, reason: &'static str) {
-        let dropped: usize = self.appended.iter().map(|(_, rows)| rows.len()).sum::<usize>() + self.staged.len();
+        let dropped: usize =
+            self.appended.iter().map(|(_, rows)| rows.len()).sum::<usize>() + self.staged.len() + self.reused.len();
         self.appended.clear();
         self.staged.clear();
+        self.reused.clear();
         self.drop_bodies(dropped, reason);
     }
 

@@ -3,9 +3,9 @@
 //! A rule match's payload, the decision it drove and an ask it raised carry
 //! byte-identical events, and an event matching several rules archived its
 //! payload once per rule with only one of those copies indexed. What these hold:
-//! the repeats share a span and read back hash-verified, the reuse never crosses
-//! a block, and everything that walks the archive -- retention, the WARC export
-//! -- still sees one body per index row.
+//! the repeats share a span and read back hash-verified, a large repeat reuses a
+//! committed span in an earlier block, and everything that walks the archive --
+//! retention, the WARC export -- still sees one body per index row.
 
 use std::collections::BTreeSet;
 
@@ -171,31 +171,84 @@ async fn an_event_matching_three_rules_stores_its_payload_once() {
     );
 }
 
-/// Pinned so a later change cannot quietly add cross-block reuse: retention
-/// drops blocks whole, and a row in a newer block pointing into an older one
-/// would be left naming bytes that are gone once the older block ages out.
+/// A payload big enough to be worth an index lookup (at least 512 bytes).
+fn large_payload() -> String {
+    format!(
+        r#"{{"event_type":"http.request","http":{{"host":"dedup.example","body":"{}"}}}}"#,
+        "a".repeat(700)
+    )
+}
+
+/// A large body already committed in an earlier block is not stored again:
+/// the newer row points into the older block and reads back hash-verified.
 #[tokio::test]
-async fn identical_bodies_in_different_blocks_are_stored_in_each() {
-    let p = temp_db_path("dedup-not-across-blocks");
+async fn a_large_body_in_an_earlier_block_is_reused() {
+    let p = temp_db_path("dedup-across-blocks");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
+    let db = DbHandle::open(&p).expect("open handle");
+    let large = large_payload();
+    write_rule(&db, "0123456789a2", "profiles.rules.dedup", &large).await;
+    db.flush().await.expect("flush closes the first block");
+    write_decision(&db, "0123456789a2", &large).await;
+    db.flush().await.expect("flush commits the second row");
+
+    let spans = payload_spans(&db, "0123456789a2").await;
+    assert_eq!(spans.len(), 2);
+    assert_eq!(
+        (spans[0].1, spans[0].2),
+        (spans[1].1, spans[1].2),
+        "one span: {spans:?}"
+    );
+    assert_eq!(archived_raw_bytes(&db).await, large.len() as i64, "stored once");
+    for table in ["security_rule_events", "security_decision_events"] {
+        assert_eq!(payload(&db, "0123456789a2", table).await, large.as_bytes(), "{table}");
+    }
+}
+
+/// Below the lookup floor, a repeat in a later block is stored again: deflate
+/// already absorbs it, and the lookup would cost more than it saves.
+#[tokio::test]
+async fn a_small_body_in_an_earlier_block_is_stored_again() {
+    let p = temp_db_path("dedup-small-across-blocks");
     crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let db = DbHandle::open(&p).expect("open handle");
     write_rule(&db, "0123456789a2", "profiles.rules.dedup", PAYLOAD).await;
-    db.flush().await.expect("flush seals the first block");
+    db.flush().await.expect("flush closes the first block");
     write_decision(&db, "0123456789a2", PAYLOAD).await;
-    db.flush().await.expect("flush seals the second block");
+    db.flush().await.expect("flush commits the second row");
 
-    assert_eq!(count(&db, "SELECT COUNT(*) FROM body_blocks").await, 2);
-    let spans = payload_spans(&db, "0123456789a2").await;
-    assert_eq!(spans.len(), 2);
-    assert_ne!(spans[0].1, spans[1].1, "each row names its own block: {spans:?}");
+    assert_eq!(archived_raw_bytes(&db).await, 2 * PAYLOAD.len() as i64);
+}
+
+/// A block past its own age is kept while a newer row still points into it,
+/// and goes once that row ages out too.
+#[tokio::test]
+async fn retention_keeps_an_old_block_a_newer_row_still_reads() {
+    let p = temp_db_path("dedup-retention-across-blocks");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
+    let db = DbHandle::open(&p).expect("open handle");
+    let large = large_payload();
+    write_rule(&db, "0123456789b1", "profiles.rules.old", &large).await;
+    db.flush().await.expect("flush the old block");
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let cutoff = crate::writer::format_timestamp(std::time::SystemTime::now());
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    write_decision(&db, "0123456789b1", &large).await;
+    db.flush().await.expect("flush the newer row");
+
+    db.retain_bodies_since(&cutoff).await.expect("retain");
     assert_eq!(
-        archived_raw_bytes(&db).await,
-        2 * PAYLOAD.len() as i64,
-        "a sealed block's bytes are never pointed back into"
+        payload(&db, "0123456789b1", "security_decision_events").await,
+        large.as_bytes(),
+        "the newer row still reads its bytes from the older block"
     );
-    for table in ["security_rule_events", "security_decision_events"] {
-        assert_eq!(payload(&db, "0123456789a2", table).await, PAYLOAD.as_bytes(), "{table}");
-    }
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM pragma_foreign_key_check").await, 0);
+
+    db.retain_bodies_since("2999-01-01T00:00:00Z")
+        .await
+        .expect("retain nothing");
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM event_body_blobs").await, 0);
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM body_blocks").await, 0);
 }
 
 /// Keyed by hash, not by anything weaker: two bodies of the same length that
