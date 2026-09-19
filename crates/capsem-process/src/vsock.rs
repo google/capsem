@@ -1340,24 +1340,38 @@ async fn handle_guest_msg(
                 },
             )
             .await;
-            match boundary {
-                Ok(Some(emission)) if emission.enforcement.is_allowed() => {}
-                Ok(Some(emission)) if action == capsem_logger::FileAction::Exported => {
-                    let error = emission
+            // An export leaves the sandbox, so it is refused unless its ledger
+            // record was admitted and allowed -- like exec and file import. A
+            // record that failed to write or evaluate refuses it too (#203):
+            // an export nobody could audit must not happen.
+            let export_refusal = match &boundary {
+                _ if action != capsem_logger::FileAction::Exported => None,
+                Ok(Some(emission)) if emission.enforcement.is_allowed() => None,
+                Ok(Some(emission)) => Some(
+                    emission
                         .enforcement
                         .reason
-                        .unwrap_or_else(|| "file export blocked by security policy".into());
-                    if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
-                        capsem_core::try_send!(
-                            "job_result_read_file_blocked",
-                            tx.send(JobResult::ReadFile {
-                                data: None,
-                                error: Some(error)
-                            })
-                        );
-                    }
-                    return;
+                        .clone()
+                        .unwrap_or_else(|| "file export blocked by security policy".into()),
+                ),
+                Ok(None) => Some("file export refused: its security event could not be recorded".into()),
+                Err(error) => Some(format!("file export refused: its security event failed: {error}")),
+            };
+            if let Some(error) = export_refusal {
+                warn!(id, error, "file export refused");
+                if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
+                    capsem_core::try_send!(
+                        "job_result_read_file_blocked",
+                        tx.send(JobResult::ReadFile {
+                            data: None,
+                            error: Some(error)
+                        })
+                    );
                 }
+                return;
+            }
+            match boundary {
+                Ok(Some(emission)) if emission.enforcement.is_allowed() => {}
                 Ok(Some(emission)) => {
                     warn!(
                         id,

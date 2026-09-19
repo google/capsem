@@ -115,6 +115,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- A file export from the guest is refused when its security event cannot be
+  recorded or evaluated. It used to log a warning and hand the file over
+  anyway, so an export could leave the sandbox with no audit trail; exec and
+  file import already refused in that case.
 - A profile can no longer define an MCP server named `local`, the name the
   builtin tools are served under. It was reserved only when the builtin binary
   was installed, so on a host without it a profile server of that name owned

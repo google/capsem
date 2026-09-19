@@ -562,6 +562,60 @@ match = 'file.export.path == "/workspace/out.txt" && file.export.content.contain
     assert_eq!(rule_rows["rows"][0][1].as_str(), Some("file.export"));
 }
 
+/// An export nobody could record is refused: with the ledger writer gone, the
+/// guest's bytes never reach the caller.
+#[tokio::test]
+async fn read_file_content_is_refused_when_its_export_cannot_be_recorded() {
+    use capsem_proto::GuestToHost;
+    use std::sync::Arc;
+    use tokio::sync::oneshot;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(capsem_logger::DbWriter::open(&dir.path().join("session.db"), 16).unwrap());
+    db.shutdown_blocking();
+    let profile = capsem_core::net::policy_config::SecurityRuleProfile::parse_toml("").expect("rules parse");
+    let rules = capsem_core::net::policy_config::SecurityRuleSet::compile_profile(
+        &profile,
+        capsem_core::net::policy_config::SecurityRuleSource::User,
+    )
+    .expect("rules compile");
+    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
+    let plugin_policy = empty_plugin_policy();
+    let js = Arc::new(JobStore::new());
+    let id: u64 = 78;
+    js.active_file_ops.lock().unwrap().insert(
+        id,
+        ActiveFileOp::Read {
+            path: "/workspace/secret.txt".to_string(),
+        },
+    );
+    let (tx, rx) = oneshot::channel::<JobResult>();
+    js.jobs.lock().unwrap().insert(id, tx);
+
+    handle_guest_msg(
+        GuestToHost::FileContent {
+            id,
+            path: "/workspace/secret.txt".to_string(),
+            data: b"must not leave unrecorded".to_vec(),
+        },
+        &js,
+        &db,
+        &security_rules,
+        &plugin_policy,
+    )
+    .await;
+
+    match rx.await.expect("read job must resolve") {
+        JobResult::ReadFile {
+            data: None,
+            error: Some(error),
+        } => {
+            assert!(error.contains("refused"), "{error}");
+        }
+        other => panic!("expected a refused export with no data, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn dns_security_write_emits_joined_rule_ledger_row() {
     let dir = tempfile::tempdir().unwrap();
