@@ -1,7 +1,10 @@
 """Real expose authorization: deny before Redis accepts a TCP connection."""
 
+import contextlib
 import json
+import re
 import socket
+import sqlite3
 
 import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
@@ -56,41 +59,39 @@ def test_container_pull_policy_stops_before_registry_egress_and_redacts_credenti
             },
             timeout=90,
         )
-        vm_id = created["id"]
-        try:
-            status = {}
+        # Create waits for the workload, so the refusal is its answer. The VM
+        # is discarded and its name freed, but its ledger and logs are kept as
+        # a failed session: they are the record of the refusal.
+        assert "id" not in created, created
+        refusal = created["error"]
+        assert "policy refused" in refusal, created
+        assert not requests, requests
+        assert password not in refusal and username not in refusal
+        vm_id = re.search(r"for VM ([0-9a-f-]{36})", refusal).group(1)
+        assert all(vm["id"] != vm_id for vm in client.get("/vms/list")["sandboxes"])
 
-            def refused():
-                status.update(client.get(f"/vms/{vm_id}/container"))
-                return status.get("state") == "failed"
-
-            wait_for(refused, "container pull policy refusal", timeout=30)
-            assert "policy refused" in status["error"], status
-            assert not requests, requests
-
-            rows = []
-
-            def audited():
-                rows[:] = client.get(f"/vms/{vm_id}/security/latest?limit=200")
-                return any(
-                    row["event_type"] == "network.lifecycle"
-                    and json.loads(row["event_json"]).get("container", {}).get("image") == reference
-                    for row in rows
-                )
-
-            wait_for(audited, "container pull policy audit", timeout=15)
-            rendered = json.dumps(rows)
-            assert reference in rendered and registry_host in rendered
-            assert password not in rendered and username not in rendered
-            logs = "\n".join(
-                path.read_text(errors="replace")
-                for root in (service.home_dir, service.tmp_dir)
-                for path in root.rglob("*.log*")
-                if path.is_file()
-            )
-            assert password not in logs and username not in logs
-        finally:
-            client.delete(f"/vms/{vm_id}/delete")
+        kept = sorted((service.tmp_dir / "sessions").glob(f"{vm_id}-failed-*"))
+        assert len(kept) == 1, f"the refused create's ledger is kept: {kept}"
+        with contextlib.closing(sqlite3.connect(f"file:{kept[0] / 'session.db'}?mode=ro", uri=True)) as db:
+            rows = [
+                {"event_type": event_type, "event_json": event_json}
+                for event_type, event_json in db.execute("SELECT event_type, event_json FROM security_rule_events")
+            ]
+        assert any(
+            row["event_type"] == "network.lifecycle"
+            and json.loads(row["event_json"]).get("container", {}).get("image") == reference
+            for row in rows
+        ), rows
+        rendered = json.dumps(rows)
+        assert reference in rendered and registry_host in rendered
+        assert password not in rendered and username not in rendered
+        logs = "\n".join(
+            path.read_text(errors="replace")
+            for root in (service.home_dir, service.tmp_dir)
+            for path in root.rglob("*.log*")
+            if path.is_file()
+        )
+        assert password not in logs and username not in logs
 
 
 def _redis_command(stream, *arguments):
