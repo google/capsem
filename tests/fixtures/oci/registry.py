@@ -91,8 +91,12 @@ def registry(directory, *, image_config=None, image="redis"):
         directory / "server.csr",
     )
     config_path = directory / "openssl.cnf"
+    # The CA must not share the leaf's name. With both `CN=localhost` a strict
+    # verifier takes the leaf for self-issued and never chains it to the CA:
+    # OpenSSL says "self-signed certificate", rustls `UnknownIssuer`, and only
+    # macOS curl accepted it.
     config_path.write_text(
-        "[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=localhost\n[ext]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign\n[server]\nsubjectAltName=IP:127.0.0.1,DNS:localhost\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n"
+        "[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=Capsem test registry CA\n[ext]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign\nsubjectKeyIdentifier=hash\n[server]\nsubjectAltName=IP:127.0.0.1,DNS:localhost\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid:always\n"
     )
     subprocess.run(
         [

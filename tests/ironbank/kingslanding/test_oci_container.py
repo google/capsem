@@ -82,6 +82,7 @@ def test_offline_oci_adversarial_suite(oci_vm, tmp_path):
     ) == {
         "success": True,
         "size": len(payload),
+        "vm_path": "/root/oci/input.bin",
     }
     result = client.post(
         f"/vms/{name}/exec",

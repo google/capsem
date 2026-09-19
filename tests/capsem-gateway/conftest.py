@@ -25,6 +25,7 @@ import os
 import socketserver
 import tempfile
 import threading
+import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -287,7 +288,12 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         elif path_only.startswith("/vms/") and path_only.endswith("/stop"):
             self._send_json({"ok": True})
         elif path_only.startswith("/vms/") and path_only.endswith("/files/content"):
-            self._send_json({"success": True, "size": len(body)})
+            # Answered as the service does: the upload's size and where the
+            # guest sees it (a relative path lands under /root).
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.clean_path).query)
+            path = query.get("path", [""])[0]
+            vm_path = path if path.startswith("/") else f"/root/{path}"
+            self._send_json({"success": True, "size": len(body), "vm_path": vm_path})
         elif path_only.startswith("/vms/") and path_only.endswith("/save"):
             self._send_json({"ok": True})
         elif path_only == "/purge":

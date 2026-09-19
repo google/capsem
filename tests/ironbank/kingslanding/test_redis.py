@@ -72,6 +72,7 @@ def test_real_redis_persistence_limits_and_fresh_vm(oci_vm, tmp_path):
                 ) == {
                     "success": True,
                     "size": len(contents),
+                    "vm_path": f"/root/oci/{filename}",
                 }
             result = client.post(
                 f"/vms/{name}/exec",
