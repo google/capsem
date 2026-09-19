@@ -68,7 +68,7 @@ visibility.
 
 Do not hide route SQL by adding route-specific helpers to `DbWriter`; the DB
 writer is not a product route registry. Put connection threads, `mem`/disk
-tables, batching, flushing, rehydration, WAL tuning, and future FTS5/search in
+tables, batching, flushing, WAL tuning, and future FTS5/search in
 the DB layer. Empty tables are fine. Missing tables or columns are schema
 contract failures and must not be converted into empty results.
 

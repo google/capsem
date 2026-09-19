@@ -276,7 +276,7 @@ Telemetry and security ledgers are database-owned.
   that fingerprint. `tests/citadel/test_db_freshness_boundary.py` holds it.
 - They may own query intent, but the logger DB object owns query execution.
 - `capsem-logger` owns SQLite connection threads, `mem`/disk table layout,
-  batching, flushing, rehydration, WAL tuning, and future FTS5/search.
+  batching, flushing, WAL tuning, and future FTS5/search.
 - Do not hardcode route-specific query helpers in `DbWriter` as a substitute
   for this boundary. The DB object is an execution/storage owner, not a route
   semantics registry.
