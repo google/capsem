@@ -102,7 +102,13 @@ impl<'a> Workload<'a> {
     }
 }
 
+/// Create the VM. With a container workload the service pulls the image and
+/// waits for it before answering, so the pull is announced here: a pull that
+/// fails comes back as this call's error, before anything could follow it.
 pub(super) async fn provision(client: &UdsClient, request: &ProvisionRequest) -> Result<ProvisionResponse> {
+    if let Some(container) = &request.container {
+        eprintln!("Pulling {}", container.image);
+    }
     let response: ApiResponse<ProvisionResponse> = client.post("/vms/create", request).await?;
     response.into_result()
 }
@@ -113,15 +119,13 @@ pub(super) async fn destroy(client: &UdsClient, id: &str) -> Result<()> {
 }
 
 /// Follow the service's setup of VM `id` until its state is one `done`
-/// accepts, reporting the pull and the verified digest as they happen. A
-/// failed setup is an error carrying the service's reason.
+/// accepts, reporting the verified digest when it is known. A failed setup is
+/// an error carrying the service's reason.
 pub(super) async fn follow(
     client: &UdsClient,
     id: &str,
-    reference: &str,
     done: impl Fn(ContainerState) -> bool,
 ) -> Result<ContainerStatusResponse> {
-    eprintln!("Pulling {reference}");
     let mut reported_digest = false;
     loop {
         let status: ApiResponse<ContainerStatusResponse> = client.get(&format!("/vms/{id}/container")).await?;

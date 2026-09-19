@@ -73,7 +73,7 @@ pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> 
 /// ports. A VM this command could not start is not left behind.
 async fn start_image(client: &UdsClient, vm: &ProvisionResponse, workload: &Workload<'_>) -> Result<()> {
     let started = async {
-        container_image::follow(client, &vm.id, workload.reference, |state| {
+        container_image::follow(client, &vm.id, |state| {
             matches!(state, ContainerState::Starting | ContainerState::Running)
         })
         .await?;

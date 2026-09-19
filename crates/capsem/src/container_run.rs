@@ -111,10 +111,7 @@ async fn run_image(client: &UdsClient, args: &RunArgs, workload: &Workload<'_>) 
     let vm = container_image::provision(client, &request).await?;
     eprintln!("Running {} ({})", vm.name, vm.id);
     let work = async {
-        container_image::follow(client, &vm.id, workload.reference, |state| {
-            state == ContainerState::Staged
-        })
-        .await?;
+        container_image::follow(client, &vm.id, |state| state == ContainerState::Staged).await?;
         container_image::expose(client, &vm.id, &workload.image.publish).await?;
         container_image::attach(client, &vm.id).await
     };

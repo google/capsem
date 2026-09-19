@@ -124,11 +124,9 @@ async fn follow_waits_for_the_state_it_needs() {
         .once("GET", "/vms/vm-1/container", 200, status("pulling", None))
         .once("GET", "/vms/vm-1/container", 200, status("staging", Some("sha256:ab")))
         .route("GET", "/vms/vm-1/container", 200, status("staged", Some("sha256:ab")));
-    let staged = follow(&service.client, "vm-1", "docker://redis:7", |state| {
-        state == ContainerState::Staged
-    })
-    .await
-    .unwrap();
+    let staged = follow(&service.client, "vm-1", |state| state == ContainerState::Staged)
+        .await
+        .unwrap();
     assert_eq!(staged.digest.as_deref(), Some("sha256:ab"));
     assert_eq!(service.find("GET", "/vms/vm-1/container").len(), 3);
 }
@@ -139,9 +137,7 @@ async fn a_failed_setup_is_an_error_with_the_services_reason() {
     let mut failed = status("failed", None);
     failed["error"] = json!("pull docker://redis:7: certificate unknown");
     service.route("GET", "/vms/vm-1/container", 200, failed);
-    let error = follow(&service.client, "vm-1", "docker://redis:7", |_| false)
-        .await
-        .unwrap_err();
+    let error = follow(&service.client, "vm-1", |_| false).await.unwrap_err();
     assert!(format!("{error:#}").contains("certificate unknown"), "{error:#}");
 }
 
