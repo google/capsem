@@ -134,7 +134,7 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "turn_id",
         ],
     ),
-    ("body_blocks", &["block_offset", "raw_len", "comp_len", "sealed_at"]),
+    ("body_blocks", &["block_offset", "raw_len", "disk_len", "sealed_at"]),
     (
         "fs_events",
         &[

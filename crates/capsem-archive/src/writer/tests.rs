@@ -1,6 +1,7 @@
 use super::*;
 use crate::format::{MAX_BLOCK_RAW_BYTES, TARGET_BLOCK_BYTES};
-use crate::{ArchiveError, BodyLogReader};
+use crate::reader::BodyLogReader;
+use crate::ArchiveError;
 use std::path::PathBuf;
 
 fn archive(dir: &tempfile::TempDir) -> PathBuf {

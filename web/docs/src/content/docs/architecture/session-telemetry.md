@@ -99,7 +99,7 @@ erDiagram
     body_blocks {
         int block_offset PK
         int raw_len
-        int comp_len
+        int disk_len
         text sealed_at
     }
     security_rule_events {
@@ -390,15 +390,16 @@ preview and an archived body disagree, the archive is the ledger.
 
 ### body_blocks
 
-One row per sealed block of `session.bodies`, so a reader seeks straight to a
-block instead of scanning the file.
+One row per block of `session.bodies`, so a reader seeks straight to a block
+instead of scanning the file. A block stays open across disk flushes and grows
+by one segment each, so its row is updated as it grows.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `block_offset` | INTEGER PK | Byte offset of the block's header in `session.bodies` |
-| `raw_len` | INTEGER | Inflated size of the block |
-| `comp_len` | INTEGER | Deflated size of the block's payload, after its 44-byte header |
-| `sealed_at` | TEXT | When the block was sealed; retention cuts by this |
+| `raw_len` | INTEGER | Inflated size of the block's committed segments |
+| `disk_len` | INTEGER | Committed extent of the block in the file, headers included |
+| `sealed_at` | TEXT | When the block's last segment was written; retention cuts by this |
 
 ### tool_calls
 
@@ -651,27 +652,36 @@ graph LR
     SNAP -->|"in-memory IPC status"| SNAPAPI
     CH --> WT
     WT --> DB
-    WT -->|"bodies, sealed in blocks"| BODIES
+    WT -->|"bodies, one segment per flush"| BODIES
 ```
 
-The writer thread owns both files. A body is staged into the open block and its
-index row is written with the event row; a sealed block is appended to
-`session.bodies` and recorded in `body_blocks`.
+The writer thread owns both files. A body is fed to the open block's
+compressor as its event is written; each disk flush appends what the block
+produced since the last one to `session.bodies` as a segment, syncs it, and
+only then commits the body's index row and the block's grown extent in
+`body_blocks`.
 
 ## Body archive
 
-`session.bodies` is append-only: a 16-byte file header, then blocks. Each block
-is a 44-byte header (magic, `raw_len`, `comp_len`, and the blake3 of the raw
-bytes) followed by the raw-deflated bytes of the bodies staged into it, sealed
-at about 1 MiB. Bodies that belong together -- the request and response of
-one exchange -- are staged together and almost always share a block, so they
-share one inflate. The format is defined once, in
+`session.bodies` is append-only: a 16-byte file header, then blocks. A block
+is one raw-deflate stream: an 8-byte header (magic and codec), then segments.
+Each disk flush sync-flushes the stream -- byte-aligned, dictionary kept -- and
+appends what it produced as a segment behind a 52-byte header (`raw_start`,
+`raw_len`, `comp_len` and the blake3 of the segment's raw bytes). The block
+stays open, so every body compresses against the ones before it, and closes
+with a FINAL segment at about 1 MiB, after an hour, at retention, and at
+shutdown. The codec is recorded per block, so a second one is a new codec id
+rather than a new file version. The format is defined once, in
 `crates/capsem-archive/src/format.rs`.
 
-Reading a body is one index lookup, one seek, one inflate and a slice. Every
-read checks the block against its own hash and the body against the
-`body_hash` of the row that named it, so an edited index row or a damaged block
-is refused rather than served as someone else's bytes.
+Reading a body is one index lookup, one seek, and an inflate of the block's
+segments up to the one that ends the body's span; a reader keeps its place in
+the block, so the next body in it costs only the segments after. Every read
+checks each segment against its own hash and the body against the
+`body_hash` of the row that named it, so an edited index row or a damaged
+segment is refused rather than served as someone else's bytes. A reader never
+reads past the segment it needs, which is why another process can read a block
+the writer is still appending to.
 
 The writer checks at open that every block the index names is inside the file.
 If the index names bytes past the end of `session.bodies` -- a crash between

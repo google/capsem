@@ -20,6 +20,8 @@ mod flush_faults;
 mod model_rows;
 mod producer;
 pub(crate) use bodies::archive_path_for_db;
+#[cfg(test)]
+pub(crate) use bodies::close_blocks_at_every_flush_for_tests;
 use bodies::{BodyArchive, EventBodyBlob};
 use flush_faults::take_disk_flush_failure_for_tests;
 #[cfg(test)]
@@ -88,7 +90,7 @@ pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
 /// Bodies the archive gave up on, by the step that gave up: the only place a
 /// poisoned archive surfaces besides a log line.
 pub const DB_ARCHIVE_BODIES_DROPPED_TOTAL: &str = "db.archive_bodies_dropped_total";
-/// Bodies indexed against identical bytes already in the pending block.
+/// Bodies indexed against identical bytes already in the open block.
 pub const DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL: &str = "db.archive_bodies_deduplicated_total";
 /// Ops the writer holds in memory waiting for a disk flush. It falls to zero
 /// on every flush that lands; a value that only climbs is a disk the writer
@@ -239,7 +241,7 @@ enum WriterMessage {
     /// Commit everything queued before this and report whether the disk flush
     /// happened.
     Flush(tokio::sync::oneshot::Sender<FlushOutcome>),
-    /// Drop archived bodies sealed before this RFC 3339 cutoff. A barrier
+    /// Drop archived bodies written before this RFC 3339 cutoff. A barrier
     /// like `Flush`, because it needs the queue committed before it runs.
     Retain {
         cutoff: String,
@@ -301,7 +303,7 @@ pub struct DbWriter {
     tx: std::sync::Mutex<Option<WriterSender>>,
     join_handle: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
     db_path: PathBuf,
-    /// Raw bytes the writer thread is holding in the archive's pending block.
+    /// Raw bytes the writer thread has staged but not yet written to the archive.
     /// Published by the writer thread after every batch so a test can prove
     /// the bound without a second view of the thread's state.
     pending_body_bytes: Arc<AtomicU64>,
@@ -464,7 +466,7 @@ impl DbWriter {
             .map_err(|e| format!("db writer flush barrier dropped before ack: {e}"))?
     }
 
-    /// Drop archived bodies whose blocks sealed before `cutoff` (RFC 3339).
+    /// Drop archived bodies whose blocks were last written before `cutoff` (RFC 3339).
     ///
     /// A barrier, like `flush_checked`: everything queued before this call is
     /// committed first, so a body written a moment ago is either indexed and
@@ -532,9 +534,9 @@ impl DbWriter {
         &self.db_path
     }
 
-    /// Raw body bytes the writer thread is holding in the archive's unsealed
-    /// block. They reach `session.bodies` when the block fills or the next
-    /// disk flush runs, so this is the backlog a crash would lose.
+    /// Raw body bytes the writer thread has staged into the archive's open
+    /// block but not yet written. They reach `session.bodies` at the next
+    /// disk flush or when the block closes, so this is the backlog a crash would lose.
     pub fn pending_body_bytes(&self) -> u64 {
         self.pending_body_bytes.load(Ordering::Acquire)
     }
@@ -691,10 +693,10 @@ fn writer_loop(
                 }
             }
         }
-        // A burst of large bodies must not sit in RAM until the interval
-        // expires, so a full block seals as soon as the batch ends. Its index
-        // rows wait for the next transaction; its bytes are already on disk.
-        bodies.seal_if_full();
+        // A burst of large bodies closes its block as soon as the batch ends
+        // rather than growing it until the interval expires. Its index rows
+        // wait for the next transaction; its bytes are already on disk.
+        bodies.close_if_due();
         pending_body_bytes.store(bodies.pending_bytes() as u64, Ordering::Release);
         let disk_flush_due = dirty_ops >= DISK_FLUSH_THRESHOLD_OPS
             || last_disk_flush.elapsed() >= DISK_FLUSH_INTERVAL
@@ -733,6 +735,8 @@ fn writer_loop(
         }
     }
 
+    // The open block ends with its FINAL segment, committed by this flush.
+    bodies.close_block();
     if let Err(error) = flush_dirty_tables_to_disk(
         &conn,
         &mut dirty_tables,
@@ -855,7 +859,7 @@ fn execute_memory_batch(
     let tx = conn.unchecked_transaction()?;
     // Bodies staged by a transaction that rolls back must not leave index
     // rows behind: their event's row is gone, and the retry pass stages them
-    // again. Their bytes stay in the pending block, unreferenced.
+    // again. Their bytes stay in the open block, unreferenced.
     let staged_mark = bodies.staged_mark();
     let mut affected_tables = BTreeSet::new();
     let mut op_counts = std::collections::BTreeMap::<&'static str, usize>::new();
@@ -889,7 +893,7 @@ fn insert_batch_ops(
         }
         *op_counts.entry(op.kind()).or_default() += 1;
         affected_memory_tables(op, affected_tables);
-        bodies.seal_if_full();
+        bodies.close_if_due();
         match op {
             WriteOp::TransportEvent(e) => event_rows::insert_transport_event(tx, e, WriteTarget::Memory)?,
             WriteOp::NetEvent(e) => insert_net_event(tx, e, WriteTarget::Memory, bodies)?,
@@ -922,10 +926,10 @@ fn flush_dirty_tables_to_disk(
     if dirty_tables.is_empty() && !bodies.has_work() {
         return Ok(());
     }
-    // Bytes before index: the block reaches the archive file here, and the
+    // Bytes before index: the segment reaches the archive file here, and the
     // rows that name it are inserted in the transaction below. A crash in
-    // between costs one unreferenced block, never a row pointing past EOF.
-    bodies.seal_pending();
+    // between costs unreferenced bytes, never a row pointing past EOF.
+    bodies.flush_segment();
     let tables: Vec<&'static str> = dirty_tables.iter().copied().collect();
     let tx = conn.unchecked_transaction()?;
     bodies.commit_index_rows(&tx)?;
@@ -941,7 +945,7 @@ fn flush_dirty_tables_to_disk(
         schema::flush_memory_tables_to_disk(&tx, tables.iter().copied(), flush_watermarks)
     })?;
     tx.commit()?;
-    // Only now are the appended blocks indexed: anything above this line rolls
+    // Only now are the written segments indexed: anything above this line rolls
     // the transaction back, and the next flush retries both halves together.
     bodies.index_rows_committed();
     flush_watermarks.extend(advanced_watermarks);

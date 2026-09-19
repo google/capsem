@@ -163,7 +163,7 @@ fn body_blob<'a>(event_id: &'a str, body: &'a str) -> EventBodyBlob<'a> {
 }
 
 /// The archive is flushed to the device before the index rows that name its
-/// blocks are inserted. A crash between the two must cost bodies, never
+/// segments are inserted. A crash between the two must cost bodies, never
 /// produce rows pointing at bytes the disk never received.
 #[test]
 fn appended_blocks_are_flushed_before_their_index_rows_commit() {
@@ -174,13 +174,13 @@ fn appended_blocks_are_flushed_before_their_index_rows_commit() {
 
     let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
     archive.stage(body_blob("0f1f2f3f4f5f", "a body worth flushing"));
-    archive.seal_pending();
+    archive.flush_segment();
     archive.commit_index_rows(&conn).unwrap();
 
     assert_eq!(
         archive.steps_for_tests(),
         ["sync", "commit"],
-        "the blocks reach the device before the rows that name them"
+        "the segments reach the device before the rows that name them"
     );
     let rows: i64 = conn
         .query_row("SELECT COUNT(*) FROM event_body_blobs", [], |row| row.get(0))
@@ -189,24 +189,24 @@ fn appended_blocks_are_flushed_before_their_index_rows_commit() {
     archive.sync();
 }
 
-/// A body that cannot fit beside what is already pending seals the block and
-/// retries, rather than failing or panicking. Two 10 MiB bodies cannot share
-/// a 16 MiB block, so they land in two.
+/// A body that cannot fit beside what the open block holds closes the block
+/// and retries, rather than failing or panicking. Two 10 MiB bodies cannot
+/// share a 16 MiB block, so they land in two.
 #[test]
-fn a_body_that_does_not_fit_the_pending_block_seals_and_retries() {
+fn a_body_that_does_not_fit_the_open_block_closes_it_and_retries() {
     let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("seal-and-retry.db");
+    let db_path = dir.path().join("close-and-retry.db");
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
-    // Different bytes: identical ones would be one body the pending block
-    // already holds, and never reach the seal this test is about.
+    // Different bytes: identical ones would be one body the open block
+    // already holds, and never reach the close this test is about.
     let first = "y".repeat(MAX_BODY_BLOB_BYTES);
     let second = "z".repeat(MAX_BODY_BLOB_BYTES);
     let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
     archive.stage(body_blob("aaaaaaaaaaa1", &first));
     archive.stage(body_blob("aaaaaaaaaaa2", &second));
-    archive.seal_pending();
+    archive.flush_segment();
     archive.commit_index_rows(&conn).unwrap();
     archive.sync();
 
@@ -215,7 +215,7 @@ fn a_body_that_does_not_fit_the_pending_block_seals_and_retries() {
         .unwrap();
     assert_eq!(blocks, 2, "10 MiB twice cannot share one 16 MiB block");
 
-    // Both bodies come back whole, which is what seal-and-retry has to
+    // Both bodies come back whole, which is what close-and-retry has to
     // preserve: the retry restarts the offsets in a new block.
     let reader = capsem_archive::BodyLogReader::open(&archive_path_for_db(&db_path)).unwrap();
     let mut statement = conn
@@ -235,8 +235,8 @@ fn a_body_that_does_not_fit_the_pending_block_seals_and_retries() {
     assert_eq!(bodies, vec![first.into_bytes(), second.into_bytes()]);
 }
 
-/// A failed append takes the writer out of service and leaves the blocks it
-/// had already appended holding their rows. Those rows can never be vouched
+/// A failed write takes the writer out of service and leaves the segments it
+/// had already written holding their rows. Those rows can never be vouched
 /// for, so the next commit drops them -- and, just as importantly, stops
 /// counting them as work: otherwise every flush tick for the rest of the
 /// session opens a transaction to do nothing in.
@@ -249,8 +249,8 @@ fn a_poisoned_archive_drops_its_uncommitted_blocks_instead_of_retrying_forever()
 
     let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
     archive.stage(body_blob("0b0b0b0b0b0b", "a body whose writer dies after it"));
-    archive.seal_pending();
-    assert_eq!(archive.appended_len_for_tests(), 1, "the block is appended");
+    archive.flush_segment();
+    assert_eq!(archive.appended_len_for_tests(), 1, "the segment is written");
 
     archive.poison_writer_for_tests();
     archive.commit_index_rows(&conn).unwrap();
@@ -258,7 +258,7 @@ fn a_poisoned_archive_drops_its_uncommitted_blocks_instead_of_retrying_forever()
     assert_eq!(
         archive.appended_len_for_tests(),
         0,
-        "a block nothing can vouch for is dropped, not kept for a retry that cannot work"
+        "a segment nothing can vouch for is dropped, not kept for a retry that cannot work"
     );
     assert!(
         !archive.has_work(),
@@ -276,7 +276,7 @@ fn a_poisoned_archive_drops_its_uncommitted_blocks_instead_of_retrying_forever()
 }
 
 /// A poisoned writer cannot place bytes any more, so rows staged against its
-/// pending block are unplaceable too and must not survive to be inserted.
+/// open block are unplaceable too and must not survive to be inserted.
 /// This is the half of that rule that decides; the half that acts is below.
 #[test]
 fn only_a_poisoned_writer_takes_the_archive_out_of_service() {
@@ -318,24 +318,24 @@ fn giving_up_drops_the_rows_that_can_no_longer_be_placed() {
     assert_eq!(rows, 0);
 }
 
-/// The body in hand when `seal_pending` fails its append has no index row yet,
-/// so the count that seal takes cannot include it. It used to fall through the
+/// The body in hand when the close before its retry fails has no index row
+/// yet, so the count that close takes cannot include it. It used to fall through the
 /// `?` on the retry and disappear: no row, no bytes, and no counter anywhere
 /// saying a body was lost. That counter is the only sign a session's archive
 /// gave up, so a body it cannot see is a body nobody can notice.
 #[test]
-fn the_body_lost_to_a_failed_seal_is_counted() {
+fn the_body_lost_to_a_failed_close_is_counted() {
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
     let recorder = DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
 
     let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("seal-failure.db");
+    let db_path = dir.path().join("close-failure.db");
     // Two bodies at the logger's cap overflow a 16 MiB block, which is the
-    // only thing that makes `stage` seal and retry.
-    // Two different bodies: a repeat would be served from the pending block
-    // and never force the seal whose failure this test is about.
+    // only thing that makes `stage` close and retry.
+    // Two different bodies: a repeat would be served from the open block
+    // and never force the close whose failure this test is about.
     let body = "b".repeat(MAX_BODY_BLOB_BYTES);
     let other = "c".repeat(MAX_BODY_BLOB_BYTES);
     // The archive checks its index against the file before opening, so it
@@ -372,20 +372,21 @@ fn the_body_lost_to_a_failed_seal_is_counted() {
 
     assert!(
         dropped.contains(&("append".to_string(), 1)),
-        "the sealed block's own row is counted where the append failed: {dropped:?}"
+        "the closed block's own row is counted where the write failed: {dropped:?}"
     );
     assert!(
-        dropped.contains(&("stage_after_seal".to_string(), 1)),
+        dropped.contains(&("stage_after_close".to_string(), 1)),
         "and the body being staged when it failed is counted too: {dropped:?}"
     );
 }
 
-/// The span map, driven directly: a repeat inside the pending block appends
-/// nothing and is counted; bytes of the same length but different content are
-/// not a repeat; and once the block is taken to be sealed, the same bytes are
-/// appended again, into the next block, rather than pointed back across.
+/// The span map, driven directly: a repeat inside the open block appends
+/// nothing and is counted -- across the segments of that block too, since a
+/// flush leaves it open; bytes of the same length but different content are
+/// not a repeat; and once the block closes, the same bytes are appended again,
+/// into the next block, rather than pointed back across.
 #[test]
-fn identical_bytes_share_a_span_only_inside_the_pending_block() {
+fn identical_bytes_share_a_span_only_inside_the_open_block() {
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
     let recorder = DebuggingRecorder::new();
@@ -414,15 +415,22 @@ fn identical_bytes_share_a_span_only_inside_the_pending_block() {
         archive.stage(body_blob("0e0e0e0e0e04", &same_length));
         assert_eq!(archive.pending_bytes(), one_copy * 2, "different content is stored");
 
-        archive.seal_pending();
+        archive.flush_segment();
         assert_eq!(archive.pending_bytes(), 0);
         archive.stage(body_blob("0e0e0e0e0e05", payload));
         assert_eq!(
             archive.pending_bytes(),
-            payload.len(),
-            "a sealed block's span is never reused: the next block gets its own copy"
+            0,
+            "a flush leaves the block open, and its spans reusable"
         );
-        archive.seal_pending();
+        archive.close_block();
+        archive.stage(body_blob("0e0e0e0e0e06", payload));
+        assert_eq!(
+            archive.pending_bytes(),
+            payload.len(),
+            "a closed block's span is never reused: the next block gets its own copy"
+        );
+        archive.flush_segment();
     });
 
     let deduplicated: Vec<u64> = snapshotter
@@ -437,7 +445,134 @@ fn identical_bytes_share_a_span_only_inside_the_pending_block() {
         .collect();
     assert_eq!(
         deduplicated,
-        vec![2],
-        "the two repeats are counted, and nothing else is"
+        vec![3],
+        "the three repeats are counted, and nothing else is"
     );
+}
+
+/// Read one indexed body straight out of the archive, the way the handle
+/// resolves a row.
+fn read_indexed(conn: &rusqlite::Connection, db_path: &std::path::Path, event_id: &str) -> Vec<u8> {
+    let reference = conn
+        .query_row(
+            "SELECT block_offset, body_offset, body_len FROM event_body_blobs WHERE event_id = ?1",
+            [event_id],
+            |row| {
+                Ok(capsem_archive::BodyRef {
+                    block_offset: row.get::<_, i64>(0)? as u64,
+                    offset: row.get::<_, i64>(1)? as u32,
+                    len: row.get::<_, i64>(2)? as u32,
+                })
+            },
+        )
+        .unwrap();
+    capsem_archive::BodyLogReader::open(&archive_path_for_db(db_path))
+        .unwrap()
+        .read(reference)
+        .unwrap()
+}
+
+fn commit(archive: &mut BodyArchive, conn: &rusqlite::Connection) {
+    let tx = conn.unchecked_transaction().unwrap();
+    archive.commit_index_rows(&tx).unwrap();
+    tx.commit().unwrap();
+    archive.index_rows_committed();
+}
+
+/// A crash after a segment reached the file and before its rows committed:
+/// the process is gone, the bytes are unreferenced, and the next writer to
+/// open the ledger finds an index that still fits the file, starts a new
+/// block after the stranded one, and every committed body still reads.
+#[test]
+fn a_crash_between_a_segment_and_its_commit_strands_bytes_and_nothing_else() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("crash-before-commit.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    crate::schema::create_tables(&conn).unwrap();
+
+    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
+    archive.stage(body_blob("0a0a0a0a0a01", "committed before the crash"));
+    archive.flush_segment();
+    commit(&mut archive, &conn);
+    archive.stage(body_blob("0a0a0a0a0a02", "written, never committed"));
+    archive.flush_segment();
+    // The crash: the segment is in the file, its row never commits.
+    drop(archive);
+    let stranded_end = std::fs::metadata(archive_path_for_db(&db_path)).unwrap().len();
+
+    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
+    archive.stage(body_blob("0a0a0a0a0a03", "after the restart"));
+    archive.flush_segment();
+    commit(&mut archive, &conn);
+
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM event_body_blobs", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 2, "the uncommitted body has no row");
+    let new_block: i64 = conn
+        .query_row(
+            "SELECT block_offset FROM event_body_blobs WHERE event_id = '0a0a0a0a0a03'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(new_block as u64, stranded_end, "a new block, after the stranded bytes");
+    assert_eq!(
+        read_indexed(&conn, &db_path, "0a0a0a0a0a01"),
+        b"committed before the crash"
+    );
+    assert_eq!(read_indexed(&conn, &db_path, "0a0a0a0a0a03"), b"after the restart");
+}
+
+/// Seconds since the epoch the test clock reads, so a test can move time.
+static TEST_CLOCK_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1_800_000_000);
+
+fn test_clock() -> SystemTime {
+    SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(TEST_CLOCK_SECS.load(std::sync::atomic::Ordering::SeqCst))
+}
+
+fn advance_test_clock(by: std::time::Duration) {
+    TEST_CLOCK_SECS.fetch_add(by.as_secs(), std::sync::atomic::Ordering::SeqCst);
+}
+
+/// A quiet session must not keep one block open for days: retention drops
+/// whole blocks by their last write, so a block that never closed would keep
+/// every body in it for as long as anything new joined it. A block older
+/// than `MAX_BLOCK_AGE` closes, and the next body starts a new one.
+#[test]
+fn a_block_open_longer_than_its_age_limit_closes_before_the_next_body() {
+    use crate::writer::bodies::MAX_BLOCK_AGE;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("block-age.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    crate::schema::create_tables(&conn).unwrap();
+
+    let mut archive = BodyArchive::open(Some(&db_path), test_clock, &conn);
+    archive.stage(body_blob("0a0a0a0a0b01", "opens the block"));
+    archive.flush_segment();
+    advance_test_clock(MAX_BLOCK_AGE.saturating_sub(std::time::Duration::from_secs(60)));
+    archive.stage(body_blob("0a0a0a0a0b02", "still inside the age limit"));
+    archive.flush_segment();
+    advance_test_clock(std::time::Duration::from_secs(120));
+    archive.stage(body_blob("0a0a0a0a0b03", "past it"));
+    archive.flush_segment();
+    commit(&mut archive, &conn);
+
+    let blocks: Vec<i64> = conn
+        .prepare("SELECT block_offset FROM event_body_blobs ORDER BY event_id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(blocks[0], blocks[1], "inside the limit, one block");
+    assert!(blocks[2] > blocks[1], "past it, a new block: {blocks:?}");
+    assert_eq!(read_indexed(&conn, &db_path, "0a0a0a0a0b03"), b"past it");
+
+    // And an idle block closes at the next flush, not only at the next body.
+    advance_test_clock(MAX_BLOCK_AGE);
+    archive.flush_segment();
+    assert_eq!(archive.appended_len_for_tests(), 1, "the stale block closed");
+    commit(&mut archive, &conn);
 }

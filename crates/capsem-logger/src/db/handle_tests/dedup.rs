@@ -177,6 +177,7 @@ async fn an_event_matching_three_rules_stores_its_payload_once() {
 #[tokio::test]
 async fn identical_bodies_in_different_blocks_are_stored_in_each() {
     let p = temp_db_path("dedup-not-across-blocks");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let db = DbHandle::open(&p).expect("open handle");
     write_rule(&db, "0123456789a2", "profiles.rules.dedup", PAYLOAD).await;
     db.flush().await.expect("flush seals the first block");
@@ -228,6 +229,7 @@ async fn equal_length_different_bytes_are_not_reused() {
 #[tokio::test]
 async fn retention_keeps_and_drops_a_shared_span_with_every_row_that_names_it() {
     let p = temp_db_path("dedup-retention");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let db = DbHandle::open(&p).expect("open handle");
     write_rule(&db, "0123456789a4", "profiles.rules.old", r#"{"old":true}"#).await;
     db.flush().await.expect("flush the old block");

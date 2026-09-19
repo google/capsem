@@ -1,11 +1,16 @@
 //! Append-only, block-compressed body archive for one Capsem session.
 //!
 //! SQLite stays the index of every ledger row. Bodies (HTTP, model, tool,
-//! security payloads) are staged into a block, deflated together when the
-//! block seals, and appended to `session.bodies`. Consecutive bodies from the
-//! same provider share most of their text, so a block compresses about
-//! twice as well as a body on its own (11x vs 6x measured), and the raw
-//! bytes leave RAM the moment the block seals.
+//! security payloads) are fed to one open deflate stream, a block, and each
+//! disk flush appends what that stream produced as a segment of the block in
+//! `session.bodies`. The block stays open across flushes, so every body
+//! compresses against the ones before it, until it reaches its target size.
+//! Consecutive bodies from the same provider share most of their text, so a
+//! block compresses several times better than a body on its own.
+//!
+//! The crate root is the current format, version 2 (`v2`). The version 1
+//! modules (`format`, `writer`, `reader`, `retain`) remain only until nothing
+//! reads a version 1 archive.
 //!
 //! Pure Rust by rule: the runtime links one C library (SQLite) and this
 //! crate must not add a second in front of attacker-influenced bytes.
@@ -21,11 +26,11 @@ pub mod v2;
 pub mod warc;
 pub mod writer;
 
-pub use format::{BodyRef, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES, TARGET_BLOCK_BYTES};
-pub use reader::BodyLogReader;
-pub use retain::{commit_retained, stage_retained_blocks, RetainedStaging};
+pub use v2::{
+    commit_retained, stage_retained_blocks, BodyLogReader, BodyLogWriter, BodyRef, RetainedStaging, SegmentWritten,
+    BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES, TARGET_BLOCK_BYTES,
+};
 pub use warc::{write_record, WarcRecord};
-pub use writer::{BodyLogWriter, EncodedBlock, PendingBlock, SealedBlock};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArchiveError {

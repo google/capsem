@@ -689,9 +689,17 @@ fn regenerate_session_fixture() {
 
     // Bodies come from the archive, not from the display columns beside them.
     let bodies = archived_bodies(&fixture, &source);
+    // A flush after each rail is a segment of the open block, as a live
+    // session's timed flushes are, so the fixture's archive has the shape the
+    // product writes -- several segments, the last one closing the block --
+    // and every reader of it is exercised across segment boundaries. Explicit
+    // barriers rather than the timer, so the layout is the same on every run.
     let net = replay_net_events(&source, &writer, &bodies);
+    block_on(writer.flush());
     let model = replay_model_calls(&source, &writer, &bodies);
+    block_on(writer.flush());
     let mcp = replay_mcp_calls(&source, &writer, &bodies);
+    block_on(writer.flush());
     let files = replay_file_events(&source, &writer);
     drop(bodies);
     writer.shutdown_blocking();

@@ -80,12 +80,16 @@ pub const CREATE_SCHEMA: &str = "
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
-    -- One sealed block of `session.bodies`. The bytes live in the archive
-    -- file; SQLite records where each block landed so a reader never scans.
+    -- One block of `session.bodies`. The bytes live in the archive file;
+    -- SQLite records where each block landed so a reader never scans. A block
+    -- stays open across disk flushes and grows by one segment per flush, so
+    -- the row is upserted as it grows: `raw_len` and `disk_len` are what the
+    -- committed segments hold (disk_len counting the block and segment
+    -- headers), and `sealed_at` is when the last of them was written.
     CREATE TABLE IF NOT EXISTS body_blocks (
         block_offset INTEGER PRIMARY KEY,
         raw_len INTEGER NOT NULL CHECK (raw_len > 0),
-        comp_len INTEGER NOT NULL CHECK (comp_len > 0),
+        disk_len INTEGER NOT NULL CHECK (disk_len > 0),
         sealed_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_body_blocks_sealed_at ON body_blocks(sealed_at);

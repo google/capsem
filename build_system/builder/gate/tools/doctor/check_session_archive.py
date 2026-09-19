@@ -1,16 +1,17 @@
 """Check a session's body archive against the index that points into it.
 
 Bodies live in ``session.bodies`` beside ``session.db``; the database keeps
-``body_blocks`` (one row per sealed block) and ``event_body_blobs`` (one row
-per body, naming its block and its span inside the block's raw bytes). A
+``body_blocks`` (one row per block, with its committed extent) and
+``event_body_blobs`` (one row per body, naming its block and its span inside
+the block's raw bytes). A
 ledger whose index and archive disagree serves nothing for the rows that
 disagree, so the doctor checks the facts that must hold between them without
 trusting either side:
 
 * every body names a block the ledger recorded;
 * every body's span fits inside its block's raw length;
-* the file is long enough to hold every recorded block, header included,
-  and starts with the archive's own header.
+* the file is long enough to hold every recorded block extent (its headers
+  and every committed segment), and starts with the archive's own header.
 
 The byte layout is not restated here. ``tests/helpers/body_archive.py`` is the
 one allowlisted Python reader of the format (see
@@ -133,7 +134,7 @@ def check_body_archive(
         archive=archive,
         blocks_end=_scalar(
             conn,
-            f"SELECT MAX(block_offset + {helper.BLOCK_HEADER_BYTES} + comp_len) FROM body_blocks",
+            "SELECT MAX(block_offset + disk_len) FROM body_blocks",
         ),
     )
     findings.problems = _index_problems(conn) + _file_problems(findings, archive, db_path, helper)

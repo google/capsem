@@ -8,7 +8,7 @@ use super::*;
 // process owns the writer, so this is the only place it can be trimmed.
 // -----------------------------------------------------------------------
 
-/// Write one archived body and flush, which seals it into a block of its own.
+/// Write one archived body and flush it into the open block.
 async fn archive_one_body(db: &DbWriter, event_id: &str, payload: &str) {
     db.write_checked(capsem_logger::WriteOp::SecurityRuleEvent(
         capsem_logger::SecurityRuleEvent::new(
@@ -41,10 +41,10 @@ async fn stopping_a_persistent_session_drops_bodies_past_the_retention_period() 
     let db = DbWriter::open(&db_path, 16).unwrap();
     archive_one_body(&db, "abcdef123450", r#"{"from":"an old session"}"#).await;
     archive_one_body(&db, "abcdef123451", r#"{"from":"this session"}"#).await;
-    assert_eq!(archived_blocks(&db_path), 2, "each flush sealed its own block");
+    assert_eq!(archived_blocks(&db_path), 1, "both flushes grew the one open block");
 
-    // Zero days of retention is every block sealed before this instant, which
-    // is both of them: the period is what selects, and this proves it selects.
+    // Zero days of retention is every block last written before this instant,
+    // which is all of them: the period is what selects, and this proves it selects.
     retain_session_bodies(&db, 0).await;
 
     assert_eq!(

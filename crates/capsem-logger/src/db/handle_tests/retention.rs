@@ -13,7 +13,9 @@ use crate::writer::{fail_retention_for_path_for_tests, RetentionFault};
 
 use super::correctness::make_correctness_security_event;
 
-/// Write one security payload and flush, which seals exactly one block.
+/// Write one security payload and flush, which -- with every test here
+/// closing its block at each flush -- is exactly one block. What these tests
+/// hold is what retention does with separate blocks, not when one closes.
 async fn write_block(db: &DbHandle, event_id: &str, payload: &str) {
     let mut event = make_correctness_security_event(&credential_reference("test", "not-a-real-secret"));
     event.event_id = event_id.to_string();
@@ -68,6 +70,7 @@ async fn foreign_key_violations(db: &DbHandle) -> usize {
 #[tokio::test]
 async fn external_reader_cannot_retain_bodies() {
     let p = temp_db_path("retention-external-reader");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let writer = DbHandle::open(&p).expect("open handle");
     write_block(&writer, "0000000000ab", r#"{"keep":true}"#).await;
 
@@ -93,6 +96,7 @@ async fn external_reader_cannot_retain_bodies() {
 #[tokio::test]
 async fn a_cutoff_past_everything_empties_the_archive() {
     let p = temp_db_path("retention-drops-everything");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let db = DbHandle::open(&p).expect("open handle");
     write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
     write_block(&db, "0000000000cd", r#"{"older":2}"#).await;
@@ -128,11 +132,12 @@ async fn a_cutoff_past_everything_empties_the_archive() {
 #[tokio::test]
 async fn a_cutoff_between_two_blocks_keeps_the_newer_one() {
     let p = temp_db_path("retention-keeps-the-newer");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let db = DbHandle::open(&p).expect("open handle");
     write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
     write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
     let sealed = blocks(&db).await;
-    assert_eq!(sealed.len(), 2, "each flush seals its own block");
+    assert_eq!(sealed.len(), 2, "each flush closes its own block here");
     assert_ne!(
         sealed[0].1, sealed[1].1,
         "the two flushes must be distinguishable in time for a cutoff to sit between them"
@@ -173,6 +178,7 @@ async fn a_cutoff_between_two_blocks_keeps_the_newer_one() {
 #[tokio::test]
 async fn writes_after_retention_append_to_the_compacted_archive() {
     let p = temp_db_path("retention-then-writes");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let db = DbHandle::open(&p).expect("open handle");
     write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
     write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
@@ -208,6 +214,7 @@ async fn a_failed_compaction_leaves_the_index_and_the_bodies_alone() {
     // the shared temp directory is not this test's to seal.
     let directory = tempfile::tempdir().expect("a private directory");
     let p = directory.path().join("session.db");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let db = DbHandle::open(&p).expect("open handle");
     write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
     write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
@@ -247,6 +254,7 @@ async fn a_failed_compaction_leaves_the_index_and_the_bodies_alone() {
 #[tokio::test]
 async fn a_failed_index_transaction_leaves_the_archive_and_the_index_untouched() {
     let p = temp_db_path("retention-index-failure");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let db = DbHandle::open(&p).expect("open handle");
     write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
     write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
@@ -302,6 +310,7 @@ async fn a_failed_index_transaction_leaves_the_archive_and_the_index_untouched()
 #[tokio::test]
 async fn a_failed_rename_puts_the_old_offsets_back_and_every_body_still_reads() {
     let p = temp_db_path("retention-rename-failure");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let db = DbHandle::open(&p).expect("open handle");
     write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
     write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
@@ -355,6 +364,7 @@ async fn a_failed_rename_puts_the_old_offsets_back_and_every_body_still_reads() 
 #[tokio::test]
 async fn an_external_reader_follows_the_archive_across_a_retention() {
     let p = temp_db_path("retention-external-reader-follows");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let writer = DbHandle::open(&p).expect("open handle");
     write_block(&writer, "0000000000ab", r#"{"old":1}"#).await;
     write_block(&writer, "0000000000cd", r#"{"new":2}"#).await;
@@ -404,6 +414,7 @@ async fn an_external_reader_follows_the_archive_across_a_retention() {
 #[tokio::test]
 async fn a_retention_leaves_no_orphan_index_rows() {
     let p = temp_db_path("retention-foreign-keys");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let db = DbHandle::open(&p).expect("open handle");
     write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
     write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
@@ -462,6 +473,7 @@ async fn a_retention_leaves_no_orphan_index_rows() {
 #[tokio::test]
 async fn an_unrecoverable_retention_takes_the_archive_out_of_service() {
     let p = temp_db_path("retention-unrecoverable");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let db = DbHandle::open(&p).expect("open handle");
     write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
     write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
@@ -499,6 +511,7 @@ async fn an_unrecoverable_retention_takes_the_archive_out_of_service() {
 #[tokio::test]
 async fn an_index_naming_bytes_past_the_archive_refuses_to_open() {
     let p = temp_db_path("retention-index-past-eof");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let db = DbHandle::open(&p).expect("open handle");
     write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
     db.flush().await.expect("flush");

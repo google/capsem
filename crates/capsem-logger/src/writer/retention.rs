@@ -7,15 +7,18 @@
 //!
 //! The unit is a block, not a body. A block is the smallest thing the archive
 //! can drop without re-deflating what survives, and `body_blocks.sealed_at`
-//! is when its bytes were written, so "older than the cutoff" is a property
-//! the index already records.
+//! is when its last segment was written, so "older than the cutoff" is a
+//! property the index already records. A kept block is copied to its
+//! committed extent, `body_blocks.disk_len`, and no further.
 //!
 //! Order of operations, and why:
 //!
-//! 1. Everything staged is sealed and its index rows committed first. A block
+//! 1. The open block is closed and every index row committed first. A block
 //!    whose rows have not committed is invisible to the keep query, so it
 //!    would be compacted away and its rows inserted afterwards pointing at
-//!    offsets that no longer exist.
+//!    offsets that no longer exist; and a block left open would have its
+//!    next segment appended to a file that no longer ends where the writer
+//!    believes it does.
 //! 2. The compacted archive is **staged**: written and flushed beside the
 //!    original, which stays the live file.
 //! 3. One transaction deletes the rows of the dropped blocks and remaps the
@@ -56,7 +59,7 @@ pub struct RetainOutcome {
     pub bytes_reclaimed: u64,
 }
 
-/// Drop every archived block sealed before `cutoff` (RFC 3339), compacting the
+/// Drop every archived block last written before `cutoff` (RFC 3339), compacting the
 /// archive file and rewriting the index rows that name it.
 ///
 /// # Errors
@@ -74,6 +77,7 @@ pub(super) fn retain_bodies(
     if bodies.has_work() {
         return Err("session body retention needs a flushed archive; blocks are still waiting for index rows".into());
     }
+    close_open_block(conn, bodies)?;
     let path = bodies
         .path_in_service()
         .ok_or("session body archive is not open; nothing was retained")?
@@ -108,6 +112,26 @@ pub(super) fn retain_bodies(
         rows_dropped: dropped.rows,
         bytes_reclaimed,
     })
+}
+
+/// Close the open block and commit the rows of its FINAL segment, so the
+/// keep query sees it whole and the writer reopened afterwards starts a new
+/// block at the compacted file's end.
+fn close_open_block(conn: &Connection, bodies: &mut BodyArchive) -> Result<(), String> {
+    bodies.close_block();
+    let committed = conn.unchecked_transaction().and_then(|tx| {
+        bodies.commit_index_rows(&tx)?;
+        tx.commit()
+    });
+    match committed {
+        Ok(()) => {
+            bodies.index_rows_committed();
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "session body retention could not index the block it closed; nothing was retained: {error}"
+        )),
+    }
 }
 
 /// Put the compacted archive in place, or put the index back.
@@ -174,20 +198,27 @@ struct Dropped {
     rows: u64,
 }
 
-fn kept_block_offsets(conn: &Connection, cutoff: &str) -> Result<Vec<u64>, String> {
+/// `(block_offset, disk_len)` of every block to keep: the offset to find it
+/// and the committed extent to copy.
+fn kept_block_offsets(conn: &Connection, cutoff: &str) -> Result<Vec<(u64, u64)>, String> {
+    let read_error = |error: rusqlite::Error| format!("session body retention could not read body_blocks: {error}");
     let mut statement = conn
-        .prepare_cached("SELECT block_offset FROM body_blocks WHERE sealed_at >= ?1 ORDER BY block_offset")
-        .map_err(|error| format!("session body retention could not read body_blocks: {error}"))?;
+        .prepare_cached("SELECT block_offset, disk_len FROM body_blocks WHERE sealed_at >= ?1 ORDER BY block_offset")
+        .map_err(read_error)?;
     let rows = statement
-        .query_map(params![cutoff], |row| row.get::<_, i64>(0))
-        .map_err(|error| format!("session body retention could not read body_blocks: {error}"))?;
+        .query_map(params![cutoff], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(read_error)?;
     let mut keep = Vec::new();
     for row in rows {
-        let offset = row.map_err(|error| format!("session body retention could not read body_blocks: {error}"))?;
-        keep.push(
-            u64::try_from(offset)
-                .map_err(|_| format!("body_blocks holds a negative block offset {offset}; the index is corrupt"))?,
-        );
+        let (offset, disk_len) = row.map_err(read_error)?;
+        let (Ok(offset), Ok(disk_len)) = (u64::try_from(offset), u64::try_from(disk_len)) else {
+            return Err(format!(
+                "body_blocks holds a negative extent ({offset}, {disk_len}); the index is corrupt"
+            ));
+        };
+        keep.push((offset, disk_len));
     }
     Ok(keep)
 }

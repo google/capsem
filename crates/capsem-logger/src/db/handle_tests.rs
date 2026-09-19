@@ -20,6 +20,7 @@ mod correctness;
 mod dedup;
 mod external_reader;
 mod external_warc_reader;
+mod open_blocks;
 mod owning_reader;
 mod query;
 mod retention;

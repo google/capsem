@@ -203,7 +203,7 @@ impl DbHandle {
         Ok(archived)
     }
 
-    /// Drop every archived body whose block sealed before `cutoff` (RFC 3339),
+    /// Drop every archived body whose block was last written before `cutoff` (RFC 3339),
     /// compacting `session.bodies` and rewriting the index rows that name it.
     ///
     /// Writer-owning handles only. `capsem-process` owns every write to a
@@ -299,7 +299,7 @@ impl DbHandle {
             // served, and useless, in that the body is there and readable.
             //
             // One `stat` per read batch, against the file identity the reader
-            // recorded when it opened, so the one-block cache survives
+            // recorded when it opened, so the block cursor survives
             // everything except an actual replacement. Keying it to the
             // ledger's own change signal instead would throw that cache away
             // on every commit during a live session.
@@ -406,9 +406,9 @@ pub(super) fn read_one_checked(reader: &BodyLogReader, row: IndexRow) -> Result<
         );
         match error {
             // The only variant the read raises about the file rather than
-            // about one row or one block: `BodyLogReader::inflate` seeks
-            // before it does anything else, and every other failure it can
-            // produce is named after the offset it happened at.
+            // about one row or one block: the reader seeks before it reads
+            // a header or a segment, and every other failure it can produce
+            // is named after the offset it happened at.
             ArchiveError::Io(_) => BodyFault::FileIo(message),
             _ => BodyFault::Unreadable(message),
         }

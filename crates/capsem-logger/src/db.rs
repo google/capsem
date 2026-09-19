@@ -210,7 +210,7 @@ struct DbHandleInner {
     writer: Option<Arc<DbWriter>>,
     ready_cache: Mutex<Option<DbResult<()>>>,
     /// The session's body archive, opened on the first body read and kept for
-    /// its one-block cache. `BodyLogReader` is not `Sync`, and one reader per
+    /// its block cursor. `BodyLogReader` is not `Sync`, and one reader per
     /// handle is also what makes "one inflate for one exchange" true.
     archive_reader: Mutex<Option<capsem_archive::BodyLogReader>>,
     query_many_cache: Mutex<DbQueryManyCache>,
@@ -765,7 +765,7 @@ impl DbHandle {
         let _ = self.flush().await;
     }
 
-    /// Raw body bytes the writer thread is holding in its unsealed block.
+    /// Raw body bytes the writer thread has staged but not yet written.
     #[cfg(test)]
     pub(crate) async fn pending_body_bytes_for_tests(&self) -> u64 {
         self.inner

@@ -312,6 +312,19 @@ impl BodyLogWriter {
         self.fail_write_after = Some(bytes);
     }
 
+    /// Take this writer out of service on purpose, discarding whatever was
+    /// staged and not yet flushed.
+    ///
+    /// For an owner that stops archiving because of a failure of its own --
+    /// an index it could not commit, an injected fault -- rather than one this
+    /// writer reported. Those bodies had no committed row, so discarding them
+    /// is the documented cost; what this changes is that the owner says so,
+    /// rather than dropping a writer that asserts it was not dropped holding
+    /// bodies. The file is left exactly as the last written segment left it.
+    pub fn abandon(mut self) {
+        self.poisoned = true;
+    }
+
     /// Whether an earlier partial write took this writer out of service.
     #[must_use]
     pub fn is_poisoned(&self) -> bool {

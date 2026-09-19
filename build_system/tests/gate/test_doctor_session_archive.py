@@ -78,6 +78,76 @@ def test_a_body_whose_bytes_changed_fails_the_end_to_end_read(ledger: Path) -> N
     assert found.verified == found.bodies - 1
 
 
+def _segment_starts(archive: Path) -> list[int]:
+    """File offsets of the fixture block's segments, walked by header."""
+    helper = check_session_archive.body_archive_helper()
+    data = archive.read_bytes()
+    at = helper.FILE_HEADER_BYTES + helper.BLOCK_HEADER_BYTES
+    starts = []
+    while at < len(data):
+        starts.append(at)
+        comp_len = int.from_bytes(data[at + 16 : at + 20], "little")
+        at += helper.SEGMENT_HEADER_BYTES + comp_len
+    return starts
+
+
+def _cut_block_at(ledger: Path, cut: int) -> None:
+    """Leave the fixture's block as a crash would: open, committed to ``cut``.
+
+    The file stops where a segment began, the block's recorded extent stops
+    there too, and the rows whose bytes were past it never committed.
+    """
+    archive = ledger.with_suffix(".bodies")
+    helper = check_session_archive.body_archive_helper()
+    committed_raw = int.from_bytes(archive.read_bytes()[cut + 8 : cut + 12], "little")
+    archive.write_bytes(archive.read_bytes()[:cut])
+    first_block = helper.FILE_HEADER_BYTES
+    _edit(ledger, f"DELETE FROM event_body_blobs WHERE body_offset + body_len > {committed_raw}")
+    _edit(
+        ledger,
+        f"UPDATE body_blocks SET disk_len = {cut - first_block}, raw_len = {committed_raw}",
+    )
+
+
+def test_the_fixture_block_has_several_segments_and_a_final_one(ledger: Path) -> None:
+    helper = check_session_archive.body_archive_helper()
+    archive = ledger.with_suffix(".bodies")
+    starts = _segment_starts(archive)
+    assert len(starts) >= 3, "the fixture must exercise reads across segment boundaries"
+    data = archive.read_bytes()
+    assert [data[start + 4] & helper.SEGMENT_FINAL for start in starts] == [0] * (len(starts) - 1) + [1]
+
+
+def test_a_block_still_open_reads_body_for_body(ledger: Path) -> None:
+    # Everything but the FINAL segment: the block a live session is writing.
+    _cut_block_at(ledger, _segment_starts(ledger.with_suffix(".bodies"))[-1])
+    found = _findings(ledger, verify=True)
+    assert found.problems == []
+    assert found.bodies > 0
+    assert found.verified == found.bodies
+    assert found.archive_bytes == found.blocks_end
+
+
+def test_a_block_cut_before_its_last_segments_reads_what_it_committed(ledger: Path) -> None:
+    before = _findings(ledger).bodies
+    _cut_block_at(ledger, _segment_starts(ledger.with_suffix(".bodies"))[1])
+    found = _findings(ledger, verify=True)
+    assert found.problems == []
+    assert 0 < found.bodies < before, "the cut must leave some rows and drop others"
+    assert found.verified == found.bodies
+
+
+def test_a_flipped_byte_in_a_later_segment_fails_only_the_bodies_that_need_it(ledger: Path) -> None:
+    archive = ledger.with_suffix(".bodies")
+    second = _segment_starts(archive)[1]
+    data = bytearray(archive.read_bytes())
+    data[second + 60] ^= 0x5A
+    archive.write_bytes(bytes(data))
+    found = _findings(ledger, verify=True)
+    assert found.problems, "a damaged segment must fail its reads"
+    assert 0 < found.verified < found.bodies, "bodies wholly before the damage still read"
+
+
 def test_overflow_windows_are_counted_with_the_changes_they_deferred(ledger: Path) -> None:
     _edit(
         ledger,

@@ -272,6 +272,23 @@ fn dropping_a_writer_with_unflushed_bodies_trips_the_debug_assert() {
 }
 
 #[test]
+fn abandoning_a_writer_discards_its_unflushed_bodies_and_leaves_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = archive(&dir);
+    let mut writer = BodyLogWriter::open(&path).unwrap();
+    let kept = writer.stage(b"flushed before").unwrap();
+    writer.flush_segment().unwrap();
+    let end = file_len(&path);
+    writer.stage(b"never flushed").unwrap();
+    writer.abandon();
+    assert_eq!(file_len(&path), end, "nothing more is written");
+    assert_eq!(
+        BodyLogReader::open(&path).unwrap().read(kept).unwrap(),
+        b"flushed before"
+    );
+}
+
+#[test]
 fn dropping_a_writer_whose_open_block_is_flushed_is_fine() {
     let dir = tempfile::tempdir().unwrap();
     let path = archive(&dir);

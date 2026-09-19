@@ -18,7 +18,7 @@ fn ledger_with_two_blocks(path: &std::path::Path) -> Connection {
         (100, "2026-06-01T00:00:00Z", "bbbbbbbbbbbb"),
     ] {
         conn.execute(
-            "INSERT INTO body_blocks (block_offset, raw_len, comp_len, sealed_at) VALUES (?1, 40, 40, ?2)",
+            "INSERT INTO body_blocks (block_offset, raw_len, disk_len, sealed_at) VALUES (?1, 40, 40, ?2)",
             params![offset, sealed_at],
         )
         .expect("block row");

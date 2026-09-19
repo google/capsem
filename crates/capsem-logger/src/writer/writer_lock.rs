@@ -2,8 +2,8 @@
 //!
 //! A ledger is `session.db` and the `session.bodies` archive beside it, and
 //! only the archive's own writer knows where the file ends: it reads the end
-//! once at open and numbers every block it seals from there. A second writer
-//! on the same ledger appends too, so the first block it seals moves the real
+//! once at open and places every segment it writes from there. A second writer
+//! on the same ledger appends too, so the first segment it writes moves the real
 //! end under the first writer, and every index row the first writes afterwards
 //! names bytes that are not its body. SQLite would have serialised the two
 //! writers without complaint; the archive cannot, and nothing noticed until a
@@ -12,7 +12,7 @@
 //!
 //! So a writer takes an exclusive lock on a sidecar file before it touches the
 //! ledger, and its writer thread holds it until the thread ends -- after the
-//! last block is sealed and the last row committed. A second writer, in this
+//! last block is closed and the last row committed. A second writer, in this
 //! process or any other, fails at open and names the ledger, instead of
 //! corrupting it later and silently.
 //!

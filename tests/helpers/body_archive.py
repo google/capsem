@@ -15,17 +15,23 @@ exist -- ``tests/citadel/test_body_archive_format_is_one_place.py`` allowlists e
 this path, for exactly that reason, so that a third parser cannot appear
 quietly.
 
-The layout, from that file::
+The layout, from that file (version 2)::
 
-    file header (16 bytes):  magic "CAPSEMBL"  u16 version  u16 pad  u32 pad
-    block (repeated):        magic "BLK1"  u32 raw_len  u32 comp_len
-                             blake3(raw)[32]  deflate(raw)
+    file header (16 bytes):  magic "CAPSEMBL"  u16 version=2  u16 pad  u32 pad
+    block header (8 bytes):  magic "BLK2"  u8 codec (1 = raw deflate)  u8 flags  u16 pad
+    segment (repeated):      magic "SGMT"  u8 flags (bit 0 FINAL)  u8[3] pad
+                             u32 raw_start  u32 raw_len  u32 comp_len
+                             blake3(segment raw)[32]  deflate bytes
 
-Every read verifies the block's blake3 against its header and the body's own
-blake3 against the index row that named it, exactly as the product reader does:
-bytes that do not match what named them are a broken ledger, not a body, and a
-test must not quietly assert on them. Both lengths are bounded before anything
-is allocated or inflated, because they come off disk.
+A block is one deflate stream cut at sync-flush points into segments; one
+inflater runs across them, and the last segment of a closed block ends the
+stream. A block that is still being written simply has no FINAL segment yet.
+
+Every read verifies each segment's blake3 against its header and the body's
+own blake3 against the index row that named it, exactly as the product reader
+does: bytes that do not match what named them are a broken ledger, not a
+body, and a test must not quietly assert on them. Every length is bounded
+before anything is allocated or inflated, because it comes off disk.
 """
 
 from __future__ import annotations
@@ -38,12 +44,17 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 FILE_MAGIC = b"CAPSEMBL"
-FILE_VERSION = 1
+FILE_VERSION = 2
 FILE_HEADER_BYTES = 16
-BLOCK_MAGIC = b"BLK1"
-BLOCK_HEADER_BYTES = 44
+BLOCK_MAGIC = b"BLK2"
+BLOCK_HEADER_BYTES = 8
+CODEC_DEFLATE = 1
+SEGMENT_MAGIC = b"SGMT"
+SEGMENT_HEADER_BYTES = 52
+SEGMENT_FINAL = 0x01
+SYNC_FLUSH_TAIL = b"\x00\x00\xff\xff"
 MAX_BLOCK_RAW_BYTES = 16 * 1024 * 1024
-MAX_BLOCK_COMP_BYTES = MAX_BLOCK_RAW_BYTES + 64 * 1024
+MAX_SEGMENT_EXPANSION = 64 * 1024
 
 
 # The ledgers that archive the event they are about as a ``payload``. They share
@@ -69,17 +80,28 @@ def _blake3(data: bytes) -> str:
     return _hash(data).hexdigest()
 
 
+class _Cursor:
+    """One block inflated up to the end of some segment, as the product keeps it."""
+
+    def __init__(self, block_offset: int) -> None:
+        self.block_offset = block_offset
+        self.inflater = zlib.decompressobj(-15)
+        self.raw = bytearray()
+        self.next_segment_at = block_offset + BLOCK_HEADER_BYTES
+        self.finished = False
+
+
 class SessionArchive:
-    """One session archive, with the product reader's one-block cache.
+    """One session archive, with the product reader's block cursor.
 
     Held across a page of rows rather than rebuilt per body: the bodies of one
     page mostly share a block, and reading the file per body turned a page into
     N opens and N inflates of the same bytes.
 
-    It holds no file descriptor between reads. The archive is opened only on a
-    block-cache miss -- exactly when a block has to be inflated anyway -- and
-    closed before the read returns. Callers keep one of these for a whole test
-    function, well past the loop that needs it, and an instance that held the
+    It holds no file descriptor between reads. The archive is opened only when
+    a segment has to be inflated, and closed before the read returns. Callers
+    keep one of these for a whole test function, well past the loop that needs
+    it, and an instance that held the
     file open leaked it into pytest's unraisable-exception check, which fails
     the test that happened to be running when the collector found it.
     """
@@ -88,12 +110,11 @@ class SessionArchive:
         self.db_path = Path(db_path)
         self._archive = archive_path_for_db(self.db_path)
         self._verify_file_header()
-        self._cached_offset: int | None = None
-        self._cached_block: bytes = b""
+        self._cursor: _Cursor | None = None
 
     def close(self) -> None:
-        """Nothing is held open; drop the cached block."""
-        self._cached_offset, self._cached_block = None, b""
+        """Nothing is held open; drop the cursor."""
+        self._cursor = None
 
     def __enter__(self) -> SessionArchive:
         return self
@@ -117,10 +138,14 @@ class SessionArchive:
         if row is None:
             return None
         block_offset, body_offset, body_len, body_hash = (int(row[0]), int(row[1]), int(row[2]), row[3])
-        block = self._block(block_offset)
-        body = block[body_offset : body_offset + body_len]
-        if len(body) != body_len:
-            raise AssertionError(f"body of {event_id} runs past the end of its block")
+        end = body_offset + body_len
+        try:
+            body = self._span(block_offset, body_offset, end)
+        except AssertionError:
+            # A cursor that failed part-way holds an inflater in an unknown
+            # state; nothing may read from it again.
+            self._cursor = None
+            raise
         got = f"blake3:{_blake3(body)}"
         if got != body_hash:
             raise AssertionError(
@@ -151,59 +176,99 @@ class SessionArchive:
         if header[:8] != FILE_MAGIC or int.from_bytes(header[8:10], "little") != FILE_VERSION:
             raise AssertionError(f"{self._archive} is not a capsem body archive")
 
-    def _block(self, block_offset: int) -> bytes:
-        if self._cached_offset == block_offset:
-            return self._cached_block
-        with self._archive.open("rb") as file:
-            raw = self._read_block(file, block_offset)
-        self._cached_offset, self._cached_block = block_offset, raw
-        return raw
+    def _span(self, block_offset: int, start: int, end: int) -> bytes:
+        """Raw bytes ``start..end`` of a block, inflating as far as they need."""
+        if end > MAX_BLOCK_RAW_BYTES:
+            raise AssertionError(f"a span ending at {end} is past any block's bounds")
+        cursor = self._cursor
+        if cursor is None or cursor.block_offset != block_offset:
+            cursor = self._cursor = self._start_block(block_offset)
+        if len(cursor.raw) < end:
+            with self._archive.open("rb") as file:
+                while len(cursor.raw) < end:
+                    if cursor.finished:
+                        raise AssertionError(
+                            f"span ending at {end} runs past the end of block {block_offset}"
+                        )
+                    self._inflate_segment(file, cursor)
+        return bytes(cursor.raw[start:end])
 
-    def _read_block(self, file: BinaryIO, block_offset: int) -> bytes:
-        file.seek(block_offset)
-        header = file.read(BLOCK_HEADER_BYTES)
+    def _start_block(self, block_offset: int) -> _Cursor:
+        with self._archive.open("rb") as file:
+            file.seek(block_offset)
+            header = file.read(BLOCK_HEADER_BYTES)
         if len(header) != BLOCK_HEADER_BYTES or header[:4] != BLOCK_MAGIC:
             raise AssertionError(f"no block at offset {block_offset} of {self._archive}")
-        raw_len = int.from_bytes(header[4:8], "little")
-        comp_len = int.from_bytes(header[8:12], "little")
-        # Bounded before anything is sized by them: these lengths come off
-        # disk, and the product refuses the same two ceilings rather than
-        # allocating whatever a forged or torn header asks for.
-        #
-        # Zero is refused with them, and not as a nicety: `max_length=0` means
-        # *unlimited* to Python's inflater, so a forged `raw_len` of 0 would
-        # turn the bound below into no bound at all. A block of nothing cannot
-        # exist anyway -- `body_blocks.raw_len` is CHECK(raw_len > 0), and the
-        # Rust reader's `decompress_to_vec_with_limit(_, 0)` errors.
-        if not 0 < raw_len <= MAX_BLOCK_RAW_BYTES or not 0 < comp_len <= MAX_BLOCK_COMP_BYTES:
+        if header[4] != CODEC_DEFLATE or header[5:] != b"\x00\x00\x00":
             raise AssertionError(
-                f"block at {block_offset} of {self._archive} declares "
-                f"raw_len={raw_len} comp_len={comp_len}, outside the archive's bounds"
+                f"block at {block_offset} of {self._archive} uses codec {header[4]}, "
+                "which this reader does not know"
             )
-        expected_hash = header[12:BLOCK_HEADER_BYTES].hex()
+        return _Cursor(block_offset)
+
+    def _inflate_segment(self, file: BinaryIO, cursor: _Cursor) -> None:
+        at = cursor.next_segment_at
+        file.seek(at)
+        header = file.read(SEGMENT_HEADER_BYTES)
+        where = f"segment at {at} of {self._archive}"
+        if len(header) != SEGMENT_HEADER_BYTES:
+            raise AssertionError(f"{where} is truncated: the block was never written this far")
+        flags = header[4]
+        raw_start = int.from_bytes(header[8:12], "little")
+        raw_len = int.from_bytes(header[12:16], "little")
+        comp_len = int.from_bytes(header[16:20], "little")
+        final = bool(flags & SEGMENT_FINAL)
+        # Bounded before anything is sized by them: these lengths come off
+        # disk, and the product refuses the same bounds rather than allocating
+        # whatever a forged or torn header asks for.
+        #
+        # A zero raw_len is refused unless the segment is FINAL, and not as a
+        # nicety: ``max_length=0`` means *unlimited* to Python's inflater, so a
+        # forged zero would turn the bound below into no bound at all. The
+        # writer never cuts an empty segment.
+        if (
+            header[:4] != SEGMENT_MAGIC
+            or flags & ~SEGMENT_FINAL
+            or header[5:8] != b"\x00\x00\x00"
+            or raw_start != len(cursor.raw)
+            or raw_start + raw_len > MAX_BLOCK_RAW_BYTES
+            or comp_len > raw_len + MAX_SEGMENT_EXPANSION
+            or (raw_len == 0 and not final)
+        ):
+            raise AssertionError(
+                f"{where} declares flags={flags:#x} raw_start={raw_start} raw_len={raw_len} "
+                f"comp_len={comp_len}, outside the archive's bounds"
+            )
         compressed = file.read(comp_len)
         if len(compressed) != comp_len:
-            raise AssertionError(f"block at {block_offset} of {self._archive} is truncated")
-        # Raw deflate, matching miniz_oxide's `compress_to_vec`, and bounded by
-        # the length the header declared so a decompression bomb cannot be
-        # inflated by a test either.
-        inflater = zlib.decompressobj(-15)
-        raw = inflater.decompress(compressed, raw_len)
-        # `eof` is the third thing that can be wrong: a stream that stopped at
-        # the right length without reaching its own end is a truncated block
-        # that happens to measure correctly, and unconsumed_tail is empty when
-        # the limit was never the thing that stopped it.
-        if len(raw) != raw_len or not inflater.eof or inflater.unconsumed_tail:
-            raise AssertionError(
-                f"block at {block_offset} of {self._archive} did not inflate to the "
-                f"{raw_len} bytes it declares"
-            )
+            raise AssertionError(f"{where} is truncated")
+        if not final and not compressed.endswith(SYNC_FLUSH_TAIL):
+            raise AssertionError(f"{where} does not end on a sync flush")
+        # One inflater across the block's segments, bounded by the length the
+        # header declared plus one byte, so an overlong segment is seen rather
+        # than cut -- and never by zero, which Python reads as no bound at all.
+        # `eof` must be reached on the FINAL segment and only there.
+        inflater = cursor.inflater
+        try:
+            raw = inflater.decompress(compressed, raw_len + 1)
+        except zlib.error as error:
+            raise AssertionError(f"{where} did not inflate: {error}") from error
+        if (
+            len(raw) != raw_len
+            or inflater.unconsumed_tail
+            or inflater.eof != final
+            or (final and inflater.unused_data)
+        ):
+            raise AssertionError(f"{where} did not inflate to the {raw_len} bytes it declares")
+        expected_hash = header[20:SEGMENT_HEADER_BYTES].hex()
         if _blake3(raw) != expected_hash:
             raise AssertionError(
-                f"block at {block_offset} of {self._archive} does not match its own hash: "
-                f"header says {expected_hash}, bytes hash to {_blake3(raw)}"
+                f"{where} does not match its own hash: header says {expected_hash}, "
+                f"bytes hash to {_blake3(raw)}"
             )
-        return raw
+        cursor.raw += raw
+        cursor.next_segment_at = at + SEGMENT_HEADER_BYTES + comp_len
+        cursor.finished = final
 
 
 def archived_bodies(db_path: Path | str) -> list[tuple[str, str, str, bytes]]:

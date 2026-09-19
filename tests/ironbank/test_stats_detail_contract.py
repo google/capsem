@@ -234,7 +234,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE body_blocks (
             block_offset INTEGER PRIMARY KEY,
             raw_len INTEGER NOT NULL,
-            comp_len INTEGER NOT NULL,
+            disk_len INTEGER NOT NULL,
             sealed_at TEXT NOT NULL
         );
         CREATE TABLE event_body_blobs (
@@ -545,7 +545,7 @@ def _seed_session_db(db_path: Path) -> None:
         )
         conn.execute(
             """
-            INSERT INTO body_blocks (block_offset, raw_len, comp_len, sealed_at)
+            INSERT INTO body_blocks (block_offset, raw_len, disk_len, sealed_at)
             VALUES (?, ?, ?, ?)
             """,
             (

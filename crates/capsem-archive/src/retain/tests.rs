@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use super::*;
 use crate::format::BodyRef;
-use crate::{BodyLogReader, BodyLogWriter};
+use crate::reader::BodyLogReader;
+use crate::writer::BodyLogWriter;
 
 fn archive(dir: &tempfile::TempDir) -> PathBuf {
     dir.path().join("session.bodies")

@@ -440,7 +440,7 @@ async fn a_dropped_main_table_fails_ready_loudly() {
 
 /// The ordering that makes a crash survivable: bytes first, index second.
 #[tokio::test]
-async fn index_rows_are_committed_only_after_their_block_is_appended() {
+async fn index_rows_are_committed_only_after_their_segment_is_written() {
     let p = temp_db_path("bodies-bytes-before-index");
     let db = DbHandle::open(&p).expect("open handle");
     for i in 0..40 {
@@ -457,7 +457,7 @@ async fn index_rows_are_committed_only_after_their_block_is_appended() {
     let archive_len = std::fs::metadata(archive_path(&p)).expect("stat archive").len();
     let blocks = query_json(
         &db.query(
-            "SELECT DISTINCT k.block_offset, k.comp_len
+            "SELECT DISTINCT k.block_offset, k.disk_len
              FROM event_body_blobs AS b
              JOIN body_blocks AS k ON k.block_offset = b.block_offset",
             &[],
@@ -472,8 +472,8 @@ async fn index_rows_are_committed_only_after_their_block_is_appended() {
     assert!(!rows.is_empty(), "the flush must have committed index rows");
     for row in rows {
         let block_offset = row[0].as_u64().expect("block offset");
-        let comp_len = row[1].as_u64().expect("compressed length");
-        let block_end = block_offset + capsem_archive::BLOCK_HEADER_BYTES as u64 + comp_len;
+        let disk_len = row[1].as_u64().expect("committed extent");
+        let block_end = block_offset + disk_len;
         assert!(
             block_end <= archive_len,
             "an index row points past the end of the archive: block {block_offset} ends at \

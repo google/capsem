@@ -79,9 +79,10 @@ critical fields. It exits 1 when the ledger is damaged.
 The body archive check compares the index with the file without trusting
 either: every `event_body_blobs.block_offset` exists in `body_blocks`; every
 `body_offset + body_len` fits in its block's `raw_len`; `session.bodies` is at
-least as long as the largest `block_offset + 44 + comp_len` (44 is the block
-header) and starts with the archive's file header. `--verify-bodies` then reads
-every body, inflating each block once, and checks it against `body_hash`.
+least as long as the largest `block_offset + disk_len` (a block's committed
+extent, headers included) and starts with the archive's file header.
+`--verify-bodies` then reads every body, inflating each segment once, and
+checks it against `body_hash`.
 
 ## Session database tables (session.db)
 
@@ -334,11 +335,11 @@ stdout/stderr, security rule payloads -- live in `session.bodies`, not in
 SQLite. `session.db` holds the index:
 
 ```sql
-CREATE TABLE body_blocks (             -- one row per sealed archive block
+CREATE TABLE body_blocks (             -- one row per archive block, upserted per segment
     block_offset INTEGER PRIMARY KEY,  -- byte offset of the block header in session.bodies
-    raw_len INTEGER NOT NULL,          -- inflated size of the block
-    comp_len INTEGER NOT NULL,         -- deflated payload size after the 44-byte header
-    sealed_at TEXT NOT NULL            -- retention cuts by this
+    raw_len INTEGER NOT NULL,          -- inflated size of the committed segments
+    disk_len INTEGER NOT NULL,         -- committed extent in the file, headers included
+    sealed_at TEXT NOT NULL            -- when the last segment was written; retention cuts by this
 );
 
 CREATE TABLE event_body_blobs (        -- one row per archived body; no bytes
@@ -544,7 +545,7 @@ sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT id, model, stop_rea
 sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT source_table, direction, content_type, original_bytes, stored_bytes, truncated FROM event_body_blobs WHERE event_id = '<event_id>'"
 
 # Archive health at a glance: blocks, bytes, and any body pointing at an unrecorded block
-sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT COUNT(*), SUM(raw_len), SUM(comp_len), MIN(sealed_at) FROM body_blocks; SELECT COUNT(*) FROM event_body_blobs b LEFT JOIN body_blocks k USING (block_offset) WHERE k.block_offset IS NULL"
+sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT COUNT(*), SUM(raw_len), SUM(disk_len), MIN(sealed_at) FROM body_blocks; SELECT COUNT(*) FROM event_body_blobs b LEFT JOIN body_blocks k USING (block_offset) WHERE k.block_offset IS NULL"
 
 # File-monitor overflow windows and what kinds of paths changed
 sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT kind, action, COUNT(*) FROM fs_events GROUP BY kind, action"

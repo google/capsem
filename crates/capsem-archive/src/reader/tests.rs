@@ -1,6 +1,7 @@
 use super::*;
 use crate::format::BLOCK_MAGIC;
-use crate::{ArchiveError, BodyLogWriter, SealedBlock};
+use crate::writer::{BodyLogWriter, SealedBlock};
+use crate::ArchiveError;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 

@@ -276,6 +276,12 @@ async fn a_registered_session_handle_reads_bodies_after_the_process_trims_them()
         }
     };
     write_body("0000000000ab", r#"{"old":1}"#).await;
+    // A block stays open across flushes; a retention that keeps everything
+    // closes it, so the next body starts the second block this test trims to.
+    owner
+        .retain_bodies_since("1970-01-01T00:00:00.000000Z")
+        .await
+        .expect("close the first block");
     write_body("0000000000cd", r#"{"new":2}"#).await;
 
     // The service registers its external reader and serves a body from it,

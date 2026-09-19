@@ -197,6 +197,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with only one copy indexed; on recorded sessions the security payloads now take
   22-61% less archive space. Bodies are only shared inside one block, so
   retention still drops every row with the block it points into.
+- The session archive compresses bodies about 1.7x better. Every five-second
+  disk flush used to seal the block being written, so blocks averaged about
+  85 KiB and the flush timer, not the data, capped compression. A block now
+  stays open across flushes: each flush appends what it compressed as a
+  segment, synced to disk before the rows that name it commit, and the block
+  goes on compressing against everything before it until it reaches 1 MiB, is
+  an hour old, or the session stops. Replaying a recorded 76 MB session, the
+  archive goes from 6.3x to 10.4x smaller than the bodies it holds. A body is
+  still readable -- from the service too -- the moment its flush returns, a
+  crash still costs at most the unflushed bodies, and the codec is now recorded
+  per block. Archives from earlier builds of this branch are not appended to.
 - A session ledger written by an earlier build is refused rather than upgraded
   in place: opening it fails and names what it lacks. The old upgrade path
   discarded its own errors and could produce a ledger matching neither build,
