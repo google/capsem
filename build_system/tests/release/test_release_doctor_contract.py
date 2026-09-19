@@ -6355,9 +6355,10 @@ def test_guest_init_console_redirection_cannot_kill_pid_one() -> None:
 def test_guest_init_persists_boot_diagnostics_before_agent_launch() -> None:
     init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
 
+    log_dir_pos = init.find("GUEST_LOG_DIR=/mnt/shared/logs")
     helper_pos = init.find("init_log()")
-    workspace_log_pos = init.find("/mnt/shared/workspace/.capsem-boot.log")
-    agent_stdio_pos = init.find("/mnt/shared/workspace/.capsem-agent-stdio.log")
+    boot_log_pos = init.find('"$GUEST_LOG_DIR/.capsem-boot.log"')
+    agent_stdio_pos = init.find('"$GUEST_LOG_DIR/.capsem-agent-stdio.log"')
     backtrace_pos = init.find("export RUST_BACKTRACE=1")
     kmsg_pos = init.find("> /dev/kmsg")
     launch_log_pos = init.find('init_log "starting PTY agent (vsock mode): $AGENT_PATH"')
@@ -6365,9 +6366,16 @@ def test_guest_init_persists_boot_diagnostics_before_agent_launch() -> None:
     launch_pos = init.find('chroot /newroot "$AGENT_PATH"')
     exit_status_pos = init.find('init_log "PTY agent exited with status $AGENT_STATUS"')
 
+    assert log_dir_pos != -1, "init diagnostics must survive on the host-preserved share"
     assert helper_pos != -1, "init must centralize durable boot diagnostics"
-    assert workspace_log_pos != -1, "init diagnostics must survive in host-preserved workspace"
+    assert boot_log_pos != -1, "init diagnostics must survive in the share's logs directory"
     assert agent_stdio_pos != -1, "agent stderr must survive when it exits before opening its log"
+    # The host file monitor records every change in the workspace and has no
+    # exclusion list, so a log kept there reports its own writes as file
+    # events -- one agent log was 65 of 155 in a 30-minute session.
+    assert "/mnt/shared/workspace/." not in init, (
+        "guest diagnostics must not be written inside the watched workspace"
+    )
     assert backtrace_pos != -1, "early agent panics must include enough context to fix"
     assert kmsg_pos != -1, "init diagnostics must reach serial-visible kernel log on quiet boots"
     assert launch_log_pos != -1, "init must mark the exact agent launch boundary"
@@ -6377,8 +6385,9 @@ def test_guest_init_persists_boot_diagnostics_before_agent_launch() -> None:
         "init must report early agent exits instead of silently idling PID 1"
     )
     assert (
-        helper_pos
-        < workspace_log_pos
+        log_dir_pos
+        < helper_pos
+        < boot_log_pos
         < agent_stdio_pos
         < launch_log_pos
         < launch_pos

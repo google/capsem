@@ -1,12 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::RwLock;
+use tracing::warn;
 
 use crate::net::policy_config::{SecurityRuleSet, SharedPluginPolicy};
+use capsem_logger::DbWriter;
 use capsem_proto::mcp_aggregator::AggregatorClient;
-use capsem_proto::mcp_contracts::{JsonRpcRequest, JsonRpcResponse, McpToolDef};
+use capsem_proto::mcp_contracts::{builtin_ledger, parse_namespaced, JsonRpcRequest, JsonRpcResponse, McpToolDef};
 
 const DEFAULT_MCP_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_MCP_TOOL_CALL_TIMEOUT_SECS: u64 = 300;
@@ -59,6 +61,11 @@ fn env_duration_secs(key: &str, default_secs: u64) -> Duration {
 
 pub struct McpEndpointState {
     pub aggregator: AggregatorClient,
+    /// The session ledger, for the records builtin tool results carry.
+    ledger: Arc<DbWriter>,
+    /// Names of the servers whose definition says `source == "builtin"`: the
+    /// only ones whose ledger records are honoured.
+    builtin_servers: std::sync::RwLock<BTreeSet<String>>,
     pub security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
     pub plugin_policy: SharedPluginPolicy,
     pub inflight: Arc<tokio::sync::Semaphore>,
@@ -69,6 +76,8 @@ pub struct McpEndpointState {
 impl McpEndpointState {
     pub fn new(
         aggregator: AggregatorClient,
+        ledger: Arc<DbWriter>,
+        builtin_servers: BTreeSet<String>,
         security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
         plugin_policy: SharedPluginPolicy,
         inflight: Arc<tokio::sync::Semaphore>,
@@ -76,12 +85,56 @@ impl McpEndpointState {
     ) -> Self {
         Self {
             aggregator,
+            ledger,
+            builtin_servers: std::sync::RwLock::new(builtin_servers),
             security_rules,
             plugin_policy,
             inflight,
             timeouts,
             tool_timeout_overrides: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Replace the builtin server names after a refresh rebuilt the server list.
+    pub fn set_builtin_servers(&self, names: BTreeSet<String>) {
+        *self.builtin_servers.write().expect("builtin server set poisoned") = names;
+    }
+
+    fn is_builtin_tool(&self, namespaced_tool: &str) -> bool {
+        parse_namespaced(namespaced_tool).is_some_and(|(server, _)| {
+            self.builtin_servers
+                .read()
+                .expect("builtin server set poisoned")
+                .contains(server)
+        })
+    }
+
+    /// Take the builtin ledger key out of a tool result, and record what it
+    /// held when -- and only when -- the tool belongs to the builtin server.
+    ///
+    /// The key is removed from every result, whatever server sent it: the
+    /// guest never sees it, and a server that is not the builtin cannot
+    /// write the ledger by imitating one.
+    async fn take_builtin_ledger(&self, namespaced_tool: &str, result: &mut serde_json::Value) {
+        let Some(value) = builtin_ledger::take(result) else {
+            return;
+        };
+        if !self.is_builtin_tool(namespaced_tool) {
+            warn!(
+                tool = namespaced_tool,
+                "dropped builtin ledger records from a server that is not the builtin"
+            );
+            return;
+        }
+        let records = match builtin_ledger::decode(value) {
+            Ok(records) => records,
+            Err(error) => {
+                warn!(tool = namespaced_tool, %error, "builtin ledger records did not parse; nothing recorded");
+                return;
+            }
+        };
+        let rules = Arc::clone(&*self.security_rules.read().expect("security rules poisoned"));
+        crate::mcp::builtin_ledger::record_builtin_ledger(&self.ledger, &rules, records).await;
     }
 
     pub async fn record_tool_catalog_timeouts(&self, tools: &[McpToolDef]) {
@@ -184,7 +237,10 @@ impl McpEndpointState {
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!({}));
                 match self.aggregator.call_tool(tool_name, arguments, Some(timeout)).await {
-                    Ok(result) => JsonRpcResponse::ok(req.id.clone(), result),
+                    Ok(mut result) => {
+                        self.take_builtin_ledger(tool_name, &mut result).await;
+                        JsonRpcResponse::ok(req.id.clone(), result)
+                    }
                     Err(e) => JsonRpcResponse::err(req.id.clone(), -32603, format!("tool call failed: {e}")),
                 }
             }
@@ -214,7 +270,10 @@ impl McpEndpointState {
                 }
 
                 match self.aggregator.read_resource(uri, Some(timeout)).await {
-                    Ok(result) => JsonRpcResponse::ok(req.id.clone(), result),
+                    Ok(mut result) => {
+                        strip_builtin_ledger("resources/read", &mut result);
+                        JsonRpcResponse::ok(req.id.clone(), result)
+                    }
                     Err(e) => JsonRpcResponse::err(req.id.clone(), -32603, format!("resource read failed: {e}")),
                 }
             }
@@ -249,13 +308,27 @@ impl McpEndpointState {
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!({}));
                 match self.aggregator.get_prompt(prompt_name, arguments, Some(timeout)).await {
-                    Ok(result) => JsonRpcResponse::ok(req.id.clone(), result),
+                    Ok(mut result) => {
+                        strip_builtin_ledger("prompts/get", &mut result);
+                        JsonRpcResponse::ok(req.id.clone(), result)
+                    }
                     Err(e) => JsonRpcResponse::err(req.id.clone(), -32603, format!("prompt get failed: {e}")),
                 }
             }
 
             _ => JsonRpcResponse::err(req.id.clone(), -32601, format!("method not found: {}", req.method)),
         }
+    }
+}
+
+/// Remove the builtin ledger key from a result that can never carry records:
+/// only a tool call records anything.
+fn strip_builtin_ledger(method: &str, result: &mut serde_json::Value) {
+    if builtin_ledger::take(result).is_some() {
+        warn!(
+            method,
+            "dropped builtin ledger records from a result that cannot carry them"
+        );
     }
 }
 

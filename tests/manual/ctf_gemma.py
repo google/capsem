@@ -42,7 +42,6 @@ import json
 import os
 import secrets
 import shlex
-import subprocess
 import sys
 import tempfile
 import time
@@ -55,10 +54,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from helpers.constants import BIN_DIR, CODE_PROFILE_ID
 from helpers.service import ServiceInstance
 
 from tests.fixtures.oci.registry import registry
+from tests.manual.vm_ollama import boot
 
 os.environ.setdefault("CAPSEM_TRAY_HEADLESS", "1")
 
@@ -72,36 +71,6 @@ OLLAMA = "http://127.0.0.1:11434/api/generate"
 # with CAPSEM_GYM_EVIDENCE_DIR.
 EVIDENCE_DIR = Path(os.environ.get("CAPSEM_GYM_EVIDENCE_DIR") or tempfile.gettempdir()) / "capsem-ctf-evidence"
 
-
-def boot(service, tmp_path, reference, certificate, name):
-    stdout = tmp_path / f"{name}.stdout"
-    stderr = tmp_path / f"{name}.stderr"
-    out, err = stdout.open("wb"), stderr.open("wb")
-    command = [
-        str(BIN_DIR / "capsem"), "--uds-path", str(service.uds_path),
-        "run", "--profile", CODE_PROFILE_ID, "--registry-ca", str(certificate),
-        "-n", name, reference,
-    ]
-    env = {
-        **os.environ,
-        "CAPSEM_HOME": str(service.home_dir),
-        "CAPSEM_RUN_DIR": str(service.tmp_dir),
-        "CAPSEM_PROFILES_DIR": str(service.profiles_dir),
-    }
-    process = subprocess.Popen(command, env=env, stdout=out, stderr=err)
-    deadline = time.time() + 180
-    while time.time() < deadline:
-        if process.poll() is not None:
-            raise RuntimeError(f"{name} exited early:\n{stderr.read_text()}")
-        if b"Ready to accept connections tcp" in stdout.read_bytes():
-            break
-        time.sleep(0.5)
-    else:
-        raise RuntimeError(f"{name} never became ready:\n{stdout.read_text()}")
-    rows = [r for r in service.client().get("/vms/list")["sandboxes"] if r.get("name") == name]
-    if len(rows) != 1:
-        raise RuntimeError(f"expected one {name} VM, saw {rows}")
-    return rows[0]
 
 
 def guest(service, vm_id, shell, timeout=40):

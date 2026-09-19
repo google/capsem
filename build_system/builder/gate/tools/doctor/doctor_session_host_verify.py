@@ -44,9 +44,9 @@ def _verify_main_db(
         return
 
     results.check(
-        row["status"] in ("stopped", "vacuumed"),
+        row["status"] == "stopped",
         f"main.db status = {row['status']}",
-        f"main.db status = {row['status']} (expected stopped or vacuumed)",
+        f"main.db status = {row['status']} (expected stopped)",
     )
     totals = {
         "total_file_events": row["total_file_events"],

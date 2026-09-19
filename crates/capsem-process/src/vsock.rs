@@ -1340,37 +1340,34 @@ async fn handle_guest_msg(
                 },
             )
             .await;
-            match boundary {
-                Ok(Some(emission)) if emission.enforcement.is_allowed() => {}
-                Ok(Some(emission)) if action == capsem_logger::FileAction::Exported => {
-                    let error = emission
+            // An export leaves the sandbox, so it is refused unless its ledger
+            // record was admitted and allowed -- like exec and file import. A
+            // record that failed to write or evaluate refuses it too (#203):
+            // an export nobody could audit must not happen.
+            let refusal = match &boundary {
+                Ok(Some(emission)) if emission.enforcement.is_allowed() => None,
+                Ok(Some(emission)) => Some(
+                    emission
                         .enforcement
                         .reason
-                        .unwrap_or_else(|| "file export blocked by security policy".into());
+                        .clone()
+                        .unwrap_or_else(|| "blocked by policy".into()),
+                ),
+                Ok(None) => Some("its security event could not be recorded".into()),
+                Err(error) => Some(format!("its security event failed: {error}")),
+            };
+            if let Some(reason) = refusal {
+                if action != capsem_logger::FileAction::Exported {
+                    warn!(id, action = ?action, reason, "file boundary not allowed after data was already local");
+                } else {
+                    let error = Some(format!("file export refused: {reason}"));
                     if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
                         capsem_core::try_send!(
                             "job_result_read_file_blocked",
-                            tx.send(JobResult::ReadFile {
-                                data: None,
-                                error: Some(error)
-                            })
+                            tx.send(JobResult::ReadFile { data: None, error })
                         );
                     }
                     return;
-                }
-                Ok(Some(emission)) => {
-                    warn!(
-                        id,
-                        action = ?action,
-                        decision = ?emission.enforcement.action,
-                        "file boundary emitted non-allow decision after data was already local"
-                    );
-                }
-                Ok(None) => {
-                    warn!(id, action = ?action, "failed to write file boundary security event");
-                }
-                Err(error) => {
-                    warn!(id, action = ?action, error, "failed to evaluate file boundary");
                 }
             }
             if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {

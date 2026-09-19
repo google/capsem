@@ -43,28 +43,136 @@ fn empty_security_rules() -> Arc<std::sync::RwLock<Arc<SecurityRuleSet>>> {
     Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new()))))
 }
 
-#[test]
-fn should_exclude_git() {
-    assert!(should_exclude(Path::new(".git")));
-    assert!(should_exclude(Path::new("project/.git/objects")));
+/// Start a monitor over a fresh workspace and hand back the workspace, the
+/// DB path and the running monitor.
+fn monitor_over_new_workspace(dir: &std::path::Path) -> (PathBuf, PathBuf, Arc<DbWriter>, FsMonitor) {
+    let workspace = dir.join("workspace");
+    if !workspace.exists() {
+        std::fs::create_dir(&workspace).unwrap();
+    }
+    let db_path = dir.join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 64).unwrap());
+    let monitor = FsMonitor::start(
+        workspace.clone(),
+        workspace.clone(),
+        Arc::clone(&db),
+        empty_security_rules(),
+        empty_trace_state(),
+    )
+    .unwrap();
+    (workspace, db_path, db, monitor)
 }
 
-#[test]
-fn should_exclude_node_modules() {
-    assert!(should_exclude(Path::new("node_modules")));
-    assert!(should_exclude(Path::new("project/node_modules/express")));
+/// A write to `path`, as the scan would report it.
+fn env_event(path: &str, kind: FileKind) -> QueuedEvent {
+    QueuedEvent {
+        path: path.to_string(),
+        action: FileAction::Modified,
+        kind,
+        size: Some(1),
+    }
 }
 
-#[test]
-fn should_not_exclude_normal_paths() {
-    assert!(!should_exclude(Path::new("project/src/app.js")));
-    assert!(!should_exclude(Path::new("README.md")));
+fn recorded_event(db_path: &Path, path: &str) -> Option<(String, String, Option<i64>)> {
+    let conn = rusqlite::Connection::open(db_path).unwrap();
+    conn.query_row(
+        "SELECT action, kind, size FROM fs_events WHERE path = ?1",
+        [path],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .ok()
 }
 
+/// `.git/hooks/*` is how a compromised session persists. An exclusion list
+/// that hid it made the ledger report a clean session for a backdoored repo.
 #[test]
-fn should_not_exclude_partial_name() {
-    assert!(!should_exclude(Path::new(".github/workflows")));
-    assert!(!should_exclude(Path::new("targets/debug")));
+fn events_under_dot_git_hooks_are_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let (workspace, db_path, db, monitor) = monitor_over_new_workspace(dir.path());
+
+    let hooks = workspace.join(".git/hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    std::fs::write(hooks.join("pre-commit"), "#!/bin/sh\nexfiltrate\n").unwrap();
+    monitor.shutdown_and_join();
+    db.shutdown_blocking();
+
+    let hook = recorded_event(&db_path, ".git/hooks/pre-commit").expect("the hook write must be a ledger row");
+    assert_eq!((hook.0.as_str(), hook.1.as_str()), ("created", "file"));
+}
+
+/// `node_modules/<pkg>/package.json` is how a supply-chain attack lands an
+/// install script. Same finding, same rule.
+#[test]
+fn events_under_node_modules_are_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let (workspace, db_path, db, monitor) = monitor_over_new_workspace(dir.path());
+
+    let package = workspace.join("node_modules/evil");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(package.join("package.json"), r#"{"scripts":{"postinstall":"sh -c x"}}"#).unwrap();
+    monitor.shutdown_and_join();
+    db.shutdown_blocking();
+
+    let manifest =
+        recorded_event(&db_path, "node_modules/evil/package.json").expect("the install script must be a ledger row");
+    assert_eq!((manifest.0.as_str(), manifest.1.as_str()), ("created", "file"));
+}
+
+/// A directory event must say it is a directory. Recording `mkdir` as an
+/// anonymous path carrying the directory inode's size told a reader nothing.
+#[test]
+fn mkdir_and_rmdir_are_recorded_as_dir_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let (workspace, db_path, db, monitor) = monitor_over_new_workspace(dir.path());
+    std::fs::create_dir(workspace.join("payload")).unwrap();
+    monitor.shutdown_and_join();
+
+    // A second monitor starts with the directory in its snapshot, so the
+    // removal resolves its kind from that snapshot rather than from a path
+    // that no longer exists.
+    let monitor = FsMonitor::start(
+        workspace.clone(),
+        workspace.clone(),
+        Arc::clone(&db),
+        empty_security_rules(),
+        empty_trace_state(),
+    )
+    .unwrap();
+    std::fs::remove_dir(workspace.join("payload")).unwrap();
+    monitor.shutdown_and_join();
+    db.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT action, kind, size FROM fs_events WHERE path = 'payload' ORDER BY id")
+        .unwrap();
+    let rows: Vec<(String, String, Option<i64>)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("created".to_string(), "dir".to_string(), None),
+            ("deleted".to_string(), "dir".to_string(), None),
+        ]
+    );
+}
+
+/// Watching every path costs a full stat walk per scan, so the scan pays for
+/// itself: the interval is ten scans long, floored and capped.
+#[test]
+fn poll_interval_scales_with_scan_cost() {
+    assert_eq!(
+        poll_interval_for_scan(Duration::from_millis(1)),
+        Duration::from_millis(500)
+    );
+    assert_eq!(
+        poll_interval_for_scan(Duration::from_millis(200)),
+        Duration::from_secs(2)
+    );
+    assert_eq!(poll_interval_for_scan(Duration::from_secs(5)), Duration::from_secs(10));
 }
 
 #[test]
@@ -75,181 +183,100 @@ fn env_candidate_matches_dotenv_files_only() {
     assert!(!is_env_candidate("project/not.env"));
 }
 
+/// Overflow must be a delay, not a filter: a truncated window is rewound so
+/// the next scan derives it again.
 #[test]
-fn event_to_action_maps_correctly() {
+fn defer_overflow_rewinds_the_baseline_for_everything_it_holds_back() {
+    let entry = |ino| SnapshotEntry {
+        kind: FileKind::File,
+        len: 1,
+        modified: Some((1, 0)),
+        changed: (1, 0),
+        ino,
+    };
+    // A creation, a modification and a deletion, one of each, so every arm of
+    // the rewind is exercised.
+    let previous = HashMap::from([
+        ("modified.txt".to_string(), entry(2)),
+        ("deleted.txt".to_string(), entry(3)),
+    ]);
+    let mut current = HashMap::from([
+        ("created.txt".to_string(), entry(1)),
+        ("modified.txt".to_string(), entry(4)),
+    ]);
+    // What the tree actually looks like, which the next scan will see again.
+    let truth = current.clone();
+    let mut batch = reconciliation_events(&previous, &current);
+    assert_eq!(batch.len(), 3);
+
+    assert_eq!(defer_overflow(&mut batch, &previous, &mut current, 1), 2);
     assert_eq!(
-        event_to_action(&EventKind::Create(notify::event::CreateKind::File)),
-        Some(FileAction::Created)
+        batch.iter().map(|e| (e.path.as_str(), e.action)).collect::<Vec<_>>(),
+        vec![("created.txt", FileAction::Created)]
     );
+
+    // The rewound baseline must produce exactly the events that were held
+    // back, and nothing else, on the next scan.
+    let next = reconciliation_events(&current, &truth);
     assert_eq!(
-        event_to_action(&EventKind::Modify(notify::event::ModifyKind::Data(
-            notify::event::DataChange::Content
-        ))),
-        Some(FileAction::Modified)
-    );
-    assert_eq!(
-        event_to_action(&EventKind::Remove(notify::event::RemoveKind::File)),
-        Some(FileAction::Deleted)
-    );
-    assert_eq!(
-        event_to_action(&EventKind::Access(notify::event::AccessKind::Read)),
-        None
+        next.iter().map(|e| (e.path.as_str(), e.action)).collect::<Vec<_>>(),
+        vec![
+            ("deleted.txt", FileAction::Deleted),
+            ("modified.txt", FileAction::Modified)
+        ]
     );
 }
 
-// -- flush coalescing tests --
-
-/// Test the coalescing logic by extracting it into a pure function.
-/// Returns the list of (path, action) pairs that would be emitted.
-fn coalesce(events: &[(&str, FileAction)]) -> Vec<(String, FileAction)> {
-    let mut pending: HashMap<String, FileAction> = HashMap::new();
-    let mut result = Vec::new();
-
-    for (path, action) in events {
-        let path = path.to_string();
-        match pending.get(&path) {
-            Some(&existing) if existing == *action => {
-                // Same path, same action -- coalesce
-            }
-            Some(_) => {
-                // Same path, different action -- emit old, store new
-                let old = pending.insert(path.clone(), *action).unwrap();
-                result.push((path, old));
-            }
-            None => {
-                pending.insert(path, *action);
-            }
-        }
-    }
-
-    for (path, action) in pending {
-        result.push((path, action));
-    }
-    result
+/// The marker is a ledger row, not a log line: a reader must see that a
+/// window was truncated, and by how much.
+#[test]
+fn the_overflow_marker_names_no_path_and_counts_what_it_stands_for() {
+    let marker = overflow_event(4_096);
+    assert_eq!(marker.action, FileAction::Overflow);
+    assert_eq!(marker.path, "");
+    assert_eq!(marker.size, Some(4_096));
 }
 
 #[test]
-fn flush_coalesces_same_action_same_path() {
-    let result = coalesce(&[
-        ("file.txt", FileAction::Modified),
-        ("file.txt", FileAction::Modified),
-        ("file.txt", FileAction::Modified),
-    ]);
-    assert_eq!(result.len(), 1);
-    assert_eq!(result[0].1, FileAction::Modified);
-}
-
-#[test]
-fn flush_preserves_different_actions_same_path() {
-    let result = coalesce(&[("file.txt", FileAction::Created), ("file.txt", FileAction::Deleted)]);
-    assert_eq!(result.len(), 2);
-    let actions: Vec<_> = result.iter().map(|(_, a)| *a).collect();
-    assert!(actions.contains(&FileAction::Created));
-    assert!(actions.contains(&FileAction::Deleted));
-}
-
-#[test]
-fn flush_different_paths_not_coalesced() {
-    let result = coalesce(&[("a.txt", FileAction::Modified), ("b.txt", FileAction::Modified)]);
-    assert_eq!(result.len(), 2);
-}
-
-#[test]
-fn flush_empty_queue_is_noop() {
-    let result = coalesce(&[]);
-    assert_eq!(result.len(), 0);
-}
-
-#[test]
-fn flush_create_modify_delete_sequence() {
-    let result = coalesce(&[
-        ("file.txt", FileAction::Created),
-        ("file.txt", FileAction::Modified),
-        ("file.txt", FileAction::Modified),
-        ("file.txt", FileAction::Modified),
-        ("file.txt", FileAction::Deleted),
-    ]);
-    // created -> modified (emits created), modified -> modified (coalesced),
-    // modified -> deleted (emits modified), remaining: deleted = 3 total
-    assert_eq!(result.len(), 3);
-    let actions: Vec<_> = result.iter().map(|(_, a)| *a).collect();
-    assert!(actions.contains(&FileAction::Created));
-    assert!(actions.contains(&FileAction::Modified));
-    assert!(actions.contains(&FileAction::Deleted));
-}
-
-#[test]
-fn flush_interleaved_paths() {
-    let result = coalesce(&[
-        ("a.txt", FileAction::Modified),
-        ("b.txt", FileAction::Created),
-        ("a.txt", FileAction::Modified),
-        ("b.txt", FileAction::Modified),
-    ]);
-    // a.txt: 2x modified -> 1 emitted (coalesced)
-    // b.txt: created then modified -> 2 emitted
-    assert_eq!(result.len(), 3);
-}
-
-#[test]
-fn flush_modify_modify_delete() {
-    // Common pattern: file saved multiple times then deleted
-    let result = coalesce(&[
-        ("temp.txt", FileAction::Modified),
-        ("temp.txt", FileAction::Modified),
-        ("temp.txt", FileAction::Deleted),
-    ]);
-    assert_eq!(result.len(), 2);
-    let actions: Vec<_> = result.iter().map(|(_, a)| *a).collect();
-    assert!(actions.contains(&FileAction::Modified));
-    assert!(actions.contains(&FileAction::Deleted));
-}
-
-#[test]
-fn flush_create_delete_create() {
-    // Edge case: file created, deleted, created again
-    let result = coalesce(&[
-        ("f.txt", FileAction::Created),
-        ("f.txt", FileAction::Deleted),
-        ("f.txt", FileAction::Created),
-    ]);
-    // created -> deleted (emits created), deleted -> created (emits deleted),
-    // remaining: created = 3 total
-    assert_eq!(result.len(), 3);
-}
-
-#[test]
-fn queue_overflow_caps_at_max() {
-    let mut queue: Vec<QueuedEvent> = Vec::new();
-    let mut dropped = 0u64;
-    // Fill queue to capacity
-    for i in 0..MAX_QUEUE_SIZE {
-        queue.push(QueuedEvent {
-            path: format!("file_{}.txt", i),
-            fs_path: PathBuf::from(format!("file_{}.txt", i)),
-            action: FileAction::Modified,
-        });
-    }
-    // One more should increment dropped
-    if queue.len() >= MAX_QUEUE_SIZE {
-        dropped += 1;
-    }
-    assert_eq!(queue.len(), MAX_QUEUE_SIZE);
-    assert_eq!(dropped, 1);
-}
-
-#[test]
-fn reconciliation_finds_changes_missing_from_notify_queue() {
+fn reconciliation_between_scans_carries_kind_and_size_from_the_walk() {
     let root = tempfile::tempdir().unwrap();
     let before = workspace_snapshot(root.path(), root.path());
-    let created = root.path().join("late.txt");
-    std::fs::write(&created, "late write").unwrap();
+    std::fs::write(root.path().join("late.txt"), "late write").unwrap();
     let after = workspace_snapshot(root.path(), root.path());
 
     let events = reconciliation_events(&before, &after);
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].path, "late.txt");
-    assert_eq!(events[0].action, FileAction::Created);
+    assert_eq!(
+        events,
+        vec![QueuedEvent {
+            path: "late.txt".to_string(),
+            action: FileAction::Created,
+            kind: FileKind::File,
+            size: Some(10),
+        }]
+    );
+}
+
+/// A symlink is recorded as a symlink and never dereferenced: its `size` is
+/// not the target's, and the walk never descends through it.
+#[test]
+fn a_symlink_is_recorded_as_a_symlink_with_no_size() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("big.bin");
+    std::fs::write(&target, vec![0u8; 1024 * 1024]).unwrap();
+    let before = workspace_snapshot(root.path(), root.path());
+    std::os::unix::fs::symlink(&target, root.path().join("link")).unwrap();
+    let after = workspace_snapshot(root.path(), root.path());
+
+    let events = reconciliation_events(&before, &after);
+    assert_eq!(
+        events,
+        vec![QueuedEvent {
+            path: "link".to_string(),
+            action: FileAction::Created,
+            kind: FileKind::Symlink,
+            size: None,
+        }]
+    );
 }
 
 #[test]
@@ -279,7 +306,7 @@ match = 'file.create.path == "late.txt"'
     )
     .unwrap();
 
-    // Do not wait for PollWatcher's 500ms scan. Shutdown itself must be the
+    // Do not wait for the next scan. Shutdown itself must be the
     // visibility boundary for this already-materialized file.
     std::fs::write(workspace.join("late.txt"), "late write").unwrap();
     monitor.shutdown_and_join();
@@ -313,12 +340,13 @@ async fn emit_brokers_env_credentials_and_persists_reference() {
 
     let db = DbWriter::open(&db_path, 64).unwrap();
     FsMonitor::emit(
-        &db,
-        &empty_security_rules(),
-        &empty_trace_state(),
-        ".env",
-        &env_path,
-        FileAction::Modified,
+        &EmitContext {
+            db: &db,
+            security_rules: &empty_security_rules(),
+            trace_state: &empty_trace_state(),
+            strip_prefix: dir.path(),
+        },
+        &env_event(".env", FileKind::File),
     )
     .await;
     db.shutdown_blocking();
@@ -364,12 +392,18 @@ match = 'file.create.name == "skill.md" && file.create.ext == "md"'
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
 
     FsMonitor::emit(
-        &db,
-        &security_rules,
-        &empty_trace_state(),
-        "skill.md",
-        &file_path,
-        FileAction::Created,
+        &EmitContext {
+            db: &db,
+            security_rules: &security_rules,
+            trace_state: &empty_trace_state(),
+            strip_prefix: dir.path(),
+        },
+        &QueuedEvent {
+            path: "skill.md".to_string(),
+            action: FileAction::Created,
+            kind: FileKind::File,
+            size: Some(7),
+        },
     )
     .await;
     db.shutdown_blocking();
@@ -413,12 +447,18 @@ match = 'file.create.path == "openai-two.txt"'
         .unwrap()
         .register_tool_file_hints("trace-model", [r#"{"cmd":"printf x > /root/openai-two.txt"}"#]);
     FsMonitor::emit(
-        &db,
-        &security_rules,
-        &trace_state,
-        "openai-two.txt",
-        &file_path,
-        FileAction::Created,
+        &EmitContext {
+            db: &db,
+            security_rules: &security_rules,
+            trace_state: &trace_state,
+            strip_prefix: dir.path(),
+        },
+        &QueuedEvent {
+            path: "openai-two.txt".to_string(),
+            action: FileAction::Created,
+            kind: FileKind::File,
+            size: Some(6),
+        },
     )
     .await;
     db.shutdown_blocking();
@@ -431,14 +471,32 @@ match = 'file.create.path == "openai-two.txt"'
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
-    let (rule_trace_id, event_credential_ref): (String, Option<String>) = conn
+    let (rule_event_id, rule_trace_id): (String, String) = conn
         .query_row(
-            "SELECT trace_id, json_extract(event_json, '$.credential_ref') FROM security_rule_events
+            "SELECT event_id, trace_id FROM security_rule_events
              WHERE event_id = (SELECT event_id FROM fs_events WHERE path = 'openai-two.txt')",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
+    drop(conn);
+    // The matched event's payload is archive-backed, so the credential
+    // reference inside it is read from the archive rather than from the row.
+    let payload = capsem_logger::DbHandle::open_external_reader(&db_path)
+        .unwrap()
+        .read_body(
+            &rule_event_id,
+            "security_rule_events",
+            capsem_logger::BodyDirection::Payload,
+        )
+        .await
+        .unwrap()
+        .expect("the matched event payload is archived");
+    let payload: serde_json::Value = serde_json::from_slice(&payload.bytes).unwrap();
+    let event_credential_ref = payload
+        .get("credential_ref")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
     assert_eq!(trace_id, "trace-model");
     assert_eq!(rule_trace_id, "trace-model");
     assert_eq!(credential_ref, None);
@@ -466,12 +524,18 @@ match = 'file.write.path == "blocked.txt"'
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
 
     FsMonitor::emit(
-        &db,
-        &security_rules,
-        &empty_trace_state(),
-        "blocked.txt",
-        &file_path,
-        FileAction::Modified,
+        &EmitContext {
+            db: &db,
+            security_rules: &security_rules,
+            trace_state: &empty_trace_state(),
+            strip_prefix: dir.path(),
+        },
+        &QueuedEvent {
+            path: "blocked.txt".to_string(),
+            action: FileAction::Modified,
+            kind: FileKind::File,
+            size: Some(20),
+        },
     )
     .await;
     db.shutdown_blocking();
@@ -509,55 +573,271 @@ match = 'file.write.path == "blocked.txt"'
     );
 }
 
-// -- flush cadence under load --
-
-#[tokio::test(start_paused = true)]
-async fn flush_fires_on_interval_under_continuous_events() {
+/// The `.env` broker is the only place the monitor reads guest-controlled
+/// bytes. A guest that plants `.env` as a link to a host secret must get
+/// nothing: not a brokered reference, not a substitution row, and above all
+/// not the host file's contents anywhere near the ledger.
+#[tokio::test]
+async fn env_symlink_to_a_host_secret_is_never_read_or_brokered() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
-    let db = std::sync::Arc::new(DbWriter::open(&db_path, 64).unwrap());
-    let (event_tx, event_rx) = mpsc::channel::<Event>(1024);
-    let (_shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
-    let workspace = WorkspaceState {
-        watch_dir: dir.path().to_path_buf(),
-        strip_prefix: dir.path().to_path_buf(),
-        snapshot: HashMap::new(),
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    let host_secret = dir.path().join("host-credentials");
+    std::fs::write(&host_secret, "AWS_SECRET_ACCESS_KEY=sk-host-only-secret\n").unwrap();
+    std::os::unix::fs::symlink(&host_secret, dir.path().join(".env")).unwrap();
+
+    let db = DbWriter::open(&db_path, 64).unwrap();
+    FsMonitor::emit(
+        &EmitContext {
+            db: &db,
+            security_rules: &empty_security_rules(),
+            trace_state: &empty_trace_state(),
+            strip_prefix: dir.path(),
+        },
+        // The scan's own lstat says symlink; the broker must refuse on that
+        // alone, and the O_NOFOLLOW open must refuse it again.
+        &env_event(".env", FileKind::Symlink),
+    )
+    .await;
+    db.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let credential_ref: Option<String> = conn
+        .query_row("SELECT credential_ref FROM fs_events WHERE path = '.env'", [], |row| {
+            row.get(0)
+        })
+        .expect("the symlink itself is still a recorded event");
+    assert_eq!(credential_ref, None, "a link to a host secret must broker nothing");
+    let substitutions: i64 = conn
+        .query_row("SELECT COUNT(*) FROM substitution_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(substitutions, 0);
+    let db_bytes = std::fs::read(&db_path).unwrap();
+    assert!(!String::from_utf8_lossy(&db_bytes).contains("sk-host-only-secret"));
+}
+
+/// Even if the kind were wrong, the open refuses to follow the link: the
+/// scan's answer and the open are two independent refusals of the same trick.
+#[tokio::test]
+async fn env_symlink_is_refused_by_the_open_even_if_it_claims_to_be_a_file() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+
+    let host_secret = dir.path().join("host-credentials");
+    std::fs::write(&host_secret, "AWS_SECRET_ACCESS_KEY=sk-host-only-secret\n").unwrap();
+    std::os::unix::fs::symlink(&host_secret, dir.path().join(".env")).unwrap();
+
+    let db = DbWriter::open(&db_path, 64).unwrap();
+    FsMonitor::emit(
+        &EmitContext {
+            db: &db,
+            security_rules: &empty_security_rules(),
+            trace_state: &empty_trace_state(),
+            strip_prefix: dir.path(),
+        },
+        &env_event(".env", FileKind::File),
+    )
+    .await;
+    db.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let credential_ref: Option<String> = conn
+        .query_row("SELECT credential_ref FROM fs_events WHERE path = '.env'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(credential_ref, None);
+    let db_bytes = std::fs::read(&db_path).unwrap();
+    assert!(!String::from_utf8_lossy(&db_bytes).contains("sk-host-only-secret"));
+}
+
+/// The monitor owns its poll loop, so a write lands in the ledger on the next
+/// cycle -- shutdown is not the only visibility barrier.
+#[tokio::test]
+async fn a_hook_write_is_recorded_after_one_poll_cycle_without_shutdown() {
+    let dir = tempfile::tempdir().unwrap();
+    let (workspace, db_path, db, monitor) = monitor_over_new_workspace(dir.path());
+
+    let hooks = workspace.join(".git/hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    std::fs::write(hooks.join("pre-commit"), "#!/bin/sh\nexfiltrate\n").unwrap();
+
+    // An empty workspace scans in well under a millisecond, so the interval is
+    // the 500ms floor. Wait at most three of those, checking as we go, and
+    // never shut the monitor down -- shutdown reconciles unconditionally and
+    // would hide a loop that never ticks.
+    let deadline = std::time::Instant::now() + Duration::from_millis(1500);
+    let recorded = loop {
+        db.flush().await;
+        if let Some(recorded) = recorded_event(&db_path, ".git/hooks/pre-commit") {
+            break Some(recorded);
+        }
+        if std::time::Instant::now() >= deadline {
+            break None;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     };
-    let loop_task = tokio::spawn(FsMonitor::event_loop(
-        event_rx,
+    // Both of these park the calling thread, so they cannot run on the
+    // runtime driving this test.
+    let teardown_db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || {
+        monitor.shutdown_and_join();
+        teardown_db.shutdown_blocking();
+    })
+    .await
+    .unwrap();
+
+    let recorded = recorded.expect("a poll cycle must record the hook write without a shutdown");
+    assert_eq!((recorded.0.as_str(), recorded.1.as_str()), ("created", "file"));
+}
+
+/// Pin a path's mtime to a fixed instant, so two scans can differ in every
+/// way *except* the timestamp a guest can forge with `touch -r`.
+fn pin_mtime(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let pinned = libc::timespec {
+        tv_sec: 1_700_000_000,
+        tv_nsec: 123_456_789,
+    };
+    let times = [pinned, pinned];
+    let rc = unsafe { libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0) };
+    assert_eq!(rc, 0, "utimensat: {}", std::io::Error::last_os_error());
+}
+
+/// The forgery this guards: rewrite a file in place to the same length, then
+/// put its mtime back. Size and mtime say nothing happened; ctime does.
+#[test]
+fn an_in_place_rewrite_with_a_restored_mtime_is_still_a_modification() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("payload.bin");
+    std::fs::write(&path, b"aaaaa").unwrap();
+    pin_mtime(&path);
+    let before = workspace_snapshot(root.path(), root.path());
+
+    std::fs::write(&path, b"bbbbb").unwrap();
+    pin_mtime(&path);
+    let after = workspace_snapshot(root.path(), root.path());
+
+    assert_eq!(
+        before["payload.bin"].modified, after["payload.bin"].modified,
+        "the test is only meaningful while mtime and size are unchanged"
+    );
+    assert_eq!(before["payload.bin"].len, after["payload.bin"].len);
+    let events = reconciliation_events(&before, &after);
+    assert_eq!(
+        events.iter().map(|e| (e.path.as_str(), e.action)).collect::<Vec<_>>(),
+        vec![("payload.bin", FileAction::Modified)]
+    );
+}
+
+/// A link to a directory is one entry, not a subtree: descending it is how a
+/// guest `ln -s /` turned a workspace scan into a walk of the host.
+#[test]
+fn a_symlink_to_a_directory_is_not_descended() {
+    let root = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::fs::write(elsewhere.path().join("child.txt"), "not ours").unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), root.path().join("link")).unwrap();
+
+    let snapshot = workspace_snapshot(root.path(), root.path());
+
+    assert_eq!(snapshot["link"].kind, FileKind::Symlink);
+    assert_eq!(
+        snapshot.keys().collect::<Vec<_>>(),
+        vec!["link"],
+        "the walk must stop at the link, not enumerate what it points at"
+    );
+}
+
+/// Overflow is a delay, not a filter. Events past the bound are held back by
+/// rewinding the baseline, so the next scan emits them, and the window that
+/// was truncated is itself a ledger row.
+#[tokio::test]
+async fn overflow_defers_events_to_the_next_scan_and_records_a_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 64).unwrap());
+    for i in 0..5 {
+        std::fs::write(workspace.join(format!("f{i}.txt")), "x").unwrap();
+    }
+
+    let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
+    let scan = tokio::spawn(FsMonitor::scan_loop(
         shutdown_rx,
-        workspace,
-        std::sync::Arc::clone(&db),
+        ScanConfig {
+            watch_dir: workspace.clone(),
+            strip_prefix: workspace.clone(),
+            interval: Duration::from_millis(20),
+            max_batch: 2,
+        },
+        HashMap::new(),
+        Arc::clone(&db),
         empty_security_rules(),
         empty_trace_state(),
     ));
 
-    // Feed events every 60ms -- faster than the 100ms flush interval. With the
-    // old per-iteration `sleep`, each event reset the timer so no flush fired
-    // mid-stream and the events sat in the loop's local queue. An interval ticks
-    // on a fixed cadence regardless of event arrivals.
-    for i in 0..6 {
-        let p = dir.path().join(format!("f{i}.txt"));
-        std::fs::write(&p, b"x").unwrap();
-        let ev = Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(p);
-        event_tx.send(ev).await.unwrap();
-        tokio::task::yield_now().await;
-        tokio::time::advance(Duration::from_millis(60)).await;
-        tokio::task::yield_now().await;
+    // Three cycles at most: 2 emitted, 2 emitted, 1 emitted.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        db.flush().await;
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let recorded: i64 = conn
+            .query_row("SELECT COUNT(*) FROM fs_events WHERE action = 'created'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        if recorded == 5 || std::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
-
-    // Make what the loop persisted visible WITHOUT shutting it down -- shutdown
-    // flushes unconditionally and would hide the bug.
-    db.flush().await;
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM fs_events", [], |r| r.get(0))
+    shutdown_tx.send(()).await.unwrap();
+    scan.await.unwrap();
+    let teardown_db = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || teardown_db.shutdown_blocking())
+        .await
         .unwrap();
-    assert!(
-        count > 0,
-        "interval flush must persist events mid-stream, not only at shutdown"
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT path FROM fs_events WHERE action = 'created' ORDER BY path")
+        .unwrap();
+    let created: Vec<String> = stmt
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        created,
+        vec!["f0.txt", "f1.txt", "f2.txt", "f3.txt", "f4.txt"],
+        "every deferred path must arrive on a later scan"
     );
 
-    drop(event_tx);
-    let _ = loop_task.await;
+    let (markers, deferred): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM fs_events WHERE action = 'overflow'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((markers, deferred), (2, 4), "each truncated window is its own row");
+    let marker_paths: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM fs_events WHERE action = 'overflow' AND path != ''",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(marker_paths, 0, "an overflow marker names no path");
 }

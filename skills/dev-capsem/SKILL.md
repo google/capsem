@@ -25,6 +25,7 @@ choice), and even then lead with a recommendation. The full contract is
 | Crate | What | Key modules |
 |-------|------|-------------|
 | `capsem-foundation` | Dependency-light host primitives shared across product crates. | `paths.rs`, `uds.rs`, `poll.rs`, `telemetry.rs`, `log_layer.rs`, `ipc_handshake.rs` |
+| `capsem-archive` | Append-only, block-compressed body archive for one session ledger. | `format.rs`, `writer.rs`, `reader.rs` |
 | `capsem-assets` | VM asset lifecycle and manifest compatibility. | `asset_manager.rs`, `manifest_compat.rs` |
 | `capsem-config` | Product config contracts, parsing, validation, and provider/MCP identity. | `types.rs`, `validation.rs`, `provider_profile.rs`, `mcp.rs`, `resolver.rs` |
 | `capsem-credentials` | Credential provider contracts and durable credential storage. | `provider.rs`, `store.rs`, `durable.rs` |

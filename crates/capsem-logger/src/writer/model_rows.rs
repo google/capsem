@@ -1,16 +1,20 @@
 use rusqlite::{params, Connection};
 
-use super::{
-    blake3_ref, cap_field, format_timestamp, insert_event_body_blob, new_event_id, EventBodyBlob, WriteTarget,
-};
+use super::bodies::{BodyArchive, EventBodyBlob};
+use super::{blake3_ref, body_preview, cap_field, cap_preview, format_timestamp, new_event_id, WriteTarget};
 use crate::events::ModelCall;
 
-pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: WriteTarget) -> rusqlite::Result<()> {
+pub(super) fn insert_model_call(
+    conn: &Connection,
+    call: &ModelCall,
+    target: WriteTarget,
+    bodies: &mut BodyArchive,
+) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(call.timestamp);
-    let req_body = cap_field(&call.request_body_preview);
+    let req_body = body_preview(call.request_body.as_deref());
     let text_content = cap_field(&call.text_content);
     let thinking_content = cap_field(&call.thinking_content);
-    let sys_prompt = cap_field(&call.system_prompt_preview);
+    let sys_prompt = cap_preview(&call.system_prompt_preview);
     let event_id = call.event_id.clone().unwrap_or_else(new_event_id);
     super::execute_cached(
         conn,
@@ -58,7 +62,7 @@ pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: Wri
         ],
     )?;
     let model_call_id = conn.last_insert_rowid();
-    insert_event_body_blob(
+    bodies.stage(
         conn,
         EventBodyBlob {
             event_id: &event_id,
@@ -66,15 +70,13 @@ pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: Wri
             source_table: "model_calls",
             direction: "request",
             content_type: Some("application/json"),
-            body: call
-                .request_body_full
-                .as_deref()
-                .or(call.request_body_preview.as_deref()),
+            body: call.request_body.as_deref(),
+            original_bytes: None,
             trace_id: call.trace_id.as_deref(),
             turn_id: call.trace_id.as_deref(),
         },
-    )?;
-    insert_event_body_blob(
+    );
+    bodies.stage(
         conn,
         EventBodyBlob {
             event_id: &event_id,
@@ -82,11 +84,15 @@ pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: Wri
             source_table: "model_calls",
             direction: "response",
             content_type: None,
-            body: call.response_body_full.as_deref().or(call.text_content.as_deref()),
+            body: call
+                .response_body
+                .as_deref()
+                .or_else(|| call.text_content.as_deref().map(str::as_bytes)),
+            original_bytes: None,
             trace_id: call.trace_id.as_deref(),
             turn_id: call.trace_id.as_deref(),
         },
-    )?;
+    );
     insert_model_items(conn, model_call_id, call, &timestamp, target)?;
 
     for tc in &call.tool_calls {
@@ -105,7 +111,7 @@ pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: Wri
                 target.table("tool_calls")
             ),
             params![
-                new_event_id(),
+                tc.event_id.clone().unwrap_or_else(new_event_id),
                 timestamp,
                 model_call_id,
                 call.provider,
@@ -129,17 +135,38 @@ pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: Wri
     for tr in &call.tool_responses {
         let tr_trace = tr.trace_id.clone().or_else(|| call.trace_id.clone());
         let tr_credential_ref = tr.credential_ref.clone().or_else(|| call.credential_ref.clone());
+        // The full content is archived below; this column is the display
+        // excerpt, reached from the same event_id the archive row carries.
+        let tr_content_preview = cap_preview(&tr.content_preview);
+        let tr_event_id = tr.event_id.clone().unwrap_or_else(new_event_id);
+        bodies.stage(
+            conn,
+            EventBodyBlob {
+                event_id: &tr_event_id,
+                // A tool result is part of the model exchange it continues;
+                // `source_table` is what distinguishes it from the call body.
+                event_type: "model.call",
+                source_table: "tool_responses",
+                direction: "response",
+                content_type: None,
+                body: tr.content_preview.as_deref().map(str::as_bytes),
+                original_bytes: None,
+                trace_id: tr_trace.as_deref(),
+                turn_id: call.trace_id.as_deref(),
+            },
+        );
         super::execute_cached(
             conn,
             &format!(
-                "INSERT INTO {} (model_call_id, call_id, content_preview, is_error, trace_id, turn_id, credential_ref)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO {} (event_id, model_call_id, call_id, content_preview, is_error, trace_id, turn_id, credential_ref)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 target.table("tool_responses")
             ),
             params![
+                tr_event_id,
                 model_call_id,
                 tr.call_id,
-                tr.content_preview,
+                tr_content_preview,
                 i64::from(tr.is_error),
                 tr_trace,
                 call.trace_id,
@@ -149,6 +176,26 @@ pub(super) fn insert_model_call(conn: &Connection, call: &ModelCall, target: Wri
     }
 
     Ok(())
+}
+
+/// A model item's `event_id`, derived from the identity the row already has.
+///
+/// Every other column of a `model_items` row comes from the `ModelCall` it is
+/// derived from, so minting this one from a random UUID made it the single
+/// value in a rebuilt ledger that a replay of the same session could not
+/// reproduce -- which is what kept the fixture regenerator from being
+/// byte-reproducible, and with it the digest that is supposed to let a
+/// reviewer rerun the tool and diff.
+///
+/// `(trace_id, kind, content_hash, call_id)` is the tuple the `UNIQUE` on this
+/// table already treats as the row's identity, so two rows can only share a
+/// derived id if one of them cannot exist. That makes the id an answer about
+/// the item rather than an arbitrary label, and two writes of the same item
+/// now agree on it instead of disagreeing by construction. The width matches
+/// `new_event_id`: 12 lowercase hex, as the column's CHECK requires.
+fn model_item_event_id(trace_id: Option<&str>, kind: &str, content_hash: &str, call_id: &str) -> String {
+    let material = format!("{}\0{kind}\0{content_hash}\0{call_id}", trace_id.unwrap_or_default());
+    blake3::hash(material.as_bytes()).to_hex()[..12].to_string()
 }
 
 fn insert_model_items(
@@ -168,7 +215,11 @@ fn insert_model_items(
      -> rusqlite::Result<()> {
         item_index += 1;
         let call_id = call_id.unwrap_or_default();
-        let content = cap_field(&content);
+        // Hash the ORIGINAL, uncapped content: content_hash feeds the
+        // UNIQUE(trace_id, kind, content_hash, call_id) dedup guard below,
+        // and two distinct turns whose bodies only differ after the cap
+        // point (e.g. share the same system prompt for the first 2 KB)
+        // must not collapse into one row. Only the stored value is capped.
         let hash_material = serde_json::json!({
             "kind": kind,
             "call_id": call_id,
@@ -178,6 +229,18 @@ fn insert_model_items(
         })
         .to_string();
         let content_hash = blake3_ref(&hash_material);
+        // A tool_response item's full content is in the archive, reachable
+        // from the tool_responses row with the same call_id, so this column
+        // keeps a display excerpt. The other kinds have no archive row of
+        // their own and stay at the full field cap.
+        let content = if kind == "tool_response" {
+            cap_preview(&content)
+        } else {
+            cap_field(&content)
+        };
+        // First write wins, and the first write may already have been
+        // flushed out of memory: the flush copies with INSERT OR REPLACE, so
+        // a repeat that reached memory would replace the disk row.
         super::execute_cached(
             conn,
             &format!(
@@ -193,10 +256,17 @@ fn insert_model_items(
                   AND kind = ?8
                   AND content_hash = ?14
                   AND call_id = ?10
+             )
+             AND NOT EXISTS (
+                SELECT 1 FROM main.model_items
+                WHERE trace_id IS ?7
+                  AND kind = ?8
+                  AND content_hash = ?14
+                  AND call_id = ?10
              )"
             ),
             params![
-                new_event_id(),
+                model_item_event_id(call.trace_id.as_deref(), kind, &content_hash, call_id),
                 model_call_id,
                 timestamp,
                 call.provider,
@@ -220,8 +290,12 @@ fn insert_model_items(
     // A tool-result continuation request is represented by tool_response rows;
     // do not also log it as another user request for the same trace.
     if call.tool_responses.is_empty() {
-        if let Some(content) = &call.request_body_preview {
-            insert_item("request", None, None, None, Some(content.clone()))?;
+        // The item content is capped at the field ceiling, not the preview
+        // ceiling, and its hash is taken over the uncapped text -- so the
+        // whole captured body is what reaches `insert_item`, not an excerpt.
+        if let Some(body) = call.request_body.as_deref().filter(|body| !body.is_empty()) {
+            let content = String::from_utf8_lossy(body).into_owned();
+            insert_item("request", None, None, None, Some(content))?;
         }
     }
     if let Some(content) = &call.thinking_content {

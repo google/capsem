@@ -16,6 +16,7 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
+from helpers.body_archive import FILE_HEADER_BYTES
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, materialize_test_profiles
 
@@ -33,6 +34,38 @@ CRED_EVENT_ID = "abc123def456"
 SEC_EVENT_ID = "123abc456def"
 CREDENTIAL_REF = "credential:blake3:" + "1" * 64
 BLAKE3_HASH = "blake3:" + "2" * 64
+# Every block follows the archive's file header, so the first one starts at
+# exactly its length. The number is not repeated here: `helpers.body_archive`
+# is the one place outside capsem-archive allowed to restate the format, and
+# `test_body_archive_format_is_one_place.py` is what keeps it the only one.
+ARCHIVE_FIRST_BLOCK_OFFSET = FILE_HEADER_BYTES
+
+
+def index_rows_for_one_block(bodies: list[tuple]) -> list[tuple]:
+    """Turn (.., body bytes, ..) fixture rows into archive index rows.
+
+    Every body is laid out in one block, in order, exactly as the writer
+    stages them. The rows describe where each body would be; the bytes
+    themselves are the bodies route's fixture, not this one's.
+    """
+    rows = []
+    offset = 0
+    for row in bodies:
+        body = row[9]
+        rows.append(
+            (
+                *row[:9],
+                row[10],
+                row[11],
+                ARCHIVE_FIRST_BLOCK_OFFSET,
+                offset,
+                len(body),
+            )
+        )
+        offset += len(body)
+    return rows
+
+
 EXPECTED_REQUEST_BODY = {"prompt": "write the ledger poem", "nonce": "stats-detail"}
 EXPECTED_REQUEST_BODY_TEXT = json.dumps(EXPECTED_REQUEST_BODY)
 EXPECTED_MODEL_RESPONSE = "Thought for 2s.\nCreated /root/poeme.md with a ledger poem."
@@ -173,6 +206,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
         );
         CREATE TABLE tool_responses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL DEFAULT '000000000000',
             model_call_id INTEGER NOT NULL,
             call_id TEXT NOT NULL,
             content_preview TEXT,
@@ -197,6 +231,12 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             content_hash TEXT NOT NULL,
             credential_ref TEXT
         );
+        CREATE TABLE body_blocks (
+            block_offset INTEGER PRIMARY KEY,
+            raw_len INTEGER NOT NULL,
+            disk_len INTEGER NOT NULL,
+            sealed_at TEXT NOT NULL
+        );
         CREATE TABLE event_body_blobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_id TEXT NOT NULL,
@@ -208,7 +248,9 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             stored_bytes INTEGER NOT NULL,
             truncated INTEGER NOT NULL,
             body_hash TEXT NOT NULL,
-            body BLOB NOT NULL,
+            block_offset INTEGER NOT NULL REFERENCES body_blocks(block_offset),
+            body_offset INTEGER NOT NULL,
+            body_len INTEGER NOT NULL,
             trace_id TEXT,
             created_at TEXT NOT NULL
         );
@@ -307,7 +349,6 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             rule_action TEXT NOT NULL,
             detection_level TEXT NOT NULL DEFAULT 'none',
             rule_json TEXT NOT NULL,
-            event_json TEXT NOT NULL,
             trace_id TEXT
         );
         CREATE TABLE security_decision_events (
@@ -322,7 +363,6 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             event_id TEXT NOT NULL,
             ask_id TEXT NOT NULL,
             status TEXT NOT NULL,
-            event_json TEXT NOT NULL,
             trace_id TEXT
         );
         CREATE TABLE profile_mutation_events (
@@ -410,15 +450,12 @@ def _seed_session_db(db_path: Path) -> None:
                 CREDENTIAL_REF,
             ),
         )
-        conn.executemany(
-            """
-            INSERT INTO event_body_blobs (
-                event_id, event_type, source_table, direction, content_type,
-                original_bytes, stored_bytes, truncated, body_hash, body,
-                trace_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
+        # Bodies live in the session archive; the ledger keeps the index that
+        # names them. This fixture builds that index -- one block holding
+        # every body in order -- because the route under test reads body
+        # metadata, not bytes. The bodies route that reads the file is its own
+        # change, and brings its own archive fixture.
+        body_index_rows = index_rows_for_one_block([
                 (
                     HTTP_EVENT_ID,
                     "http.request",
@@ -489,7 +526,44 @@ def _seed_session_db(db_path: Path) -> None:
                     TRACE_ID,
                     "2026-06-17T20:11:20Z",
                 ),
-            ],
+                # A rule match's forensic payload is a body like any other.
+                (
+                    SEC_EVENT_ID,
+                    "security.rule",
+                    "security_rule_events",
+                    "payload",
+                    "application/json",
+                    len(event_json.encode()),
+                    len(event_json.encode()),
+                    0,
+                    BLAKE3_HASH,
+                    event_json.encode(),
+                    TRACE_ID,
+                    "2026-06-17T20:11:21Z",
+                ),
+            ]
+        )
+        conn.execute(
+            """
+            INSERT INTO body_blocks (block_offset, raw_len, disk_len, sealed_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                ARCHIVE_FIRST_BLOCK_OFFSET,
+                sum(row[-1] for row in body_index_rows),
+                64,
+                "2026-06-17T20:11:20Z",
+            ),
+        )
+        conn.executemany(
+            """
+            INSERT INTO event_body_blobs (
+                event_id, event_type, source_table, direction, content_type,
+                original_bytes, stored_bytes, truncated, body_hash,
+                trace_id, created_at, block_offset, body_offset, body_len
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            body_index_rows,
         )
         conn.execute(
             """
@@ -705,8 +779,8 @@ def _seed_session_db(db_path: Path) -> None:
             """
             INSERT INTO security_rule_events (
                 timestamp_unix_ms, event_id, event_type, rule_id, rule_action,
-                detection_level, rule_json, event_json, trace_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                detection_level, rule_json, trace_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -717,7 +791,6 @@ def _seed_session_db(db_path: Path) -> None:
                     "allow",
                     "informational",
                     rule_json,
-                    event_json,
                     TRACE_ID,
                 ),
                 (
@@ -788,7 +861,7 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
             client,
             f"""
             SELECT direction, content_type, original_bytes, stored_bytes,
-                   truncated, body_hash, CAST(body AS TEXT) AS body
+                   truncated, body_hash, block_offset, body_len
             FROM event_body_blobs
             WHERE event_id = '{HTTP_EVENT_ID}'
             ORDER BY direction
@@ -796,16 +869,12 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         )
         bodies = {row["direction"]: row for row in body_rows}
         assert set(bodies) == {"request", "response"}
-        assert json.loads(bodies["request"]["body"]) == {
-            "prompt": "write the ledger poem",
-            "nonce": "stats-detail",
-        }
-        response_body = bodies["response"]["body"]
-        assert isinstance(response_body, str)
-        assert response_body.endswith("-tail\"}")
-        assert len(response_body) > 65_536
-        assert bodies["response"]["original_bytes"] == len(response_body.encode())
-        assert bodies["response"]["stored_bytes"] == len(response_body.encode())
+        assert bodies["request"]["body_len"] == len(EXPECTED_REQUEST_BODY_TEXT.encode())
+        # That the response is the large one is asserted on the route payload
+        # below, where the value is not typed as `object`.
+        assert bodies["response"]["stored_bytes"] == bodies["response"]["original_bytes"]
+        assert bodies["response"]["body_len"] == bodies["response"]["stored_bytes"]
+        assert bodies["response"]["block_offset"] == ARCHIVE_FIRST_BLOCK_OFFSET
         assert bodies["response"]["truncated"] == 0
         assert str(bodies["response"]["body_hash"]).startswith("blake3:")
 
@@ -813,7 +882,7 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
             client,
             f"""
             SELECT direction, content_type, original_bytes, stored_bytes,
-                   truncated, body_hash, CAST(body AS TEXT) AS body
+                   truncated, body_hash, block_offset, body_len
             FROM event_body_blobs
             WHERE event_id = '{MODEL_EVENT_ID}'
             ORDER BY direction
@@ -821,13 +890,11 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         )
         model_bodies = {row["direction"]: row for row in model_body_rows}
         assert set(model_bodies) == {"request", "response"}
-        assert json.loads(model_bodies["request"]["body"]) == EXPECTED_REQUEST_BODY
         assert model_bodies["request"]["content_type"] == "application/json"
         assert model_bodies["request"]["stored_bytes"] == len(
             EXPECTED_REQUEST_BODY_TEXT.encode()
         )
         assert model_bodies["request"]["truncated"] == 0
-        assert model_bodies["response"]["body"] == EXPECTED_MODEL_RESPONSE
         assert model_bodies["response"]["content_type"] == "text/plain"
         assert model_bodies["response"]["stored_bytes"] == len(
             EXPECTED_MODEL_RESPONSE.encode()
@@ -956,9 +1023,10 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         assert latest[1]["rule_id"] == "profiles.rules.ai_google_http_googleapis"
         assert latest[1]["rule_action"] == "allow"
         assert latest[1]["detection_level"] == "informational"
-        assert json.loads(latest[1]["event_json"])["http"]["host"] == (
-            "daily-cloudcode-pa.googleapis.com"
-        )
+        # The matched event's payload left the row for the archive, so the
+        # latest route carries the row and the stats detail carries the index
+        # metadata that says where the payload is.
+        assert "event_json" not in latest[1]
 
         security = client.get(f"/vms/{SESSION_ID}/security/status", timeout=30)
         assert security["total"] == 2
@@ -991,7 +1059,6 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         route_http_response = next(
             row for row in route_http_blobs if row["direction"] == "response"
         )
-        assert route_http_response["body"].endswith("-tail\"}")
         assert route_http_response["original_bytes"] > 65_536
         assert route_http_response["stored_bytes"] == route_http_response["original_bytes"]
         assert route_http_response["truncated"] == 0
@@ -1004,11 +1071,21 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         route_model_response = next(
             row for row in route_model_blobs if row["direction"] == "response"
         )
-        assert json.loads(route_model_request["body"]) == EXPECTED_REQUEST_BODY
         assert route_model_request["content_type"] == "application/json"
         assert route_model_request["truncated"] == 0
-        assert route_model_response["body"] == EXPECTED_MODEL_RESPONSE
         assert route_model_response["content_type"] == "text/plain"
+        assert "body" not in route_model_response, (
+            "the stats payload carries body metadata; bytes come from the "
+            "bodies route"
+        )
         assert route_model_response["truncated"] == 0
+
+        # The rule match's payload rides the same metadata channel as every
+        # other body, which is how the security views will fetch it.
+        route_security_blobs = detail["body_blobs"][SEC_EVENT_ID]
+        assert [row["direction"] for row in route_security_blobs] == ["payload"]
+        assert route_security_blobs[0]["source_table"] == "security_rule_events"
+        assert route_security_blobs[0]["content_type"] == "application/json"
+        assert "body" not in route_security_blobs[0]
     finally:
         service.stop()

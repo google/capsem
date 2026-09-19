@@ -671,7 +671,6 @@ class TestVmResourcesConfig:
         assert r.retention_days == 30
         assert r.max_sessions == 100
         assert r.max_disk_gb == 100
-        assert r.terminated_retention_days == 365
 
     def test_min_bounds(self):
         r = VmResourcesConfig(
@@ -682,7 +681,6 @@ class TestVmResourcesConfig:
             retention_days=1,
             max_sessions=1,
             max_disk_gb=1,
-            terminated_retention_days=30,
         )
         assert r.cpu_count == 1
 
@@ -695,7 +693,6 @@ class TestVmResourcesConfig:
             retention_days=365,
             max_sessions=10000,
             max_disk_gb=1000,
-            terminated_retention_days=3650,
         )
         assert r.cpu_count == 8
 
@@ -711,9 +708,9 @@ class TestVmResourcesConfig:
         with pytest.raises(ValidationError):
             VmResourcesConfig(ram_gb=17)
 
-    def test_terminated_retention_too_low(self):
+    def test_retention_days_too_low(self):
         with pytest.raises(ValidationError):
-            VmResourcesConfig(terminated_retention_days=29)
+            VmResourcesConfig(retention_days=0)
 
     def test_roundtrip(self):
         r = VmResourcesConfig(cpu_count=2, ram_gb=8)

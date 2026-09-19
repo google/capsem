@@ -159,6 +159,8 @@ revision = "test.1"
         });
         let endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
             aggregator.clone(),
+            Arc::clone(&db),
+            std::collections::BTreeSet::new(),
             Arc::clone(&security_rules),
             Arc::clone(&plugin_policy),
             Arc::new(tokio::sync::Semaphore::new(4)),

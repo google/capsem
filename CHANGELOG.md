@@ -7,8 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The `vm.resources.terminated_retention_days` setting. It was offered in the
+  settings UI and written into every generated profile, and nothing read it. A
+  retention policy that appears to be in force and is not is worse than none.
+  `vm.resources.retention_days` is unaffected, and is now enforced (see Added).
+- The `vacuumed` session state. A stopped session was supposed to have its
+  ledger compacted and gzipped; nothing ever did it, so no session ever reached
+  the state, while retention queries and the doctor's session listing still
+  carried it. `main.db` upgrades itself, rewriting any `vacuumed` row to
+  `stopped`, and drops the `vacuumed_at` and `compressed_size_bytes` columns.
+
 ### Added
 
+- Captured bodies are readable in the stats view. Expanding an event fetches
+  its request and response bodies, tool results, exec output or security-rule
+  payload on demand from `GET /vms/{id}/bodies/{event_id}`, instead of every
+  list response carrying them. The route sends up to 1 MiB per body by default
+  (`?max_bytes=` raises it to 16 MiB) and says when it cut one, separately from
+  whether the capture itself was truncated. The list already carries each
+  body's size, truncation and hash, so the detail pane shows them even when the
+  fetch fails.
+- A session's captured bodies can be exported as a standard WARC 1.1 file from
+  `GET /vms/{id}/bodies/export.warc.gz`: one `resource` record per body,
+  gzip-member framed so `warcio`, `pywb` and the rest of the web-archive
+  toolchain can read it -- and seek within it -- without any Capsem code. Each
+  record's id, `urn:capsem:<session>:<event id>:<direction>`, is unique across
+  sessions merged into one collection and names the ledger row it came from.
+  Each record's URI says where the body came from: the real `https://` URI for
+  network and model traffic, and a `capsem://` one for tools, exec output and
+  security-rule payloads. A body the export cannot honestly describe -- its
+  source event gone, its timestamp unreadable, its URI carrying a line break,
+  its bytes failing their recorded hash, or the archive unable to produce them
+  -- is left out rather than described with a guess, and never costs the rest
+  of the session. The file opens and closes with a `warcinfo` record, and the
+  closing one counts the omitted bodies by reason; a file without it is an
+  export that did not finish. Two things a reader should know: a tool
+  response's `WARC-Date` is when the body was archived, because tool responses
+  carry no timestamp of their own; and `WARC-Block-Digest` is blake3, so tools
+  expecting the conventional base32 sha1 will not verify it.
+- `vm.resources.retention_days` (default 30) is now enforced; nothing read it
+  before. Failed-session directories older than the period are removed when
+  the service starts -- they were culled only by count, and only when a new
+  failure landed, so a machine that stopped failing kept its last 32
+  post-mortems forever. A persistent VM drops archived bodies older than the
+  period when it stops; its session directory survives every stop, so its
+  bodies previously only ever grew. Ephemeral sessions are deleted whole and
+  are unaffected.
 - `capsem run --image IMAGE --network NAME` joins the container's VM to a named
   network at creation, like `capsem create --network`.
 - Members of a network have names: `<vm>.<network>.capsem.internal` (and
@@ -44,11 +90,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `capsem-bench-rs throughput` measures bulk upload, download, bidirectional
   transfer and echo latency over N streams, and serves as the far end itself.
 - The logger supports bounded primary transport audit records, with indexed
-  connection/network identities and an additive upgrade for retained sessions
-  that preserves the shared session index's schema version.
+  connection/network identities.
 - Security rules recognize typed `network` routing facts. Network boundary
-  events validate owner identities and require an explicit allow; retained
-  security ledgers accept their new event types through a checked migration.
+  events validate owner identities and require an explicit allow.
 - `capsem-bench-rs redis` collects validated Redis PING samples with configurable
   concurrency and pipelining on both the host and guest.
 - `capsem run|create --image IMAGE -p HOST:GUEST` publishes loopback TCP ports through VSOCK
@@ -71,10 +115,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- A file export from the guest is refused when its security event cannot be
+  recorded or evaluated. It used to log a warning and hand the file over
+  anyway, so an export could leave the sandbox with no audit trail; exec and
+  file import already refused in that case.
+- A profile can no longer define an MCP server named `local`, the name the
+  builtin tools are served under. It was reserved only when the builtin binary
+  was installed, so on a host without it a profile server of that name owned
+  every `local__*` tool name. `local` and `builtin` are now refused whatever is
+  installed, and the profile server is skipped with a warning.
+- The session ledger now records every filesystem change under the workspace.
+  The host monitor used to drop any path containing `.git`, `node_modules`,
+  `__pycache__`, `.cache`, `target`, `.venv` or `.swapfile`, which is exactly
+  where a compromise persists: `.git/hooks/*` and `.git/config`, npm install
+  scripts, `.venv/bin/activate`, build scripts under `target/`. Those changes
+  are now ledger rows and are evaluated by the profile's file security rules
+  like any other. Symlinks are never followed: a link is recorded as a link,
+  the scan does not descend through it, and the one place the monitor reads
+  bytes -- brokering credentials out of a `.env` the guest wrote -- opens with
+  `O_NOFOLLOW` and refuses anything that is not a regular file, so a `.env`
+  planted as a link to a host secret yields nothing. Directory events are
+  marked as such: `fs_events` carries a `kind` column (`file`, `dir`,
+  `symlink`, `other`), rules can read `file.kind`, and a directory event no
+  longer reports the directory inode's size. Watching everything costs more to
+  poll, so each scan now times itself and the next rescan is ten scan-durations
+  later, between 500ms and 10s -- a workspace that grows into a large install
+  re-adapts on the next cycle. A change is detected by inode change time and
+  inode number as well as size and mtime, so rewriting a file in place and
+  putting its timestamp back no longer hides the write. If a single scan sees
+  more changes than one window emits, the rest are held for the next scan
+  rather than dropped, and the truncated window is itself an `fs_events` row
+  (action `overflow`, with the count in `size`).
+- Stored HTTP request and response headers are capped at 16 KB per set
+  instead of 256 KB, so a remote server can no longer make a session ledger
+  grow by padding its headers. A request whose headers were cut says so
+  (`net_events.headers_truncated`), so a cut header set never reads as a
+  complete one.
 - rustls moves to 0.23.45 for RUSTSEC-2026-0285: TLS 1.3 handshake messages
   were accepted across encryption level boundaries on the host's TLS paths.
 
+### Fixed
+
+- capsem-process memory no longer grows with the length of a session. The
+  ledger writer copied the whole session ledger into RAM when it opened and
+  kept every row it wrote there until the VM stopped -- about 138 KB per
+  proxied request, and a full copy of a persistent VM's history on every
+  resume. It now holds only rows it has not flushed to disk yet, at most one
+  flush interval (5 s) of traffic, and copies nothing at open. Readers in the
+  same process read the file like the service does. A resumed session's exec
+  completion no longer overwrites the result of an earlier boot's command that
+  reused the same exec id. Measured on a 1M-row ledger: opening it drops from
+  about 2.5 s to 1.6 s (the rest is `ready()`'s integrity check); a poll right
+  after a commit through a handle that owns its writer (`main.db`, network
+  ledgers) goes from 1.7 ms to 3.2-4.1 ms, the cost the service's session
+  readers already paid, and an idle poll from 0.1 us to 6.5 us; the service's
+  session readers go from 4.15 ms to 3.1-3.3 ms after a commit. Accepting
+  writes is unchanged.
+
 ### Changed
+
+- Session ledgers keep captured bodies in a compressed archive beside the
+  database. Request and response bodies, tool results, exec output and the
+  forensic payload of each security rule match now live in `session.bodies`
+  next to `session.db`, compressed in blocks, and the database keeps only the
+  index that finds them: typically 6-11x smaller on disk, with the same bytes
+  returned and every read checked against the hash recorded when it was
+  stored. The security, detection and enforcement views list rule metadata as
+  before and show each payload's size and hash, fetching the payload itself on
+  demand. Forking a session, or anything else that copies a session ledger,
+  copies both files.
+- Security decisions and asks store the event they are about in the body
+  archive too, the way rule matches do. The decision ledger was the largest
+  table in a session -- about 6 KB a row and ~25 rows a request, most of them
+  process audits, 7.5 MB of a 10.5 MB ledger in a 30-minute session -- and the
+  per-VM process also held all of it in memory; the row is now a few hundred
+  bytes. A ledger that still keeps any security payload inline is refused at
+  open by name instead of failing its first security write. In the WARC export,
+  record ids now include the source table (`urn:capsem:{session}:{table}:{event}:{direction}`),
+  because a rule match, the decision it drove and an ask it raised name the
+  same event, and a body several rows share is exported once rather than once
+  per row.
+- Identical bodies written together are stored once in the session archive. A
+  rule match, the decision it drove and an ask it raised carry the same event,
+  and an event matching several rules used to store its payload once per rule
+  with only one copy indexed; on recorded sessions the security payloads now take
+  22-61% less archive space. A body of 512 bytes or more that is already
+  stored in an earlier block is not stored again; retention keeps that block
+  while any retained row still reads from it.
+- The session archive compresses bodies about 1.7x better. Every five-second
+  disk flush used to seal the block being written, so blocks averaged about
+  85 KiB and the flush timer, not the data, capped compression. A block now
+  stays open across flushes: each flush appends what it compressed as a
+  segment, synced to disk before the rows that name it commit, and the block
+  goes on compressing against everything before it until it reaches 1 MiB, is
+  an hour old, or the session stops. Replaying a recorded 76 MB session, the
+  archive goes from 6.3x to 10.4x smaller than the bodies it holds. A body is
+  still readable -- from the service too -- the moment its flush returns, a
+  crash still costs at most the unflushed bodies, and the codec is now recorded
+  per block. Archives from earlier builds of this branch are not appended to.
+- A session ledger written by an earlier build is refused rather than upgraded
+  in place: opening it fails and names what it lacks. The old upgrade path
+  discarded its own errors and could produce a ledger matching neither build,
+  or read one as a current ledger in which nothing had been recorded.
+- The service no longer holds a copy of each session's telemetry and security
+  ledger in memory. It reads the ledger file directly, so its memory no longer
+  grows with the number of VMs or with how much each has logged. The
+  per-VM `stats/summary` and `security/status` polls the TUI and desktop UI
+  make are answered from a cache while the ledger has not changed, instead of
+  re-running their aggregates on every poll.
 
 - Published TCP connections require an audited allow from the existing security
   rules and plugins before guest setup. Profile defaults explicitly allow expose;
@@ -332,6 +480,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   itself, so it is computed rather than maintained.
 
 ### Fixed
+
+- Display previews in the session ledger -- the short excerpts of request and
+  response bodies, system prompts and tool results that list views show -- are
+  capped at 2 KB instead of 256 KB. The full body is unaffected: it is stored
+  in the session's body archive. A ten-day session had carried 75 MB of
+  previews.
+- The per-VM `stats/summary` and `security/status` polls can no longer keep
+  serving a pre-commit answer after the ledger changes; a race between the two
+  costs at most one stale response.
+- The built-in MCP server refuses to start without a session ledger. It used
+  to fall back to an in-memory one that accepted every row and kept none, so a
+  misconfigured server answered tool calls normally and recorded nothing.
 
 - `capsem stop` no longer reports "Service stopped." while another capsem
   service still answers on the socket: it names the socket and fails instead.

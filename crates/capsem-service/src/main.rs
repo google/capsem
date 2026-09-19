@@ -902,8 +902,6 @@ impl ServiceState {
             total_estimated_cost: 0.0,
             total_tool_calls: 0,
             total_file_events: 0,
-            compressed_size_bytes: None,
-            vacuumed_at: None,
             storage_mode: "virtiofs".to_string(),
             rootfs_hash: rootfs_hash.map(ToOwned::to_owned),
             rootfs_version: rootfs_version.map(ToOwned::to_owned),

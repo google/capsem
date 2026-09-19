@@ -2,13 +2,24 @@
 """List recent Capsem sessions with per-table event counts."""
 
 import argparse
+import os
 import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
 
-SESSIONS_DIR = Path.home() / ".capsem" / "sessions"
-MAIN_DB = SESSIONS_DIR / "main.db"
+CAPSEM_HOME = Path(os.environ.get("CAPSEM_HOME", Path.home() / ".capsem"))
+RUN_DIR = Path(os.environ.get("CAPSEM_RUN_DIR", CAPSEM_HOME / "run"))
+MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
+# Ephemeral ledgers live under run/sessions/<id>; a named VM keeps its ledger
+# under run/persistent/<name> across stops. main.db is the only thing left in
+# ~/.capsem/sessions, so looking for ledgers there found none.
+LEDGER_DIRS = (RUN_DIR / "sessions", RUN_DIR / "persistent")
+
+
+def has_ledger(session_id: str) -> bool:
+    return any((root / session_id / "session.db").exists() for root in LEDGER_DIRS)
+
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -34,7 +45,6 @@ def fmt_duration(created_at, stopped_at, status):
 def main():
     parser = argparse.ArgumentParser(description="List recent Capsem sessions")
     parser.add_argument("-n", type=int, default=10, help="Number of sessions (default: 10)")
-    parser.add_argument("--all", action="store_true", help="Include vacuumed sessions")
     parser.add_argument("--with-db", action="store_true", help="Only sessions with session.db on disk")
     parser.add_argument("--with-model", action="store_true", help="Only sessions with model calls (tokens > 0)")
     parser.add_argument("--with-net", action="store_true", help="Only sessions with network events")
@@ -50,8 +60,6 @@ def main():
     conn.row_factory = sqlite3.Row
 
     conditions = []
-    if not args.all:
-        conditions.append("status != 'vacuumed'")
     if args.with_model:
         conditions.append("(total_input_tokens + total_output_tokens) > 0")
     if args.with_net:
@@ -75,7 +83,7 @@ def main():
 
     # Post-filter for --with-db (needs filesystem check)
     if args.with_db:
-        rows = [r for r in rows if (SESSIONS_DIR / r["id"] / "session.db").exists()]
+        rows = [r for r in rows if has_ledger(r["id"])]
 
     if not rows:
         print("No sessions found")
@@ -108,7 +116,7 @@ def main():
         fs = r["total_file_events"] or 0
 
         # Mark sessions that still have DB on disk
-        has_db = "*" if (SESSIONS_DIR / sid / "session.db").exists() else " "
+        has_db = "*" if has_ledger(sid) else " "
 
         line = (
             f"{sid:<36}{has_db} {created_short:>16}  {dur:>6}  ${cost:>6.2f}"

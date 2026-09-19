@@ -3,6 +3,33 @@
 
 use super::*;
 
+/// `vm.resources.retention_days` when nothing resolves one. Matches the
+/// setting's declared default, which is the number a user reading the settings
+/// UI is being promised.
+pub(crate) const DEFAULT_RETENTION_DAYS: u64 = 30;
+
+/// How long a failed session's evidence is kept, from the user's settings.
+///
+/// Split from `retention_days_from_resolved` the way `automatic_updates_enabled`
+/// is: the pure half is what tests exercise, so a test never depends on the
+/// settings file of whoever is running it.
+pub(crate) fn retention_days() -> u64 {
+    let (user, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    retention_days_from_resolved(&capsem_core::net::policy_config::resolve_settings(&user, &corp))
+}
+
+pub(crate) fn retention_days_from_resolved(settings: &[capsem_core::net::policy_config::ResolvedSetting]) -> u64 {
+    settings
+        .iter()
+        .find(|setting| setting.id == "vm.resources.retention_days")
+        .and_then(|setting| setting.effective_value.as_number())
+        // The setting's own floor is 1. A zero or negative value would mean
+        // "delete evidence the moment it is written", which no one can have
+        // meant by a retention period, so it falls back to the default.
+        .filter(|days| *days >= 1)
+        .map_or(DEFAULT_RETENTION_DAYS, |days| days as u64)
+}
+
 impl ServiceState {
     /// Rename an ephemeral session dir to a `-failed-*` sibling so its
     /// logs survive for post-mortem, then cull down to
@@ -31,7 +58,7 @@ impl ServiceState {
                     path = %failed_dir.display(),
                     "preserved failed session dir for post-mortem"
                 );
-                if let Err(e) = self.cull_failed_sessions() {
+                if let Err(e) = self.cull_failed_sessions().map(|_| ()) {
                     warn!(
                         error = %e,
                         "failed to cull old failed session dirs -- disk may grow beyond {MAX_FAILED_SESSIONS}"
@@ -60,10 +87,29 @@ impl ServiceState {
         }
     }
 
-    pub(crate) fn cull_failed_sessions(&self) -> Result<()> {
+    /// Cull failed session dirs by age and by count, and say how many went.
+    ///
+    /// Reads `vm.resources.retention_days`; see
+    /// `cull_failed_sessions_older_than` for what the two rules are for.
+    pub(crate) fn cull_failed_sessions(&self) -> Result<usize> {
+        self.cull_failed_sessions_older_than(retention_days())
+    }
+
+    /// Two rules, because they answer different questions.
+    ///
+    /// The count cap bounds disk: whatever happens, at most
+    /// `MAX_FAILED_SESSIONS` post-mortems are kept. It says nothing about how
+    /// long the newest 32 live, so a machine that fails once a month kept a
+    /// session's bodies, logs and ledger for two and a half years.
+    ///
+    /// The age rule is the promise the settings UI makes. A user who sets a
+    /// retention period is saying how long evidence about their work may sit
+    /// on disk, and a directory that outlives it is a promise broken, whether
+    /// or not anything is above the cap.
+    pub(crate) fn cull_failed_sessions_older_than(&self, retention_days: u64) -> Result<usize> {
         let sessions_dir = self.run_dir.join("sessions");
         if !sessions_dir.exists() {
-            return Ok(());
+            return Ok(0);
         }
         let mut failed_dirs: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
         let entries =
@@ -79,6 +125,13 @@ impl ServiceState {
             if !name.contains("-failed-") {
                 continue;
             }
+            // The directory's mtime is when a file was last created in it,
+            // which for a failed session is when its logs stopped being
+            // written -- the moment the evidence was produced. The rename
+            // into `-failed-` does not touch it and nothing writes there
+            // afterwards, so it neither drifts forward nor needs the
+            // timestamp in the name parsed back out of UTC to be trusted.
+            //
             // If we can't stat, skip rather than fail the whole cull --
             // we'd rather leave one undateable dir than abort the prune.
             if let Ok(metadata) = entry.metadata() {
@@ -88,16 +141,28 @@ impl ServiceState {
             }
         }
         failed_dirs.sort_by(|a, b| a.1.cmp(&b.1));
-        if failed_dirs.len() > MAX_FAILED_SESSIONS {
-            let to_delete = failed_dirs.len() - MAX_FAILED_SESSIONS;
-            for (path, _) in failed_dirs.iter().take(to_delete) {
-                info!(path = %path.display(), "culling old failed session dir");
-                if let Err(e) = std::fs::remove_dir_all(path) {
-                    warn!(path = %path.display(), error = %e, "cull remove_dir_all failed");
-                }
+        let expired_before = std::time::SystemTime::now()
+            .checked_sub(std::time::Duration::from_secs(retention_days.saturating_mul(86_400)))
+            // A retention period so long it leaves the epoch behind expires
+            // nothing, which is the honest reading of "keep it that long".
+            .unwrap_or(std::time::UNIX_EPOCH);
+        let expired = failed_dirs
+            .iter()
+            .take_while(|(_, modified)| *modified < expired_before)
+            .count();
+        let over_cap = failed_dirs.len().saturating_sub(MAX_FAILED_SESSIONS);
+        // Oldest first, so both rules select a prefix of the same sorted list
+        // and the wider one subsumes the other.
+        let to_delete = expired.max(over_cap);
+        let mut culled = 0;
+        for (path, _) in failed_dirs.iter().take(to_delete) {
+            info!(path = %path.display(), "culling old failed session dir");
+            match std::fs::remove_dir_all(path) {
+                Ok(()) => culled += 1,
+                Err(e) => warn!(path = %path.display(), error = %e, "cull remove_dir_all failed"),
             }
         }
-        Ok(())
+        Ok(culled)
     }
 
     /// Permanently remove one service-owned session directory.

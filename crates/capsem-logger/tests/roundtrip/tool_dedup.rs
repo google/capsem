@@ -19,6 +19,7 @@ async fn setup_dedup_scenario(writer: &DbWriter) {
     let mut call1 = sample_model_call("anthropic");
     call1.trace_id = Some("trace_dedup".to_string());
     call1.tool_calls = vec![ToolCallEntry {
+        event_id: None,
         call_index: 0,
         call_id: "toolu_bash_01".to_string(),
         tool_name: "bash".to_string(),
@@ -33,6 +34,7 @@ async fn setup_dedup_scenario(writer: &DbWriter) {
     let mut call2 = sample_model_call("anthropic");
     call2.trace_id = Some("trace_dedup".to_string());
     call2.tool_calls = vec![ToolCallEntry {
+        event_id: None,
         call_index: 0,
         call_id: "toolu_mcp_01".to_string(),
         tool_name: "mcp__capsem__fetch_http".to_string(),
@@ -42,6 +44,7 @@ async fn setup_dedup_scenario(writer: &DbWriter) {
     }];
     // The response for the bash tool from call 1 comes back in call 2's request
     call2.tool_responses = vec![ToolResponseEntry {
+        event_id: None,
         call_id: "toolu_bash_01".to_string(),
         content_preview: Some("file1.txt\nfile2.txt".to_string()),
         is_error: false,
@@ -358,6 +361,7 @@ async fn tool_responses_linked_by_call_id_not_model_call_id() {
     // model_call 1: has tool_call (call_id="toolu_01")
     let mut call1 = sample_model_call("anthropic");
     call1.tool_calls = vec![ToolCallEntry {
+        event_id: None,
         call_index: 0,
         call_id: "toolu_01".to_string(),
         tool_name: "bash".to_string(),
@@ -372,6 +376,7 @@ async fn tool_responses_linked_by_call_id_not_model_call_id() {
     let mut call2 = sample_model_call("anthropic");
     call2.tool_calls = vec![];
     call2.tool_responses = vec![ToolResponseEntry {
+        event_id: None,
         call_id: "toolu_01".to_string(),
         content_preview: Some("hi".to_string()),
         is_error: false,
@@ -459,6 +464,7 @@ async fn tool_unified_only_native_calls() {
     // Write a native tool call + response
     let mut call = sample_model_call("anthropic");
     call.tool_calls = vec![ToolCallEntry {
+        event_id: None,
         call_index: 0,
         call_id: "toolu_solo".to_string(),
         tool_name: "read_file".to_string(),
@@ -473,6 +479,7 @@ async fn tool_unified_only_native_calls() {
     let mut call2 = sample_model_call("anthropic");
     call2.tool_calls = vec![];
     call2.tool_responses = vec![ToolResponseEntry {
+        event_id: None,
         call_id: "toolu_solo".to_string(),
         content_preview: Some("# README\nContents here".to_string()),
         is_error: false,

@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::{json, Value};
-use std::time::{Duration, SystemTime};
+
+mod query_plan;
 
 fn setup_reader_with_data() -> DbReader {
     let reader = DbReader::open_in_memory().unwrap();
@@ -21,29 +22,6 @@ fn setup_reader_with_data() -> DbReader {
         )
         .unwrap();
     reader
-}
-
-fn dns_fixture(idx: usize) -> crate::DnsEvent {
-    crate::DnsEvent {
-        event_id: Some(format!("{idx:012x}")),
-        timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(idx as u64),
-        qname: format!("fixture-{idx}.example"),
-        qtype: 1,
-        qclass: 1,
-        rcode: 0,
-        answer_ip: Some("127.0.0.1".to_string()),
-        decision: crate::Decision::Allowed.as_str().to_string(),
-        matched_rule: None,
-        source_proto: Some("udp".to_string()),
-        process_name: Some("fixture".to_string()),
-        upstream_resolver_ms: 0,
-        trace_id: Some(format!("{idx:016x}")),
-        policy_mode: None,
-        policy_action: None,
-        policy_rule: None,
-        policy_reason: None,
-        credential_ref: None,
-    }
 }
 
 #[test]
@@ -267,18 +245,18 @@ fn recent_net_events_respects_limit() {
 }
 
 #[test]
-fn recent_security_rule_events_orders_newest_first_and_keeps_payloads() {
+fn recent_security_rule_events_orders_newest_first_and_keeps_the_rule_snapshot() {
     let r = DbReader::open_in_memory().unwrap();
     r.conn
         .execute_batch(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json
+                    rule_action, detection_level, rule_json
                  ) VALUES
                     (1789000000000, '111111111111', 'http.request', 'allow_github',
-                     'allow', 'none', '{\"name\":\"allow_github\"}', '{\"http\":{\"host\":\"api.github.com\"}}'),
+                     'allow', 'none', '{\"name\":\"allow_github\"}'),
                     (1789000000001, '222222222222', 'model.call', 'block_openai',
-                     'block', 'critical', '{\"name\":\"block_openai\"}', '{\"model\":{\"provider\":\"openai\"}}')",
+                     'block', 'critical', '{\"name\":\"block_openai\"}')",
         )
         .unwrap();
 
@@ -289,7 +267,6 @@ fn recent_security_rule_events_orders_newest_first_and_keeps_payloads() {
     assert_eq!(latest[0].rule_action, SecurityRuleAction::Block);
     assert_eq!(latest[0].detection_level, SecurityDetectionLevel::Critical);
     assert!(latest[0].rule_json.contains("block_openai"));
-    assert!(latest[0].event_json.contains("openai"));
 }
 
 #[test]
@@ -299,14 +276,14 @@ fn security_rule_stats_are_db_only() {
         .execute_batch(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json
+                    rule_action, detection_level, rule_json
                  ) VALUES
                     (1789000000000, '111111111111', 'model.call', 'block_openai',
-                     'block', 'critical', '{}', '{}'),
+                     'block', 'critical', '{}'),
                     (1789000000001, '222222222222', 'model.call', 'block_openai',
-                     'block', 'critical', '{}', '{}'),
+                     'block', 'critical', '{}'),
                     (1789000000002, '333333333333', 'http.request', 'allow_github',
-                     'allow', 'none', '{}', '{}')",
+                     'allow', 'none', '{}')",
         )
         .unwrap();
 
@@ -624,21 +601,32 @@ fn tool_responses_for_returns_by_model_call_id() {
     assert!(rs[1].is_error);
 }
 
+/// A `tool_responses` without `credential_ref` is broken schema, not a row
+/// whose credential happens to be unknown.
+///
+/// The read used to go through `optional_column_expr`, which substituted
+/// `NULL AS credential_ref` when the column was absent. That made a ledger an
+/// older build wrote indistinguishable from a current one in which nothing
+/// was ever brokered -- the reader answered "no credential" for a question it
+/// could not see the answer to. The column is declared in `schema/ddl.rs` and
+/// selected outright, so its absence is now an error that names it.
 #[test]
-fn tool_responses_for_tolerates_old_schema_without_credential_ref() {
+fn tool_responses_for_fails_loudly_without_credential_ref() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("old-session.db");
     {
         let conn = Connection::open(&path).unwrap();
-        conn.execute(
-            "CREATE TABLE tool_responses (
+        crate::schema::create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "DROP TABLE tool_responses;
+             CREATE TABLE tool_responses (
                     id INTEGER PRIMARY KEY,
                     model_call_id INTEGER NOT NULL,
                     call_id TEXT NOT NULL,
                     content_preview TEXT,
-                    is_error INTEGER NOT NULL DEFAULT 0
-                )",
-            [],
+                    is_error INTEGER NOT NULL DEFAULT 0,
+                    event_id TEXT
+             );",
         )
         .unwrap();
         conn.execute(
@@ -649,12 +637,14 @@ fn tool_responses_for_tolerates_old_schema_without_credential_ref() {
         .unwrap();
     }
 
-    let reader = DbReader::open(&path).unwrap();
-    let responses = reader.tool_responses_for(1).unwrap();
-    assert_eq!(responses.len(), 1);
-    assert_eq!(responses[0].call_id, "old-call");
-    assert_eq!(responses[0].content_preview.as_deref(), Some("old-ok"));
-    assert_eq!(responses[0].credential_ref, None);
+    let error = DbReader::open(&path)
+        .and_then(|reader| reader.tool_responses_for(1).map(|_| ()))
+        .expect_err("a tool_responses without credential_ref must not read as a current ledger")
+        .to_string();
+    assert!(
+        error.contains("credential_ref"),
+        "the failure must name the column the ledger lacks: {error}"
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -714,126 +704,26 @@ fn query_raw_returns_row_cap_on_large_results() {
     assert_eq!(v["rows"].as_array().unwrap().len(), 50);
 }
 
-/// The disk sync used to run before every query and copy every hot table
-/// from disk into memory: a UI poll cost O(ledger) whether or not anything
-/// had been written. It now runs only when another connection has committed.
-#[tokio::test]
-async fn disk_sync_runs_only_when_another_connection_committed() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("session.db");
-    let writer = crate::writer::DbWriter::open(&path, 16).expect("writer opens");
-    writer.write(crate::WriteOp::DnsEvent(dns_fixture(1))).await;
-    writer.flush().await;
-
-    let reader = DbReader::open(&path).expect("external reader opens");
-    reader.sync_from_disk().expect("first sync copies the tables");
-    assert_eq!(reader.disk_syncs(), 1);
-    for _ in 0..5 {
-        reader.sync_from_disk().expect("no-op sync");
-    }
-    assert_eq!(reader.disk_syncs(), 1, "polls with nothing committed must copy nothing");
-    let before = reader.query_raw("SELECT COUNT(*) FROM dns_events").unwrap();
-    assert!(before.contains("[[1]]"), "{before}");
-
-    writer.write(crate::WriteOp::DnsEvent(dns_fixture(2))).await;
-    writer.flush().await;
-    reader.sync_from_disk().expect("sync after a commit");
-    assert_eq!(
-        reader.disk_syncs(),
-        2,
-        "a commit by the writer must trigger exactly one copy"
-    );
-    let after = reader.query_raw("SELECT COUNT(*) FROM dns_events").unwrap();
-    assert!(after.contains("[[2]]"), "{after}");
-    writer.shutdown_blocking();
-}
-
-/// exec_events rows are completed in place, so that table is copied whole
-/// on every resync; the append-only ledgers pull only new rows. Both must
-/// show what is on disk after a commit.
-#[test]
-fn resync_after_a_commit_reflects_in_place_updates_and_appended_rows() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("session.db");
-    {
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        crate::schema::create_tables(&conn).unwrap();
-        conn.execute(
-            "INSERT INTO exec_events (timestamp, exec_id, command) VALUES ('2026-09-03T00:00:00Z', 7, 'ls')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO dns_events (timestamp, qname, qtype, qclass, rcode, decision) VALUES (1, 'a.example', 1, 1, 0, 'allowed')",
-            [],
-        )
-        .unwrap();
-    }
-    let reader = DbReader::open(&path).unwrap();
-    reader.sync_from_disk().unwrap();
-    assert!(reader
-        .query_raw("SELECT exit_code FROM exec_events")
-        .unwrap()
-        .contains("[[null]]"));
-
-    {
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute(
-            "UPDATE exec_events SET exit_code = 3, duration_ms = 12 WHERE exec_id = 7",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO dns_events (timestamp, qname, qtype, qclass, rcode, decision) VALUES (2, 'b.example', 1, 1, 0, 'denied')",
-            [],
-        )
-        .unwrap();
-    }
-    reader.sync_from_disk().unwrap();
-    let exec = reader
-        .query_raw("SELECT exit_code, duration_ms FROM exec_events")
-        .unwrap();
-    assert!(exec.contains("[[3,12]]"), "in-place completion must be visible: {exec}");
-    let dns = reader.query_raw("SELECT qname FROM dns_events ORDER BY id").unwrap();
-    assert!(
-        dns.contains("a.example") && dns.contains("b.example"),
-        "appended row must be visible: {dns}"
-    );
-    assert_eq!(reader.disk_syncs(), 2);
-}
-
-#[test]
-fn a_dropped_ledger_table_is_an_error_not_stale_memory_rows() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("session.db");
-    let disk = Connection::open(&path).unwrap();
-    crate::schema::create_tables(&disk).unwrap();
-    let reader = DbReader::open(&path).unwrap();
-    reader.sync_from_disk().unwrap();
-    disk.execute_batch("DROP TABLE main.dns_events").unwrap();
-    let error = reader
-        .sync_from_disk()
-        .expect_err("missing ledger shape must fail loudly");
-    assert!(error.to_string().contains("dns_events"), "{error}");
-    let query_only: bool = reader
-        .conn
-        .query_row("PRAGMA query_only", [], |row| row.get(0))
-        .unwrap();
-    assert!(query_only, "a failed refresh must restore query-only protection");
-}
-
-/// The incremental copy is only correct while the writer never changes a
-/// row of an append-only ledger in place. This holds the writer's SQL to
-/// the list in `UPDATABLE_HOT_TABLES`; a new UPDATE or DELETE on any other
-/// hot table must extend the list, which turns that table back into a full
-/// copy.
+/// The writer's memory holds only rows it has not flushed, so an update to a
+/// hot ledger row cannot assume the row is still there: the flush may have
+/// moved it to disk, and the update has to look in both (see
+/// `update_exec_event`). This holds the writer's SQL to the tables in
+/// `UPDATABLE_HOT_TABLES`, which do; a new UPDATE or DELETE on any other hot
+/// table must be taught the same and then listed.
 #[test]
 fn writer_updates_only_the_updatable_tables() {
     let sources = [
         ("writer.rs", include_str!("../writer.rs")),
+        ("writer/traffic_rows.rs", include_str!("../writer/traffic_rows.rs")),
+        ("writer/model_rows.rs", include_str!("../writer/model_rows.rs")),
+        ("writer/event_rows.rs", include_str!("../writer/event_rows.rs")),
+        ("writer/retention.rs", include_str!("../writer/retention.rs")),
+        ("writer/bodies.rs", include_str!("../writer/bodies.rs")),
         ("schema.rs", include_str!("../schema.rs")),
         ("schema/memory_sync.rs", include_str!("../schema/memory_sync.rs")),
         ("db.rs", include_str!("../db.rs")),
+        ("db/maintenance.rs", include_str!("../db/maintenance.rs")),
+        ("db/reader_worker.rs", include_str!("../db/reader_worker.rs")),
     ];
     let mut offences = Vec::new();
     for (name, source) in sources {
@@ -842,14 +732,23 @@ fn writer_updates_only_the_updatable_tables() {
             while let Some(found) = source[search..].find(keyword) {
                 let at = search + found;
                 search = at + keyword.len();
+                // An upsert's `ON CONFLICT ... DO UPDATE` names no table of its own.
+                if source[..at].ends_with("DO ") {
+                    continue;
+                }
                 // The statement text plus the format arguments that follow it.
                 let window = &source[at..(at + 400).min(source.len())];
-                let memory_schema = window.starts_with(&format!("{keyword}{{MEMORY_SCHEMA}}"));
-                let session_index = window.starts_with(&format!("{keyword}sessions"));
+                let target = window[keyword.len()..]
+                    .split(|c: char| c.is_whitespace() || c == '(')
+                    .next()
+                    .unwrap_or("");
+                let memory_schema = target.starts_with("{MEMORY_SCHEMA}");
+                let session_index = target == "sessions";
+                let disk_only = crate::schema::is_disk_only_table(target);
                 let updatable = crate::schema::UPDATABLE_HOT_TABLES
                     .iter()
                     .any(|table| window.contains(table));
-                if !(memory_schema || session_index || updatable) {
+                if !(memory_schema || session_index || disk_only || updatable) {
                     offences.push(format!("{name}: {}", window.lines().next().unwrap_or("")));
                 }
             }
@@ -857,44 +756,54 @@ fn writer_updates_only_the_updatable_tables() {
     }
     assert!(
         offences.is_empty(),
-        "in-place writes to a hot ledger outside UPDATABLE_HOT_TABLES; extend the list so the \
-         external reader copies that table whole: {offences:?}"
+        "in-place writes to a hot ledger outside UPDATABLE_HOT_TABLES; make the write find a row the \
+         flush already moved to disk, then extend the list: {offences:?}"
     );
 }
 
+/// The readiness gate knows every column a reader selects.
+///
+/// `ready()` is where a ledger an older build wrote is supposed to be caught,
+/// by name, before a route runs against it. That only works if
+/// `READY_SCHEMA_COLUMNS` demands everything a SELECT will ask for. A column
+/// the reader reads and the gate does not require still fails -- SQLite says
+/// "no such column" -- but it fails partway through a route, in SQLite's
+/// vocabulary, on a file readiness has already called healthy.
+///
+/// Rather than top the list up by hand whenever that happens, this walks every
+/// column list the reads are built from and names anything the gate is missing.
+/// Adding a column to a SELECT is then a failing test here, which is the
+/// cheapest place for it to fail.
 #[test]
-fn a_read_during_the_writers_open_batch_neither_fails_nor_waits() {
-    // The writer's batch holds the shared-cache memory table; a reader that
-    // arrived meanwhile used to get SQLITE_LOCKED at once, and under back to
-    // back batches it starved. Hold the table from a second connection to the
-    // same memory database and read through it: `read_uncommitted` means the
-    // read completes at once.
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("session.db");
-    let handle = crate::DbHandle::open(&path).unwrap();
-    let reader = DbReader::open(&path).unwrap();
-    let memory_uri = schema::memory_uri_for_path(&path);
-    let locker = Connection::open_with_flags(
-        &memory_uri,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_URI,
-    )
-    .unwrap();
-    locker
-        .execute_batch("BEGIN IMMEDIATE; DELETE FROM transport_events WHERE 0;")
-        .unwrap();
-    let locked_for = Duration::from_millis(200);
-    let release = std::thread::spawn(move || {
-        std::thread::sleep(locked_for);
-        locker.execute_batch("COMMIT").unwrap();
-    });
-    let started = std::time::Instant::now();
-    let result = reader.query_raw("SELECT count(*) FROM transport_events");
-    let waited = started.elapsed();
-    release.join().unwrap();
-    assert!(result.is_ok(), "{result:?}");
+fn reader_select_columns_are_required_by_the_readiness_gate() {
+    let required: std::collections::BTreeMap<&str, std::collections::BTreeSet<&str>> =
+        crate::schema::REQUIRED_COLUMNS_FOR_TESTS
+            .iter()
+            .map(|(table, columns)| (*table, columns.iter().copied().collect()))
+            .collect();
+
+    let mut missing: Vec<String> = Vec::new();
+    for (table, list) in crate::reader::reader_select_columns() {
+        let gate = required
+            .get(table)
+            .unwrap_or_else(|| panic!("{table} is selected from but is not in READY_SCHEMA_COLUMNS at all"));
+        for column in list.split(',').map(str::trim).filter(|c| !c.is_empty()) {
+            assert!(
+                !column.contains(' '),
+                "{table}: `{column}` is an expression, not a column; the gate cannot require it"
+            );
+            if !gate.contains(column) {
+                missing.push(format!("{table}.{column}"));
+            }
+        }
+    }
+    missing.sort();
+    missing.dedup();
     assert!(
-        waited < locked_for / 2,
-        "the read waited on the writer's lock: {waited:?}"
+        missing.is_empty(),
+        "these columns are selected by a reader but not required by READY_SCHEMA_COLUMNS, \
+         so a ledger without them fails mid-route as SQLite's `no such column` instead of \
+         loudly at ready(). Add them to crates/capsem-logger/src/schema/columns.rs:\n  {}",
+        missing.join("\n  ")
     );
-    drop(handle);
 }

@@ -14,6 +14,10 @@ const detailSource = readFileSync(
   new URL('../stats-detail.ts', import.meta.url),
   'utf8',
 );
+const bodiesSource = readFileSync(
+  new URL('../event-bodies.ts', import.meta.url),
+  'utf8',
+);
 
 describe('StatsView process contract', () => {
   it('distinguishes command executions from process observations', () => {
@@ -21,9 +25,9 @@ describe('StatsView process contract', () => {
     expect(source).toContain('Observed Processes');
     expect(source).toContain('Unique Binaries');
     expect(source).toContain('auditCommand(row)');
-    expect(source).toContain("type: 'observed process'");
+    expect(source).toContain("showDetail('observed process'");
     expect(source).not.toContain('Process Audit Events');
-    expect(source).not.toContain("type: 'process audit'");
+    expect(source).not.toContain('process audit');
   });
 
   it('does not show process credential-ref counters or tutorial prose', () => {
@@ -70,7 +74,7 @@ describe('StatsView credential broker contract', () => {
     expect(source).toContain("'credentials'");
     expect(source).toContain("label: 'Credentials'");
     expect(source).toContain('Credential Broker Events');
-    expect(source).toContain("type: 'credential broker event'");
+    expect(source).toContain("showDetail('credential broker event'");
     expect(source).toContain('substitutionRows = detailRows.credential_events');
     expect(source).toContain('Captured');
     expect(source).toContain('Brokered');
@@ -157,12 +161,16 @@ describe('StatsView detail drawer contract', () => {
     expect(source).not.toContain("lang: 'json',");
   });
 
-  it('loads body payloads from event_body_blobs instead of preview columns', () => {
+  it('fetches body bytes per event instead of carrying them in the list', () => {
+    // The list view brings the index metadata; the bytes come from the body
+    // route when one event is expanded. Inlining them in the detail response
+    // would make a page of rows as large as the traffic it describes.
     expect(source).toContain('api.getVmStatsDetail(vmId)');
     expect(source).toContain('bodyBlobs = detailRows.body_blobs');
+    expect(source).toContain('api.fetchEventBodies(vmId, eventId)');
     expect(detailSource).toContain("'request_body'");
     expect(detailSource).toContain("'response_body'");
-    expect(source).toContain('`${direction}_body`');
+    expect(bodiesSource).toContain('`${body.direction}_body`');
     expect(source).toContain("void showDetail('model', row)");
     expect(source).toContain("void showDetail('tool', row)");
     expect(source).toContain("void showDetail('http', row)");
@@ -173,22 +181,89 @@ describe('StatsView detail drawer contract', () => {
     expect(source).not.toContain('text_content');
   });
 
+  it('opens and closes the pane only through the loader', () => {
+    // Any write to the selection that the loader does not know about is a
+    // selection no fetch in flight knows about, and the stale response wins
+    // when it lands. Three of those wrote an object; the fourth wrote `null`
+    // from the tab switch and the close button, which the object-shaped
+    // assertion below could not see -- so the rule is now "no bare assignment
+    // to `detail` at all, in either direction".
+    //
+    // The sequencing itself is tested for real in event-bodies.test.ts; this
+    // is the half about the template having no second way in or out.
+    expect(source).toContain('createDetailLoader(');
+    expect(source).toContain('dismiss: dismissDetail');
+    // The only assignment left is the loader's own `show` callback. The
+    // declaration is not an assignment, hence the lookbehind.
+    expect(source.match(/(?<!let )\bdetail = /g) ?? []).toHaveLength(1);
+    expect(source).toContain('show: selection => { detail = selection; }');
+    expect(source).not.toMatch(/detail = \{ type: '/);
+    expect(source).not.toMatch(/detail = null/);
+    expect(source).not.toMatch(/bodyError = null/);
+    for (const kind of ['model', 'tool', 'http', 'dns', 'file', 'process', 'security', 'detection', 'enforcement']) {
+      expect(source).toContain(`void showDetail('${kind}'`);
+    }
+    // Both ways out of the pane.
+    expect(source).toContain('dismissDetail();');
+    expect(source).toContain('onclick={dismissDetail}');
+  });
+
   it('keeps body ledger metadata out of the generic field grid', () => {
     expect(detailSource).toContain('DETAIL_BODY_METADATA_KEYS');
     expect(source).toContain('payloadSectionMeta(section, detail.data)');
-    expect(source).toContain('Original');
-    expect(source).toContain('Stored');
-    expect(source).toContain('Truncated');
-    expect(source).toContain('Hash');
+    // The labels live with the helper that builds them, not with the template
+    // that iterates them -- this used to assert against the template and so
+    // asserted nothing.
+    for (const label of ['Content Type', 'Original', 'Stored', 'Truncated', 'Showing', 'Encoding', 'Hash']) {
+      expect(detailSource).toContain(`label: '${label}'`);
+    }
     expect(detailSource).toContain('&& !DETAIL_BODY_METADATA_KEYS.has(key)');
+  });
+
+  it('says how much of a body it is showing, separately from what was captured', () => {
+    // Two different statements. Truncated means the capture is gone; Showing
+    // means the rest is one larger request away.
+    expect(detailSource).toContain('transportNote');
+    expect(detailSource).toContain('_truncated_for_transport');
+    expect(detailSource).toContain('first ${shown} of ${stored}');
+    expect(bodiesSource).toContain('_truncated_for_transport`] = body.truncated_for_transport');
+    expect(bodiesSource).toContain('_shown_bytes`] = shownBytes(body)');
+  });
+
+  it('renders a body the index names even when its bytes are not here', () => {
+    // Metadata-only sections. A failed fetch or a zero-length body used to
+    // take the whole section with it, and every metadata key is filtered out
+    // of the generic field grid, so the pane went silent about a body it knew
+    // existed. Behaviour is covered in stats-detail.test.ts; this is the
+    // template half.
+    expect(detailSource).toContain('hasContent');
+    expect(source).toContain('{#if section.hasContent}');
+    expect(source).toContain("'no bytes stored'");
   });
 
   it('renders compact structured snapshots instead of null-heavy security projections', () => {
     expect(source).toContain('compactJsonForDisplay(detail.data.rule_json)');
-    expect(source).toContain('compactJsonForDisplay(detail.data.event_json)');
     expect(detailSource).toContain('stripEmptyDetailValues');
-    expect(source).not.toContain("formatAndHighlight(detail.data.event_json, 'json')");
     expect(source).not.toContain("formatAndHighlight(detail.data.rule_json, 'json')");
+  });
+
+  it('renders the matched event through the same body section as every other body', () => {
+    // The forensic payload left SQLite for the body archive, and while there
+    // was no route to read it the detail pane showed its metadata under a
+    // hand-rolled "Matched Event" block. There is a route now, so `payload` is
+    // a direction like `request` and `response`: one section builder, one
+    // metadata grid, one place that decides what a truncated body looks like.
+    expect(source).not.toContain('detail.data.event_json');
+    expect(detailSource).toContain("'payload_body'");
+    expect(source).toContain("void showDetail('security', row as any)");
+    expect(source).toContain("void showDetail('detection', row as any)");
+    expect(source).toContain("void showDetail('enforcement', row as any)");
+    // The bespoke block and its derived value are gone with it.
+    expect(source).not.toContain('payloadMeta');
+    expect(source).not.toContain('Matched Event');
+    // An event whose bodies cannot be read says so instead of rendering an
+    // empty section that reads as "there was nothing here".
+    expect(source).toContain('bodyError');
   });
 
   it('gives detail fields enough room to wrap without overlapping values', () => {

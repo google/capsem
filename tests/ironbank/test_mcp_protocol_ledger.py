@@ -12,6 +12,7 @@ from contextlib import closing, suppress
 from pathlib import Path
 
 import pytest
+from helpers.body_archive import session_archive
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -22,7 +23,12 @@ from helpers.constants import (
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
+from helpers.service import (
+    ServiceInstance,
+    vm_name,
+    vm_session_db_path,
+    wait_exec_ready,
+)
 from log_streams import assert_service_log_evidence
 
 pytestmark = pytest.mark.integration
@@ -38,7 +44,6 @@ EXPECTED_SECURITY_COLUMNS = {
     "rule_action",
     "detection_level",
     "rule_json",
-    "event_json",
     "trace_id",
     "turn_id",
     "credential_ref",
@@ -313,12 +318,13 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
                 (call_row["event_id"],),
             ).fetchall()
             assert security_rows
+            archive = session_archive(conn)
             security_by_event: dict[str, list[sqlite3.Row]] = {}
             for row in security_rows:
                 security_by_event.setdefault(row["event_id"], []).append(row)
                 assert row["trace_id"] == trace_id
                 assert json.loads(row["rule_json"])["name"]
-                event = json.loads(row["event_json"])
+                event = archive.security_payload(row["event_id"])
                 assert event["mcp"]["server_name"] == observed_server
                 assert event["tcp"]["port"] == "3713"
                 assert event["ip"]["value"] == "127.0.0.1"
@@ -341,7 +347,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             for row in list_security:
                 assert row["trace_id"]
                 assert json.loads(row["rule_json"])["name"]
-            list_event = json.loads(list_security[0]["event_json"])
+            list_event = archive.security_payload(list_security[0]["event_id"])
             assert list_event["event_type"] == "mcp.tool_list"
             assert list_event["mcp"]["method"] == "tools/list"
             listed_tools = json.loads(list_event["mcp"]["tool_list"])["result"]["tools"]
@@ -369,7 +375,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
                 and row["rule_action"] == "ask"
                 for row in call_security
             )
-            call_event = json.loads(call_security[0]["event_json"])
+            call_event = archive.security_payload(call_security[0]["event_id"])
             assert call_event["event_type"] == "mcp.tool_call"
             assert call_event["mcp"]["method"] == "tools/call"
             assert call_event["mcp"]["tool_call_name"] == "fixture_lookup"

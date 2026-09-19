@@ -14,6 +14,35 @@ fn columns_for_schema(conn: &Connection, schema: &str, table: &str) -> BTreeSet<
         .unwrap()
 }
 
+/// Rows the writer of the ledger at `path` still holds in its memory schema.
+///
+/// Opens its own connection to the shared-cache memory database, so a test
+/// can watch the writer's `mem` without a hook into the writer thread.
+/// `read_uncommitted` keeps it off the writer's table locks.
+pub(crate) fn memory_row_count_for_tests(path: &std::path::Path, table: &str) -> i64 {
+    use rusqlite::OpenFlags;
+    let conn = Connection::open_with_flags(
+        ":memory:",
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_URI,
+    )
+    .expect("open probe connection");
+    let uri = memory_uri_for_path(path).replace('\'', "''");
+    conn.execute_batch(&format!(
+        "ATTACH DATABASE '{uri}' AS probe; PRAGMA read_uncommitted = ON;"
+    ))
+    .expect("attach the writer's memory schema");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match conn.query_row(&format!("SELECT COUNT(*) FROM probe.{table}"), [], |row| row.get(0)) {
+            Ok(count) => return count,
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(error) => panic!("count probe.{table}: {error}"),
+        }
+    }
+}
+
 #[test]
 fn create_tables_succeeds() {
     let conn = Connection::open_in_memory().unwrap();
@@ -31,7 +60,6 @@ fn create_tables_idempotent() {
 fn db_mem_tables_match_schema() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    migrate(&conn).unwrap();
     create_memory_tables(&conn, &memory_uri_for_name("db_mem_tables_match_schema")).unwrap();
 
     for (table, _) in READY_SCHEMA_COLUMNS {
@@ -53,146 +81,102 @@ fn db_mem_tables_match_schema() {
 }
 
 #[test]
-fn fresh_create_schema_has_no_migration_only_columns() {
+fn db_mem_flush_copies_each_row_once_and_empties_memory() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    let before = READY_SCHEMA_COLUMNS
-        .iter()
-        .map(|(table, _)| (*table, columns_for_schema(&conn, "main", table)))
-        .collect::<BTreeMap<_, _>>();
-
-    migrate(&conn).unwrap();
-
-    for (table, columns_before_migrate) in before {
-        assert_eq!(
-            columns_before_migrate,
-            columns_for_schema(&conn, "main", table),
-            "fresh CREATE_SCHEMA must publish the final {table} shape; migrations are only for existing databases"
-        );
-    }
-}
-
-#[test]
-fn fresh_schema_is_final_before_external_memory_rehydrate() {
-    let conn = Connection::open_in_memory().unwrap();
-    create_tables(&conn).unwrap();
-    create_memory_tables(
-        &conn,
-        &memory_uri_for_name("fresh_schema_is_final_before_external_memory_rehydrate"),
-    )
-    .unwrap();
-
-    // Reproduce the production ordering window: an external reader mirrors
-    // the freshly published schema before the writer runs legacy migrations.
-    migrate(&conn).unwrap();
-    sync_memory_tables_from_disk(&conn, ["security_ask_events"])
-        .expect("fresh canonical DDL must already match its post-migration shape");
-
-    assert_eq!(
-        columns_for_schema(&conn, MEMORY_SCHEMA, "security_ask_events"),
-        columns_for_schema(&conn, "main", "security_ask_events"),
-        "a fresh DB must not publish a pre-migration table shape to external readers"
-    );
-}
-
-#[test]
-fn db_mem_disk_ready_rejects_missing_memory_schema() {
-    let conn = Connection::open_in_memory().unwrap();
-    create_tables(&conn).unwrap();
-    migrate(&conn).unwrap();
-
-    let error = validate_ready_schema(&conn).expect_err("ready() must fail if DB-owned memory tables were not created");
-    assert!(
-        error.contains("mem.net_events"),
-        "missing memory schema must fail loudly instead of route projections hiding stale state: {error}"
-    );
-}
-
-#[test]
-fn db_mem_flush_uses_per_table_id_watermark() {
-    let conn = Connection::open_in_memory().unwrap();
-    create_tables(&conn).unwrap();
-    migrate(&conn).unwrap();
-    create_memory_tables(&conn, &memory_uri_for_name("db_mem_flush_uses_per_table_id_watermark")).unwrap();
+    create_memory_tables(&conn, &memory_uri_for_name("db_mem_flush_copies_each_row_once")).unwrap();
     let mut watermarks = initial_memory_flush_watermarks(&conn, ["net_events"]).expect("initial watermarks");
+    let count = |schema: &str| -> i64 {
+        conn.query_row(&format!("SELECT COUNT(*) FROM {schema}.net_events"), [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+    };
+    let insert = |domain: &str| {
+        conn.execute(
+            "INSERT INTO mem.net_events (timestamp, domain, decision)
+             VALUES ('2026-06-26T00:00:00Z', ?1, 'allowed')",
+            [domain],
+        )
+        .unwrap();
+    };
 
-    conn.execute(
-        "INSERT INTO mem.net_events (timestamp, domain, decision)
-             VALUES ('2026-06-26T00:00:00Z', 'flush-one.example', 'allowed')",
-        [],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO mem.net_events (timestamp, domain, decision)
-             VALUES ('2026-06-26T00:00:01Z', 'flush-two.example', 'allowed')",
-        [],
-    )
-    .unwrap();
-
-    let before_first = conn.total_changes();
+    insert("flush-one.example");
+    insert("flush-two.example");
     let advanced = flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("first flush");
     watermarks.extend(advanced);
     assert_eq!(
-        conn.total_changes() - before_first,
-        2,
-        "first mem->disk flush should copy exactly the two new rows"
+        (count("main"), count(MEMORY_SCHEMA)),
+        (2, 0),
+        "the first flush moves both rows"
     );
 
-    conn.execute(
-        "INSERT INTO mem.net_events (timestamp, domain, decision)
-             VALUES ('2026-06-26T00:00:02Z', 'flush-three.example', 'allowed')",
-        [],
-    )
-    .unwrap();
-
-    let before_second = conn.total_changes();
+    insert("flush-three.example");
     let advanced = flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("second flush");
     watermarks.extend(advanced);
     assert_eq!(
-        conn.total_changes() - before_second,
-        1,
-        "second mem->disk flush must use the per-table id watermark instead of replaying the whole memory table"
+        (count("main"), count(MEMORY_SCHEMA)),
+        (3, 0),
+        "the second flush moves only the new row; the first two are not replayed"
     );
 
     let before_third = conn.total_changes();
-    let advanced = flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("third flush");
-    watermarks.extend(advanced);
+    flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).expect("third flush");
     assert_eq!(
         conn.total_changes() - before_third,
         0,
-        "unchanged dirty-table flush must not rewrite already flushed rows"
+        "a flush with nothing in memory writes nothing"
     );
 }
 
 #[test]
-fn db_mem_disk_memory_tables_work_before_query_only_guard() {
+fn memory_sequences_start_above_every_id_the_disk_handed_out() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    conn.execute_batch(
+        "INSERT INTO main.net_events (timestamp, domain, decision) VALUES ('t', 'a.example', 'allowed');
+         UPDATE main.sqlite_sequence SET seq = 41 WHERE name = 'net_events';",
+    )
+    .unwrap();
+    create_memory_tables(&conn, &memory_uri_for_name("memory_sequences_start_above_disk")).unwrap();
+    seed_memory_sequences(&conn, hot_ledger_tables()).unwrap();
+    conn.execute(
+        "INSERT INTO mem.net_events (timestamp, domain, decision) VALUES ('t', 'b.example', 'allowed')",
+        [],
+    )
+    .unwrap();
+    assert_eq!(conn.last_insert_rowid(), 42);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM mem.net_events", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1,
+        "seeding the sequence must copy no rows"
+    );
+}
+
+#[test]
+fn reader_pragmas_leave_the_connection_query_only() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.db");
     {
         let conn = Connection::open(&path).unwrap();
         apply_pragmas(&conn).unwrap();
         create_tables(&conn).unwrap();
-        migrate(&conn).unwrap();
     }
 
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let conn = Connection::open_with_flags(&path, flags).unwrap();
-    create_memory_tables(
-        &conn,
-        &memory_uri_for_name("db_mem_disk_memory_tables_work_before_query_only_guard"),
-    )
-    .unwrap();
     apply_reader_pragmas(&conn).unwrap();
-    validate_ready_schema(&conn).expect("query-only connection must still own its DB-local memory schema");
+    validate_ready_schema(&conn).expect("a query-only reader validates the disk schema");
     let error = conn
         .execute(
-            "INSERT INTO mem.net_events (timestamp, domain, decision) VALUES ('t', 'example.com', 'allowed')",
+            "INSERT INTO net_events (timestamp, domain, decision) VALUES ('t', 'example.com', 'allowed')",
             [],
         )
-        .expect_err("query_only must prevent writes after DB-owned memory setup");
+        .expect_err("query_only must prevent writes through a reader");
     assert!(
         error.to_string().contains("readonly"),
-        "query_only should make the reader worker effectively read-only after setup: {error}"
+        "query_only should make the reader worker effectively read-only: {error}"
     );
 }
 
@@ -217,12 +201,9 @@ fn writer_pragmas_enable_file_backed_mmap() {
 }
 
 #[test]
-fn migrate_trace_columns_idempotent() {
+fn create_tables_publishes_trace_columns() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    // Run twice -- second call must not error.
-    migrate(&conn).unwrap();
-    migrate(&conn).unwrap();
     // Verify trace_id column exists by inserting a row with it.
     conn.execute(
         "INSERT INTO model_calls (timestamp, provider, method, path, trace_id)
@@ -261,11 +242,9 @@ fn create_tables_includes_fs_events() {
 }
 
 #[test]
-fn migrate_fs_events_idempotent() {
+fn create_tables_publishes_the_fs_events_table() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    migrate(&conn).unwrap();
-    migrate(&conn).unwrap();
     conn.execute(
         "INSERT INTO fs_events (timestamp, action, path)
              VALUES ('2026-01-01T00:00:00Z', 'deleted', 'project/old.txt')",
@@ -281,11 +260,9 @@ fn migrate_fs_events_idempotent() {
 }
 
 #[test]
-fn migrate_tool_calls_origin_idempotent() {
+fn create_tables_publishes_tool_call_origin_columns() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    migrate(&conn).unwrap();
-    migrate(&conn).unwrap();
     // Verify origin/server/method columns exist by inserting one unified MCP-origin row.
     conn.execute(
         "INSERT INTO model_calls (timestamp, provider, method, path)
@@ -309,23 +286,17 @@ fn migrate_tool_calls_origin_idempotent() {
     assert_eq!(origin, "mcp");
 }
 
+/// An MCP tool call has no model call to hang from, and the table says so.
+///
+/// This was a `migrate` test: the old `tool_calls` had `model_call_id NOT
+/// NULL`, and `rebuild_tool_calls_nullable_model_call` copied the table into
+/// a nullable one. The declaration in `schema/ddl.rs` is nullable outright,
+/// so what is left to hold is the invariant itself -- a tool call the agent
+/// made directly through MCP is a real row, not an orphan to reject.
 #[test]
-fn migrate_tool_calls_allows_orphan_mcp_origin_rows() {
+fn an_mcp_tool_call_needs_no_model_call_to_belong_to() {
     let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        "CREATE TABLE tool_calls (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                model_call_id INTEGER NOT NULL,
-                call_index INTEGER NOT NULL,
-                call_id TEXT NOT NULL,
-                tool_name TEXT NOT NULL,
-                arguments TEXT
-            );",
-    )
-    .unwrap();
-
-    migrate(&conn).unwrap();
-    migrate(&conn).unwrap();
+    create_tables(&conn).unwrap();
 
     conn.execute(
         "INSERT INTO tool_calls (
@@ -353,55 +324,39 @@ fn migrate_tool_calls_allows_orphan_mcp_origin_rows() {
     assert_eq!(row.2, "Status: 200 OK");
 }
 
+/// A ledger written before bodies moved into the archive still has a `body`
+/// column and no `block_offset`. Nothing migrates it -- Capsem has published
+/// no release, so there is no such file in the wild to rescue -- and the one
+/// thing that must not happen is a silent adoption of it: the open fails,
+/// naming the column the table lacks.
 #[test]
-fn migrate_event_body_blobs_accepts_tool_calls_source() {
+fn a_pre_archive_body_table_fails_to_open_by_name() {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(
         "CREATE TABLE event_body_blobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id TEXT NOT NULL CHECK (length(event_id) = 12),
-                event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call')),
-                source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls')),
-                direction TEXT NOT NULL CHECK (direction IN ('request', 'response')),
+                event_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                source_table TEXT NOT NULL,
+                direction TEXT NOT NULL,
                 content_type TEXT,
-                original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
-                stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0 AND stored_bytes <= original_bytes),
-                truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
-                body_hash TEXT NOT NULL CHECK (length(body_hash) = 71),
+                original_bytes INTEGER NOT NULL,
+                stored_bytes INTEGER NOT NULL,
+                truncated INTEGER NOT NULL,
+                body_hash TEXT NOT NULL,
                 body BLOB NOT NULL,
                 trace_id TEXT,
-                created_at TEXT NOT NULL,
-                UNIQUE(event_id, source_table, direction)
+                created_at TEXT NOT NULL
             );",
     )
     .unwrap();
 
-    migrate(&conn).unwrap();
-    migrate(&conn).unwrap();
-
-    conn.execute(
-        "INSERT INTO event_body_blobs (
-                event_id, event_type, source_table, direction, content_type,
-                original_bytes, stored_bytes, truncated, body_hash, body,
-                trace_id, created_at
-             ) VALUES (
-                '012345abcdef', 'mcp.tool_call', 'tool_calls', 'request',
-                'application/json', 2, 2, 0,
-                'blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-                '{}', 'trace-1', '2026-01-01T00:00:00Z'
-             )",
-        [],
-    )
-    .unwrap();
-
-    let source: String = conn
-        .query_row(
-            "SELECT source_table FROM event_body_blobs WHERE event_id = '012345abcdef'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(source, "tool_calls");
+    let error = create_tables(&conn).expect_err("a pre-archive ledger cannot be opened");
+    let error = error.to_string();
+    assert!(
+        error.contains("block_offset"),
+        "opening a pre-archive ledger must name the column it lacks: {error}"
+    );
 }
 
 #[test]
@@ -614,12 +569,11 @@ fn create_tables_includes_security_rule_events_contract() {
     conn.execute(
         "INSERT INTO security_rule_events (
                 timestamp_unix_ms, event_id, event_type, rule_id,
-                rule_action, detection_level, rule_json, event_json
+                rule_action, detection_level, rule_json
              ) VALUES (
                 1789000000000, 'abcdef123456', 'model.call',
                 'openai_api_block', 'block', 'critical',
-                '{\"name\":\"openai_api_block\",\"match\":\"model.provider == \\\"openai\\\"\"}',
-                '{\"common\":{\"event_type\":\"model.call\"},\"model\":{\"provider\":\"openai\"}}'
+                '{\"name\":\"openai_api_block\",\"match\":\"model.provider == \\\"openai\\\"\"}'
              )",
         [],
     )
@@ -646,12 +600,11 @@ fn create_tables_includes_security_ask_events_contract() {
     conn.execute(
         "INSERT INTO security_ask_events (
                 timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
-                rule_name, status, rule_json, event_json
+                rule_name, status, rule_json
              ) VALUES (
                 1789000000000, 'abcdef123456', '111111abcdef',
                 'http.request', 'profiles.rules.ask_openai', 'ask_openai',
-                'pending', '{\"name\":\"ask_openai\"}',
-                '{\"http\":{\"host\":\"api.openai.com\"}}'
+                'pending', '{\"name\":\"ask_openai\"}'
              )",
         [],
     )
@@ -661,11 +614,11 @@ fn create_tables_includes_security_ask_events_contract() {
         .execute(
             "INSERT INTO security_ask_events (
                     timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
-                    rule_name, status, rule_json, event_json
+                    rule_name, status, rule_json
                  ) VALUES (
                     1789000000000, 'abcdef123457', '111111abcdeg',
                     'http.request', 'profiles.rules.ask_openai', 'ask_openai',
-                    'maybe', '{}', '{}'
+                    'maybe', '{}'
                  )",
             [],
         )
@@ -685,10 +638,10 @@ fn security_rule_events_reject_unknown_rule_action() {
         .execute(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, rule_json, event_json
+                    rule_action, rule_json
                  ) VALUES (
                     1789000000000, 'abcdef123456', 'model.call',
-                    'old_detect', 'detect', '{}', '{}'
+                    'old_detect', 'detect', '{}'
                  )",
             [],
         )
@@ -707,10 +660,10 @@ fn security_rule_events_accept_rewrite_rule_action() {
     conn.execute(
         "INSERT INTO security_rule_events (
                 timestamp_unix_ms, event_id, event_type, rule_id,
-                rule_action, rule_json, event_json
+                rule_action, rule_json
              ) VALUES (
                 1789000000000, 'abcdef123456', 'model.call',
-                'profiles.rules.redact_model', 'rewrite', '{}', '{}'
+                'profiles.rules.redact_model', 'rewrite', '{}'
              )",
         [],
     )
@@ -726,11 +679,11 @@ fn security_decision_events_record_explicit_decisions_and_reject_magic_outcome()
         "INSERT INTO security_decision_events (
                 timestamp_unix_ms, event_id, event_type, stage, actor,
                 rule_id, plugin_id, previous_decision, requested_decision,
-                effective_decision, reason, event_json
+                effective_decision, reason
              ) VALUES (
                 1789000000000, 'abcdef123456', 'file.import', 'rewrite',
                 'dummy_pre_eicar', 'profiles.rules.scan_eicar', 'dummy_pre_eicar',
-                'allow', 'block', 'block', 'EICAR test seed observed', '{}'
+                'allow', 'block', 'block', 'EICAR test seed observed'
              )",
         [],
     )
@@ -740,11 +693,10 @@ fn security_decision_events_record_explicit_decisions_and_reject_magic_outcome()
         .execute(
             "INSERT INTO security_decision_events (
                     timestamp_unix_ms, event_id, event_type, stage, actor,
-                    previous_decision, requested_decision, effective_decision,
-                    event_json
+                    previous_decision, requested_decision, effective_decision
                  ) VALUES (
                     1789000000001, 'abcdef123457', 'file.import', 'rewrite',
-                    'dummy_pre_eicar', 'allow', 'outcome', 'block', '{}'
+                    'dummy_pre_eicar', 'allow', 'outcome', 'block'
                  )",
             [],
         )
@@ -758,11 +710,10 @@ fn security_decision_events_record_explicit_decisions_and_reject_magic_outcome()
         .execute(
             "INSERT INTO security_decision_events (
                     timestamp_unix_ms, event_id, event_type, stage, actor,
-                    previous_decision, requested_decision, effective_decision,
-                    event_json
+                    previous_decision, requested_decision, effective_decision
                  ) VALUES (
                     1789000002, 'abcdef123458', 'file.import', 'mystery',
-                    'dummy_pre_eicar', 'allow', 'block', 'block', '{}'
+                    'dummy_pre_eicar', 'allow', 'block', 'block'
                  )",
             [],
         )
@@ -782,10 +733,10 @@ fn security_rule_events_reject_non_hex_event_id() {
         .execute(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, rule_json, event_json
+                    rule_action, rule_json
                  ) VALUES (
                     1789000000000, 'evt_abc123', 'model.call',
-                    'bad_event_id', 'allow', '{}', '{}'
+                    'bad_event_id', 'allow', '{}'
                  )",
             [],
         )
@@ -806,10 +757,10 @@ fn security_rule_events_reject_unknown_event_type() {
             .execute(
                 "INSERT INTO security_rule_events (
                         timestamp_unix_ms, event_id, event_type, rule_id,
-                        rule_action, rule_json, event_json
+                        rule_action, rule_json
                      ) VALUES (
                         1789000000000, 'abcdef123456', ?1,
-                        'stale_event_type', 'allow', '{}', '{}'
+                        'stale_event_type', 'allow', '{}'
                      )",
                 [event_type],
             )
@@ -830,11 +781,11 @@ fn security_ask_events_reject_unknown_event_type() {
         .execute(
             "INSERT INTO security_ask_events (
                     timestamp_unix_ms, ask_id, event_id, event_type, rule_id,
-                    rule_name, status, rule_json, event_json
+                    rule_name, status, rule_json
                  ) VALUES (
                     1789000000000, 'abcdef123456', '111111abcdef',
                     'model.request', 'profiles.rules.ask_model', 'ask_model',
-                    'pending', '{}', '{}'
+                    'pending', '{}'
                  )",
             [],
         )
@@ -854,10 +805,10 @@ fn security_rule_events_reject_unknown_detection_level() {
         .execute(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json
+                    rule_action, detection_level, rule_json
                  ) VALUES (
                     1789000000000, 'abcdef123456', 'model.call',
-                    'bad_level', 'allow', 'info', '{}', '{}'
+                    'bad_level', 'allow', 'info', '{}'
                  )",
             [],
         )
@@ -877,10 +828,10 @@ fn security_rule_events_reject_null_detection_level() {
         .execute(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, event_json
+                    rule_action, detection_level, rule_json
                  ) VALUES (
                     1789000000000, 'abcdef123456', 'model.call',
-                    'ambiguous_level', 'allow', NULL, '{}', '{}'
+                    'ambiguous_level', 'allow', NULL, '{}'
                  )",
             [],
         )
@@ -900,10 +851,10 @@ fn security_rule_events_reject_non_json_forensic_payloads() {
         .execute(
             "INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, rule_json, event_json
+                    rule_action, rule_json
                  ) VALUES (
                     1789000000000, 'abcdef123456', 'model.call',
-                    'bad_payload', 'allow', 'not json', '{}'
+                    'bad_payload', 'allow', 'not json'
                  )",
             [],
         )

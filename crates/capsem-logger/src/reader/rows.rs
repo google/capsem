@@ -2,10 +2,10 @@
 
 use super::*;
 
-pub(super) fn read_security_rule_event_row(row: &Row<'_>) -> rusqlite::Result<SecurityRuleEvent> {
+pub(super) fn read_security_rule_event_row(row: &Row<'_>) -> rusqlite::Result<SecurityRuleMatch> {
     let rule_action: String = row.get(4)?;
     let detection_level: String = row.get(5)?;
-    Ok(SecurityRuleEvent {
+    Ok(SecurityRuleMatch {
         timestamp_unix_ms: row.get(0)?,
         event_id: row.get(1)?,
         event_type: row.get(2)?,
@@ -25,16 +25,15 @@ pub(super) fn read_security_rule_event_row(row: &Row<'_>) -> rusqlite::Result<Se
             )
         })?,
         rule_json: row.get(6)?,
-        event_json: row.get(7)?,
-        trace_id: row.get(8)?,
-        turn_id: row.get(9)?,
-        credential_ref: row.get(10)?,
+        trace_id: row.get(7)?,
+        turn_id: row.get(8)?,
+        credential_ref: row.get(9)?,
     })
 }
 
-pub(super) fn read_security_ask_event_row(row: &Row<'_>) -> rusqlite::Result<SecurityAskEvent> {
+pub(super) fn read_security_ask_event_row(row: &Row<'_>) -> rusqlite::Result<SecurityAskRecord> {
     let status: String = row.get(6)?;
-    Ok(SecurityAskEvent {
+    Ok(SecurityAskRecord {
         timestamp_unix_ms: row.get(0)?,
         ask_id: row.get(1)?,
         event_id: row.get(2)?,
@@ -49,10 +48,9 @@ pub(super) fn read_security_ask_event_row(row: &Row<'_>) -> rusqlite::Result<Sec
             )
         })?,
         rule_json: row.get(7)?,
-        event_json: row.get(8)?,
-        resolver: row.get(9)?,
-        reason: row.get(10)?,
-        trace_id: row.get(11)?,
+        resolver: row.get(8)?,
+        reason: row.get(9)?,
+        trace_id: row.get(10)?,
     })
 }
 
@@ -67,6 +65,9 @@ pub(super) fn read_file_event_row(row: &Row<'_>) -> rusqlite::Result<FileEvent> 
         action: FileAction::parse_str(&action_str),
         path: row.get(2)?,
         size: row.get::<_, Option<i64>>(3)?.map(|s| s as u64),
+        // NOT NULL in the schema: a read error here is broken shape, not a
+        // legacy row, and propagates.
+        kind: FileKind::parse_str(&row.get::<_, String>(7)?),
         trace_id: row.get::<_, Option<String>>(4).ok().flatten(),
         credential_ref: row.get::<_, Option<String>>(5).ok().flatten(),
     })

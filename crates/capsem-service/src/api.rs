@@ -2,6 +2,8 @@ use capsem_core::net::policy_config::{DetectionLevel, ProfileConfigFile, Securit
 use capsem_core::session::{GlobalStats, McpToolSummary, ProviderSummary, SessionRecord, ToolSummary};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+pub mod bodies;
 use std::collections::HashMap;
 
 /// Response for GET /stats -- global session stats from the logger DB boundary.

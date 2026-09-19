@@ -1,7 +1,7 @@
 //! Caller-owned SQL, DB-owned execution: the raw read path behind `query`.
 //!
 //! The route names its intent as a SELECT; this module owns validation,
-//! binding, row shaping, the 5 s interrupt and the shared-cache lock wait.
+//! binding, row shaping and the 5 s interrupt.
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -16,6 +16,7 @@ impl DbReader {
         const TIMEOUT_MS: u64 = 5_000;
         const PROGRESS_OPS: i32 = 10_000;
 
+        self.record_query_executed();
         let deadline = Instant::now() + Duration::from_millis(TIMEOUT_MS);
         self.conn
             .progress_handler(PROGRESS_OPS, Some(move || Instant::now() >= deadline));
@@ -65,7 +66,7 @@ impl DbReader {
     }
 
     fn query_raw_params_inner(&self, sql: &str, params: &[Value], max_rows: usize) -> Result<String, String> {
-        let result = retry_while_table_locked(|| self.query_rows(sql, params, max_rows)).map_err(|e| e.to_string())?;
+        let result = self.query_rows(sql, params, max_rows).map_err(|e| e.to_string())?;
         serde_json::to_string(&result).map_err(|e| e.to_string())
     }
 
@@ -136,31 +137,5 @@ impl DbReader {
             "columns": columns,
             "rows": rows,
         }))
-    }
-}
-
-/// How long a read waits out SQLITE_LOCKED on the shared-cache memory schema.
-///
-/// Readers run with `read_uncommitted`, so the writer's batches no longer lock
-/// them out of the hot tables (see `schema::apply_reader_pragmas`). Schema
-/// changes on the shared cache still take exclusive locks -- the writer
-/// reconciling a memory table, a rekey creating views -- and those surface
-/// as SQLITE_LOCKED for an instant rather than as `busy_timeout` waits, which
-/// only cover file locks. Waiting is bounded so a wedged writer still fails
-/// loudly.
-const TABLE_LOCK_WAIT: Duration = Duration::from_secs(2);
-const TABLE_LOCK_POLL: Duration = Duration::from_millis(1);
-
-fn retry_while_table_locked<T>(mut run: impl FnMut() -> rusqlite::Result<T>) -> rusqlite::Result<T> {
-    let deadline = Instant::now() + TABLE_LOCK_WAIT;
-    loop {
-        match run() {
-            Err(rusqlite::Error::SqliteFailure(inner, _))
-                if inner.code == rusqlite::ErrorCode::DatabaseLocked && Instant::now() < deadline =>
-            {
-                std::thread::sleep(TABLE_LOCK_POLL);
-            }
-            result => return result,
-        }
     }
 }

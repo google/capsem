@@ -195,6 +195,7 @@ fn fully_populated_security_event() -> SecurityEvent {
             delete_mime_type: text(),
             delete_content: text(),
             content: text(),
+            kind: text(),
         })
         .with_process(ProcessSecurityEvent {
             exec_id: text(),

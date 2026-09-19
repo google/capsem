@@ -1,10 +1,11 @@
 """Real expose authorization: deny before Redis accepts a TCP connection."""
 
-import json
 import socket
 
 import pytest
+from helpers.body_archive import SessionArchive
 from helpers.constants import CODE_PROFILE_ID
+from helpers.service import vm_session_db_path
 
 from tests.ironbank.kingslanding.test_publish import redis
 from tests.ironbank.kingslanding.test_run import service, wait_for
@@ -102,31 +103,36 @@ def test_expose_security_prevents_redis_accept_and_retains_trusted_facts(redis, 
         assert _redis_command(stream, "PING") == b"PONG"
 
         rows = []
+        # The matched event's payload is archive-backed: the route hands back
+        # the row, and the network facts are read from the session archive.
+        session_db = vm_session_db_path(service.tmp_dir, client, vm_id)
 
         def audited():
             rows[:] = client.get(f"/vms/{vm_id}/security/latest?limit=2000")
-            seen = {
-                json.loads(row["event_json"])["network"]["source"]["address"]
-                for row in rows
-                if row["event_type"] == "network.connect"
-            }
+            with SessionArchive(session_db) as archive:
+                seen = {
+                    archive.security_payload(row["event_id"])["network"]["source"]["address"]
+                    for row in rows
+                    if row["event_type"] == "network.connect"
+                }
             return denied_peers <= seen
 
         wait_for(audited, "denied connection security rows", timeout=15)
-        for row in rows:
-            if row["event_type"] != "network.connect":
-                continue
-            event = json.loads(row["event_json"])
-            facts = event["network"]
-            if facts["source"]["address"] not in denied_peers:
-                continue
-            assert event["decision"]["effective"] == ("ask" if policy == "ask" else "block")
-            assert facts["source"]["vm"] is None
-            assert facts["destination"]["address"] == "127.0.0.1:6379"
-            assert facts["destination"]["vm"]["id"] == vm_id
-            # An unnamed VM is known by its route id; its list label is the UI's.
-            assert facts["destination"]["vm"]["name"] == redis["vm"]["id"]
-            assert int(facts["destination"]["vm"]["generation"]) > 0
-            assert facts["route"]["listener"] == f"127.0.0.1:{port}"
-            assert facts["route"]["publication_id"] and facts["connection_id"]
-            assert facts["protocol"] == "tcp" and facts["side"] == "destination"
+        with SessionArchive(session_db) as archive:
+            for row in rows:
+                if row["event_type"] != "network.connect":
+                    continue
+                event = archive.security_payload(row["event_id"])
+                facts = event["network"]
+                if facts["source"]["address"] not in denied_peers:
+                    continue
+                assert event["decision"]["effective"] == ("ask" if policy == "ask" else "block")
+                assert facts["source"]["vm"] is None
+                assert facts["destination"]["address"] == "127.0.0.1:6379"
+                assert facts["destination"]["vm"]["id"] == vm_id
+                # An unnamed VM is known by its route id; its list label is the UI's.
+                assert facts["destination"]["vm"]["name"] == redis["vm"]["id"]
+                assert int(facts["destination"]["vm"]["generation"]) > 0
+                assert facts["route"]["listener"] == f"127.0.0.1:{port}"
+                assert facts["route"]["publication_id"] and facts["connection_id"]
+                assert facts["protocol"] == "tcp" and facts["side"] == "destination"

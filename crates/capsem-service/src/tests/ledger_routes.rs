@@ -1,6 +1,9 @@
 use super::*;
 
+mod bodies;
+mod bodies_export;
 mod freshness;
+mod query_plan;
 
 #[tokio::test]
 async fn security_routes_read_security_ledger_from_session_db() {
@@ -39,7 +42,7 @@ async fn security_routes_read_security_ledger_from_session_db() {
     .await
     .expect("security latest reads session ledger");
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let events: Vec<capsem_logger::SecurityRuleEvent> = serde_json::from_slice(&bytes).unwrap();
+    let events: Vec<capsem_logger::SecurityRuleMatch> = serde_json::from_slice(&bytes).unwrap();
 
     assert_eq!(events.len(), 1);
     let event = &events[0];
@@ -52,8 +55,22 @@ async fn security_routes_read_security_ledger_from_session_db() {
         capsem_logger::SecurityDetectionLevel::Informational
     );
     assert!(event.rule_json.contains("ollama_model_api_observed"));
-    assert!(event.event_json.contains(r#""provider":"ollama""#));
     assert_eq!(event.trace_id.as_deref(), Some("trace_ollama"));
+    // The route returns the row; the matched event's payload is archived and
+    // is read by event id, not carried by every row of a list view.
+    let payload = capsem_logger::DbHandle::open_external_reader(&db_path)
+        .unwrap()
+        .read_body(
+            "abcdef123456",
+            "security_rule_events",
+            capsem_logger::BodyDirection::Payload,
+        )
+        .await
+        .unwrap()
+        .expect("the matched event payload is archived");
+    assert!(String::from_utf8(payload.bytes)
+        .unwrap()
+        .contains(r#""provider":"ollama""#));
 
     let response = handle_security_info(State(state), Path("vm-ledger".to_string()))
         .await
@@ -304,10 +321,8 @@ async fn timeline_route_reads_timeline_ledger_from_session_db() {
             matched_rule: Some("profiles.rules.default_http".to_string()),
             request_headers: None,
             response_headers: None,
-            request_body_preview: Some("{}".to_string()),
-            response_body_preview: Some(r#"{"ok":true}"#.to_string()),
-            request_body_full: Some("{}".to_string()),
-            response_body_full: Some(r#"{"ok":true}"#.to_string()),
+            request_body: Some(b"{}".to_vec()),
+            response_body: Some(br#"{"ok":true}"#.to_vec()),
             conn_type: Some("http".to_string()),
             policy_mode: None,
             policy_action: Some("allow".to_string()),
@@ -384,10 +399,8 @@ async fn triage_route_reads_triage_ledger_from_session_db() {
             matched_rule: Some("corp.rules.block_evil".to_string()),
             request_headers: None,
             response_headers: None,
-            request_body_preview: None,
-            response_body_preview: None,
-            request_body_full: None,
-            response_body_full: None,
+            request_body: None,
+            response_body: None,
             conn_type: Some("http".to_string()),
             policy_mode: None,
             policy_action: Some("block".to_string()),
@@ -543,8 +556,6 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
         total_estimated_cost: 0.0,
         total_tool_calls: 0,
         total_file_events: 0,
-        compressed_size_bytes: None,
-        vacuumed_at: None,
         storage_mode: "virtiofs".to_string(),
         rootfs_hash: None,
         rootfs_version: None,
@@ -619,10 +630,8 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
         matched_rule: Some("profiles.rules.default_http".to_string()),
         request_headers: Some("content-type: application/json".to_string()),
         response_headers: Some("content-type: application/json".to_string()),
-        request_body_preview: Some(r#"{"input":"winterfell"}"#.to_string()),
-        response_body_preview: Some(r#"{"output_text":"the wall holds"}"#.to_string()),
-        request_body_full: Some(r#"{"input":"winterfell"}"#.to_string()),
-        response_body_full: Some(r#"{"output_text":"the wall holds"}"#.to_string()),
+        request_body: Some(br#"{"input":"winterfell"}"#.to_vec()),
+        response_body: Some(br#"{"output_text":"the wall holds"}"#.to_vec()),
         conn_type: Some("https".to_string()),
         policy_mode: None,
         policy_action: Some("allow".to_string()),
@@ -648,13 +657,12 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
         messages_count: 1,
         tools_count: 1,
         request_bytes: 64,
-        request_body_preview: Some(r#"{"input":"write winterfell"}"#.to_string()),
-        request_body_full: Some(r#"{"input":"write winterfell"}"#.to_string()),
+        request_body: Some(br#"{"input":"write winterfell"}"#.to_vec()),
         message_id: Some("msg-winterfell".to_string()),
         status_code: Some(200),
         text_content: Some("the wall holds".to_string()),
         thinking_content: Some("prepare ledger proof".to_string()),
-        response_body_full: Some(r#"{"output_text":"the wall holds"}"#.to_string()),
+        response_body: Some(br#"{"output_text":"the wall holds"}"#.to_vec()),
         stop_reason: Some("end_turn".to_string()),
         input_tokens: Some(9),
         output_tokens: Some(4),
@@ -667,6 +675,7 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
             "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
         ),
         tool_calls: vec![capsem_logger::ToolCallEntry {
+            event_id: None,
             call_index: 0,
             call_id: "tool-winterfell".to_string(),
             tool_name: "Write".to_string(),
@@ -675,6 +684,7 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
             trace_id: Some("trace-winterfell".to_string()),
         }],
         tool_responses: vec![capsem_logger::ToolResponseEntry {
+            event_id: None,
             call_id: "tool-winterfell".to_string(),
             content_preview: Some("Wrote winterfell.md".to_string()),
             is_error: false,
@@ -723,9 +733,11 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
     assert_eq!(detail["model_events"][0]["input_tokens"], 9, "{detail}");
     assert_eq!(detail["tool_events"][0]["call_id"], "tool-winterfell", "{detail}");
     assert_eq!(detail["tool_events"][0]["tool_name"], "Write", "{detail}");
+    // Body bytes are archive-backed now; the stats payload names them.
+    assert_eq!(detail["body_blobs"]["abcdef123453"][0]["direction"], "request");
     assert_eq!(
-        detail["body_blobs"]["abcdef123453"][0]["body"],
-        r#"{"input":"write winterfell"}"#
+        detail["body_blobs"]["abcdef123453"][0]["stored_bytes"],
+        r#"{"input":"write winterfell"}"#.len()
     );
 
     let (status, security) = route_request(

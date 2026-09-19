@@ -375,24 +375,86 @@ fn build_profile_server_list_respects_local_builtin_enablement() {
 }
 
 #[test]
-fn build_profile_server_list_disables_builtin_pool_when_session_db_is_shared() {
+fn build_profile_server_list_runs_one_builtin_peer_per_session() {
     let dir = tempfile::tempdir().unwrap();
     let builtin = dir.path().join("capsem-mcp-builtin");
     std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
     let mut env = HashMap::new();
-    env.insert(
-        "CAPSEM_SESSION_DB".to_string(),
-        dir.path().join("session.db").display().to_string(),
-    );
+    env.insert("CAPSEM_SESSION_DIR".to_string(), dir.path().display().to_string());
 
     let list = build_profile_server_list(&McpProfileConfig::default(), Some(&builtin), env);
 
     let local = list.iter().find(|server| server.name == "local").unwrap();
-    assert_eq!(
-        local.pool_size,
-        Some(1),
-        "pooled builtin peers cannot share one session DB writer safely"
+    assert_eq!(local.pool_size, Some(1), "a session's builtin runs one peer");
+    assert!(
+        !local.env.contains_key("CAPSEM_SESSION_DB"),
+        "the builtin is given no ledger to write"
     );
+}
+
+#[test]
+fn only_the_builtin_definition_is_named_as_builtin() {
+    let dir = tempfile::tempdir().unwrap();
+    let builtin = dir.path().join("capsem-mcp-builtin");
+    std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
+    let mut profile = McpProfileConfig::default();
+    profile.servers.push(McpManualServer {
+        name: "github".to_string(),
+        url: "https://example.com/mcp".to_string(),
+        headers: HashMap::new(),
+        auth: None,
+        enabled: true,
+    });
+
+    let list = build_profile_server_list(&profile, Some(&builtin), HashMap::new());
+
+    assert_eq!(list.len(), 2);
+    assert_eq!(builtin_server_names(&list), BTreeSet::from(["local".to_string()]));
+}
+
+fn profile_server(name: &str) -> McpManualServer {
+    McpManualServer {
+        name: name.to_string(),
+        url: "https://shadow.example/mcp".to_string(),
+        headers: HashMap::new(),
+        auth: None,
+        enabled: true,
+    }
+}
+
+/// With the builtin binary absent, nothing claimed `local` first, so a
+/// profile server of that name became the owner of every `local__*` tool.
+#[test]
+fn a_profile_cannot_shadow_the_builtin_when_its_binary_is_absent() {
+    let profile = McpProfileConfig {
+        servers: vec![
+            profile_server("local"),
+            profile_server("builtin"),
+            profile_server("kept"),
+        ],
+        ..Default::default()
+    };
+
+    let list = build_profile_server_list(&profile, None, HashMap::new());
+
+    let names: Vec<&str> = list.iter().map(|server| server.name.as_str()).collect();
+    assert_eq!(names, ["kept"], "reserved names are refused whatever is installed");
+}
+
+#[test]
+fn a_profile_cannot_shadow_the_builtin_when_its_binary_is_present() {
+    let dir = tempfile::tempdir().unwrap();
+    let builtin = dir.path().join("capsem-mcp-builtin");
+    std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
+    let profile = McpProfileConfig {
+        servers: vec![profile_server("local")],
+        ..Default::default()
+    };
+
+    let list = build_profile_server_list(&profile, Some(&builtin), HashMap::new());
+
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].source, BUILTIN_SERVER_SOURCE);
 }
 
 #[test]

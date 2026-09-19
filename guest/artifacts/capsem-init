@@ -62,11 +62,20 @@ boot_mark() {
     _LAST_MARK=$now
 }
 
+# Boot and agent diagnostics survive on the host-preserved VirtioFS share, in
+# its own logs/ directory beside workspace/ -- never inside workspace/. The
+# host file monitor watches the workspace and records every change in it, by
+# design with no exclusions, so a log written there reported its own writes:
+# the agent's log alone was 65 of 155 file events in a 30-minute session. The
+# guest's processes cannot reach logs/ either: only workspace/ is bound into
+# the new root.
+GUEST_LOG_DIR=/mnt/shared/logs
+
 init_log() {
     echo "[capsem-init] $*"
     printf '<1>[capsem-init] %s\n' "$*" > /dev/kmsg 2>/dev/null || true
-    if [ -d /mnt/shared/workspace ]; then
-        printf '[capsem-init] %s\n' "$*" >> /mnt/shared/workspace/.capsem-boot.log 2>/dev/null || true
+    if [ -d "$GUEST_LOG_DIR" ]; then
+        printf '[capsem-init] %s\n' "$*" >> "$GUEST_LOG_DIR/.capsem-boot.log" 2>/dev/null || true
     fi
 }
 
@@ -118,6 +127,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
         echo "[capsem-init] FATAL: cannot mount virtiofs 'capsem' -- aborting"
         exit 1
     }
+    mkdir -p "$GUEST_LOG_DIR" 2>/dev/null || true
     init_log "VirtioFS share mounted"
     boot_mark "virtiofs"
 
@@ -682,8 +692,8 @@ if [ -f /newroot/root/.capsem-image/ready ]; then
 fi
 
 AGENT_STDIO_LOG=/tmp/capsem-agent-stdio.log
-if [ -d /mnt/shared/workspace ]; then
-    AGENT_STDIO_LOG=/mnt/shared/workspace/.capsem-agent-stdio.log
+if [ -d "$GUEST_LOG_DIR" ]; then
+    AGENT_STDIO_LOG="$GUEST_LOG_DIR/.capsem-agent-stdio.log"
 fi
 export RUST_BACKTRACE=1
 

@@ -447,6 +447,8 @@ fn gated_endpoint(inflight: usize, hold: bool) -> (Arc<McpEndpointState>, GatedD
     });
     let endpoint = Arc::new(McpEndpointState::new(
         aggregator,
+        Arc::new(capsem_logger::DbWriter::open_in_memory(8).unwrap()),
+        std::collections::BTreeSet::new(),
         Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new())))),
         Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
         Arc::new(tokio::sync::Semaphore::new(inflight)),
@@ -612,6 +614,8 @@ fn endpoint_with_matching_rule() -> Arc<McpEndpointState> {
         SecurityRuleSet::compile_profile(&profile, crate::net::policy_config::SecurityRuleSource::User).unwrap();
     Arc::new(McpEndpointState::new(
         aggregator,
+        Arc::new(capsem_logger::DbWriter::open_in_memory(8).unwrap()),
+        std::collections::BTreeSet::new(),
         Arc::new(std::sync::RwLock::new(Arc::new(rules))),
         Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
         Arc::new(tokio::sync::Semaphore::new(4)),

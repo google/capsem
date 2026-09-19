@@ -91,6 +91,7 @@ pub const SECURITY_EVENT_CEL_FIELDS: &[&str] = &[
     "file.import.name",
     "file.import.path",
     "file.import.valid",
+    "file.kind",
     "file.read.content",
     "file.read.ext",
     "file.read.mime_type",

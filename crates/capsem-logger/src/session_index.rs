@@ -10,7 +10,7 @@ pub struct SessionIndex {
 }
 
 /// Current schema version for main.db.
-pub const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 8;
 
 pub const SESSION_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS sessions (
@@ -30,8 +30,6 @@ pub const SESSION_SCHEMA: &str = "
         total_estimated_cost REAL NOT NULL DEFAULT 0.0,
         total_tool_calls INTEGER NOT NULL DEFAULT 0,
         total_file_events INTEGER NOT NULL DEFAULT 0,
-        compressed_size_bytes INTEGER,
-        vacuumed_at TEXT,
         storage_mode TEXT NOT NULL DEFAULT 'block',
         rootfs_hash TEXT,
         rootfs_version TEXT,
@@ -75,6 +73,14 @@ pub const SESSION_SCHEMA: &str = "
         PRIMARY KEY (session_id, tool_name)
     );
 ";
+
+/// An overflow marker is not a file event; it says some went unrecorded.
+const FILE_EVENT_COUNT: &str = "SELECT COUNT(*) FROM fs_events WHERE action != 'overflow'";
+
+/// One count. A missing table is a schema violation and bubbles up, not a zero.
+fn count_rows(conn: &Connection, sql: &str) -> rusqlite::Result<i64> {
+    conn.query_row(sql, [], |row| row.get(0))
+}
 
 pub fn ensure_session_index_schema(path: &Path) -> rusqlite::Result<()> {
     SessionIndex::open(path).map(|_| ())
@@ -121,49 +127,20 @@ impl SessionIndex {
     }
 
     /// Check user_version and migrate if needed.
+    ///
+    /// Every branch below lands on the current shape, so each one applies
+    /// every change introduced after the version it starts from. They used to
+    /// stamp `SCHEMA_VERSION` after a single jump, which marked a v3, v4 or v5
+    /// ledger current while it was still missing the `exec_count` and
+    /// `audit_event_count` columns that v6->v7 adds.
     pub(crate) fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
         let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version == 6 {
-            // Additive migration v6->v7: add exec_count and audit_event_count columns.
-            conn.execute_batch(
-                "ALTER TABLE sessions ADD COLUMN exec_count INTEGER NOT NULL DEFAULT 0;
-                 ALTER TABLE sessions ADD COLUMN audit_event_count INTEGER NOT NULL DEFAULT 0;",
-            )?;
-            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-        } else if version == 5 {
-            // Additive migration v5->v6: rename source_image to forked_from.
-            conn.execute_batch("ALTER TABLE sessions RENAME COLUMN source_image TO forked_from;")?;
-            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-        } else if version == 4 {
-            // Additive migration v4->v6: add forked_from and persistent columns.
-            conn.execute_batch(
-                "ALTER TABLE sessions ADD COLUMN forked_from TEXT;
-                 ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;",
-            )?;
-            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-        } else if version == 3 {
-            // Additive migration v3->v6: add VirtioFS storage + forked_from columns.
-            conn.execute_batch(
-                "ALTER TABLE sessions ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'block';
-                 ALTER TABLE sessions ADD COLUMN rootfs_hash TEXT;
-                 ALTER TABLE sessions ADD COLUMN rootfs_version TEXT;
-                 ALTER TABLE sessions ADD COLUMN forked_from TEXT;
-                 ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;",
-            )?;
-            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-        } else if version == 2 {
-            // Additive migration v2->v6: add vacuum + VirtioFS + forked_from columns.
-            conn.execute_batch(
-                "ALTER TABLE sessions ADD COLUMN compressed_size_bytes INTEGER;
-                 ALTER TABLE sessions ADD COLUMN vacuumed_at TEXT;
-                 ALTER TABLE sessions ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'block';
-                 ALTER TABLE sessions ADD COLUMN rootfs_hash TEXT;
-                 ALTER TABLE sessions ADD COLUMN rootfs_version TEXT;
-                 ALTER TABLE sessions ADD COLUMN forked_from TEXT;
-                 ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;",
-            )?;
-            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-        } else if version < 2 {
+        if version >= SCHEMA_VERSION {
+            // Already at current version -- just ensure tables exist.
+            conn.execute_batch(SESSION_SCHEMA)?;
+            return Ok(());
+        }
+        if version < 2 {
             // Old schema -- drop and recreate.
             conn.execute_batch(
                 "DROP TABLE IF EXISTS sessions;
@@ -173,10 +150,66 @@ impl SessionIndex {
             )?;
             conn.execute_batch(SESSION_SCHEMA)?;
             conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-        } else {
-            // Already at current version -- just ensure tables exist.
-            conn.execute_batch(SESSION_SCHEMA)?;
+            return Ok(());
         }
+
+        // v2 and v3 predate the VirtioFS storage columns. v2's own upgrade
+        // used to add `compressed_size_bytes` and `vacuumed_at` here; the v8
+        // step below drops them, so they are not added in the first place.
+        if version <= 3 {
+            conn.execute_batch(
+                "ALTER TABLE sessions ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'block';
+                 ALTER TABLE sessions ADD COLUMN rootfs_hash TEXT;
+                 ALTER TABLE sessions ADD COLUMN rootfs_version TEXT;",
+            )?;
+        }
+        // v5 has the column under its old name; v4 and earlier do not have it.
+        if version == 5 {
+            conn.execute_batch("ALTER TABLE sessions RENAME COLUMN source_image TO forked_from;")?;
+        } else if version <= 4 {
+            conn.execute_batch(
+                "ALTER TABLE sessions ADD COLUMN forked_from TEXT;
+                 ALTER TABLE sessions ADD COLUMN persistent BOOLEAN NOT NULL DEFAULT 0;",
+            )?;
+        }
+        if version <= 6 {
+            conn.execute_batch(
+                "ALTER TABLE sessions ADD COLUMN exec_count INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE sessions ADD COLUMN audit_event_count INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
+        Self::drop_vacuum_lifecycle(conn)?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        Ok(())
+    }
+
+    /// v7 -> v8: the vacuum lifecycle is gone.
+    ///
+    /// `vacuum_and_compress_session_db` checkpointed a session ledger,
+    /// VACUUMed it, gzipped it and deleted the original; `mark_vacuumed`
+    /// recorded the result here. Nothing ever called it, and it cannot come
+    /// back as written: bodies now live in an append-only `session.bodies`
+    /// that `event_body_blobs` indexes by block offset, so rewriting or
+    /// removing `session.db` orphans the archive beside it.
+    ///
+    /// `main.db` outlives every build on a developer's machine, so the columns
+    /// have to be dropped rather than left to rot. The presence check is a
+    /// fact about this file -- a ledger upgrading from v2 never had them --
+    /// not tolerance for an unknown shape: anything other than absence fails.
+    fn drop_vacuum_lifecycle(conn: &Connection) -> rusqlite::Result<()> {
+        for column in ["compressed_size_bytes", "vacuumed_at"] {
+            let present: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1)",
+                params![column],
+                |row| row.get(0),
+            )?;
+            if present {
+                conn.execute_batch(&format!("ALTER TABLE sessions DROP COLUMN {column};"))?;
+            }
+        }
+        // A session that reached the dead state is a stopped session; that is
+        // all the state ever meant.
+        conn.execute("UPDATE sessions SET status = 'stopped' WHERE status = 'vacuumed'", [])?;
         Ok(())
     }
 
@@ -187,10 +220,9 @@ impl SessionIndex {
                 scratch_disk_size_gb, ram_bytes, total_requests, allowed_requests, denied_requests,
                 total_input_tokens, total_output_tokens, total_estimated_cost,
                 total_tool_calls, total_file_events,
-                compressed_size_bytes, vacuumed_at,
                 storage_mode, rootfs_hash, rootfs_version, forked_from, persistent,
                 exec_count, audit_event_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
             params![
                 record.id,
                 record.mode,
@@ -208,8 +240,6 @@ impl SessionIndex {
                 record.total_estimated_cost,
                 record.total_tool_calls as i64,
                 record.total_file_events as i64,
-                record.compressed_size_bytes.map(|v| v as i64),
-                record.vacuumed_at,
                 record.storage_mode,
                 record.rootfs_hash,
                 record.rootfs_version,
@@ -270,7 +300,6 @@ impl SessionIndex {
          scratch_disk_size_gb, ram_bytes, total_requests, allowed_requests, denied_requests,
          total_input_tokens, total_output_tokens, total_estimated_cost,
          total_tool_calls, total_file_events,
-         compressed_size_bytes, vacuumed_at,
          storage_mode, rootfs_hash, rootfs_version, forked_from, persistent,
          exec_count, audit_event_count";
 
@@ -293,15 +322,13 @@ impl SessionIndex {
             total_estimated_cost: row.get::<_, f64>(13)?,
             total_tool_calls: row.get::<_, i64>(14)? as u64,
             total_file_events: row.get::<_, i64>(15)? as u64,
-            compressed_size_bytes: row.get::<_, Option<i64>>(16)?.map(|v| v as u64),
-            vacuumed_at: row.get(17)?,
-            storage_mode: row.get::<_, Option<String>>(18)?.unwrap_or_else(|| "block".to_string()),
-            rootfs_hash: row.get(19)?,
-            rootfs_version: row.get(20)?,
-            forked_from: row.get(21)?,
-            persistent: row.get::<_, Option<bool>>(22)?.unwrap_or(false),
-            exec_count: row.get::<_, Option<i64>>(23)?.unwrap_or(0) as u64,
-            audit_event_count: row.get::<_, Option<i64>>(24)?.unwrap_or(0) as u64,
+            storage_mode: row.get::<_, Option<String>>(16)?.unwrap_or_else(|| "block".to_string()),
+            rootfs_hash: row.get(17)?,
+            rootfs_version: row.get(18)?,
+            forked_from: row.get(19)?,
+            persistent: row.get::<_, Option<bool>>(20)?.unwrap_or(false),
+            exec_count: row.get::<_, Option<i64>>(21)?.unwrap_or(0) as u64,
+            audit_event_count: row.get::<_, Option<i64>>(22)?.unwrap_or(0) as u64,
         })
     }
 
@@ -316,153 +343,10 @@ impl SessionIndex {
         rows.collect()
     }
 
-    /// Terminate sessions with created_at older than `days` days ago.
-    /// Sets status='terminated' on stopped/crashed/vacuumed sessions (not running).
-    /// Returns count of affected rows.
-    pub fn terminate_older_than_days(&self, days: u32) -> rusqlite::Result<usize> {
-        let cutoff_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .saturating_sub(u64::from(days) * 86400);
-        // created_at is ISO 8601 -- string comparison works for our format.
-        let cutoff_str = epoch_to_iso(cutoff_secs);
-        let count = self.conn.execute(
-            "UPDATE sessions SET status = 'terminated'
-             WHERE created_at < ?1 AND status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0",
-            params![cutoff_str],
-        )?;
-        Ok(count)
-    }
-
-    /// Terminate oldest sessions beyond the cap.
-    /// Sets status='terminated' on excess stopped/crashed/vacuumed sessions.
-    /// Returns count of affected rows.
-    pub fn terminate_excess_sessions(&self, max: usize) -> rusqlite::Result<usize> {
-        let count = self.conn.execute(
-            "UPDATE sessions SET status = 'terminated'
-             WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
-             AND id NOT IN (
-                SELECT id FROM sessions ORDER BY created_at DESC LIMIT ?1
-             )",
-            params![max as i64],
-        )?;
-        Ok(count)
-    }
-
-    /// Terminate old sessions with content-awareness.
-    ///
-    /// Empty sessions (0 tokens, 0 tool calls, 0 requests) are terminated
-    /// without protection. Content sessions are terminated only if there are
-    /// more than `min_content_keep` remaining after culling.
-    pub fn terminate_older_than_days_content_aware(
-        &self,
-        days: u32,
-        min_content_keep: usize,
-    ) -> rusqlite::Result<usize> {
-        let cutoff_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .saturating_sub(u64::from(days) * 86400);
-        let cutoff_str = epoch_to_iso(cutoff_secs);
-
-        // Terminate ALL old empty sessions (no protection).
-        let empty_count = self.conn.execute(
-            "UPDATE sessions SET status = 'terminated'
-             WHERE created_at < ?1
-             AND status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
-             AND total_input_tokens = 0 AND total_tool_calls = 0 AND total_requests = 0",
-            params![cutoff_str],
-        )?;
-
-        // Terminate old content sessions, but protect newest min_content_keep.
-        let content_count = self.conn.execute(
-            "UPDATE sessions SET status = 'terminated'
-             WHERE created_at < ?1
-             AND status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
-             AND (total_input_tokens > 0 OR total_tool_calls > 0)
-             AND id NOT IN (
-                 SELECT id FROM sessions
-                 WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
-                 AND (total_input_tokens > 0 OR total_tool_calls > 0)
-                 ORDER BY created_at DESC LIMIT ?2
-             )",
-            params![cutoff_str, min_content_keep as i64],
-        )?;
-
-        Ok(empty_count + content_count)
-    }
-
-    /// Terminate excess sessions beyond `max`, prioritizing empty sessions first.
-    ///
-    /// Always protects at least `min_content_keep` content sessions.
-    pub fn terminate_excess_sessions_content_aware(
-        &self,
-        max: usize,
-        min_content_keep: usize,
-    ) -> rusqlite::Result<usize> {
-        // Count non-terminated, non-running sessions.
-        let active_count: usize = self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0",
-            [],
-            |row| row.get(0),
-        )?;
-
-        if active_count <= max {
-            return Ok(0);
-        }
-
-        // Terminate empty sessions first (those with no content).
-        let empty_count = self.conn.execute(
-            "UPDATE sessions SET status = 'terminated'
-             WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
-             AND total_input_tokens = 0 AND total_tool_calls = 0 AND total_requests = 0
-             AND id NOT IN (
-                 SELECT id FROM sessions
-                 WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
-                 ORDER BY created_at DESC LIMIT ?1
-             )",
-            params![max as i64],
-        )?;
-
-        // Check if we're still over the cap after removing empty sessions.
-        let still_active: usize = self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0",
-            [],
-            |row| row.get(0),
-        )?;
-
-        if still_active <= max {
-            return Ok(empty_count);
-        }
-
-        // Still over cap: terminate oldest content sessions, but protect min_content_keep.
-        let content_count = self.conn.execute(
-            "UPDATE sessions SET status = 'terminated'
-             WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
-             AND (total_input_tokens > 0 OR total_tool_calls > 0)
-             AND id NOT IN (
-                 SELECT id FROM sessions
-                 WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
-                 ORDER BY created_at DESC LIMIT ?1
-             )
-             AND id NOT IN (
-                 SELECT id FROM sessions
-                 WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0
-                 AND (total_input_tokens > 0 OR total_tool_calls > 0)
-                 ORDER BY created_at DESC LIMIT ?2
-             )",
-            params![max as i64, min_content_keep as i64],
-        )?;
-
-        Ok(empty_count + content_count)
-    }
-
-    /// Return stopped/crashed/vacuumed sessions ordered oldest first (for disk culling).
+    /// Return stopped/crashed sessions ordered oldest first (for disk culling).
     pub fn stopped_sessions_oldest_first(&self) -> rusqlite::Result<Vec<SessionRecord>> {
         let sql = format!(
-            "SELECT {} FROM sessions WHERE status IN ('stopped', 'crashed', 'vacuumed') ORDER BY created_at ASC",
+            "SELECT {} FROM sessions WHERE status IN ('stopped', 'crashed') ORDER BY created_at ASC",
             Self::SESSION_COLUMNS
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -479,26 +363,6 @@ impl SessionIndex {
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![status], Self::read_session_row)?;
         rows.collect()
-    }
-
-    /// Return stopped/crashed sessions that have not been vacuumed yet.
-    pub fn unvacuumed_sessions(&self) -> rusqlite::Result<Vec<SessionRecord>> {
-        let sql = format!(
-            "SELECT {} FROM sessions WHERE status IN ('stopped', 'crashed') AND vacuumed_at IS NULL AND persistent = 0 ORDER BY created_at ASC",
-            Self::SESSION_COLUMNS
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map([], Self::read_session_row)?;
-        rows.collect()
-    }
-
-    /// Mark a session as vacuumed with compressed size and timestamp.
-    pub fn mark_vacuumed(&self, id: &str, compressed_size_bytes: u64, vacuumed_at: &str) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "UPDATE sessions SET status = 'vacuumed', compressed_size_bytes = ?1, vacuumed_at = ?2 WHERE id = ?3",
-            params![compressed_size_bytes as i64, vacuumed_at, id],
-        )?;
-        Ok(())
     }
 
     /// Mark a session as terminated (disk artifacts deleted, record retained).
@@ -531,9 +395,7 @@ impl SessionIndex {
 
     /// Total count of sessions.
     pub fn count(&self) -> rusqlite::Result<usize> {
-        self.conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| {
-            row.get::<_, i64>(0).map(|n| n as usize)
-        })
+        count_rows(&self.conn, "SELECT COUNT(*) FROM sessions").map(|n| n as usize)
     }
 
     // -- Cross-session aggregation reads ------------------------------------
@@ -804,11 +666,10 @@ impl SessionIndex {
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
-        let total_tool_calls: i64 = session_conn.query_row("SELECT COUNT(*) FROM tool_calls", [], |row| row.get(0))?;
-        let total_file_events: i64 = session_conn.query_row("SELECT COUNT(*) FROM fs_events", [], |row| row.get(0))?;
-        let exec_count: i64 = session_conn.query_row("SELECT COUNT(*) FROM exec_events", [], |row| row.get(0))?;
-        let audit_event_count: i64 =
-            session_conn.query_row("SELECT COUNT(*) FROM audit_events", [], |row| row.get(0))?;
+        let total_tool_calls = count_rows(&session_conn, "SELECT COUNT(*) FROM tool_calls")?;
+        let total_file_events = count_rows(&session_conn, FILE_EVENT_COUNT)?;
+        let exec_count = count_rows(&session_conn, "SELECT COUNT(*) FROM exec_events")?;
+        let audit_event_count = count_rows(&session_conn, "SELECT COUNT(*) FROM audit_events")?;
 
         let updated = self.conn.execute(
             "UPDATE sessions SET
@@ -914,357 +775,3 @@ impl SessionIndex {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod retention_tests {
-    use super::*;
-    use crate::session_types::SessionRecord;
-
-    fn make_session(
-        id: &str,
-        created_at: &str,
-        status: &str,
-        tokens: u64,
-        tool_calls: u64,
-        requests: u64,
-    ) -> SessionRecord {
-        SessionRecord {
-            id: id.to_string(),
-            mode: "virtiofs".to_string(),
-            command: None,
-            status: status.to_string(),
-            created_at: created_at.to_string(),
-            stopped_at: None,
-            scratch_disk_size_gb: 16,
-            ram_bytes: 4294967296,
-            total_requests: requests,
-            allowed_requests: 0,
-            denied_requests: 0,
-            total_input_tokens: tokens,
-            total_output_tokens: 0,
-            total_estimated_cost: 0.0,
-            total_tool_calls: tool_calls,
-            total_file_events: 0,
-            compressed_size_bytes: None,
-            vacuumed_at: None,
-            storage_mode: "virtiofs".to_string(),
-            rootfs_hash: None,
-            rootfs_version: None,
-            forked_from: None,
-            persistent: false,
-            exec_count: 0,
-            audit_event_count: 0,
-        }
-    }
-
-    fn make_persistent_session(id: &str, created_at: &str, status: &str) -> SessionRecord {
-        let mut s = make_session(id, created_at, status, 100, 5, 10);
-        s.persistent = true;
-        s
-    }
-
-    #[test]
-    fn terminate_older_skips_persistent_sessions() {
-        let idx = SessionIndex::open_in_memory().unwrap();
-
-        // Old ephemeral session (60 days ago) -- should be terminated
-        let ephemeral = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "stopped", 0, 0, 0);
-        idx.create_session(&ephemeral).unwrap();
-
-        // Old persistent session (60 days ago) -- should NOT be terminated
-        let persistent = make_persistent_session("20260126-120000-0002", "2026-01-26T12:00:00Z", "stopped");
-        idx.create_session(&persistent).unwrap();
-
-        let n = idx.terminate_older_than_days(30).unwrap();
-        assert_eq!(n, 1, "only ephemeral session should be terminated");
-
-        let sessions = idx.recent(100).unwrap();
-        let eph = sessions.iter().find(|s| s.id == "20260126-120000-0001").unwrap();
-        assert_eq!(eph.status, "terminated");
-        let pers = sessions.iter().find(|s| s.id == "20260126-120000-0002").unwrap();
-        assert_eq!(pers.status, "stopped", "persistent session should remain stopped");
-    }
-
-    #[test]
-    fn terminate_older_leaves_persistent_crashed() {
-        let idx = SessionIndex::open_in_memory().unwrap();
-
-        // Old persistent crashed session
-        let pers_crashed = make_persistent_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "crashed");
-        idx.create_session(&pers_crashed).unwrap();
-
-        let n = idx.terminate_older_than_days(30).unwrap();
-        assert_eq!(n, 0, "persistent crashed session should not be terminated");
-    }
-
-    #[test]
-    fn session_with_forked_from_roundtrips() {
-        let idx = SessionIndex::open_in_memory().unwrap();
-        let mut s = make_session("20260326-100000-0001", "2026-03-26T10:00:00Z", "running", 0, 0, 0);
-        s.forked_from = Some("my-image".into());
-        s.persistent = true;
-        idx.create_session(&s).unwrap();
-
-        let sessions = idx.recent(10).unwrap();
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].forked_from.as_deref(), Some("my-image"));
-        assert!(sessions[0].persistent);
-    }
-
-    #[test]
-    fn v6_schema_has_forked_from_and_persistent() {
-        // Verify the schema includes the new columns by inserting and querying
-        let idx = SessionIndex::open_in_memory().unwrap();
-        let mut s = make_session("20260326-100000-0001", "2026-03-26T10:00:00Z", "running", 0, 0, 0);
-        s.forked_from = Some("test-img".into());
-        s.persistent = true;
-        idx.create_session(&s).unwrap();
-
-        // Raw query to verify columns exist
-        let (src_img, pers): (Option<String>, bool) = idx
-            .conn
-            .query_row(
-                "SELECT forked_from, persistent FROM sessions WHERE id = ?1",
-                params!["20260326-100000-0001"],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(src_img.as_deref(), Some("test-img"));
-        assert!(pers);
-    }
-
-    #[test]
-    fn content_aware_age_terminates_empty_first() {
-        let idx = SessionIndex::open_in_memory().unwrap();
-
-        // Old empty session (60 days ago).
-        let empty = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "stopped", 0, 0, 0);
-        idx.create_session(&empty).unwrap();
-
-        // Old content session (60 days ago).
-        let content = make_session("20260126-120000-0002", "2026-01-26T12:00:00Z", "stopped", 1000, 5, 10);
-        idx.create_session(&content).unwrap();
-
-        // Terminate sessions older than 30 days, protect 1 content session.
-        let n = idx.terminate_older_than_days_content_aware(30, 1).unwrap();
-        assert_eq!(n, 1, "only the empty session should be terminated");
-
-        // Verify: empty is terminated, content is still stopped.
-        let sessions = idx.recent(100).unwrap();
-        let empty_rec = sessions.iter().find(|s| s.id == "20260126-120000-0001").unwrap();
-        assert_eq!(empty_rec.status, "terminated");
-
-        let content_rec = sessions.iter().find(|s| s.id == "20260126-120000-0002").unwrap();
-        assert_eq!(content_rec.status, "stopped");
-    }
-
-    #[test]
-    fn content_aware_age_protects_min_content_sessions() {
-        let idx = SessionIndex::open_in_memory().unwrap();
-
-        // 3 old content sessions.
-        for i in 1..=3 {
-            let rec = make_session(
-                &format!("20260126-12000{i}-000{i}"),
-                &format!("2026-01-26T12:00:0{i}Z"),
-                "stopped",
-                500,
-                2,
-                5,
-            );
-            idx.create_session(&rec).unwrap();
-        }
-
-        // Protect 2 content sessions. One should be terminated.
-        let n = idx.terminate_older_than_days_content_aware(30, 2).unwrap();
-        assert_eq!(n, 1, "only oldest content session should be terminated");
-
-        let sessions = idx.recent(100).unwrap();
-        let terminated: Vec<_> = sessions.iter().filter(|s| s.status == "terminated").collect();
-        assert_eq!(terminated.len(), 1);
-        assert_eq!(terminated[0].id, "20260126-120001-0001"); // oldest
-    }
-
-    #[test]
-    fn content_aware_excess_terminates_empty_first() {
-        let idx = SessionIndex::open_in_memory().unwrap();
-
-        // 3 empty sessions + 2 content sessions = 5 total.
-        for i in 1..=3 {
-            let rec = make_session(
-                &format!("20260326-12000{i}-000{i}"),
-                &format!("2026-03-26T12:00:0{i}Z"),
-                "stopped",
-                0,
-                0,
-                0,
-            );
-            idx.create_session(&rec).unwrap();
-        }
-        for i in 4..=5 {
-            let rec = make_session(
-                &format!("20260326-12000{i}-000{i}"),
-                &format!("2026-03-26T12:00:0{i}Z"),
-                "stopped",
-                1000,
-                10,
-                20,
-            );
-            idx.create_session(&rec).unwrap();
-        }
-
-        // Max 3 sessions, protect 2 content sessions.
-        let n = idx.terminate_excess_sessions_content_aware(3, 2).unwrap();
-        assert_eq!(n, 2, "should terminate 2 empty sessions");
-
-        let sessions = idx.recent(100).unwrap();
-        let active: Vec<_> = sessions.iter().filter(|s| s.status != "terminated").collect();
-        assert_eq!(active.len(), 3, "should have 3 remaining");
-
-        // Both content sessions should survive.
-        for s in &active {
-            if s.total_input_tokens > 0 {
-                assert_ne!(s.status, "terminated");
-            }
-        }
-    }
-
-    #[test]
-    fn content_aware_excess_no_action_when_under_cap() {
-        let idx = SessionIndex::open_in_memory().unwrap();
-
-        let rec = make_session("20260326-120000-0001", "2026-03-26T12:00:00Z", "stopped", 100, 1, 5);
-        idx.create_session(&rec).unwrap();
-
-        let n = idx.terminate_excess_sessions_content_aware(10, 5).unwrap();
-        assert_eq!(n, 0, "no action when under cap");
-    }
-
-    #[test]
-    fn content_aware_tool_calls_only_counts_as_content() {
-        // Sessions with tool_calls > 0 but tokens = 0 should be treated as content.
-        let idx = SessionIndex::open_in_memory().unwrap();
-
-        let empty = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "stopped", 0, 0, 0);
-        idx.create_session(&empty).unwrap();
-
-        // Has tool calls but no tokens -- still content.
-        let tool_only = make_session("20260126-120000-0002", "2026-01-26T12:00:00Z", "stopped", 0, 5, 0);
-        idx.create_session(&tool_only).unwrap();
-
-        let n = idx.terminate_older_than_days_content_aware(30, 1).unwrap();
-        assert_eq!(n, 1, "only the truly empty session should be terminated");
-
-        let sessions = idx.recent(100).unwrap();
-        let tool_rec = sessions.iter().find(|s| s.id == "20260126-120000-0002").unwrap();
-        assert_eq!(tool_rec.status, "stopped", "tool-calls-only session is content");
-    }
-
-    #[test]
-    fn content_aware_never_terminates_running() {
-        let idx = SessionIndex::open_in_memory().unwrap();
-
-        // Running session -- must never be terminated regardless of age.
-        let running = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "running", 0, 0, 0);
-        idx.create_session(&running).unwrap();
-
-        let n = idx.terminate_older_than_days_content_aware(30, 0).unwrap();
-        assert_eq!(n, 0, "running sessions must never be terminated");
-
-        let sessions = idx.recent(100).unwrap();
-        assert_eq!(sessions[0].status, "running");
-    }
-
-    #[test]
-    fn content_aware_excess_all_content_over_cap_protects_min() {
-        let idx = SessionIndex::open_in_memory().unwrap();
-
-        // 5 content sessions, cap is 3, protect 4.
-        for i in 1..=5 {
-            let rec = make_session(
-                &format!("20260326-12000{i}-000{i}"),
-                &format!("2026-03-26T12:00:0{i}Z"),
-                "stopped",
-                500,
-                2,
-                5,
-            );
-            idx.create_session(&rec).unwrap();
-        }
-
-        // Cap is 3 but min_content_keep is 4: should only terminate 1 (the oldest).
-        let n = idx.terminate_excess_sessions_content_aware(3, 4).unwrap();
-        assert_eq!(n, 1, "should terminate oldest to approach cap, but protect 4");
-
-        let sessions = idx.recent(100).unwrap();
-        let active = sessions.iter().filter(|s| s.status != "terminated").count();
-        assert_eq!(active, 4, "min_content_keep overrides max_sessions");
-    }
-
-    #[test]
-    fn content_aware_age_with_mixed_statuses() {
-        let idx = SessionIndex::open_in_memory().unwrap();
-
-        // Crashed empty session -- should be terminated.
-        let crashed = make_session("20260126-120000-0001", "2026-01-26T12:00:00Z", "crashed", 0, 0, 0);
-        idx.create_session(&crashed).unwrap();
-
-        // Vacuumed content session -- should be protected.
-        let vacuumed = make_session("20260126-120000-0002", "2026-01-26T12:00:00Z", "vacuumed", 100, 0, 5);
-        idx.create_session(&vacuumed).unwrap();
-
-        let n = idx.terminate_older_than_days_content_aware(30, 1).unwrap();
-        assert_eq!(n, 1, "only crashed empty session terminated");
-
-        let sessions = idx.recent(100).unwrap();
-        let crashed_rec = sessions.iter().find(|s| s.id == "20260126-120000-0001").unwrap();
-        assert_eq!(crashed_rec.status, "terminated");
-
-        let vacuumed_rec = sessions.iter().find(|s| s.id == "20260126-120000-0002").unwrap();
-        assert_eq!(vacuumed_rec.status, "vacuumed", "vacuumed content session preserved");
-    }
-
-    #[test]
-    fn top_mcp_tools_groups_by_server_name() {
-        let idx = SessionIndex::open_in_memory().unwrap();
-        let s1 = make_session("s1", "2026-03-01T10:00:00Z", "stopped", 10, 5, 1);
-        let s2 = make_session("s2", "2026-03-02T10:00:00Z", "stopped", 10, 5, 1);
-        idx.create_session(&s1).unwrap();
-        idx.create_session(&s2).unwrap();
-
-        // Same tool_name "search" from different servers in different sessions
-        idx.replace_mcp_usage(
-            "s1",
-            &[McpToolSummary {
-                tool_name: "search".into(),
-                server_name: "github".into(),
-                call_count: 3,
-                total_bytes: 100,
-                total_duration_ms: 50,
-            }],
-        )
-        .unwrap();
-        idx.replace_mcp_usage(
-            "s2",
-            &[McpToolSummary {
-                tool_name: "search".into(),
-                server_name: "jira".into(),
-                call_count: 2,
-                total_bytes: 80,
-                total_duration_ms: 40,
-            }],
-        )
-        .unwrap();
-
-        let results = idx.top_mcp_tools(10).unwrap();
-        // Should return 2 entries (one per server), not merge them into 1
-        assert_eq!(
-            results.len(),
-            2,
-            "same tool_name from different servers should be separate rows"
-        );
-        let servers: Vec<&str> = results.iter().map(|r| r.server_name.as_str()).collect();
-        assert!(servers.contains(&"github"), "github server missing");
-        assert!(servers.contains(&"jira"), "jira server missing");
-    }
-}

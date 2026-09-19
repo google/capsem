@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from helpers.body_archive import session_archive
 from helpers.constants import (
     CODE_PROFILE_ID,
     DEFAULT_CPUS,
@@ -95,7 +96,6 @@ SECURITY_ROUTE_FIELDS = {
     "rule_action",
     "detection_level",
     "rule_json",
-    "event_json",
     "trace_id",
     "turn_id",
     "credential_ref",
@@ -389,9 +389,10 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
                 "file.export",
                 "file.event",
             }
+            archive = session_archive(conn)
             for row in security_rows:
                 _assert_ledger_id(row["event_id"])
-                event_json = json.loads(row["event_json"])
+                event_json = archive.security_payload(row["event_id"])
                 assert event_json["event_type"] in {"file.import", "file.export", "file.event"}
                 assert event_json["file"] is not None
                 assert event_json["decision"]["effective"] == "allow"
@@ -451,7 +452,7 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
             ]
             assert latest_file_events
             assert any(
-                json.loads(item["event_json"])["file"].get("import_name") == upload_path
+                archive.security_payload(item["event_id"])["file"].get("import_name") == upload_path
                 for item in latest_file_events
             )
         finally:

@@ -135,6 +135,8 @@ impl SecurityEventEmitter for RecordingEmitter {
     }
 }
 
+#[path = "tests/ask_ledger.rs"]
+mod ask_ledger;
 #[path = "tests/boundary_events.rs"]
 mod boundary_events;
 #[path = "tests/decision_ledger.rs"]
@@ -167,10 +169,8 @@ fn net_write(credential_ref: Option<&str>) -> WriteOp {
         matched_rule: None,
         request_headers: None,
         response_headers: None,
-        request_body_preview: None,
-        response_body_preview: None,
-        request_body_full: None,
-        response_body_full: None,
+        request_body: None,
+        response_body: None,
         conn_type: None,
         policy_mode: None,
         policy_action: None,
@@ -197,13 +197,12 @@ fn model_write(credential_ref: Option<&str>) -> WriteOp {
         messages_count: 1,
         tools_count: 0,
         request_bytes: 2,
-        request_body_preview: None,
-        request_body_full: None,
+        request_body: None,
         message_id: None,
         status_code: Some(200),
         text_content: None,
         thinking_content: None,
-        response_body_full: None,
+        response_body: None,
         stop_reason: None,
         input_tokens: None,
         output_tokens: None,
@@ -255,6 +254,7 @@ fn file_write_with_action(action: FileAction, credential_ref: Option<&str>) -> W
         action,
         path: "/tmp/example".to_string(),
         size: Some(1),
+        kind: capsem_logger::FileKind::File,
         trace_id: Some("trace".to_string()),
         credential_ref: credential_ref.map(str::to_string),
     })

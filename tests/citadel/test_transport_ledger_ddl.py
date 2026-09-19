@@ -5,8 +5,13 @@ view across networks is a union of identical tables. The moment a second
 `CREATE TABLE transport_events` exists, the two shapes drift independently
 and the union becomes a migration nobody scheduled. The network database
 therefore defines no transport table of its own: it obtains the session
-schema through the shared `DbHandle::open`, and the only DDL for the table
-lives in `crates/capsem-logger/src/schema/transport.rs`.
+schema through the shared `DbHandle::open`.
+
+The one definition used to live in `schema/transport.rs`, because that module
+migrated: `upgrade_legacy` created the table from `DbReader::open`. It no
+longer does -- it asserts -- so the DDL sits in `schema/ddl.rs` with every
+other table, and `test_ledger_readers_never_migrate.py` holds the read path
+free of `CREATE TABLE` from the other side.
 """
 
 from __future__ import annotations
@@ -19,17 +24,18 @@ from citadel.test_db_boundary import PROJECT_ROOT, relative, rust_sources
 TRANSPORT_DDL = re.compile(
     r"CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+transport_events\b", re.IGNORECASE
 )
-TRANSPORT_SCHEMA = Path("crates/capsem-logger/src/schema/transport.rs")
+TRANSPORT_SCHEMA = Path("crates/capsem-logger/src/schema/ddl.rs")
 NETWORK_DB = Path("crates/capsem-logger/src/network_db.rs")
 SHARED_OPEN = "DbHandle::open("
 
 RATIONALE = """\
 The transport ledger has exactly one shape.
 
-`transport_events` is created by crates/capsem-logger/src/schema/transport.rs
-and by nothing else. A network database takes it from the shared DbHandle so
-that cross-network log views are a union of identical tables, never a
-migration between two definitions that drifted apart.
+`transport_events` is created by crates/capsem-logger/src/schema/ddl.rs and
+by nothing else -- not even schema/transport.rs, which only asserts. A network
+database takes it from the shared DbHandle so that cross-network log views are
+a union of identical tables, never a migration between two definitions that
+drifted apart.
 """
 
 

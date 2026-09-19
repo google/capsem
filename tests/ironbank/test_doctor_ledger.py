@@ -12,6 +12,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from helpers.body_archive import (
+    SessionArchive,
+    archived_bodies,
+    ledger_path,
+    security_payload,
+    session_archive,
+)
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -62,7 +69,6 @@ EXPECTED_SECURITY_LATEST_FIELDS = {
     "rule_action",
     "detection_level",
     "rule_json",
-    "event_json",
     "trace_id",
     "turn_id",
     "credential_ref",
@@ -151,6 +157,14 @@ def _assert_no_raw_secret_markers_in_session_db(conn: sqlite3.Connection) -> Non
                     continue
                 leaked = [marker for marker in RAW_SECRET_MARKERS if marker in value]
                 assert not leaked, f"raw secret marker leaked in {table}.{column}: {leaked}"
+    # Bodies left SQLite for the archive -- request and response bodies, then
+    # the security ledgers' payloads -- so a scan of text columns alone passes
+    # by not looking. The archive is walked too, every body hash-verified.
+    for source_table, event_id, direction, body in archived_bodies(ledger_path(conn)):
+        leaked = [marker for marker in RAW_SECRET_MARKERS if marker.encode() in body]
+        assert not leaked, (
+            f"raw secret marker leaked in the archived {source_table}/{direction} body of {event_id}: {leaked}"
+        )
 
 
 def _post_bytes_with_status(
@@ -281,7 +295,10 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             for row in security_latest
         )
         assert all(json.loads(row["rule_json"]) for row in security_latest)
-        assert all(json.loads(row["event_json"]) for row in security_latest)
+        # The forensic payload left the row for the archive; every match the
+        # route lists must still have one, and it must still parse.
+        with SessionArchive(vm_session_db_path(service.tmp_dir, client, vm_id)) as archive:
+            assert all(archive.security_payload(row["event_id"]) for row in security_latest)
 
         mcp_default = client.get(f"/profiles/{CODE_PROFILE_ID}/mcp/default/info", timeout=30)
         assert set(mcp_default) == {"action", "source", "rule_id"}
@@ -410,10 +427,16 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert model_security["rule_action"] == "allow"
         assert model_security["detection_level"] in {"none", "informational"}
         assert model_security["rule_id"]
-        assert model_security["event_json"]
+        assert security_payload(conn, model_security["event_id"])
         assert model_security["rule_json"]
 
         security_rows = conn.execute("SELECT * FROM security_rule_events").fetchall()
+        # One pass over the archive for the whole page: the rows of one session
+        # mostly share a block, and asking per assertion re-inflated it.
+        with session_archive(conn) as archive:
+            payloads_by_event = {
+                row["event_id"]: archive.security_payload(row["event_id"]) for row in security_rows
+            }
         security_actions = {row["rule_action"] for row in security_rows}
         security_levels = {row["detection_level"] for row in security_rows}
         assert {"allow", "ask"} <= security_actions
@@ -424,7 +447,7 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         ask_rows = [row for row in security_rows if row["rule_action"] == "ask"]
         assert ask_rows, "doctor must trigger the default local-network ask guard"
         for row in ask_rows:
-            payload = json.loads(row["event_json"])
+            payload = payloads_by_event[row["event_id"]]
             assert row["event_type"] == "http.request"
             assert row["rule_id"] == "profiles.rules.default_000_local_network"
             assert row["detection_level"] == "none"
@@ -447,7 +470,7 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         ]
         assert informational_rows, "doctor must emit informational detection rows"
         for row in informational_rows:
-            payload = json.loads(row["event_json"])
+            payload = payloads_by_event[row["event_id"]]
             detections = payload.get("detections", [])
             assert any(
                 detection.get("detection_level") == "informational"
@@ -458,7 +481,7 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         plugin_executions = [
             execution
             for row in security_rows
-            for execution in json.loads(row["event_json"]).get("plugin_executions", [])
+            for execution in payloads_by_event[row["event_id"]].get("plugin_executions", [])
         ]
         assert plugin_executions, "doctor security payloads must carry plugin timings"
         assert {
@@ -537,7 +560,7 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert mcp_security["event_type"] == "mcp.tool_call"
         assert mcp_security["rule_action"] in {"allow", "ask"}
         assert mcp_security["rule_id"]
-        assert json.loads(mcp_security["event_json"])
+        assert security_payload(conn, mcp_security["event_id"])
         assert json.loads(mcp_security["rule_json"])
 
         broker_outcomes = {
@@ -756,16 +779,20 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         ).fetchall()
         assert security_rows, "file imports must emit security ledger rows"
         assert {row["rule_action"] for row in security_rows} == {"allow"}
-        payloads = [json.loads(row["event_json"]) for row in security_rows]
+        with session_archive(conn) as archive:
+            payloads_by_event = {
+                row["event_id"]: archive.security_payload(row["event_id"]) for row in security_rows
+            }
+        payloads = list(payloads_by_event.values())
         assert {"block", "allow"} <= {payload["decision"]["effective"] for payload in payloads}
 
         blocked_rows = [
             row
             for row in security_rows
-            if json.loads(row["event_json"])["decision"]["effective"] == "block"
+            if payloads_by_event[row["event_id"]]["decision"]["effective"] == "block"
         ]
         assert blocked_rows, "enabled dummy_pre_eicar must produce block evidence"
-        blocked_payloads = [json.loads(row["event_json"]) for row in blocked_rows]
+        blocked_payloads = [payloads_by_event[row["event_id"]] for row in blocked_rows]
         assert any(payload["decision"]["effective"] == "block" for payload in blocked_payloads)
         assert any(
             detection.get("source") == "plugin"
@@ -819,7 +846,7 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
             row for row in security_rows if row["event_id"] == rewrite_file_row["event_id"]
         ]
         assert rewrite_security, "rewrite-mode import must carry security rows"
-        rewrite_payloads = [json.loads(row["event_json"]) for row in rewrite_security]
+        rewrite_payloads = [payloads_by_event[row["event_id"]] for row in rewrite_security]
         assert all(payload["decision"]["effective"] == "allow" for payload in rewrite_payloads)
         assert any(
             detection.get("source") == "plugin"
@@ -856,7 +883,7 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         assert allowed_security, "successful import must carry security rows"
         assert {row["rule_action"] for row in allowed_security} == {"allow"}
         assert all(
-            json.loads(row["event_json"])["decision"]["effective"] == "allow"
+            payloads_by_event[row["event_id"]]["decision"]["effective"] == "allow"
             for row in allowed_security
         )
 

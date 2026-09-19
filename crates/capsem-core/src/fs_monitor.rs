@@ -1,120 +1,150 @@
 //! Host-based file monitor for VirtioFS overlay directories.
 //!
-//! Uses a stat-based `PollWatcher` (via the `notify` crate) to watch the session's
-//! workspace directory on the host filesystem.
+//! Apple VZ VirtioFS writes bypass FSEvents, so the workspace has to be
+//! polled. The monitor owns that poll loop rather than delegating it: it walks
+//! the tree with `walkdir` and `follow_links(false)`, diffs the walk against
+//! the previous one, and emits the difference.
 //!
-//! Design: two-phase queue+flush. Raw events from the watcher are pushed into
-//! a bounded queue (no processing on the hot path). A timer fires every
-//! FLUSH_INTERVAL_MS to drain the queue, coalesce consecutive same-type
-//! events on the same path, and emit the results to the session DB.
+//! Owning the loop is a security property, not a preference. The `notify`
+//! crate's polling watcher walks with link-following hardcoded on and ignores
+//! the configuration that claims to turn it off, so one guest `ln -s /
+//! workspace/evil` turned every scan into a walk of the host's entire
+//! filesystem. Nothing here follows a link: a symlink is recorded as a symlink
+//! and never descended, and the one place that reads bytes (`.env` credential
+//! brokering) opens with `O_NOFOLLOW` and refuses anything that is not a
+//! regular file. `tests/citadel/test_fs_monitor_has_no_exclusions.py` refuses
+//! that watcher and that setting by name, which is why this paragraph spells
+//! neither.
+//!
+//! Owning the loop also means the cadence tracks the real cost: each scan
+//! times itself and sets the next sleep, so a workspace that starts empty and
+//! ephemeral and later grows to a 100k-file install re-adapts on the next
+//! cycle instead of keeping the interval it was born with.
 
 use std::collections::HashMap;
+use std::io::Read;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
-use notify::poll::PollWatcher;
-use notify::{Config, Event, EventKind, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use capsem_logger::{DbWriter, FileAction, FileEvent};
+use capsem_foundation::unix::fs as unix_fs;
+use capsem_logger::{DbWriter, FileAction, FileEvent, FileKind};
 
 use crate::credential_broker::{broker_and_log_observations, parse_env_credentials};
 use crate::net::ai_traffic::TraceState;
 use crate::net::policy_config::SecurityRuleSet;
 
-/// Directories excluded from monitoring.
-const EXCLUDED_DIRS: &[&str] = &[
-    ".git",
-    "node_modules",
-    "__pycache__",
-    ".cache",
-    "target",
-    ".venv",
-    ".swapfile",
-];
+/// Floor and ceiling for the rescan cadence (ms).
+const POLL_INTERVAL_MIN_MS: u64 = 500;
+const POLL_INTERVAL_MAX_MS: u64 = 10_000;
 
-/// How often the queue is drained and events are emitted (ms).
-const FLUSH_INTERVAL_MS: u64 = 100;
+/// Scans per interval. One scan stats every entry of the workspace, and the
+/// monitor watches every path -- including `node_modules` and the build output
+/// directory, which is the whole point -- so the cost is real and proportional
+/// to the tree. Spending at most a tenth of the wall clock on it keeps the
+/// monitor from competing with the workload it is watching, at any tree size.
+const POLL_SCAN_DUTY_CYCLE: u32 = 10;
 
-/// How often the PollWatcher rescans the directory tree (ms).
-/// Apple VZ VirtioFS writes bypass FSEvents, so we must poll.
-const POLL_INTERVAL_MS: u64 = 500;
-
-/// Maximum number of raw events buffered before dropping.
-const MAX_QUEUE_SIZE: usize = 10_000;
-
-/// Check if any path component matches an excluded directory.
-fn should_exclude(path: &Path) -> bool {
-    for component in path.components() {
-        if let std::path::Component::Normal(name) = component {
-            if let Some(s) = name.to_str() {
-                if EXCLUDED_DIRS.contains(&s) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+/// Poll cadence for a tree whose full stat walk took `scan`.
+///
+/// Ten scans per interval, floored at 500ms so a small workspace still reacts
+/// promptly, capped at 10s so a very large one is still watched. Cost is
+/// answered here, never by deciding in advance which paths are not worth
+/// recording: `.git/hooks`, `node_modules` and the build output directory are
+/// precisely where a compromise persists.
+fn poll_interval_for_scan(scan: Duration) -> Duration {
+    (scan * POLL_SCAN_DUTY_CYCLE).clamp(
+        Duration::from_millis(POLL_INTERVAL_MIN_MS),
+        Duration::from_millis(POLL_INTERVAL_MAX_MS),
+    )
 }
 
-/// Map a notify EventKind to a FileAction.
-fn event_to_action(kind: &EventKind) -> Option<FileAction> {
-    match kind {
-        EventKind::Create(_) => Some(FileAction::Created),
-        EventKind::Modify(_) => Some(FileAction::Modified),
-        EventKind::Remove(_) => Some(FileAction::Deleted),
-        _ => None,
+/// Maximum number of events emitted from a single scan.
+///
+/// A 100k-file install between two scans must not lose events. An event is a
+/// path string plus two small enums and an `Option<u64>`, so a full queue is
+/// tens of megabytes transient, and only for as long as it takes to write.
+const MAX_QUEUE_SIZE: usize = 100_000;
+
+/// Events written between two checks of the shutdown signal.
+const EMIT_CHUNK: usize = 1_000;
+
+/// Largest `.env` the credential broker will read.
+const MAX_ENV_BYTES: u64 = 1024 * 1024;
+
+/// The one place a `FileType` becomes a ledger `kind`.
+///
+/// Order matters: a symlink to a directory reports `is_dir()` through a
+/// following stat, and calling it a directory is exactly the confusion that
+/// lets a link pass for the thing it points at.
+fn kind_of(file_type: std::fs::FileType) -> FileKind {
+    if file_type.is_symlink() {
+        FileKind::Symlink
+    } else if file_type.is_dir() {
+        FileKind::Dir
+    } else if file_type.is_file() {
+        FileKind::File
+    } else {
+        FileKind::Other
     }
 }
 
-/// A raw queued event (path already relativized, exclusions already applied).
+/// One emitted change. The absolute path is derived from `strip_prefix` rather
+/// than stored: at 100k queued events the `PathBuf` was half the memory and
+/// every byte of it was already in `path`.
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct QueuedEvent {
     path: String,
-    fs_path: PathBuf,
     action: FileAction,
+    kind: FileKind,
+    size: Option<u64>,
 }
 
+/// What one scan saw of one path, and the whole of what "unchanged" means.
+///
+/// `mtime` alone is guest-controlled and cheap to forge: rewrite a file in
+/// place to the same length, then `touch -r` it back, and a monitor comparing
+/// (kind, len, mtime) sees nothing. `ctime` moves on any inode update and
+/// cannot be set by `utimes`, and `ino` catches a replacement that reuses the
+/// path. Both come out of the stat the walk already did.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SnapshotEntry {
-    fs_path: PathBuf,
-    is_dir: bool,
+    kind: FileKind,
     len: u64,
     modified: Option<(u64, u32)>,
+    changed: (i64, i64),
+    ino: u64,
 }
 
-struct WorkspaceState {
-    watch_dir: PathBuf,
-    strip_prefix: PathBuf,
-    snapshot: HashMap<String, SnapshotEntry>,
+impl SnapshotEntry {
+    /// A directory's inode size says nothing about what changed inside it, and
+    /// a symlink's is the length of its target string; reporting either as the
+    /// event's size is what made `mkdir` read like a small file write.
+    fn size(&self) -> Option<u64> {
+        matches!(self.kind, FileKind::File | FileKind::Other).then_some(self.len)
+    }
 }
 
-fn snapshot_entry(fs_path: &Path) -> Option<SnapshotEntry> {
-    let metadata = std::fs::symlink_metadata(fs_path).ok()?;
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|value| (value.as_secs(), value.subsec_nanos()));
-    Some(SnapshotEntry {
-        fs_path: fs_path.to_path_buf(),
-        is_dir: metadata.is_dir(),
-        len: metadata.len(),
-        modified,
-    })
-}
-
+/// Walk the workspace, stat-ing each entry exactly once and following nothing.
 fn workspace_snapshot(watch_dir: &Path, strip_prefix: &Path) -> HashMap<String, SnapshotEntry> {
+    // Every entry, with nothing pruned: a walk that skips a directory is a
+    // ledger that lies about it.
     let mut snapshot = HashMap::new();
     for entry in walkdir::WalkDir::new(watch_dir)
         .min_depth(1)
         .follow_links(false)
         .into_iter()
-        .filter_entry(|entry| !should_exclude(entry.path()))
         .filter_map(Result::ok)
     {
         let fs_path = entry.path();
+        // A non-UTF8 filename is recorded lossily rather than skipped: a name
+        // the ledger cannot spell exactly is still a change that happened, and
+        // dropping it would be one more way to write a file the record does
+        // not mention.
         let rel = fs_path
             .strip_prefix(strip_prefix)
             .unwrap_or(fs_path)
@@ -123,13 +153,36 @@ fn workspace_snapshot(watch_dir: &Path, strip_prefix: &Path) -> HashMap<String, 
         if rel.is_empty() {
             continue;
         }
-        if let Some(snapshot_entry) = snapshot_entry(fs_path) {
-            snapshot.insert(rel, snapshot_entry);
-        }
+        // `follow_links(false)` makes this the entry's own lstat, and it is
+        // the only stat any part of the monitor performs for this path.
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|value| (value.as_secs(), value.subsec_nanos()));
+        snapshot.insert(
+            rel,
+            SnapshotEntry {
+                kind: kind_of(metadata.file_type()),
+                len: metadata.len(),
+                modified,
+                changed: (metadata.ctime(), metadata.ctime_nsec()),
+                ino: metadata.ino(),
+            },
+        );
     }
     snapshot
 }
 
+/// The difference between two scans, as events.
+///
+/// A path created and deleted entirely between two scans leaves no trace in
+/// either snapshot and so produces nothing at all -- it is not recorded with a
+/// guessed kind, because the monitor never saw it and inventing `file` for it
+/// would be a claim it cannot support.
 fn reconciliation_events(
     previous: &HashMap<String, SnapshotEntry>,
     current: &HashMap<String, SnapshotEntry>,
@@ -143,38 +196,115 @@ fn reconciliation_events(
         .filter_map(|path| match (previous.get(&path), current.get(&path)) {
             (None, Some(entry)) => Some(QueuedEvent {
                 path,
-                fs_path: entry.fs_path.clone(),
                 action: FileAction::Created,
+                kind: entry.kind,
+                size: entry.size(),
             }),
             (Some(entry), None) => Some(QueuedEvent {
                 path,
-                fs_path: entry.fs_path.clone(),
                 action: FileAction::Deleted,
+                // The last snapshot is the only remaining witness to what
+                // disappeared; there is nothing left to stat.
+                kind: entry.kind,
+                size: None,
             }),
             (Some(before), Some(after)) if before != after => Some(QueuedEvent {
                 path,
-                fs_path: after.fs_path.clone(),
                 action: FileAction::Modified,
+                kind: after.kind,
+                size: after.size(),
             }),
             _ => None,
         })
         .collect()
 }
 
+/// Bound one scan's emission and rewind the baseline for what it defers.
+///
+/// Truncating used to be permanent: the overflow was logged, `current` became
+/// the baseline, and the difference was never derived again. That is a hole an
+/// attacker can steer, because events come out ordered by path -- 100k files
+/// named `!...` push `.git/hooks/pre-commit` out of the window, and nothing in
+/// the ledger says so.
+///
+/// Rewinding each deferred path to what `previous` held (or removing it, if
+/// `previous` had never seen it) makes the loss temporary: the next scan
+/// computes the same difference for that path and emits it. The order is a
+/// delay, not a filter.
+///
+/// What a delay does cost is resolution, and only in one direction: a deferred
+/// deletion whose path is re-created before the next scan surfaces as a
+/// `Modified`, because that is what the two snapshots then differ by. Snapshot
+/// polling has that blind spot at any interval -- a delete-and-recreate inside
+/// one window reads the same way -- and deferral widens the window by one
+/// scan for the paths it holds back. The `overflow` row says which windows
+/// those were.
+fn defer_overflow(
+    batch: &mut Vec<QueuedEvent>,
+    previous: &HashMap<String, SnapshotEntry>,
+    current: &mut HashMap<String, SnapshotEntry>,
+    max_batch: usize,
+) -> usize {
+    if batch.len() <= max_batch {
+        return 0;
+    }
+    let deferred = batch.split_off(max_batch);
+    for event in &deferred {
+        match previous.get(&event.path) {
+            Some(entry) => current.insert(event.path.clone(), entry.clone()),
+            None => current.remove(&event.path),
+        };
+    }
+    deferred.len()
+}
+
+/// The marker row for a window the monitor could not record in full.
+fn overflow_event(deferred: usize) -> QueuedEvent {
+    QueuedEvent {
+        path: String::new(),
+        action: FileAction::Overflow,
+        kind: FileKind::Other,
+        size: Some(deferred as u64),
+    }
+}
+
+/// Everything the scan loop needs about the tree it watches.
+struct ScanConfig {
+    watch_dir: PathBuf,
+    strip_prefix: PathBuf,
+    /// Cadence for the next scan; re-derived from each scan's own cost.
+    interval: Duration,
+    /// Events emitted from one scan before the rest is deferred to the next.
+    /// Only the tests lower it; production is `MAX_QUEUE_SIZE`.
+    max_batch: usize,
+}
+
+/// What every emission needs, bundled so the signature stays readable.
+struct EmitContext<'a> {
+    db: &'a DbWriter,
+    security_rules: &'a Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+    trace_state: &'a Arc<std::sync::Mutex<TraceState>>,
+    /// Prefix removed from absolute paths when recording, and therefore the
+    /// prefix that turns a recorded path back into one on disk.
+    strip_prefix: &'a Path,
+}
+
 /// Host-side file system monitor.
 ///
-/// Watches the VirtioFS workspace directory using stat-based polling.
-/// Apple VZ VirtioFS writes do not trigger macOS FSEvents, so we use
-/// `PollWatcher` (which compares mtime/size on each scan) instead of
-/// the native `FsEventWatcher`.
+/// Watches the VirtioFS workspace directory by stat-based polling, on a
+/// cadence it derives from its own scan cost. See the module doc for why the
+/// loop is owned here rather than taken from `notify`.
 pub struct FsMonitor {
-    _watcher: PollWatcher,
     shutdown_tx: mpsc::Sender<()>,
     /// JoinHandle stored so `shutdown_and_join` can sequence "fs_monitor
     /// fully flushed" before the caller tears down the DbWriter. Without
     /// this, the pending-event flush at shutdown raced with the WAL
     /// checkpoint -- the signal-driven explicit-cleanup pattern in
     /// capsem-process relies on fs events landing before the checkpoint.
+    ///
+    /// The wait it imposes is bounded: at most two scans and two emissions.
+    /// A shutdown noticed mid-emission costs one extra cycle, to reconcile
+    /// what was written while that batch was persisting, and never more.
     join_handle: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
@@ -190,30 +320,16 @@ impl FsMonitor {
         security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
         trace_state: Arc<std::sync::Mutex<TraceState>>,
     ) -> anyhow::Result<Self> {
-        // PollWatcher discovers changes asynchronously. Keep an owner-local
-        // baseline so shutdown can reconcile changes that exist on disk but
-        // have not reached the notify callback yet.
-        let initial_snapshot = workspace_snapshot(&watch_dir, &strip_prefix);
-        let workspace_state = WorkspaceState {
-            watch_dir: watch_dir.clone(),
-            strip_prefix,
-            snapshot: initial_snapshot,
-        };
-        let (event_tx, event_rx) = mpsc::channel::<Event>(1024);
+        // The baseline walk is the same walk each scan performs, so it is also
+        // the first measurement of what a scan costs.
+        let scan_started = Instant::now();
+        let snapshot = workspace_snapshot(&watch_dir, &strip_prefix);
+        let scan_duration = scan_started.elapsed();
+        let poll_interval = poll_interval_for_scan(scan_duration);
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
-        let config = Config::default().with_poll_interval(Duration::from_millis(POLL_INTERVAL_MS));
-        let mut watcher = PollWatcher::new(
-            move |res: Result<Event, _>| {
-                if let Ok(event) = res {
-                    let _ = event_tx.blocking_send(event);
-                }
-            },
-            config,
-        )?;
-
-        watcher.watch(&watch_dir, RecursiveMode::Recursive)?;
-        info!(dir = %watch_dir.display(), poll_ms = POLL_INTERVAL_MS,
+        info!(dir = %watch_dir.display(), entries = snapshot.len(), scan_ms = scan_duration.as_millis(),
+              poll_ms = poll_interval.as_millis(),
               "host fs-monitor started (poll mode, FSEvents unreliable for VirtioFS)");
 
         let join_handle = std::thread::Builder::new()
@@ -223,10 +339,15 @@ impl FsMonitor {
                     .enable_time()
                     .build()
                     .expect("fs_monitor runtime");
-                rt.block_on(Self::event_loop(
-                    event_rx,
+                rt.block_on(Self::scan_loop(
                     shutdown_rx,
-                    workspace_state,
+                    ScanConfig {
+                        watch_dir,
+                        strip_prefix,
+                        interval: poll_interval,
+                        max_batch: MAX_QUEUE_SIZE,
+                    },
+                    snapshot,
                     db,
                     security_rules,
                     trace_state,
@@ -235,13 +356,12 @@ impl FsMonitor {
             .expect("failed to spawn fs_monitor thread");
 
         Ok(Self {
-            _watcher: watcher,
             shutdown_tx,
             join_handle: std::sync::Mutex::new(Some(join_handle)),
         })
     }
 
-    /// Signal the event loop to flush and exit, then block until the
+    /// Signal the scan loop to reconcile and exit, then block until the
     /// worker thread has run its final flush into `DbWriter`. Idempotent.
     /// Call from a blocking context (e.g. `tokio::task::spawn_blocking`).
     pub fn shutdown_and_join(&self) {
@@ -252,182 +372,121 @@ impl FsMonitor {
         }
     }
 
-    /// Process notify events: queue on receive, flush on timer.
-    async fn event_loop(
-        mut event_rx: mpsc::Receiver<Event>,
+    /// Scan, emit the difference, sleep for as long as the scan earned.
+    ///
+    /// Shutdown is one more scan and emission -- the same code path as any
+    /// other cycle -- so the last writes before teardown land in the ledger
+    /// without a second reconciliation mechanism to keep in step.
+    async fn scan_loop(
         mut shutdown_rx: mpsc::Receiver<()>,
-        mut workspace: WorkspaceState,
+        config: ScanConfig,
+        mut snapshot: HashMap<String, SnapshotEntry>,
         db: Arc<DbWriter>,
         security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
         trace_state: Arc<std::sync::Mutex<TraceState>>,
     ) {
-        let mut queue: Vec<QueuedEvent> = Vec::new();
-        let mut dropped: u64 = 0;
-        // A fixed-cadence interval, not a `sleep` recreated each iteration: the
-        // select! restarts on every event, so a fresh per-iteration sleep would
-        // have its deadline reset by each arrival and never fire under a
-        // sustained event stream, starving the flush until MAX_QUEUE_SIZE drops
-        // events. `interval` ticks on wall-cadence regardless of arrivals.
-        let mut flush_ticker = tokio::time::interval(Duration::from_millis(FLUSH_INTERVAL_MS));
-        flush_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let ctx = EmitContext {
+            db: &db,
+            security_rules: &security_rules,
+            trace_state: &trace_state,
+            strip_prefix: &config.strip_prefix,
+        };
+        let mut interval = config.interval;
+        let mut stopping = false;
 
         loop {
-            tokio::select! {
-                _ = shutdown_rx.recv() => {
-                    // Drain callbacks already accepted by the monitor, then
-                    // reconcile the actual workspace state. PollWatcher may
-                    // not have completed its next 500ms scan when shutdown
-                    // starts, so queue drainage alone is not a visibility
-                    // barrier for the latest guest writes.
-                    Self::flush(&mut queue, &mut dropped, &mut workspace.snapshot, &db, &security_rules, &trace_state).await;
-                    let current = workspace_snapshot(&workspace.watch_dir, &workspace.strip_prefix);
-                    queue.extend(reconciliation_events(&workspace.snapshot, &current));
-                    Self::flush(&mut queue, &mut dropped, &mut workspace.snapshot, &db, &security_rules, &trace_state).await;
-                    debug!("host fs-monitor stopped");
-                    break;
-                }
-                event = event_rx.recv() => {
-                    let Some(event) = event else {
-                        Self::flush(&mut queue, &mut dropped, &mut workspace.snapshot, &db, &security_rules, &trace_state).await;
-                        let current = workspace_snapshot(&workspace.watch_dir, &workspace.strip_prefix);
-                        queue.extend(reconciliation_events(&workspace.snapshot, &current));
-                        Self::flush(&mut queue, &mut dropped, &mut workspace.snapshot, &db, &security_rules, &trace_state).await;
-                        debug!("host fs-monitor channel closed");
-                        break;
-                    };
-                    let Some(action) = event_to_action(&event.kind) else { continue };
-
-                    for path in &event.paths {
-                        if should_exclude(path) {
-                            continue;
-                        }
-                        let rel = path
-                            .strip_prefix(&workspace.strip_prefix)
-                            .unwrap_or(path)
-                            .to_string_lossy()
-                            .to_string();
-                        if rel.is_empty() {
-                            continue;
-                        }
-                        if queue.len() >= MAX_QUEUE_SIZE {
-                            dropped += 1;
-                        } else {
-                            queue.push(QueuedEvent { path: rel, fs_path: path.clone(), action });
-                        }
-                    }
-                }
-                _ = flush_ticker.tick() => {
-                    Self::flush(&mut queue, &mut dropped, &mut workspace.snapshot, &db, &security_rules, &trace_state).await;
-                }
+            if !stopping {
+                stopping = tokio::select! {
+                    _ = shutdown_rx.recv() => true,
+                    _ = tokio::time::sleep(interval) => false,
+                };
             }
+
+            let scan_started = Instant::now();
+            let mut current = workspace_snapshot(&config.watch_dir, &config.strip_prefix);
+            let scan_duration = scan_started.elapsed();
+            let mut batch = reconciliation_events(&snapshot, &current);
+            let raw = batch.len();
+            let deferred = defer_overflow(&mut batch, &snapshot, &mut current, config.max_batch);
+            if deferred > 0 {
+                warn!(
+                    count = deferred,
+                    "fs-monitor scan overflow, events deferred to next scan"
+                );
+                // The marker goes in the same batch as the window it describes,
+                // so the gap is read in place rather than inferred from a log.
+                batch.push(overflow_event(deferred));
+            }
+            snapshot = current;
+            let saw_shutdown = Self::emit_batch(&ctx, &batch, &mut shutdown_rx).await;
+            if raw > 0 {
+                debug!(raw, emitted = batch.len(), "fs-monitor scan");
+            }
+
+            if stopping {
+                debug!("host fs-monitor stopped");
+                break;
+            }
+            if saw_shutdown {
+                // Go round once more so anything written while that batch was
+                // being persisted is reconciled before the thread exits.
+                stopping = true;
+                continue;
+            }
+
+            let next = poll_interval_for_scan(scan_duration);
+            // Only a real change is worth a line: a workspace that grows into
+            // a large install should say so, a scan that wobbles should not.
+            if next > interval * 2 || next * 2 < interval {
+                info!(
+                    entries = snapshot.len(),
+                    scan_ms = scan_duration.as_millis(),
+                    poll_ms = next.as_millis(),
+                    "host fs-monitor poll interval adapted to scan cost"
+                );
+            }
+            interval = next;
         }
     }
 
-    /// Drain the queue, coalesce same-type events per path, emit all.
+    /// Write a scan's events, checking for shutdown between chunks.
     ///
-    /// For each path, consecutive events of the same action type are coalesced
-    /// into one. Different action types on the same path emit separately
-    /// (e.g., create then delete = two emitted events).
-    async fn flush(
-        queue: &mut Vec<QueuedEvent>,
-        dropped: &mut u64,
-        snapshot: &mut HashMap<String, SnapshotEntry>,
-        db: &DbWriter,
-        security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
-        trace_state: &Arc<std::sync::Mutex<TraceState>>,
-    ) {
-        if queue.is_empty() && *dropped == 0 {
-            return;
-        }
-
-        if *dropped > 0 {
-            warn!(count = *dropped, "fs-monitor queue overflow, events dropped");
-            *dropped = 0;
-        }
-
-        let batch = std::mem::take(queue);
-        let raw_count = batch.len();
-
-        // Coalesce: walk the batch in order. For each (path, action), if the
-        // pending map already has the same path with the same action, skip.
-        // If it has a different action, emit the pending one first, then
-        // store the new action.
-        let mut pending: HashMap<String, (FileAction, PathBuf)> = HashMap::new();
-        let mut emitted: u64 = 0;
-
-        for event in batch {
-            match pending.get(&event.path) {
-                Some((existing, _)) if *existing == event.action => {
-                    // Same path, same action -- coalesce (skip)
-                }
-                Some(_) => {
-                    // Same path, different action -- emit the old one first
-                    let (old_action, old_fs_path) = pending
-                        .insert(event.path.clone(), (event.action, event.fs_path.clone()))
-                        .unwrap();
-                    Self::emit(db, security_rules, trace_state, &event.path, &old_fs_path, old_action).await;
-                    Self::update_snapshot(snapshot, &event.path, &old_fs_path, old_action);
-                    emitted += 1;
-                }
-                None => {
-                    pending.insert(event.path, (event.action, event.fs_path));
-                }
+    /// The check is a poll rather than a wait: a shutdown arriving mid-batch
+    /// must be noticed promptly, but the batch is still finished, because the
+    /// rows are the whole point of shutting down in order.
+    async fn emit_batch(ctx: &EmitContext<'_>, batch: &[QueuedEvent], shutdown_rx: &mut mpsc::Receiver<()>) -> bool {
+        let mut saw_shutdown = false;
+        for chunk in batch.chunks(EMIT_CHUNK) {
+            for event in chunk {
+                Self::emit(ctx, event).await;
             }
+            saw_shutdown |= shutdown_rx.try_recv().is_ok();
         }
-
-        // Emit all remaining pending entries
-        for (path, (action, fs_path)) in pending {
-            Self::emit(db, security_rules, trace_state, &path, &fs_path, action).await;
-            Self::update_snapshot(snapshot, &path, &fs_path, action);
-            emitted += 1;
-        }
-
-        if emitted > 0 {
-            debug!(raw = raw_count, emitted, "fs-monitor flush");
-        }
+        saw_shutdown
     }
 
-    fn update_snapshot(snapshot: &mut HashMap<String, SnapshotEntry>, path: &str, fs_path: &Path, action: FileAction) {
-        if action == FileAction::Deleted {
-            snapshot.remove(path);
-        } else if let Some(entry) = snapshot_entry(fs_path) {
-            snapshot.insert(path.to_string(), entry);
-        }
-    }
-
-    async fn emit(
-        db: &DbWriter,
-        security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
-        trace_state: &Arc<std::sync::Mutex<TraceState>>,
-        path: &str,
-        fs_path: &Path,
-        action: FileAction,
-    ) {
-        let size = if action != FileAction::Deleted {
-            std::fs::metadata(fs_path).ok().map(|m| m.len())
-        } else {
-            None
-        };
+    async fn emit(ctx: &EmitContext<'_>, event: &QueuedEvent) {
         // Recover a poisoned rules lock rather than panic: an unwrap here kills
         // the monitor thread, silently ending all fs-event recording. Matches
         // the trace_state recovery just below.
-        let rules = security_rules.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let rules = ctx.security_rules.read().unwrap_or_else(|e| e.into_inner()).clone();
         let trace_id = {
-            let state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
+            let state = ctx.trace_state.lock().unwrap_or_else(|e| e.into_inner());
             state
-                .lookup_file_path(path)
+                .lookup_file_path(&event.path)
                 .or_else(capsem_foundation::telemetry::ambient_capsem_trace_id)
         };
-        let credential_ref = Self::broker_env_file_credentials(db, &rules, path, fs_path, action).await;
+        let credential_ref = Self::broker_env_file_credentials(ctx, &rules, event).await;
         crate::security_engine::emit_file_security_write_and_rules(
-            db,
+            ctx.db,
             &rules,
             FileEvent {
                 event_id: None,
                 timestamp: SystemTime::now(),
-                action,
-                path: path.to_string(),
-                size,
+                action: event.action,
+                path: event.path.clone(),
+                size: event.size,
+                kind: event.kind,
                 trace_id,
                 credential_ref,
             },
@@ -435,26 +494,36 @@ impl FsMonitor {
         .await;
     }
 
+    /// Broker credentials found in a `.env` the guest just wrote.
+    ///
+    /// Two conditions guard the only place the monitor reads guest-controlled
+    /// bytes, and both are about the same attack: a guest that plants `.env`
+    /// as a symlink to a host file (`~/.aws/credentials`, a private key) so
+    /// the host parses and stores what it points at. The kind comes from the
+    /// scan's own lstat, and the open is `O_NOFOLLOW` and regular-file-only,
+    /// so a link swapped in after the scan is refused too.
     async fn broker_env_file_credentials(
-        db: &DbWriter,
+        ctx: &EmitContext<'_>,
         rules: &SecurityRuleSet,
-        path: &str,
-        fs_path: &Path,
-        action: FileAction,
+        event: &QueuedEvent,
     ) -> Option<String> {
-        if action == FileAction::Deleted || !is_env_candidate(path) {
+        if event.action == FileAction::Deleted || event.kind != FileKind::File || !is_env_candidate(&event.path) {
             return None;
         }
-        let metadata = std::fs::metadata(fs_path).ok()?;
-        if !metadata.is_file() || metadata.len() > 1024 * 1024 {
+        let fs_path = ctx.strip_prefix.join(&event.path);
+        let file = unix_fs::open_regular_file_no_follow(&fs_path).ok()?;
+        // fstat on the open handle, so the size that is checked belongs to the
+        // same file that is about to be read.
+        if file.metadata().ok()?.len() > MAX_ENV_BYTES {
             return None;
         }
-        let content = std::fs::read_to_string(fs_path).ok()?;
-        let observations = parse_env_credentials(path, &content);
+        let mut content = String::new();
+        file.take(MAX_ENV_BYTES).read_to_string(&mut content).ok()?;
+        let observations = parse_env_credentials(&event.path, &content);
         if observations.is_empty() {
             return None;
         }
-        broker_and_log_observations(db, rules, observations).await
+        broker_and_log_observations(ctx.db, rules, observations).await
     }
 }
 

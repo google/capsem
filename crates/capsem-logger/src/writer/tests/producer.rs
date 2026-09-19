@@ -6,15 +6,11 @@ fn write_blocking_persists_without_try_drop() {
     let db_path = dir.path().join("blocking.db");
     let writer = DbWriter::open(&db_path, 1).unwrap();
     writer
-        .write_blocking_checked(WriteOp::FileEvent(crate::events::FileEvent {
-            event_id: None,
-            timestamp: std::time::SystemTime::now(),
-            action: crate::events::FileAction::Created,
-            path: "/blocking".into(),
-            size: None,
-            trace_id: None,
-            credential_ref: None,
-        }))
+        .write_blocking_checked(WriteOp::FileEvent(file_event(
+            "/blocking",
+            crate::events::FileAction::Created,
+            None,
+        )))
         .unwrap();
     writer.shutdown_blocking();
 
@@ -37,15 +33,11 @@ fn write_blocking_is_safe_inside_tokio_runtime() {
         .build()
         .unwrap();
     rt.block_on(async {
-        writer.write_blocking(WriteOp::FileEvent(crate::events::FileEvent {
-            event_id: None,
-            timestamp: std::time::SystemTime::now(),
-            action: crate::events::FileAction::Created,
-            path: "/runtime-safe".into(),
-            size: None,
-            trace_id: None,
-            credential_ref: None,
-        }));
+        writer.write_blocking(WriteOp::FileEvent(file_event(
+            "/runtime-safe",
+            crate::events::FileAction::Created,
+            None,
+        )));
     });
     writer.shutdown_blocking();
 

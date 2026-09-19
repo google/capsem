@@ -245,6 +245,61 @@ describe('api', () => {
     });
   });
 
+  // ---- archived bodies ----
+
+  describe('fetchEventBodies', () => {
+    it('reads one event\'s bodies from the body route', async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok123' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
+      await api.init();
+
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        event_id: '0123456789ab',
+        bodies: [
+          {
+            event_id: '0123456789ab',
+            source_table: 'net_events',
+            direction: 'response',
+            content_type: 'application/json',
+            original_bytes: 3145728,
+            stored_bytes: 3145728,
+            truncated: false,
+            truncated_for_transport: true,
+            body_hash: 'blake3:abc',
+            encoding: 'utf8',
+            content: '{"answer":"yes"}',
+          },
+        ],
+      }));
+
+      const bodies = await api.fetchEventBodies('session 1', '0123456789ab');
+
+      expect(mockFetch.mock.calls.at(-1)?.[0]).toContain('/vms/session%201/bodies/0123456789ab');
+      expect(bodies.bodies).toHaveLength(1);
+      // Capture truncation and transport truncation arrive as separate fields
+      // and the client must keep them that way.
+      expect(bodies.bodies[0].truncated).toBe(false);
+      expect(bodies.bodies[0].truncated_for_transport).toBe(true);
+      expect(bodies.bodies[0].encoding).toBe('utf8');
+    });
+
+    it('treats an event with no archived body as data, not a failure', async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok123' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
+      await api.init();
+
+      mockFetch.mockReturnValueOnce(jsonResponse({ event_id: 'ffffffffffff', bodies: [] }));
+      await expect(api.fetchEventBodies('vm', 'ffffffffffff')).resolves.toEqual({
+        event_id: 'ffffffffffff',
+        bodies: [],
+      });
+    });
+  });
+
   // ---- VM lifecycle ----
 
   describe('VM lifecycle', () => {
@@ -447,7 +502,6 @@ describe('api', () => {
           rule_action: 'allow',
           detection_level: 'none',
           rule_json: '{}',
-          event_json: '{}',
           trace_id: null,
         },
       ]));

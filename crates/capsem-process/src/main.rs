@@ -6,6 +6,7 @@ mod job_store;
 mod mcp_runtime;
 mod private_names;
 mod private_seats;
+mod retention;
 mod runtime_config;
 mod terminal;
 mod vsock;
@@ -37,6 +38,11 @@ pub(crate) struct Shutdown {
     publisher: Option<Arc<capsem_core::container::publish::Publisher>>,
     db: Option<Arc<DbWriter>>,
     fs_monitor: Option<FsMonitor>,
+    /// How many days of archived bodies this session keeps, when its ledger
+    /// outlives the process. `None` for an ephemeral session: its whole
+    /// directory is deleted, so trimming its archive first would be work
+    /// whose only result is a shorter file nobody will open.
+    retention_days: Option<u64>,
 }
 
 impl Shutdown {
@@ -60,6 +66,12 @@ pub(crate) async fn drain_background_owners(shutdown: &Arc<Mutex<Shutdown>>) {
     let mut owned = std::mem::take(&mut *guard);
     if let Some(publisher) = owned.publisher.take() {
         publisher.shutdown().await;
+    }
+    // Before the writer is joined, and from the process that owns it: the
+    // service holds only external readers of this ledger, so this is the one
+    // place a session's archive can be trimmed at all.
+    if let (Some(db), Some(retention_days)) = (owned.db.as_deref(), owned.retention_days) {
+        retention::retain_session_bodies(db, retention_days).await;
     }
     if let Err(error) = tokio::task::spawn_blocking(move || owned.drain_blocking()).await {
         error!(%error, "background owner drain failed");
@@ -140,6 +152,16 @@ struct Args {
     service_socket: Option<PathBuf>,
     #[arg(long)]
     checkpoint_path: Option<PathBuf>,
+    /// Days of archived bodies to keep when this session's ledger outlives
+    /// the process. The service passes it for a persistent VM and omits it
+    /// for an ephemeral one, whose directory it deletes outright.
+    ///
+    /// Taken as given, including `0`, which drops every archived body. The
+    /// setting's floor of 1 is the service's to enforce -- it is the side
+    /// that reads the setting -- and a process told to keep nothing is a
+    /// process being told something, not one being misconfigured.
+    #[arg(long)]
+    retention_days: Option<u64>,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
     #[arg(long = "env")]
     env: Vec<String>,
@@ -397,7 +419,11 @@ async fn run_async_main_loop(
     // Register the DbWriter with the SIGTERM handler BEFORE any work that
     // produces writes. If the signal fires before the workspace monitor
     // starts, we still want a clean checkpoint.
-    shutdown.lock().await.db = Some(Arc::clone(&db));
+    {
+        let mut guard = shutdown.lock().await;
+        guard.db = Some(Arc::clone(&db));
+        guard.retention_days = args.retention_days;
+    }
 
     let security_rule_ids = runtime_config
         .security_rules
@@ -486,8 +512,6 @@ async fn run_async_main_loop(
         .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
     let mut builtin_env = std::collections::HashMap::new();
     builtin_env.insert("CAPSEM_SESSION_DIR".into(), session_dir.to_string_lossy().to_string());
-    let db_path = session_dir.join("session.db");
-    builtin_env.insert("CAPSEM_SESSION_DB".into(), db_path.to_string_lossy().to_string());
     builtin_env.insert(
         "CAPSEM_ACTIVE_PROFILE".into(),
         runtime_config.active_profile_path.to_string_lossy().to_string(),
@@ -564,6 +588,8 @@ async fn run_async_main_loop(
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
     let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
         aggregator_client.clone(),
+        Arc::clone(&db),
+        capsem_core::mcp::builtin_server_names(&mcp_servers),
         Arc::clone(&security_rules),
         Arc::clone(&plugin_policy),
         Arc::clone(&mcp_inflight),

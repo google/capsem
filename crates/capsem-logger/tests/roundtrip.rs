@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use capsem_logger::{
-    credential_reference, validate_select_only, DbReader, DbWriter, Decision, FileAction, FileEvent, McpCall,
+    credential_reference, validate_select_only, DbReader, DbWriter, Decision, FileAction, FileEvent, FileKind, McpCall,
     ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry, WriteOp,
 };
 
@@ -39,10 +39,8 @@ fn sample_net_event(domain: &str, decision: Decision) -> NetEvent {
         matched_rule: Some("test".to_string()),
         request_headers: None,
         response_headers: None,
-        request_body_preview: None,
-        response_body_preview: None,
-        request_body_full: None,
-        response_body_full: None,
+        request_body: None,
+        response_body: None,
         conn_type: None,
         policy_mode: None,
         policy_action: None,
@@ -72,10 +70,8 @@ fn http_net_event(domain: &str) -> NetEvent {
         matched_rule: None,
         request_headers: Some("Host: github.com\r\nUser-Agent: curl".to_string()),
         response_headers: Some("Content-Type: application/json".to_string()),
-        request_body_preview: None,
-        response_body_preview: Some("{\"repos\":[]}".to_string()),
-        request_body_full: None,
-        response_body_full: Some("{\"repos\":[]}".to_string()),
+        request_body: None,
+        response_body: Some(b"{\"repos\":[]}".to_vec()),
         conn_type: Some("https".to_string()),
         policy_mode: None,
         policy_action: None,
@@ -102,13 +98,12 @@ fn sample_model_call(provider: &str) -> ModelCall {
         messages_count: 3,
         tools_count: 2,
         request_bytes: 2048,
-        request_body_preview: Some("{\"model\":\"...\"}".to_string()),
-        request_body_full: Some("{\"model\":\"...\"}".to_string()),
+        request_body: Some(b"{\"model\":\"...\"}".to_vec()),
         message_id: Some("msg_01".to_string()),
         status_code: Some(200),
         text_content: Some("Hello world!".to_string()),
         thinking_content: None,
-        response_body_full: Some("{\"content\":[{\"text\":\"Hello world!\"}]}".to_string()),
+        response_body: Some(b"{\"content\":[{\"text\":\"Hello world!\"}]}".to_vec()),
         stop_reason: Some("end_turn".to_string()),
         input_tokens: Some(25),
         output_tokens: Some(10),
@@ -119,6 +114,7 @@ fn sample_model_call(provider: &str) -> ModelCall {
         trace_id: None,
         credential_ref: None,
         tool_calls: vec![ToolCallEntry {
+            event_id: None,
             call_index: 0,
             call_id: "toolu_01".to_string(),
             tool_name: "get_weather".to_string(),
@@ -127,6 +123,7 @@ fn sample_model_call(provider: &str) -> ModelCall {
             trace_id: None,
         }],
         tool_responses: vec![ToolResponseEntry {
+            event_id: None,
             call_id: "toolu_prev".to_string(),
             content_preview: Some("72F and sunny".to_string()),
             is_error: false,
@@ -144,6 +141,8 @@ mod analytics;
 mod event_roundtrips;
 #[path = "roundtrip/file_events.rs"]
 mod file_events;
+#[path = "roundtrip/fixture_regen.rs"]
+mod fixture_regen;
 #[path = "roundtrip/mcp_calls.rs"]
 mod mcp_calls;
 #[path = "roundtrip/reader_queries.rs"]

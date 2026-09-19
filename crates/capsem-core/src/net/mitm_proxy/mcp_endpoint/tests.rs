@@ -10,6 +10,8 @@ use capsem_proto::mcp_contracts::{JsonRpcRequest, McpPromptDef, McpResourceDef, 
 
 use super::*;
 
+mod builtin_ledger;
+
 fn json_request(method: &str, params: serde_json::Value) -> JsonRpcRequest {
     JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
@@ -54,6 +56,8 @@ where
     (
         Arc::new(McpEndpointState::new(
             aggregator,
+            Arc::new(capsem_logger::DbWriter::open_in_memory(8).unwrap()),
+            std::collections::BTreeSet::new(),
             Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new())))),
             Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
             Arc::new(tokio::sync::Semaphore::new(crate::mcp::default_inflight_cap())),

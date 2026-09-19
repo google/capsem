@@ -69,7 +69,7 @@ def test_session_list_success_returns_zero_status(
     monkeypatch.setattr(check_session, "list_recent_sessions", lambda _count: [row])
     monkeypatch.setattr(sys, "argv", ["check_session.py", "--list"])
 
-    assert check_session.main() is None
+    assert check_session.main() == 0
 
 
 def test_kvm_diagnostic_preserves_missing_device_failure_status(

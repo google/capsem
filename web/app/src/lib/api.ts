@@ -315,6 +315,9 @@ export interface SecurityRuleStats {
   by_rule: SecurityRuleStatsByRule[];
 }
 
+// The matched event's forensic payload is not here: it is archive-backed and
+// is fetched by event id, like the other bodies. The row is what the security
+// views list and filter on.
 export interface SecurityRuleEvent {
   timestamp_unix_ms: number;
   event_id: string;
@@ -323,8 +326,9 @@ export interface SecurityRuleEvent {
   rule_action: SecurityRuleAction;
   detection_level: RuntimeSecurityRuleDetectionLevel;
   rule_json: string;
-  event_json: string;
   trace_id?: string | null;
+  turn_id?: string | null;
+  credential_ref?: string | null;
 }
 
 // -- Initialization --
@@ -735,6 +739,47 @@ export async function getVmStatsDetail(id: string): Promise<VmStatsDetailRespons
     }
     throw err;
   }
+}
+
+/**
+ * One archived body, as `GET /vms/{id}/bodies/{event_id}` sends it.
+ *
+ * Mirrored by hand from `capsem_service::api::bodies` -- there is no generated
+ * SDK on this branch. When #199 lands these types come from `capsem-api` and
+ * this block goes away.
+ *
+ * `truncated` is what the capture did upstream; `truncated_for_transport` is
+ * what the route did to fit the byte budget. They are separate answers and the
+ * UI must not merge them.
+ */
+export interface EventBody {
+  event_id: string;
+  source_table: string;
+  direction: string;
+  content_type: string | null;
+  original_bytes: number;
+  stored_bytes: number;
+  truncated: boolean;
+  truncated_for_transport: boolean;
+  body_hash: string;
+  encoding: 'utf8' | 'base64';
+  content: string;
+}
+
+export interface EventBodiesResponse {
+  event_id: string;
+  bodies: EventBody[];
+}
+
+/**
+ * The archived bodies of one event. An event with no body answers with an
+ * empty list, so an empty `bodies` is data rather than a failure.
+ */
+export async function fetchEventBodies(id: string, eventId: string): Promise<EventBodiesResponse> {
+  const resp = await _get(
+    `/vms/${encodeURIComponent(id)}/bodies/${encodeURIComponent(eventId)}`,
+  );
+  return await resp.json();
 }
 
 export async function readFile(id: string, path: string): Promise<ReadFileResponse> {

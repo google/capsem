@@ -184,6 +184,58 @@ pub struct SecurityRuleEvent {
     pub credential_ref: Option<String>,
 }
 
+/// A stored security rule match as the ledger holds it, which is the write
+/// type minus the payload.
+///
+/// `SecurityRuleEvent` is what a producer sends: the row *and* the normalized
+/// event payload that the rule matched. Only the row reaches
+/// `security_rule_events`. The payload is a body like any other and is stored
+/// in the session archive, read back by event id with
+/// `BodyDirection::Payload` -- it averaged a kilobyte and peaked at 297 KB in
+/// one real session, which is not something to carry in every scan of a table
+/// that was also mirrored in RAM.
+///
+/// Reading a match therefore gives the columns routes filter, group and
+/// correlate on; whoever actually wants the payload asks for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecurityRuleMatch {
+    pub timestamp_unix_ms: i64,
+    pub event_id: String,
+    pub event_type: String,
+    pub rule_id: String,
+    pub rule_action: SecurityRuleAction,
+    pub detection_level: SecurityDetectionLevel,
+    pub rule_json: String,
+    #[serde(default)]
+    pub trace_id: Option<String>,
+    #[serde(default)]
+    pub turn_id: Option<String>,
+    #[serde(default)]
+    pub credential_ref: Option<String>,
+}
+
+/// A stored ask lifecycle row as the ledger holds it: `SecurityAskEvent` minus
+/// the payload, for the same reason as `SecurityRuleMatch`. The asked-about
+/// event is archive-backed and read by event id with `BodyDirection::Payload`;
+/// every security payload is stored one way.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecurityAskRecord {
+    pub timestamp_unix_ms: i64,
+    pub ask_id: String,
+    pub event_id: String,
+    pub event_type: String,
+    pub rule_id: String,
+    pub rule_name: String,
+    pub status: SecurityAskStatus,
+    pub rule_json: String,
+    #[serde(default)]
+    pub resolver: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub trace_id: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileMutationEvent {
     pub timestamp_unix_ms: i64,
@@ -445,6 +497,14 @@ pub enum FileAction {
     Read,
     Imported,
     Exported,
+    /// Not a change to a path: the marker a watcher writes when it could not
+    /// record every change it saw in one window.
+    ///
+    /// A gap in the file rail is itself forensic evidence and has to be in the
+    /// ledger, not only in a log line nobody keeps. The row carries an empty
+    /// `path` and the number of events it stands for in `size`, so a reader
+    /// scanning the rail in time order sees exactly where the record thins.
+    Overflow,
 }
 
 impl FileAction {
@@ -457,6 +517,7 @@ impl FileAction {
             FileAction::Read => "read",
             FileAction::Imported => "import",
             FileAction::Exported => "export",
+            FileAction::Overflow => "overflow",
         }
     }
 
@@ -469,9 +530,49 @@ impl FileAction {
             "read" => FileAction::Read,
             "import" => FileAction::Imported,
             "export" => FileAction::Exported,
+            "overflow" => FileAction::Overflow,
             other => {
                 tracing::warn!(value = other, "unknown file action string in DB, treating as Modified");
                 FileAction::Modified
+            }
+        }
+    }
+}
+
+/// What the path named by a file event actually is.
+///
+/// Without this a `mkdir` is an anonymous path carrying the directory inode's
+/// size, which no reader can tell from a small file write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileKind {
+    /// The default keeps payloads written before this field existed readable.
+    #[default]
+    File,
+    Dir,
+    Symlink,
+    Other,
+}
+
+impl FileKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FileKind::File => "file",
+            FileKind::Dir => "dir",
+            FileKind::Symlink => "symlink",
+            FileKind::Other => "other",
+        }
+    }
+
+    pub fn parse_str(s: &str) -> Self {
+        match s {
+            "file" => FileKind::File,
+            "dir" => FileKind::Dir,
+            "symlink" => FileKind::Symlink,
+            "other" => FileKind::Other,
+            other => {
+                tracing::warn!(value = other, "unknown file kind string in DB, treating as File");
+                FileKind::File
             }
         }
     }
@@ -486,7 +587,10 @@ pub struct FileEvent {
     pub timestamp: SystemTime,
     pub action: FileAction,
     pub path: String,
+    /// `None` for directories and for deletions.
     pub size: Option<u64>,
+    #[serde(default)]
+    pub kind: FileKind,
     /// W6: ambient trace_id for the operation that triggered this event
     /// (lower 16 hex of the W3C trace_id). None when no trace context.
     #[serde(default)]
@@ -517,12 +621,13 @@ pub struct NetEvent {
     pub matched_rule: Option<String>,
     pub request_headers: Option<String>,
     pub response_headers: Option<String>,
-    pub request_body_preview: Option<String>,
-    pub response_body_preview: Option<String>,
+    /// The request body as it was captured, once. The writer derives the
+    /// display preview from it at insert and stages the bytes into the
+    /// session archive; nothing else carries a second copy.
     #[serde(default)]
-    pub request_body_full: Option<String>,
+    pub request_body: Option<Vec<u8>>,
     #[serde(default)]
-    pub response_body_full: Option<String>,
+    pub response_body: Option<Vec<u8>>,
     pub conn_type: Option<String>,
     #[serde(default)]
     pub policy_mode: Option<String>,
@@ -541,6 +646,11 @@ pub struct NetEvent {
 /// A tool call emitted by the model in a response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallEntry {
+    /// The ledger id this entry is written under. `None` lets the writer mint
+    /// one; a replay (the fixture regenerator) passes the source id through so
+    /// the regenerated ledger is byte-identical to the one it read.
+    #[serde(default)]
+    pub event_id: Option<String>,
     pub call_index: u32,
     pub call_id: String,
     pub tool_name: String,
@@ -563,6 +673,9 @@ fn default_tool_transport() -> String {
 /// A tool result sent back to the model in a subsequent request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResponseEntry {
+    /// See `ToolCallEntry::event_id`.
+    #[serde(default)]
+    pub event_id: Option<String>,
     pub call_id: String,
     pub content_preview: Option<String>,
     pub is_error: bool,
@@ -636,16 +749,16 @@ pub struct ModelCall {
     pub messages_count: usize,
     pub tools_count: usize,
     pub request_bytes: u64,
-    pub request_body_preview: Option<String>,
+    /// The request body as it was captured, once; see `NetEvent::request_body`.
     #[serde(default)]
-    pub request_body_full: Option<String>,
+    pub request_body: Option<Vec<u8>>,
     // Response metadata
     pub message_id: Option<String>,
     pub status_code: Option<u16>,
     pub text_content: Option<String>,
     pub thinking_content: Option<String>,
     #[serde(default)]
-    pub response_body_full: Option<String>,
+    pub response_body: Option<Vec<u8>>,
     pub stop_reason: Option<String>,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,

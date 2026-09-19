@@ -961,16 +961,16 @@ pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> an
         }
     }
 
-    // Snapshot session.db at session root (host-only, not in guest/).
+    // Snapshot the session ledger at session root (host-only, not in guest/).
     //
     // session.db may be in WAL mode while the VM is running. Copying only the
     // main database file can produce a malformed or stale fork because the
-    // committed pages may still live in session.db-wal. Ask SQLite to write a
-    // coherent standalone image instead.
-    let db_src = src_session_dir.join("session.db");
-    if db_src.exists() {
-        let db_dst = dst_session_dir.join("session.db");
-        clone_session_db_snapshot(&db_src, &db_dst).context("failed to snapshot session.db")?;
+    // committed pages may still live in session.db-wal. Ask the logger to
+    // write a coherent standalone image instead -- and to bring the body
+    // archive beside it, because the database is only an index into that file.
+    if src_session_dir.join("session.db").exists() {
+        capsem_logger::snapshot_session_ledger(src_session_dir, dst_session_dir)
+            .context("failed to snapshot the session ledger")?;
     }
 
     Ok(crate::session::disk_usage_bytes(dst_session_dir))
@@ -993,11 +993,6 @@ fn log_rootfs_clone_usage(src: &Path, dst: &Path) {
             );
         }
     }
-}
-
-fn clone_session_db_snapshot(src: &Path, dst: &Path) -> anyhow::Result<()> {
-    capsem_logger::snapshot_session_db(src, dst)
-        .with_context(|| format!("failed to snapshot session db {} into {}", src.display(), dst.display()))
 }
 
 /// Simple ISO 8601 timestamp from epoch seconds (no chrono dependency).

@@ -3,11 +3,13 @@
   import * as api from '../../api';
   import { formatBytes, formatDuration, formatTime } from '../../format';
   import { getShikiHighlighter, resolveShikiTheme, ensureShikiLang, ensureShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
+  import { createDetailLoader } from '../../event-bodies';
   import {
     compactJsonForDisplay,
     detailPayloadSections,
     formatDetailValue,
     normalizePayloadContent,
+    payloadSectionMeta,
     visibleDetailEntries,
   } from '../../stats-detail';
   import { themeStore } from '../../stores/theme.svelte.ts';
@@ -37,6 +39,7 @@
   let loading = $state(false);
   let error = $state<string | null>(null);
   let detail = $state<DetailSelection | null>(null);
+  let bodyError = $state<string | null>(null);
   let shiki = $state<ShikiHighlighter | null>(null);
   let shikiTick = $state(0);
 
@@ -55,32 +58,26 @@
   let securityStatus = $state<api.SecurityRuleStats | null>(null);
   let bodyBlobs = $state<Record<string, Row[]>>({});
 
-  function safeEventId(value: unknown): string | null {
-    const id = text(value);
-    return /^[0-9a-f]{12}$/.test(id) ? id : null;
-  }
-
-  async function showDetail(type: string, row: Row) {
-    detail = { type, data: row };
-    const eventId = safeEventId(row.event_id);
-    if (!eventId) return;
-
-    const bodyRows = bodyBlobs[eventId] ?? [];
-    if (bodyRows.length === 0) return;
-
-    const enriched: Row = { ...row };
-    for (const bodyRow of bodyRows) {
-      const direction = text(bodyRow.direction);
-      if (direction !== 'request' && direction !== 'response') continue;
-      enriched[`${direction}_body`] = bodyRow.body;
-      enriched[`${direction}_body_content_type`] = bodyRow.content_type;
-      enriched[`${direction}_body_original_bytes`] = bodyRow.original_bytes;
-      enriched[`${direction}_body_stored_bytes`] = bodyRow.stored_bytes;
-      enriched[`${direction}_body_truncated`] = bodyRow.truncated;
-      enriched[`${direction}_body_hash`] = bodyRow.body_hash;
-    }
-    detail = { type, data: enriched };
-  }
+  // Every row in every tab opens the pane through `showDetail`, and every way
+  // of closing it goes through `dismissDetail` -- including the tab switch,
+  // which used to set the selection to null without telling the loader, so a
+  // fetch still out would reopen the pane on the event just dismissed.
+  //
+  // The rules about which selection is the open one, and what a response that
+  // lands after the user has moved on may do, live in `event-bodies.ts` where
+  // they can be tested: they had four bugs in them that reading the source
+  // could not have found. The component supplies the two writes and the two
+  // sources and nothing else.
+  const { show: showDetail, dismiss: dismissDetail } = createDetailLoader(
+    {
+      show: selection => { detail = selection; },
+      setError: message => { bodyError = message; },
+    },
+    {
+      indexRowsFor: eventId => bodyBlobs[eventId] ?? [],
+      fetchBodies: async eventId => (await api.fetchEventBodies(vmId, eventId)).bodies,
+    },
+  );
 
   function number(value: unknown): number {
     const n = Number(value ?? 0);
@@ -94,32 +91,6 @@
   function eventTimeMs(value: number): string {
     return new Date(value).toISOString();
   }
-
-  function isPresent(value: unknown): boolean {
-    if (value == null) return false;
-    if (typeof value === 'string') return value.trim().length > 0;
-    return true;
-  }
-
-  function payloadSectionMeta(
-    section: { key: string },
-    obj: Record<string, unknown>,
-  ): { label: string; value: string }[] {
-    const prefix = section.key;
-    return [
-      { label: 'Content Type', value: text(obj[`${prefix}_content_type`]) },
-      { label: 'Original', value: formatBodyBytes(obj[`${prefix}_original_bytes`]) },
-      { label: 'Stored', value: formatBodyBytes(obj[`${prefix}_stored_bytes`]) },
-      { label: 'Truncated', value: number(obj[`${prefix}_truncated`]) === 1 ? 'yes' : 'no' },
-      { label: 'Hash', value: text(obj[`${prefix}_hash`]) },
-    ].filter(row => row.value.length > 0);
-  }
-
-  function formatBodyBytes(value: unknown): string {
-    if (!isPresent(value)) return '';
-    return formatBytes(number(value));
-  }
-
 
   function formatAndHighlight(value: unknown, lang: string | undefined = undefined): string {
     shikiTick;
@@ -273,7 +244,7 @@
             {activeTab === item.id
               ? 'bg-muted text-foreground font-medium'
               : 'text-muted-foreground-1 hover:text-foreground hover:bg-muted-hover'}"
-          onclick={() => { activeTab = item.id; detail = null; }}
+          onclick={() => { activeTab = item.id; dismissDetail(); }}
         >
           <item.icon size={18} />
           {item.label}
@@ -371,7 +342,7 @@
           <MetricCard label="Redirected" value={dnsRows.filter(row => text(row.decision) === 'redirected').length.toLocaleString()} />
           <MetricCard label="Avg Upstream" value={`${Math.round(dnsRows.reduce((sum, row) => sum + number(row.upstream_resolver_ms), 0) / Math.max(1, dnsRows.length))}ms`} />
         </div>
-        <StatsEventList title="DNS Events" rows={dnsRows} columns={['Time', 'Name', 'Type', 'Rcode', 'Decision']} onrow={(row) => detail = { type: 'dns', data: row }}>
+        <StatsEventList title="DNS Events" rows={dnsRows} columns={['Time', 'Name', 'Type', 'Rcode', 'Decision']} onrow={(row) => { void showDetail('dns', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2 font-mono text-xs text-foreground">{row.qname}</td>
@@ -388,7 +359,7 @@
           <MetricCard label="Modified" value={fileModified.toLocaleString()} />
           <MetricCard label="Deleted" value={fileDeleted.toLocaleString()} tone="danger" />
         </div>
-        <StatsEventList title="File Events" rows={fileRows} columns={['Time', 'Action', 'Path', 'Size', 'Trace']} onrow={(row) => detail = { type: 'file', data: row }}>
+        <StatsEventList title="File Events" rows={fileRows} columns={['Time', 'Action', 'Path', 'Size', 'Trace']} onrow={(row) => { void showDetail('file', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2"><StatsBadge value={text(row.action)} /></td>
@@ -405,7 +376,7 @@
           <MetricCard label="Observed Processes" value={auditRows.length.toLocaleString()} />
           <MetricCard label="Unique Binaries" value={processUniqueBinaries.toLocaleString()} />
         </div>
-        <StatsEventList title="Process Exec Events" rows={processRows} columns={['Time', 'Source', 'Command', 'Exit', 'Duration']} onrow={(row) => detail = { type: 'process', data: row }}>
+        <StatsEventList title="Process Exec Events" rows={processRows} columns={['Time', 'Source', 'Command', 'Exit', 'Duration']} onrow={(row) => { void showDetail('process', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2 text-muted-foreground-1">{row.source}</td>
@@ -414,7 +385,7 @@
             <td class="px-4 py-2 text-right text-muted-foreground">{row.duration_ms != null ? formatDuration(number(row.duration_ms)) : '--'}</td>
           {/snippet}
         </StatsEventList>
-        <StatsEventList title="Observed Processes" rows={auditRows} columns={['Observed', 'Executable', 'Command', 'PID', 'Parent']} onrow={(row) => detail = { type: 'observed process', data: row }}>
+        <StatsEventList title="Observed Processes" rows={auditRows} columns={['Observed', 'Executable', 'Command', 'PID', 'Parent']} onrow={(row) => { void showDetail('observed process', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2 font-mono text-xs text-foreground max-w-xl truncate">{row.exe}</td>
@@ -431,7 +402,7 @@
           <MetricCard label="Injected" value={brokerInjectedCount.toLocaleString()} />
           <MetricCard label="Errors" value={brokerErrorCount.toLocaleString()} tone="danger" />
         </div>
-        <StatsEventList title="Credential Broker Events" rows={substitutionRows} columns={['Time', 'Verb', 'Source', 'Provider', 'Origin']} onrow={(row) => detail = { type: 'credential broker event', data: row }}>
+        <StatsEventList title="Credential Broker Events" rows={substitutionRows} columns={['Time', 'Verb', 'Source', 'Provider', 'Origin']} onrow={(row) => { void showDetail('credential broker event', row); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
             <td class="px-4 py-2"><StatsBadge value={brokerVerb(row)} /></td>
@@ -455,7 +426,7 @@
             <StatsMiniGroup title="By Event Type" rows={securityStatus.by_event_type} nameKey="event_type" />
           </div>
         {/if}
-        <StatsEventList title="Security Ledger" rows={securityLatest} columns={['Time', 'Event', 'Rule', 'Action', 'Level']} onrow={(row) => detail = { type: 'security', data: row as any }}>
+        <StatsEventList title="Security Ledger" rows={securityLatest} columns={['Time', 'Event', 'Rule', 'Action', 'Level']} onrow={(row) => { void showDetail('security', row as any); }}>
           {#snippet children(row: any)}
             <td class="px-4 py-2 text-muted-foreground">{formatTime(eventTimeMs(row.timestamp_unix_ms))}</td>
             <td class="px-4 py-2 font-mono text-xs text-foreground">{row.event_type}</td>
@@ -465,14 +436,14 @@
           {/snippet}
         </StatsEventList>
         <div class="grid grid-cols-2 gap-4">
-          <StatsEventList title="Detection Latest" rows={detectionLatest} columns={['Time', 'Rule', 'Level']} onrow={(row) => detail = { type: 'detection', data: row as any }}>
+          <StatsEventList title="Detection Latest" rows={detectionLatest} columns={['Time', 'Rule', 'Level']} onrow={(row) => { void showDetail('detection', row as any); }}>
             {#snippet children(row: any)}
               <td class="px-4 py-2 text-muted-foreground">{formatTime(eventTimeMs(row.timestamp_unix_ms))}</td>
               <td class="px-4 py-2 font-mono text-xs text-foreground">{row.rule_id}</td>
               <td class="px-4 py-2"><StatsBadge value={row.detection_level} kind="detection" /></td>
             {/snippet}
           </StatsEventList>
-          <StatsEventList title="Enforcement Latest" rows={enforcementLatest} columns={['Time', 'Rule', 'Action']} onrow={(row) => detail = { type: 'enforcement', data: row as any }}>
+          <StatsEventList title="Enforcement Latest" rows={enforcementLatest} columns={['Time', 'Rule', 'Action']} onrow={(row) => { void showDetail('enforcement', row as any); }}>
             {#snippet children(row: any)}
               <td class="px-4 py-2 text-muted-foreground">{formatTime(eventTimeMs(row.timestamp_unix_ms))}</td>
               <td class="px-4 py-2 font-mono text-xs text-foreground">{row.rule_id}</td>
@@ -489,11 +460,16 @@
     <div class="w-[560px] shrink-0 border-s border-line-2 flex flex-col overflow-hidden bg-background">
       <div class="flex items-center gap-2 px-3 py-2 border-b border-line-2 bg-surface">
         <span class="text-xs font-semibold flex-1 truncate capitalize text-foreground">{detail.type}</span>
-        <button class="p-1 rounded hover:bg-muted-hover text-muted-foreground-1 hover:text-foreground" onclick={() => detail = null} aria-label="Close detail panel">
+        <button class="p-1 rounded hover:bg-muted-hover text-muted-foreground-1 hover:text-foreground" onclick={dismissDetail} aria-label="Close detail panel">
           <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
       <div class="flex-1 overflow-auto p-3 text-xs space-y-3">
+        {#if bodyError}
+          <div class="p-2 rounded border border-destructive/30 bg-destructive/10 text-destructive">
+            Could not load this event's bodies: {bodyError}
+          </div>
+        {/if}
         <div class="space-y-1">
           <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Event Fields</div>
           {#each visibleDetailEntries(detail.data) as [key, value]}
@@ -514,17 +490,19 @@
                 </div>
               {/each}
             </div>
-            <div class="detail-shiki rounded overflow-auto max-h-80 bg-background-1">{@html formatAndHighlight(section.value, section.lang)}</div>
+            {#if section.hasContent}
+              <div class="detail-shiki rounded overflow-auto max-h-80 bg-background-1">{@html formatAndHighlight(section.value, section.lang)}</div>
+            {:else}
+              <div class="rounded px-2 py-1 bg-background-1 text-muted-foreground-1 italic">
+                {bodyError ? 'bytes not loaded' : 'no bytes stored'}
+              </div>
+            {/if}
           </div>
         {/each}
         {#if detail.type === 'security' || detail.type === 'detection' || detail.type === 'enforcement'}
           <div>
             <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Rule Snapshot</div>
             <div class="detail-shiki rounded overflow-auto max-h-64 bg-background-1">{@html formatAndHighlight(compactJsonForDisplay(detail.data.rule_json), 'json')}</div>
-          </div>
-          <div>
-            <div class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Matched Event</div>
-            <div class="detail-shiki rounded overflow-auto max-h-80 bg-background-1">{@html formatAndHighlight(compactJsonForDisplay(detail.data.event_json), 'json')}</div>
           </div>
         {/if}
       </div>

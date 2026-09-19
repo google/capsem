@@ -11,6 +11,9 @@ Sharing alone is not a reason to put code in `capsem-core`.
 
 - **`capsem-foundation`**: dependency-light host primitives: paths, UDS HTTP,
   polling, telemetry/log setup, and IPC handshakes.
+- **`capsem-archive`**: block-compressed body archive for session ledgers.
+  Pure Rust (`miniz_oxide`); SQLite keeps the index, this crate keeps the
+  bytes, and every block is blake3-verified before a body is returned.
 - **`capsem-assets`**: asset manifests, compatibility, download, resolution,
   and verification.
 - **`capsem-config`**: config types, parsing, validation, resolution, and

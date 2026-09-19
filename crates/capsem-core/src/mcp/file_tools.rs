@@ -12,8 +12,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::SystemTime;
 
+use capsem_proto::mcp_contracts::builtin_ledger::{FileRevertedRecord, RevertAction};
 use capsem_proto::mcp_contracts::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 use serde_json::Value;
 
@@ -479,8 +479,8 @@ pub fn handle_revert_file_with_rules(
     db: Option<&Arc<capsem_logger::DbWriter>>,
     security_rules: Option<&crate::net::policy_config::SecurityRuleSet>,
 ) -> JsonRpcResponse {
-    let (resp, file_event) = handle_revert_file_with_security_event(arguments, scheduler, workspace_root, request_id);
-    if let (Some(db), Some(file_event)) = (db, file_event) {
+    let (resp, record) = handle_revert_file_with_record(arguments, scheduler, workspace_root, request_id);
+    if let (Some(db), Some(record)) = (db, record) {
         let empty_rules;
         let rules = match security_rules {
             Some(rules) => rules,
@@ -489,17 +489,22 @@ pub fn handle_revert_file_with_rules(
                 &empty_rules
             }
         };
-        crate::security_engine::emit_file_security_write_and_rules_blocking(db, rules, file_event);
+        crate::security_engine::emit_file_security_write_and_rules_blocking(
+            db,
+            rules,
+            super::builtin_ledger::file_event(&record),
+        );
     }
     resp
 }
 
-pub fn handle_revert_file_with_security_event(
+/// Revert one file and describe what was done, for whoever writes the ledger.
+pub fn handle_revert_file_with_record(
     arguments: &Value,
     scheduler: &AutoSnapshotScheduler,
     workspace_root: &Path,
     request_id: Option<Value>,
-) -> (JsonRpcResponse, Option<capsem_logger::FileEvent>) {
+) -> (JsonRpcResponse, Option<FileRevertedRecord>) {
     let raw_path = match arguments.get("path").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => {
@@ -698,24 +703,20 @@ pub fn handle_revert_file_with_security_event(
         }
     }
 
-    let file_action = if action == "restored" {
-        capsem_logger::FileAction::Restored
+    let (revert_action, size) = if action == "restored" {
+        (
+            RevertAction::Restored,
+            std::fs::symlink_metadata(&current_file).ok().map(|m| m.len()),
+        )
     } else {
-        capsem_logger::FileAction::Deleted
+        (RevertAction::Deleted, None)
     };
-    let size = if action == "restored" {
-        std::fs::symlink_metadata(&current_file).ok().map(|m| m.len())
-    } else {
-        None
-    };
-    let file_event = capsem_logger::FileEvent {
-        event_id: None,
-        timestamp: SystemTime::now(),
-        action: file_action,
-        path: format!("{} (from {})", path_str, cp_str_owned),
+    let record = FileRevertedRecord {
+        timestamp_unix_ms: super::builtin_ledger::now_unix_ms(),
+        path: path_str.clone(),
+        checkpoint: cp_str_owned.clone(),
+        action: revert_action,
         size,
-        trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
-        credential_ref: None,
     };
 
     (
@@ -730,7 +731,7 @@ pub fn handle_revert_file_with_security_event(
                 }).to_string()}]
             }),
         ),
-        Some(file_event),
+        Some(record),
     )
 }
 

@@ -14,6 +14,7 @@ from contextlib import closing, contextmanager, suppress
 from pathlib import Path
 
 import pytest
+from helpers.body_archive import session_archive
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -24,7 +25,12 @@ from helpers.constants import (
 )
 from helpers.mcp import content_text, kill_mcp_proc
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
+from helpers.service import (
+    ServiceInstance,
+    vm_name,
+    vm_session_db_path,
+    wait_exec_ready,
+)
 from log_streams import read_log_stream
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -465,8 +471,8 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 security_rows = _rows(
                     conn,
                     """
-                    SELECT event_type, rule_id, rule_action, detection_level,
-                           event_json, rule_json, trace_id
+                    SELECT event_id, event_type, rule_id, rule_action, detection_level,
+                           rule_json, trace_id
                     FROM security_rule_events
                     WHERE event_id = ?
                     ORDER BY id
@@ -481,9 +487,10 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                     row["detection_level"] in {"none", "informational"}
                     for row in security_rows
                 )
+                archive = session_archive(conn)
                 for row in security_rows:
                     assert row["trace_id"] == tool_row["trace_id"]
-                    event = json.loads(row["event_json"])
+                    event = archive.security_payload(row["event_id"])
                     rule = json.loads(row["rule_json"])
                     assert event["event_type"] == "mcp.tool_call"
                     assert event["mcp"]["server_name"] == "local"

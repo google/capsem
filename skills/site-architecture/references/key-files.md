@@ -21,7 +21,7 @@
 - `crates/capsem-core/src/vm/config.rs` -- VmConfig builder (VirtioFsShare, block devices, validation)
 - `crates/capsem-core/src/vm/serial.rs` -- serial console pipe setup (boot logs)
 - `crates/capsem-core/src/vm/vsock.rs` -- vsock manager, control messages, coalescing buffer
-- `crates/capsem-core/src/fs_monitor.rs` -- host-side FSEvents file monitor
+- `crates/capsem-core/src/fs_monitor.rs` -- host-side workspace monitor: its own walkdir scan loop (FSEvents misses VirtioFS writes), following no symlinks, on a cadence derived from the scan's own cost
 - `crates/capsem-core/src/auto_snapshot.rs` -- rolling auto-snapshot scheduler (APFS clonefile ring buffer)
 
 ## Gateway

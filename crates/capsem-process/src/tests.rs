@@ -464,3 +464,35 @@ fn mcp_aggregator_resolver_supports_cargo_test_deps_layout() {
     let resolved = resolve_mcp_aggregator_binary(&deps.join("capsem-process-test")).unwrap();
     assert_eq!(resolved, aggregator);
 }
+
+#[test]
+fn retention_days_is_absent_for_an_ephemeral_session() {
+    let base = [
+        "capsem-process",
+        "--id",
+        "vm",
+        "--assets-dir",
+        "/a",
+        "--rootfs",
+        "/r",
+        "--session-dir",
+        "/s",
+        "--active-profile",
+        "/profiles/code",
+        "--expected-kernel-hash",
+        "aa",
+        "--expected-initrd-hash",
+        "bb",
+        "--expected-rootfs-hash",
+        "cc",
+        "--uds-path",
+        "/tmp/vm.sock",
+    ];
+    assert_eq!(
+        Args::try_parse_from(base).unwrap().retention_days,
+        None,
+        "an ephemeral session is deleted whole; trimming its archive first is work for nobody"
+    );
+    let persistent: Vec<&str> = base.iter().copied().chain(["--retention-days", "7"]).collect();
+    assert_eq!(Args::try_parse_from(persistent).unwrap().retention_days, Some(7));
+}

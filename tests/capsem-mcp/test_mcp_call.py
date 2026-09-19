@@ -6,6 +6,7 @@ import time
 import uuid
 
 import pytest
+from helpers.body_archive import SessionArchive
 from helpers.mcp import content_text
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import vm_session_db_path
@@ -18,8 +19,7 @@ def _json_tool_result(result):
     return json.loads(content_text(result))
 
 
-def _ledger_rows(service_uds_path, vm_name, sql, params=()):
-    """Read the isolated test session ledger directly, not through product routes."""
+def _session_db_path(service_uds_path, vm_name):
     client = UdsHttpClient(service_uds_path)
     deadline = time.monotonic() + 10
     db_path = None
@@ -31,6 +31,12 @@ def _ledger_rows(service_uds_path, vm_name, sql, params=()):
             db_path = None
         time.sleep(0.1)
     assert db_path is not None, f"session ledger missing for {vm_name}"
+    return db_path
+
+
+def _ledger_rows(service_uds_path, vm_name, sql, params=()):
+    """Read the isolated test session ledger directly, not through product routes."""
+    db_path = _session_db_path(service_uds_path, vm_name)
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         conn.row_factory = sqlite3.Row
@@ -165,8 +171,8 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(capsem_service, shared_v
             capsem_service,
             vm_name,
             """
-            SELECT event_type, rule_id, rule_action, detection_level,
-                   event_json, rule_json
+            SELECT event_id, event_type, rule_id, rule_action, detection_level,
+                   rule_json
             FROM security_rule_events
             WHERE event_id = ?
             ORDER BY id
@@ -178,13 +184,16 @@ def test_mcp_call_builtin_http_headers_pays_full_ledger(capsem_service, shared_v
         assert any(row["rule_id"] == "profiles.rules.default_mcp" for row in security_rows)
         assert {row["rule_action"] for row in security_rows} <= {"allow", "ask"}
         assert all(row["detection_level"] in {"none", "informational"} for row in security_rows)
-        for row in security_rows:
-            event = json.loads(row["event_json"])
-            rule = json.loads(row["rule_json"])
-            assert event["event_type"] == "mcp.tool_call"
-            assert event["mcp"]["server_name"] == "local"
-            assert event["mcp"]["tool_call_name"] in {"http_headers", "local__http_headers"}
-            assert rule["name"]
+        # The matched event's payload is archive-backed, not a column, and
+        # one reader serves the whole page.
+        with SessionArchive(_session_db_path(capsem_service, vm_name)) as archive:
+            for row in security_rows:
+                event = archive.security_payload(row["event_id"])
+                rule = json.loads(row["rule_json"])
+                assert event["event_type"] == "mcp.tool_call"
+                assert event["mcp"]["server_name"] == "local"
+                assert event["mcp"]["tool_call_name"] in {"http_headers", "local__http_headers"}
+                assert rule["name"]
     finally:
         stop_process(mock_proc)
 

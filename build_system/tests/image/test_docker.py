@@ -245,7 +245,6 @@ def _profile_guest_config(tmp_path: Path, profile_id: str):
                 "max_sessions = 100",
                 "min_content_sessions = 25",
                 "max_disk_gb = 100",
-                "terminated_retention_days = 365",
                 "",
             ]
         )

@@ -117,7 +117,7 @@ async fn integration_fetch_http_local_fixture() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "fetch should succeed");
@@ -142,7 +142,7 @@ async fn integration_grep_http_local_fixture_finds_matches() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "grep should succeed");
@@ -172,7 +172,7 @@ async fn integration_grep_http_blocked_domain() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp), "blocked domain must return isError");
@@ -195,7 +195,7 @@ async fn integration_http_headers_local_fixture() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "http_headers should succeed");
@@ -219,7 +219,7 @@ async fn integration_fetch_http_blocked_domain() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp), "blocked domain must return isError");
@@ -241,7 +241,7 @@ async fn integration_http_headers_blocked_domain() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp), "blocked domain must return isError");
@@ -496,7 +496,7 @@ async fn integration_fetch_http_local_about() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "fetch should succeed");
@@ -532,7 +532,7 @@ async fn integration_fetch_http_local_about_content_mode() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "fetch content should succeed");
@@ -555,7 +555,7 @@ async fn integration_fetch_http_local_about_raw() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "fetch raw should succeed");
@@ -579,7 +579,7 @@ async fn integration_grep_http_local_about() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "grep should succeed");
@@ -600,7 +600,7 @@ async fn integration_fetch_http_local_about_pagination() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "fetch should succeed");
@@ -623,7 +623,7 @@ async fn integration_http_headers_local_about() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "http_headers should succeed");
@@ -655,7 +655,7 @@ async fn integration_fetch_http_local_wiki_turing() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "fetch should succeed");
@@ -678,7 +678,7 @@ async fn integration_grep_http_local_wiki_rust_finds_mozilla() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "grep should succeed");
@@ -701,7 +701,7 @@ async fn integration_fetch_http_local_wiki_unicode_multibyte() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "fetch should succeed (no panic from multi-byte)");

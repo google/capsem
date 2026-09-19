@@ -13,6 +13,7 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 | Crate | Role | CI macOS | CI Linux | Fast source | Full |
 |-------|------|:--------:|:--------:|:-----------:|:----:|
 | `capsem-foundation` | Host primitives | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-archive` | Session body archive | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-assets` | Asset lifecycle | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-config` | Config contracts | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-credentials` | Credential contracts/store | Yes | Compile/no-run | Clippy | Yes |
