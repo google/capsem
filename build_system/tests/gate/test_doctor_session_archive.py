@@ -145,6 +145,7 @@ def test_a_flipped_byte_in_a_later_segment_fails_only_the_bodies_that_need_it(le
     archive.write_bytes(bytes(data))
     found = _findings(ledger, verify=True)
     assert found.problems, "a damaged segment must fail its reads"
+    assert found.verified is not None
     assert 0 < found.verified < found.bodies, "bodies wholly before the damage still read"
 
 
