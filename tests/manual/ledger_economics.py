@@ -30,7 +30,8 @@ Usage (build first, then bound the run so no VM leaks):
     python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 2700 \
         -- uv run --project build_system --frozen python tests/manual/ledger_economics.py
 
-Env: CAPSEM_ECON_MODEL (default "gemma4"), CAPSEM_ECON_MINUTES (default 30).
+Env: CAPSEM_ECON_MODEL (default "gemma4"), CAPSEM_ECON_MINUTES (default 30),
+CAPSEM_ECON_KEEP_DIR (copy the ledger files there before teardown, for offline replay).
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ import contextlib
 import itertools
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -63,6 +65,7 @@ os.environ.setdefault("CAPSEM_TRAY_HEADLESS", "1")
 MODEL = os.environ.get("CAPSEM_ECON_MODEL", "gemma4")
 MINUTES = int(os.environ.get("CAPSEM_ECON_MINUTES", "30"))
 SAMPLE_EVERY_S = 300
+KEEP_DIR = os.environ.get("CAPSEM_ECON_KEEP_DIR")
 SITES = [
     "https://en.wikipedia.org/wiki/Special:Random",
     "https://news.ycombinator.com/",
@@ -159,7 +162,7 @@ LEDGER_SQL = """SELECT
     (SELECT COUNT(*) FROM model_calls) AS models,
     (SELECT COUNT(*) FROM body_blocks) AS blocks,
     (SELECT COALESCE(SUM(raw_len), 0) FROM body_blocks) AS raw,
-    (SELECT COALESCE(SUM(comp_len), 0) FROM body_blocks) AS comp,
+    (SELECT COALESCE(SUM(disk_len), 0) FROM body_blocks) AS comp,
     (SELECT COALESCE(SUM(original_bytes), 0) FROM event_body_blobs) AS original,
     (SELECT COALESCE(SUM(stored_bytes), 0) FROM event_body_blobs) AS stored"""
 
@@ -177,6 +180,17 @@ def sample(session_dir: Path, vm_id: str, service_pid: int) -> dict:
         "service_rss": rss_kb([str(service_pid)]),
         "writers": writers_of(bodies),
     }
+
+
+def keep_ledger(session_dir: Path) -> None:
+    """Copy the run's ledger out of the temp home, which teardown deletes."""
+    assert KEEP_DIR
+    dest = Path(KEEP_DIR)
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in ("session.db", "session.db-wal", "session.bodies"):
+        if (session_dir / name).exists():
+            shutil.copy2(session_dir / name, dest / name)
+    print(f"  kept the ledger in {dest}")
 
 
 def _disk(snapshot: dict) -> int:
@@ -242,6 +256,7 @@ def main() -> int:
     assert service.proc is not None, "start() returned without a service process"
     service_pid, client = service.proc.pid, service.client()
     booted, failures, samples = [], [], []
+    session_dir = None
     try:
         with registry(service.tmp_dir) as (reference, certificate, _requests):
             print(f"\n== boot a sandboxed VM (profile {CODE_PROFILE_ID}) ==")
@@ -286,6 +301,9 @@ def main() -> int:
                 )
             judge(samples, failures)
     finally:
+        # Before the VM is deleted: the ledger lives under the temp home.
+        if KEEP_DIR and session_dir is not None:
+            keep_ledger(session_dir)
         for vm_id in booted:
             with contextlib.suppress(Exception):
                 client.delete(f"/vms/{vm_id}/delete")
