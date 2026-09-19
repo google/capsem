@@ -28,5 +28,15 @@ class LockConfig(Strict):
         raise ValueError("machine lock paths must be absolute or user-home-relative")
 
 
+class BoundedLeaseConfig(Strict):
+    """Which direct commands are machine work, and so take the gate's lock."""
+
+    programs: tuple[str, ...]
+    wrappers: tuple[str, ...]
+    exempt_subcommands: tuple[str, ...]
+    wait_exit_code: int
+
+
 class LocksConfig(Strict):
     gate: LockConfig
+    bounded: BoundedLeaseConfig

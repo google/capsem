@@ -216,6 +216,16 @@ target = "build_system/tests/gate/test_gate_linuxrust_hermetic.py"
 
 [[owned]]
 owner = "gate"
+source = "tests/test_bounded_machine_lease.py"
+target = "build_system/tests/gate/test_bounded_machine_lease.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_stale_process_reaper.py"
+target = "build_system/tests/gate/test_stale_process_reaper.py"
+
+[[owned]]
+owner = "gate"
 source = "tests/test_gate_locks.py"
 target = "build_system/tests/gate/test_gate_locks.py"
 

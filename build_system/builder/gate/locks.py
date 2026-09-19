@@ -32,6 +32,7 @@ import json
 import os
 import socket
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from .config import GateConfig
@@ -48,15 +49,30 @@ class ExclusiveLock(Resource, name="gate-lock"):
     than leaving the machine locked by a process that no longer exists.
     """
 
-    def __init__(self, settings: LockConfig, *, purpose: str) -> None:
+    def __init__(
+        self,
+        settings: LockConfig,
+        *,
+        purpose: str,
+        announce: Callable[[str], None] = print,
+    ) -> None:
         self._settings = settings
         self._purpose = purpose
+        # A wrapped command's stdout belongs to the command: a queue notice
+        # printed there ends up parsed as cargo's JSON.
+        self._announce = announce
         self.path = Path(settings.path)
         self._record = Path(settings.holder_record)
         self._fd: int | None = None
 
     @classmethod
-    def for_gate(cls, config: GateConfig, *, purpose: str) -> ExclusiveLock:
+    def for_gate(
+        cls,
+        config: GateConfig,
+        *,
+        purpose: str,
+        announce: Callable[[str], None] = print,
+    ) -> ExclusiveLock:
         """The one gate lock, resolved against the user rather than a tree.
 
         Worktrees and detached qualification prefixes share the machine state
@@ -72,6 +88,7 @@ class ExclusiveLock(Resource, name="gate-lock"):
                 }
             ),
             purpose=purpose,
+            announce=announce,
         )
 
     def environment(self) -> dict[str, str]:
@@ -139,7 +156,7 @@ class ExclusiveLock(Resource, name="gate-lock"):
             except BlockingIOError:
                 waited = time.monotonic() - started
                 if not reported and waited >= settings.report_after_seconds:
-                    print(f"waiting: {self._holder()}")
+                    self._announce(f"waiting: {self._holder()}")
                     reported = True
                 if time.monotonic() >= deadline:
                     raise GateError(

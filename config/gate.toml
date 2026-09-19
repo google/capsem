@@ -1238,6 +1238,28 @@ poll_interval_seconds = 0.25
 # stranger holds, and the child dutifully waits out the two hours.
 run_marker = "CAPSEM_GATE_RUN"
 
+[locks.bounded]
+# Direct commands that are machine work take the lock above, through the
+# bounded-command wrapper every direct command already has to use.
+#
+# The lock used to coordinate `capsem-gate` processes and nothing else, while
+# that wrapper routed every worktree's cargo into the one shared target
+# directory and onto every core. Two sessions deadlocked on an incremental
+# session lock at 0% CPU for six minutes and blamed sccache; a compile made
+# another session's services miss their 15-second start deadlines; and agents
+# coordinated by chat -- "starting VMs", "VMs done" -- with one of them paused
+# for ninety minutes of a day. A queue the kernel owns replaces all three:
+# it names its holder, and it is released when the holder dies.
+programs = ["cargo"]
+# Stepped over when finding the program, with any `NAME=value` that follows.
+wrappers = ["env", "caffeinate", "nice", "time"]
+# Neither compile nor write the target directory, so queueing them behind a
+# forty-minute VM run buys nothing.
+exempt_subcommands = ["fmt", "metadata", "tree", "locate-project", "--version", "-V", "--list", "help"]
+# EX_TEMPFAIL: the wait ran out, which is not the command's own failure and
+# not the wrapper's timeout (124) either.
+wait_exit_code = 75
+
 # ---------------------------------------------------------------------------
 # The tools a gate needs before it can start
 # ---------------------------------------------------------------------------
@@ -1251,6 +1273,15 @@ compiler_cache_command = "sccache"
 compiler_cache_socket_name = "sccache.sock"
 compiler_cache_client_side = true
 compiler_cache_idle_timeout_seconds = 0
+# Run at the start of every command that holds the machine, before its own
+# server starts. The end-of-run orphan check forgives whatever predates the
+# run, so a server that outlived a killed run was forgiven by every run after:
+# eleven accumulated, the oldest eight days old, nine on one socket path of
+# which at most one was reachable. Nobody should have to clean that by hand.
+# A module, not a launcher script: the package is installed in the project
+# environment, and a launcher would only add import-order suppressions.
+reaper_module = "capsem_builder.gate.tools.ci.reap_stale_processes"
+reaper_grace_seconds = 5.0
 node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release_site"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the
