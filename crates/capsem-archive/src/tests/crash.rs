@@ -4,8 +4,8 @@
 //! reopened on the torn file starts after the tear and works.
 
 use super::{archive, file_len, XorShift};
-use crate::v2::format::BodyRef;
-use crate::v2::{BodyLogReader, BodyLogWriter};
+use crate::format::BodyRef;
+use crate::{BodyLogReader, BodyLogWriter};
 
 /// Bodies of a small session with a flush after each, and the file length
 /// after each flush: the committed extent at that moment.

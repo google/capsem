@@ -11,8 +11,8 @@
 use std::sync::mpsc;
 
 use super::{archive, XorShift};
-use crate::v2::format::BodyRef;
-use crate::v2::{BodyLogReader, BodyLogWriter};
+use crate::format::BodyRef;
+use crate::{BodyLogReader, BodyLogWriter};
 
 #[test]
 fn a_reader_beside_the_writer_continues_its_cursor_one_segment_per_commit() {

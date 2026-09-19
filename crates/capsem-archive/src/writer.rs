@@ -1,138 +1,99 @@
-//! Stage bodies into a pending block; seal and append when full or asked.
+//! Stage bodies into an open block; flush a segment when asked, close the
+//! block when it is full.
 //!
-//! Sealing is two-phase so the owner can deflate off its own thread:
-//! `take_pending` hands out the raw block, `PendingBlock::encode` deflates
-//! it anywhere, `append` writes the encoded bytes back in order. `seal` is
-//! the three in sequence for owners that do not care.
+//! A block is one deflate stream. `stage` feeds a body to the compressor and
+//! hands back a reference naming the block's real offset; `flush_segment`
+//! sync-flushes the compressor and appends everything it produced since the
+//! last flush, behind a segment header, in one write. The block stays open,
+//! so the next segment compresses against the same dictionary. `close_block`
+//! finishes the stream with a FINAL segment.
 //!
-//! Two invariants survive that detour. Every block carries the sequence
-//! number it was taken with, and `append` refuses anything but the next one,
-//! so a block that came back late -- or came from a different writer -- is
-//! rejected instead of landing at an offset its index rows do not name. And
-//! a write that fails part-way through a block poisons the writer: the file's
-//! end is no longer provably where it was, so every later offset would be a
-//! guess, and guessing is how an index comes to point at the wrong bytes.
+//! Nothing a reader can be told about is ever rewritten: a segment is
+//! appended once, whole, and the logger commits the index rows that name it
+//! only after the segment is on disk. A write that fails part-way through a
+//! segment poisons the writer: the file's end is no longer provably where it
+//! was, so every later offset would be a guess, and guessing is how an index
+//! comes to point at the wrong bytes.
+//!
+//! A reopened writer never continues a block it finds in the file. It has no
+//! compressor state for it, and the bytes past the last committed segment may
+//! be a torn tail. It starts a new block at the end of the file instead; the
+//! old block stays readable up to whatever its index committed.
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use std::os::unix::fs::PermissionsExt;
-
 use capsem_foundation::unix::fs as unix_fs;
+use flate2::{Compress, Compression, FlushCompress, Status};
 
-use crate::format::{self, BodyRef, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES, TARGET_BLOCK_BYTES};
+use super::format::{
+    self, BodyRef, SegmentHeader, BLOCK_HEADER_BYTES, CODEC_DEFLATE, DEFLATE_LEVEL, FILE_HEADER_BYTES,
+    MAX_BLOCK_RAW_BYTES, SEGMENT_HEADER_BYTES, TARGET_BLOCK_BYTES,
+};
 use crate::{ArchiveError, Result};
 
-/// One block's raw bytes, detached from the writer so they can be deflated
-/// anywhere. `Send`, deliberately: compression is the expensive half and does
-/// not belong on the thread that owns the SQLite connection.
-pub struct PendingBlock {
-    seq: u64,
-    raw: Vec<u8>,
-}
-
-/// A deflated block, ready to be appended. Holds the complete on-disk bytes:
-/// block header followed by the compressed payload.
-pub struct EncodedBlock {
-    seq: u64,
-    raw_len: u32,
-    bytes: Vec<u8>,
-}
-
-/// Both halves of a two-phase seal cross a thread boundary by design, so
-/// losing `Send` must be a compile error rather than a discovery. A const
-/// block rather than a runtime closure: the check belongs to compilation, and
-/// writing it as a function body would leave it reading as an untested line
-/// forever after.
-const _: () = {
-    const fn assert_send<T: Send>() {}
-    assert_send::<PendingBlock>();
-    assert_send::<EncodedBlock>();
-};
-
-/// Where a block landed. The owner stamps `block_offset` into the index rows
-/// of every body the block holds.
+/// What one flush or close put on disk. The owner records `raw_len` and
+/// `disk_len` against `block_offset` in the same transaction as the index
+/// rows the segment covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SealedBlock {
+pub struct SegmentWritten {
     pub block_offset: u64,
+    /// Raw bytes of the block now on disk, across every segment so far.
     pub raw_len: u32,
-    pub comp_len: u32,
+    /// Bytes the block occupies in the file: its header and every segment.
+    pub disk_len: u64,
+    /// The segment was FINAL: the block is closed and nothing more joins it.
+    pub closed: bool,
+}
+
+/// The block being written: one compressor, and the segment in progress.
+struct OpenBlock {
+    offset: u64,
+    compressor: Compress,
+    /// Raw bytes staged into the block, flushed or not.
+    raw_len: u32,
+    /// Raw bytes already inside a written segment.
+    flushed_raw: u32,
+    /// Bytes of the block already in the file. Zero until the first segment,
+    /// which carries the block header with it.
+    disk_len: u64,
+    /// blake3 of the raw bytes of the segment in progress.
+    hasher: blake3::Hasher,
+    /// Compressed bytes of the segment in progress.
+    out: Vec<u8>,
 }
 
 /// Appends blocks to one `session.bodies`.
 ///
-/// Dropping a writer with a pending block discards those bodies: they were
+/// Dropping a writer with staged, unflushed bodies discards them: they were
 /// never written, and their index rows were never committed, so the ledger
-/// stays consistent -- but the bodies are gone. Owners seal before dropping,
-/// and a debug build asserts they did.
+/// stays consistent -- but the bodies are gone. Owners flush before dropping,
+/// and a debug build asserts they did. An open block whose every body was
+/// flushed may be dropped: it is readable to the extent that was written.
 pub struct BodyLogWriter {
     file: File,
     end: u64,
-    pending: Vec<u8>,
-    /// Sequence number the next `take_pending` hands out.
-    next_block_seq: u64,
-    /// Sequence number `append` will accept next.
-    next_append_seq: u64,
-    /// Set by a write that failed part-way through a block. See
+    block: Option<OpenBlock>,
+    /// Set by a write that failed part-way through. See
     /// [`ArchiveError::Poisoned`].
     poisoned: bool,
-    /// Write this many bytes of the next block and then fail, producing a
+    /// Write this many bytes of the next segment and then fail, producing a
     /// genuine torn tail on the real file rather than a simulated one.
     #[cfg(test)]
     fail_write_after: Option<usize>,
 }
 
-impl PendingBlock {
-    #[must_use]
-    pub fn encode(self) -> EncodedBlock {
-        // The writer refuses a body that would take the pending block past
-        // MAX_BLOCK_RAW_BYTES, so this length is bounded well inside a u32.
-        let raw_len = u32::try_from(self.raw.len()).expect("a pending block fits a u32");
-        EncodedBlock {
-            seq: self.seq,
-            raw_len,
-            bytes: format::encode_block(&self.raw),
-        }
-    }
-
-    #[must_use]
-    pub fn raw_len(&self) -> usize {
-        self.raw.len()
-    }
-
-    /// The order this block must be appended in.
-    #[must_use]
-    pub fn seq(&self) -> u64 {
-        self.seq
-    }
-}
-
-impl EncodedBlock {
-    #[must_use]
-    pub fn comp_len(&self) -> usize {
-        self.bytes.len() - BLOCK_HEADER_BYTES
-    }
-
-    /// The order this block must be appended in.
-    #[must_use]
-    pub fn seq(&self) -> u64 {
-        self.seq
-    }
-}
-
 impl Drop for BodyLogWriter {
     fn drop(&mut self) {
-        // Not while unwinding: a panic that happens to leave a block pending
-        // would abort the process instead of surfacing its own cause. And not
-        // when poisoned: `take_pending` hands out nothing once the file's end
-        // is in doubt, so sealing first is not something the owner could have
-        // done. Asking for it would make dropping a poisoned writer -- the
-        // correct response to poisoning -- the assertion's only caller.
+        // Not while unwinding, and not when poisoned: a poisoned writer can
+        // place nothing, so flushing first is not something the owner could
+        // have done.
         debug_assert!(
-            std::thread::panicking() || self.poisoned || self.pending.is_empty(),
-            "BodyLogWriter dropped with {} bytes of unsealed bodies; seal before dropping",
-            self.pending.len()
+            std::thread::panicking() || self.poisoned || self.pending_bytes() == 0,
+            "BodyLogWriter dropped with {} bytes of unflushed bodies; flush before dropping",
+            self.pending_bytes()
         );
     }
 }
@@ -141,28 +102,16 @@ impl BodyLogWriter {
     /// Create or reopen `session.bodies`.
     ///
     /// Creates the file with mode 0o600, refuses a symlink, and opens without
-    /// following links through `capsem-foundation::unix::fs`: the archive
-    /// holds request and response bodies, which are the most sensitive bytes
-    /// a session produces.
+    /// following links: the archive holds request and response bodies, the
+    /// most sensitive bytes a session produces. A reopened file has its mode
+    /// set back to 0o600 through the open handle, so a widened mode does not
+    /// keep serving group and other for the rest of the session.
     ///
-    /// A reopened file has its mode set back to 0o600 through the open handle
-    /// rather than the path. A file created before this rule, or one whose
-    /// mode was widened afterwards, would otherwise keep serving group and
-    /// other a session's bodies for the rest of its life; the mode is a
-    /// property this writer maintains, not one it checks once at creation.
-    ///
-    /// That mode repair is the one way this can refuse a file it could
-    /// otherwise use: an `fchmod` the filesystem does not permit fails the
-    /// open, and the logger then warns and stores no bodies for the session
-    /// rather than writing to a file whose permissions it cannot vouch for.
-    ///
-    /// A reopened file is validated and appended after its current end. A
-    /// torn tail from an earlier crash is left exactly where it is, because
-    /// no SQLite index row points at it: unreachable bytes, never corruption.
+    /// A reopened file must carry this version's header. It is appended after
+    /// its current end, torn tail included: no index row points there.
     pub fn open(path: &Path) -> Result<Self> {
         refuse_symlink(path)?;
         let mut file = unix_fs::open_private_append_no_follow(path)?;
-
         let end = file.metadata()?.len();
         if end == 0 {
             file.write_all(&format::encode_file_header())?;
@@ -180,35 +129,30 @@ impl BodyLogWriter {
         Self {
             file,
             end,
-            pending: Vec::new(),
-            next_block_seq: 0,
-            next_append_seq: 0,
+            block: None,
             poisoned: false,
             #[cfg(test)]
             fail_write_after: None,
         }
     }
 
-    /// Append `body` to the pending block.
+    /// Feed `body` to the open block, opening one at the end of the file if
+    /// none is open, and return where it will be once flushed.
     ///
-    /// The returned reference has a placeholder `block_offset` of 0; the
-    /// caller sets it from the next `SealedBlock`, which the logger does
-    /// inside one SQLite transaction so no index row is ever visible with a
-    /// placeholder in it.
+    /// The reference names the block's real offset. It is not readable until
+    /// the segment holding it is flushed and synced, which is why the owner
+    /// holds the index row until then.
     ///
     /// # Errors
     ///
     /// - [`ArchiveError::BodyTooLarge`] when the body alone exceeds
-    ///   `MAX_BLOCK_RAW_BYTES`. No block could hold it, so sealing does not
-    ///   help and the owner must truncate or drop it.
-    /// - [`ArchiveError::BlockFull`] when the body would take the *pending*
-    ///   block past that ceiling. The contract is seal-and-retry: call
-    ///   `seal` (or `take_pending`/`append`) and stage the same body again,
-    ///   which is then guaranteed to fit an empty block.
+    ///   `MAX_BLOCK_RAW_BYTES`. No block could hold it.
+    /// - [`ArchiveError::BlockFull`] when it would take the open block past
+    ///   that ceiling. Close the block and stage it again; it then fits.
     /// - [`ArchiveError::Poisoned`] after a partial write.
     ///
-    /// Nothing here panics: an oversized body arrives from the network, and a
-    /// panic on the writer thread would take the whole session ledger down.
+    /// Nothing here panics: a body arrives from the network, and a panic on
+    /// the writer thread would take the whole session ledger down.
     pub fn stage(&mut self, body: &[u8]) -> Result<BodyRef> {
         self.check_usable()?;
         if body.len() > MAX_BLOCK_RAW_BYTES {
@@ -217,15 +161,36 @@ impl BodyLogWriter {
                 max: MAX_BLOCK_RAW_BYTES,
             });
         }
-        if self.pending.len() + body.len() > MAX_BLOCK_RAW_BYTES {
+        if self
+            .block
+            .as_ref()
+            .is_some_and(|block| block.raw_len as usize + body.len() > MAX_BLOCK_RAW_BYTES)
+        {
             return Err(ArchiveError::BlockFull);
         }
-        // Both lengths are now bounded by MAX_BLOCK_RAW_BYTES, which is 16 MiB.
-        let offset = u32::try_from(self.pending.len()).expect("bounded by MAX_BLOCK_RAW_BYTES");
+        let end = self.end;
+        let block = self.block.get_or_insert_with(|| OpenBlock {
+            offset: end,
+            compressor: Compress::new(Compression::new(DEFLATE_LEVEL), false),
+            raw_len: 0,
+            flushed_raw: 0,
+            disk_len: 0,
+            hasher: blake3::Hasher::new(),
+            out: Vec::new(),
+        });
+        if let Err(error) = deflate_into(&mut block.compressor, body, &mut block.out, FlushCompress::None) {
+            // The compressor may have taken part of the body; nothing it
+            // produces from here on can be vouched for.
+            self.poisoned = true;
+            return Err(error);
+        }
+        block.hasher.update(body);
+        // Both bounded by MAX_BLOCK_RAW_BYTES (16 MiB) above.
+        let offset = block.raw_len;
         let len = u32::try_from(body.len()).expect("bounded by MAX_BLOCK_RAW_BYTES");
-        self.pending.extend_from_slice(body);
+        block.raw_len += len;
         Ok(BodyRef {
-            block_offset: 0,
+            block_offset: block.offset,
             offset,
             len,
         })
@@ -238,86 +203,125 @@ impl BodyLogWriter {
         Ok(())
     }
 
+    /// Raw bytes staged but not yet inside a written segment.
     #[must_use]
     pub fn pending_bytes(&self) -> usize {
-        self.pending.len()
+        self.block
+            .as_ref()
+            .map_or(0, |block| (block.raw_len - block.flushed_raw) as usize)
     }
 
-    /// True once the pending block has reached its target size.
+    /// Raw bytes in the open block, flushed or not; `None` when no block is
+    /// open.
     #[must_use]
-    pub fn wants_seal(&self) -> bool {
-        self.pending.len() >= TARGET_BLOCK_BYTES
+    pub fn open_block_raw_len(&self) -> Option<usize> {
+        self.block.as_ref().map(|block| block.raw_len as usize)
     }
 
-    /// Take the pending raw block out (`None` when empty, or when the writer
-    /// is poisoned); the writer keeps accepting `stage` calls into a fresh
-    /// block meanwhile. Offsets handed out by `stage` before this call belong
-    /// to the taken block, and so does the sequence number it carries.
-    pub fn take_pending(&mut self) -> Option<PendingBlock> {
-        if self.poisoned || self.pending.is_empty() {
-            return None;
-        }
-        let seq = self.next_block_seq;
-        self.next_block_seq += 1;
-        Some(PendingBlock {
-            seq,
-            raw: std::mem::take(&mut self.pending),
-        })
+    /// True once the open block has reached its target size.
+    #[must_use]
+    pub fn wants_close(&self) -> bool {
+        self.open_block_raw_len()
+            .is_some_and(|raw_len| raw_len >= TARGET_BLOCK_BYTES)
     }
 
-    /// Append an encoded block, which must be the next one this writer handed
-    /// out.
+    /// Sync-flush the open block and append what it produced as one segment.
+    /// `None` when nothing was staged since the last flush: an empty segment
+    /// is never written.
     ///
     /// # Errors
     ///
-    /// - [`ArchiveError::OutOfOrderBlock`] when the block's sequence number is
-    ///   not the expected one. Appending out of order would put a block at an
-    ///   offset the other block's index rows already claim, so two-phase
-    ///   sealing is checked rather than trusted -- this also rejects a block
-    ///   encoded by a different writer, whose sequence space is its own.
-    /// - [`ArchiveError::Poisoned`] after an earlier partial write.
-    /// - [`ArchiveError::Io`] from the write itself, which poisons the
-    ///   writer: a block that reached the file in part leaves the end
-    ///   somewhere this writer cannot compute, and `end` is deliberately not
-    ///   advanced.
-    pub fn append(&mut self, block: EncodedBlock) -> Result<SealedBlock> {
+    /// [`ArchiveError::Poisoned`], or [`ArchiveError::Io`] from the write,
+    /// which poisons the writer.
+    pub fn flush_segment(&mut self) -> Result<Option<SegmentWritten>> {
         self.check_usable()?;
-        if block.seq != self.next_append_seq {
-            return Err(ArchiveError::OutOfOrderBlock {
-                expected: self.next_append_seq,
-                got: block.seq,
-            });
+        if self.pending_bytes() == 0 {
+            return Ok(None);
         }
-        let block_offset = self.end;
-        if let Err(error) = self.write_block_bytes(&block.bytes) {
+        self.write_segment(false).map(Some)
+    }
+
+    /// End the open block's stream with a FINAL segment, carrying whatever
+    /// was staged since the last flush. `None` when no block is open.
+    ///
+    /// # Errors
+    ///
+    /// As [`BodyLogWriter::flush_segment`].
+    pub fn close_block(&mut self) -> Result<Option<SegmentWritten>> {
+        self.check_usable()?;
+        if self.block.is_none() {
+            return Ok(None);
+        }
+        let written = self.write_segment(true)?;
+        self.block = None;
+        Ok(Some(written))
+    }
+
+    fn write_segment(&mut self, last: bool) -> Result<SegmentWritten> {
+        #[cfg(test)]
+        let fail_after = self.fail_write_after.take();
+        #[cfg(not(test))]
+        let fail_after = None;
+        let block = self.block.as_mut().expect("callers check a block is open");
+        let flush = if last {
+            FlushCompress::Finish
+        } else {
+            FlushCompress::Sync
+        };
+        if let Err(error) = deflate_into(&mut block.compressor, &[], &mut block.out, flush) {
+            // The compressor's state is unknown; nothing it produces next can
+            // be vouched for.
+            self.poisoned = true;
+            return Err(error);
+        }
+        let comp_len = u32::try_from(block.out.len()).expect("a segment's compressed size fits a u32");
+        let header = format::encode_segment_header(&SegmentHeader {
+            last,
+            raw_start: block.flushed_raw,
+            raw_len: block.raw_len - block.flushed_raw,
+            comp_len,
+            hash: *block.hasher.finalize().as_bytes(),
+        });
+        let mut bytes = Vec::with_capacity(BLOCK_HEADER_BYTES + SEGMENT_HEADER_BYTES + block.out.len());
+        if block.disk_len == 0 {
+            bytes.extend_from_slice(&format::encode_block_header(CODEC_DEFLATE));
+        }
+        bytes.extend_from_slice(&header);
+        bytes.extend_from_slice(&block.out);
+        if let Err(error) = write_all(&mut self.file, &bytes, fail_after) {
             self.poisoned = true;
             return Err(ArchiveError::Io(error));
         }
-        self.end += block.bytes.len() as u64;
-        self.next_append_seq += 1;
-        Ok(SealedBlock {
-            block_offset,
+        self.end += bytes.len() as u64;
+        block.disk_len += bytes.len() as u64;
+        block.flushed_raw = block.raw_len;
+        block.hasher = blake3::Hasher::new();
+        block.out.clear();
+        Ok(SegmentWritten {
+            block_offset: block.offset,
             raw_len: block.raw_len,
-            comp_len: u32::try_from(block.comp_len()).expect("a compressed block fits a u32"),
+            disk_len: block.disk_len,
+            closed: last,
         })
     }
 
-    fn write_block_bytes(&mut self, bytes: &[u8]) -> io::Result<()> {
-        #[cfg(test)]
-        if let Some(after) = self.fail_write_after.take() {
-            // A real partial write, not a simulated one: the prefix reaches
-            // the real file, so the test that follows is reading the same
-            // torn tail a dying process would leave.
-            self.file.write_all(&bytes[..after.min(bytes.len())])?;
-            return Err(io::Error::other("injected short write"));
-        }
-        self.file.write_all(bytes)
-    }
-
-    /// Write only the first `bytes` of the next block, then fail.
+    /// Write only the first `bytes` of the next segment, then fail.
     #[cfg(test)]
     pub(crate) fn fail_next_write_after(&mut self, bytes: usize) {
         self.fail_write_after = Some(bytes);
+    }
+
+    /// Take this writer out of service on purpose, discarding whatever was
+    /// staged and not yet flushed.
+    ///
+    /// For an owner that stops archiving because of a failure of its own --
+    /// an index it could not commit, an injected fault -- rather than one this
+    /// writer reported. Those bodies had no committed row, so discarding them
+    /// is the documented cost; what this changes is that the owner says so,
+    /// rather than dropping a writer that asserts it was not dropped holding
+    /// bodies. The file is left exactly as the last written segment left it.
+    pub fn abandon(mut self) {
+        self.poisoned = true;
     }
 
     /// Whether an earlier partial write took this writer out of service.
@@ -326,51 +330,67 @@ impl BodyLogWriter {
         self.poisoned
     }
 
-    /// The file offset the next appended block will take.
+    /// The file offset the next segment will be written at.
     #[must_use]
     pub fn end(&self) -> u64 {
         self.end
     }
 
-    /// `take_pending` + `encode` + `append`. Returns `None` when nothing was
-    /// pending.
-    ///
-    /// # Errors
-    ///
-    /// [`ArchiveError::Poisoned`] after a partial write, and whatever
-    /// `append` returns otherwise.
-    pub fn seal(&mut self) -> Result<Option<SealedBlock>> {
-        self.check_usable()?;
-        match self.take_pending() {
-            None => Ok(None),
-            Some(pending) => self.append(pending.encode()).map(Some),
-        }
-    }
-
-    /// Durability barrier: the appended blocks are on the device when this
-    /// returns.
-    ///
-    /// `sync_data` rather than `sync_all`: a reader needs the bytes and the
-    /// file's length, both of which `fdatasync` flushes, and not the mtime,
-    /// which is the extra metadata write `fsync` pays for on every call.
-    ///
-    /// The owner calls this before committing the index rows that name those
-    /// blocks -- see `capsem-logger`'s `commit_index_rows`.
+    /// Durability barrier: every written segment is on the device when this
+    /// returns. `sync_data` rather than `sync_all`: a reader needs the bytes
+    /// and the length, not the mtime. The owner calls this before committing
+    /// the index rows that name those segments.
     pub fn sync(&mut self) -> Result<()> {
         self.file.sync_data()?;
         Ok(())
     }
 }
 
-/// The archive path must be the archive, not a pointer at someone else's
-/// file. Checked before the open so the refusal names the path rather than
-/// surfacing as an `ELOOP` from `O_NOFOLLOW`.
+/// One `write_all`, or -- in a test that asked for it; `None` outside tests --
+/// a real partial write
+/// of the first `fail_after` bytes followed by an error, so the torn tail a
+/// test reads is the one a dying process would leave.
+fn write_all(file: &mut File, bytes: &[u8], fail_after: Option<usize>) -> io::Result<()> {
+    if let Some(after) = fail_after {
+        file.write_all(&bytes[..after.min(bytes.len())])?;
+        return Err(io::Error::other("injected short write"));
+    }
+    file.write_all(bytes)
+}
+
+/// Run `input` through the compressor with `flush`, growing `out` until the
+/// compressor has taken all of it and emitted everything the flush owes.
+fn deflate_into(compressor: &mut Compress, input: &[u8], out: &mut Vec<u8>, flush: FlushCompress) -> Result<()> {
+    let mut consumed = 0;
+    loop {
+        // Room for the input at worst-case expansion plus the flush's own
+        // bytes, so a sync flush almost always completes in one call.
+        out.reserve((input.len() - consumed) + (input.len() - consumed) / 1000 + 64 * 1024);
+        let before = compressor.total_in();
+        let status = compressor
+            .compress_vec(&input[consumed..], out, flush)
+            .map_err(|error| ArchiveError::Io(io::Error::other(error)))?;
+        consumed += usize::try_from(compressor.total_in() - before).expect("bounded by the input");
+        let done = match flush {
+            FlushCompress::Finish => status == Status::StreamEnd,
+            // Output stopped short of the buffer's end: the flush is complete.
+            _ => consumed == input.len() && out.len() < out.capacity(),
+        };
+        if done {
+            return Ok(());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;
+
+/// Refuse a path whose last component is a symlink. The guest can shape the
+/// session directory's neighbours, never this file's name, but the archive is
+/// opened by path and must not follow a link somewhere else.
 pub(crate) fn refuse_symlink(path: &Path) -> Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(ArchiveError::Symlink(path.to_path_buf())),
         _ => Ok(()),
     }
 }
-
-#[cfg(test)]
-mod tests;

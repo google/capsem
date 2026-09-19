@@ -11,8 +11,8 @@
 use flate2::{Compress, Compression, FlushCompress};
 
 use super::{archive, file_len, XorShift};
-use crate::v2::format::{BodyRef, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES};
-use crate::v2::{BodyLogReader, BodyLogWriter};
+use crate::format::{BodyRef, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES};
+use crate::{BodyLogReader, BodyLogWriter};
 
 /// Random bodies -- text, incompressible, empty -- with random flushes and
 /// closes. After every flush, a copy of the file cut at the writer's end must

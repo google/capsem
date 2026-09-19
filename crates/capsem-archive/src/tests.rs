@@ -1,6 +1,6 @@
 //! Behaviour that spans the writer, the reader and the file between them:
 //! crash at every boundary, a reader running beside the writer, and the
-//! stream properties the format rests on. Helpers shared by every v2 test
+//! stream properties the format rests on. Helpers shared by every test
 //! module live here.
 
 use std::path::{Path, PathBuf};
@@ -66,4 +66,11 @@ impl XorShift {
         out.truncate(len);
         out
     }
+}
+
+/// A file carrying version 1's header, which this build must refuse.
+pub(crate) fn write_version_one_archive(path: &Path) {
+    let mut header = crate::format::encode_file_header();
+    header[8..10].copy_from_slice(&1u16.to_le_bytes());
+    std::fs::write(path, header).unwrap();
 }

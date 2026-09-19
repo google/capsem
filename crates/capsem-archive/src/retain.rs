@@ -1,57 +1,43 @@
 //! Retention: dropping blocks whose ledger rows have aged out.
 //!
-//! A body archive is append-only, so the only way to reclaim the bytes of an
-//! expired body is to write the file again without it. The kept blocks are
-//! copied **verbatim**, in ascending offset order, into a sibling temporary.
+//! An archive is append-only, so the only way to reclaim an expired block is
+//! to write the file again without it. Kept blocks are copied **verbatim**,
+//! in ascending offset order, into a sibling temporary: no re-deflating, so a
+//! retention pass costs I/O rather than CPU over the whole surviving archive,
+//! and every segment keeps the blake3 its writer computed.
 //!
-//! Two phases, because the caller's SQLite index has to move with the file and
-//! the two cannot commit together. `stage_retained_blocks` writes and flushes
-//! the replacement while the original is still the live archive;
-//! `commit_retained` is one `rename(2)`. The caller puts its index rows in
-//! order between them, so the moment where the index and the file could
-//! disagree is a single syscall rather than a whole transaction -- and until
-//! the rename, a caller that hits trouble can still put everything back.
+//! A block is kept to its **committed extent** -- `body_blocks.disk_len`, the
+//! bytes the index vouches for -- not to the end of whatever the file holds
+//! after it. The segment headers inside that extent are walked (not
+//! inflated) first, so an extent that does not end exactly on a segment
+//! boundary is refused rather than copied: a torn tail past a stranded
+//! block's last committed segment is dropped here, and a wrong `disk_len` is
+//! caught before it becomes a permanent part of the file.
 //!
-//! Verbatim matters twice. Re-deflating would spend CPU proportional to the
-//! whole surviving archive on every retention pass, and it would re-encode
-//! attacker-influenced bytes that were already accepted once -- the retained
-//! block keeps the blake3 the writer computed, so a reader's integrity check
-//! still proves the bytes are the bytes that were originally written.
-//!
-//! Blocks move, so their offsets move. The returned map is old offset -> new
-//! offset for every kept block; the caller is responsible for remapping the
-//! SQLite index rows that name them, in the same breath as deleting the rows
-//! of the blocks that went away. Until it does, the index points at stale
-//! offsets, which is why the caller does both under one transaction and the
-//! archive exposes no half-step between them.
-//!
-//! The original is never modified before the rename. Everything is built in
-//! the temporary, and any error -- including an abandoned staging, which drops
-//! it -- leaves the archive exactly as it was: a failed retention costs disk,
-//! never evidence.
+//! Two phases, because the caller's index has to move with the file and the
+//! two cannot commit together. `stage_retained_blocks` writes and flushes the
+//! replacement while the original is still live; `commit_retained` is one
+//! `rename(2)`. The original is never modified before the rename, and any
+//! error -- including an abandoned staging, which removes its temporary --
+//! leaves the archive exactly as it was.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use capsem_foundation::unix::fs as unix_fs;
 
-use crate::format::{self, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES};
+use super::format::{self, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, SEGMENT_HEADER_BYTES};
 use crate::writer::refuse_symlink;
 use crate::{ArchiveError, Result};
 
-/// A compacted archive, written and flushed but not yet in place.
-///
-/// The original file is untouched while this exists, and dropping it removes
-/// the replacement. Nothing is visible to a reader until `commit_retained`
-/// renames it over the original, which is why the caller can put its index in
-/// order first and still be able to walk away.
+/// A compacted archive, written and flushed but not yet in place. Dropping it
+/// removes the replacement; nothing is visible to a reader until
+/// `commit_retained` renames it over the original.
 #[derive(Debug)]
 pub struct RetainedStaging {
     destination: PathBuf,
-    /// Removes itself unless `commit_retained` renames it, including when a
-    /// panic unwinds through whoever was holding this.
     temporary: unix_fs::PrivateSibling,
     map: BTreeMap<u64, u64>,
     bytes_freed: u64,
@@ -70,39 +56,29 @@ impl RetainedStaging {
         self.bytes_freed
     }
 
-    /// Where the replacement is waiting. For tests and diagnostics; a caller
-    /// commits through `commit_retained` rather than renaming this itself.
+    /// Where the replacement is waiting, for tests and diagnostics.
     #[must_use]
     pub fn temporary_path(&self) -> &Path {
         self.temporary.path()
     }
 }
 
-/// Write a compacted copy of the archive at `path`, keeping only the blocks at
-/// the offsets in `keep`, and flush it. **The original is not modified.**
-///
-/// This is the half of retention that can fail in many ways and the half that
-/// takes time. Splitting it from the rename is what lets the caller commit its
-/// index rows while the old file is still the live one, leaving a single
-/// `rename(2)` between the two states rather than a whole transaction.
-///
-/// Offsets not present in the file are an error, not a silent skip: the
-/// caller's keep set comes from the index, and an offset the index names but
-/// the file does not have means the two have already diverged.
+/// Write a compacted copy of the archive at `path` holding only the blocks in
+/// `keep`, each `(block_offset, disk_len)`, and flush it. **The original is
+/// not modified.**
 ///
 /// # Errors
 ///
-/// - [`ArchiveError::Symlink`] when something replaced the archive with a
-///   link at the path.
-/// - [`ArchiveError::BadFileHeader`] when the file is not this crate's
-///   archive, or [`ArchiveError::BadBlockHeader`] /
-///   [`ArchiveError::TruncatedBlock`] when a kept offset does not begin a
-///   parseable, complete block. A block that cannot be parsed is never
-///   copied: copying bytes whose length this code could not agree on is how
-///   a torn tail becomes a permanent one.
-/// - [`ArchiveError::Io`] from any of the reads, the writes, or the
-///   `sync_data`.
-pub fn stage_retained_blocks(path: &Path, keep: &[u64]) -> Result<RetainedStaging> {
+/// - [`ArchiveError::Symlink`] when the path is a link.
+/// - [`ArchiveError::BadFileHeader`] when the file is not this version's
+///   archive.
+/// - [`ArchiveError::BadBlockHeader`] / [`ArchiveError::UnsupportedCodec`]
+///   when a kept offset does not begin a block, [`ArchiveError::BadSegment`]
+///   when its extent does not end on one of its segment boundaries, and
+///   [`ArchiveError::TruncatedBlock`] when the file ends inside the extent.
+///   An extent this code could not agree on is never copied.
+/// - [`ArchiveError::Io`] from any read, write or the `sync_data`.
+pub fn stage_retained_blocks(path: &Path, keep: &[(u64, u64)]) -> Result<RetainedStaging> {
     refuse_symlink(path)?;
     let mut source = unix_fs::open_regular_file_no_follow(path)?;
     let before = source.metadata()?.len();
@@ -114,11 +90,10 @@ pub fn stage_retained_blocks(path: &Path, keep: &[u64]) -> Result<RetainedStagin
 
     let mut temporary = unix_fs::create_private_sibling(path)?;
     let map = copy_kept_blocks(&mut source, temporary.file(), keep)?;
-    // Flushed here, not at the rename: after `commit_retained` returns, the
-    // bytes the index now names must already be on the device.
+    // Flushed here, not at the rename: once `commit_retained` returns, the
+    // bytes the index names must already be on the device.
     temporary.file().sync_data()?;
     let after = temporary.file().metadata()?.len();
-    // Every `?` above drops the staging, which removes the temporary.
     Ok(RetainedStaging {
         destination: path.to_path_buf(),
         temporary,
@@ -127,26 +102,13 @@ pub fn stage_retained_blocks(path: &Path, keep: &[u64]) -> Result<RetainedStagin
     })
 }
 
-/// Put the compacted copy in place, atomically.
-///
-/// One `rename(2)`: a reader sees either the whole old archive or the whole
-/// new one. This is the only step of retention that changes what is at the
-/// archive path, and it is deliberately the last thing that happens, so
-/// everything that can fail has already failed with the original still live.
-///
-/// **The parent directory is fsynced before this returns**, so the rename is
-/// durable and not merely done. The caller commits an index naming the new
-/// offsets, and SQLite makes *that* durable at commit; if the rename were
-/// still only in the page cache, a power loss could leave the durable index
-/// pointing into a file the directory entry still names as the old one, with
-/// nothing afterwards to notice. Ordering two durable things requires both to
-/// be durable.
+/// Put the compacted copy in place with one `rename(2)`, and fsync the parent
+/// directory so the rename is durable before the caller relies on it.
 ///
 /// # Errors
 ///
 /// [`ArchiveError::Io`] from the rename or the directory sync. The staging is
-/// removed, so a refused commit leaves exactly the state that existed before
-/// staging.
+/// removed either way.
 pub fn commit_retained(staging: RetainedStaging) -> Result<()> {
     let RetainedStaging {
         destination, temporary, ..
@@ -154,44 +116,58 @@ pub fn commit_retained(staging: RetainedStaging) -> Result<()> {
     unix_fs::rename_private_sibling(temporary, &destination).map_err(ArchiveError::Io)
 }
 
-/// Stream the kept blocks into `destination` behind a fresh file header.
-///
-/// `BTreeSet` rather than the caller's slice: ascending order makes the copy
-/// one forward pass over the source, and it removes the question of what a
-/// duplicated offset would mean.
-fn copy_kept_blocks(source: &mut File, destination: &mut File, keep: &[u64]) -> Result<BTreeMap<u64, u64>> {
+/// Stream the kept extents into `destination` behind a fresh file header, in
+/// ascending offset order: one forward pass over the source.
+fn copy_kept_blocks(source: &mut File, destination: &mut File, keep: &[(u64, u64)]) -> Result<BTreeMap<u64, u64>> {
     destination.write_all(&format::encode_file_header())?;
     let mut end = FILE_HEADER_BYTES as u64;
     let mut moved = BTreeMap::new();
-    let ascending: BTreeSet<u64> = keep.iter().copied().collect();
-    for block_offset in ascending {
-        let bytes = read_whole_block(source, block_offset)?;
-        destination.write_all(&bytes)?;
+    let ascending: BTreeMap<u64, u64> = keep.iter().copied().collect();
+    for (block_offset, disk_len) in ascending {
+        check_extent(source, block_offset, disk_len)?;
+        source.seek(SeekFrom::Start(block_offset))?;
+        let copied = io::copy(&mut (&mut *source).take(disk_len), destination)?;
+        if copied != disk_len {
+            return Err(ArchiveError::TruncatedBlock(block_offset));
+        }
         moved.insert(block_offset, end);
-        end += bytes.len() as u64;
+        end += disk_len;
     }
     Ok(moved)
 }
 
-/// Read one complete block -- header and compressed payload -- as it sits on
-/// disk. The header is parsed only to learn how long the block is and to
-/// refuse one that is not a block at all; the bytes handed back are the
-/// file's own.
-fn read_whole_block(source: &mut File, block_offset: u64) -> Result<Vec<u8>> {
+/// Prove `disk_len` bytes from `block_offset` are one block header followed
+/// by whole segments, by walking the segment headers without inflating.
+fn check_extent(source: &mut File, block_offset: u64, disk_len: u64) -> Result<()> {
     source.seek(SeekFrom::Start(block_offset))?;
     let mut head = [0u8; BLOCK_HEADER_BYTES];
     source
         .read_exact(&mut head)
         .map_err(|_| ArchiveError::BadBlockHeader(block_offset))?;
-    // Bounds `comp_len` before it sizes the buffer below.
-    let header = format::parse_block_header(&head, block_offset)?;
-    let mut bytes = Vec::with_capacity(BLOCK_HEADER_BYTES + header.comp_len as usize);
-    bytes.extend_from_slice(&head);
-    bytes.resize(BLOCK_HEADER_BYTES + header.comp_len as usize, 0);
-    source
-        .read_exact(&mut bytes[BLOCK_HEADER_BYTES..])
-        .map_err(|_| ArchiveError::TruncatedBlock(block_offset))?;
-    Ok(bytes)
+    format::parse_block_header(&head, block_offset)?;
+    let mut at = block_offset + BLOCK_HEADER_BYTES as u64;
+    let extent_end = block_offset.saturating_add(disk_len);
+    let mut raw_start = 0u32;
+    let mut last = false;
+    while at < extent_end {
+        if last {
+            // Bytes after a FINAL segment are not part of this block.
+            return Err(ArchiveError::BadSegment(at));
+        }
+        source.seek(SeekFrom::Start(at))?;
+        let mut head = [0u8; SEGMENT_HEADER_BYTES];
+        source
+            .read_exact(&mut head)
+            .map_err(|_| ArchiveError::TruncatedBlock(block_offset))?;
+        let segment = format::parse_segment_header(&head, at, raw_start)?;
+        raw_start += segment.raw_len;
+        last = segment.last;
+        at += (SEGMENT_HEADER_BYTES + segment.comp_len as usize) as u64;
+    }
+    if at != extent_end || raw_start == 0 {
+        return Err(ArchiveError::BadSegment(at.min(extent_end)));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -8,9 +8,8 @@
 //! Consecutive bodies from the same provider share most of their text, so a
 //! block compresses several times better than a body on its own.
 //!
-//! The crate root is the current format, version 2 (`v2`). The version 1
-//! modules (`format`, `writer`, `reader`, `retain`) remain only until nothing
-//! reads a version 1 archive.
+//! This is format version 2. A version 1 archive is refused by name: it never
+//! left the branch that introduced it, so nothing needs to read one.
 //!
 //! Pure Rust by rule: the runtime links one C library (SQLite) and this
 //! crate must not add a second in front of attacker-influenced bytes.
@@ -22,15 +21,17 @@ compile_error!("capsem-archive relies on O_NOFOLLOW and mode 0600");
 pub mod format;
 pub mod reader;
 pub mod retain;
-pub mod v2;
 pub mod warc;
 pub mod writer;
 
-pub use v2::{
-    commit_retained, stage_retained_blocks, BodyLogReader, BodyLogWriter, BodyRef, RetainedStaging, SegmentWritten,
-    BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES, TARGET_BLOCK_BYTES,
-};
+pub use format::{BodyRef, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES, TARGET_BLOCK_BYTES};
+pub use reader::BodyLogReader;
+pub use retain::{commit_retained, stage_retained_blocks, RetainedStaging};
 pub use warc::{write_record, WarcRecord};
+pub use writer::{BodyLogWriter, SegmentWritten};
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArchiveError {
@@ -68,12 +69,10 @@ pub enum ArchiveError {
     Poisoned,
     #[error("body of {len} bytes exceeds the {max}-byte block ceiling")]
     BodyTooLarge { len: usize, max: usize },
-    /// The pending block cannot hold this body. Seal and stage it again; the
+    /// The open block cannot hold this body. Close it and stage again; the
     /// body is guaranteed to fit a block of its own.
-    #[error("pending block is full; seal it and stage this body again")]
+    #[error("open block is full; close it and stage this body again")]
     BlockFull,
-    #[error("block {got} appended out of order; expected {expected}")]
-    OutOfOrderBlock { expected: u64, got: u64 },
     /// A WARC header value carried a line break. Header blocks are
     /// line-oriented, so the rest of that value would have been read as
     /// headers of its own -- a forged record rather than a malformed one.

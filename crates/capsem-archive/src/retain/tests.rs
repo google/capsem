@@ -1,307 +1,198 @@
-use std::io::{Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::collections::BTreeMap;
 
 use super::*;
 use crate::format::BodyRef;
-use crate::reader::BodyLogReader;
-use crate::writer::BodyLogWriter;
+use crate::tests::{archive, file_len, XorShift};
+use crate::{BodyLogReader, BodyLogWriter, SegmentWritten};
 
-fn archive(dir: &tempfile::TempDir) -> PathBuf {
-    dir.path().join("session.bodies")
-}
-
-/// Write one body per block and return the placed reference for each, in the
-/// order the bodies were given.
-fn write_one_body_per_block(path: &Path, bodies: &[&[u8]]) -> Vec<BodyRef> {
+/// Three blocks: two closed, the last still open after two segments. Returns
+/// every body with the extent its block had committed.
+fn three_blocks(path: &Path) -> (Vec<(BodyRef, Vec<u8>)>, Vec<SegmentWritten>) {
     let mut writer = BodyLogWriter::open(path).unwrap();
-    let mut placed = Vec::new();
-    for body in bodies {
-        let reference = writer.stage(body).unwrap();
-        let sealed = writer.seal().unwrap().expect("a block was pending");
-        placed.push(BodyRef {
-            block_offset: sealed.block_offset,
-            ..reference
-        });
+    let mut rng = XorShift(77);
+    let mut bodies = Vec::new();
+    let mut extents = Vec::new();
+    for block in 0..3 {
+        for _ in 0..2 {
+            let body = rng.text(900);
+            bodies.push((writer.stage(&body).unwrap(), body));
+            let written = writer.flush_segment().unwrap().unwrap();
+            if block == 2 {
+                extents.retain(|e: &SegmentWritten| e.block_offset != written.block_offset);
+                extents.push(written);
+            }
+        }
+        if block < 2 {
+            extents.push(writer.close_block().unwrap().unwrap());
+        }
     }
     writer.sync().unwrap();
-    placed
+    (bodies, extents)
 }
 
-fn file_len(path: &Path) -> u64 {
-    std::fs::metadata(path).unwrap().len()
+fn keep_of(extents: &[SegmentWritten]) -> Vec<(u64, u64)> {
+    extents.iter().map(|e| (e.block_offset, e.disk_len)).collect()
 }
 
-/// Stage and commit in one step, for the tests whose subject is what
-/// retention keeps rather than when it becomes visible.
-fn retain_blocks(path: &Path, keep: &[u64]) -> Result<BTreeMap<u64, u64>> {
+fn retain(path: &Path, keep: &[(u64, u64)]) -> Result<BTreeMap<u64, u64>> {
     let staging = stage_retained_blocks(path, keep)?;
     let moved = staging.map().clone();
     commit_retained(staging)?;
     Ok(moved)
 }
 
+fn moved_ref(moved: &BTreeMap<u64, u64>, reference: BodyRef) -> BodyRef {
+    BodyRef {
+        block_offset: moved[&reference.block_offset],
+        ..reference
+    }
+}
+
 #[test]
-fn keeping_a_later_block_moves_it_to_the_front_and_shrinks_the_file() {
+fn kept_extents_move_up_verbatim_and_still_read() {
     let dir = tempfile::tempdir().unwrap();
     let path = archive(&dir);
-    let placed = write_one_body_per_block(&path, &[b"first body", b"second body", b"third body"]);
+    let (bodies, extents) = three_blocks(&path);
     let before = file_len(&path);
 
-    let moved = retain_blocks(&path, &[placed[2].block_offset]).unwrap();
-
-    assert_eq!(moved.len(), 1, "only the kept block is remapped");
-    let new_offset = moved[&placed[2].block_offset];
-    assert_eq!(
-        new_offset, FILE_HEADER_BYTES as u64,
-        "the surviving block moves up behind the file header"
-    );
-    assert!(file_len(&path) < before, "the dropped blocks' bytes are reclaimed");
-
-    let reader = BodyLogReader::open(&path).unwrap();
-    assert_eq!(
-        reader
-            .read(BodyRef {
-                block_offset: new_offset,
-                ..placed[2]
-            })
-            .unwrap(),
-        b"third body",
-        "the kept body survives the move byte for byte"
-    );
-}
-
-#[test]
-fn keeping_nothing_leaves_a_header_only_archive() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = archive(&dir);
-    write_one_body_per_block(&path, &[b"first body", b"second body"]);
-
-    let moved = retain_blocks(&path, &[]).unwrap();
-
-    assert!(moved.is_empty());
+    let keep = keep_of(&extents[1..]);
+    let moved = retain(&path, &keep).unwrap();
+    assert_eq!(moved.len(), 2);
+    assert_eq!(moved[&extents[1].block_offset], FILE_HEADER_BYTES as u64);
     assert_eq!(
         file_len(&path),
-        FILE_HEADER_BYTES as u64,
-        "an archive with no kept blocks is its header and nothing else"
+        FILE_HEADER_BYTES as u64 + extents[1].disk_len + extents[2].disk_len,
+        "exactly the committed extents, nothing else"
     );
-    BodyLogReader::open(&path).expect("a header-only archive is still an archive");
-}
+    assert_eq!(before - file_len(&path), extents[0].disk_len);
 
-#[test]
-fn keeping_every_block_is_a_faithful_copy() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = archive(&dir);
-    let placed = write_one_body_per_block(&path, &[b"alpha", b"beta", b"gamma"]);
-    let before = std::fs::read(&path).unwrap();
-
-    let offsets: Vec<u64> = placed.iter().map(|reference| reference.block_offset).collect();
-    let moved = retain_blocks(&path, &offsets).unwrap();
-
-    for offset in offsets {
-        assert_eq!(moved[&offset], offset, "nothing dropped means nothing moves");
+    let reader = BodyLogReader::open(&path).unwrap();
+    for (reference, body) in &bodies[2..] {
+        assert_eq!(&reader.read(moved_ref(&moved, *reference)).unwrap(), body);
     }
+}
+
+/// A block stranded open by a crash, with a torn segment after its last
+/// committed one, is copied to its committed extent: the torn bytes go.
+#[test]
+fn a_stranded_block_is_copied_to_its_committed_extent_and_its_torn_tail_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = archive(&dir);
+    let mut writer = BodyLogWriter::open(&path).unwrap();
+    let kept = writer.stage(b"committed").unwrap();
+    let extent = writer.flush_segment().unwrap().unwrap();
+    writer.stage(b"torn away").unwrap();
+    writer.fail_next_write_after(30);
+    assert!(writer.flush_segment().is_err());
+    drop(writer);
+
+    let moved = retain(&path, &[(extent.block_offset, extent.disk_len)]).unwrap();
+    assert_eq!(file_len(&path), FILE_HEADER_BYTES as u64 + extent.disk_len);
+    let reader = BodyLogReader::open(&path).unwrap();
+    assert_eq!(reader.read(moved_ref(&moved, kept)).unwrap(), b"committed");
+
+    // And the compacted file takes new blocks after it.
+    let mut writer = BodyLogWriter::open(&path).unwrap();
+    let next = writer.stage(b"after retention").unwrap();
+    writer.close_block().unwrap();
     assert_eq!(
-        std::fs::read(&path).unwrap(),
-        before,
-        "a retain that keeps everything rewrites the same bytes, uncompressed anew"
+        BodyLogReader::open(&path).unwrap().read(next).unwrap(),
+        b"after retention"
     );
 }
 
+/// An extent that does not end exactly on a segment boundary is refused, and
+/// the original is left exactly as it was.
 #[test]
-fn an_unparseable_block_refuses_and_leaves_the_original_intact() {
+fn an_extent_off_a_segment_boundary_is_refused_and_the_original_untouched() {
     let dir = tempfile::tempdir().unwrap();
     let path = archive(&dir);
-    let placed = write_one_body_per_block(&path, &[b"first body", b"second body"]);
-    let corrupted = placed[1].block_offset;
-    let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
-    file.seek(SeekFrom::Start(corrupted)).unwrap();
-    file.write_all(b"NOPE").unwrap();
-    file.sync_all().unwrap();
-    drop(file);
-    let before = std::fs::read(&path).unwrap();
-
-    let error = retain_blocks(&path, &[placed[0].block_offset, corrupted]).unwrap_err();
-
-    assert!(
-        matches!(error, ArchiveError::BadBlockHeader(offset) if offset == corrupted),
-        "a block this code cannot parse is refused, not copied: {error}"
-    );
-    assert_eq!(
-        std::fs::read(&path).unwrap(),
-        before,
-        "a failed retain leaves the archive exactly as it was"
-    );
-    assert!(
-        std::fs::read_dir(dir.path())
-            .unwrap()
-            .all(|entry| entry.unwrap().file_name() == "session.bodies"),
-        "the temporary is removed on failure"
-    );
-}
-
-#[test]
-fn a_truncated_block_is_refused_rather_than_copied_short() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = archive(&dir);
-    let placed = write_one_body_per_block(&path, &[b"first body", b"second body"]);
-    let truncated = placed[1].block_offset;
-    let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
-    file.set_len(file_len(&path) - 4).unwrap();
-    file.sync_all().unwrap();
-    drop(file);
-
-    let error = retain_blocks(&path, &[truncated]).unwrap_err();
-
-    assert!(
-        matches!(error, ArchiveError::TruncatedBlock(offset) if offset == truncated),
-        "a block whose payload the file does not hold is refused: {error}"
-    );
-}
-
-#[test]
-fn a_symlink_at_the_archive_path_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
-    let real = dir.path().join("real.bodies");
-    write_one_body_per_block(&real, &[b"first body"]);
-    let link = archive(&dir);
-    std::os::unix::fs::symlink(&real, &link).unwrap();
-
-    let error = retain_blocks(&link, &[FILE_HEADER_BYTES as u64]).unwrap_err();
-
-    assert!(
-        matches!(error, ArchiveError::Symlink(ref path) if path == &link),
-        "retention never writes through a link planted at the archive path: {error}"
-    );
-}
-
-#[test]
-fn a_file_that_is_not_an_archive_is_refused_before_anything_is_written() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = archive(&dir);
-    std::fs::write(&path, b"not an archive at all").unwrap();
-
-    let error = retain_blocks(&path, &[]).unwrap_err();
-
-    assert!(matches!(error, ArchiveError::BadFileHeader), "got {error}");
-    assert_eq!(std::fs::read(&path).unwrap(), b"not an archive at all");
-}
-
-#[test]
-fn a_retained_archive_reopens_and_accepts_new_blocks() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = archive(&dir);
-    let placed = write_one_body_per_block(&path, &[b"first body", b"second body", b"third body"]);
-    let moved = retain_blocks(&path, &[placed[1].block_offset, placed[2].block_offset]).unwrap();
-    let kept = BodyRef {
-        block_offset: moved[&placed[1].block_offset],
-        ..placed[1]
+    let (_, extents) = three_blocks(&path);
+    let original = std::fs::read(&path).unwrap();
+    let open = extents[2];
+    let closed = extents[0];
+    let first_segment_end = {
+        // The open block's first segment: its extent before the second flush.
+        let reader_len = BLOCK_HEADER_BYTES as u64 + SEGMENT_HEADER_BYTES as u64;
+        (open.block_offset, reader_len)
     };
-
-    let mut writer = BodyLogWriter::open(&path).expect("a retained archive is still appendable");
-    assert_eq!(
-        writer.end(),
-        file_len(&path),
-        "the writer appends after the retained end, not after the old one"
-    );
-    let staged = writer.stage(b"after retention").unwrap();
-    let sealed = writer.seal().unwrap().expect("a block was pending");
-    writer.sync().unwrap();
-    assert!(
-        sealed.block_offset >= moved[&placed[2].block_offset],
-        "the new block lands past every kept one"
-    );
-
-    let reader = BodyLogReader::open(&path).unwrap();
-    assert_eq!(reader.read(kept).unwrap(), b"second body", "kept bodies still read");
-    assert_eq!(
-        reader
-            .read(BodyRef {
-                block_offset: sealed.block_offset,
-                ..staged
-            })
-            .unwrap(),
-        b"after retention",
-        "and so do the ones written afterwards"
-    );
+    for (offset, disk_len) in [
+        (open.block_offset, open.disk_len - 1),
+        (open.block_offset, open.disk_len + 1),
+        (open.block_offset, 3),
+        first_segment_end,
+        (closed.block_offset, closed.disk_len + 60),
+    ] {
+        let error = stage_retained_blocks(&path, &[(offset, disk_len)]).expect_err("refused");
+        assert!(
+            matches!(error, ArchiveError::BadSegment(_) | ArchiveError::TruncatedBlock(_)),
+            "({offset}, {disk_len}): {error:?}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+    assert_eq!(leftovers.len(), 1, "a refused staging removes its temporary");
 }
 
 #[test]
-fn staging_leaves_the_original_in_place_until_it_is_committed() {
+fn an_offset_that_is_not_a_block_or_an_extent_past_the_end_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let path = archive(&dir);
-    let placed = write_one_body_per_block(&path, &[b"first body", b"second body"]);
-    let before = std::fs::read(&path).unwrap();
-
-    let staging = stage_retained_blocks(&path, &[placed[1].block_offset]).unwrap();
-
-    assert_eq!(
-        std::fs::read(&path).unwrap(),
-        before,
-        "the archive is still the old one while the replacement waits"
-    );
-    assert_eq!(
-        staging.map()[&placed[1].block_offset],
-        FILE_HEADER_BYTES as u64,
-        "the map is known before anything is replaced, so the index can be written first"
-    );
-    assert!(staging.bytes_freed() > 0, "and so is what the commit will reclaim");
-    let reader = BodyLogReader::open(&path).unwrap();
-    assert_eq!(
-        reader.read(placed[1]).unwrap(),
-        b"second body",
-        "every body still reads at its old offset"
-    );
-
-    commit_retained(staging).unwrap();
-
-    assert!(file_len(&path) < before.len() as u64);
-    let reader = BodyLogReader::open(&path).unwrap();
-    assert_eq!(
-        reader
-            .read(BodyRef {
-                block_offset: FILE_HEADER_BYTES as u64,
-                ..placed[1]
-            })
-            .unwrap(),
-        b"second body"
-    );
+    let (_, extents) = three_blocks(&path);
+    assert!(matches!(
+        stage_retained_blocks(&path, &[(extents[1].block_offset + 1, 10)]),
+        Err(ArchiveError::BadBlockHeader(_))
+    ));
+    let open = extents[2];
+    assert!(matches!(
+        stage_retained_blocks(&path, &[(open.block_offset, open.disk_len + 500)]),
+        Err(ArchiveError::TruncatedBlock(_) | ArchiveError::BadSegment(_))
+    ));
 }
 
 #[test]
-fn an_abandoned_staging_removes_itself_and_changes_nothing() {
+fn keeping_nothing_leaves_a_header_and_keeping_everything_changes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let path = archive(&dir);
-    let placed = write_one_body_per_block(&path, &[b"first body", b"second body"]);
-    let before = std::fs::read(&path).unwrap();
-
-    let temporary = {
-        let staging = stage_retained_blocks(&path, &[placed[1].block_offset]).unwrap();
-        staging.temporary_path().to_path_buf()
-        // Dropped here: the caller decided not to go through with it.
-    };
-
-    assert!(!temporary.exists(), "the replacement is removed with the staging");
-    assert_eq!(std::fs::read(&path).unwrap(), before, "and the archive is untouched");
+    let (_, extents) = three_blocks(&path);
+    let original = std::fs::read(&path).unwrap();
+    let moved = retain(&path, &keep_of(&extents)).unwrap();
+    assert!(moved.iter().all(|(old, new)| old == new));
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert!(retain(&path, &[]).unwrap().is_empty());
+    assert_eq!(file_len(&path), FILE_HEADER_BYTES as u64);
 }
 
 #[test]
-fn a_reader_open_before_a_commit_knows_its_file_was_replaced() {
+fn a_staging_that_is_dropped_leaves_the_original_and_no_temporary() {
     let dir = tempfile::tempdir().unwrap();
     let path = archive(&dir);
-    let placed = write_one_body_per_block(&path, &[b"first body", b"second body"]);
-    let reader = BodyLogReader::open(&path).unwrap();
-    assert_eq!(reader.read(placed[0]).unwrap(), b"first body");
-    assert!(!reader.file_was_replaced(), "nothing has happened yet");
+    let (_, extents) = three_blocks(&path);
+    let original = std::fs::read(&path).unwrap();
+    let staging = stage_retained_blocks(&path, &keep_of(&extents[2..])).unwrap();
+    let temporary = staging.temporary_path().to_path_buf();
+    assert!(temporary.exists());
+    assert!(staging.bytes_freed() > 0);
+    drop(staging);
+    assert!(!temporary.exists());
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
 
-    let staging = stage_retained_blocks(&path, &[placed[1].block_offset]).unwrap();
-    assert!(
-        !reader.file_was_replaced(),
-        "staging alone does not replace the archive"
-    );
-    commit_retained(staging).unwrap();
-
-    assert!(
-        reader.file_was_replaced(),
-        "after the rename this handle is on an inode that is no longer the archive"
-    );
+#[test]
+fn a_symlink_or_a_version_one_archive_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = archive(&dir);
+    three_blocks(&path);
+    let link = dir.path().join("link.bodies");
+    std::os::unix::fs::symlink(&path, &link).unwrap();
+    assert!(matches!(
+        stage_retained_blocks(&link, &[]),
+        Err(ArchiveError::Symlink(_))
+    ));
+    let old = dir.path().join("old.bodies");
+    crate::tests::write_version_one_archive(&old);
+    assert!(matches!(
+        stage_retained_blocks(&old, &[]),
+        Err(ArchiveError::BadFileHeader)
+    ));
 }

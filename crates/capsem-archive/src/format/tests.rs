@@ -1,37 +1,42 @@
 use super::*;
 use crate::ArchiveError;
 
-const AT: u64 = FILE_HEADER_BYTES as u64;
+const AT: u64 = 4242;
 
-fn roundtrip(raw: &[u8]) -> Vec<u8> {
-    let block = encode_block(raw);
-    let (header, comp) = split_block(&block, AT).expect("split");
-    decode_block(&header, comp, AT).expect("decode")
+fn segment(last: bool, raw_start: u32, raw_len: u32, comp_len: u32) -> SegmentHeader {
+    SegmentHeader {
+        last,
+        raw_start,
+        raw_len,
+        comp_len,
+        hash: [7; 32],
+    }
+}
+
+fn is_bad_segment(result: Result<SegmentHeader>) -> bool {
+    matches!(result, Err(ArchiveError::BadSegment(AT)))
 }
 
 #[test]
-fn file_header_round_trips() {
+fn file_header_round_trips_and_names_version_two() {
     let header = encode_file_header();
-    assert_eq!(header.len(), FILE_HEADER_BYTES);
+    assert_eq!(&header[..8], b"CAPSEMBL");
+    assert_eq!(u16::from_le_bytes([header[8], header[9]]), 2);
     decode_file_header(&header).expect("own header accepted");
 }
 
 #[test]
-fn a_header_with_another_magic_is_rejected() {
+fn a_version_one_archive_is_refused() {
+    let mut header = encode_file_header();
+    header[8..10].copy_from_slice(&1u16.to_le_bytes());
+    assert!(matches!(decode_file_header(&header), Err(ArchiveError::BadFileHeader)));
+}
+
+#[test]
+fn another_magic_or_a_short_file_header_is_refused() {
     let mut header = encode_file_header();
     header[0] = b'X';
     assert!(matches!(decode_file_header(&header), Err(ArchiveError::BadFileHeader)));
-}
-
-#[test]
-fn a_header_with_another_version_is_rejected() {
-    let mut header = encode_file_header();
-    header[8..10].copy_from_slice(&(FILE_VERSION + 1).to_le_bytes());
-    assert!(matches!(decode_file_header(&header), Err(ArchiveError::BadFileHeader)));
-}
-
-#[test]
-fn a_short_header_is_rejected() {
     let header = encode_file_header();
     assert!(matches!(
         decode_file_header(&header[..FILE_HEADER_BYTES - 1]),
@@ -40,99 +45,108 @@ fn a_short_header_is_rejected() {
 }
 
 #[test]
-fn a_block_round_trips_and_deflate_shrinks_repetition() {
-    let raw = b"the same sentence, over and over. ".repeat(500);
-    let block = encode_block(&raw);
-    assert!(
-        block.len() < raw.len() / 4,
-        "repetitive input should deflate hard: {} -> {}",
-        raw.len(),
-        block.len()
-    );
-    assert_eq!(roundtrip(&raw), raw);
+fn block_header_round_trips_its_codec() {
+    let header = encode_block_header(CODEC_DEFLATE);
+    assert_eq!(&header[..4], b"BLK2");
+    assert_eq!(parse_block_header(&header, AT).unwrap(), CODEC_DEFLATE);
 }
 
 #[test]
-fn an_empty_block_round_trips() {
-    assert_eq!(roundtrip(b""), Vec::<u8>::new());
-}
-
-#[test]
-fn a_tampered_last_byte_is_rejected() {
-    let raw = b"bodies that must come back exactly as written".repeat(20);
-    let mut block = encode_block(&raw);
-    let last = block.len() - 1;
-    block[last] ^= 0xff;
-    let (header, comp) = split_block(&block, AT).expect("split");
-    let error = decode_block(&header, comp, AT).expect_err("tampered payload rejected");
-    assert!(
-        matches!(error, ArchiveError::Integrity(AT) | ArchiveError::Inflate(AT, _)),
-        "unexpected error: {error:?}"
-    );
-}
-
-/// Deflate carries no checksum of its own here (raw deflate, not zlib), so
-/// the blake3 field is the only thing standing between an edited payload and
-/// a caller. A wrong hash must be refused even though the block inflates
-/// perfectly.
-#[test]
-fn a_block_whose_hash_does_not_match_is_rejected() {
-    let raw = b"bytes that must not be returned unverified".repeat(10);
-    let mut block = encode_block(&raw);
-    block[12] ^= 0x01;
-    let (header, comp) = split_block(&block, AT).expect("split");
+fn an_unknown_codec_is_refused_by_name() {
+    let header = encode_block_header(2);
     assert!(matches!(
-        decode_block(&header, comp, AT),
-        Err(ArchiveError::Integrity(AT))
+        parse_block_header(&header, AT),
+        Err(ArchiveError::UnsupportedCodec {
+            block_offset: AT,
+            codec: 2
+        })
     ));
 }
 
 #[test]
-fn an_absurd_raw_len_is_rejected_before_allocating() {
-    let mut block = encode_block(b"small");
-    block[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
-    assert!(matches!(split_block(&block, AT), Err(ArchiveError::BadBlockHeader(AT))));
-    let header: &[u8; BLOCK_HEADER_BYTES] = block[..BLOCK_HEADER_BYTES].try_into().unwrap();
+fn block_flags_and_reserved_bytes_must_be_zero() {
+    for index in 5..BLOCK_HEADER_BYTES {
+        let mut header = encode_block_header(CODEC_DEFLATE);
+        header[index] = 1;
+        assert!(
+            matches!(
+                parse_block_header(&header, AT),
+                Err(ArchiveError::UnsupportedCodec { .. })
+            ),
+            "byte {index} set"
+        );
+    }
+}
+
+#[test]
+fn another_block_magic_is_a_bad_header() {
+    let mut header = encode_block_header(CODEC_DEFLATE);
+    header[3] = b'1';
     assert!(matches!(
-        parse_block_header(header, AT),
+        parse_block_header(&header, AT),
         Err(ArchiveError::BadBlockHeader(AT))
     ));
 }
 
 #[test]
-fn an_absurd_comp_len_is_rejected_before_allocating() {
-    let mut block = encode_block(b"small");
-    block[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
-    assert!(matches!(split_block(&block, AT), Err(ArchiveError::BadBlockHeader(AT))));
-    let header: &[u8; BLOCK_HEADER_BYTES] = block[..BLOCK_HEADER_BYTES].try_into().unwrap();
-    assert!(matches!(
-        parse_block_header(header, AT),
-        Err(ArchiveError::BadBlockHeader(AT))
-    ));
+fn segment_header_round_trips() {
+    for header in [
+        segment(false, 0, 10, 12),
+        segment(true, 10, 0, 2),
+        segment(true, 3, 5, 9),
+    ] {
+        let bytes = encode_segment_header(&header);
+        assert_eq!(&bytes[..4], b"SGMT");
+        assert_eq!(parse_segment_header(&bytes, AT, header.raw_start).unwrap(), header);
+    }
 }
 
 #[test]
-fn a_comp_len_longer_than_the_slice_is_rejected() {
-    let block = encode_block(b"a body worth a few bytes");
-    let truncated = &block[..block.len() - 1];
-    assert!(matches!(
-        split_block(truncated, AT),
-        Err(ArchiveError::BadBlockHeader(AT))
-    ));
+fn a_segment_must_continue_where_the_last_one_ended() {
+    let bytes = encode_segment_header(&segment(false, 10, 5, 7));
+    assert!(is_bad_segment(parse_segment_header(&bytes, AT, 9)));
+    assert!(is_bad_segment(parse_segment_header(&bytes, AT, 11)));
 }
 
 #[test]
-fn another_block_magic_is_rejected() {
-    let mut block = encode_block(b"body");
-    block[0] = b'X';
-    assert!(matches!(split_block(&block, AT), Err(ArchiveError::BadBlockHeader(AT))));
+fn only_a_final_segment_may_be_empty() {
+    let bytes = encode_segment_header(&segment(false, 0, 0, 5));
+    assert!(is_bad_segment(parse_segment_header(&bytes, AT, 0)));
+    let bytes = encode_segment_header(&segment(true, 0, 0, 2));
+    parse_segment_header(&bytes, AT, 0).expect("an empty final segment ends a stream");
 }
 
 #[test]
-fn a_block_shorter_than_its_header_is_rejected() {
-    let block = encode_block(b"body");
-    assert!(matches!(
-        split_block(&block[..BLOCK_HEADER_BYTES - 1], AT),
-        Err(ArchiveError::BadBlockHeader(AT))
-    ));
+fn a_raw_extent_past_the_block_ceiling_is_refused() {
+    let at_ceiling = u32::try_from(MAX_BLOCK_RAW_BYTES).unwrap();
+    let bytes = encode_segment_header(&segment(false, 0, at_ceiling, 10));
+    parse_segment_header(&bytes, AT, 0).expect("exactly the ceiling fits");
+    let bytes = encode_segment_header(&segment(false, 1, at_ceiling, 10));
+    assert!(is_bad_segment(parse_segment_header(&bytes, AT, 1)));
+    let bytes = encode_segment_header(&segment(false, 0, u32::MAX, 10));
+    assert!(is_bad_segment(parse_segment_header(&bytes, AT, 0)));
+}
+
+#[test]
+fn a_comp_len_beyond_deflate_expansion_is_refused_before_reading() {
+    let limit = 100 + u32::try_from(MAX_SEGMENT_EXPANSION).unwrap();
+    let bytes = encode_segment_header(&segment(false, 0, 100, limit));
+    parse_segment_header(&bytes, AT, 0).expect("the expansion bound itself is accepted");
+    let bytes = encode_segment_header(&segment(false, 0, 100, limit + 1));
+    assert!(is_bad_segment(parse_segment_header(&bytes, AT, 0)));
+    let bytes = encode_segment_header(&segment(false, 0, 100, u32::MAX));
+    assert!(is_bad_segment(parse_segment_header(&bytes, AT, 0)));
+}
+
+#[test]
+fn unknown_segment_flags_reserved_bytes_and_magic_are_refused() {
+    let good = encode_segment_header(&segment(false, 0, 10, 12));
+    for (index, value) in [(0, b'X'), (4, 0x02), (4, 0x80), (5, 1), (6, 1), (7, 1)] {
+        let mut bytes = good;
+        bytes[index] = value;
+        assert!(
+            is_bad_segment(parse_segment_header(&bytes, AT, 0)),
+            "byte {index} = {value:#x}"
+        );
+    }
 }
