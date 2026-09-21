@@ -42,6 +42,18 @@ def test_install_test_inherits_uv_through_its_exact_local_helper() -> None:
     assert "astral-sh/uv" not in child
 
 
+def test_install_helper_prefetch_can_load_the_rust_sdk_workspace_member() -> None:
+    """The copied root workspace must remain loadable during locked Cargo fetch."""
+    from capsem_builder.gate import config as gate_config
+
+    helper = _read("build_system/docker/Dockerfile.install-builder")
+    builder = gate_config.load(PROJECT_ROOT).install.builder
+
+    assert "COPY sdk/rust/Cargo.toml /prefetch/sdk/rust/Cargo.toml" in helper
+    assert ": > /prefetch/sdk/rust/src/lib.rs" in helper
+    assert "sdk/rust/Cargo.toml" in builder.identity_inputs
+
+
 def selected_tools(job: str) -> set[str]:
     """The crates a job installs, resolved through the sets it names.
 
@@ -492,7 +504,7 @@ def test_public_release_storage_is_verified_before_channel_deployment() -> None:
     assert "binary-channel-preview" in candidate
     assert "https://capsem.org/install.sh" in candidate_proof
     assert "CAPSEM_MANIFEST_URL" in candidate_proof
-    assert "github.com/${{ github.repository }}/releases/download" in candidate
+    assert "github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/" in candidate
     assert "build_system/scripts/release/release-package-contract.py verify-storage" in candidate
     assert "build_system/scripts/release/prove-candidate-installer.sh" in candidate
     assert "needs: [verify-release-candidate]" in deploy

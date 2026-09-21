@@ -15,14 +15,17 @@ impl DbReader {
     /// Normal writer-owned handles do not call this on read because their
     /// memory tables are the write truth. Service session route handles use it
     /// because capsem-process owns the writes and disk is the process boundary.
-    pub(crate) fn sync_from_disk(&self) -> rusqlite::Result<()> {
+    ///
+    /// Returns whether another connection's commit was absorbed, which is what
+    /// the owning handle's read-cache epochs advance on.
+    pub(crate) fn sync_from_disk(&self) -> rusqlite::Result<bool> {
         // Skip copying when no external connection has committed.
         // `data_version` is SQLite's own answer to "did another connection
         // commit since I last looked"; a writer in another process moves it,
         // this connection's own memory-schema writes do not.
         let data_version: i64 = self.conn.query_row("PRAGMA main.data_version", [], |row| row.get(0))?;
         if self.synced_data_version.get() == Some(data_version) {
-            return Ok(());
+            return Ok(false);
         }
         let schema_version: i64 = self
             .conn
@@ -48,7 +51,7 @@ impl DbReader {
             self.synced_schema_version.set(Some(schema_version));
             self.disk_syncs.set(self.disk_syncs.get() + 1);
         }
-        result.and(restore)
+        result.and(restore).map(|()| true)
     }
 
     /// How many times the memory tables were rebuilt from disk.

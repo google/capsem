@@ -314,7 +314,9 @@ def test_asset_ci_uses_primitives_owned_by_just_test() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
     lanes = _source_text("build_system/builder/gate/assetlanes.py")
 
-    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
+    assert "ASSET_ARCH: ${{ matrix.arch }}" in workflow
+    assert "RELEASE_PROFILE: ${{ inputs.profile }}" in workflow
+    assert 'just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"' in workflow
     assert "pack-initrds" in _planned(
         "build-assets", profile="code", arch="arm64", template="rootfs"
     )

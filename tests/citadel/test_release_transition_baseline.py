@@ -16,6 +16,12 @@ def _selector(workflow: str) -> str:
     return workflow[start:end]
 
 
+def _activation(workflow: str) -> str:
+    start = workflow.index("- name: Activate exact candidate package binaries")
+    end = workflow.index("\n      - name:", start + 8)
+    return workflow[start:end]
+
+
 def _violations(binary: str, profile: str, staging: str) -> list[str]:
     violations = []
     for name, workflow in (("binary", binary), ("profile", profile)):
@@ -24,6 +30,11 @@ def _violations(binary: str, profile: str, staging: str) -> list[str]:
             violations.append(f"{name} public-before is not verified stable")
     if "CAPSEM_RELEASE_BASELINE_CHANNEL=" not in binary:
         violations.append("binary pairing drops the verified baseline identity")
+    activation = _activation(binary)
+    if "BASELINE_CHANNEL: ${{ needs.resolve-channel-source.outputs.baseline_channel }}" not in activation:
+        violations.append("binary pairing interpolates the baseline identity inside its shell")
+    if '"$BASELINE_CHANNEL"' not in activation:
+        violations.append("binary pairing does not consume the environment-bound baseline identity")
     if "CAPSEM_RELEASE_BASELINE_CHANNEL=" not in staging:
         violations.append("profile pairing drops the verified baseline identity")
     if "CAPSEM_RELEASE_TRANSITION=auto" not in staging:
@@ -51,3 +62,21 @@ def test_guard_rejects_previous_nightly_as_the_baseline() -> None:
 
     violations = _violations(binary, profile, staging)
     assert len(violations) == 2, BASELINE_RATIONALE
+
+
+def test_guard_rejects_shell_interpolation_of_the_baseline_identity() -> None:
+    binary, profile, staging = _sources()
+    binary = binary.replace(
+        "        env:\n"
+        "          BASELINE_CHANNEL: ${{ needs.resolve-channel-source.outputs.baseline_channel }}\n",
+        "",
+    ).replace(
+        '"$BASELINE_CHANNEL"',
+        '"${{ needs.resolve-channel-source.outputs.baseline_channel }}"',
+    )
+
+    violations = _violations(binary, profile, staging)
+    assert violations == [
+        "binary pairing interpolates the baseline identity inside its shell",
+        "binary pairing does not consume the environment-bound baseline identity",
+    ], BASELINE_RATIONALE

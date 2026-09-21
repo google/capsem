@@ -63,7 +63,23 @@ pub struct McpEndpointState {
     pub plugin_policy: SharedPluginPolicy,
     pub inflight: Arc<tokio::sync::Semaphore>,
     pub timeouts: McpTimeouts,
+    scoped_tools: Option<Arc<dyn ScopedMcpTools>>,
     tool_timeout_overrides: RwLock<HashMap<String, Duration>>,
+}
+
+/// Tools implemented by the current VM owner rather than an MCP subprocess.
+///
+/// The endpoint still applies the normal MCP admission and logging around
+/// these calls. Implementations receive only the tool arguments and whatever
+/// owner-scoped capabilities they were constructed with.
+pub trait ScopedMcpTools: Send + Sync {
+    fn definitions(&self) -> Vec<McpToolDef>;
+
+    fn call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        arguments: serde_json::Value,
+    ) -> futures::future::BoxFuture<'a, Result<serde_json::Value, String>>;
 }
 
 impl McpEndpointState {
@@ -80,8 +96,14 @@ impl McpEndpointState {
             plugin_policy,
             inflight,
             timeouts,
+            scoped_tools: None,
             tool_timeout_overrides: RwLock::new(HashMap::new()),
         }
+    }
+
+    pub fn with_scoped_tools(mut self, scoped_tools: Arc<dyn ScopedMcpTools>) -> Self {
+        self.scoped_tools = Some(scoped_tools);
+        self
     }
 
     pub async fn record_tool_catalog_timeouts(&self, tools: &[McpToolDef]) {
@@ -150,7 +172,21 @@ impl McpEndpointState {
             ),
 
             "tools/list" => match self.aggregator.list_tools().await {
-                Ok(tools) => {
+                Ok(mut tools) => {
+                    if let Some(scoped) = &self.scoped_tools {
+                        let scoped = scoped.definitions();
+                        if let Some(collision) = scoped
+                            .iter()
+                            .find(|local| tools.iter().any(|tool| tool.namespaced_name == local.namespaced_name))
+                        {
+                            return JsonRpcResponse::err(
+                                req.id.clone(),
+                                -32603,
+                                format!("reserved scoped tool name collision: {}", collision.namespaced_name),
+                            );
+                        }
+                        tools.extend(scoped);
+                    }
                     self.record_tool_catalog_timeouts(&tools).await;
                     let tools: Vec<serde_json::Value> = tools
                         .iter()
@@ -183,6 +219,22 @@ impl McpEndpointState {
                     .and_then(|params| params.get("arguments"))
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!({}));
+                if let Some(scoped) = &self.scoped_tools {
+                    if scoped
+                        .definitions()
+                        .iter()
+                        .any(|tool| tool.namespaced_name == tool_name)
+                    {
+                        return match scoped.call_tool(tool_name, arguments).await {
+                            Ok(result) => JsonRpcResponse::ok(req.id.clone(), result),
+                            Err(error) => JsonRpcResponse::err(
+                                req.id.clone(),
+                                -32603,
+                                format!("scoped tool call failed: {error}"),
+                            ),
+                        };
+                    }
+                }
                 match self.aggregator.call_tool(tool_name, arguments, Some(timeout)).await {
                     Ok(result) => JsonRpcResponse::ok(req.id.clone(), result),
                     Err(e) => JsonRpcResponse::err(req.id.clone(), -32603, format!("tool call failed: {e}")),

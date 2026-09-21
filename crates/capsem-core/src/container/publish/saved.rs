@@ -1,30 +1,53 @@
 //! Host-only listener intent; guest workspace and fork snapshots carry no ports.
 use super::*;
-use crate::container::PortMapping;
+use capsem_proto::{ipc::PublicationInfo, PublicationTarget};
 use std::path::{Path, PathBuf};
+
+/// One declared listener. Records written before targets existed are the
+/// container's, which is all a publication could reach then.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct SavedPublication {
+    pub(super) host: u16,
+    pub(super) guest: u16,
+    #[serde(default)]
+    pub(super) target: PublicationTarget,
+}
 
 pub(super) struct Mappings {
     path: PathBuf,
     lock: tokio::sync::Mutex<()>,
 }
 
-fn read(path: &Path) -> Result<Vec<PortMapping>> {
+fn read(path: &Path) -> Result<Vec<SavedPublication>> {
     let bytes = match capsem_foundation::unix::fs::read_regular_file_no_follow(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.into()),
     };
     ensure!(bytes.len() <= 4096, "saved publication record is too large");
-    let ports: Vec<PortMapping> = serde_json::from_slice(&bytes)?;
+    let ports: Vec<SavedPublication> = serde_json::from_slice(&bytes)?;
     ensure!(ports.len() <= 8, "too many saved publications");
     let mut seen = std::collections::HashSet::new();
     for port in &ports {
         ensure!(
-            port.host != 0 && port.guest != 0 && seen.insert(port.host),
+            port.host != 0 && port.target.admits(port.guest) && seen.insert(port.host),
             "invalid saved publication"
         );
     }
     Ok(ports)
+}
+
+/// Drop `host` from the saved record so a revoked publication does not come
+/// back when the owner restores. Returns whether it was saved.
+fn forget(path: &Path, host: u16) -> Result<bool> {
+    let mut ports = read(path)?;
+    let before = ports.len();
+    ports.retain(|port| port.host != host);
+    if ports.len() == before {
+        return Ok(false);
+    }
+    capsem_foundation::unix::fs::atomic_write_private(path, &serde_json::to_vec(&ports)?)?;
+    Ok(true)
 }
 
 impl Publisher {
@@ -37,33 +60,60 @@ impl Publisher {
         Ok(publisher)
     }
 
-    pub async fn restore(self: &Arc<Self>, control: mpsc::Sender<ServiceToProcess>) -> Result<Vec<Publication>> {
+    /// Re-open every saved publication; returns how many were restored.
+    pub async fn restore(self: &Arc<Self>, control: mpsc::Sender<ServiceToProcess>) -> Result<usize> {
         let Some(saved) = &self.saved else {
-            return Ok(Vec::new());
+            return Ok(0);
         };
         let path = saved.path.clone();
         let ports = tokio::task::spawn_blocking(move || read(&path)).await??;
-        let mut publications = Vec::new();
+        let mut restored = 0;
         for port in ports {
-            publications.push(self.publish(port.host, port.guest, control.clone()).await?);
+            let reopened = self
+                .open(
+                    port.host,
+                    port.guest,
+                    port.target,
+                    control.clone(),
+                    crate::security_engine::network::NetworkLifecycleAction::Restored,
+                )
+                .await;
+            match reopened {
+                Ok(publication) => {
+                    self.declare(port.guest, port.target, publication);
+                    restored += 1;
+                }
+                // The rules changed since it was published: forget it rather
+                // than retry a refusal on every start.
+                Err(error) if error.is::<super::security::ExposureRefused>() => {
+                    tracing::warn!(%error, host_port = port.host, "saved exposure refused on restore");
+                    let path = saved.path.clone();
+                    tokio::task::spawn_blocking(move || forget(&path, port.host)).await??;
+                }
+                Err(error) => return Err(error),
+            }
         }
-        Ok(publications)
+        Ok(restored)
     }
 
+    /// Publish, declare and save a publication so the owner restores it.
     pub async fn publish_saved(
         self: &Arc<Self>,
         host: u16,
         guest: u16,
+        target: PublicationTarget,
         control: mpsc::Sender<ServiceToProcess>,
-    ) -> Result<Publication> {
+    ) -> Result<PublicationInfo> {
         let Some(saved) = &self.saved else {
-            return self.publish(host, guest, control).await;
+            let publication = self.publish(host, guest, target, control).await?;
+            return Ok(self.declare(guest, target, publication));
         };
         let _lock = saved.lock.lock().await;
-        let publication = self.publish(host, guest, control).await?;
-        let port = PortMapping {
-            host: publication.host_port,
+        let publication = self.publish(host, guest, target, control).await?;
+        let port = SavedPublication {
+            host: publication.host_port.expect("saved publication has a loopback port"),
             guest,
+            target,
         };
         let path = saved.path.clone();
         tokio::task::spawn_blocking(move || {
@@ -75,7 +125,41 @@ impl Publisher {
             Ok::<_, anyhow::Error>(())
         })
         .await??;
-        Ok(publication)
+        Ok(self.declare(guest, target, publication))
+    }
+
+    /// Close a declared publication and forget its saved record.
+    pub async fn revoke(&self, exposure_id: &str) -> Result<bool> {
+        // Closed first: the listener does not wait on its audit row.
+        let declared = match self.declared.remove(exposure_id) {
+            Some(entry) => {
+                let (publication_id, listener, guest, target, access) = (
+                    entry.handle.publication_id,
+                    entry.handle.listener,
+                    entry.guest_port,
+                    entry.target,
+                    entry.access,
+                );
+                drop(entry);
+                if let Err(error) = self
+                    .audit_revoked(publication_id, listener, guest, target, access)
+                    .await
+                {
+                    tracing::warn!(%error, %exposure_id, "exposure revocation audit was not admitted");
+                }
+                true
+            }
+            None => false,
+        };
+        let Some(saved) = &self.saved else {
+            return Ok(declared);
+        };
+        let _lock = saved.lock.lock().await;
+        let host = exposure_id.parse::<u16>().ok().filter(|port| *port != 0);
+        let Some(host) = host else { return Ok(declared) };
+        let path = saved.path.clone();
+        let forgotten = tokio::task::spawn_blocking(move || forget(&path, host)).await??;
+        Ok(declared || forgotten)
     }
 }
 

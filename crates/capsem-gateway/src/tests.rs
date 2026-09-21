@@ -30,7 +30,7 @@ impl Drop for EnvGuard {
     }
 }
 
-fn health_app(uds_path: &str) -> (axum::Router, Arc<AppState>) {
+pub(crate) fn health_app(uds_path: &str) -> (axum::Router, Arc<AppState>) {
     let state = Arc::new(AppState {
         token: "test".into(),
         uds_path: uds_path.into(),
@@ -38,6 +38,7 @@ fn health_app(uds_path: &str) -> (axum::Router, Arc<AppState>) {
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
+        previews: crate::preview::PreviewState::new(0),
     });
     let app = axum::Router::new()
         .route("/", axum::routing::get(handle_health))
@@ -82,6 +83,7 @@ fn token_app() -> (axum::Router, Arc<AppState>) {
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
+        previews: crate::preview::PreviewState::new(0),
     });
     let app = axum::Router::new()
         .route("/token", axum::routing::get(handle_token))
@@ -135,6 +137,7 @@ fn cors_app() -> axum::Router {
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
+        previews: crate::preview::PreviewState::new(0),
     });
     axum::Router::new()
         .route("/", axum::routing::get(handle_health))
@@ -355,6 +358,7 @@ async fn events_ws_without_upgrade_header_is_rejected() {
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
+        previews: crate::preview::PreviewState::new(0),
     });
     let app = axum::Router::new()
         .route("/events", axum::routing::get(handle_events_ws))
@@ -467,7 +471,7 @@ fn token_comparison_does_not_depend_on_prefix_agreement() {
 
 // --- Request spans must not record the query string ---
 //
-// The browser WebSocket API cannot set headers, so `/events` and `/terminal`
+// The browser WebSocket API cannot set headers, so `/events` and `/vms/{id}/stream`
 // authenticate with `?token=`. tower-http's default span records the full
 // URI at debug, and the gateway log runs `tower_http=debug`, so every such
 // request wrote the bearer token into gateway.log in clear text.

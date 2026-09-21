@@ -1063,7 +1063,6 @@ pub(super) fn binary_description_for_name(name: &str) -> &'static str {
         "capsem-tray" => "Capsem tray companion executable",
         "capsem-service" => "Capsem host service executable",
         "capsem-gateway" => "Capsem local gateway executable",
-        "capsem-mcp" => "Capsem MCP server executable",
         "capsem-process" => "Capsem guest process bridge executable",
         "capsem" => "Capsem command-line executable",
         _ => "Capsem packaged executable",

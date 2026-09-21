@@ -1,6 +1,7 @@
 """Command execution endpoint tests."""
 
 import pytest
+from helpers.service import exec_output_text
 
 pytestmark = pytest.mark.integration
 
@@ -11,13 +12,13 @@ class TestExec:
         client, name = ready_vm
         resp = client.post(f"/vms/{name}/exec", {"command": "echo hello-service"})
         assert resp is not None
-        assert "hello-service" in resp.get("stdout", "")
+        assert "hello-service" in exec_output_text(resp)
 
     def test_stderr(self, ready_vm):
         client, name = ready_vm
         resp = client.post(f"/vms/{name}/exec", {"command": "echo err-msg >&2"})
         assert resp is not None
-        assert "err-msg" in resp.get("stderr", "") or "err-msg" in resp.get("stdout", "")
+        assert "err-msg" in exec_output_text(resp, "stderr") or "err-msg" in exec_output_text(resp)
 
     def test_exit_code_zero(self, ready_vm):
         client, name = ready_vm
@@ -34,24 +35,24 @@ class TestExec:
     def test_multiline(self, ready_vm):
         client, name = ready_vm
         resp = client.post(f"/vms/{name}/exec", {"command": "printf 'a\\nb\\nc'"})
-        assert "a" in resp.get("stdout", "")
-        assert "b" in resp.get("stdout", "")
-        assert "c" in resp.get("stdout", "")
+        assert "a" in exec_output_text(resp)
+        assert "b" in exec_output_text(resp)
+        assert "c" in exec_output_text(resp)
 
     def test_pipe(self, ready_vm):
         client, name = ready_vm
         resp = client.post(f"/vms/{name}/exec", {"command": "echo abc123 | grep -o abc"})
-        assert "abc" in resp.get("stdout", "")
+        assert "abc" in exec_output_text(resp)
 
     def test_env_var(self, ready_vm):
         client, name = ready_vm
         resp = client.post(f"/vms/{name}/exec", {"command": "export X=works && echo $X"})
-        assert "works" in resp.get("stdout", "")
+        assert "works" in exec_output_text(resp)
 
     def test_uname_linux(self, ready_vm):
         client, name = ready_vm
         resp = client.post(f"/vms/{name}/exec", {"command": "uname -s"})
-        assert "Linux" in resp.get("stdout", "")
+        assert "Linux" in exec_output_text(resp)
 
     def test_timeout(self, ready_vm):
         """A command exceeding timeout should be killed and return an error."""

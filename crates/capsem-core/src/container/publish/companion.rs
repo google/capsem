@@ -30,6 +30,7 @@ impl Router {
         source: BorrowedFd<'_>,
         destination: BorrowedFd<'_>,
         observer: mpsc::Sender<Event>,
+        preview: Option<capsem_proto::PreviewAdmissionKind>,
     ) -> Result<u64> {
         let mut writer = self.writer.lock().await;
         ensure!(!self.closed.is_cancelled(), "VM router is closed");
@@ -40,10 +41,18 @@ impl Router {
             Duration::from_secs(2),
             send_grant(
                 &writer.sender,
-                Grant::Connected {
-                    id,
-                    source,
-                    destination,
+                match preview {
+                    Some(admission) => Grant::Preview {
+                        id,
+                        admission,
+                        source,
+                        destination,
+                    },
+                    None => Grant::Connected {
+                        id,
+                        source,
+                        destination,
+                    },
                 },
             ),
         )

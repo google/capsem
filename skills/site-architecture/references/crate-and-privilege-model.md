@@ -16,6 +16,8 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-config`**: config types, parsing, validation, resolution, and
   provider/MCP identity.
 - **`capsem-credentials`**: credential provider contracts and durable store.
+- **`capsem-api`**: gateway request/response types and OpenAPI schema, shared by clients without service runtime access.
+- **`capsem-sdk`** (`sdk/rust`): async HTTP gateway clients that reuse `capsem-api` DTOs; explicit URL/token, no filesystem discovery or service/core dependencies.
 - **`capsem-proto`**: shared host/guest and service/process wire contracts.
 - **`capsem-core`**: VM, hypervisor, security-engine, host-network, MCP runtime,
   and session/image domain logic.
@@ -26,7 +28,8 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem`**: CLI client; HTTP/UDS to the service and direct process UDS for shell.
 - **`capsem-tui`**: terminal control UI over the gateway API.
 - **`capsem-admin`**: profile/asset/release validation and materialization.
-- **`capsem-mcp`**: host MCP server bridging AI-agent tools to the service API.
+- **`@capsem/mcp`** (`mcp/typescript`): separately installed host MCP server;
+  typed SDK client over authenticated gateway HTTP with no native runtime privilege.
 - **`capsem-router`**: Seatbelt/seccomp-confined companion with two jobs from one binary. Per VM owner, a TCP relay for published host ports only (connected descriptor pairs over a private, bounded grant channel). Per named network, `--network`: that network's layer-2 switch. The service plugs each attached VM's cable (a duplicate of that cable's VSOCK 5009 stream) into it; it forwards ethernet frames on MAC only, floods broadcast under a cap, and carries every protocol. No service control socket, ambient file access, listener acceptance, or virtualization entitlement in either job.
 - **`capsem-network`**: the cable's frame codec (`u16` length + ethernet frame) and the switch's MAC forwarding table as pure code. The kernel inside each guest does ARP, IP and everything above; no host process parses past a frame's MAC addresses.
 - **`capsem-mcp-aggregator`**: low-privilege external-MCP subprocess manager.
@@ -43,7 +46,7 @@ Sharing alone is not a reason to put code in `capsem-core`.
 capsem-process is a **low-privilege** per-VM process. Security invariants:
 
 1. **Minimal environment**: service uses `env_clear()` before spawn, then passes only `HOME`, `PATH`, `USER`, `TMPDIR`, `RUST_LOG`. API keys and tokens from the user's shell never reach the process.
-2. **Socket permissions 0600**: IPC (`{id}.sock`) and terminal WS (`{id}-ws.sock`) sockets are chmod 0600 after bind. Only the owning user can connect.
+2. **Socket permissions 0600**: Per-VM owner sockets (`{id}.sock` IPC, `{id}-handoff.sock`) are chmod 0600 after bind; no client dials them -- terminals and attach go through the service `/vms/{id}/stream` route. Only the owning user can connect.
 3. **Session directory 0700**: created by the service via `create_virtiofs_session`. Contains workspace/, system/, serial.log (0600), session.db.
 4. **No guest-triggered process exit**: control channel read errors cause `break` (loop exit), not `process::exit()`. Guest cannot DoS the host process.
 5. **Gateway auth layer**: external access goes through capsem-gateway (Bearer token, rate limiting, localhost CORS). Per-VM sockets are not exposed to the network.

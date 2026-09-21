@@ -14,6 +14,7 @@ from pathlib import Path
 
 from log_streams import read_log_stream
 
+from . import failures
 from .constants import (
     ASSETS_DIR,
     BIN_DIR,
@@ -42,7 +43,6 @@ WINTERFELL_REQUIRED_BINARIES = (
     "capsem-service",
     "capsem-process",
     "capsem-gateway",
-    "capsem-mcp",
 )
 
 
@@ -151,7 +151,11 @@ def resolve_winterfell_artifact_roots(
     source_roots = (
         (binary_dir, host_bin_root(environment).resolve(), "binary"),
         (assets_dir, (PROJECT_ROOT / "cache" / "target" / "assets").resolve(), "asset"),
-        (profiles_dir, PROFILES_DIR.resolve(), "profile"),
+        (
+            profiles_dir,
+            (PROJECT_ROOT / "cache" / "target" / "config" / "profiles").resolve(),
+            "profile",
+        ),
     )
     for selected, source, family in source_roots:
         if _path_is_within(selected, source):
@@ -283,6 +287,13 @@ def materialize_test_profiles(tmp_dir: Path) -> Path:
     return profiles_dir
 
 
+def record_failure(nodeid: str) -> None:
+    """Record a failed test and keep every live service home as it is now."""
+    failures.FAILED_NODEIDS.append(nodeid)
+    for home in sorted(failures.LIVE_HOMES):
+        preserve_tmp_dir_on_failure(home, force=True)
+
+
 def preserve_tmp_dir_on_failure(
     tmp_dir, *, force: bool = False, any_worker_failure: bool = False
 ):
@@ -309,10 +320,7 @@ def preserve_tmp_dir_on_failure(
     Also rotates `cache/target/tests/evidence/` after each preserve, keeping only the
     most recent `ARTIFACT_MAX_KEPT_DIRS` failure dirs.
     """
-    try:
-        from conftest import ARTIFACTS_ROOT, FAILED_NODEIDS
-    except ImportError:
-        return
+    artifacts_root = Path(os.environ.get("CAPSEM_TEST_ARTIFACTS_ROOT", failures.ARTIFACTS_ROOT))
     tmp_dir = Path(tmp_dir)
     if not tmp_dir.exists():
         return
@@ -323,28 +331,28 @@ def preserve_tmp_dir_on_failure(
     force = force or bool(os.environ.get("CAPSEM_TEST_PRESERVE_ALWAYS"))
     current_test = os.environ.get("PYTEST_CURRENT_TEST", "").rsplit(" (", 1)[0]
     if not force:
-        if not FAILED_NODEIDS:
+        if not failures.FAILED_NODEIDS:
             return
         if (
             not any_worker_failure
             and current_test
-            and current_test not in FAILED_NODEIDS
+            and current_test not in failures.FAILED_NODEIDS
         ):
             return
     import stat as statmod
     import time
 
     worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
-    if any_worker_failure and FAILED_NODEIDS:
-        tag = FAILED_NODEIDS[-1].replace("/", "_").replace(":", "_")[:80]
+    if any_worker_failure and failures.FAILED_NODEIDS:
+        tag = failures.FAILED_NODEIDS[-1].replace("/", "_").replace(":", "_")[:80]
     elif current_test:
         tag = current_test.replace("/", "_").replace(":", "_")[:80]
-    elif FAILED_NODEIDS:
-        tag = FAILED_NODEIDS[-1].replace("/", "_").replace(":", "_")[:80]
+    elif failures.FAILED_NODEIDS:
+        tag = failures.FAILED_NODEIDS[-1].replace("/", "_").replace(":", "_")[:80]
     else:
         tag = "no-failures-on-this-worker"
     ts = time.strftime("%Y%m%d-%H%M%S")
-    dest = ARTIFACTS_ROOT / f"{ts}-{worker}-{tag}" / tmp_dir.name
+    dest = artifacts_root / f"{ts}-{worker}-{tag}" / tmp_dir.name
 
     copied = 0
     skipped_name = 0
@@ -417,7 +425,7 @@ def preserve_tmp_dir_on_failure(
         for err in errors[:10]:
             print(f"  ! {err}", file=sys.stderr)
         _rotate_artifacts(
-            ARTIFACTS_ROOT,
+            artifacts_root,
             keep=ARTIFACT_MAX_KEPT_DIRS,
             minimum=ARTIFACT_MIN_KEPT_DIRS,
             maximum_age_s=ARTIFACT_MAX_AGE_S,
@@ -478,7 +486,7 @@ def _rotate_artifacts(root, keep, minimum, maximum_age_s, maximum_total_bytes):
 class ServiceInstance:
     """A running capsem-service instance on an isolated socket."""
 
-    def __init__(self, *, assets_dir: Path | None = None):
+    def __init__(self, *, assets_dir: Path | None = None, sign_binaries: bool = True):
         # Match the installed layout exactly: CAPSEM_HOME owns a run/
         # directory and sessions/main.db is its sibling.  Using the temporary
         # home itself as CAPSEM_RUN_DIR makes main_db_path_for_run_dir() resolve
@@ -487,6 +495,7 @@ class ServiceInstance:
         self.home_dir, self.tmp_dir = make_service_home_run_dirs()
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.assets_dir = assets_dir
+        self.sign_binaries = sign_binaries
         self.profiles_dir = None
         self.gateway_port = 0
         self.proc = None
@@ -494,11 +503,13 @@ class ServiceInstance:
         self._failure_evidence_preserved = False
 
     def start(self):
+        failures.LIVE_HOMES.add(self.home_dir)
         # Sign binaries before spawning (macOS needs virtualization entitlement)
-        sign_binary(PROCESS_BINARY)
-        sign_binary(SERVICE_BINARY)
-        sign_binary(GATEWAY_BINARY)
-        sign_binary(TRAY_BINARY)
+        if self.sign_binaries:
+            sign_binary(PROCESS_BINARY)
+            sign_binary(SERVICE_BINARY)
+            sign_binary(GATEWAY_BINARY)
+            sign_binary(TRAY_BINARY)
 
         assets_dir = self.assets_dir or ASSETS_DIR
         if self.profiles_dir is None:
@@ -623,6 +634,7 @@ class ServiceInstance:
             else:
                 preserve_tmp_dir_on_failure(self.home_dir)
 
+        failures.LIVE_HOMES.discard(self.home_dir)
         if self.home_dir.exists():
             shutil.rmtree(self.home_dir, ignore_errors=True)
 
@@ -635,6 +647,13 @@ class ServiceInstance:
         """
         self.stop(cleanup=False)
         return read_log_stream(self.tmp_dir / "service.log")
+
+
+def exec_output_text(response, stream="stdout"):
+    """Read one explicitly textual stream from the typed exec response."""
+    output = response[stream]
+    assert output["encoding"] == "utf8", response
+    return output["data"]
 
 
 def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
@@ -650,7 +669,7 @@ def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
             {"command": "echo ready", "timeout_secs": timeout},
             timeout=timeout + 5,
         )
-        return resp is not None and "ready" in resp.get("stdout", "")
+        return resp is not None and "ready" in exec_output_text(resp)
     except Exception:
         return False
 

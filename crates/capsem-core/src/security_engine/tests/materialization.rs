@@ -129,6 +129,11 @@ fn http_materializer_resolves_broker_ref_only_for_upstream_copy() {
 fn fully_populated_security_event() -> SecurityEvent {
     let text = || Some("populated".to_string());
     SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_container(ContainerSecurityEvent {
+            image: "registry.example/app:1".into(),
+            registry: "registry.example".into(),
+            digest: Some("sha256:fixture".into()),
+        })
         .with_http(HttpSecurityEvent {
             host: text(),
             method: text(),
@@ -222,18 +227,21 @@ fn security_event_cel_fields_all_resolve() {
         .with_network(NetworkSecurityEvent::Flow(network::tests::private_flow()));
     let mut expose = network::tests::private_flow();
     expose.route = network::NetworkRoute::Expose {
-        publication_id: Uuid::from_u128(3),
+        publication_id: uuid::Uuid::from_u128(3),
         listener: "127.0.0.1:16379".parse().unwrap(),
     };
     expose.source.vm = None;
     expose.side = network::NetworkSide::Destination;
     let expose =
         SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect).with_network(NetworkSecurityEvent::Flow(expose));
+    let exposure = SecurityEvent::new(RuntimeSecurityEventType::NetworkLifecycle).with_network(
+        network::tests::exposure(network::NetworkLifecycleAction::Published, 6379),
+    );
     let unresolved = SECURITY_EVENT_CEL_FIELDS
         .iter()
         .copied()
         .filter(|field| {
-            [&event, &private, &expose]
+            [&event, &private, &expose, &exposure]
                 .iter()
                 .all(|event| event.get_policy_field(field).is_none())
         })

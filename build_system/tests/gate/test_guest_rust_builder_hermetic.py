@@ -72,6 +72,30 @@ def test_guest_rust_builder_materializes_the_checked_in_lock_before_runtime() ->
     assert "RUN rm -rf /prefetch" in source
 
 
+def test_guest_rust_builder_prefetch_can_load_every_workspace_member() -> None:
+    """`cargo fetch --locked` loads the whole workspace before it fetches.
+
+    The prefetch layer copied only `crates/`, so when `sdk/rust` joined the
+    workspace every cold helper build failed with "failed to load manifest for
+    workspace member". A member outside `crates/` needs its manifest and a stub
+    target (Cargo refuses a manifest with no target), and its manifest keys the
+    image identity because it decides what fetch resolves.
+    """
+    import tomllib
+
+    manifest = tomllib.loads((PROJECT_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    outside = [member for member in manifest["workspace"]["members"] if not member.startswith("crates/")]
+    source = (PROJECT_ROOT / BUILD.guest_rust_builder.dockerfile).read_text(encoding="utf-8")
+    identity = BUILD.guest_rust_builder.identity_inputs
+
+    assert outside, "the check below is vacuous without a member outside crates/"
+    assert "Cargo.toml" in identity
+    for member in outside:
+        assert f"COPY {member}/Cargo.toml /prefetch/{member}/Cargo.toml" in source, member
+        assert f"/prefetch/{member}/src/lib.rs" in source, member
+        assert f"{member}/Cargo.toml" in identity, member
+
+
 def test_a_cross_image_materializes_its_target_and_asserts_it_landed() -> None:
     """`rustup target add` is permitted, and only in the cross setup layer.
 

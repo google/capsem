@@ -9,6 +9,10 @@ import sys
 from pathlib import Path, PurePosixPath
 
 RUNTIME = Path("/var/tmp/capsem-container")
+# The VM workspace (the host-visible share) and, inside it, this launcher's
+# own stage. The service names where the container sees the workspace.
+VM_WORKSPACE = "/root"
+STAGE = ".capsem-image"
 CONTAINER = "workload"
 
 # The VM trusts the Capsem CA through this bundle; the container gets the same
@@ -32,6 +36,20 @@ REDIRECT_RULE = re.compile(
     r"-j REDIRECT --to-ports (\d+)$"
 )
 RETURN_RULE = re.compile(r"^-A OUTPUT -d (\S+) -j RETURN$")
+
+
+def _safe_mount_point(value):
+    """An absolute, normalized path the container may mount something at."""
+    path = PurePosixPath(value)
+    return (
+        isinstance(value, str)
+        and path.is_absolute()
+        and ".." not in path.parts
+        and str(path) == value
+        and len(path.parts) >= 2
+        and len(value) <= 4096
+        and path.parts[1] not in {"proc", "dev", "sys", "usr", "bin", "sbin", "lib", "lib64", "etc"}
+    )
 
 
 def configure(unpacked, image, options):
@@ -68,17 +86,11 @@ def configure(unpacked, image, options):
     if len(volumes) > 32:
         raise ValueError("image declares too many volumes")
     for volume in volumes:
-        path = PurePosixPath(volume)
-        if (
-            not path.is_absolute()
-            or ".." in path.parts
-            or str(path) != volume
-            or len(path.parts) < 2
-            or len(volume) > 4096
-            or path.parts[1]
-            in {"proc", "dev", "sys", "usr", "bin", "sbin", "lib", "lib64", "etc"}
-        ):
+        if not _safe_mount_point(volume):
             raise ValueError(f"unsafe image volume: {volume}")
+    workspace = options.get("workspace")
+    if workspace is not None and not _safe_mount_point(workspace):
+        raise ValueError(f"unsafe workspace mount point: {workspace}")
     mounts = [
         {
             "destination": "/proc",
@@ -114,6 +126,28 @@ def configure(unpacked, image, options):
             (CA_BUNDLE, CA_BUNDLE),
         )
     )
+    if workspace is not None:
+        # After the volumes, so an image's own volume at this path cannot hide
+        # it. Writable: a workload leaves its outputs here for the host.
+        mounts.append(
+            {
+                "destination": workspace,
+                "type": "bind",
+                "source": VM_WORKSPACE,
+                "options": ["bind", "rw", "nosuid", "nodev"],
+            }
+        )
+        # The stage holds this launcher, which runs as root in the VM on every
+        # relaunch, and options.json with the workload's environment: the
+        # container must neither read nor replace it.
+        mounts.append(
+            {
+                "destination": f"{workspace}/{STAGE}",
+                "type": "tmpfs",
+                "source": "tmpfs",
+                "options": ["ro", "nosuid", "nodev", "noexec", "mode=000", "size=4k"],
+            }
+        )
     return {
         "ociVersion": "1.0.2",
         "root": {"path": "rootfs", "readonly": True},

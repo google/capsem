@@ -254,7 +254,7 @@ Component-level targets in `codecov.yml`:
 | CLI | command-line client |
 | TUI | terminal UI |
 | MCP Server | stdio JSON-RPC MCP server |
-| Gateway | TCP-to-UDS gateway and terminal WebSocket |
+| Gateway | TCP-to-UDS gateway and stream WebSocket tunnel |
 | System Tray | menu-bar host |
 | Guard | lifecycle guard primitives |
 | UI | frontend app |

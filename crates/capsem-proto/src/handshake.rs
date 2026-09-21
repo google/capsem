@@ -8,12 +8,17 @@
 //!
 //! With this handshake, the FIRST message on every newly-built channel is
 //! a typed [`Hello`] carrying the protocol version, a compile-time schema
-//! hash of the enum source, and the peer's binary identifier. A
+//! hash of normalized protocol syntax, and the peer's binary identifier. A
 //! [`Handshake`-mismatch][HandshakeError] log shows up in the JSON trace
 //! within 1s; the support-bundle parser cross-references the two
 //! `service.start` lines and points at the version skew immediately.
 
 use serde::{Deserialize, Serialize};
+
+/// Hello `peer` of a connection that carries exactly one stream (terminal or
+/// streaming exec). The VM owner sends such a connection no lifecycle
+/// broadcasts, so nothing interleaves with the stream's own messages.
+pub const STREAM_PEER_ID: &str = "capsem-stream";
 
 /// First message on every typed IPC connection and every vsock control
 /// connection. Sent by the *initiator* (service for IPC, guest for
@@ -28,8 +33,8 @@ pub struct Hello {
     /// Bumped on any breaking change to the wire shape of the four
     /// protocol enums or the framing on either transport.
     pub version: u16,
-    /// FNV-1a 64-bit hash of the protocol source bytes. Catches enum
-    /// reordering / variant additions that don't bump `version`.
+    /// FNV-1a 64-bit hash of normalized protocol syntax. Catches wire-shape
+    /// changes that do not bump `version`, without rejecting doc edits.
     pub schema_hash: u64,
     /// Free-form identifier ("capsem-service-1.0.1777", git sha, etc.).
     /// Logged on mismatch so the operator sees both peers at once.

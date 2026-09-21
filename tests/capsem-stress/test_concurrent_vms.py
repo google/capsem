@@ -4,7 +4,7 @@ import contextlib
 import uuid
 
 import pytest
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.stress
 
@@ -30,7 +30,7 @@ def test_create_five_vms():
         # Exec in each, verify isolation
         for i, (_name, vm_id) in enumerate(vms):
             resp = client.post(f"/vms/{vm_id}/exec", {"command": f"echo vm-{i}"})
-            assert f"vm-{i}" in resp.get("stdout", "")
+            assert f"vm-{i}" in exec_output_text(resp)
 
         # All in list
         list_resp = client.get("/vms/list")

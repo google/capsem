@@ -65,11 +65,20 @@ fn network_info(registry: &NetworkRegistry, id: Uuid) -> Option<NetworkInfo> {
     let members = registry
         .members(id)?
         .into_iter()
-        .map(|member| NetworkMemberInfo {
-            vm_id: member.vm_id,
-            address: member.address,
-            state: member.state.as_str().to_string(),
-            updated_unix_ms: member.updated_unix_ms,
+        .filter_map(|member| {
+            let state = match member.state {
+                capsem_logger::MembershipState::Declared => NetworkMemberState::Declared,
+                capsem_logger::MembershipState::Attaching => NetworkMemberState::Attaching,
+                capsem_logger::MembershipState::Ready => NetworkMemberState::Ready,
+                capsem_logger::MembershipState::Failed => NetworkMemberState::Failed,
+                capsem_logger::MembershipState::Detached => return None,
+            };
+            Some(NetworkMemberInfo {
+                vm_id: member.vm_id,
+                address: member.address,
+                state,
+                updated_unix_ms: member.updated_unix_ms,
+            })
         })
         .collect();
     Some(NetworkInfo {

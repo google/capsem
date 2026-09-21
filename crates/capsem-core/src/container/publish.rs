@@ -13,7 +13,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixStream;
 use tokio::sync::{mpsc, oneshot, Semaphore};
@@ -22,9 +22,10 @@ use tokio_util::sync::CancellationToken;
 mod admission;
 mod broker;
 mod companion;
+mod registry;
 mod saved;
 mod security;
-pub use security::AuditFlow;
+pub use security::{AuditFlow, ContainerPullRefused, ExposureRefused};
 
 pub struct Publisher {
     security: Option<Arc<security::Authority>>,
@@ -45,6 +46,7 @@ pub struct Publisher {
     cancellation: CancellationToken,
     drain: tokio::sync::Mutex<()>,
     router: tokio::sync::Mutex<Option<Arc<companion::Router>>>,
+    declared: registry::Registry<Publication>,
 }
 
 type GuestClose = (capsem_proto::router::FlowKey, capsem_proto::router::CloseReport);
@@ -88,6 +90,13 @@ pub struct Incoming {
     pub source: Source,
     pub audit: security::AuditFlow,
     pub port: u16,
+    pub target: capsem_proto::PublicationTarget,
+    /// The request shape a preview connection was admitted for; `None` for a
+    /// published host port.
+    pub preview: Option<capsem_proto::PreviewAdmissionKind>,
+    /// The session a preview connection was admitted under: the flow ends
+    /// when it expires or is revoked. `None` for a published host port.
+    pub session: Option<SessionLease>,
 }
 
 struct GuestFlow {
@@ -128,16 +137,162 @@ impl Publisher {
             cancellation: CancellationToken::new(),
             drain: tokio::sync::Mutex::new(()),
             router: tokio::sync::Mutex::new(None),
+            declared: registry::Registry::default(),
             budgets,
         })
     }
 }
 
 pub struct Publication {
-    pub host_port: u16,
+    pub host_port: Option<u16>,
+    listener: std::net::SocketAddr,
     pub router_pid: u32,
+    /// The identity its admission, connections and revocation are audited under.
+    pub publication_id: uuid::Uuid,
     task: tokio::task::AbortHandle,
     cancellation: CancellationToken,
+    preview: Option<Arc<PreviewState>>,
+}
+
+const PREVIEW_BOOTSTRAP_LIFETIME: Duration = Duration::from_secs(capsem_proto::PREVIEW_BOOTSTRAP_LIFETIME_SECS as u64);
+const PREVIEW_SESSION_LIFETIME: Duration = Duration::from_secs(capsem_proto::PREVIEW_SESSION_LIFETIME_SECS as u64);
+const PREVIEW_HANDOFF_LIFETIME: Duration = Duration::from_secs(5);
+const MAX_PREVIEW_CREDENTIALS: usize = 128;
+
+struct PreviewCredentials {
+    bootstraps: HashMap<String, Instant>,
+    sessions: HashMap<String, SessionLease>,
+    handoffs: HashMap<u64, (Instant, capsem_proto::PreviewAdmissionKind, SessionLease)>,
+}
+
+/// What an admitted preview flow knows about its session: when it expires,
+/// and whether it has been revoked. Admission was once the only check, so a
+/// WebSocket opened a minute before expiry kept working indefinitely.
+#[derive(Debug, Clone)]
+pub struct SessionLease {
+    expires: Instant,
+    revoked: CancellationToken,
+}
+
+impl SessionLease {
+    /// Why a flow admitted under this session must end by `now`, if it must.
+    pub fn ended(&self, now: Instant) -> Option<crate::security_engine::network::NetworkReason> {
+        use crate::security_engine::network::NetworkReason;
+        if self.revoked.is_cancelled() {
+            Some(NetworkReason::SessionRevoked)
+        } else if now >= self.expires {
+            Some(NetworkReason::SessionExpired)
+        } else {
+            None
+        }
+    }
+}
+
+struct PreviewState {
+    incoming: mpsc::Sender<Incoming>,
+    credentials: Mutex<PreviewCredentials>,
+}
+
+impl PreviewState {
+    fn new(incoming: mpsc::Sender<Incoming>) -> Self {
+        Self {
+            incoming,
+            credentials: Mutex::new(PreviewCredentials {
+                bootstraps: HashMap::new(),
+                sessions: HashMap::new(),
+                handoffs: HashMap::new(),
+            }),
+        }
+    }
+
+    fn secret() -> String {
+        format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple())
+    }
+
+    fn create_session(&self) -> Result<String> {
+        let now = Instant::now();
+        let mut credentials = self.credentials.lock().unwrap();
+        credentials.bootstraps.retain(|_, expires| *expires > now);
+        ensure!(
+            credentials.bootstraps.len() < MAX_PREVIEW_CREDENTIALS,
+            "preview bootstrap quota reached"
+        );
+        let token = Self::secret();
+        credentials
+            .bootstraps
+            .insert(token.clone(), now + PREVIEW_BOOTSTRAP_LIFETIME);
+        drop(credentials);
+        Ok(token)
+    }
+
+    fn exchange(&self, token: &str) -> Result<String> {
+        let now = Instant::now();
+        let mut credentials = self.credentials.lock().unwrap();
+        let expires = credentials
+            .bootstraps
+            .remove(token)
+            .context("unknown, reused or expired preview bootstrap")?;
+        ensure!(expires > now, "unknown, reused or expired preview bootstrap");
+        credentials.sessions.retain(|_, lease| lease.expires > now);
+        ensure!(
+            credentials.sessions.len() < MAX_PREVIEW_CREDENTIALS,
+            "preview session quota reached"
+        );
+        let session = Self::secret();
+        credentials.sessions.insert(
+            session.clone(),
+            SessionLease {
+                expires: now + PREVIEW_SESSION_LIFETIME,
+                revoked: CancellationToken::new(),
+            },
+        );
+        drop(credentials);
+        Ok(session)
+    }
+
+    fn admit(&self, session: &str, kind: capsem_proto::PreviewAdmissionKind) -> Result<u64> {
+        let now = Instant::now();
+        let mut credentials = self.credentials.lock().unwrap();
+        credentials.sessions.retain(|_, lease| lease.expires > now);
+        let lease = credentials
+            .sessions
+            .get(session)
+            .cloned()
+            .context("unknown or expired preview session")?;
+        credentials.handoffs.retain(|_, (expires, _, _)| *expires > now);
+        ensure!(
+            credentials.handoffs.len() < MAX_PREVIEW_CREDENTIALS,
+            "preview handoff quota reached"
+        );
+        let mut token = uuid::Uuid::new_v4().as_u128() as u64;
+        if token == 0 {
+            token = 1;
+        }
+        while credentials.handoffs.contains_key(&token) {
+            token = token.checked_add(1).context("preview handoff tokens exhausted")?;
+        }
+        credentials
+            .handoffs
+            .insert(token, (now + PREVIEW_HANDOFF_LIFETIME, kind, lease));
+        drop(credentials);
+        Ok(token)
+    }
+
+    fn redeem(&self, token: u64) -> Option<(capsem_proto::PreviewAdmissionKind, SessionLease)> {
+        let now = Instant::now();
+        let (expires, kind, lease) = self.credentials.lock().unwrap().handoffs.remove(&token)?;
+        (expires > now).then_some((kind, lease))
+    }
+
+    /// End every session of this exposure, which stays declared: a legitimate
+    /// user bootstraps again, a leaked session does not come back.
+    fn revoke_all(&self) -> usize {
+        let sessions: Vec<_> = self.credentials.lock().unwrap().sessions.drain().collect();
+        for (_, lease) in &sessions {
+            lease.revoked.cancel();
+        }
+        sessions.len()
+    }
 }
 
 impl Publication {
@@ -238,16 +393,40 @@ impl Publisher {
         Ok(tasks.spawn(task))
     }
 
+    /// Open a loopback listener for `guest_port` once the VM's rules admit
+    /// the exposure. A refused exposure accepts no connection.
     pub async fn publish(
         self: &Arc<Self>,
         host_port: u16,
         guest_port: u16,
+        target: capsem_proto::PublicationTarget,
         control: mpsc::Sender<ServiceToProcess>,
+    ) -> Result<Publication> {
+        self.open(
+            host_port,
+            guest_port,
+            target,
+            control,
+            crate::security_engine::network::NetworkLifecycleAction::Published,
+        )
+        .await
+    }
+
+    async fn open(
+        self: &Arc<Self>,
+        host_port: u16,
+        guest_port: u16,
+        target: capsem_proto::PublicationTarget,
+        control: mpsc::Sender<ServiceToProcess>,
+        action: crate::security_engine::network::NetworkLifecycleAction,
     ) -> Result<Publication> {
         let lifecycle = self.drain.lock().await;
         ensure!(!self.cancellation.is_cancelled(), "VM router is shutting down");
-        ensure!(guest_port != 0, "guest port must be nonzero");
-        ensure!(self.security.is_some(), "publication security context missing");
+        ensure!(
+            target.admits(guest_port),
+            "guest port {guest_port} cannot be published into the {target:?} namespace"
+        );
+        let authority = self.security.clone().context("publication security context missing")?;
         let permit = self
             .mappings
             .clone()
@@ -255,7 +434,21 @@ impl Publisher {
             .context("VM publication limit reached")?;
         let listener =
             std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, host_port)).context("bind publication listener")?;
-        let host_port = listener.local_addr()?.port();
+        let host_address = listener.local_addr()?;
+        let host_port = host_address.port();
+        // Bound, so the audited listener is the real one, but not accepting:
+        // dropping it on refusal serves nothing.
+        let publication_id = uuid::Uuid::new_v4();
+        authority
+            .admit_exposure(
+                publication_id,
+                host_address,
+                guest_port,
+                target,
+                capsem_proto::PublicationAccess::LoopbackTcp,
+                action,
+            )
+            .await?;
         listener.set_nonblocking(true)?;
         let listener = tokio::net::TcpListener::from_std(listener)?;
         let mut current = self.router.lock().await;
@@ -268,7 +461,7 @@ impl Publisher {
         let owner = self.clone();
         let cancellation = self.cancellation.child_token();
         let stop = cancellation.clone();
-        let incoming = self.accept_publication(listener, guest_port, stop.clone())?;
+        let incoming = self.accept_publication(listener, publication_id, guest_port, target, stop.clone())?;
         let task = self.spawn(async move {
             let _permit = permit;
             if let Err(error) = broker::serve(owner, incoming, control, router, stop).await {
@@ -277,10 +470,13 @@ impl Publisher {
         })?;
         drop(lifecycle);
         Ok(Publication {
-            host_port,
+            host_port: Some(host_port),
+            listener: host_address,
             router_pid,
+            publication_id,
             task,
             cancellation,
+            preview: None,
         })
     }
 
@@ -403,6 +599,205 @@ impl Publisher {
 }
 
 impl Publisher {
+    /// The owner's live publications, in host port order.
+    pub fn publications(&self) -> Vec<capsem_proto::ipc::PublicationInfo> {
+        self.declared.list(|entry| capsem_proto::ipc::PublicationInfo {
+            id: entry.id.clone(),
+            host_port: entry.host_port,
+            guest_port: entry.guest_port,
+            target: entry.target,
+            access: entry.access,
+            router_pid: entry.handle.router_pid,
+        })
+    }
+
+    fn declare(
+        &self,
+        guest_port: u16,
+        target: capsem_proto::PublicationTarget,
+        publication: Publication,
+    ) -> capsem_proto::ipc::PublicationInfo {
+        let info = capsem_proto::ipc::PublicationInfo {
+            id: publication
+                .host_port
+                .expect("loopback publication has a port")
+                .to_string(),
+            host_port: publication.host_port,
+            guest_port,
+            target,
+            access: capsem_proto::PublicationAccess::LoopbackTcp,
+            router_pid: publication.router_pid,
+        };
+        self.declared.insert(registry::Declared {
+            id: info.id.clone(),
+            host_port: info.host_port,
+            guest_port,
+            target,
+            access: info.access,
+            handle: publication,
+        });
+        info
+    }
+
+    /// Declare a browser-only exposure. The gateway owns the one shared
+    /// loopback listener; this owner receives only admitted connected sockets.
+    pub async fn declare_preview(
+        self: &Arc<Self>,
+        listener_port: u16,
+        guest_port: u16,
+        target: capsem_proto::PublicationTarget,
+        control: mpsc::Sender<ServiceToProcess>,
+    ) -> Result<capsem_proto::ipc::PublicationInfo> {
+        let lifecycle = self.drain.lock().await;
+        ensure!(!self.cancellation.is_cancelled(), "VM router is shutting down");
+        ensure!(listener_port != 0, "preview listener port is missing");
+        ensure!(target.admits(guest_port), "invalid preview guest port");
+        let permit = self
+            .mappings
+            .clone()
+            .try_acquire_owned()
+            .context("VM publication limit reached")?;
+        let publication_id = uuid::Uuid::new_v4();
+        let listener = (Ipv4Addr::LOCALHOST, listener_port).into();
+        let authority = self.security.clone().context("publication security context missing")?;
+        authority
+            .admit_exposure(
+                publication_id,
+                listener,
+                guest_port,
+                target,
+                capsem_proto::PublicationAccess::HttpPreview,
+                crate::security_engine::network::NetworkLifecycleAction::Published,
+            )
+            .await?;
+        let mut current = self.router.lock().await;
+        if current.as_ref().is_none_or(|router| router.closed.is_cancelled()) {
+            *current = Some(companion::start(self).await?);
+        }
+        let router = current.as_ref().unwrap().clone();
+        drop(current);
+        let router_pid = router.pid;
+        let (feed, incoming) = mpsc::channel(capsem_router::MAX_CONNECTIONS);
+        let preview = Arc::new(PreviewState::new(feed));
+        let cancellation = self.cancellation.child_token();
+        let stop = cancellation.clone();
+        let owner = self.clone();
+        let task = self.spawn(async move {
+            let _permit = permit;
+            if let Err(error) = broker::serve(owner, incoming, control, router, stop).await {
+                tracing::warn!(%error, %publication_id, "preview broker ended");
+            }
+        })?;
+        let id = publication_id.to_string();
+        let publication = Publication {
+            host_port: None,
+            listener,
+            router_pid,
+            publication_id,
+            task,
+            cancellation,
+            preview: Some(preview),
+        };
+        let info = capsem_proto::ipc::PublicationInfo {
+            id: id.clone(),
+            host_port: None,
+            guest_port,
+            target,
+            access: capsem_proto::PublicationAccess::HttpPreview,
+            router_pid,
+        };
+        self.declared.insert(registry::Declared {
+            id,
+            host_port: None,
+            guest_port,
+            target,
+            access: capsem_proto::PublicationAccess::HttpPreview,
+            handle: publication,
+        });
+        drop(lifecycle);
+        Ok(info)
+    }
+
+    pub fn create_preview_session(&self, id: &str) -> Result<String> {
+        self.declared
+            .with(id, |entry| {
+                entry.handle.preview.as_ref().map(|preview| preview.create_session())
+            })
+            .flatten()
+            .context("preview exposure not found")?
+    }
+
+    /// End every session of preview exposure `id` and, through the broker,
+    /// every flow they admitted. The exposure stays declared.
+    pub fn revoke_preview_sessions(&self, id: &str) -> Result<usize> {
+        self.declared
+            .with(id, |entry| {
+                entry.handle.preview.as_ref().map(|preview| preview.revoke_all())
+            })
+            .flatten()
+            .context("preview exposure not found")
+    }
+
+    pub fn exchange_preview_bootstrap(&self, id: &str, token: &str) -> Result<String> {
+        self.declared
+            .with(id, |entry| {
+                entry.handle.preview.as_ref().map(|preview| preview.exchange(token))
+            })
+            .flatten()
+            .context("preview exposure not found")?
+    }
+
+    pub fn admit_preview_connection(
+        &self,
+        id: &str,
+        session: &str,
+        kind: capsem_proto::PreviewAdmissionKind,
+    ) -> Result<u64> {
+        self.declared
+            .with(id, |entry| {
+                entry
+                    .handle
+                    .preview
+                    .as_ref()
+                    .map(|preview| preview.admit(session, kind))
+            })
+            .flatten()
+            .context("preview exposure not found")?
+    }
+
+    pub async fn accept_preview_handoff(self: &Arc<Self>, token: u64, source: Source) -> Result<()> {
+        let found = self.declared.find_map(|entry| {
+            let preview = entry.handle.preview.as_ref()?;
+            let (kind, lease) = preview.redeem(token)?;
+            Some((
+                preview.clone(),
+                entry.handle.publication_id,
+                entry.guest_port,
+                entry.target,
+                kind,
+                lease,
+            ))
+        });
+        let (preview, publication_id, guest_port, target, kind, lease) =
+            found.context("unknown, reused or expired preview handoff")?;
+        let authority = self.security.clone().context("publication security context missing")?;
+        let listener = source.0.local_addr()?;
+        let peer = source.0.peer_addr()?;
+        let audit = security::AuditFlow::preview(authority, publication_id, listener, peer, guest_port, kind);
+        preview
+            .incoming
+            .send(Incoming {
+                source,
+                audit,
+                port: guest_port,
+                target,
+                preview: Some(kind),
+                session: Some(lease),
+            })
+            .await
+            .context("preview broker closed")
+    }
+
     pub fn generation(&self) -> NonZeroU64 {
         self.generation
     }
@@ -424,12 +819,13 @@ impl Publisher {
     pub(super) fn accept_publication(
         self: &Arc<Self>,
         listener: tokio::net::TcpListener,
+        publication_id: uuid::Uuid,
         guest_port: u16,
+        target: capsem_proto::PublicationTarget,
         stop: CancellationToken,
     ) -> Result<mpsc::Receiver<Incoming>> {
         let authority = self.security.clone().context("publication security context missing")?;
         let host_address = listener.local_addr()?;
-        let publication_id = uuid::Uuid::new_v4();
         let (feed, incoming) = mpsc::channel(capsem_router::MAX_CONNECTIONS);
         self.spawn(async move {
             loop {
@@ -450,6 +846,9 @@ impl Publisher {
                     source: Source(source),
                     audit,
                     port: guest_port,
+                    target,
+                    preview: None,
+                    session: None,
                 };
                 if feed.send(arrival).await.is_err() {
                     return;

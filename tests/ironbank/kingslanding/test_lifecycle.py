@@ -14,6 +14,7 @@ from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_run import (
     created,
     environment,
+    exec_output_text,
     service,
     wait_for,
 )
@@ -100,7 +101,7 @@ def test_existing_fork_starts_saved_container_without_stealing_ports(redis, serv
                     "timeout_secs": 5,
                 },
             )
-            return result.get("exit_code") == 0 and result.get("stdout") == "+PONG\r\n"
+            return result.get("exit_code") == 0 and exec_output_text(result) == "+PONG\r\n"
 
         wait_for(fork_ready, "fork boots saved image and command", timeout=30)
         ping(redis["port"])

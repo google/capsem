@@ -34,7 +34,6 @@ All host binaries are codesigned with a Developer ID certificate. The `com.apple
 | `capsem` | CLI client | `com.apple.security.virtualization` |
 | `capsem-service` | Background daemon | `com.apple.security.virtualization` |
 | `capsem-process` | Per-VM process | `com.apple.security.virtualization` |
-| `capsem-mcp` | MCP server | `com.apple.security.virtualization` |
 | `capsem-gateway` | HTTP gateway | `com.apple.security.virtualization` |
 | `capsem-tray` | System tray | `com.apple.security.virtualization` |
 | `Capsem.app` | Tauri desktop app | `com.apple.security.virtualization` |

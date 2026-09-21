@@ -315,8 +315,15 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: web/app/pnpm-lock.yaml
+          cache-dependency-path: |
+            web/app/pnpm-lock.yaml
+            sdk/typescript/pnpm-lock.yaml
       - run: cd web/app && pnpm install --frozen-lockfile
+      - name: Build TypeScript SDK for frontend consumers
+        working-directory: sdk/typescript
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
 
       - name: Build frontend
         run: bash build_system/scripts/web/check-web-surface.sh frontend-build
@@ -385,7 +392,6 @@ jobs:
             -p capsem-service \
             -p capsem-process \
             -p capsem-tui \
-            -p capsem-mcp \
             -p capsem-router \
             -p capsem-mcp-aggregator \
             -p capsem-mcp-builtin \
@@ -400,7 +406,7 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
+          for bin in capsem capsem-service capsem-process capsem-tui capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
             entitlement_args=()
             if [[ "$bin" != capsem-router ]]; then
               entitlement_args=(--entitlements build_system/packaging/macos/entitlements.plist)
@@ -757,7 +763,7 @@ jobs:
           pkgutil --pkg-info com.capsem.pkg | grep -F "version: $VERSION"
           test -d "/Applications/Capsem.app"
           test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"
-          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
+          for bin in capsem capsem-admin capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
             test -x "$HOME/.capsem/bin/$bin"
             "$HOME/.capsem/bin/$bin" --version | grep -F "$VERSION"
           done
@@ -842,7 +848,7 @@ jobs:
           sudo dpkg -i "$package"
           test ! -e /var/run/capsem/install-manifest
           dpkg-query -W -f='${Version}' capsem | grep -Fx "$VERSION"
-          for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
+          for bin in capsem capsem-admin capsem-app capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
             test -x "/usr/bin/$bin"
             if [ "$bin" != "capsem-app" ]; then
               "/usr/bin/$bin" --version | grep -F "$VERSION"
@@ -891,10 +897,17 @@ jobs:
           cache-dependency-path: |
             web/app/pnpm-lock.yaml
             build_system/release_site/pnpm-lock.yaml
-      - name: Install shared functional web dependencies
+            sdk/typescript/pnpm-lock.yaml
+            mcp/typescript/pnpm-lock.yaml
+      # The functional suites run with no network, and they drive every SDK and
+      # pack the npm MCP, so each one's locked dependencies are materialized here.
+      - name: Install shared functional web and SDK dependencies
         run: |
           (cd web/app && pnpm install --frozen-lockfile)
           (cd build_system/release_site && pnpm install --frozen-lockfile)
+          (cd sdk/typescript && pnpm install --frozen-lockfile)
+          (cd mcp/typescript && pnpm install --frozen-lockfile)
+          uv sync --project sdk/python --frozen --no-install-project
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: 1.97.1
@@ -979,6 +992,8 @@ jobs:
             bash build_system/scripts/build/materialize-config.sh --pair-content
 
       - name: Activate exact candidate package binaries for functional tests
+        env:
+          BASELINE_CHANNEL: ${{ needs.resolve-channel-source.outputs.baseline_channel }}
         run: |
           set -euo pipefail
           package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
@@ -994,7 +1009,7 @@ jobs:
             echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package"
             echo "CAPSEM_RELEASE_BIN_DIR=$PWD/cache/target/cargo/debug"
             echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/cache/target/candidate-profile-inputs"
-            printf 'CAPSEM_RELEASE_CHANNEL=%s\nCAPSEM_RELEASE_BASELINE_CHANNEL=%s\n' "$RELEASE_CHANNEL" "${{ needs.resolve-channel-source.outputs.baseline_channel }}"
+            printf 'CAPSEM_RELEASE_CHANNEL=%s\nCAPSEM_RELEASE_BASELINE_CHANNEL=%s\n' "$RELEASE_CHANNEL" "$BASELINE_CHANNEL"
             echo "CAPSEM_RELEASE_TRANSITION=auto"
             echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/cache/target/binary-public-before/profiles/manifest.json"
             echo "CAPSEM_RELEASE_AFTER_MANIFEST=$PWD/cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json"

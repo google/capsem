@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.security
 
@@ -44,20 +44,20 @@ class TestEnvBlocklist:
     def test_ld_preload_not_set(self, security_vm):
         client, name = security_vm
         resp = client.post(f"/vms/{name}/exec", {"command": "echo LD_PRELOAD=$LD_PRELOAD"})
-        stdout = resp.get("stdout", "")
+        stdout = exec_output_text(resp)
         # LD_PRELOAD should be empty (just "LD_PRELOAD=")
         assert "LD_PRELOAD=/" not in stdout, f"LD_PRELOAD should not be set: {stdout}"
 
     def test_ld_library_path_not_set(self, security_vm):
         client, name = security_vm
         resp = client.post(f"/vms/{name}/exec", {"command": "echo LD_LIBRARY_PATH=$LD_LIBRARY_PATH"})
-        stdout = resp.get("stdout", "")
+        stdout = exec_output_text(resp)
         assert "LD_LIBRARY_PATH=/" not in stdout
 
     def test_bash_env_not_set(self, security_vm):
         client, name = security_vm
         resp = client.post(f"/vms/{name}/exec", {"command": "echo BASH_ENV=$BASH_ENV"})
-        stdout = resp.get("stdout", "")
+        stdout = exec_output_text(resp)
         assert "BASH_ENV=/" not in stdout
 
     def test_ifs_is_default(self, security_vm):
@@ -66,6 +66,6 @@ class TestEnvBlocklist:
         resp = client.post(f"/vms/{name}/exec", {
             "command": "printf '%q' \"$IFS\"",
         })
-        stdout = resp.get("stdout", "")
+        stdout = exec_output_text(resp)
         # Default IFS is ' \t\n', printf %q renders it as $' \t\n'
         assert "IFS" not in stdout or "\\" not in stdout or len(stdout.strip()) < 20

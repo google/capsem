@@ -13,6 +13,8 @@ from typing import Any
 
 import pytest
 
+from tests.citadel.source_enum_literals import contract_enums, reference_source
+
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path(__file__).with_name("web_benchmark_boundary_debt.toml")
 SELF = "tests/citadel/test_web_benchmark_boundary.py"
@@ -99,6 +101,7 @@ def _text_sources(tracked: tuple[str, ...]) -> dict[str, str]:
 
 
 def _legacy_references(sources: dict[str, str]) -> tuple[str, ...]:
+    enums = contract_enums(sources)
     return tuple(
         sorted(
             json.dumps(
@@ -111,7 +114,7 @@ def _legacy_references(sources: dict[str, str]) -> tuple[str, ...]:
                 separators=(",", ":"),
             )
             for path, text in sources.items()
-            for line in text.splitlines()
+            for line in reference_source(path, text, enums).splitlines()
             for family, pattern in REFERENCE_PATTERNS.items()
             if pattern.search(line)
         )
@@ -352,6 +355,29 @@ def test_legacy_reference_fingerprint_changes_for_new_debt() -> None:
 
     assert len(after) == len(before) + 1
     assert _digest(after) != _digest(before)
+
+
+def test_openapi_wire_enums_are_not_repository_paths() -> None:
+    document: dict[str, Any] = {"openapi": "3.1.0", "components": {"schemas": {
+        "Source": {"type": "string", "enum": ["frontend"]},
+    }}}
+    assert not _legacy_references({"contract.json": json.dumps(document)})
+    document["example"] = "frontend/missing.ts"
+    assert _legacy_references({"contract.json": json.dumps(document)})
+
+
+@pytest.mark.parametrize(("path", "source"), [
+    ("model.py", 'from enum import StrEnum\nclass Source(StrEnum):\n    FRONTEND = "frontend"\n'),
+    ("model.ts", 'export enum Source {\n  FRONTEND = "frontend",\n}\n'),
+])
+def test_typed_wire_enums_keep_surrounding_path_checks(path: str, source: str) -> None:
+    contract = {"contract.json": json.dumps({"openapi": "3.1.0", "components": {
+        "schemas": {"Source": {"type": "string", "enum": ["frontend"]}},
+    }})}
+    assert _legacy_references({path: source})  # Ordinary path enums remain visible.
+    assert not _legacy_references({**contract, path: source})
+    assert _legacy_references({**contract, path: source + '\nlegacy_path = "frontend"\n'})
+    assert _legacy_references({**contract, path: source.replace('"frontend"', '"frontend" # docs/guide')})
 
 
 def test_coverage_mapping_fingerprint_ignores_unrelated_line_movement() -> None:

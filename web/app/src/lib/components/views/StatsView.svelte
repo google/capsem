@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import type { EventBody, InteractionReport, ModelUsage, ToolEvent } from '@capsem/sdk';
   import * as api from '../../api';
   import { formatBytes, formatDuration, formatTime } from '../../format';
   import { getShikiHighlighter, resolveShikiTheme, ensureShikiLang, ensureShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
@@ -16,6 +17,7 @@
   import StatsEventList from './stats/StatsEventList.svelte';
   import StatsMiniGroup from './stats/StatsMiniGroup.svelte';
   import StatsTable from './stats/StatsTable.svelte';
+  import InteractionViewer from './stats/InteractionViewer.svelte';
   import Brain from 'phosphor-svelte/lib/Brain';
   import Wrench from 'phosphor-svelte/lib/Wrench';
   import Globe from 'phosphor-svelte/lib/Globe';
@@ -40,9 +42,9 @@
   let shiki = $state<ShikiHighlighter | null>(null);
   let shikiTick = $state(0);
 
-  let modelStats = $state<Row[]>([]);
-  let modelRows = $state<Row[]>([]);
-  let toolRows = $state<Row[]>([]);
+  let modelStats = $state<ModelUsage[]>([]);
+  let toolRows = $state<ToolEvent[]>([]);
+  let interactions = $state<InteractionReport>({ items: [], bodies: [] });
   let httpRows = $state<Row[]>([]);
   let dnsRows = $state<Row[]>([]);
   let fileRows = $state<Row[]>([]);
@@ -53,7 +55,7 @@
   let detectionLatest = $state<api.SecurityRuleEvent[]>([]);
   let enforcementLatest = $state<api.SecurityRuleEvent[]>([]);
   let securityStatus = $state<api.SecurityRuleStats | null>(null);
-  let bodyBlobs = $state<Record<string, Row[]>>({});
+  let bodyBlobs = $state<Record<string, EventBody[]>>({});
 
   function safeEventId(value: unknown): string | null {
     const id = text(value);
@@ -169,16 +171,16 @@
         api.getVmDetectionLatest(vmId, 200),
         api.getVmEnforcementLatest(vmId, 200),
       ]);
-      modelStats = detailRows.model_stats as Row[];
-      modelRows = detailRows.model_events as Row[];
-      toolRows = detailRows.tool_events as Row[];
-      httpRows = detailRows.http_events as Row[];
-      dnsRows = detailRows.dns_events as Row[];
-      fileRows = detailRows.file_events as Row[];
-      processRows = detailRows.process_events as Row[];
-      auditRows = detailRows.audit_events as Row[];
-      substitutionRows = detailRows.credential_events as Row[];
-      bodyBlobs = detailRows.body_blobs as Record<string, Row[]>;
+      modelStats = detailRows.model_stats;
+      toolRows = detailRows.tool_events;
+      interactions = detailRows.interactions;
+      httpRows = detailRows.http_events;
+      dnsRows = detailRows.dns_events;
+      fileRows = detailRows.file_events;
+      processRows = detailRows.process_events;
+      auditRows = detailRows.audit_events;
+      substitutionRows = detailRows.credential_events;
+      bodyBlobs = detailRows.body_blobs;
       securityLatest = secLatest;
       securityStatus = secStatus;
       detectionLatest = detLatest;
@@ -320,15 +322,7 @@
             <td class="px-4 py-2 text-right text-foreground">${number(row.estimated_cost_usd).toFixed(2)}</td>
           {/snippet}
         </StatsTable>
-        <StatsEventList title="Recent Model Events" rows={modelRows} columns={['Time', 'Provider', 'Model', 'Tokens', 'Trace']} onrow={(row) => { void showDetail('model', row); }}>
-          {#snippet children(row: any)}
-            <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
-            <td class="px-4 py-2 text-foreground">{row.provider}</td>
-            <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1">{row.model ?? '--'}</td>
-            <td class="px-4 py-2 text-right text-foreground">{number(row.input_tokens) + number(row.output_tokens)}</td>
-            <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1">{row.trace_id ?? '--'}</td>
-          {/snippet}
-        </StatsEventList>
+        <InteractionViewer title="Model and Tool Interactions" report={interactions} scope="model" />
 
       {:else if activeTab === 'tools'}
         <div class="grid grid-cols-4 gap-3 mb-6">
@@ -337,15 +331,7 @@
           <MetricCard label="Protocol Origin" value={protocolOriginToolCalls.toLocaleString()} />
           <MetricCard label="Blocked/Error" value={toolBlocked.toLocaleString()} tone="danger" />
         </div>
-        <StatsEventList title="Tool Calls" rows={toolRows} columns={['Time', 'Origin', 'Tool', 'Server', 'Decision']} onrow={(row) => { void showDetail('tool', row); }}>
-          {#snippet children(row: any)}
-            <td class="px-4 py-2 text-muted-foreground">{formatTime(row.timestamp)}</td>
-            <td class="px-4 py-2 text-foreground">{row.source}</td>
-            <td class="px-4 py-2 font-mono text-xs text-foreground">{row.tool_name ?? '--'}</td>
-            <td class="px-4 py-2 font-mono text-xs text-muted-foreground-1">{row.server_name ?? row.method ?? '--'}</td>
-            <td class="px-4 py-2"><StatsBadge value={text(row.decision)} kind="decision" /></td>
-          {/snippet}
-        </StatsEventList>
+        <InteractionViewer title="Tool Interactions" report={interactions} scope="tools" />
 
       {:else if activeTab === 'http'}
         <div class="grid grid-cols-4 gap-3 mb-6">

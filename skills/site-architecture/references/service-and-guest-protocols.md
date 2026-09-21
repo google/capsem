@@ -9,7 +9,7 @@ or any guest agent binary.
 **All VM operations go through a single path.** There is no direct VM boot -- every entry point routes through capsem-service to capsem-process.
 
 ```
-AI Agent  -> capsem-mcp (stdio)  -> HTTP/UDS -> capsem-service
+AI Agent  -> @capsem/mcp (stdio) -> authenticated gateway HTTP -> capsem-service
 User      -> capsem CLI          -> HTTP/UDS -> capsem-service
 Frontend  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
@@ -27,7 +27,7 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 **Entry points for exec:**
 - `capsem exec <id> "cmd"` -> service HTTP `/exec/{id}` -> process IPC -> vsock
 - `capsem run "cmd"` -> service HTTP `/run` -> provision + exec + destroy
-- MCP `capsem_exec` / `capsem_run` -> service HTTP -> same path
+- MCP `capsem_exec` / `capsem_run` -> authenticated gateway HTTP -> same service path
 
 **Entry point for interactive shell:**
 - `capsem shell [id]` -> UDS IPC directly to capsem-process -> `StartTerminalStream` -> vsock:5001
@@ -38,8 +38,9 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 |-------|----------|--------|
 | Frontend/Tray -> gateway | HTTP/1.1 over TCP | `127.0.0.1:19222` (Bearer token auth) |
 | Gateway -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
-| CLI/MCP -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
-| Service -> process | MessagePack over UDS | `~/.capsem/run/instances/{id}.sock` |
+| CLI -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
+| SDK/npm MCP -> gateway | HTTP/1.1 over TCP | explicit gateway URL (Bearer token auth) |
+| Service -> process | bincode over UDS (after a MessagePack Hello) | `~/.capsem/run/instances/{id}.sock` |
 | Process -> guest agent | Binary frames over vsock | ports 5000 (control), 5001 (terminal), 5004 (lifecycle), 5005 (exec) |
 
 ### Service HTTP API
@@ -71,18 +72,15 @@ surface requires explicit product/API approval.
 | POST | `/vms/{id}/fork` | Fork a session into reusable state |
 | DELETE | `/vms/{id}/delete` | Destroy session and wipe state |
 | POST | `/purge` | Delete defunct/incompatible service state |
-| POST | `/vms/{id}/files/write` | Write file to guest |
-| POST | `/vms/{id}/files/read` | Read file from guest |
+| GET/POST | `/vms/{id}/files/content` | Download/upload exact file bytes through the audited boundary |
 | GET | `/vms/{id}/files/list` | List guest files |
-| GET | `/vms/{id}/files/content` | Download file content |
-| POST | `/vms/{id}/files/content` | Upload file content |
 | GET | `/vms/{id}/logs` | Serial/boot logs |
 
-### MCP tools (capsem-mcp)
+### MCP tools (`@capsem/mcp`)
 
 MCP tools include `capsem_create`, `capsem_list`, `capsem_info`, `capsem_exec`,
 `capsem_run`, lifecycle tools, file read/write, logs, timeline, triage,
-version, fork, and profile MCP tools. Raw SQL inspection tools are not part of
+status, fork, private networks, and profile MCP tools. Raw SQL inspection tools are not part of
 the product surface; telemetry access must use typed routes.
 
 ## Host-guest communication

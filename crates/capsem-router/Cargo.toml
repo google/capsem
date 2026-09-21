@@ -16,6 +16,10 @@ capsem-guard = { path = "../capsem-guard" }
 capsem-network = { path = "../capsem-network" }
 capsem-proto = { path = "../capsem-proto" }
 tokio.workspace = true
+tokio-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
 tracing.workspace = true
 clap = { workspace = true, features = ["derive"] }
 

@@ -24,9 +24,15 @@ async fn late_ack_after_removal_does_not_interrupt_another_publication() {
     let (second, mut second_events) = mpsc::channel(4);
     let (source, _client) = StdUnixStream::pair().unwrap();
     let (destination, _server) = StdUnixStream::pair().unwrap();
-    let first = router.grant(source.as_fd(), destination.as_fd(), first).await.unwrap();
+    let first = router
+        .grant(source.as_fd(), destination.as_fd(), first, None)
+        .await
+        .unwrap();
     let _first_pair = receiver.recv().await.unwrap();
-    let second = router.grant(source.as_fd(), destination.as_fd(), second).await.unwrap();
+    let second = router
+        .grant(source.as_fd(), destination.as_fd(), second, None)
+        .await
+        .unwrap();
     let _second_pair = receiver.recv().await.unwrap();
     router.abort(first).await.unwrap();
     assert!(matches!(Grant::decode(receiver.recv().await.unwrap()).unwrap(), Grant::Abort { id } if id == first));
@@ -40,4 +46,36 @@ async fn late_ack_after_removal_does_not_interrupt_another_publication() {
     assert!(router.observers.lock().unwrap().is_empty());
     router.closed.cancel();
     reader.await.unwrap().unwrap();
+}
+
+/// The router enforces the request shape policy admitted, so the grant must
+/// carry it: a preview admitted for plain requests may not upgrade later.
+#[tokio::test]
+async fn preview_grants_carry_the_admitted_request_shape() {
+    let (parent, child) = StdUnixStream::pair().unwrap();
+    parent.set_nonblocking(true).unwrap();
+    child.set_nonblocking(true).unwrap();
+    let receiver = Receiver::new(child).unwrap();
+    let router = Router::new(0, Sender::new(parent).unwrap(), CancellationToken::new());
+    let (source, _client) = StdUnixStream::pair().unwrap();
+    let (destination, _server) = StdUnixStream::pair().unwrap();
+    for admitted in [
+        capsem_proto::PreviewAdmissionKind::Request,
+        capsem_proto::PreviewAdmissionKind::WebsocketUpgrade,
+    ] {
+        let (observer, _events) = mpsc::channel(1);
+        let id = router
+            .grant(source.as_fd(), destination.as_fd(), observer, Some(admitted))
+            .await
+            .unwrap();
+        match Grant::decode(receiver.recv().await.unwrap()).unwrap() {
+            Grant::Preview {
+                id: granted, admission, ..
+            } => {
+                assert_eq!(granted, id);
+                assert_eq!(admission, admitted);
+            }
+            _ => panic!("a preview flow must be granted as a preview"),
+        }
+    }
 }

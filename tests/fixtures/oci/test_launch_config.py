@@ -385,3 +385,63 @@ def test_network_ready_hook_never_makes_the_vm_a_router_between_its_networks(
     ]
     # Inserted last, so it sits first in the chain.
     assert accepts and all(index < run.calls.index(no_transit) for index in accepts)
+
+
+def _mounts_at(config, destination):
+    return [mount for mount in config["mounts"] if mount["destination"] == destination]
+
+
+def test_the_workspace_is_mounted_where_the_service_says(launcher):
+    """The container sees the VM workspace, so files placed through the API reach it.
+
+    The mount point comes from options.json, which Capsem writes: the service
+    and the launcher cannot disagree about where the workspace is.
+    """
+    options = {"args": [], "env": {}, "workspace": "/workspace"}
+    config = launcher.configure(unpacked(), image(), options)
+    (mount,) = _mounts_at(config, "/workspace")
+    assert mount["type"] == "bind"
+    assert mount["source"] == "/root", "the VM's /root is the workspace share"
+    assert {"bind", "nosuid", "nodev"} <= set(mount["options"])
+    assert "ro" not in mount["options"], "a workload writes its outputs back to the workspace"
+
+
+def test_the_stage_stays_hidden_from_the_container(launcher):
+    """The launcher and its inputs live in the workspace, under .capsem-image.
+
+    The launcher runs as root in the VM on every relaunch, and options.json
+    carries the workload's environment. A container that could read or replace
+    that directory would read those secrets or escape into the VM, so an empty
+    read-only mount covers it, after the workspace mount that would expose it.
+    """
+    options = {"args": [], "env": {}, "workspace": "/workspace"}
+    config = launcher.configure(unpacked(), image(), options)
+    destinations = [mount["destination"] for mount in config["mounts"]]
+    (mask,) = _mounts_at(config, "/workspace/.capsem-image")
+    assert mask["type"] == "tmpfs"
+    assert {"ro", "nosuid", "nodev", "noexec"} <= set(mask["options"])
+    assert destinations.index("/workspace/.capsem-image") > destinations.index("/workspace")
+
+
+def test_an_image_volume_cannot_shadow_the_workspace(launcher):
+    """An image declaring its own /workspace volume must not hide the real one."""
+    declared = image()
+    declared["config"]["Volumes"] = {"/workspace": {}}
+    config = launcher.configure(unpacked(), declared, {"args": [], "env": {}, "workspace": "/workspace"})
+    assert _mounts_at(config, "/workspace")[-1]["type"] == "bind", "the last mount at a path is the one seen"
+
+
+def test_a_stage_written_before_the_workspace_mount_existed_starts_without_it(launcher):
+    """A persistent VM staged by an older Capsem restarts exactly as it did."""
+    config = launcher.configure(unpacked(), image(), {"args": [], "env": {}})
+    assert not _mounts_at(config, "/workspace")
+
+
+@pytest.mark.parametrize(
+    "workspace",
+    ["workspace", "/proc", "/etc/ws", "/a/../b", "/", "/work//space", "/usr/lib/ws"],
+)
+def test_an_unsafe_workspace_mount_point_is_refused(launcher, workspace):
+    """The mount point is launcher input: it must never land on a system path."""
+    with pytest.raises(ValueError, match="unsafe workspace mount point"):
+        launcher.configure(unpacked(), image(), {"args": [], "env": {}, "workspace": workspace})

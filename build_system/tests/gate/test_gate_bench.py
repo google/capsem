@@ -201,3 +201,77 @@ def test_the_report_reads_the_store_the_run_wrote() -> None:
     report = _argv(_plan(bench.BenchReportCommand), "bench.report")
     store = str(CONFIG.path(SETTINGS.store))
     assert store in run and store in report
+
+
+class _ActingRunner(RecordingRunner):
+    """Records commands but acts on the filesystem, as a real run does."""
+
+    observing = False
+
+
+def _linked_worktree(tmp_path: Path):
+    """A checkout whose shared build root lives elsewhere, as in a linked worktree."""
+    checkout = tmp_path / "worktree"
+    checkout.mkdir(parents=True)
+    # The compiler cache resource reads the checkout's cache policy.
+    (checkout / "config").symlink_to(PROJECT_ROOT / "config", target_is_directory=True)
+    return CONFIG.model_copy(
+        update={
+            "root": checkout,
+            "prefix": CONFIG.prefix.model_copy(update={"cargo_target": str(tmp_path / "shared" / "cargo")}),
+        }
+    )
+
+
+def test_a_linked_worktree_reads_binaries_where_cargo_writes_them(tmp_path: Path) -> None:
+    """`just bench` built into the shared target and then hashed the checkout's.
+
+    Every exclusive command in a linked worktree compiled into the shared build
+    root while its steps named `cache/target/cargo/debug/...` under the checkout,
+    so `prepare.bench.build` failed with "cannot hash ... it is not a file"
+    before anything was measured. The checkout's profile directories must
+    resolve to the build root the compiler was given, as a prefix's do.
+    """
+    from capsem_builder.gate import cargotarget, preflight
+
+    config = _linked_worktree(tmp_path)
+    shared = cargotarget.path(config)
+    (shared / "debug").mkdir(parents=True)
+    (shared / "debug" / "capsem").write_bytes(b"built")
+    resources = preflight.holdings(config, _ActingRunner(config.root), "measure", exclusive=True, declared=())
+    link = next(resource for resource in resources if isinstance(resource, cargotarget.CheckoutBuildRoot))
+    link.acquire()
+    debug = config.root / "cache" / "target" / "cargo" / "debug"
+    assert debug.is_symlink() and (debug / "capsem").read_bytes() == b"built"
+    link.acquire()  # idempotent on the next command
+    assert debug.readlink() == shared / "debug"
+
+
+def test_the_checkout_that_owns_the_build_root_and_observers_are_left_alone(tmp_path: Path) -> None:
+    from capsem_builder.gate import cargotarget
+
+    owner = CONFIG.model_copy(
+        update={
+            "root": tmp_path,
+            "prefix": CONFIG.prefix.model_copy(update={"cargo_target": str(tmp_path / "cache" / "target" / "cargo")}),
+        }
+    )
+    cargotarget.CheckoutBuildRoot(owner, _ActingRunner(tmp_path)).acquire()
+    assert not (tmp_path / "cache" / "target" / "cargo" / "debug").exists()
+
+    observed = _linked_worktree(tmp_path / "observed")
+    cargotarget.CheckoutBuildRoot(observed, RecordingRunner(observed.root)).acquire()
+    assert not (observed.root / "cache").exists(), "interrogating a plan must not touch the checkout"
+
+
+def test_a_real_profile_directory_in_a_worktree_is_named_not_overwritten(tmp_path: Path) -> None:
+    from capsem_builder.gate import cargotarget
+    from capsem_builder.gate.errors import GateError
+
+    config = _linked_worktree(tmp_path)
+    stale = config.root / "cache" / "target" / "cargo" / "debug"
+    stale.mkdir(parents=True)
+    (stale / "old").write_bytes(b"x")
+    with pytest.raises(GateError, match="real directory"):
+        cargotarget.CheckoutBuildRoot(config, _ActingRunner(config.root)).acquire()
+    assert (stale / "old").exists()

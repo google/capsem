@@ -20,7 +20,7 @@ import pytest
 from helpers.benchmark_output import benchmark_output_dir
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, vm_session_db_path, wait_exec_ready
 
 pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
 
@@ -212,8 +212,8 @@ def test_mock_server_protocol_benchmark_artifact():
         assert resp and resp.get("exit_code") == 0, (
             f"capsem-bench-rs protocol failed to run local protocol scenarios: "
             f"exit={resp.get('exit_code') if resp else None}\n"
-            f"stdout: {(resp or {}).get('stdout', '')[:1000]}\n"
-            f"stderr: {(resp or {}).get('stderr', '')[:1000]}"
+            f"stdout: {(resp or {}).get('stdout', {}).get('data', '')[:1000]}\n"
+            f"stderr: {(resp or {}).get('stderr', {}).get('data', '')[:1000]}"
         )
 
         resp = client.post(
@@ -224,7 +224,7 @@ def test_mock_server_protocol_benchmark_artifact():
         assert resp and resp.get("exit_code") == 0, (
             "capsem-bench-rs protocol did not write /tmp/capsem-benchmark.json"
         )
-        data = json.loads(resp.get("stdout", "").strip())
+        data = json.loads(exec_output_text(resp).strip())
         _assert_mock_server_protocol_succeeded(data)
         assert tuple(data["mock_server_protocol"]["selected_scenarios"]) == selected_scenarios
         assert "capsem_test_api_key" not in json.dumps(data)

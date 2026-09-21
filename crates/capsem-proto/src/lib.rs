@@ -11,6 +11,7 @@
 //! encode/decode function pairs.
 
 pub mod credential_reference;
+mod exec_stream;
 pub mod handshake;
 pub mod ipc;
 pub mod mcp;
@@ -19,7 +20,16 @@ pub mod mcp_contracts;
 pub mod poll;
 pub mod privatelink;
 pub mod router;
+mod wire_bytes;
 
+/// Where the guest mounts the host-visible workspace share: every VM sees its
+/// workspace at this path.
+pub const GUEST_WORKSPACE: &str = "/root";
+
+pub use exec_stream::{
+    read_exec_input, read_exec_output, write_exec_input, write_exec_output, write_exec_output_data, ExecInputFrame,
+    ExecOutputChannel, ExecOutputFrame, ExecOutputProtocol, EXEC_STDIN_WINDOW, MAX_EXEC_DATA_BYTES,
+};
 pub use handshake::{HandshakeError, Hello};
 
 use std::path::Path;
@@ -40,24 +50,85 @@ pub const MAX_BOOT_ENV_VARS: usize = 128;
 /// Maximum number of files allowed during boot handshake.
 pub const MAX_BOOT_FILES: usize = 64;
 
-/// Wire-protocol version for the bincode IPC channel and the vsock
+/// Wire-protocol version for the MessagePack IPC channel and the vsock
 /// control bridge. Bumped on any breaking change to
 /// `{ServiceToProcess, ProcessToService, HostToGuest, GuestToHost}` or
 /// to the framing of either transport.
 ///
-/// `1` since the Hello handshake (W3) added Frame<T> wrapping to every
-/// bincode channel and a typed Hello frame to the vsock control port.
+/// `1` since the Hello handshake (W3) added framing to every typed channel
+/// and a typed Hello frame to the vsock control port.
 /// Pre-W3 binaries fail decode within 1 second.
 /// Version 2 adds router flow keys tied to the owner generation.
 /// Version 4 links VMs to a network switch and admits only TCP by handoff.
 /// Version 5 plugs one cable per network and removes the private TCP handoff.
-pub const PROTOCOL_VERSION: u16 = 5;
+/// Version 6 names the namespace a publication connects to.
+/// Version 7 replaces native-endian unbounded host IPC with bounded,
+/// big-endian length-prefixed MessagePack and binary byte payloads.
+/// Version 8 adds framed exec stdin/EOF, separated output lanes and reliable
+/// host cancellation. Version 9 adds owner-scoped HTTP preview declarations,
+/// credentials and descriptor handoff admission.
+pub const PROTOCOL_VERSION: u16 = 9;
 
-/// FNV-1a 64 hash of the protocol enum source bytes (lib.rs + ipc.rs +
-/// handshake.rs + router.rs). Computed by `build.rs`. Detects "I added a variant in
-/// the middle without bumping PROTOCOL_VERSION" -- silent re-numbering of
-/// bincode variants -- which is exactly the bug that motivated this
-/// sprint.
+/// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
+pub const GUEST_DNS_PROXY_PORT: u16 = 1053;
+/// Guest loopback port of the agent's plain HTTP interception listener.
+pub const GUEST_HTTP_PROXY_PORT: u16 = 10080;
+/// Guest loopback port of the agent's TLS interception listener.
+pub const GUEST_HTTPS_PROXY_PORT: u16 = 10443;
+
+/// Guest loopback ports Capsem's own services own. A VM-namespace publication
+/// to one of them would hand the host a path into the guest's DNS or
+/// interception proxy, so the host refuses to publish it and the guest refuses
+/// to connect it.
+pub const CAPSEM_GUEST_LOOPBACK_PORTS: [u16; 4] =
+    [53, GUEST_DNS_PROXY_PORT, GUEST_HTTP_PROXY_PORT, GUEST_HTTPS_PROXY_PORT];
+
+/// The guest network namespace a publication's connections reach. There is
+/// no fallback between the two: a missing container never becomes the VM.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicationTarget {
+    /// Loopback inside the running container workload's namespace.
+    #[default]
+    Container,
+    /// Loopback in the VM's own namespace, minus Capsem's service ports.
+    Vm,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicationAccess {
+    #[default]
+    LoopbackTcp,
+    HttpPreview,
+}
+
+/// The cookie a browser preview carries, named once for the gateway that sets
+/// it and the confined router that strips it before the workload sees it.
+pub const PREVIEW_COOKIE: &str = "capsem_preview";
+/// How long a single-use browser bootstrap token may be exchanged.
+pub const PREVIEW_BOOTSTRAP_LIFETIME_SECS: u16 = 30;
+/// How long an exchanged preview session admits connections.
+pub const PREVIEW_SESSION_LIFETIME_SECS: u16 = 15 * 60;
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewAdmissionKind {
+    Request,
+    WebsocketUpgrade,
+}
+
+impl PublicationTarget {
+    /// Whether a connection to guest `port` in this namespace is allowed.
+    pub fn admits(self, port: u16) -> bool {
+        port != 0 && (self == Self::Container || !CAPSEM_GUEST_LOOPBACK_PORTS.contains(&port))
+    }
+}
+
+/// FNV-1a 64 hash of normalized protocol declarations (lib.rs + ipc.rs +
+/// handshake.rs + router.rs + exec_stream.rs). Formatting, documentation and
+/// function bodies do not change it; wire-relevant Rust and serde tokens do.
+/// Computed by `build.rs`.
 pub const SCHEMA_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/schema_hash.txt"));
 
 /// Maximum cumulative file bytes allowed during boot handshake (10MB).
@@ -414,6 +485,9 @@ pub enum HostToGuest {
     Resize { cols: u16, rows: u16 },
     /// Execute command in guest PTY.
     Exec { id: u64, command: String },
+    /// Stop an in-flight exec and its process group. Idempotent so replaying a
+    /// cancellation after a control-channel rekey cannot affect another job.
+    CancelExec { id: u64, cancellation_id: u64 },
     // -- Heartbeat --
     /// Liveness check + clock resync (handles Mac sleep drift).
     Ping { epoch_secs: u64 },
@@ -433,6 +507,7 @@ pub enum HostToGuest {
     FileWrite {
         id: u64,
         path: String,
+        #[serde(with = "serde_bytes")]
         data: Vec<u8>,
         mode: u32,
     },
@@ -447,8 +522,14 @@ pub enum HostToGuest {
     PrepareSnapshot,
     /// Resume filesystem I/O after snapshot.
     Unfreeze,
-    /// Connect to loopback in the active container's network namespace.
-    ConnectPort { flow: router::FlowKey, port: u16 },
+    /// Connect to loopback `port` in the `target` namespace. Absent on older
+    /// hosts, where every publication was the container's.
+    ConnectPort {
+        flow: router::FlowKey,
+        port: u16,
+        #[serde(default)]
+        target: PublicationTarget,
+    },
     /// Cancel a bounded set of flows from this control connection's VM boot.
     AbortPorts { flows: Vec<router::FlowKey> },
     /// Receipt of a terminal flow report; distinct from exec/file job IDs.
@@ -539,6 +620,7 @@ pub struct DnsRequest {
     /// the field decode it as 0 and still speak in lock-step.
     #[serde(default)]
     pub id: u32,
+    #[serde(with = "serde_bytes")]
     pub raw: Vec<u8>,
     /// "udp" or "tcp" -- the source-side transport, NOT the path used
     /// to reach the upstream nameserver (which is always UDP today).
@@ -561,6 +643,7 @@ pub struct DnsResponse {
     /// The `DnsRequest::id` this answers.
     #[serde(default)]
     pub id: u32,
+    #[serde(with = "serde_bytes")]
     pub raw: Vec<u8>,
     pub decision: String,
     pub rcode: u16,
@@ -608,8 +691,13 @@ pub enum GuestToHost {
     /// Boot timing measurements from the guest init script.
     BootTiming { stages: Vec<BootStage> },
     // -- Terminal --
-    /// Exec started: handshake on vsock exec port identifying the exec ID.
-    ExecStarted { id: u64 },
+    /// Exec started: handshake on the dedicated exec connection. The default
+    /// keeps immutable pre-streaming profile assets compatible.
+    ExecStarted {
+        id: u64,
+        #[serde(default)]
+        output_protocol: ExecOutputProtocol,
+    },
     /// Command completed with exit code.
     ExecDone { id: u64, exit_code: i32 },
     // -- Heartbeat --
@@ -635,7 +723,12 @@ pub enum GuestToHost {
     /// Telemetry: file deleted in guest.
     FileDeleted { path: String },
     /// Response to FileRead.
-    FileContent { id: u64, path: String, data: Vec<u8> },
+    FileContent {
+        id: u64,
+        path: String,
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
     /// Acknowledgment of a successful FileWrite or FileDelete.
     FileOpDone { id: u64 },
     /// Error encountered during a file operation or exec.
@@ -711,8 +804,7 @@ fn length_prefixed(payload: Vec<u8>, what: &str) -> Result<Vec<u8>> {
     Ok(frame)
 }
 
-/// Whether `msg` fits one control frame. rmp encodes a `Vec<u8>` as an array
-/// of one- or two-byte integers, so only encoding can answer this exactly.
+/// Whether `msg` fits one control frame, including its typed envelope.
 pub fn host_msg_fits_frame(msg: &HostToGuest) -> bool {
     encode_host_msg(msg).is_ok()
 }

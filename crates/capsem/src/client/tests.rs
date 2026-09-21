@@ -1,6 +1,7 @@
 //! Tests for `client` (extracted from inline `mod tests`).
 
 use super::*;
+use capsem_api::VmAction;
 
 /// Shared with every command's tests that talk to the service.
 pub(crate) mod fake_service;
@@ -345,6 +346,7 @@ fn provision_request_serde() {
         env: None,
         from: None,
         networks: Vec::new(),
+        container: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
@@ -368,6 +370,7 @@ fn provision_request_with_env() {
         env: Some(env),
         from: None,
         networks: Vec::new(),
+        container: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(json.contains("FOO"));
@@ -386,6 +389,7 @@ fn provision_request_env_omitted_when_none() {
         env: None,
         from: None,
         networks: Vec::new(),
+        container: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(!json.contains("env"));
@@ -403,6 +407,7 @@ fn provision_request_omits_unset_resources_for_the_profile_defaults() {
         env: None,
         from: None,
         networks: Vec::new(),
+        container: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(json.get("ram_mb").is_none() && json.get("cpus").is_none(), "{json}");
@@ -419,6 +424,7 @@ fn provision_request_with_from() {
         env: None,
         from: Some("my-sandbox".into()),
         networks: Vec::new(),
+        container: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(json.contains("my-sandbox"));
@@ -437,6 +443,7 @@ fn provision_request_from_omitted_when_none() {
         env: None,
         from: None,
         networks: Vec::new(),
+        container: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(!json.contains("from"));
@@ -560,7 +567,7 @@ fn exec_response_serde() {
     };
     let json = serde_json::to_string(&resp).unwrap();
     let resp2: ExecResponse = serde_json::from_str(&json).unwrap();
-    assert_eq!(resp2.stdout, "hello\n");
+    assert_eq!(resp2.stdout.decode().unwrap(), b"hello\n");
     assert_eq!(resp2.exit_code, 0);
 }
 
@@ -575,7 +582,7 @@ fn exec_response_nonzero_exit() {
     let json = serde_json::to_string(&resp).unwrap();
     let resp2: ExecResponse = serde_json::from_str(&json).unwrap();
     assert_eq!(resp2.exit_code, 127);
-    assert_eq!(resp2.stderr, "not found\n");
+    assert_eq!(resp2.stderr.decode().unwrap(), b"not found\n");
 }
 
 #[test]
@@ -921,7 +928,7 @@ fn ordinary_direct_spawn_preserves_the_installed_gateway_port_contract() {
 fn a_complete_result_prints_no_truncation_notice() {
     let resp = ExecResponse {
         stdout: "total 42\n".into(),
-        stderr: String::new(),
+        stderr: String::new().into(),
         exit_code: 0,
         truncated: false,
     };
@@ -933,7 +940,7 @@ fn a_complete_result_prints_no_truncation_notice() {
 fn a_capped_result_warns_that_output_is_a_prefix() {
     let resp = ExecResponse {
         stdout: "first chunk".into(),
-        stderr: String::new(),
+        stderr: String::new().into(),
         exit_code: 0,
         truncated: true,
     };
@@ -947,10 +954,11 @@ fn a_capped_result_warns_that_output_is_a_prefix() {
 }
 
 #[test]
-fn an_older_service_response_decodes_as_complete() {
-    // A service built before the field existed must read as complete, never
-    // as truncated -- defaulting the other way would warn on every exec.
-    let resp: ExecResponse = serde_json::from_str(r#"{"stdout":"ok","stderr":"","exit_code":0}"#).unwrap();
+fn a_response_without_truncation_decodes_as_complete() {
+    let resp: ExecResponse = serde_json::from_str(
+        r#"{"stdout":{"encoding":"utf8","data":"ok"},"stderr":{"encoding":"utf8","data":""},"exit_code":0}"#,
+    )
+    .unwrap();
 
     assert!(!resp.truncated);
     assert_eq!(resp.truncation_notice(), None);
@@ -960,7 +968,7 @@ fn an_older_service_response_decodes_as_complete() {
 fn the_truncation_flag_survives_a_response_roundtrip() {
     let resp = ExecResponse {
         stdout: "prefix".into(),
-        stderr: String::new(),
+        stderr: String::new().into(),
         exit_code: 0,
         truncated: true,
     };

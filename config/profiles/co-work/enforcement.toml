@@ -74,6 +74,13 @@ priority = "default"
 reason = "Allow explicitly published loopback TCP ports."
 match = 'network.mode == "expose" && network.side == "destination" && network.protocol == "tcp"'
 
+[default.http_preview]
+name = "http_preview"
+action = "allow"
+priority = "default"
+reason = "Allow authenticated HTTP preview requests admitted through the confined router."
+match = 'network.mode == "http_preview" && network.side == "destination" && network.protocol == "tcp" && (network.action == "preview_request" || network.action == "preview_upgrade")'
+
 [default.private]
 name = "private"
 action = "allow"

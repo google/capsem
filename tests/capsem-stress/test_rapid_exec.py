@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.stress
 
@@ -29,7 +29,7 @@ def test_rapid_exec_sequence():
         # All should have returned
         for i, resp in enumerate(results):
             assert resp is not None, f"Exec {i} returned None"
-            assert f"seq-{i}" in resp.get("stdout", ""), f"Exec {i} missing output"
+            assert f"seq-{i}" in exec_output_text(resp), f"Exec {i} missing output"
 
     finally:
         with contextlib.suppress(Exception):
@@ -50,17 +50,14 @@ def test_rapid_file_io():
 
         # Write 10 files
         for i in range(10):
-            resp = client.post(f"/vms/{name}/files/write", {
-                "path": f"/root/file-{i}.txt",
-                "content": f"content-{i}",
-            })
+            resp = client.upload_file(name, f"/root/file-{i}.txt", f"content-{i}")
             assert resp is not None, f"Write {i} failed"
 
         # Read them all back
         for i in range(10):
-            resp = client.post(f"/vms/{name}/files/read", {"path": f"/root/file-{i}.txt"})
+            resp = client.download_file(name, f"/root/file-{i}.txt")
             assert resp is not None, f"Read {i} failed"
-            assert f"content-{i}" in resp.get("content", ""), f"File {i} content mismatch"
+            assert resp == f"content-{i}".encode(), f"File {i} content mismatch"
 
     finally:
         with contextlib.suppress(Exception):

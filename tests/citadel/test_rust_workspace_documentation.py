@@ -55,9 +55,17 @@ ratchet moves; refer to rust_coverage_floors instead.
 """
 
 
-def _workspace_crates(manifest: str) -> set[str]:
+def _workspace_crates(manifest: str, root: Path = PROJECT_ROOT) -> set[str]:
     members = tomllib.loads(manifest)["workspace"]["members"]
-    return {Path(member).name for member in members if member.startswith("crates/")}
+    return {tomllib.loads((directory / "Cargo.toml").read_text())["package"]["name"]
+            for member in members for directory in root.glob(member)}
+
+
+def test_crate_inventory_uses_package_names_outside_crates(tmp_path: Path) -> None:
+    package = tmp_path / "sdk/rust"
+    package.mkdir(parents=True)
+    (package / "Cargo.toml").write_text('[package]\nname = "capsem-sdk"\n')
+    assert _workspace_crates('[workspace]\nmembers = ["sdk/*"]\n', tmp_path) == {"capsem-sdk"}
 
 
 def _documented_crates(source: str) -> set[str]:

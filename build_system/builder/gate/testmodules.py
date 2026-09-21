@@ -24,6 +24,7 @@ from . import (
     digestreport,
     pytestsuite,
     sandbox,
+    sdkchecks,
     sourcechecks,
     toolchain,
     webaudits,
@@ -169,6 +170,11 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         rust_policy,
         *(phase.add(check, after=(syntax,)) for check in audits.all_of(config)),
     )
+    # SDK checks remain separate leaves of the consolidated source-guard
+    # fragment so each language reports its own failure and timing.
+    sdk_checked = sdkchecks.fragment(plan, config, after=(syntax,))
+    typescript_checked = sdkchecks.typescript_fragment(plan, config, after=(syntax, node))
+    rust_sdk_checked = sdkchecks.rust_fragment(plan, config, after=(syntax,))
 
     # The web surfaces import `web/app/src/lib/mock-settings.generated.ts`,
     # which is gitignored and therefore never part of the source a run is
@@ -191,10 +197,13 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # `mcp_export` build in front of it for a mock that only `__tests__` files
     # import.
     consumer = config.websurfaces.needs_generated_settings
+    sdk_built = next(check for check in typescript_checked if check.label.endswith(".build"))
     surfaces = [
         phase.add(
             surface,
-            after=(syntax, node, settings) if surface.label.endswith(consumer) else (syntax, node),
+            after=(syntax, node)
+            + ((settings,) if surface.label.endswith(consumer) else ())
+            + ((sdk_built,) if surface.label.endswith((consumer, config.frontend.build_target)) else ()),
         )
         for surface in webaudits.surfaces(config)
     ]
@@ -209,6 +218,9 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     guest = phase.add(webaudits.clippy_guest(config), after=(syntax, rust, ort))
     return (
         *audited,
+        *sdk_checked,
+        *typescript_checked,
+        *rust_sdk_checked,
         *guards.leaves,
         formatted,
         digest,

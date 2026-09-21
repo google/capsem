@@ -50,16 +50,6 @@
       "fileName": "/usr/bin/capsem-gateway"
     },
     {
-      "SPDXID": "SPDXRef-File-capsem-mcp",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "4a28cf8600a519d43aa47027ef15680f2ffb5ceb274f34872060c0eb3fc84658"
-        }
-      ],
-      "fileName": "/usr/bin/capsem-mcp"
-    },
-    {
       "SPDXID": "SPDXRef-File-capsem-mcp-aggregator",
       "checksums": [
         {

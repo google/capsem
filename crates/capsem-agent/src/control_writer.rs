@@ -127,7 +127,8 @@ impl CtrlSender {
 /// `run_bridge`: exec bookkeeping and the serialized control writer channel.
 #[derive(Clone)]
 pub(crate) struct BridgeShared {
-    pub(crate) exec_inflight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
+    pub(crate) exec_inflight:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<crate::ExecCancellation>>>>,
     pub(crate) exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>>,
     pub(crate) ctrl_sender: CtrlSender,
     pub(crate) ctrl_rx: SharedCtrlReceiver,

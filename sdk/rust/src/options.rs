@@ -1,0 +1,121 @@
+use std::collections::HashMap;
+
+use std::fmt;
+
+use crate::models::{HistoryLayerFilter, NetworkInfo, ProfileSummary, TimelineLayer};
+
+/// Credentials and optional trust material used for one registry pull.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Registry {
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub ca_pem: Option<String>,
+}
+
+impl fmt::Debug for Registry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let present = |value: &Option<String>| if value.is_some() { "<redacted>" } else { "<none>" };
+        formatter
+            .debug_struct("Registry")
+            .field("username", &present(&self.username))
+            .field("password", &present(&self.password))
+            .field("ca_pem", &present(&self.ca_pem))
+            .finish()
+    }
+}
+
+impl From<Registry> for crate::models::RegistryAccess {
+    fn from(registry: Registry) -> Self {
+        Self {
+            username: registry.username,
+            password: registry.password,
+            ca_pem: registry.ca_pem,
+        }
+    }
+}
+
+/// Exactly one way to select a VM; names resolve once through the gateway.
+#[derive(Debug, Clone)]
+pub enum VmSelector {
+    Id(String),
+    Name(String),
+}
+
+/// Omitted CPU and memory values retain the selected profile's defaults.
+#[derive(Debug, Clone, Default)]
+pub struct CreateOptions {
+    pub profile: Option<ProfileSummary>,
+    pub name: Option<String>,
+    pub cpus: Option<u32>,
+    /// Guest memory in GiB.
+    pub memory: Option<u64>,
+    pub env: Option<HashMap<String, String>>,
+    pub networks: Vec<NetworkInfo>,
+    pub image: Option<String>,
+    pub command: Vec<String>,
+    pub registry: Option<Registry>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RunOptions {
+    pub profile: Option<ProfileSummary>,
+    pub timeout_secs: Option<u64>,
+    pub cpus: Option<u32>,
+    /// Guest memory in GiB.
+    pub memory: Option<u64>,
+    pub env: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DiagnosticOptions {
+    pub since: Option<String>,
+    pub limit: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TriageOptions {
+    pub since: Option<String>,
+    pub limit: Option<u64>,
+    pub vm_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LogOptions {
+    pub grep: Option<String>,
+    pub tail: Option<u64>,
+    pub max_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct HistoryOptions {
+    pub limit: Option<u64>,
+    pub offset: Option<u64>,
+    pub search: Option<String>,
+    pub layer: Option<HistoryLayerFilter>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TimelineOptions {
+    pub trace_id: Option<String>,
+    pub since: Option<String>,
+    pub limit: Option<u64>,
+    pub layers: Option<Vec<TimelineLayer>>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PageOptions {
+    pub limit: Option<u64>,
+    pub offset: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct NetworkLogOptions {
+    pub cursor: Option<String>,
+    pub limit: Option<u64>,
+    pub vm: Option<String>,
+    pub connection: Option<String>,
+    pub event_type: Option<String>,
+    pub decision: Option<String>,
+    pub since: Option<i64>,
+    pub until: Option<i64>,
+}

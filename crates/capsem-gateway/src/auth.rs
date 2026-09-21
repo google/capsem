@@ -81,17 +81,26 @@ pub struct AuthState {
     pub token_path: PathBuf,
     pub port_path: PathBuf,
     pub pid_path: PathBuf,
+    pub preview_port_path: PathBuf,
 }
 
 impl AuthState {
-    /// Generate runtime files: token (600), port, pid.
-    pub fn new(run_dir: &Path, token: &str, port: u16) -> Result<Self> {
+    /// Generate runtime files. The token is written last: its presence is the
+    /// readiness marker, after both listeners and every other marker exist.
+    pub fn new(run_dir: &Path, token: &str, port: u16, preview_port: u16) -> Result<Self> {
         std::fs::create_dir_all(run_dir).with_context(|| format!("failed to create run dir: {}", run_dir.display()))?;
 
         let token_path = run_dir.join("gateway.token");
         let port_path = run_dir.join("gateway.port");
         let pid_path = run_dir.join("gateway.pid");
+        let preview_port_path = run_dir.join("preview.port");
 
+        std::fs::write(&preview_port_path, preview_port.to_string())
+            .with_context(|| format!("failed to write {}", preview_port_path.display()))?;
+        #[cfg(unix)]
+        std::fs::set_permissions(&preview_port_path, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+        std::fs::write(&port_path, port.to_string())?;
+        std::fs::write(&pid_path, std::process::id().to_string())?;
         std::fs::write(&token_path, token).with_context(|| format!("failed to write {}", token_path.display()))?;
 
         // chmod 600 on token file
@@ -100,9 +109,6 @@ impl AuthState {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600))?;
         }
-
-        std::fs::write(&port_path, port.to_string())?;
-        std::fs::write(&pid_path, std::process::id().to_string())?;
 
         info!(
             token_path = %token_path.display(),
@@ -115,12 +121,18 @@ impl AuthState {
             token_path,
             port_path,
             pid_path,
+            preview_port_path,
         })
     }
 
     /// Remove runtime files on shutdown.
     pub fn cleanup(&self) {
-        for path in [&self.token_path, &self.port_path, &self.pid_path] {
+        for path in [
+            &self.token_path,
+            &self.port_path,
+            &self.pid_path,
+            &self.preview_port_path,
+        ] {
             if let Err(e) = std::fs::remove_file(path) {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     tracing::warn!(path = %path.display(), error = %e, "failed to remove runtime file");
@@ -182,6 +194,14 @@ pub fn request_names_loopback_host<B>(req: &Request<B>) -> bool {
         .is_ok_and(|authority| crate::cors::is_loopback_host(authority.host()))
 }
 
+/// `/vms/{id}/stream`, the one WebSocket control route a browser opens.
+fn is_stream_path(path: &str) -> bool {
+    matches!(
+        path.trim_start_matches('/').split('/').collect::<Vec<_>>().as_slice(),
+        ["vms", id, "stream"] if !id.is_empty()
+    )
+}
+
 /// Axum middleware: refuse foreign hosts, then require a Bearer token on all
 /// routes except `GET /health` and `GET /token`.
 pub async fn auth_middleware(
@@ -215,7 +235,7 @@ pub async fn auth_middleware(
     // (browser WebSocket API cannot set custom headers).
     // Only the "token" param is recognized; all others are dropped.
     let query_valid = !header_valid
-        && (path.starts_with("/terminal/") || path == "/events")
+        && (path == "/events" || is_stream_path(path))
         && req
             .uri()
             .query()

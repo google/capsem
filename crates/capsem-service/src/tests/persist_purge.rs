@@ -8,7 +8,7 @@ fn insert_ephemeral_instance(state: &ServiceState, id: &str) -> PathBuf {
     session_dir
 }
 
-async fn persist(state: &Arc<ServiceState>, id: &str, name: &str) -> Result<Json<serde_json::Value>, AppError> {
+async fn persist(state: &Arc<ServiceState>, id: &str, name: &str) -> Result<Json<PersistResponse>, AppError> {
     handle_persist(
         State(Arc::clone(state)),
         Path(id.to_string()),
@@ -285,15 +285,7 @@ fn settle_is_a_no_op_for_a_directory_already_under_persistent() {
 /// would lose its directory to that reaper's move.
 #[test]
 fn resume_settles_the_session_dir_before_spawning() {
-    let source = include_str!("../vm_spawn.rs");
-    let start = source
-        .find("    pub(crate) fn resume_sandbox(")
-        .expect("resume_sandbox exists");
-    let end = start
-        + source[start..]
-            .find("\n}\n")
-            .expect("resume_sandbox closes the impl block");
-    let body = &source[start..end];
+    let body = include_str!("../vm_lifecycle/resume_process.rs");
     let settle = body
         .find("settle_persistent_session_dir(")
         .expect("resume settles the session dir");

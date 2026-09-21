@@ -8,8 +8,9 @@ endpoints behave correctly under real inputs; that correctness is owned
 by:
 
   tests/capsem-service/    (every HTTP handler against the real service)
-  tests/capsem-mcp/        (every #[tool] in capsem-mcp against a live
-                            capsem-mcp -> capsem-service -> VM chain)
+  mcp/typescript/tests/    (the npm host against typed gateway fixtures)
+  tests/ironbank/test_mcp_profile_ledger.py
+                           (packed npm MCP -> gateway -> service -> VM chain)
   tests/capsem-e2e/        (full CLI -> gateway -> service -> VM paths
                             for a handful of flagship flows)
 
@@ -24,6 +25,7 @@ import os
 import socketserver
 import tempfile
 import threading
+import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -217,7 +219,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         elif path_only == "/profiles/status":
             self._send_json(
                 {
-                    "source": "directory",
+                    "source": "profile",
                     "profile_count": 2,
                     "ready_count": 1,
                     "asset_manifest": {
@@ -278,15 +280,20 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         elif path_only.startswith("/vms/") and path_only.endswith("/exec"):
             data = json.loads(body) if body else {}
             cmd = data.get("command", "")
-            self._send_json({"stdout": f"mock: {cmd}\n", "stderr": "", "exit_code": 0})
+            self._send_json({
+                "stdout": {"encoding": "utf8", "data": f"mock: {cmd}\n"},
+                "stderr": {"encoding": "utf8", "data": ""},
+                "exit_code": 0,
+            })
         elif path_only.startswith("/vms/") and path_only.endswith("/stop"):
             self._send_json({"ok": True})
-        elif path_only.startswith("/vms/") and path_only.endswith("/files/write"):
-            self._send_json({"success": True})
-        elif path_only.startswith("/vms/") and path_only.endswith("/files/read"):
-            self._send_json({"content": "mock file content"})
         elif path_only.startswith("/vms/") and path_only.endswith("/files/content"):
-            self._send_json({"success": True, "size": len(body)})
+            # Answered as the service does: the upload's size and where the
+            # guest sees it (a relative path lands under /root).
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.clean_path).query)
+            path = query.get("path", [""])[0]
+            vm_path = path if path.startswith("/") else f"/root/{path}"
+            self._send_json({"success": True, "size": len(body), "vm_path": vm_path})
         elif path_only.startswith("/vms/") and path_only.endswith("/save"):
             self._send_json({"ok": True})
         elif path_only == "/purge":
@@ -296,7 +303,11 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             if data.get("profile_id") != CODE_PROFILE_ID:
                 self._send_error(400, "profile_id is required")
                 return
-            self._send_json({"stdout": "mock run output\n", "stderr": "", "exit_code": 0})
+            self._send_json({
+                "stdout": {"encoding": "utf8", "data": "mock run output\n"},
+                "stderr": {"encoding": "utf8", "data": ""},
+                "exit_code": 0,
+            })
         elif path_only.startswith("/vms/") and path_only.endswith("/resume"):
             self._send_json({"id": "33333333-3333-4333-8333-333333333333"})
         elif path_only.startswith("/vms/") and path_only.endswith("/fork"):

@@ -209,3 +209,77 @@ fn a_short_key_value_line_is_not_reliably_plain_text() {
         assert!(is_text);
     }
 }
+
+/// The files API used to strip a leading `/` silently, so `/root/app.py` landed
+/// at `/root/root/app.py` in the VM and nothing said so. An absolute path now
+/// means the path the caller sees; `exact` keeps the literal workspace form.
+mod paths {
+    use super::*;
+
+    fn landed(raw: &str, exact: bool, container: bool) -> (String, String, Option<String>) {
+        let path = resolve_file_path(raw, exact, container).unwrap();
+        (path.relative, path.vm_path, path.container_path)
+    }
+
+    fn refused(raw: &str, container: bool) -> String {
+        let AppError(status, message) = resolve_file_path(raw, false, container).unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        message
+    }
+
+    #[test]
+    fn a_vm_path_under_root_lands_where_the_vm_sees_it() {
+        assert_eq!(
+            landed("/root/app.py", false, false),
+            ("app.py".into(), "/root/app.py".into(), None)
+        );
+        assert_eq!(
+            landed("app.py", false, false),
+            ("app.py".into(), "/root/app.py".into(), None)
+        );
+        assert_eq!(landed("/root/src//main.rs", false, false).0, "src/main.rs");
+    }
+
+    #[test]
+    fn a_container_path_under_its_workspace_lands_in_the_same_file() {
+        assert_eq!(
+            landed("/workspace/app.py", false, true),
+            ("app.py".into(), "/root/app.py".into(), Some("/workspace/app.py".into()))
+        );
+        assert_eq!(landed("app.py", false, true).2, Some("/workspace/app.py".into()));
+    }
+
+    #[test]
+    fn an_absolute_path_outside_the_workspace_is_refused_with_the_reason() {
+        assert!(refused("/etc/passwd", false).contains("/root"));
+        let container = refused("/root/app.py", true);
+        assert!(container.contains("container"), "{container}");
+        assert!(container.contains("/workspace"), "{container}");
+        assert!(refused("/app/config.json", true).contains("container"));
+    }
+
+    #[test]
+    fn exact_takes_the_path_literally_inside_the_workspace() {
+        assert_eq!(landed("/root/app.py", true, false).0, "root/app.py");
+        assert_eq!(landed("/root/app.py", true, false).1, "/root/root/app.py");
+        assert_eq!(landed("/etc/app.py", true, true).0, "etc/app.py");
+    }
+
+    #[test]
+    fn traversal_and_the_bare_workspace_are_refused_in_every_form() {
+        for raw in ["/root/../etc/passwd", "../x", "/root", "/root/", "/workspace/../x"] {
+            assert!(
+                resolve_file_path(raw, false, raw.starts_with("/workspace")).is_err(),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_directory_listing_may_name_the_workspace_root() {
+        for (raw, container) in [("", false), ("/root", false), ("/root/", false), ("/workspace", true)] {
+            assert_eq!(resolve_dir_path(raw, false, container).unwrap(), "", "{raw}");
+        }
+        assert_eq!(resolve_dir_path("/root/src", false, false).unwrap(), "src");
+    }
+}

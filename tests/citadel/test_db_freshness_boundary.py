@@ -36,7 +36,7 @@ LOGGER_DB_TOKENS = ("session.db", "main.db", "network.db", "db_path", "session_d
 LEDGER_READER_CRATES = (
     "capsem-service",
     "capsem-gateway",
-    "capsem-mcp",
+
     "capsem-core",
     "capsem-bench",
     "capsem-tui",

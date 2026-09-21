@@ -15,6 +15,7 @@ from helpers.benchmark_output import benchmark_output_dir
 from helpers.constants import ASSETS_DIR, BIN_DIR, PROJECT_ROOT
 
 from tests.ironbank.kingslanding.test_publish import redis, service
+from tests.ironbank.kingslanding.test_run import exec_output_text
 
 __all__ = ["redis", "service"]
 pytestmark = pytest.mark.integration
@@ -73,7 +74,7 @@ def test_redis_guest_and_published_transport_samples(redis, service):
                         timeout=45,
                     )
                     assert response.get("exit_code") == 0, response
-                    raw = response["stdout"]
+                    raw = exec_output_text(response)
                 else:
                     invocation = [
                         bench,

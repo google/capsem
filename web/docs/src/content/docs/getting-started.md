@@ -157,11 +157,16 @@ forensic tool, not a Capsem route or UI surface.
 AI agents can control sandboxes programmatically via the MCP server:
 
 ```sh
-# Add to your Claude Code or Gemini CLI MCP config
-capsem-mcp
+npm install --global @capsem/mcp
+CAPSEM_GATEWAY_TOKEN="$(cat ~/.capsem/run/gateway.token)" \
+  capsem-mcp --gateway-url http://127.0.0.1:19222 --timeout-ms 30000
 ```
 
-This gives agents tools to create, exec, read/write files, and inspect sessions.
+The token comes from `CAPSEM_GATEWAY_TOKEN` or `--token-file`, never from the
+command line. Register the command with your MCP client and pass the token
+through its environment block.
+The package gives agents typed lifecycle, execution, file, diagnostics, network,
+and profile MCP tools through authenticated gateway HTTP.
 
 ## What's next
 

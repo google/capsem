@@ -49,7 +49,7 @@ from helpers.route_health_budget import (
 from helpers.route_health_budget import (
     scaled_hot_route_budget as _scaled_hot_route_budget,
 )
-from helpers.service import ServiceInstance, vm_name, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, vm_name, wait_exec_ready
 
 from tests.ironbank.test_stats_detail_contract import (
     SESSION_ID as SEEDED_SESSION_ID,
@@ -695,7 +695,7 @@ def _seeded_session_route_contracts(session_id: str) -> list[RouteContract]:
         ),
         RouteContract(
             "GET",
-            f"/vms/{session_id}/history?layer=net&limit=50",
+            f"/vms/{session_id}/history?layer=all&limit=50",
             None,
             {"commands", "total"},
             dict,
@@ -716,9 +716,9 @@ def _seeded_session_route_contracts(session_id: str) -> list[RouteContract]:
         ),
         RouteContract(
             "GET",
-            f"/vms/{session_id}/timeline?layers=net,model,tools,dns,fs,exec,security&limit=100",
+            f"/vms/{session_id}/timeline?layers=net,model,tool,fs,exec&limit=100",
             None,
-            {"columns", "rows"},
+            {"events"},
             dict,
         ),
         RouteContract(
@@ -1198,7 +1198,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
             service_proc=service_proc,
         )
         assert exec_payload["exit_code"] == 0
-        assert exec_payload["stdout"] == "route-lifecycle-ok"
+        assert exec_output_text(exec_payload) == "route-lifecycle-ok"
         _assert_timing_budget(timing, p95_ms=10_000.0, max_ms=10_000.0, cpu_s=1.0)
 
         fork_payload, timing = _measure_once(
