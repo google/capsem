@@ -15,6 +15,38 @@ fn write_frame(writer: &mut impl Write, channel: ExecOutputChannel, data: &[u8])
     .unwrap();
 }
 
+#[test]
+fn legacy_raw_output_is_captured_as_stdout_without_frame_decoding() {
+    let capture = read_exec_output_protocol(&mut &b"ready\n\0\xff"[..], capsem_proto::ExecOutputProtocol::RawMerged);
+    assert_eq!(capture.stdout, b"ready\n\0\xff");
+    assert_eq!(capture.stdout_bytes, 8);
+    assert!(capture.stderr.is_empty());
+    assert!(capture.error.is_none(), "{:?}", capture.error);
+}
+
+#[test]
+fn legacy_raw_stream_forwards_binary_chunks_as_stdout() {
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
+    let worker = std::thread::spawn(move || {
+        stream_exec_output_protocol(
+            &mut &b"legacy\0\xff"[..],
+            17,
+            &sender,
+            capsem_proto::ExecOutputProtocol::RawMerged,
+        )
+    });
+    let message = receiver.blocking_recv().unwrap();
+    let capsem_proto::ipc::ProcessToService::ExecOutput { id, channel, data } = message else {
+        panic!("expected streamed exec output");
+    };
+    assert_eq!(id, 17);
+    assert_eq!(channel, ExecOutputChannel::Stdout);
+    assert_eq!(data, b"legacy\0\xff");
+    drop(receiver);
+    let capture = worker.join().unwrap().unwrap();
+    assert_eq!(capture.stdout_bytes, 8);
+}
+
 fn encoded(channel: ExecOutputChannel, total: usize) -> Vec<u8> {
     let mut bytes = Vec::new();
     let mut remaining = total;

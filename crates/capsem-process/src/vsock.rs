@@ -22,7 +22,7 @@ mod exec_completion;
 mod exec_input;
 mod exec_output;
 mod shutdown;
-use exec_output::{read_exec_output, MAX_EXEC_OUTPUT_BYTES};
+use exec_output::MAX_EXEC_OUTPUT_BYTES;
 
 type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
 type PluginPolicyHandle = capsem_core::net::policy_config::SharedPluginPolicy;
@@ -993,8 +993,8 @@ fn dispatch_aux_connection(
                 let Some(mut file) = clone_fd(&conn, "duplicate-exec-vsock") else {
                     return;
                 };
-                if let Ok(GuestToHost::ExecStarted { id }) = read_control_msg(&mut file) {
-                    info!(id, "exec port: received ExecStarted");
+                if let Ok(GuestToHost::ExecStarted { id, output_protocol }) = read_control_msg(&mut file) {
+                    info!(id, ?output_protocol, "exec port: received ExecStarted");
                     let (stream, input) = js
                         .active_execs
                         .lock()
@@ -1002,11 +1002,8 @@ fn dispatch_aux_connection(
                         .get_mut(&id)
                         .map(|active| (active.stream.clone(), active.input_rx.take()))
                         .unwrap_or((None, None));
-                    let _input_handle = exec_input::spawn(&conn, id, input, stream.clone());
-                    let result = match stream {
-                        Some(sender) => exec_output::stream_exec_output(&mut file, id, &sender),
-                        None => Ok(read_exec_output(&mut file)),
-                    };
+                    let _input_handle = exec_input::spawn_for(&conn, id, input, stream.clone(), output_protocol);
+                    let result = exec_output::read_protocol(&mut file, id, stream.as_ref(), output_protocol);
                     let capture = match result {
                         Ok(output) => output,
                         Err(error) => {

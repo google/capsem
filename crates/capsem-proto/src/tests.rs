@@ -1,6 +1,7 @@
 use super::*;
 
 mod dns_frames;
+mod exec_output_protocol;
 mod validation;
 
 // -------------------------------------------------------------------
@@ -332,17 +333,6 @@ fn boot_timing_fails_as_host_msg() {
     };
     let frame = encode_guest_msg(&msg).unwrap();
     assert!(decode_host_msg(&frame[4..]).is_err());
-}
-
-#[test]
-fn roundtrip_exec_started() {
-    let msg = GuestToHost::ExecStarted { id: 42 };
-    let frame = encode_guest_msg(&msg).unwrap();
-    let decoded = decode_guest_msg(&frame[4..]).unwrap();
-    match decoded {
-        GuestToHost::ExecStarted { id } => assert_eq!(id, 42),
-        other => panic!("expected ExecStarted, got {other:?}"),
-    }
 }
 
 #[test]

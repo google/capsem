@@ -56,7 +56,7 @@ fn exec_output_read_retries_interrupted_socket_reads() {
         }),
     };
 
-    let captured = read_exec_output(&mut reader);
+    let captured = exec_output::read_exec_output(&mut reader);
 
     assert_eq!(captured.stdout, b"IRONBANK_CLIENT_RESULT={\"ok\":true}\n");
     assert_eq!(
@@ -692,7 +692,7 @@ fn exec_output_is_capped_against_an_endless_guest_stream() {
         capsem_proto::ExecOutputChannel::Stdout,
         MAX_EXEC_OUTPUT_BYTES * 2,
     ));
-    let captured = read_exec_output(&mut reader);
+    let captured = exec_output::read_exec_output(&mut reader);
 
     assert_eq!(
         captured.stdout.len(),
@@ -714,7 +714,7 @@ fn exec_output_keeps_the_prefix_and_drains_to_eof() {
         capsem_proto::ExecOutputChannel::Stdout,
         MAX_EXEC_OUTPUT_BYTES + 4096,
     ));
-    let captured = read_exec_output(&mut reader);
+    let captured = exec_output::read_exec_output(&mut reader);
 
     assert!(captured.stdout.iter().all(|b| *b == b'y'), "prefix is intact");
     assert_eq!(captured.stdout.len(), MAX_EXEC_OUTPUT_BYTES);
@@ -727,7 +727,7 @@ fn output_at_exactly_the_cap_is_not_reported_as_truncated() {
         capsem_proto::ExecOutputChannel::Stdout,
         MAX_EXEC_OUTPUT_BYTES,
     ));
-    let captured = read_exec_output(&mut reader);
+    let captured = exec_output::read_exec_output(&mut reader);
 
     assert_eq!(captured.stdout.len(), MAX_EXEC_OUTPUT_BYTES);
     assert_eq!(
@@ -748,7 +748,7 @@ fn ordinary_output_is_unaffected_by_the_cap() {
         },
     )
     .unwrap();
-    let captured = read_exec_output(&mut std::io::Cursor::new(bytes));
+    let captured = exec_output::read_exec_output(&mut std::io::Cursor::new(bytes));
 
     assert_eq!(captured.stderr, b"total 42\r\n");
     assert_eq!(captured.stderr_bytes, 10);
@@ -777,7 +777,7 @@ fn a_read_error_ends_capture_without_losing_what_was_already_read() {
         },
     )
     .unwrap();
-    let captured = read_exec_output(&mut DataThenError {
+    let captured = exec_output::read_exec_output(&mut DataThenError {
         data: std::io::Cursor::new(bytes),
     });
 

@@ -28,7 +28,7 @@ pub const GUEST_WORKSPACE: &str = "/root";
 
 pub use exec_stream::{
     read_exec_input, read_exec_output, write_exec_input, write_exec_output, write_exec_output_data, ExecInputFrame,
-    ExecOutputChannel, ExecOutputFrame, EXEC_STDIN_WINDOW, MAX_EXEC_DATA_BYTES,
+    ExecOutputChannel, ExecOutputFrame, ExecOutputProtocol, EXEC_STDIN_WINDOW, MAX_EXEC_DATA_BYTES,
 };
 pub use handshake::{HandshakeError, Hello};
 
@@ -126,9 +126,9 @@ impl PublicationTarget {
 }
 
 /// FNV-1a 64 hash of normalized protocol declarations (lib.rs + ipc.rs +
-/// handshake.rs + router.rs). Formatting, documentation and function bodies
-/// do not change it; wire-relevant Rust and serde tokens do. Computed by
-/// `build.rs`.
+/// handshake.rs + router.rs + exec_stream.rs). Formatting, documentation and
+/// function bodies do not change it; wire-relevant Rust and serde tokens do.
+/// Computed by `build.rs`.
 pub const SCHEMA_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/schema_hash.txt"));
 
 /// Maximum cumulative file bytes allowed during boot handshake (10MB).
@@ -691,8 +691,13 @@ pub enum GuestToHost {
     /// Boot timing measurements from the guest init script.
     BootTiming { stages: Vec<BootStage> },
     // -- Terminal --
-    /// Exec started: handshake on vsock exec port identifying the exec ID.
-    ExecStarted { id: u64 },
+    /// Exec started: handshake on the dedicated exec connection. The default
+    /// keeps immutable pre-streaming profile assets compatible.
+    ExecStarted {
+        id: u64,
+        #[serde(default)]
+        output_protocol: ExecOutputProtocol,
+    },
     /// Command completed with exit code.
     ExecDone { id: u64, exit_code: i32 },
     // -- Heartbeat --

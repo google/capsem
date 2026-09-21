@@ -1,4 +1,4 @@
-use capsem_proto::ExecOutputChannel;
+use capsem_proto::{ExecOutputChannel, ExecOutputProtocol};
 use std::sync::Arc;
 
 use crate::job_store::JobStore;
@@ -59,8 +59,26 @@ pub(super) fn deposit(job_store: &JobStore, id: u64, capture: ExecCapture) -> Op
 /// Drain framed exec output through EOF. Reading continues after the retained
 /// cap so the guest cannot block on a full socket and telemetry records the
 /// actual byte volume.
+#[cfg(test)]
 pub(super) fn read_exec_output(reader: &mut impl std::io::Read) -> ExecCapture {
     read_output(reader, |_, _| Ok(()), false, MAX_EXEC_OUTPUT_BYTES).expect("capture has no fallible forwarding")
+}
+
+pub(super) fn read_exec_output_protocol(reader: &mut impl std::io::Read, protocol: ExecOutputProtocol) -> ExecCapture {
+    read_output_protocol(reader, protocol, |_, _| Ok(()), false, MAX_EXEC_OUTPUT_BYTES)
+        .expect("capture has no fallible forwarding")
+}
+
+pub(super) fn read_protocol(
+    reader: &mut impl std::io::Read,
+    id: u64,
+    sender: Option<&tokio::sync::mpsc::Sender<capsem_proto::ipc::ProcessToService>>,
+    protocol: ExecOutputProtocol,
+) -> std::io::Result<ExecCapture> {
+    match sender {
+        Some(sender) => stream_exec_output_protocol(reader, id, sender, protocol),
+        None => Ok(read_exec_output_protocol(reader, protocol)),
+    }
 }
 
 /// Bytes buffered per read of the EXEC socket: frames are read from memory, not
@@ -102,6 +120,48 @@ fn read_output(
     Ok(capture)
 }
 
+fn read_output_protocol(
+    reader: &mut impl std::io::Read,
+    protocol: ExecOutputProtocol,
+    forward: impl FnMut(ExecOutputChannel, Vec<u8>) -> std::io::Result<()>,
+    strict: bool,
+    retain_per_lane: usize,
+) -> std::io::Result<ExecCapture> {
+    match protocol {
+        ExecOutputProtocol::RawMerged => read_raw_output(reader, forward, strict, retain_per_lane),
+        ExecOutputProtocol::FramedLanes => read_output(reader, forward, strict, retain_per_lane),
+    }
+}
+
+fn read_raw_output(
+    reader: &mut impl std::io::Read,
+    mut forward: impl FnMut(ExecOutputChannel, Vec<u8>) -> std::io::Result<()>,
+    strict: bool,
+    retain: usize,
+) -> std::io::Result<ExecCapture> {
+    let mut capture = ExecCapture::default();
+    let mut buffer = vec![0_u8; EXEC_OUTPUT_READ_BUFFER];
+    loop {
+        let read = match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) if strict => return Err(error),
+            Err(error) => {
+                capture.error = Some(format!("exec output transport failed: {error}"));
+                break;
+            }
+        };
+        capture.stdout_bytes = capture.stdout_bytes.saturating_add(read as u64);
+        let keep = read
+            .min(MAX_EXEC_OUTPUT_BYTES.saturating_sub(capture.stdout.len()))
+            .min(retain.saturating_sub(capture.stdout.len()));
+        capture.stdout.extend_from_slice(&buffer[..keep]);
+        forward(ExecOutputChannel::Stdout, buffer[..read].to_vec())?;
+    }
+    Ok(capture)
+}
+
 /// Distinguish clean socket EOF between frames from a truncated frame: an
 /// empty buffer after a refill is EOF; anything else must be a whole frame.
 fn read_frame(reader: &mut impl std::io::BufRead) -> std::io::Result<Option<capsem_proto::ExecOutputFrame>> {
@@ -115,6 +175,7 @@ fn read_frame(reader: &mut impl std::io::BufRead) -> std::io::Result<Option<caps
     }
 }
 
+#[cfg(test)]
 pub(super) fn stream_exec_output(
     reader: &mut impl std::io::Read,
     id: u64,
@@ -123,6 +184,29 @@ pub(super) fn stream_exec_output(
     let mut attached = true;
     read_output(
         reader,
+        |channel, data| {
+            if attached {
+                attached = sender
+                    .blocking_send(capsem_proto::ipc::ProcessToService::ExecOutput { id, channel, data })
+                    .is_ok();
+            }
+            Ok(())
+        },
+        true,
+        EXEC_LEDGER_PREVIEW_BYTES,
+    )
+}
+
+pub(super) fn stream_exec_output_protocol(
+    reader: &mut impl std::io::Read,
+    id: u64,
+    sender: &tokio::sync::mpsc::Sender<capsem_proto::ipc::ProcessToService>,
+    protocol: ExecOutputProtocol,
+) -> std::io::Result<ExecCapture> {
+    let mut attached = true;
+    read_output_protocol(
+        reader,
+        protocol,
         |channel, data| {
             if attached {
                 attached = sender

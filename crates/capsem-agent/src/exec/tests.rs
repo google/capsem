@@ -17,7 +17,10 @@ fn read_exec_started(exec_host: &mut std::os::unix::net::UnixStream) -> u64 {
     let mut frame = vec![0u8; frame_len];
     exec_host.read_exact(&mut frame).unwrap();
     match capsem_proto::decode_guest_msg(&frame).unwrap() {
-        GuestToHost::ExecStarted { id } => id,
+        GuestToHost::ExecStarted { id, output_protocol } => {
+            assert_eq!(output_protocol, capsem_proto::ExecOutputProtocol::FramedLanes);
+            id
+        }
         other => panic!("expected ExecStarted, got {other:?}"),
     }
 }

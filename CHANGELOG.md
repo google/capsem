@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Hosts now detect whether a guest agent uses legacy merged raw exec output or
+  current framed stdout/stderr output. Installed VMs built from the stable
+  profile can therefore complete readiness checks and commands without the
+  host misreading command bytes as a frame length.
+
 - A create that fails after its VM exists, such as a container pull refused
   by policy, no longer deletes the evidence of why. The VM is still
   discarded and its name freed, but its ledger and logs are kept as a

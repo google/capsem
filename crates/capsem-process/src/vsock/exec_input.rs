@@ -1,6 +1,18 @@
 use capsem_core::VsockConnection;
 use capsem_proto::ipc::ProcessToService;
-use capsem_proto::ExecInputFrame;
+use capsem_proto::{ExecInputFrame, ExecOutputProtocol};
+
+pub(super) fn spawn_for(
+    connection: &VsockConnection,
+    id: u64,
+    input: Option<tokio::sync::mpsc::Receiver<ExecInputFrame>>,
+    credit: Option<tokio::sync::mpsc::Sender<ProcessToService>>,
+    protocol: ExecOutputProtocol,
+) -> Option<std::thread::JoinHandle<()>> {
+    (protocol == ExecOutputProtocol::FramedLanes)
+        .then(|| spawn(connection, id, input, credit))
+        .flatten()
+}
 
 /// Write queued stdin frames to the guest. Each frame that leaves the queue
 /// returns one unit of stdin credit to the service through `credit`.

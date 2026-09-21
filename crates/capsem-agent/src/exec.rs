@@ -199,7 +199,13 @@ pub(super) fn run_exec_on_fds_with_cancel(
     cancellation: &std::sync::Arc<ExecCancellation>,
 ) -> i32 {
     // Send ExecStarted handshake so host knows which exec ID this connection belongs to.
-    if let Err(e) = send_guest_msg(exec_fd, &GuestToHost::ExecStarted { id }) {
+    if let Err(e) = send_guest_msg(
+        exec_fd,
+        &GuestToHost::ExecStarted {
+            id,
+            output_protocol: capsem_proto::ExecOutputProtocol::FramedLanes,
+        },
+    ) {
         eprintln!("[capsem-agent] exec[{id}] handshake failed: {e}");
         let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code: 126 });
         return 126;
