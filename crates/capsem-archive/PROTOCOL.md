@@ -5,6 +5,33 @@ Designed against `c8da3c1272c77c1ba07784de6176da13fae4e493` on 2026-09-21.
 The associated Sprinty ledger is worktree-local at
 `/Users/elie/.codex/worktrees/pr227-review/capsem/.sprinty`.
 
+## Product decision: retire all workspace snapshots after #227
+
+The user explicitly chose **Remove all snapshot features**, and explicitly
+included SDK cleanup. S07-001 replaces the former #221/#216 repair plan.
+After #227, delete automatic and manual snapshot scheduling and all snapshot
+create/list/status/change/history/revert/compact product surfaces. Remove their
+MCP tools, server routes, IPC, configuration, UI, documentation and tests.
+Remove snapshot methods, request/response types, exported symbols, generated
+schemas, examples and tests from both SDKs; regenerate from their actual source
+of truth. Do not keep deprecated aliases or methods returning unsupported.
+This is explicit authorization to remove the corresponding public-surface
+entries, not a request to disable the feature behind a setting.
+
+Preserve existing saved snapshots and session data; no cleanup migration is
+authorized. Do not implement a replacement scheduler or merge #216 to expand
+snapshots. Remove snapshot-only tests and add only focused removal/regression
+checks using the existing gates.
+
+`auto_snapshot` currently also houses clone and disk-usage primitives used by
+ordinary VM creation and fork. Move still-needed primitives to their proper
+owner before deleting that module. Do not remove normal persistence, file I/O,
+or unrelated SQL/state snapshots by keyword. The coherent ledger-copy protocol
+below still protects archive evidence and any retained cloning operations; it
+does not require retaining a user-facing snapshot feature. Do not expand
+snapshot functionality as part of #227. The later order is snapshot retirement
+S07-001, counters S03-001, IPC S04-001, then confinement S05-001.
+
 ## Decision
 
 Give every physical archive generation its own unique filename. SQLite is
