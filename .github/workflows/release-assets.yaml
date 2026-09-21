@@ -102,42 +102,54 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
       - name: Validate selected channel profile through capsem-admin
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_PROFILE: ${{ inputs.profile }}
         run: |
           mkdir -p cache/target
           cargo run -p capsem-admin -- validate \
-            --channel "${{ inputs.channel }}" \
-            --profile "${{ inputs.profile }}" \
+            --channel "$RELEASE_CHANNEL" \
+            --profile "$RELEASE_PROFILE" \
             --json > cache/target/profile-release-selection.json
 
       - name: Fetch latest selected channel source manifest
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_PROFILE: ${{ inputs.profile }}
+          RELEASE_SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           python3 build_system/scripts/release/fetch-channel-source-manifest.py \
-            --channel "${{ inputs.channel }}" \
-            --profile "${{ inputs.profile }}" \
-            --source-commit "${{ inputs.source_commit }}" \
+            --channel "$RELEASE_CHANNEL" \
+            --profile "$RELEASE_PROFILE" \
+            --source-commit "$RELEASE_SOURCE_COMMIT" \
             --bootstrap-missing-first-party \
             --output cache/target/channel-source/manifest.json
 
       - name: Project inactive first-channel public-before state
         if: ${{ steps.public-before.outputs.bootstrap == 'true' }}
+        env:
+          PUBLIC_BEFORE_BOOTSTRAP: ${{ steps.public-before.outputs.bootstrap }}
+          PUBLIC_BEFORE_RETIRED: ${{ steps.public-before.outputs.retired }}
         run: |
           python3 build_system/scripts/release/project-first-channel-before.py \
             --source-manifest cache/target/channel-source/manifest.json \
             --channel "stable" \
-            --bootstrap "${{ steps.public-before.outputs.bootstrap }}" \
-            --retired "${{ steps.public-before.outputs.retired }}" \
+            --bootstrap "$PUBLIC_BEFORE_BOOTSTRAP" \
+            --retired "$PUBLIC_BEFORE_RETIRED" \
             --output cache/target/channel-source/public-before.json
 
       - name: Select public-before authority for exact pairing
         id: public-before-authority
+        env:
+          PUBLIC_BEFORE_BOOTSTRAP: ${{ steps.public-before.outputs.bootstrap }}
+          PUBLIC_BEFORE_MANIFEST_URL: ${{ steps.public-before.outputs.manifest-url }}
         run: |
-          if [[ "${{ steps.public-before.outputs.bootstrap }}" == "true" ]]; then
+          if [[ "$PUBLIC_BEFORE_BOOTSTRAP" == "true" ]]; then
             echo "manifest-url=file://$PWD/cache/target/channel-source/public-before.json" \
               >> "$GITHUB_OUTPUT"
           else
-            echo "manifest-url=${{ steps.public-before.outputs.manifest-url }}" \
+            echo "manifest-url=$PUBLIC_BEFORE_MANIFEST_URL" \
               >> "$GITHUB_OUTPUT"
           fi
 
@@ -234,11 +246,13 @@ jobs:
         id: resolve
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
         run: |
           python3 build_system/scripts/build/resolve-reusable-profile-assets.py \
-            --repository "${{ github.repository }}" \
+            --repository "$RELEASE_REPOSITORY" \
             --workflow release-assets.yaml \
-            --current-run-id "${{ github.run_id }}" \
+            --current-run-id "$RELEASE_RUN_ID" \
             --source-commit "$SOURCE_COMMIT" \
             --selection cache/target/profile-release-selection.json \
             --github-output "$GITHUB_OUTPUT"
@@ -282,8 +296,11 @@ jobs:
         run: sh bootstrap.sh --yes
 
       - name: Build VM assets (kernel + rootfs)
+        env:
+          ASSET_ARCH: ${{ matrix.arch }}
+          RELEASE_PROFILE: ${{ inputs.profile }}
         run: |
-          just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"
+          just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -408,19 +425,23 @@ jobs:
       # shape that is belongs to the lane, so the flag is passed rather than
       # branched on here.
       - name: Qualify the profile assets
+        env:
+          ACTIVATION_READY: ${{ needs.author-profile-release.outputs.activation_ready }}
+          RELEASE_PROFILE: ${{ inputs.profile }}
         run: >
           just qualify-assets
           "$PWD/cache/target/candidate-profile-inputs"
-          "${{ inputs.profile }}"
+          "$RELEASE_PROFILE"
           "$PWD"
-          "${{ needs.author-profile-release.outputs.activation_ready }}"
+          "$ACTIVATION_READY"
 
       - name: Record deferred profile staging boundary
         if: ${{ needs.author-profile-release.outputs.activation_ready != 'true' }}
+        env:
+          FUNCTIONAL_READY: ${{ needs.author-profile-release.outputs.functional_ready }}
+          PRODUCT_COMPATIBLE: ${{ needs.author-profile-release.outputs.product_compatible }}
         run: |
           set -euo pipefail
-          PRODUCT_COMPATIBLE="${{ needs.author-profile-release.outputs.product_compatible }}"
-          FUNCTIONAL_READY="${{ needs.author-profile-release.outputs.functional_ready }}"
           [[ "$PRODUCT_COMPATIBLE" == "true" || "$PRODUCT_COMPATIBLE" == "false" ]]
           [[ "$FUNCTIONAL_READY" == "true" || "$FUNCTIONAL_READY" == "false" ]]
           [[ "$PRODUCT_COMPATIBLE" != "true" || "$FUNCTIONAL_READY" != "true" ]]
@@ -509,7 +530,7 @@ jobs:
       - name: Build complete asset channel preview
         run: |
           PROFILE_IDENTITY=$(python3 -c 'import json; print(json.load(open("cache/target/profile-release-selection.json"))["publication_identity"])')
-          ASSET_BASE="https://github.com/${{ github.repository }}/releases/download/$PROFILE_IDENTITY"
+          ASSET_BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$PROFILE_IDENTITY"
           MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("cache/target/source-channel/manifest.json"))["version"])')
           uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
             --channel-source "$CHANNEL=file://$PWD/cache/target/assets/manifest.json" \
@@ -522,35 +543,41 @@ jobs:
 
       - name: Check selected channel profile delta
         id: profile-delta
+        env:
+          RELEASE_PROFILE: ${{ inputs.profile }}
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/check-profile-release-delta.py \
             --source-manifest cache/target/source-channel/manifest.json \
             --candidate-manifest "cache/target/profile-candidate/assets/$CHANNEL/manifest.json" \
             --public-manifest cache/target/profile-public-before/profiles/manifest.json \
             --channel "$CHANNEL" \
-            --profile "${{ inputs.profile }}" \
+            --profile "$RELEASE_PROFILE" \
             --json-output cache/target/profile-release-delta/delta.json
 
       - name: Author selected channel profile in the source manifest
         id: author-release
         if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}
+        env:
+          FUNCTIONAL_READY: ${{ needs.resolve-current-binary.outputs.functional_ready }}
+          RELEASE_PROFILE: ${{ inputs.profile }}
         run: |
           set -euo pipefail
           MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("cache/target/source-channel/manifest.json"))["version"])')
           PUBLICATION_IDENTITY=$(python3 -c 'import json; print(json.load(open("cache/target/profile-release-selection.json"))["publication_identity"])')
-          PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$PUBLICATION_IDENTITY"
+          PUBLICATION_BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$PUBLICATION_IDENTITY"
           PROFILE_VERSION=$(python3 - <<'PY'
           import json
+          import os
 
-          channel = "${{ inputs.channel }}"
-          profile = "${{ inputs.profile }}"
+          channel = os.environ["CHANNEL"]
+          profile = os.environ["RELEASE_PROFILE"]
           manifest = json.load(open(f"cache/target/profile-candidate/assets/{channel}/manifest.json"))
           print(manifest["profiles"][profile]["revision"])
           PY
           )
           cargo run -p capsem-admin -- release \
             --channel "$CHANNEL" \
-            --profile "${{ inputs.profile }}" --source-commit "$SOURCE_COMMIT" \
+            --profile "$RELEASE_PROFILE" --source-commit "$SOURCE_COMMIT" \
             --manifest-path cache/target/source-channel/manifest.json \
             --candidate-manifest "cache/target/profile-candidate/assets/$CHANNEL/manifest.json" \
             --publication-base "$PUBLICATION_BASE" \
@@ -559,7 +586,6 @@ jobs:
             --json > cache/target/profile-release.json
           test "$(python3 -c 'import json; print(json.load(open("cache/target/profile-release.json"))["publication_identity"])')" = "$PUBLICATION_IDENTITY"
           PRODUCT_COMPATIBLE=$(python3 -c 'import json; print(str(json.load(open("cache/target/profile-release.json"))["compatible_with_current_binary"]).lower())')
-          FUNCTIONAL_READY="${{ needs.resolve-current-binary.outputs.functional_ready }}"
           ACTIVATION_READY=false
           if [[ "$PRODUCT_COMPATIBLE" == "true" && "$FUNCTIONAL_READY" == "true" ]]; then
             ACTIVATION_READY=true
@@ -573,19 +599,20 @@ jobs:
         if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}
         env:
           PUBLICATION_IDENTITY: ${{ steps.author-release.outputs.publication_identity }}
+          RELEASE_PROFILE: ${{ inputs.profile }}
         run: |
           set -euo pipefail
-          PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$PUBLICATION_IDENTITY"
+          PUBLICATION_BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$PUBLICATION_IDENTITY"
           RELEASE_DIR="cache/target/asset-release/$PUBLICATION_IDENTITY"
           uv run --project build_system --frozen python build_system/scripts/release/stage-profile-publication.py \
             --manifest cache/target/source-channel/manifest.json \
-            --profile "${{ inputs.profile }}" \
+            --profile "$RELEASE_PROFILE" \
             --assets-dir cache/target/assets \
             --config-root config \
             --release-dir "$RELEASE_DIR"
           uv run --project build_system --frozen python build_system/scripts/release/verify-profile-publication.py \
             --manifest "$RELEASE_DIR/channel-source-$CHANNEL.json" \
-            --profile "${{ inputs.profile }}" \
+            --profile "$RELEASE_PROFILE" \
             --publication-base "$PUBLICATION_BASE" \
             --release-dir "$RELEASE_DIR"
 
@@ -697,23 +724,25 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           GH_TOKEN: ${{ github.token }}
+          PUBLICATION_IDENTITY: ${{ needs.author-profile-release.outputs.publication_identity }}
+          RELEASE_PROFILE: ${{ inputs.profile }}
         run: |
           set -euo pipefail
-          TAG="${{ needs.author-profile-release.outputs.publication_identity }}"
+          TAG="$PUBLICATION_IDENTITY"
           PROFILE_REVISION=$(python3 -c 'import json; print(json.load(open("cache/target/profile-release-selection.json"))["profile_revision"])')
           RELEASE_DIR="cache/target/asset-release/$TAG"
           NOTES_FILE="cache/target/asset-release/profile-release-notes.md"
-          PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
+          PUBLICATION_BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
           uv run --project build_system --frozen python build_system/scripts/release/verify-profile-publication.py \
             --manifest "$RELEASE_DIR/channel-source-$CHANNEL.json" \
-            --profile "${{ inputs.profile }}" \
+            --profile "$RELEASE_PROFILE" \
             --publication-base "$PUBLICATION_BASE" \
             --release-dir "$RELEASE_DIR"
 
           files=("$RELEASE_DIR"/*)
           test "${#files[@]}" -gt 0
           printf '%s\n' \
-            "Immutable Capsem profile release for $CHANNEL/${{ inputs.profile }}." \
+            "Immutable Capsem profile release for $CHANNEL/$RELEASE_PROFILE." \
             > "$NOTES_FILE"
 
           {
@@ -729,7 +758,7 @@ jobs:
           if [[ "$DRY_RUN" == "true" ]]; then
             echo "Dry run: would publish immutable VM profile release $TAG"
           else
-            CAPSEM_RELEASE_CREATE_TITLE="Capsem $CHANNEL/${{ inputs.profile }} $PROFILE_REVISION ($SOURCE_COMMIT)" \
+            CAPSEM_RELEASE_CREATE_TITLE="Capsem $CHANNEL/$RELEASE_PROFILE $PROFILE_REVISION ($SOURCE_COMMIT)" \
             CAPSEM_RELEASE_CREATE_NOTES_FILE="$NOTES_FILE" \
             CAPSEM_RELEASE_CREATE_TARGET="$SOURCE_COMMIT" \
               build_system/scripts/release/publish-immutable-release-assets.sh \
