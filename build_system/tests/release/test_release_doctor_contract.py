@@ -459,8 +459,9 @@ def test_profile_release_builds_both_published_architectures() -> None:
     build_assets = _workflow_job_block("build-assets", "release-assets.yaml")
     assert "- arch: arm64" in build_assets
     assert "- arch: x86_64" in build_assets
-    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in build_assets
-    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in build_assets
+    assert "ASSET_ARCH: ${{ matrix.arch }}" in build_assets
+    assert "RELEASE_PROFILE: ${{ inputs.profile }}" in build_assets
+    assert 'just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"' in build_assets
 
 
 def test_parallel_asset_gate_preserves_and_names_failed_architecture_logs() -> None:
@@ -861,8 +862,9 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "output: cache/target/profile-public-before/packages" in workflow
     assert "--input-dir cache/target/profile-public-before/packages" in workflow
     assert "--print-package-path" in workflow
-    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
-    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
+    assert "ASSET_ARCH: ${{ matrix.arch }}" in workflow
+    assert "RELEASE_PROFILE: ${{ inputs.profile }}" in workflow
+    assert 'just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"' in workflow
     assert "- arch: arm64" in workflow
     assert "- arch: x86_64" in workflow
     assert "cargo run -p capsem-admin -- release" in workflow
