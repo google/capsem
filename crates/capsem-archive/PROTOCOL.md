@@ -536,18 +536,59 @@ paths or descriptors that reintroduce the C reader attack surface.
 
 ## Required proof before merge
 
+### Verification cost is part of the contract
+
+The user explicitly accepts the improved format, but rejects expanding every
+Capsem test run into a prolonged qualification exercise. The matrix below is
+a list of assertions to cover, **not a Cartesian product of test runs**.
+Keep the v3 design; do not build a general chaos framework to implement it.
+
+- Put format, malformed-input and failure-result cases in the existing archive
+  and logger tests. Use one small three-block ledger fixture and table-driven
+  cases, not a separate large database or VM for every assertion.
+- Use one subprocess crash driver, at most 12 selected publication/recovery
+  cut points, and at most six deterministic reader interleavings. Synchronize
+  through pipes/barriers; no random stress loops, sleep-based races or retries
+  until green. Each case checks several applicable assertions below.
+- Target **under 15 seconds of added compiled-test runtime per platform** for
+  the complete focused protocol group; bound that group to **60 seconds**.
+  Measure the incremental duration against the baseline. Compilation is
+  reported separately. If the group exceeds the budget, improve fixtures and
+  synchronization; do not silently increase timeouts or drop correctness cases.
+- Inject file/sync/commit errors at the owning test seams. Do not fill the
+  machine's disk, exhaust host descriptors, reboot hosts or create filesystem
+  images for each case. Actual process death plus the abstract durability model
+  covers the two different questions without pretending SIGKILL is power loss.
+- Reuse the existing macOS and Linux CI jobs. No new workflow, platform matrix,
+  Docker/Tart build or full `just test` invocation per milestone. Existing
+  required gates still run at their normal point in the workflow.
+- Add generation/retention assertions to **one existing VM lifecycle fixture**,
+  reusing its boot, persistent stop/reopen and snapshot path. Reuse bodies
+  already emitted by existing HTTP/model/tool/exec/security fixtures. Do not
+  multiply VM boots by failpoint, protocol, body size or platform combination.
+- The abstract model stays a design artifact, not an additional production
+  gate. Its hundreds of thousands of logical schedules are memoized over
+  hundreds of states and the whole recorded run took under one second.
+- Run the **30-minute Gemma measurement once on the final candidate**, manually.
+  It is never added to routine tests or CI. Run focused existing performance
+  benchmarks once for changed hot paths; rerun only when a relevant fix changes
+  the result. No repeated soak or million-row sweep at every milestone.
+
+Record actual added test time in the final evidence. The budget is currently
+a design requirement, not a claim that the unimplemented Rust suite meets it.
+
 Implement deterministic fault hooks behind test support, using process pipes
 or barriers rather than sleeps. Existing Rename fault injection is insufficient.
 
 | Proof | Exact assertion |
 |---|---|
 | Format golden vectors | Fixed header bytes/hash, UUID order, malformed/reserved/version rejection |
-| Crash sweep | SIGKILL at every R0–R6 seam; reopen returns all retained bodies by exact hash, selects G/H as table specifies |
+| Crash cut points | Selected distinct R0–R6/recovery durability boundaries within the 12-case driver; reopen returns exact retained hashes and the specified G/H state |
 | Durability fault model | Distinguish visible/durable namespace, bytes and SQL; power-loss subsets satisfy referential integrity |
 | File/directory sync errors | No publication before R2; post-commit GC errors never restore offsets |
 | Uncertain SQL commit | Exercise both rolled-back and visible-new outcomes; no GC until successful recovery fence |
 | Recovery interrupted | Kill before/during/after fence and GC; repeating startup converges without data loss |
-| Reader ordering | Pause before SH, after snapshot, after FD open, after SH release and after row capture; compact in other process; exact bodies, zero retention-induced skips |
+| Reader ordering | At most six selected schedules spanning SH, snapshot, FD open, release and row capture; exact bodies, zero retention-induced skips |
 | WARC ordering | Export captured G while G is unlinked and H appended; exact record identities/hashes and terminal summary |
 | Slow/cancelled client | Deadline releases FD/spool/permits; no active SQLite snapshot or flock remains |
 | Backup overlap | Run appends and attempt retention during VACUUM/copy; destination generation/rows agree after reopen |
@@ -555,7 +596,7 @@ or barriers rather than sleeps. Existing Rename fault injection is insufficient.
 | Append after compaction | New writer uses H descriptor and correct EOF; G is never appended after publication |
 | Same/cross-process ownership | Two writers refused, reader leases coexist, EX excludes acquisition, crash releases locks |
 | Resource pressure | ENOSPC, descriptor exhaustion, row/spool caps, queue-full and deadlines leave recoverable state |
-| Real VM | Exact archived HTTP/model/tool/exec/security bodies through public paths before/after persistent stop/reopen and snapshot restore |
+| Real VM | One existing lifecycle fixture verifies stop/reopen/restore; existing traffic fixtures verify their exact archived bodies |
 | Performance | Final-head Gemma once; RSS/disk slopes, body poll latency, capture latency, FULL sync overhead, logical versus pinned disk |
 
 Test production primitives, not only a duplicate algorithm. The accompanying
@@ -581,6 +622,8 @@ and VM evidence; CI repair/final Gemma/merge. Keep each implemented milestone
 revertable and tied to its Sprinty item. All items remain open until their real
 gates pass. The later snapshot, counters, IPC and confinement subsprints remain
 behind #227 acceptance.
+The verification-cost contract above applies to every implementation item;
+milestones are commit boundaries, not instructions to repeat the full gate.
 
 The implementation items in this binding are:
 
