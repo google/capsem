@@ -5,11 +5,16 @@ Designed against `c8da3c1272c77c1ba07784de6176da13fae4e493` on 2026-09-21.
 The associated Sprinty ledger is worktree-local at
 `/Users/elie/.codex/worktrees/pr227-review/capsem/.sprinty`.
 
-## Product decision: retire all workspace snapshots after #227
+## Historical decision: snapshot retirement is outside this sprint
+
+The active sprint and Sol handoff cover PR #227 only. The retirement decision
+below is preserved as future context, not an implementation assignment.
+S07-001 and the counters, IPC and confinement subsprints are deprecated from
+this execution queue. SDK cleanup and network/proxy work are outside its scope.
 
 The user explicitly chose **Remove all snapshot features**, and explicitly
-included SDK cleanup. S07-001 replaces the former #221/#216 repair plan.
-After #227, delete automatic and manual snapshot scheduling and all snapshot
+included SDK cleanup. Deprecated S07-001 records the former #221/#216 plan's
+replacement. A separate future issue should remove scheduling and all snapshot
 create/list/status/change/history/revert/compact product surfaces. Remove their
 MCP tools, server routes, IPC, configuration, UI, documentation and tests.
 Remove snapshot methods, request/response types, exported symbols, generated
@@ -29,8 +34,7 @@ owner before deleting that module. Do not remove normal persistence, file I/O,
 or unrelated SQL/state snapshots by keyword. The coherent ledger-copy protocol
 below still protects archive evidence and any retained cloning operations; it
 does not require retaining a user-facing snapshot feature. Do not expand
-snapshot functionality as part of #227. The later order is snapshot retirement
-S07-001, counters S03-001, IPC S04-001, then confinement S05-001.
+snapshot functionality as part of #227. No later feature is assigned here.
 
 ## Decision
 
@@ -528,7 +532,7 @@ Only expose that snapshot/fork after DB and archive are both durable; use the
 existing snapshot publication mechanism, with its parent-directory barrier.
 Never overwrite a visible destination ledger in place. This guarantees a
 coherent ledger capture, not atomicity of all workspace/rootfs snapshot bytes;
-the snapshot owner must coordinate those separately in #221/#216.
+whole-workspace snapshot behavior is outside this change.
 
 Apply the same logger-owned capture contract to Gemma's preserved evidence.
 Do not separately copy a live `.db`, `-wal` and archive directory. Prefer a
@@ -647,8 +651,8 @@ Build in dependency order: format/primitives; schema/durable publication and
 recovery; reader capture and bounded WARC; coherent backup/diagnostics; fault
 and VM evidence; CI repair/final Gemma/merge. Keep each implemented milestone
 revertable and tied to its Sprinty item. All items remain open until their real
-gates pass. The later snapshot, counters, IPC and confinement subsprints remain
-behind #227 acceptance.
+gates pass. Stop after #227 qualification and merge. Snapshot retirement, SDK
+cleanup, counters, IPC and confinement require separate future work.
 The verification-cost contract above applies to every implementation item;
 milestones are commit boundaries, not instructions to repeat the full gate.
 
@@ -660,7 +664,7 @@ The implementation items in this binding are:
 | S06-001 | v3 header, secure files and durability/lock primitives | S01-006 |
 | S06-002 | Schema, publication, uncertain outcomes and recovery | S06-001 |
 | S06-003 | Reader leases and bounded WARC capture/stream | S06-002 |
-| S06-004 | Coherent snapshots, diagnostics, fixtures and saved evidence | S06-002, S06-003 |
+| S06-004 | Coherent ledger copies, diagnostics, fixtures and saved evidence | S06-002, S06-003 |
 | S06-005 | Production fault/platform/VM qualification | S06-004 |
 | S01-003 | Main integration and remaining CI diagnoses/fixes | Can begin independently |
 | S01-004 | Final CI, one final-head Gemma run, merge readiness | S06-005, S01-003 |
