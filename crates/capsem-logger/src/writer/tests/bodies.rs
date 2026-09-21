@@ -9,6 +9,60 @@ use capsem_archive::ArchiveError;
 use super::*;
 use crate::writer::bodies::takes_the_archive_out_of_service;
 
+fn active_generation_path(conn: &rusqlite::Connection, db_path: &std::path::Path) -> std::path::PathBuf {
+    let state = crate::schema::archive_state(conn).unwrap();
+    archive_path_for_db(db_path).join(state.header.generation_id.file_name())
+}
+
+fn archive_reader(conn: &rusqlite::Connection, db_path: &std::path::Path) -> capsem_archive::BodyLogReader {
+    let state = crate::schema::archive_state(conn).unwrap();
+    let directory = capsem_foundation::unix::contained::ContainedDir::open_root(&archive_path_for_db(db_path)).unwrap();
+    capsem_archive::BodyLogReader::open_generation(&directory, state.header, state.committed_end).unwrap()
+}
+
+#[test]
+fn recovered_writer_fences_then_collects_only_owned_orphan_generations() {
+    use std::ffi::OsStr;
+
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("recovery-gc.db");
+    let writer = DbWriter::open(&db_path, 1).unwrap();
+    writer.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let before = crate::schema::archive_state(&conn).unwrap();
+    let archive_dir = archive_path_for_db(&db_path);
+    let directory = capsem_foundation::unix::contained::ContainedDir::open_root(&archive_dir).unwrap();
+    let orphan = capsem_archive::GenerationId::new_v4();
+    let mut candidate =
+        capsem_archive::BodyLogWriter::create_generation(&directory, before.header.archive_id, orphan).unwrap();
+    candidate.sync().unwrap();
+    drop(candidate);
+    drop(directory.create_new_private_file(OsStr::new("operator-note")).unwrap());
+    directory.sync().unwrap();
+
+    drop(BodyArchive::open_existing(&db_path, SystemTime::now, &conn).unwrap());
+
+    let after = crate::schema::archive_state(&conn).unwrap();
+    assert_eq!(
+        after.header, before.header,
+        "recovery never elects a generation by scanning names"
+    );
+    assert_eq!(
+        after.revision,
+        before.revision + 1,
+        "recovery commits a real revision fence"
+    );
+    assert!(
+        !archive_dir.join(orphan.file_name()).exists(),
+        "an exact unreferenced generation name is retryable garbage"
+    );
+    assert!(
+        archive_dir.join("operator-note").exists(),
+        "unknown entries are reported and retained"
+    );
+}
+
 #[test]
 fn net_event_stores_bounded_body_blobs_and_small_previews() {
     let dir = tempfile::tempdir().unwrap();
@@ -88,7 +142,7 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
 
     // The bytes are in the archive; SQLite only says where. Reading them back
     // through the index is what proves the two halves agree.
-    let archive = capsem_archive::BodyLogReader::open(&archive_path_for_db(&db_path)).unwrap();
+    let archive = archive_reader(&conn, &db_path);
     let blobs: Vec<StoredBlob> = conn
         .prepare(
             "SELECT direction, event_type, content_type, original_bytes, stored_bytes,
@@ -172,7 +226,7 @@ fn appended_blocks_are_flushed_before_their_index_rows_commit() {
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
-    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
+    let mut archive = BodyArchive::open_for_tests(Some(&db_path), SystemTime::now, &conn);
     archive.stage(&conn, body_blob("0f1f2f3f4f5f", "a body worth flushing"));
     archive.flush_segment();
     archive.commit_index_rows(&conn).unwrap();
@@ -203,7 +257,7 @@ fn a_body_that_does_not_fit_the_open_block_closes_it_and_retries() {
     // already holds, and never reach the close this test is about.
     let first = "y".repeat(MAX_BODY_BLOB_BYTES);
     let second = "z".repeat(MAX_BODY_BLOB_BYTES);
-    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
+    let mut archive = BodyArchive::open_for_tests(Some(&db_path), SystemTime::now, &conn);
     archive.stage(&conn, body_blob("aaaaaaaaaaa1", &first));
     archive.stage(&conn, body_blob("aaaaaaaaaaa2", &second));
     archive.flush_segment();
@@ -217,7 +271,7 @@ fn a_body_that_does_not_fit_the_open_block_closes_it_and_retries() {
 
     // Both bodies come back whole, which is what close-and-retry has to
     // preserve: the retry restarts the offsets in a new block.
-    let reader = capsem_archive::BodyLogReader::open(&archive_path_for_db(&db_path)).unwrap();
+    let reader = archive_reader(&conn, &db_path);
     let mut statement = conn
         .prepare("SELECT block_offset, body_offset, body_len FROM event_body_blobs ORDER BY event_id")
         .unwrap();
@@ -247,7 +301,7 @@ fn a_poisoned_archive_drops_its_uncommitted_blocks_instead_of_retrying_forever()
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
-    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
+    let mut archive = BodyArchive::open_for_tests(Some(&db_path), SystemTime::now, &conn);
     archive.stage(&conn, body_blob("0b0b0b0b0b0b", "a body whose writer dies after it"));
     archive.flush_segment();
     assert_eq!(archive.appended_len_for_tests(), 1, "the segment is written");
@@ -301,7 +355,7 @@ fn giving_up_drops_the_rows_that_can_no_longer_be_placed() {
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
-    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
+    let mut archive = BodyArchive::open_for_tests(Some(&db_path), SystemTime::now, &conn);
     archive.stage(&conn, body_blob("0c0c0c0c0c0c", "a body staged before the writer died"));
     assert!(archive.has_work(), "the row and its bytes are pending");
 
@@ -344,7 +398,7 @@ fn the_body_lost_to_a_failed_close_is_counted() {
     crate::schema::create_tables(&conn).unwrap();
 
     metrics::with_local_recorder(&recorder, || {
-        let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
+        let mut archive = BodyArchive::open_for_tests(Some(&db_path), SystemTime::now, &conn);
         archive.stage(&conn, body_blob("0e0e0e0e0e0e", &body));
         archive.fail_next_append_for_tests();
         archive.stage(&conn, body_blob("0f0f0f0f0f0f", &other));
@@ -397,7 +451,7 @@ fn identical_bytes_share_a_span_only_inside_the_open_block() {
     crate::schema::create_tables(&conn).unwrap();
 
     metrics::with_local_recorder(&recorder, || {
-        let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
+        let mut archive = BodyArchive::open_for_tests(Some(&db_path), SystemTime::now, &conn);
         let payload = r#"{"event":"matched by three rules"}"#;
 
         archive.stage(&conn, body_blob("0e0e0e0e0e01", payload));
@@ -466,10 +520,7 @@ fn read_indexed(conn: &rusqlite::Connection, db_path: &std::path::Path, event_id
             },
         )
         .unwrap();
-    capsem_archive::BodyLogReader::open(&archive_path_for_db(db_path))
-        .unwrap()
-        .read(reference)
-        .unwrap()
+    archive_reader(conn, db_path).read(reference).unwrap()
 }
 
 fn commit(archive: &mut BodyArchive, conn: &rusqlite::Connection) {
@@ -477,6 +528,197 @@ fn commit(archive: &mut BodyArchive, conn: &rusqlite::Connection) {
     archive.commit_index_rows(&tx).unwrap();
     tx.commit().unwrap();
     archive.index_rows_committed();
+}
+
+const CRASH_CASE_ENV: &str = "CAPSEM_ARCHIVE_PUBLICATION_CRASH_CASE";
+const CRASH_DB_ENV: &str = "CAPSEM_ARCHIVE_PUBLICATION_CRASH_DB";
+
+fn build_survivor_candidate(
+    conn: &rusqlite::Connection,
+    db_path: &std::path::Path,
+    generation: capsem_archive::GenerationId,
+) -> (capsem_archive::BodyLogWriter, i64, i64) {
+    let state = crate::schema::archive_state(conn).unwrap();
+    let directory = capsem_foundation::unix::contained::ContainedDir::open_root(&archive_path_for_db(db_path)).unwrap();
+    let (old_offset, disk_len): (i64, i64) = conn
+        .query_row(
+            "SELECT block_offset, disk_len FROM body_blocks ORDER BY block_offset DESC LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    let mut source = std::fs::File::open(active_generation_path(conn, db_path)).unwrap();
+    let mut candidate =
+        capsem_archive::BodyLogWriter::create_generation(&directory, state.header.archive_id, generation).unwrap();
+    candidate
+        .copy_block_from(&mut source, old_offset as u64, disk_len as u64)
+        .unwrap();
+    candidate.sync().unwrap();
+    directory.sync().unwrap();
+    (candidate, old_offset, disk_len)
+}
+
+#[test]
+fn publication_crash_child() {
+    use std::io::Write as _;
+
+    let Ok(case) = std::env::var(CRASH_CASE_ENV) else {
+        return;
+    };
+    let db_path = std::path::PathBuf::from(std::env::var_os(CRASH_DB_ENV).expect("crash DB path"));
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let state = crate::schema::archive_state(&conn).unwrap();
+    let directory =
+        capsem_foundation::unix::contained::ContainedDir::open_root(&archive_path_for_db(&db_path)).unwrap();
+    let generation = capsem_archive::GenerationId::new_v4();
+
+    if case == "candidate-partial" {
+        let mut file = directory
+            .create_new_private_file(std::ffi::OsStr::new(&generation.file_name()))
+            .unwrap();
+        file.write_all(b"crash-partial").unwrap();
+        file.sync_all().unwrap();
+        directory.sync().unwrap();
+        std::process::exit(73);
+    }
+
+    let (candidate, old_offset, disk_len) = build_survivor_candidate(&conn, &db_path, generation);
+    drop(candidate);
+    if matches!(
+        case.as_str(),
+        "candidate-durable" | "transaction-rolled-back" | "commit-unknown-g"
+    ) {
+        std::process::exit(73);
+    }
+
+    let tx = conn.unchecked_transaction().unwrap();
+    tx.execute_batch("PRAGMA defer_foreign_keys = ON").unwrap();
+    tx.execute("DELETE FROM event_body_blobs WHERE event_id = 'aa0000000001'", [])
+        .unwrap();
+    tx.execute("DELETE FROM body_blocks WHERE block_offset <> ?1", [old_offset])
+        .unwrap();
+    tx.execute(
+        "UPDATE body_blocks SET block_offset = ?1 WHERE block_offset = ?2",
+        rusqlite::params![capsem_archive::FILE_HEADER_BYTES as i64, old_offset],
+    )
+    .unwrap();
+    tx.execute(
+        "UPDATE event_body_blobs SET block_offset = ?1 WHERE block_offset = ?2",
+        rusqlite::params![capsem_archive::FILE_HEADER_BYTES as i64, old_offset],
+    )
+    .unwrap();
+    tx.execute(
+        "UPDATE archive_state SET generation_id = ?1, committed_end = ?2, revision = revision + 1
+         WHERE singleton = 1",
+        rusqlite::params![
+            generation.as_bytes().as_slice(),
+            capsem_archive::FILE_HEADER_BYTES as i64 + disk_len
+        ],
+    )
+    .unwrap();
+    tx.commit().unwrap();
+
+    if case == "during-gc" {
+        directory
+            .remove_private_file(std::ffi::OsStr::new(&state.header.generation_id.file_name()))
+            .unwrap();
+        directory.sync().unwrap();
+    }
+    std::process::exit(73);
+}
+
+/// Seven subprocess deaths cover the distinct recoverable publication states:
+/// partial and durable candidates, rollback, both possible uncertain-COMMIT
+/// elections, committed-before-adoption, and interrupted GC. Each recovered
+/// ledger verifies exact old/survivor bytes and appends to the SQL-elected
+/// generation before the next case begins.
+#[test]
+fn publication_crash_boundaries_recover_and_append_to_the_elected_generation() {
+    let executable = std::env::current_exe().unwrap();
+    for (case, published) in [
+        ("candidate-partial", false),
+        ("candidate-durable", false),
+        ("transaction-rolled-back", false),
+        ("commit-unknown-g", false),
+        ("commit-unknown-h", true),
+        ("published-before-adopt", true),
+        ("during-gc", true),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join(format!("{case}.db"));
+        let writer = DbWriter::open(&db_path, 1).unwrap();
+        writer.shutdown_blocking();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let mut archive = BodyArchive::open_existing(&db_path, SystemTime::now, &conn).unwrap();
+        archive.stage(&conn, body_blob("aa0000000001", "old bytes"));
+        archive.close_block();
+        commit(&mut archive, &conn);
+        archive.stage(&conn, body_blob("aa0000000002", "survivor bytes"));
+        archive.close_block();
+        commit(&mut archive, &conn);
+        let initial = crate::schema::archive_state(&conn).unwrap();
+        drop(archive);
+        drop(conn);
+
+        let status = std::process::Command::new(&executable)
+            .args([
+                "writer::tests::bodies::publication_crash_child",
+                "--exact",
+                "--nocapture",
+            ])
+            .env(CRASH_CASE_ENV, case)
+            .env(CRASH_DB_ENV, &db_path)
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(73), "{case} reached its crash boundary");
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let elected = crate::schema::archive_state(&conn).unwrap();
+        assert_eq!(
+            elected.header.generation_id != initial.header.generation_id,
+            published,
+            "{case}"
+        );
+        let mut archive = BodyArchive::open_existing(&db_path, SystemTime::now, &conn).unwrap();
+        let fenced = crate::schema::archive_state(&conn).unwrap();
+        assert_eq!(fenced.revision, elected.revision + 1, "{case} recovery fence");
+
+        if published {
+            assert_eq!(
+                conn.query_row(
+                    "SELECT COUNT(*) FROM event_body_blobs WHERE event_id = 'aa0000000001'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+                0,
+                "{case} keeps the published deletion"
+            );
+        } else {
+            assert_eq!(read_indexed(&conn, &db_path, "aa0000000001"), b"old bytes", "{case}");
+        }
+        assert_eq!(
+            read_indexed(&conn, &db_path, "aa0000000002"),
+            b"survivor bytes",
+            "{case}"
+        );
+        archive.stage(&conn, body_blob("aa0000000003", "appended after recovery"));
+        archive.close_block();
+        commit(&mut archive, &conn);
+        assert_eq!(
+            read_indexed(&conn, &db_path, "aa0000000003"),
+            b"appended after recovery",
+            "{case} appends to the elected generation"
+        );
+        let hash: String = conn
+            .query_row(
+                "SELECT body_hash FROM event_body_blobs WHERE event_id = 'aa0000000002'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(hash, blake3_bytes_ref(b"survivor bytes"), "{case} exact retained hash");
+    }
 }
 
 /// A crash after a segment reached the file and before its rows committed:
@@ -490,7 +732,7 @@ fn a_crash_between_a_segment_and_its_commit_strands_bytes_and_nothing_else() {
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
-    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
+    let mut archive = BodyArchive::open_for_tests(Some(&db_path), SystemTime::now, &conn);
     archive.stage(&conn, body_blob("0a0a0a0a0a01", "committed before the crash"));
     archive.flush_segment();
     commit(&mut archive, &conn);
@@ -498,9 +740,11 @@ fn a_crash_between_a_segment_and_its_commit_strands_bytes_and_nothing_else() {
     archive.flush_segment();
     // The crash: the segment is in the file, its row never commits.
     drop(archive);
-    let stranded_end = std::fs::metadata(archive_path_for_db(&db_path)).unwrap().len();
+    let stranded_end = std::fs::metadata(active_generation_path(&conn, &db_path))
+        .unwrap()
+        .len();
 
-    let mut archive = BodyArchive::open(Some(&db_path), SystemTime::now, &conn);
+    let mut archive = BodyArchive::open_for_tests(Some(&db_path), SystemTime::now, &conn);
     archive.stage(&conn, body_blob("0a0a0a0a0a03", "after the restart"));
     archive.flush_segment();
     commit(&mut archive, &conn);
@@ -548,7 +792,7 @@ fn a_block_open_longer_than_its_age_limit_closes_before_the_next_body() {
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
-    let mut archive = BodyArchive::open(Some(&db_path), test_clock, &conn);
+    let mut archive = BodyArchive::open_for_tests(Some(&db_path), test_clock, &conn);
     archive.stage(&conn, body_blob("0a0a0a0a0b01", "opens the block"));
     archive.flush_segment();
     advance_test_clock(MAX_BLOCK_AGE.saturating_sub(std::time::Duration::from_secs(60)));

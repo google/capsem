@@ -6,6 +6,8 @@ use std::{
 
 use rusqlite::{Connection, OptionalExtension};
 
+use capsem_archive::{ArchiveId, FileHeader, GenerationId, FILE_HEADER_BYTES};
+
 /// The writer's in-memory staging schema: rows it has accepted and not yet
 /// flushed to disk. Only the writer attaches it; every reader reads the file.
 pub(crate) const MEMORY_SCHEMA: &str = "mem";
@@ -34,12 +36,50 @@ pub(crate) use memory_sync::{is_disk_only_table, table_column_names};
 /// network and a session whose transport history was deleted must not read
 /// alike. `assert_current` speaks for every open after the stamp.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(CREATE_SCHEMA)?;
-    if !table_exists(conn, "main", "transport_schema")? {
-        stamp_transport_ledger(conn)?;
+    create_tables_with_archive_header(conn, None)
+}
+
+/// Create a fresh schema with the generation already durably prepared, or
+/// validate the required archive identity of an existing schema.
+pub(crate) fn create_tables_with_archive_header(
+    conn: &Connection,
+    prepared: Option<FileHeader>,
+) -> rusqlite::Result<()> {
+    let status = archive_schema_status(conn)?;
+    let has_archive_state = matches!(status, ArchiveSchemaStatus::Current(_));
+
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let created = (|| {
+        conn.execute_batch(CREATE_SCHEMA)?;
+        if !has_archive_state {
+            let header = prepared.unwrap_or(FileHeader {
+                archive_id: ArchiveId::new_v4(),
+                generation_id: GenerationId::new_v4(),
+            });
+            conn.execute(
+                "INSERT INTO archive_state(
+                     singleton, archive_id, generation_id, format_version, committed_end, revision
+                 ) VALUES(1, ?1, ?2, 3, ?3, 1)",
+                rusqlite::params![
+                    header.archive_id.as_bytes().as_slice(),
+                    header.generation_id.as_bytes().as_slice(),
+                    FILE_HEADER_BYTES as i64,
+                ],
+            )?;
+        }
+        if !table_exists(conn, "main", "transport_schema")? {
+            stamp_under_lock(conn)?;
+        }
+        transport::assert_current(conn)?;
+        security_event_types::assert_current(conn)?;
+        archive_state(conn)?;
+        Ok(())
+    })();
+    if created.is_err() {
+        let _ = conn.execute_batch("ROLLBACK");
+        return created;
     }
-    transport::assert_current(conn)?;
-    security_event_types::assert_current(conn)
+    conn.execute_batch("COMMIT")
 }
 
 /// Create the transport ledger, on a file that has never recorded anything.
@@ -62,16 +102,6 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 /// call the file stripped. It is also what makes the stamp atomic -- a crash
 /// between `CREATE TABLE transport_schema` and its marker row used to leave a
 /// table with no row behind, which is a state nothing knew how to describe.
-fn stamp_transport_ledger(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch("BEGIN IMMEDIATE")?;
-    let stamped = stamp_under_lock(conn);
-    if stamped.is_err() {
-        let _ = conn.execute_batch("ROLLBACK");
-        return stamped;
-    }
-    conn.execute_batch("COMMIT")
-}
-
 fn stamp_under_lock(conn: &Connection) -> rusqlite::Result<()> {
     // Another writer may have stamped it while this one waited for the lock.
     if table_exists(conn, "main", "transport_schema")? {
@@ -91,7 +121,7 @@ fn stamp_under_lock(conn: &Connection) -> rusqlite::Result<()> {
 /// recorded anything, not how much.
 fn recorded_rows(conn: &Connection) -> rusqlite::Result<Option<(&'static str, i64)>> {
     for (table, _) in READY_SCHEMA_COLUMNS {
-        if matches!(*table, "transport_events" | "transport_schema") {
+        if matches!(*table, "archive_state" | "transport_events" | "transport_schema") {
             continue;
         }
         if !table_exists(conn, "main", table)? {
@@ -103,6 +133,84 @@ fn recorded_rows(conn: &Connection) -> rusqlite::Result<Option<(&'static str, i6
         }
     }
     Ok(None)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ArchiveState {
+    pub(crate) header: FileHeader,
+    pub(crate) format_version: u16,
+    pub(crate) committed_end: u64,
+    pub(crate) revision: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArchiveSchemaStatus {
+    Fresh,
+    Current(ArchiveState),
+}
+
+pub(crate) fn archive_schema_status(conn: &Connection) -> rusqlite::Result<ArchiveSchemaStatus> {
+    if table_exists(conn, "main", "archive_state")? {
+        return archive_state(conn).map(ArchiveSchemaStatus::Current);
+    }
+    for (table, _) in READY_SCHEMA_COLUMNS {
+        if *table != "archive_state" && table_exists(conn, "main", table)? {
+            return Err(contract_error(
+                "session ledger predates required archive_state format v3; refusing implicit v2 migration",
+            ));
+        }
+    }
+    Ok(ArchiveSchemaStatus::Fresh)
+}
+
+pub(crate) fn archive_state(conn: &Connection) -> rusqlite::Result<ArchiveState> {
+    let rows: i64 = conn.query_row("SELECT COUNT(*) FROM archive_state", [], |row| row.get(0))?;
+    if rows != 1 {
+        return Err(contract_error(&format!(
+            "archive_state must contain exactly one row, found {rows}"
+        )));
+    }
+    let (archive, generation, format_version, committed_end, revision): (Vec<u8>, Vec<u8>, i64, i64, i64) = conn
+        .query_row(
+            "SELECT archive_id, generation_id, format_version, committed_end, revision
+             FROM archive_state WHERE singleton = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )?;
+    let archive: [u8; 16] = archive
+        .try_into()
+        .map_err(|_| contract_error("archive_state archive_id must be a 16-byte UUIDv4 blob"))?;
+    let generation: [u8; 16] = generation
+        .try_into()
+        .map_err(|_| contract_error("archive_state generation_id must be a 16-byte UUIDv4 blob"))?;
+    let archive_id = ArchiveId::from_bytes(archive).map_err(|error| contract_error(&error.to_string()))?;
+    let generation_id = GenerationId::from_bytes(generation).map_err(|error| contract_error(&error.to_string()))?;
+    if format_version != 3 {
+        return Err(contract_error(&format!(
+            "archive_state format version {format_version} is unsupported; expected 3"
+        )));
+    }
+    let committed_end = u64::try_from(committed_end)
+        .ok()
+        .filter(|end| *end >= FILE_HEADER_BYTES as u64)
+        .ok_or_else(|| contract_error("archive_state committed_end is invalid"))?;
+    let revision = u64::try_from(revision)
+        .ok()
+        .filter(|revision| *revision >= 1)
+        .ok_or_else(|| contract_error("archive_state revision is invalid"))?;
+    Ok(ArchiveState {
+        header: FileHeader {
+            archive_id,
+            generation_id,
+        },
+        format_version: 3,
+        committed_end,
+        revision,
+    })
+}
+
+fn contract_error(message: &str) -> rusqlite::Error {
+    rusqlite::Error::InvalidParameterName(message.to_string())
 }
 
 /// The shared-cache URI of the writer's memory schema for the ledger at `path`.

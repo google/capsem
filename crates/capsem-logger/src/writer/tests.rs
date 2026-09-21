@@ -708,7 +708,14 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
 
     let pending_body_bytes = AtomicU64::new(0);
     metrics::with_local_recorder(&recorder, || {
-        writer_loop(conn, rx, None, 16, &pending_body_bytes, SystemTime::now)
+        writer_loop(
+            conn,
+            rx,
+            None,
+            16,
+            &pending_body_bytes,
+            BodyArchive::disabled(SystemTime::now),
+        )
     });
 
     let snapshot = snapshotter.snapshot().into_vec();
@@ -1070,7 +1077,7 @@ fn mcp_protocol_only_event_does_not_claim_tool_storage() {
         credential_ref: None,
     });
 
-    let mut bodies = BodyArchive::open(None, SystemTime::now, &conn);
+    let mut bodies = BodyArchive::open_for_tests(None, SystemTime::now, &conn);
     let outcome = metrics::with_local_recorder(&recorder, || {
         execute_memory_batch(&conn, &[event], &mut bodies, 0).unwrap()
     });

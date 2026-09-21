@@ -1,21 +1,14 @@
-//! The index half of retention, exercised directly.
-//!
-//! These reach `reindex` and `restore_offsets` on a connection this test owns,
-//! which is what lets them assert the remap under enforced foreign keys and
-//! watch the transaction roll back. Enforcement is not hypothetical here --
-//! see `the_writer_connection_enforces_foreign_keys` -- so `defer_foreign_keys`
-//! is load-bearing on the live path, not insurance.
+//! The SQL half of generation publication, exercised on a real ledger.
 
 use super::*;
 
-/// A ledger with two one-block bodies, on a connection that enforces keys.
 fn ledger_with_two_blocks(path: &std::path::Path) -> Connection {
     let conn = Connection::open(path).expect("open");
     crate::schema::create_tables(&conn).expect("schema");
     conn.execute_batch("PRAGMA foreign_keys = ON").expect("enforce keys");
     for (offset, sealed_at, event_id) in [
-        (16, "2026-01-01T00:00:00Z", "aaaaaaaaaaaa"),
-        (100, "2026-06-01T00:00:00Z", "bbbbbbbbbbbb"),
+        (80, "2026-01-01T00:00:00Z", "aaaaaaaaaaaa"),
+        (164, "2026-06-01T00:00:00Z", "bbbbbbbbbbbb"),
     ] {
         conn.execute(
             "INSERT INTO body_blocks (block_offset, raw_len, disk_len, sealed_at) VALUES (?1, 40, 40, ?2)",
@@ -35,6 +28,8 @@ fn ledger_with_two_blocks(path: &std::path::Path) -> Connection {
         )
         .expect("index row");
     }
+    conn.execute("UPDATE archive_state SET committed_end = 204", [])
+        .unwrap();
     conn
 }
 
@@ -46,98 +41,106 @@ fn offsets(conn: &Connection) -> Vec<(i64, i64)> {
              ORDER BY b.block_offset",
         )
         .expect("prepare");
-    let rows = statement
+    statement
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .expect("query");
-    rows.map(|row| row.expect("row")).collect()
+        .expect("query")
+        .map(|row| row.expect("row"))
+        .collect()
 }
 
-/// What everything below rests on.
 #[test]
-fn the_writer_connection_enforces_foreign_keys() {
-    // Not an assumption: rusqlite turns enforcement on for every connection it
-    // opens, so `defer_foreign_keys` in the remap is load-bearing in
-    // production rather than insurance for a configuration nobody uses. If a
-    // future rusqlite stops doing that, this says so before the comment that
-    // depends on it goes stale.
-    let dir = tempfile::tempdir().unwrap();
-    let conn = Connection::open(dir.path().join("probe.db")).expect("open");
-    let enforced: i64 = conn
-        .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
-        .expect("read the pragma");
-    assert_eq!(enforced, 1, "the ledger's connections enforce foreign keys");
-}
-
-/// The remap moves a parent and its children one pair at a time, so the two
-/// are out of step in the middle of the transaction even though the committed
-/// state is not. That is only legal because the transaction defers the check
-/// to commit; without `defer_foreign_keys` this fails on the first pair.
-#[test]
-fn the_remap_commits_under_enforced_foreign_keys() {
+fn publication_remaps_and_switches_generation_in_one_transaction() {
     let dir = tempfile::tempdir().unwrap();
     let conn = ledger_with_two_blocks(&dir.path().join("session.db"));
-    // What a compaction that dropped the first block would produce.
-    let moved = BTreeMap::from([(100_u64, 16_u64)]);
+    let old = crate::schema::archive_state(&conn).unwrap();
+    let next = GenerationId::new_v4();
+    let tx = conn.unchecked_transaction().unwrap();
+    let counts = publish_inside_transaction(&tx, "2026-03-01T00:00:00Z", old, next, 120, 1, dir.path()).unwrap();
+    tx.commit().unwrap();
 
-    let dropped = reindex(&conn, "2026-03-01T00:00:00Z", &moved, std::path::Path::new("unused"))
-        .expect("the remap must commit with foreign keys enforced");
-
-    assert_eq!((dropped.blocks, dropped.rows), (1, 1));
-    assert_eq!(
-        offsets(&conn),
-        vec![(16, 16)],
-        "the survivor moved, and its index row moved with it"
-    );
+    assert_eq!(counts, (1, 1));
+    assert_eq!(offsets(&conn), vec![(80, 80)]);
+    let state = crate::schema::archive_state(&conn).unwrap();
+    assert_eq!(state.header.generation_id, next);
+    assert_eq!(state.committed_end, 120);
+    assert_eq!(state.revision, old.revision + 1);
     let violations: i64 = conn
         .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| row.get(0))
-        .expect("check keys");
+        .unwrap();
     assert_eq!(violations, 0);
 }
 
-/// The reverse pass, for when the rename failed after the remap committed.
-/// It runs under enforcement too, and it must put every survivor back at the
-/// offset the unreplaced file still holds it at.
 #[test]
-fn restoring_offsets_puts_every_survivor_back() {
+fn publication_failure_rolls_back_rows_offsets_and_identity_together() {
     let dir = tempfile::tempdir().unwrap();
-    let conn = ledger_with_two_blocks(&dir.path().join("session.db"));
-    let moved = BTreeMap::from([(100_u64, 16_u64)]);
-    reindex(&conn, "2026-03-01T00:00:00Z", &moved, std::path::Path::new("unused")).expect("remap");
+    let path = dir.path().join("session.db");
+    let conn = ledger_with_two_blocks(&path);
+    let old = crate::schema::archive_state(&conn).unwrap();
+    super::super::retention_faults::fail_retention_for_path_for_tests(&path, RetentionFault::IndexTransaction);
+    let tx = conn.unchecked_transaction().unwrap();
+    assert!(publish_inside_transaction(
+        &tx,
+        "2026-03-01T00:00:00Z",
+        old,
+        GenerationId::new_v4(),
+        120,
+        1,
+        &crate::writer::archive_path_for_db(&path),
+    )
+    .is_err());
+    drop(tx);
 
-    restore_offsets(&conn, &moved).expect("the reverse pass must commit too");
-
-    assert_eq!(
-        offsets(&conn),
-        vec![(100, 100)],
-        "the survivor is back where the file still has it"
-    );
-    let violations: i64 = conn
-        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| row.get(0))
-        .expect("check keys");
-    assert_eq!(violations, 0);
+    assert_eq!(offsets(&conn), vec![(80, 80), (164, 164)]);
+    assert_eq!(crate::schema::archive_state(&conn).unwrap(), old);
 }
 
-/// The index and the staged file must describe the same set of blocks. They
-/// are derived from one `sealed_at` predicate a moment apart, so this is a
-/// cross-check rather than an expected case -- and it must refuse rather than
-/// leave rows naming blocks the new file does not have.
 #[test]
-fn a_map_that_disagrees_with_the_index_refuses() {
+fn candidate_count_or_extent_disagreement_refuses_before_commit() {
     let dir = tempfile::tempdir().unwrap();
     let conn = ledger_with_two_blocks(&dir.path().join("session.db"));
-    // The file was staged keeping both blocks; the cutoff drops one.
-    let moved = BTreeMap::from([(16_u64, 16_u64), (100_u64, 100_u64)]);
-
-    let error = reindex(&conn, "2026-03-01T00:00:00Z", &moved, std::path::Path::new("unused"))
-        .expect_err("a staged file and an index that disagree must not both be committed");
-
-    assert!(
-        format!("{error}").contains("staged 2 blocks but the index holds 1"),
-        "{error}"
-    );
-    assert_eq!(
-        offsets(&conn).len(),
+    let old = crate::schema::archive_state(&conn).unwrap();
+    let tx = conn.unchecked_transaction().unwrap();
+    let error = publish_inside_transaction(
+        &tx,
+        "2026-03-01T00:00:00Z",
+        old,
+        GenerationId::new_v4(),
+        121,
         2,
-        "and the transaction rolls back, so nothing was deleted"
-    );
+        dir.path(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("candidate copied 2 blocks"));
+    drop(tx);
+    assert_eq!(offsets(&conn), vec![(80, 80), (164, 164)]);
+    assert_eq!(crate::schema::archive_state(&conn).unwrap(), old);
+}
+
+#[test]
+fn uncertain_commit_is_typed_for_either_authoritative_generation() {
+    for (fault, published) in [
+        (RetentionFault::CommitUnknownBefore, false),
+        (RetentionFault::CommitUnknownAfter, true),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.db");
+        let conn = ledger_with_two_blocks(&path);
+        let old = crate::schema::archive_state(&conn).unwrap();
+        let next = GenerationId::new_v4();
+        super::super::retention_faults::fail_retention_for_path_for_tests(&path, fault);
+        let error = publish_index(
+            &conn,
+            "2026-03-01T00:00:00Z",
+            old,
+            next,
+            120,
+            1,
+            &crate::writer::archive_path_for_db(&path),
+        )
+        .unwrap_err();
+        assert!(matches!(error, PublishError::CommitUnknown(_)));
+        let state = crate::schema::archive_state(&conn).unwrap();
+        assert_eq!(state.header.generation_id == next, published);
+        assert_eq!(offsets(&conn) == vec![(80, 80)], published);
+    }
 }

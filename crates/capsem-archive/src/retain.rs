@@ -143,7 +143,7 @@ fn copy_kept_blocks(
 
 /// Prove `disk_len` bytes from `block_offset` are one block header followed
 /// by whole segments, by walking the segment headers without inflating.
-fn check_extent(source: &mut File, block_offset: u64, disk_len: u64) -> Result<()> {
+pub(crate) fn check_extent(source: &mut File, block_offset: u64, disk_len: u64) -> Result<()> {
     source.seek(SeekFrom::Start(block_offset))?;
     let mut head = [0u8; BLOCK_HEADER_BYTES];
     source

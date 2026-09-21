@@ -13,12 +13,14 @@ use rusqlite::Connection;
 fn a_writer_does_not_refill_a_column_an_older_build_lacked() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.db");
+    let writer = crate::DbWriter::open(&path, 8).unwrap();
+    writer.shutdown_blocking();
     let conn = Connection::open(&path).unwrap();
-    create_tables(&conn).unwrap();
     conn.execute_batch("DROP INDEX IF EXISTS idx_dns_events_answer_ip")
         .unwrap();
     conn.execute_batch("ALTER TABLE dns_events DROP COLUMN answer_ip")
         .unwrap();
+    drop(conn);
 
     let writer = crate::DbWriter::open(&path, 8).unwrap();
     writer.shutdown_blocking();

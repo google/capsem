@@ -80,7 +80,19 @@ pub const CREATE_SCHEMA: &str = "
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
     );
 
-    -- One block of `session.bodies`. The bytes live in the archive file;
+    -- The one generation selected by this SQLite snapshot. Its UUID fields
+    -- are raw canonical UUID bytes, and every other archive table belongs to
+    -- this row. Absence is an incomplete or incompatible ledger.
+    CREATE TABLE IF NOT EXISTS archive_state (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        archive_id BLOB NOT NULL CHECK (typeof(archive_id) = 'blob' AND length(archive_id) = 16),
+        generation_id BLOB NOT NULL CHECK (typeof(generation_id) = 'blob' AND length(generation_id) = 16),
+        format_version INTEGER NOT NULL CHECK (typeof(format_version) = 'integer' AND format_version = 3),
+        committed_end INTEGER NOT NULL CHECK (typeof(committed_end) = 'integer' AND committed_end >= 80),
+        revision INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision >= 1)
+    );
+
+    -- One block of an archive generation. The bytes live in the archive file;
     -- SQLite records where each block landed so a reader never scans. A block
     -- stays open across disk flushes and grows by one segment per flush, so
     -- the row is upserted as it grows: `raw_len` and `disk_len` are what the

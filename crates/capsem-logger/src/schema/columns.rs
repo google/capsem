@@ -134,6 +134,17 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "turn_id",
         ],
     ),
+    (
+        "archive_state",
+        &[
+            "singleton",
+            "archive_id",
+            "generation_id",
+            "format_version",
+            "committed_end",
+            "revision",
+        ],
+    ),
     ("body_blocks", &["block_offset", "raw_len", "disk_len", "sealed_at"]),
     (
         "fs_events",

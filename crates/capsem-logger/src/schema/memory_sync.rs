@@ -13,6 +13,7 @@ use super::*;
 /// archive file they point into, the schema markers are not data, and
 /// the network registry tables (`network_db`) are small state, not a ledger.
 const DISK_ONLY_TABLES: &[&str] = &[
+    "archive_state",
     "event_body_blobs",
     "body_blocks",
     "transport_schema",

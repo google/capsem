@@ -21,15 +21,23 @@ use std::path::Path;
 /// Which step to fail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum RetentionFault {
+    /// Report the durable candidate sync as failed. SQLite must remain on G.
+    CandidateSync,
     /// Fail inside the transaction that rewrites the index, before it
     /// commits. The archive must be left exactly as it was.
     IndexTransaction,
+    /// Report COMMIT as uncertain while SQLite remains on G.
+    CommitUnknownBefore,
+    /// Report COMMIT as uncertain after SQLite has elected H.
+    CommitUnknownAfter,
     /// Fail the rename that puts the compacted archive in place, after the
     /// index has committed. The old offsets must come back.
+    #[cfg(test)]
     Rename,
     /// Fail putting the old offsets back after a failed rename. This is the
     /// one state nothing can repair, so the archive must stop accepting
     /// bodies rather than keep writing into a ledger it cannot vouch for.
+    #[cfg(test)]
     Restore,
 }
 

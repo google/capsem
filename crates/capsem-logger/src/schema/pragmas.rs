@@ -82,11 +82,13 @@ pub fn record_sqlite_mmap_telemetry(conn: &Connection, path: &Path, role: &'stat
     );
 }
 
-/// Apply write-mode pragmas: WAL journal + relaxed synchronous.
+/// Apply session write-mode pragmas: WAL with durable FULL commits.
 /// Only call on read-write connections (the writer).
 pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    conn.pragma_update(None, "synchronous", "FULL")?;
+    #[cfg(target_os = "macos")]
+    conn.pragma_update(None, "fullfsync", "ON")?;
     apply_mmap_pragma(conn)?;
     Ok(())
 }

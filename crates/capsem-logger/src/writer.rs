@@ -355,7 +355,18 @@ impl DbWriter {
         // One statement per table per target; the default 16 would evict.
         conn.set_prepared_statement_cache_capacity(64);
         schema::record_sqlite_mmap_telemetry(&conn, path, "writer", "open");
-        schema::create_tables(&conn)?;
+        let bodies = match schema::archive_schema_status(&conn)? {
+            schema::ArchiveSchemaStatus::Fresh => {
+                let (bodies, archive_lock, header) = BodyArchive::prepare_new(path, now)?;
+                schema::create_tables_with_archive_header(&conn, Some(header))?;
+                drop(archive_lock);
+                bodies
+            }
+            schema::ArchiveSchemaStatus::Current(_) => {
+                schema::create_tables(&conn)?;
+                BodyArchive::open_existing(path, now, &conn)?
+            }
+        };
         let memory_uri = schema::memory_uri_for_path(path);
         schema::with_memory_schema_lock(|| {
             schema::create_memory_tables(&conn, &memory_uri)?;
@@ -383,7 +394,7 @@ impl DbWriter {
                     writer_loop_db_path,
                     batch_capacity,
                     &loop_pending_body_bytes,
-                    now,
+                    bodies,
                 )
             })
             .expect("failed to spawn db writer thread");
@@ -403,6 +414,7 @@ impl DbWriter {
         // One statement per table per target; the default 16 would evict.
         conn.set_prepared_statement_cache_capacity(64);
         schema::create_tables(&conn)?;
+        let bodies = BodyArchive::disabled(SystemTime::now);
         let memory_uri = schema::memory_uri_for_name(&format!(
             "writer-open-in-memory-{}-{}",
             std::process::id(),
@@ -423,16 +435,7 @@ impl DbWriter {
         let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || {
-                writer_loop(
-                    conn,
-                    rx,
-                    None,
-                    batch_capacity,
-                    &loop_pending_body_bytes,
-                    SystemTime::now,
-                )
-            })
+            .spawn(move || writer_loop(conn, rx, None, batch_capacity, &loop_pending_body_bytes, bodies))
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
@@ -597,7 +600,7 @@ fn writer_loop(
     db_path: Option<PathBuf>,
     batch_capacity: usize,
     pending_body_bytes: &AtomicU64,
-    now: LedgerClock,
+    mut bodies: BodyArchive,
 ) {
     let mut flush_watermarks =
         schema::with_memory_schema_lock(|| schema::initial_memory_flush_watermarks(&conn, schema::hot_ledger_tables()))
@@ -612,11 +615,6 @@ fn writer_loop(
     let mut dirty_tables = BTreeSet::new();
     let mut dirty_ops = 0_usize;
     let mut last_disk_flush = Instant::now();
-    // The writer thread owns the archive for as long as it owns the
-    // connection: bodies are staged here and their index rows commit in the
-    // same transaction that moves the memory tables to disk.
-    let mut bodies = BodyArchive::open(db_path.as_deref(), now, &conn);
-
     // 1. Block until at least one op arrives. Returns None when all
     //    Senders are dropped (clean shutdown) and ends the loop.
     loop {

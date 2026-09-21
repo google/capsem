@@ -112,6 +112,34 @@ fn private_file_creation_is_exclusive_owner_only_and_directory_syncable() {
 }
 
 #[test]
+fn existing_private_append_refuses_permissions_and_extra_links() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let dir = ContainedDir::open_root(root.path()).unwrap();
+    let path = root.path().join("generation");
+    std::fs::write(&path, b"bytes").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(dir.open_existing_private_append(OsStr::new("generation")).is_ok());
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+    assert_eq!(
+        dir.open_existing_private_append(OsStr::new("generation"))
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::hard_link(&path, root.path().join("extra-link")).unwrap();
+    assert_eq!(
+        dir.open_existing_private_append(OsStr::new("generation"))
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::PermissionDenied
+    );
+}
+
+#[test]
 fn private_directory_validation_uses_the_opened_descriptor() {
     use std::os::unix::fs::PermissionsExt;
 

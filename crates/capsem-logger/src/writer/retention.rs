@@ -1,74 +1,94 @@
-//! Dropping archived bodies whose blocks have aged past a cutoff.
+//! Transactional archive-generation retention.
 //!
-//! Retention runs on the writer thread, because `capsem-process` owns every
-//! write to `session.db` and the archive beside it and this rewrites both. The
-//! service holds external, disk-only readers and must ask rather than act --
-//! see `DbHandle::retain_bodies_since`, which refuses a handle with no writer.
-//!
-//! The unit is a block, not a body. A block is the smallest thing the archive
-//! can drop without re-deflating what survives, and `body_blocks.sealed_at`
-//! is when its last segment was written, so "older than the cutoff" is a
-//! property the index already records. A kept block is copied to its
-//! committed extent, `body_blocks.disk_len`, and no further.
-//!
-//! Order of operations, and why:
-//!
-//! 1. The open block is closed and every index row committed first. A block
-//!    whose rows have not committed is invisible to the keep query, so it
-//!    would be compacted away and its rows inserted afterwards pointing at
-//!    offsets that no longer exist; and a block left open would have its
-//!    next segment appended to a file that no longer ends where the writer
-//!    believes it does.
-//! 2. The compacted archive is **staged**: written and flushed beside the
-//!    original, which stays the live file.
-//! 3. One transaction deletes the rows of the dropped blocks and remaps the
-//!    survivors' offsets, and commits.
-//! 4. Only then is the staged file renamed over the original.
-//!
-//! The index and the file cannot commit together, so the question is not
-//! whether a window exists but how wide it is and which way it falls. Between
-//! 3 and 4 it is a single `rename(2)`; the old ordering -- rename first, then
-//! the transaction -- made it a whole transaction, most of which is the index
-//! work itself.
-//!
-//! And within this process the window closes rather than merely being narrow.
-//! A rename that fails leaves the file holding the old offsets, so the
-//! remap is reversed and every surviving body is readable again at the offset
-//! it always had. What is not recoverable is a crash in that one syscall's
-//! width, and even then nothing is served wrongly: every body read verifies
-//! blake3 over the bytes its row's span selected, so a stale offset fails the
-//! read loudly instead of returning some other body's bytes.
+//! Retention copies committed survivor extents into a unique generation and
+//! makes that candidate durable before one FULL SQLite transaction remaps the
+//! index and switches `archive_state`. The old generation is never rewritten
+//! or replaced. SQLite is the sole publication root; deletion is retryable GC.
 
-use std::collections::BTreeMap;
+use std::ffi::OsStr;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::time::{Duration, Instant};
 
-use rusqlite::{params, Connection};
+use capsem_archive::{format, BodyLogWriter, FileHeader, GenerationId, FILE_HEADER_BYTES};
+use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
+use capsem_foundation::unix::lock::{self, LockMode};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use tracing::warn;
 
-use super::bodies::BodyArchive;
+use super::bodies::{archive_lock_path_for_db, BodyArchive};
 use super::retention_faults::{take_retention_failure_for_tests, RetentionFault};
 
-/// What one retention pass did.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RetainOutcome {
-    /// Blocks whose bytes left the archive file.
     pub blocks_dropped: u64,
-    /// Blocks that survived and were remapped.
     pub blocks_kept: u64,
-    /// `event_body_blobs` rows deleted with their blocks.
     pub rows_dropped: u64,
-    /// How much shorter the archive file is.
+    /// Logical bytes removed. An old inode may remain pinned by a reader.
     pub bytes_reclaimed: u64,
 }
 
-/// Drop every archived block last written before `cutoff` (RFC 3339), compacting the
-/// archive file and rewriting the index rows that name it.
-///
-/// # Errors
-///
-/// A string, because every caller of this is already on the `DbResult` rail.
-/// The archive being closed, unflushed work still in hand, a block the file
-/// cannot produce, and any SQLite failure all surface here; none of them
-/// leave a body readable that should have gone, and none of them delete an
-/// index row whose block is still the one the archive holds.
+#[derive(Debug)]
+enum PublicationOutcome {
+    NotPublished {
+        phase: &'static str,
+        cause: String,
+        orphan_cleanup_pending: bool,
+    },
+    Published {
+        outcome: RetainOutcome,
+        old_generation: GenerationId,
+        new_generation: GenerationId,
+        gc_pending: bool,
+    },
+    OutcomeUnknown {
+        phase: &'static str,
+        cause: String,
+    },
+}
+
+impl PublicationOutcome {
+    fn into_result(self) -> Result<RetainOutcome, String> {
+        match self {
+            Self::NotPublished {
+                phase,
+                cause,
+                orphan_cleanup_pending,
+            } => Err(format!(
+                "archive generation was not published during {phase}: {cause}; orphan cleanup pending: {orphan_cleanup_pending}"
+            )),
+            Self::Published {
+                outcome,
+                old_generation,
+                new_generation,
+                gc_pending,
+            } => {
+                if gc_pending {
+                    warn!(
+                        ?old_generation,
+                        ?new_generation,
+                        "archive generation published; old-generation GC remains pending"
+                    );
+                }
+                Ok(outcome)
+            }
+            Self::OutcomeUnknown { phase, cause } => Err(format!(
+                "archive publication outcome is unknown during {phase}: {cause}; archiving is unavailable until recovery"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RetentionPlan {
+    blocks_kept: u64,
+    kept_bytes: u64,
+}
+
+const KEPT_BLOCK: &str = "sealed_at >= ?1 OR EXISTS (
+    SELECT 1 FROM event_body_blobs AS kept
+    WHERE kept.block_offset = body_blocks.block_offset AND kept.created_at >= ?1)";
+
 pub(super) fn retain_bodies(
     conn: &Connection,
     bodies: &mut BodyArchive,
@@ -78,45 +98,147 @@ pub(super) fn retain_bodies(
         return Err("session body retention needs a flushed archive; blocks are still waiting for index rows".into());
     }
     close_open_block(conn, bodies)?;
-    let path = bodies
-        .path_in_service()
+    let directory = bodies
+        .generation_directory()
         .ok_or("session body archive is not open; nothing was retained")?
+        .try_clone()
+        .map_err(|error| format!("clone archive directory: {error}"))?;
+    let db_path = bodies
+        .db_path()
+        .ok_or("session body archive has no database path")?
         .to_path_buf();
+    let state = crate::schema::archive_state(conn).map_err(|error| format!("read archive_state: {error}"))?;
+    let mut source = open_source(&directory, state.header, state.committed_end)?;
+    let plan = retention_plan(conn, cutoff)?;
+    let dense_end = (FILE_HEADER_BYTES as u64)
+        .checked_add(plan.kept_bytes)
+        .ok_or("retained archive extent overflows u64")?;
+    if dense_end == state.committed_end && source.metadata().map_err(io_string)?.len() == dense_end {
+        return Ok(RetainOutcome::default());
+    }
 
-    let keep = kept_block_offsets(conn, cutoff)?;
-    // The original is still the live archive after this returns.
-    let staging = capsem_archive::stage_retained_blocks(&path, &keep).map_err(|error| {
-        format!(
-            "session body archive {} could not be compacted: {error}",
-            path.display()
+    let generation_id = GenerationId::new_v4();
+    let mut candidate = BodyLogWriter::create_generation(&directory, state.header.archive_id, generation_id)
+        .map_err(|error| format!("create retained generation: {error}"))?;
+    let copied = match copy_survivors(conn, cutoff, &mut source, &mut candidate) {
+        Ok(copied) => copied,
+        Err(cause) => {
+            return cleanup_unpublished(&directory, candidate, generation_id, "copy", cause).into_result();
+        }
+    };
+    if copied != plan.blocks_kept || candidate.end() != dense_end {
+        let candidate_end = candidate.end();
+        return cleanup_unpublished(
+            &directory,
+            candidate,
+            generation_id,
+            "copy-count-check",
+            format!(
+                "copied {copied} blocks to {candidate_end}, expected {} blocks ending at {dense_end}",
+                plan.blocks_kept
+            ),
         )
-    })?;
-    let moved = staging.map().clone();
-    let bytes_reclaimed = staging.bytes_freed();
-
-    let dropped = reindex(conn, cutoff, &moved, &path).map_err(|error| {
-        format!(
-            "session body retention left the archive {} untouched: its index could not be rewritten: {error}",
-            path.display()
+        .into_result();
+    }
+    if take_retention_failure_for_tests(directory.path(), RetentionFault::CandidateSync) {
+        return cleanup_unpublished(
+            &directory,
+            candidate,
+            generation_id,
+            "candidate-sync",
+            "injected retained-generation sync failure".into(),
         )
-    })?;
+        .into_result();
+    }
+    if let Err(error) = candidate.sync() {
+        return cleanup_unpublished(
+            &directory,
+            candidate,
+            generation_id,
+            "candidate-sync",
+            error.to_string(),
+        )
+        .into_result();
+    }
+    if let Err(error) = directory.sync() {
+        return cleanup_unpublished(
+            &directory,
+            candidate,
+            generation_id,
+            "directory-sync",
+            error.to_string(),
+        )
+        .into_result();
+    }
 
-    commit_staging(conn, bodies, staging, &moved, &path)?;
-    // The writer's idea of the file's end is the old file's length, and every
-    // block in the new one sits somewhere else.
-    bodies.reopen_after_retention();
+    let archive_lock = lock::acquire_existing_until(
+        &archive_lock_path_for_db(&db_path),
+        LockMode::Exclusive,
+        Instant::now() + Duration::from_secs(5),
+    )
+    .map_err(|error| format!("acquire archive publication lock: {error}"))?;
+    let current = crate::schema::archive_state(conn).map_err(|error| format!("re-read archive_state: {error}"))?;
+    if current != state {
+        drop(archive_lock);
+        return cleanup_unpublished(
+            &directory,
+            candidate,
+            generation_id,
+            "publication-precondition",
+            "archive_state changed while the sole writer staged retention".into(),
+        )
+        .into_result();
+    }
 
-    Ok(RetainOutcome {
-        blocks_dropped: dropped.blocks,
-        blocks_kept: moved.len() as u64,
-        rows_dropped: dropped.rows,
-        bytes_reclaimed,
-    })
+    let published = publish_index(
+        conn,
+        cutoff,
+        state,
+        generation_id,
+        candidate.end(),
+        copied,
+        directory.path(),
+    );
+    let (blocks_dropped, rows_dropped) = match published {
+        Ok(counts) => counts,
+        Err(PublishError::BeforeCommit(cause)) => {
+            drop(archive_lock);
+            return cleanup_unpublished(&directory, candidate, generation_id, "sqlite-transaction", cause)
+                .into_result();
+        }
+        Err(PublishError::CommitUnknown(cause)) => {
+            bodies.give_up("retention_commit_unknown");
+            drop(archive_lock);
+            drop(candidate);
+            return PublicationOutcome::OutcomeUnknown {
+                phase: "sqlite-commit",
+                cause,
+            }
+            .into_result();
+        }
+    };
+
+    bodies.adopt_generation(candidate);
+    let old_name = state.header.generation_id.file_name();
+    let gc_pending = directory
+        .remove_private_file(OsStr::new(&old_name))
+        .and_then(|()| directory.sync())
+        .is_err();
+    drop(archive_lock);
+    PublicationOutcome::Published {
+        outcome: RetainOutcome {
+            blocks_dropped,
+            blocks_kept: copied,
+            rows_dropped,
+            bytes_reclaimed: state.committed_end.saturating_sub(dense_end),
+        },
+        old_generation: state.header.generation_id,
+        new_generation: generation_id,
+        gc_pending,
+    }
+    .into_result()
 }
 
-/// Close the open block and commit the rows of its FINAL segment, so the
-/// keep query sees it whole and the writer reopened afterwards starts a new
-/// block at the compacted file's end.
 fn close_open_block(conn: &Connection, bodies: &mut BodyArchive) -> Result<(), String> {
     bodies.close_block();
     let committed = conn.unchecked_transaction().and_then(|tx| {
@@ -134,198 +256,202 @@ fn close_open_block(conn: &Connection, bodies: &mut BodyArchive) -> Result<(), S
     }
 }
 
-/// Put the compacted archive in place, or put the index back.
-///
-/// A failed rename means the file still holds the old offsets, and the index
-/// was committed a moment ago naming the new ones. Reversing the remap is
-/// what makes that recoverable rather than merely loud: every surviving body
-/// goes back to naming the offset it still occupies.
-///
-/// The rows of the dropped blocks stay deleted. Their bytes are in the file
-/// and now unreferenced, which is the archive's own documented cost for a
-/// crash between a block and its index rows -- and those bodies were the ones
-/// retention was asked to forget, so forgetting them is not the failure.
-fn commit_staging(
-    conn: &Connection,
-    bodies: &mut BodyArchive,
-    staging: capsem_archive::RetainedStaging,
-    moved: &BTreeMap<u64, u64>,
-    path: &std::path::Path,
-) -> Result<(), String> {
-    let committed = if take_retention_failure_for_tests(path, RetentionFault::Rename) {
-        drop(staging);
-        Err("injected rename failure".to_string())
-    } else {
-        capsem_archive::commit_retained(staging).map_err(|error| error.to_string())
-    };
-    let Err(error) = committed else {
-        return Ok(());
-    };
-    let restored = if take_retention_failure_for_tests(path, RetentionFault::Restore) {
-        Err(rusqlite::Error::InvalidParameterName(
-            "injected offset restore failure".to_string(),
-        ))
-    } else {
-        restore_offsets(conn, moved)
-    };
-    match restored {
-        Ok(()) => Err(format!(
-            "session body archive {} could not be replaced ({error}); \
-             the index was put back and every surviving body still reads",
-            path.display()
-        )),
-        Err(restore_error) => {
-            // The index names offsets the file does not have and nothing here
-            // can reach them again. Appending more bodies would add rows to a
-            // ledger whose existing ones already lie; the session stops
-            // archiving, and the bodies it was holding are counted as dropped.
-            bodies.give_up("retention");
-            Err(format!(
-                "session body archive {} could not be replaced ({error}) \
-                 and the index could not be put back ({restore_error}); \
-                 no further bodies will be stored, and body reads will fail \
-                 their integrity check rather than answer wrongly",
-                path.display()
-            ))
-        }
+fn open_source(directory: &ContainedDir, expected: FileHeader, committed_end: u64) -> Result<File, String> {
+    let name = expected.generation_id.file_name();
+    let mut source = directory
+        .open_file(OsStr::new(&name), ContainedOpenOptions::read_only())
+        .map_err(io_string)?;
+    if source.metadata().map_err(io_string)?.len() < committed_end {
+        return Err("active generation is shorter than archive_state.committed_end".into());
     }
+    source.seek(SeekFrom::Start(0)).map_err(io_string)?;
+    let mut header = [0u8; FILE_HEADER_BYTES];
+    source.read_exact(&mut header).map_err(io_string)?;
+    format::decode_file_header(&header)
+        .and_then(|header| header.validate(expected.archive_id, expected.generation_id, &name))
+        .map_err(|error| error.to_string())?;
+    Ok(source)
 }
 
-/// What the deletes removed.
-#[derive(Debug)]
-struct Dropped {
-    blocks: u64,
-    rows: u64,
+fn retention_plan(conn: &Connection, cutoff: &str) -> Result<RetentionPlan, String> {
+    let (blocks_kept, kept_bytes): (i64, i64) = conn
+        .query_row(
+            &format!(
+                "SELECT COUNT(*), COALESCE(SUM(disk_len), 0)
+                 FROM body_blocks WHERE {KEPT_BLOCK}"
+            ),
+            [cutoff],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(sql_string)?;
+    Ok(RetentionPlan {
+        blocks_kept: u64::try_from(blocks_kept).map_err(|_| "negative kept block count")?,
+        kept_bytes: u64::try_from(kept_bytes).map_err(|_| "negative retained byte count")?,
+    })
 }
 
-/// A block is kept while its newest segment is inside the window, or while
-/// any row still inside the window names it: dedup lets a new row point at
-/// bytes in an older block, and that row's body must outlive the block's own
-/// age. The keep set and the deletes both read this one predicate, so they
-/// cannot disagree about which blocks survive.
-const KEPT_BLOCK: &str = "sealed_at >= ?1 OR EXISTS (
-    SELECT 1 FROM event_body_blobs AS kept
-    WHERE kept.block_offset = body_blocks.block_offset AND kept.created_at >= ?1)";
-
-/// `(block_offset, disk_len)` of every block to keep: the offset to find it
-/// and the committed extent to copy.
-fn kept_block_offsets(conn: &Connection, cutoff: &str) -> Result<Vec<(u64, u64)>, String> {
-    let read_error = |error: rusqlite::Error| format!("session body retention could not read body_blocks: {error}");
-    let mut statement = conn
-        .prepare_cached(&format!(
-            "SELECT block_offset, disk_len FROM body_blocks WHERE {KEPT_BLOCK} ORDER BY block_offset"
-        ))
-        .map_err(read_error)?;
-    let rows = statement
-        .query_map(params![cutoff], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
-        })
-        .map_err(read_error)?;
-    let mut keep = Vec::new();
-    for row in rows {
-        let (offset, disk_len) = row.map_err(read_error)?;
-        let (Ok(offset), Ok(disk_len)) = (u64::try_from(offset), u64::try_from(disk_len)) else {
-            return Err(format!(
-                "body_blocks holds a negative extent ({offset}, {disk_len}); the index is corrupt"
-            ));
-        };
-        keep.push((offset, disk_len));
-    }
-    Ok(keep)
-}
-
-/// Delete the aged-out rows and move the survivors to their new offsets, in
-/// one transaction.
-///
-/// The deletes use the same `KEPT_BLOCK` predicate the keep set came from
-/// rather than a list of offsets: the writer thread is the only writer and is
-/// the one running this, so the two evaluations cannot disagree -- and the
-/// count check below refuses to go on if they somehow did.
-///
-/// **Offsets are remapped in ascending order of their old value, and that is
-/// what makes a collision impossible.** Compaction only ever moves a block
-/// down or leaves it, and it preserves order, so writing `o1 -> n1`, `o2 ->
-/// n2`, ... in ascending order can never land on an offset that is still
-/// occupied: every already-written `n` is smaller than the `n` being written,
-/// and every not-yet-moved `o` is larger than the `o` being written, which is
-/// itself at least as large as its `n`. A collision would therefore be a bug
-/// in that reasoning, not a case to handle -- and `block_offset` is
-/// `body_blocks`' primary key, so `UPDATE` raises a constraint failure and
-/// rolls the whole transaction back. Nothing here is an upsert; two blocks
-/// can never be quietly merged into one row.
-fn reindex(
+fn copy_survivors(
     conn: &Connection,
     cutoff: &str,
-    moved: &BTreeMap<u64, u64>,
+    source: &mut File,
+    candidate: &mut BodyLogWriter,
+) -> Result<u64, String> {
+    let mut statement = conn
+        .prepare_cached(&format!(
+            "SELECT block_offset, disk_len FROM body_blocks
+             WHERE {KEPT_BLOCK} ORDER BY block_offset"
+        ))
+        .map_err(sql_string)?;
+    let mut rows = statement.query([cutoff]).map_err(sql_string)?;
+    let mut copied = 0u64;
+    while let Some(row) = rows.next().map_err(sql_string)? {
+        let old: i64 = row.get(0).map_err(sql_string)?;
+        let disk_len: i64 = row.get(1).map_err(sql_string)?;
+        let old = u64::try_from(old).map_err(|_| "negative block offset".to_string())?;
+        let disk_len = u64::try_from(disk_len).map_err(|_| "negative block extent".to_string())?;
+        candidate
+            .copy_block_from(source, old, disk_len)
+            .map_err(|error| error.to_string())?;
+        copied = copied.checked_add(1).ok_or("retained block count overflow")?;
+    }
+    Ok(copied)
+}
+
+#[derive(Debug)]
+enum PublishError {
+    BeforeCommit(String),
+    CommitUnknown(String),
+}
+
+fn publish_index(
+    conn: &Connection,
+    cutoff: &str,
+    old: crate::schema::ArchiveState,
+    generation_id: GenerationId,
+    new_end: u64,
+    expected_blocks: u64,
     path: &std::path::Path,
-) -> rusqlite::Result<Dropped> {
-    let tx = conn.unchecked_transaction()?;
-    // The index rows reference `body_blocks(block_offset)`. Remapping moves
-    // parent and child one pair at a time, so the two are briefly out of step
-    // even though the committed state is consistent. Enforcement is on --
-    // rusqlite turns it on for every connection it opens, which
-    // `the_writer_connection_enforces_foreign_keys` pins -- so without this
-    // the very first pair would be refused.
+) -> Result<(u64, u64), PublishError> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| PublishError::BeforeCommit(error.to_string()))?;
+    let counts = publish_inside_transaction(&tx, cutoff, old, generation_id, new_end, expected_blocks, path)
+        .map_err(|error| PublishError::BeforeCommit(error.to_string()))?;
+    if take_retention_failure_for_tests(path, RetentionFault::CommitUnknownBefore) {
+        drop(tx);
+        return Err(PublishError::CommitUnknown(
+            "injected uncertain COMMIT with G authoritative".into(),
+        ));
+    }
+    tx.commit()
+        .map_err(|error| PublishError::CommitUnknown(error.to_string()))?;
+    if take_retention_failure_for_tests(path, RetentionFault::CommitUnknownAfter) {
+        return Err(PublishError::CommitUnknown(
+            "injected uncertain COMMIT with H authoritative".into(),
+        ));
+    }
+    Ok(counts)
+}
+
+fn publish_inside_transaction(
+    tx: &Transaction<'_>,
+    cutoff: &str,
+    old: crate::schema::ArchiveState,
+    generation_id: GenerationId,
+    new_end: u64,
+    expected_blocks: u64,
+    path: &std::path::Path,
+) -> rusqlite::Result<(u64, u64)> {
     tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
     let rows = tx.execute(
         &format!(
             "DELETE FROM event_body_blobs
              WHERE block_offset IN (SELECT block_offset FROM body_blocks WHERE NOT ({KEPT_BLOCK}))"
         ),
-        params![cutoff],
+        [cutoff],
     )?;
-    let blocks = tx.execute(
-        &format!("DELETE FROM body_blocks WHERE NOT ({KEPT_BLOCK})"),
-        params![cutoff],
-    )?;
-
-    let survivors: i64 = tx.query_row("SELECT COUNT(*) FROM body_blocks", [], |row| row.get(0))?;
-    if survivors != moved.len() as i64 {
-        // The staged file holds exactly `moved`, so an index that disagrees
-        // would name blocks it does not have.
+    let blocks = tx.execute(&format!("DELETE FROM body_blocks WHERE NOT ({KEPT_BLOCK})"), [cutoff])?;
+    let (remapped, remapped_end) = remap_survivors(tx)?;
+    if remapped != expected_blocks || remapped_end != new_end {
         return Err(rusqlite::Error::InvalidParameterName(format!(
-            "retention staged {} blocks but the index holds {survivors}",
-            moved.len()
+            "candidate copied {expected_blocks} blocks ending at {new_end}, but SQL remapped {remapped} ending at {remapped_end}"
         )));
     }
-
-    for (old, new) in moved {
-        move_block(&tx, *old, *new)?;
+    let revision = old
+        .revision
+        .checked_add(1)
+        .and_then(|revision| i64::try_from(revision).ok())
+        .ok_or_else(|| rusqlite::Error::InvalidParameterName("archive_state revision overflow".into()))?;
+    let new_end = i64::try_from(new_end)
+        .map_err(|_| rusqlite::Error::InvalidParameterName("generation extent exceeds SQLite INTEGER".into()))?;
+    let changed = tx.execute(
+        "UPDATE archive_state
+         SET generation_id = ?1, committed_end = ?2, revision = ?3
+         WHERE singleton = 1 AND archive_id = ?4 AND generation_id = ?5
+               AND committed_end = ?6 AND revision = ?7",
+        params![
+            generation_id.as_bytes().as_slice(),
+            new_end,
+            revision,
+            old.header.archive_id.as_bytes().as_slice(),
+            old.header.generation_id.as_bytes().as_slice(),
+            old.committed_end as i64,
+            old.revision as i64,
+        ],
+    )?;
+    if changed != 1 {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "archive_state changed before publication".into(),
+        ));
     }
     if take_retention_failure_for_tests(path, RetentionFault::IndexTransaction) {
         return Err(rusqlite::Error::InvalidParameterName(
-            "injected retention index failure".to_string(),
+            "injected retention publication failure".into(),
         ));
     }
-    tx.commit()?;
-    Ok(Dropped {
-        blocks: blocks as u64,
-        rows: rows as u64,
-    })
+    Ok((blocks as u64, rows as u64))
 }
 
-/// Undo the remap after the rename failed, putting every surviving block back
-/// at the offset the unreplaced file still holds it at.
-///
-/// **Descending order of the new offset**, which is the mirror of the forward
-/// pass and collision-free for the mirror reason: writing `n_i -> o_i` from
-/// the top down, every offset already written is an `o` above this one, and
-/// every offset not yet moved is an `n` below `n_i`, which is at most `o_i`.
-fn restore_offsets(conn: &Connection, moved: &BTreeMap<u64, u64>) -> rusqlite::Result<()> {
-    let tx = conn.unchecked_transaction()?;
-    tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
-    for (old, new) in moved.iter().rev() {
-        move_block(&tx, *new, *old)?;
+fn remap_survivors(tx: &Transaction<'_>) -> rusqlite::Result<(u64, u64)> {
+    let mut last_old = -1i64;
+    let mut new_offset = FILE_HEADER_BYTES as u64;
+    let mut count = 0u64;
+    loop {
+        let next = tx
+            .query_row(
+                "SELECT block_offset, disk_len FROM body_blocks
+                 WHERE block_offset > ?1 ORDER BY block_offset LIMIT 1",
+                [last_old],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?;
+        let Some((old, disk_len)) = next else {
+            break;
+        };
+        let old_u64 =
+            u64::try_from(old).map_err(|_| rusqlite::Error::InvalidParameterName("negative block offset".into()))?;
+        let disk_len = u64::try_from(disk_len)
+            .map_err(|_| rusqlite::Error::InvalidParameterName("negative block extent".into()))?;
+        move_block(tx, old_u64, new_offset)?;
+        last_old = old;
+        new_offset = new_offset
+            .checked_add(disk_len)
+            .ok_or_else(|| rusqlite::Error::InvalidParameterName("remapped extent overflow".into()))?;
+        count = count
+            .checked_add(1)
+            .ok_or_else(|| rusqlite::Error::InvalidParameterName("remapped block count overflow".into()))?;
     }
-    tx.commit()
+    Ok((count, new_offset))
 }
 
-/// Move one block's rows from `from` to `to`, in both tables.
-fn move_block(tx: &rusqlite::Transaction<'_>, from: u64, to: u64) -> rusqlite::Result<()> {
+fn move_block(tx: &Transaction<'_>, from: u64, to: u64) -> rusqlite::Result<()> {
     if from == to {
         return Ok(());
     }
-    let (from, to) = (from as i64, to as i64);
+    let from = i64::try_from(from)
+        .map_err(|_| rusqlite::Error::InvalidParameterName("old block offset exceeds SQLite INTEGER".into()))?;
+    let to = i64::try_from(to)
+        .map_err(|_| rusqlite::Error::InvalidParameterName("new block offset exceeds SQLite INTEGER".into()))?;
     tx.execute(
         "UPDATE body_blocks SET block_offset = ?2 WHERE block_offset = ?1",
         params![from, to],
@@ -335,6 +461,34 @@ fn move_block(tx: &rusqlite::Transaction<'_>, from: u64, to: u64) -> rusqlite::R
         params![from, to],
     )?;
     Ok(())
+}
+
+fn cleanup_unpublished(
+    directory: &ContainedDir,
+    candidate: BodyLogWriter,
+    generation_id: GenerationId,
+    phase: &'static str,
+    cause: String,
+) -> PublicationOutcome {
+    drop(candidate);
+    let name = generation_id.file_name();
+    let orphan_cleanup_pending = directory
+        .remove_private_file(OsStr::new(&name))
+        .and_then(|()| directory.sync())
+        .is_err();
+    PublicationOutcome::NotPublished {
+        phase,
+        cause,
+        orphan_cleanup_pending,
+    }
+}
+
+fn io_string(error: std::io::Error) -> String {
+    error.to_string()
+}
+
+fn sql_string(error: rusqlite::Error) -> String {
+    error.to_string()
 }
 
 #[cfg(test)]

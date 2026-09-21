@@ -303,6 +303,29 @@ fn generation_creation_uses_its_typed_unique_name_and_private_descriptor() {
             generation_id
         }
     );
+    drop(reader);
+    drop(writer);
+    let header = FileHeader {
+        archive_id,
+        generation_id,
+    };
+    assert_eq!(
+        BodyLogWriter::open_generation(&directory, header, FILE_HEADER_BYTES as u64)
+            .unwrap()
+            .header(),
+        header
+    );
+    assert!(matches!(
+        BodyLogWriter::open_generation(
+            &directory,
+            FileHeader {
+                archive_id: crate::ArchiveId::new_v4(),
+                generation_id,
+            },
+            FILE_HEADER_BYTES as u64
+        ),
+        Err(ArchiveError::ArchiveIdentityMismatch)
+    ));
 }
 
 #[test]

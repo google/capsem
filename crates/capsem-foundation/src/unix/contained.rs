@@ -14,6 +14,7 @@ use std::path::{Component, Path, PathBuf};
 use nix::errno::Errno;
 use nix::fcntl::{openat, AtFlags, OFlag};
 use nix::sys::stat::{fstatat, mkdirat, Mode, SFlag};
+use nix::unistd::{unlinkat, UnlinkatFlags};
 
 /// A handle on one directory below the containment root.
 #[derive(Debug)]
@@ -276,6 +277,48 @@ impl ContainedDir {
         Ok(file)
     }
 
+    /// Open an existing owner-only regular child for read/append access.
+    pub fn open_existing_private_append(&self, name: &OsStr) -> io::Result<File> {
+        check_component(name)?;
+        let flags = OFlag::O_RDWR | OFlag::O_APPEND | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK;
+        let fd = openat(Some(self.fd.as_raw_fd()), name, flags, Mode::empty())?;
+        let file = File::from(owned(fd));
+        let metadata = file.metadata()?;
+        let uid = super::process::current_uid();
+        let mode = metadata.permissions().mode() & 0o777;
+        if !metadata.is_file() || metadata.uid() != uid || metadata.nlink() != 1 || mode != 0o600 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "existing private file {} is not a mode 0600 current-user regular file with one link",
+                    Path::new(name).display()
+                ),
+            ));
+        }
+        Ok(file)
+    }
+
+    /// Remove one current-user owner-only regular child without following or
+    /// accepting extra links.
+    pub fn remove_private_file(&self, name: &OsStr) -> io::Result<()> {
+        check_component(name)?;
+        let stat = fstatat(Some(self.fd.as_raw_fd()), name, AtFlags::AT_SYMLINK_NOFOLLOW)?;
+        let mode = stat.st_mode & 0o777;
+        let uid = super::process::current_uid();
+        if kind_of(stat.st_mode) != EntryKind::File || stat.st_uid != uid || stat.st_nlink != 1 || mode != 0o600 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "refusing to remove non-private file {} (uid {}, mode {mode:o}, links {})",
+                    Path::new(name).display(),
+                    stat.st_uid,
+                    stat.st_nlink
+                ),
+            ));
+        }
+        unlinkat(Some(self.fd.as_raw_fd()), name, UnlinkatFlags::NoRemoveDir).map_err(Into::into)
+    }
+
     /// Persist namespace changes made through this directory.
     pub fn sync(&self) -> io::Result<()> {
         File::from(self.fd.try_clone()?).sync_all()
@@ -283,8 +326,21 @@ impl ContainedDir {
 
     /// List children with metadata read without following links.
     pub fn entries(&self) -> io::Result<Vec<ContainedEntry>> {
-        let mut directory = nix::dir::Dir::from_fd(self.fd.try_clone()?.into_raw_fd())?;
         let mut entries = Vec::new();
+        self.visit_entries(|entry| {
+            entries.push(entry);
+            Ok(true)
+        })?;
+        Ok(entries)
+    }
+
+    /// Visit children one at a time without following links.
+    ///
+    /// Returning `false` stops the walk. Callers that inspect or clean a
+    /// potentially large managed directory can therefore keep constant
+    /// memory rather than materializing every name first.
+    pub fn visit_entries(&self, mut visit: impl FnMut(ContainedEntry) -> io::Result<bool>) -> io::Result<()> {
+        let mut directory = nix::dir::Dir::from_fd(self.fd.try_clone()?.into_raw_fd())?;
         for entry in directory.iter() {
             let entry = entry?;
             let name = OsStr::from_bytes(entry.file_name().to_bytes());
@@ -294,14 +350,16 @@ impl ContainedDir {
             let Ok(stat) = fstatat(Some(self.fd.as_raw_fd()), name, AtFlags::AT_SYMLINK_NOFOLLOW) else {
                 continue;
             };
-            entries.push(ContainedEntry {
+            if !visit(ContainedEntry {
                 name: name.to_owned(),
                 kind: kind_of(stat.st_mode),
                 size: u64::try_from(stat.st_size).unwrap_or(0),
                 mtime_secs: u64::try_from(stat.st_mtime).unwrap_or(0),
-            });
+            })? {
+                break;
+            }
         }
-        Ok(entries)
+        Ok(())
     }
 }
 

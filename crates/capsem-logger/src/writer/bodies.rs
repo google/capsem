@@ -31,10 +31,14 @@
 //! names it, so a shared span lives as long as its newest reader.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
-use capsem_archive::{ArchiveError, BodyLogWriter, BodyRef, SegmentWritten};
+use capsem_archive::{ArchiveError, ArchiveId, BodyLogWriter, BodyRef, FileHeader, GenerationId, SegmentWritten};
+use capsem_foundation::unix::contained::{ContainedDir, EntryKind};
+use capsem_foundation::unix::fs::{durable_sync_directory, ensure_private_dir};
+use capsem_foundation::unix::lock::{self, FileLock, LockAttempt, LockMode};
 use rusqlite::{params, Connection, OptionalExtension};
 use tracing::warn;
 
@@ -108,10 +112,9 @@ struct BodyIndexRow {
 
 /// The writer thread's archive: one `session.bodies` beside `session.db`.
 pub(super) struct BodyArchive {
-    /// Where the archive file is, or `None` for an in-memory database. Kept
-    /// even when the writer is gone, because retention rewrites the file by
-    /// path and then reopens the writer on it.
-    path: Option<PathBuf>,
+    db_path: Option<PathBuf>,
+    /// The private generation directory, or `None` for an in-memory database.
+    directory: Option<ContainedDir>,
     /// `None` for an in-memory database, which has no file to put an archive
     /// beside, and after a write failure, which makes every later offset
     /// unprovable. Both stage nothing rather than writing an index nobody can
@@ -206,93 +209,223 @@ pub(crate) fn archive_path_for_db(db_path: &Path) -> PathBuf {
     db_path.with_extension("bodies")
 }
 
-/// Whether every block extent the index names is inside the archive file.
-///
-/// Retention replaces the archive and rewrites the index, and the two cannot
-/// commit together -- there is one `rename(2)` between them. A crash in that
-/// width leaves the index naming offsets the file on disk does not have, and
-/// until this check existed nothing noticed: the writer reopened whichever
-/// file was there and appended into it, and every stale row stayed in the
-/// index, answering reads with another block's bytes until its hash check
-/// refused them, one body at a time, forever.
-///
-/// So it is checked once, at open, where it can be said plainly and where
-/// refusing costs only this session's new bodies. A `body_blocks` that cannot
-/// be read is broken schema, not an empty table.
-fn index_fits_the_file(conn: &Connection, archive_path: &Path) -> bool {
-    let indexed_end: Option<i64> =
-        match conn.query_row("SELECT MAX(block_offset + disk_len) FROM body_blocks", [], |row| {
-            row.get(0)
-        }) {
-            Ok(end) => end,
-            Err(error) => {
-                warn!(
-                    archive_path = %archive_path.display(),
-                    error = %error,
-                    "session body index could not be read; bodies will not be stored"
-                );
-                return false;
-            }
-        };
-    let Some(indexed_end) = indexed_end else {
-        // No blocks indexed: nothing to disagree with, including for a
-        // session whose archive file does not exist yet.
-        return true;
-    };
-    let archive_bytes = match std::fs::metadata(archive_path) {
-        Ok(metadata) => metadata.len() as i64,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
-        Err(error) => {
-            warn!(
-                archive_path = %archive_path.display(),
-                error = %error,
-                "session body archive could not be measured; bodies will not be stored"
-            );
-            return false;
-        }
-    };
-    if indexed_end > archive_bytes {
-        warn!(
-            archive_path = %archive_path.display(),
-            indexed_end,
-            archive_bytes,
-            "session body index names bytes past the end of the archive, so the two no longer \
-             describe the same file -- most likely a crash during retention; bodies will not be \
-             stored and existing rows will fail their integrity check rather than answer wrongly"
-        );
-        return false;
-    }
-    true
+pub(crate) fn archive_lock_path_for_db(db_path: &Path) -> PathBuf {
+    let mut name = OsString::from(db_path.as_os_str());
+    name.push("-archive.lock");
+    PathBuf::from(name)
 }
 
-/// Open the archive writer, or warn and store no bodies. Shared by `open` and
-/// by the reopen retention needs: a compacted file has a new end, and a writer
-/// still holding the old one would append over a kept block.
-fn open_writer(archive_path: &Path) -> Option<BodyLogWriter> {
-    match BodyLogWriter::open(archive_path) {
-        Ok(writer) => Some(writer),
-        Err(error) => {
-            warn!(
-                archive_path = %archive_path.display(),
-                error = %error,
-                "session body archive could not be opened; bodies will not be stored"
-            );
-            None
-        }
-    }
+fn archive_contract_error(message: impl Into<String>) -> rusqlite::Error {
+    rusqlite::Error::InvalidParameterName(message.into())
 }
 
 impl BodyArchive {
-    /// Open the session's archive, after checking that the index and the
-    /// file still describe the same thing.
-    pub(super) fn open(db_path: Option<&Path>, now: LedgerClock, conn: &Connection) -> Self {
-        let path = db_path.map(archive_path_for_db);
-        let writer = path
-            .as_deref()
-            .filter(|path| index_fits_the_file(conn, path))
-            .and_then(open_writer);
+    /// Prepare a fresh generation and stable acquisition lock before the
+    /// schema transaction publishes their identities.
+    pub(super) fn prepare_new(db_path: &Path, now: LedgerClock) -> rusqlite::Result<(Self, FileLock, FileHeader)> {
+        let path = archive_path_for_db(db_path);
+        match std::fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(metadata) if metadata.is_file() => {
+                return Err(archive_contract_error(format!(
+                    "legacy v2 archive {} is a regular file; refusing to replace it",
+                    path.display()
+                )))
+            }
+            Ok(_) => {
+                return Err(archive_contract_error(format!(
+                    "unpublished archive path {} already exists; refusing to guess or erase it",
+                    path.display()
+                )))
+            }
+            Err(error) => return Err(archive_contract_error(format!("inspect {}: {error}", path.display()))),
+        }
+        ensure_private_dir(&path)
+            .map_err(|error| archive_contract_error(format!("create {}: {error}", path.display())))?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| archive_contract_error("archive directory has no parent"))?;
+        durable_sync_directory(parent)
+            .map_err(|error| archive_contract_error(format!("sync {}: {error}", parent.display())))?;
+
+        let lock_path = archive_lock_path_for_db(db_path);
+        let archive_lock = match lock::try_acquire(&lock_path, LockMode::Exclusive)
+            .map_err(|error| archive_contract_error(format!("create {}: {error}", lock_path.display())))?
+        {
+            LockAttempt::Acquired(lock) => lock,
+            LockAttempt::Contended => {
+                return Err(archive_contract_error(format!(
+                    "fresh archive lock {} is unexpectedly contended",
+                    lock_path.display()
+                )))
+            }
+        };
+        durable_sync_directory(parent)
+            .map_err(|error| archive_contract_error(format!("sync {}: {error}", parent.display())))?;
+
+        let directory = ContainedDir::open_root(&path)
+            .and_then(|directory| {
+                directory.validate_private()?;
+                Ok(directory)
+            })
+            .map_err(|error| archive_contract_error(format!("open {}: {error}", path.display())))?;
+        let header = FileHeader {
+            archive_id: ArchiveId::new_v4(),
+            generation_id: GenerationId::new_v4(),
+        };
+        let mut writer = BodyLogWriter::create_generation(&directory, header.archive_id, header.generation_id)
+            .map_err(|error| archive_contract_error(format!("create generation: {error}")))?;
+        writer
+            .sync()
+            .map_err(|error| archive_contract_error(format!("sync generation: {error}")))?;
+        directory
+            .sync()
+            .map_err(|error| archive_contract_error(format!("sync {}: {error}", path.display())))?;
+        Ok((
+            Self::with_writer(db_path.to_path_buf(), directory, writer, now),
+            archive_lock,
+            header,
+        ))
+    }
+
+    /// Recover and reopen the exact generation selected by SQLite. The
+    /// archive lock stays exclusive through the real revision durability
+    /// fence; no path scan can elect another file.
+    pub(super) fn open_existing(db_path: &Path, now: LedgerClock, conn: &Connection) -> rusqlite::Result<Self> {
+        let path = archive_path_for_db(db_path);
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|error| archive_contract_error(format!("inspect {}: {error}", path.display())))?;
+        if metadata.is_file() {
+            return Err(archive_contract_error(format!(
+                "legacy v2 archive {} is a regular file; refusing format v3 open",
+                path.display()
+            )));
+        }
+        let directory = ContainedDir::open_root(&path)
+            .and_then(|directory| {
+                directory.validate_private()?;
+                Ok(directory)
+            })
+            .map_err(|error| archive_contract_error(format!("open {}: {error}", path.display())))?;
+        let lock_path = archive_lock_path_for_db(db_path);
+        let _archive_lock =
+            lock::acquire_existing_until(&lock_path, LockMode::Exclusive, Instant::now() + Duration::from_secs(5))
+                .map_err(|error| archive_contract_error(format!("lock {}: {error}", lock_path.display())))?;
+        let state = crate::schema::archive_state(conn)?;
+        let writer = BodyLogWriter::open_generation(&directory, state.header, state.committed_end)
+            .map_err(|error| archive_contract_error(format!("open active generation: {error}")))?;
+        let next_revision = state
+            .revision
+            .checked_add(1)
+            .and_then(|revision| i64::try_from(revision).ok())
+            .ok_or_else(|| archive_contract_error("archive_state revision overflow"))?;
+        let updated = conn.execute(
+            "UPDATE archive_state SET revision = ?1 WHERE singleton = 1 AND revision = ?2",
+            rusqlite::params![next_revision, state.revision as i64],
+        )?;
+        if updated != 1 {
+            return Err(archive_contract_error("archive_state changed during writer recovery"));
+        }
+        Self::gc_unreferenced_generations(&directory, state.header.generation_id);
+        Ok(Self::with_writer(db_path.to_path_buf(), directory, writer, now))
+    }
+
+    /// Retry deletion of exact managed generation names after the elected
+    /// generation has been validated and fenced. One candidate is selected
+    /// per directory walk so cleanup remains bounded even if a crash left a
+    /// very large number of candidates.
+    fn gc_unreferenced_generations(directory: &ContainedDir, active: GenerationId) {
+        loop {
+            let mut candidate = None;
+            let walk = directory.visit_entries(|entry| {
+                let Some(name) = entry.name.to_str() else {
+                    warn!(name = ?entry.name, "archive directory contains a non-UTF-8 entry; retaining it");
+                    return Ok(true);
+                };
+                let Ok(generation) = GenerationId::from_file_name(name) else {
+                    warn!(name, "archive directory contains an unknown entry; retaining it");
+                    return Ok(true);
+                };
+                if generation == active {
+                    return Ok(true);
+                }
+                if entry.kind != EntryKind::File {
+                    warn!(name, ?entry.kind, "archive candidate is not a regular file; retaining it");
+                    return Ok(true);
+                }
+                candidate = Some(entry.name);
+                Ok(false)
+            });
+            if let Err(error) = walk {
+                warn!(error = %error, "archive generation GC could not enumerate candidates");
+                return;
+            }
+            let Some(name) = candidate else {
+                return;
+            };
+            if let Err(error) = directory.remove_private_file(&name).and_then(|()| directory.sync()) {
+                warn!(name = ?name, error = %error, "archive generation GC remains pending");
+                return;
+            }
+        }
+    }
+
+    pub(super) fn disabled(now: LedgerClock) -> Self {
+        Self::new(None, None, None, now)
+    }
+
+    #[cfg(test)]
+    pub(super) fn open_for_tests(db_path: Option<&Path>, now: LedgerClock, conn: &Connection) -> Self {
+        let Some(db_path) = db_path else {
+            return Self::disabled(now);
+        };
+        let path = archive_path_for_db(db_path);
+        let opened = if path.exists() {
+            Self::open_existing(db_path, now, conn)
+        } else {
+            let state = crate::schema::archive_state(conn);
+            state.and_then(|state| {
+                ensure_private_dir(&path).map_err(|error| archive_contract_error(error.to_string()))?;
+                let parent = path
+                    .parent()
+                    .ok_or_else(|| archive_contract_error("archive directory has no parent"))?;
+                durable_sync_directory(parent).map_err(|error| archive_contract_error(error.to_string()))?;
+                let archive_lock = lock::try_acquire(&archive_lock_path_for_db(db_path), LockMode::Exclusive)
+                    .map_err(|error| archive_contract_error(error.to_string()))?;
+                drop(archive_lock);
+                let directory =
+                    ContainedDir::open_root(&path).map_err(|error| archive_contract_error(error.to_string()))?;
+                let mut writer =
+                    BodyLogWriter::create_generation(&directory, state.header.archive_id, state.header.generation_id)
+                        .map_err(|error| archive_contract_error(error.to_string()))?;
+                writer
+                    .sync()
+                    .map_err(|error| archive_contract_error(error.to_string()))?;
+                directory
+                    .sync()
+                    .map_err(|error| archive_contract_error(error.to_string()))?;
+                Ok(Self::with_writer(db_path.to_path_buf(), directory, writer, now))
+            })
+        };
+        opened.unwrap_or_else(|error| {
+            warn!(error = %error, "test archive could not be opened");
+            Self::new(Some(db_path.to_path_buf()), None, None, now)
+        })
+    }
+
+    fn with_writer(db_path: PathBuf, directory: ContainedDir, writer: BodyLogWriter, now: LedgerClock) -> Self {
+        Self::new(Some(db_path), Some(directory), Some(writer), now)
+    }
+
+    fn new(
+        db_path: Option<PathBuf>,
+        directory: Option<ContainedDir>,
+        writer: Option<BodyLogWriter>,
+        now: LedgerClock,
+    ) -> Self {
         Self {
-            path,
+            db_path,
+            directory,
             writer,
             now,
             block_opened_at: None,
@@ -478,28 +611,19 @@ impl BodyArchive {
     /// it may rewrite: an in-memory ledger has no file, and an archive that
     /// gave up must not have its file compacted underneath index rows it can
     /// no longer vouch for.
-    pub(super) fn path_in_service(&self) -> Option<&Path> {
-        self.writer.as_ref().and(self.path.as_deref())
+    pub(super) fn generation_directory(&self) -> Option<&ContainedDir> {
+        self.writer.as_ref().and(self.directory.as_ref())
     }
 
-    /// Reopen the writer after retention rewrote the file.
-    ///
-    /// The old writer's `end` is the old file's length, so appending through
-    /// it would write past -- or, after a compaction, on top of -- blocks the
-    /// index still names. The reopened writer reads the compacted length back
-    /// from the file, which is the only place it is now true.
-    ///
-    /// Callable only with nothing in hand: retention closes and commits
-    /// first, so an open block or a row waiting to commit would mean the
-    /// sequence was not followed.
-    pub(super) fn reopen_after_retention(&mut self) {
-        debug_assert!(
-            !self.has_work() && self.block_opened_at.is_none(),
-            "retention reopened the archive with {} segments and {} rows still in hand",
-            self.appended.len(),
-            self.staged.len()
-        );
-        self.writer = self.path.as_deref().and_then(open_writer);
+    pub(super) fn db_path(&self) -> Option<&Path> {
+        self.writer.as_ref().and(self.db_path.as_deref())
+    }
+
+    pub(super) fn adopt_generation(&mut self, writer: BodyLogWriter) {
+        debug_assert!(!self.has_work());
+        self.writer = Some(writer);
+        self.block_spans.clear();
+        self.block_opened_at = None;
     }
 
     /// The sequence number the next staged row will take: a transaction's
@@ -650,6 +774,24 @@ impl BodyArchive {
         for (segment, _) in &self.appended {
             upsert_block(conn, segment, &sealed_at)?;
         }
+        let mut committed_end = None;
+        for (segment, _) in &self.appended {
+            let end = segment.block_offset.checked_add(segment.disk_len).ok_or_else(|| {
+                rusqlite::Error::InvalidParameterName("archive committed extent overflows u64".into())
+            })?;
+            committed_end = Some(committed_end.map_or(end, |current: u64| current.max(end)));
+        }
+        if let Some(committed_end) = committed_end {
+            let committed_end = i64::try_from(committed_end).map_err(|_| {
+                rusqlite::Error::InvalidParameterName("archive committed extent exceeds SQLite INTEGER".into())
+            })?;
+            conn.execute(
+                "UPDATE archive_state
+                 SET committed_end = MAX(committed_end, ?1)
+                 WHERE singleton = 1",
+                [committed_end],
+            )?;
+        }
         for row in self.appended.iter().flat_map(|(_, rows)| rows).chain(&self.reused) {
             execute_cached(
                 conn,
@@ -751,11 +893,12 @@ impl BodyArchive {
     /// Whether a test asked this archive to close its block at every flush.
     fn closes_at_every_flush(&self) -> bool {
         #[cfg(test)]
-        if let Some(path) = &self.path {
+        if let Some(path) = self.db_path.as_deref().map(archive_path_for_db) {
             return CLOSE_AT_EVERY_FLUSH
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .contains(path);
+                .iter()
+                .any(|configured| configured == &path);
         }
         false
     }

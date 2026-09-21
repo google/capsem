@@ -151,6 +151,42 @@ impl BodyLogWriter {
         Ok(Self::at(file, header, FILE_HEADER_BYTES as u64))
     }
 
+    /// Reopen the exact generation selected by the authoritative SQLite row.
+    /// Unreferenced bytes past `committed_end` are retained and a new block
+    /// starts at actual EOF; an old compressor stream is never resumed.
+    pub fn open_generation(directory: &ContainedDir, expected: FileHeader, committed_end: u64) -> Result<Self> {
+        directory.validate_private()?;
+        let name = expected.generation_id.file_name();
+        let mut file = directory.open_existing_private_append(OsStr::new(&name))?;
+        let end = file.metadata()?.len();
+        if committed_end < FILE_HEADER_BYTES as u64 || end < committed_end {
+            return Err(ArchiveError::CommittedExtent);
+        }
+        file.seek(SeekFrom::Start(0))?;
+        let mut encoded = [0u8; FILE_HEADER_BYTES];
+        file.read_exact(&mut encoded).map_err(|_| ArchiveError::BadFileHeader)?;
+        let header = format::decode_file_header(&encoded)?;
+        header.validate(expected.archive_id, expected.generation_id, &name)?;
+        Ok(Self::at(file, header, end))
+    }
+
+    /// Copy one already-validated committed block extent verbatim into a new
+    /// generation, returning its new absolute offset.
+    pub fn copy_block_from(&mut self, source: &mut File, block_offset: u64, disk_len: u64) -> Result<u64> {
+        if self.block.is_some() {
+            return Err(ArchiveError::Poisoned);
+        }
+        super::retain::check_extent(source, block_offset, disk_len)?;
+        source.seek(SeekFrom::Start(block_offset))?;
+        let new_offset = self.end;
+        let copied = io::copy(&mut source.take(disk_len), &mut self.file)?;
+        if copied != disk_len {
+            return Err(ArchiveError::TruncatedBlock(block_offset));
+        }
+        self.end = self.end.checked_add(disk_len).ok_or(ArchiveError::CommittedExtent)?;
+        Ok(new_offset)
+    }
+
     fn at(file: File, header: FileHeader, end: u64) -> Self {
         Self {
             file,
