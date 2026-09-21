@@ -1,3 +1,4 @@
+use std::io::{Seek, SeekFrom};
 use std::os::unix::fs::FileExt;
 
 use super::*;
@@ -217,4 +218,58 @@ fn open_refuses_a_symlink() {
     let link = dir.path().join("link.bodies");
     std::os::unix::fs::symlink(&path, &link).unwrap();
     assert!(matches!(BodyLogReader::open(&link), Err(ArchiveError::Symlink(_))));
+}
+
+#[test]
+fn descriptor_reader_pins_identity_and_never_crosses_captured_extents() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = archive(&dir);
+    let mut writer = BodyLogWriter::open(&path).unwrap();
+    let first = writer.stage(b"first body").unwrap();
+    let first_extent = writer.flush_segment().unwrap().unwrap();
+    let second = writer.stage(b"second body").unwrap();
+    writer.flush_segment().unwrap().unwrap();
+    writer.sync().unwrap();
+    let header = writer.header();
+
+    let mut file = std::fs::File::open(&path).unwrap();
+    file.seek(SeekFrom::End(0)).unwrap();
+    let committed_end = first.block_offset + first_extent.disk_len;
+    let reader = BodyLogReader::from_descriptor(file, header, committed_end).unwrap();
+    let extent = BlockExtent {
+        disk_len: first_extent.disk_len,
+        raw_len: first_extent.raw_len,
+    };
+    assert_eq!(reader.read_bounded(first, extent).unwrap(), b"first body");
+    assert!(matches!(
+        reader.read_bounded(second, extent),
+        Err(ArchiveError::RefOutOfRange)
+    ));
+    assert!(matches!(
+        reader.read_bounded(
+            first,
+            BlockExtent {
+                disk_len: u64::MAX,
+                raw_len: first_extent.raw_len,
+            }
+        ),
+        Err(ArchiveError::CommittedExtent)
+    ));
+
+    let wrong = FileHeader {
+        generation_id: crate::GenerationId::new_v4(),
+        ..header
+    };
+    assert!(matches!(
+        BodyLogReader::from_descriptor(std::fs::File::open(&path).unwrap(), wrong, committed_end),
+        Err(ArchiveError::ArchiveIdentityMismatch)
+    ));
+    assert!(matches!(
+        BodyLogReader::from_descriptor(
+            std::fs::File::open(&path).unwrap(),
+            header,
+            std::fs::metadata(&path).unwrap().len() + 1
+        ),
+        Err(ArchiveError::CommittedExtent)
+    ));
 }

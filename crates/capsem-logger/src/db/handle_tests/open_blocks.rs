@@ -256,7 +256,10 @@ async fn closing_an_idle_block_for_retention_does_not_make_it_newer() {
 #[tokio::test]
 async fn an_archive_of_an_earlier_version_is_left_alone() {
     let p = temp_db_path("open-block-old-version");
-    let mut header = capsem_archive::format::encode_file_header();
+    let mut header = capsem_archive::format::encode_file_header(
+        capsem_archive::ArchiveId::new_v4(),
+        capsem_archive::GenerationId::new_v4(),
+    );
     header[8..10].copy_from_slice(&1u16.to_le_bytes());
     std::fs::write(archive_path(&p), header).expect("plant a version 1 header");
 

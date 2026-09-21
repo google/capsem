@@ -8,6 +8,7 @@ use std::fs::File;
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
 use nix::errno::Errno;
@@ -146,6 +147,25 @@ impl ContainedDir {
         })
     }
 
+    /// Verify that this opened descriptor names a current-user-owned mode
+    /// 0700 directory. The check is descriptor-based, so replacing the path
+    /// after open cannot redirect later `openat` operations.
+    pub fn validate_private(&self) -> io::Result<()> {
+        let metadata = File::from(self.fd.try_clone()?).metadata()?;
+        let uid = super::process::current_uid();
+        let mode = metadata.permissions().mode() & 0o777;
+        if !metadata.is_dir() || metadata.uid() != uid || mode != 0o700 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "directory {} is not private mode 0700 owned by uid {uid}",
+                    self.path.display()
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// Open a child directory without following a link.
     pub fn descend(&self, name: &OsStr) -> io::Result<Self> {
         check_component(name)?;
@@ -226,6 +246,39 @@ impl ContainedDir {
             ));
         }
         Ok(file)
+    }
+
+    /// Exclusively create an owner-only regular child for read/append access.
+    ///
+    /// The directory descriptor anchors the create even if an attacker swaps
+    /// a pathname above it. `O_EXCL | O_NOFOLLOW` prevents reuse or link
+    /// traversal, and the returned descriptor is independently owned.
+    pub fn create_new_private_file(&self, name: &OsStr) -> io::Result<File> {
+        check_component(name)?;
+        let flags = OFlag::O_RDWR
+            | OFlag::O_APPEND
+            | OFlag::O_CREAT
+            | OFlag::O_EXCL
+            | OFlag::O_NOFOLLOW
+            | OFlag::O_CLOEXEC
+            | OFlag::O_NONBLOCK;
+        let fd = openat(Some(self.fd.as_raw_fd()), name, flags, permission_mode(0o600))?;
+        let file = File::from(owned(fd));
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        let metadata = file.metadata()?;
+        let uid = super::process::current_uid();
+        if !metadata.is_file() || metadata.uid() != uid || metadata.nlink() != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("refusing newly created private file {}", Path::new(name).display()),
+            ));
+        }
+        Ok(file)
+    }
+
+    /// Persist namespace changes made through this directory.
+    pub fn sync(&self) -> io::Result<()> {
+        File::from(self.fd.try_clone()?).sync_all()
     }
 
     /// List children with metadata read without following links.

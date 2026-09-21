@@ -262,6 +262,50 @@ fn open_on_a_directory_is_an_io_error_not_a_panic() {
 }
 
 #[test]
+fn generation_creation_uses_its_typed_unique_name_and_private_descriptor() {
+    use capsem_foundation::unix::contained::ContainedDir;
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let generations = root.path().join("session.bodies");
+    std::fs::create_dir(&generations).unwrap();
+    std::fs::set_permissions(&generations, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let archive_id = crate::ArchiveId::new_v4();
+    let generation_id = crate::GenerationId::new_v4();
+    let directory = ContainedDir::open_root(&generations).unwrap();
+    let mut writer = BodyLogWriter::create_generation(&directory, archive_id, generation_id).unwrap();
+    assert_eq!(
+        writer.header(),
+        FileHeader {
+            archive_id,
+            generation_id
+        }
+    );
+    writer.sync().unwrap();
+    directory.sync().unwrap();
+
+    let path = generations.join(generation_id.file_name());
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    assert!(BodyLogWriter::create_generation(&directory, archive_id, generation_id).is_err());
+    let reader = BodyLogReader::open_generation(
+        &directory,
+        FileHeader {
+            archive_id,
+            generation_id,
+        },
+        FILE_HEADER_BYTES as u64,
+    )
+    .unwrap();
+    assert_eq!(
+        reader.header(),
+        FileHeader {
+            archive_id,
+            generation_id
+        }
+    );
+}
+
+#[test]
 #[cfg(debug_assertions)]
 #[should_panic(expected = "unflushed bodies")]
 fn dropping_a_writer_with_unflushed_bodies_trips_the_debug_assert() {

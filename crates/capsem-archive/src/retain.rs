@@ -86,10 +86,10 @@ pub fn stage_retained_blocks(path: &Path, keep: &[(u64, u64)]) -> Result<Retaine
     source
         .read_exact(&mut header)
         .map_err(|_| ArchiveError::BadFileHeader)?;
-    format::decode_file_header(&header)?;
+    let header = format::decode_file_header(&header)?;
 
     let mut temporary = unix_fs::create_private_sibling(path)?;
-    let map = copy_kept_blocks(&mut source, temporary.file(), keep)?;
+    let map = copy_kept_blocks(&mut source, temporary.file(), keep, header)?;
     // Flushed here, not at the rename: once `commit_retained` returns, the
     // bytes the index names must already be on the device.
     temporary.file().sync_data()?;
@@ -118,8 +118,13 @@ pub fn commit_retained(staging: RetainedStaging) -> Result<()> {
 
 /// Stream the kept extents into `destination` behind a fresh file header, in
 /// ascending offset order: one forward pass over the source.
-fn copy_kept_blocks(source: &mut File, destination: &mut File, keep: &[(u64, u64)]) -> Result<BTreeMap<u64, u64>> {
-    destination.write_all(&format::encode_file_header())?;
+fn copy_kept_blocks(
+    source: &mut File,
+    destination: &mut File,
+    keep: &[(u64, u64)],
+    header: format::FileHeader,
+) -> Result<BTreeMap<u64, u64>> {
+    destination.write_all(&format::encode_file_header(header.archive_id, header.generation_id))?;
     let mut end = FILE_HEADER_BYTES as u64;
     let mut moved = BTreeMap::new();
     let ascending: BTreeMap<u64, u64> = keep.iter().copied().collect();

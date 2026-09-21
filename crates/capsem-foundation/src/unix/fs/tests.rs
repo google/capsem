@@ -2,8 +2,9 @@ use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::sync::{Arc, Barrier};
 
 use super::{
-    atomic_write_private, create_private_sibling, ensure_private_dir, filesystem_space, open_private_append_no_follow,
-    open_regular_file_no_follow, read_regular_file_no_follow, rename_private_sibling, write_new_regular_file_no_follow,
+    atomic_write_private, create_private_sibling, durable_sync_directory, durable_sync_file, ensure_private_dir,
+    filesystem_space, open_private_append_no_follow, open_regular_file_no_follow, read_regular_file_no_follow,
+    rename_private_sibling, write_new_regular_file_no_follow,
 };
 
 #[test]
@@ -115,6 +116,21 @@ fn new_regular_file_is_complete_and_uses_requested_mode() {
         std::fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777,
         0o640
     );
+}
+
+#[test]
+fn durability_barriers_cover_file_bytes_and_directory_names() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("generation");
+    std::fs::write(&path, b"bytes").unwrap();
+    let file = std::fs::File::open(&path).unwrap();
+    durable_sync_file(&file).unwrap();
+    durable_sync_directory(root.path()).unwrap();
+
+    let (pipe_reader, _pipe_writer) = nix::unistd::pipe().unwrap();
+    let pipe_reader = std::fs::File::from(pipe_reader);
+    assert!(durable_sync_file(&pipe_reader).is_err());
+    assert!(durable_sync_directory(&path).is_err());
 }
 
 #[test]

@@ -174,16 +174,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Session ledgers keep captured bodies in a compressed archive beside the
-  database. Request and response bodies, tool results, exec output and the
-  forensic payload of each security rule match now live in `session.bodies`
-  next to `session.db`, compressed in blocks, and the database keeps only the
-  index that finds them: typically 6-11x smaller on disk, with the same bytes
-  returned and every read checked against the hash recorded when it was
-  stored. The security, detection and enforcement views list rule metadata as
-  before and show each payload's size and hash, fetching the payload itself on
-  demand. Forking a session, or anything else that copies a session ledger,
-  copies both files.
+- Session ledgers keep captured bodies in version 3 compressed generations
+  beside the database. Request and response bodies, tool results, exec output and the
+  forensic payload of each security rule match now live in generation files
+  next to `session.db`, compressed in blocks. An authenticated header binds
+  each file to typed archive and generation identities, and descriptor-based
+  reads enforce the exact file and block extents selected by the database.
+  The database keeps only the index that finds each body: typically 6-11x
+  smaller on disk, with the same bytes returned and every read checked against
+  the hash recorded when it was stored. The security, detection and
+  enforcement views list rule metadata as before and show each payload's size
+  and hash, fetching the payload itself on demand. Forking a session, or
+  anything else that copies a session ledger, copies the database and its
+  selected generation.
 - Security decisions and asks store the event they are about in the body
   archive too, the way rule matches do. The decision ledger was the largest
   table in a session -- about 6 KB a row and ~25 rows a request, most of them

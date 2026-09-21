@@ -3,6 +3,8 @@
 use std::ffi::OsString;
 use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{self, Read, Write};
+#[cfg(target_os = "macos")]
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -103,6 +105,42 @@ pub fn write_new_regular_file_no_follow(path: &Path, data: &[u8], mode: u32) -> 
         .map_err(|error| context(error, "write regular file", path))?;
     file.sync_all()
         .map_err(|error| context(error, "sync regular file", path))
+}
+
+/// Persist a regular file's bytes and length using the platform's strongest
+/// supported local-filesystem barrier.
+pub fn durable_sync_file(file: &File) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        loop {
+            // SAFETY: `file` owns a live descriptor and F_FULLFSYNC does not
+            // retain the integer after this synchronous call.
+            let result = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) };
+            if result == 0 {
+                return Ok(());
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        file.sync_all()
+    }
+}
+
+/// Persist directory-entry creation, replacement, or deletion.
+pub fn durable_sync_directory(path: &Path) -> io::Result<()> {
+    let directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_DIRECTORY)
+        .open(path)
+        .map_err(|error| context(error, "open directory for durable sync", path))?;
+    directory
+        .sync_all()
+        .map_err(|error| context(error, "durably sync directory", path))
 }
 
 /// Create `path` as an owner-only directory, or verify an existing one.

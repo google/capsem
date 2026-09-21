@@ -18,18 +18,20 @@
 //! its row records.
 
 use std::cell::{Cell, RefCell};
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
 use capsem_foundation::unix::fs as unix_fs;
 use miniz_oxide::inflate::stream::{inflate, InflateState};
 use miniz_oxide::{DataFormat, MZFlush, MZStatus};
 
 use super::format::{
-    self, BodyRef, SegmentHeader, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES, SEGMENT_HEADER_BYTES,
-    SYNC_FLUSH_TAIL,
+    self, BodyRef, FileHeader, SegmentHeader, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES,
+    SEGMENT_HEADER_BYTES, SYNC_FLUSH_TAIL,
 };
 use crate::writer::refuse_symlink;
 use crate::{ArchiveError, Result};
@@ -43,8 +45,10 @@ pub struct BodyLogReader {
     /// The path this reader was opened on, and the file that was there at the
     /// time. Retention replaces the archive by renaming a compacted copy over
     /// it -- see `file_was_replaced`.
-    path: PathBuf,
-    identity: FileIdentity,
+    path: Option<PathBuf>,
+    identity: Option<FileIdentity>,
+    header: FileHeader,
+    committed_end: u64,
     /// How far into one block this reader has inflated. Bodies of one
     /// exchange land in one block, and a UI walks rows in order, so the next
     /// read usually continues this cursor rather than starting over.
@@ -56,6 +60,8 @@ pub struct BodyLogReader {
 /// One block, inflated up to the end of some segment.
 struct Cursor {
     block_offset: u64,
+    block_end: u64,
+    raw_limit: u32,
     /// The block's inflater, carrying the dictionary the next segment was
     /// compressed against. Boxed: it is about 40 KiB.
     inflater: Box<InflateState>,
@@ -65,6 +71,14 @@ struct Cursor {
     next_segment_at: u64,
     /// The FINAL segment has been inflated; the block has no more bytes.
     finished: bool,
+}
+
+/// The committed bounds recorded for a block in the same SQLite snapshot as
+/// its body reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockExtent {
+    pub disk_len: u64,
+    pub raw_len: u32,
 }
 
 /// Which file a handle is on, as the filesystem answers it.
@@ -86,15 +100,59 @@ impl FileIdentity {
 impl BodyLogReader {
     pub fn open(path: &Path) -> Result<Self> {
         refuse_symlink(path)?;
-        let mut file = unix_fs::open_regular_file_no_follow(path)?;
+        let file = unix_fs::open_regular_file_no_follow(path)?;
         let identity = FileIdentity::of(&file.metadata()?);
+        let committed_end = file.metadata()?.len();
+        let mut reader = Self::from_descriptor_unchecked(file, committed_end)?;
+        reader.path = Some(path.to_path_buf());
+        reader.identity = Some(identity);
+        // Transitional path-based callers follow an append-only live file.
+        // Generation-pinned callers use `from_descriptor`/`open_generation`
+        // and retain the captured finite extent.
+        reader.committed_end = u64::MAX;
+        Ok(reader)
+    }
+
+    /// Open the exact generation selected by a SQLite snapshot beneath an
+    /// already-open private directory.
+    pub fn open_generation(directory: &ContainedDir, expected: FileHeader, committed_end: u64) -> Result<Self> {
+        directory.validate_private()?;
+        let name = expected.generation_id.file_name();
+        let file = directory.open_file(OsStr::new(&name), ContainedOpenOptions::read_only())?;
+        let reader = Self::from_descriptor(file, expected, committed_end)?;
+        reader
+            .header
+            .validate(expected.archive_id, expected.generation_id, &name)?;
+        Ok(reader)
+    }
+
+    /// Adopt an independently-owned descriptor and validate it against the
+    /// selected ledger identity and committed extent.
+    pub fn from_descriptor(file: File, expected: FileHeader, committed_end: u64) -> Result<Self> {
+        let reader = Self::from_descriptor_unchecked(file, committed_end)?;
+        if reader.header != expected {
+            return Err(ArchiveError::ArchiveIdentityMismatch);
+        }
+        Ok(reader)
+    }
+
+    fn from_descriptor_unchecked(mut file: File, committed_end: u64) -> Result<Self> {
+        if committed_end < FILE_HEADER_BYTES as u64 {
+            return Err(ArchiveError::BadFileHeader);
+        }
+        if file.metadata()?.len() < committed_end {
+            return Err(ArchiveError::CommittedExtent);
+        }
+        file.seek(SeekFrom::Start(0))?;
         let mut header = [0u8; FILE_HEADER_BYTES];
         file.read_exact(&mut header).map_err(|_| ArchiveError::BadFileHeader)?;
-        format::decode_file_header(&header)?;
+        let header = format::decode_file_header(&header)?;
         Ok(Self {
             file: RefCell::new(file),
-            path: path.to_path_buf(),
-            identity,
+            path: None,
+            identity: None,
+            header,
+            committed_end,
             cursor: RefCell::new(None),
             blocks: Cell::new(0),
             segments: Cell::new(0),
@@ -107,18 +165,43 @@ impl BodyLogReader {
     /// `read`, which may replace it, a runtime borrow panic in whichever
     /// caller still held the view.
     pub fn read(&self, reference: BodyRef) -> Result<Vec<u8>> {
+        if reference.block_offset < FILE_HEADER_BYTES as u64 || reference.block_offset >= self.committed_end {
+            return Err(ArchiveError::BadBlockHeader(reference.block_offset));
+        }
+        let disk_len = self
+            .committed_end
+            .checked_sub(reference.block_offset)
+            .ok_or(ArchiveError::RefOutOfRange)?;
+        self.read_bounded(
+            reference,
+            BlockExtent {
+                disk_len,
+                raw_len: u32::try_from(MAX_BLOCK_RAW_BYTES).expect("block limit fits u32"),
+            },
+        )
+    }
+
+    /// Read only within the block extent committed by the captured SQLite
+    /// snapshot, even when the descriptor contains later appended segments.
+    pub fn read_bounded(&self, reference: BodyRef, extent: BlockExtent) -> Result<Vec<u8>> {
         let start = reference.offset as usize;
         let end = start
             .checked_add(reference.len as usize)
-            .filter(|end| *end <= MAX_BLOCK_RAW_BYTES)
+            .filter(|end| *end <= MAX_BLOCK_RAW_BYTES && *end <= extent.raw_len as usize)
             .ok_or(ArchiveError::RefOutOfRange)?;
+        let block_end = reference
+            .block_offset
+            .checked_add(extent.disk_len)
+            .filter(|end| *end <= self.committed_end)
+            .ok_or(ArchiveError::CommittedExtent)?;
         let mut slot = self.cursor.borrow_mut();
-        if slot
-            .as_ref()
-            .is_none_or(|cursor| cursor.block_offset != reference.block_offset)
-        {
+        if slot.as_ref().is_none_or(|cursor| {
+            cursor.block_offset != reference.block_offset
+                || cursor.block_end != block_end
+                || cursor.raw_limit != extent.raw_len
+        }) {
             *slot = None;
-            *slot = Some(self.start_block(reference.block_offset)?);
+            *slot = Some(self.start_block(reference.block_offset, block_end, extent.raw_len)?);
         }
         let cursor = slot.as_mut().expect("set above");
         if let Err(error) = self.inflate_through(cursor, end) {
@@ -130,7 +213,14 @@ impl BodyLogReader {
         Ok(cursor.raw[start..end].to_vec())
     }
 
-    fn start_block(&self, block_offset: u64) -> Result<Cursor> {
+    fn start_block(&self, block_offset: u64, block_end: u64, raw_limit: u32) -> Result<Cursor> {
+        if block_offset < FILE_HEADER_BYTES as u64
+            || block_offset
+                .checked_add(BLOCK_HEADER_BYTES as u64)
+                .is_none_or(|header_end| header_end > block_end)
+        {
+            return Err(ArchiveError::BadBlockHeader(block_offset));
+        }
         let mut head = [0u8; BLOCK_HEADER_BYTES];
         {
             let mut file = self.file.borrow_mut();
@@ -142,6 +232,8 @@ impl BodyLogReader {
         self.blocks.set(self.blocks.get() + 1);
         Ok(Cursor {
             block_offset,
+            block_end,
+            raw_limit,
             inflater: InflateState::new_boxed(DataFormat::Raw),
             raw: Vec::new(),
             next_segment_at: block_offset + BLOCK_HEADER_BYTES as u64,
@@ -163,6 +255,10 @@ impl BodyLogReader {
     /// Read, bound, inflate and verify the segment at `next_segment_at`.
     fn inflate_next_segment(&self, cursor: &mut Cursor) -> Result<()> {
         let at = cursor.next_segment_at;
+        let header_end = at
+            .checked_add(SEGMENT_HEADER_BYTES as u64)
+            .filter(|end| *end <= cursor.block_end)
+            .ok_or(ArchiveError::TruncatedBlock(cursor.block_offset))?;
         let (header, comp) = {
             let mut file = self.file.borrow_mut();
             file.seek(SeekFrom::Start(at))?;
@@ -174,6 +270,15 @@ impl BodyLogReader {
             let raw_start = u32::try_from(cursor.raw.len()).expect("bounded by MAX_BLOCK_RAW_BYTES");
             // Bounds `comp_len` before it sizes the buffer below.
             let header = format::parse_segment_header(&head, at, raw_start)?;
+            header
+                .raw_start
+                .checked_add(header.raw_len)
+                .filter(|end| *end <= cursor.raw_limit)
+                .ok_or(ArchiveError::RefOutOfRange)?;
+            header_end
+                .checked_add(u64::from(header.comp_len))
+                .filter(|end| *end <= cursor.block_end)
+                .ok_or(ArchiveError::TruncatedBlock(cursor.block_offset))?;
             let mut comp = vec![0u8; header.comp_len as usize];
             file.read_exact(&mut comp)
                 .map_err(|_| ArchiveError::TruncatedBlock(cursor.block_offset))?;
@@ -206,7 +311,17 @@ impl BodyLogReader {
     /// when it is true. A path that cannot be stat'd counts as replaced.
     #[must_use]
     pub fn file_was_replaced(&self) -> bool {
-        std::fs::metadata(&self.path).map_or(true, |metadata| FileIdentity::of(&metadata) != self.identity)
+        match (&self.path, self.identity) {
+            (Some(path), Some(identity)) => {
+                std::fs::metadata(path).map_or(true, |metadata| FileIdentity::of(&metadata) != identity)
+            }
+            _ => false,
+        }
+    }
+
+    #[must_use]
+    pub fn header(&self) -> FileHeader {
+        self.header
     }
 }
 

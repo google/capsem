@@ -20,17 +20,19 @@
 //! be a torn tail. It starts a new block at the end of the file instead; the
 //! old block stays readable up to whatever its index committed.
 
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+use capsem_foundation::unix::contained::ContainedDir;
 use capsem_foundation::unix::fs as unix_fs;
 use flate2::{Compress, Compression, FlushCompress, Status};
 
 use super::format::{
-    self, BodyRef, SegmentHeader, BLOCK_HEADER_BYTES, CODEC_DEFLATE, DEFLATE_LEVEL, FILE_HEADER_BYTES,
-    MAX_BLOCK_RAW_BYTES, SEGMENT_HEADER_BYTES, TARGET_BLOCK_BYTES,
+    self, ArchiveId, BodyRef, FileHeader, GenerationId, SegmentHeader, BLOCK_HEADER_BYTES, CODEC_DEFLATE,
+    DEFLATE_LEVEL, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES, SEGMENT_HEADER_BYTES, TARGET_BLOCK_BYTES,
 };
 use crate::{ArchiveError, Result};
 
@@ -74,6 +76,7 @@ struct OpenBlock {
 /// flushed may be dropped: it is readable to the extent that was written.
 pub struct BodyLogWriter {
     file: File,
+    header: FileHeader,
     end: u64,
     block: Option<OpenBlock>,
     /// Set by a write that failed part-way through. See
@@ -114,26 +117,55 @@ impl BodyLogWriter {
         let mut file = unix_fs::open_private_append_no_follow(path)?;
         let end = file.metadata()?.len();
         if end == 0 {
-            file.write_all(&format::encode_file_header())?;
-            return Ok(Self::at(file, FILE_HEADER_BYTES as u64));
+            let header = FileHeader {
+                archive_id: ArchiveId::new_v4(),
+                generation_id: GenerationId::new_v4(),
+            };
+            file.write_all(&format::encode_file_header(header.archive_id, header.generation_id))?;
+            return Ok(Self::at(file, header, FILE_HEADER_BYTES as u64));
         }
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         let mut header = [0u8; FILE_HEADER_BYTES];
         file.seek(SeekFrom::Start(0))?;
         file.read_exact(&mut header).map_err(|_| ArchiveError::BadFileHeader)?;
-        format::decode_file_header(&header)?;
-        Ok(Self::at(file, end))
+        let header = format::decode_file_header(&header)?;
+        Ok(Self::at(file, header, end))
     }
 
-    fn at(file: File, end: u64) -> Self {
+    /// Exclusively create a generation beneath an already-open private
+    /// archive directory. The unique final name is derived only from the
+    /// typed generation id.
+    pub fn create_generation(
+        directory: &ContainedDir,
+        archive_id: ArchiveId,
+        generation_id: GenerationId,
+    ) -> Result<Self> {
+        directory.validate_private()?;
+        let name = generation_id.file_name();
+        let mut file = directory.create_new_private_file(OsStr::new(&name))?;
+        let header = FileHeader {
+            archive_id,
+            generation_id,
+        };
+        file.write_all(&format::encode_file_header(archive_id, generation_id))?;
+        Ok(Self::at(file, header, FILE_HEADER_BYTES as u64))
+    }
+
+    fn at(file: File, header: FileHeader, end: u64) -> Self {
         Self {
             file,
+            header,
             end,
             block: None,
             poisoned: false,
             #[cfg(test)]
             fail_write_after: None,
         }
+    }
+
+    #[must_use]
+    pub fn header(&self) -> FileHeader {
+        self.header
     }
 
     /// Feed `body` to the open block, opening one at the end of the file if
@@ -336,12 +368,11 @@ impl BodyLogWriter {
         self.end
     }
 
-    /// Durability barrier: every written segment is on the device when this
-    /// returns. `sync_data` rather than `sync_all`: a reader needs the bytes
-    /// and the length, not the mtime. The owner calls this before committing
-    /// the index rows that name those segments.
+    /// Durability barrier: every written segment and the file length are on
+    /// the device when this returns. The owner separately syncs the archive
+    /// directory before publishing a newly-created generation.
     pub fn sync(&mut self) -> Result<()> {
-        self.file.sync_data()?;
+        unix_fs::durable_sync_file(&self.file)?;
         Ok(())
     }
 }

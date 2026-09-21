@@ -19,6 +19,7 @@ capsem-foundation = { path = "../capsem-foundation" }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 miniz_oxide = { workspace = true }
 thiserror = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
 
 [lints]
 workspace = true

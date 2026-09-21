@@ -70,7 +70,8 @@ impl XorShift {
 
 /// A file carrying version 1's header, which this build must refuse.
 pub(crate) fn write_version_one_archive(path: &Path) {
-    let mut header = crate::format::encode_file_header();
+    let mut header = [0u8; 16];
+    header[..8].copy_from_slice(crate::format::FILE_MAGIC);
     header[8..10].copy_from_slice(&1u16.to_le_bytes());
     std::fs::write(path, header).unwrap();
 }

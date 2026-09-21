@@ -5,7 +5,7 @@
 
 use super::{archive, file_len, XorShift};
 use crate::format::BodyRef;
-use crate::{BodyLogReader, BodyLogWriter};
+use crate::{BodyLogReader, BodyLogWriter, FILE_HEADER_BYTES};
 
 /// Bodies of a small session with a flush after each, and the file length
 /// after each flush: the committed extent at that moment.
@@ -46,7 +46,10 @@ fn check_cut(original: &[u8], session: &Session, cut: usize) {
     let path = archive(&dir);
     std::fs::write(&path, &original[..cut]).unwrap();
     let Ok(reader) = BodyLogReader::open(&path) else {
-        assert!(cut < 16, "only a cut inside the file header may refuse the file");
+        assert!(
+            cut < FILE_HEADER_BYTES,
+            "only a cut inside the file header may refuse the file"
+        );
         return;
     };
     for (index, (reference, body)) in session.bodies.iter().enumerate() {
@@ -84,7 +87,7 @@ fn a_crash_at_every_byte_leaves_committed_bodies_readable_and_nothing_else() {
         let path = archive(&dir);
         let session = write_session(&path, close_last);
         let original = std::fs::read(&path).unwrap();
-        for cut in 16..=original.len() {
+        for cut in FILE_HEADER_BYTES..=original.len() {
             check_cut(&original, &session, cut);
         }
     }

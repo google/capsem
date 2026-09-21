@@ -1,7 +1,9 @@
-//! Byte layout of a version 2 `session.bodies`.
+//! Byte layout of a version 3 archive generation.
 //!
 //! ```text
-//! file header (16):  "CAPSEMBL" | u16 version = 2 | u16 0 | u32 0
+//! file header (80):  "CAPSEMBL" | u16 version = 3 | u16 flags = 0
+//!                    | u32 header length = 80 | ArchiveId[16]
+//!                    | GenerationId[16] | blake3(bytes 0..48)[32]
 //! block header (8):  "BLK2" | u8 codec | u8 flags = 0 | u16 0
 //! segment (52+comp): "SGMT" | u8 flags (bit 0 = FINAL) | u8[3] 0
 //!                    | u32 raw_start | u32 raw_len | u32 comp_len
@@ -33,8 +35,8 @@
 use crate::{ArchiveError, Result};
 
 pub const FILE_MAGIC: &[u8; 8] = b"CAPSEMBL";
-pub const FILE_VERSION: u16 = 2;
-pub const FILE_HEADER_BYTES: usize = 16;
+pub const FILE_VERSION: u16 = 3;
+pub const FILE_HEADER_BYTES: usize = 80;
 pub const BLOCK_MAGIC: &[u8; 4] = b"BLK2";
 /// magic(4) + codec(1) + flags(1) + reserved(2)
 pub const BLOCK_HEADER_BYTES: usize = 8;
@@ -69,6 +71,84 @@ pub const MAX_BLOCK_RAW_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_SEGMENT_EXPANSION: usize = 64 * 1024;
 pub(crate) const DEFLATE_LEVEL: u32 = 6;
 
+macro_rules! identity {
+    ($name:ident) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub struct $name([u8; 16]);
+
+        impl $name {
+            #[must_use]
+            pub fn new_v4() -> Self {
+                Self(*uuid::Uuid::new_v4().as_bytes())
+            }
+
+            pub fn from_bytes(bytes: [u8; 16]) -> Result<Self> {
+                if bytes[6] >> 4 != 4 || bytes[8] >> 6 != 2 {
+                    return Err(ArchiveError::InvalidIdentity);
+                }
+                Ok(Self(bytes))
+            }
+
+            #[must_use]
+            pub const fn as_bytes(&self) -> &[u8; 16] {
+                &self.0
+            }
+        }
+    };
+}
+
+identity!(ArchiveId);
+identity!(GenerationId);
+
+impl GenerationId {
+    #[must_use]
+    pub fn file_name(self) -> String {
+        let mut hex = String::with_capacity(32);
+        for byte in self.0 {
+            use std::fmt::Write as _;
+            write!(&mut hex, "{byte:02x}").expect("writing to a String cannot fail");
+        }
+        format!("g-{hex}.cbl")
+    }
+
+    pub fn from_file_name(name: &str) -> Result<Self> {
+        let hex = name
+            .strip_prefix("g-")
+            .and_then(|name| name.strip_suffix(".cbl"))
+            .filter(|hex| {
+                hex.len() == 32
+                    && hex
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+            .ok_or(ArchiveError::InvalidGenerationName)?;
+        let mut bytes = [0u8; 16];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
+                .map_err(|_| ArchiveError::InvalidGenerationName)?;
+        }
+        Self::from_bytes(bytes).map_err(|_| ArchiveError::InvalidGenerationName)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileHeader {
+    pub archive_id: ArchiveId,
+    pub generation_id: GenerationId,
+}
+
+impl FileHeader {
+    pub fn validate(self, archive_id: ArchiveId, generation_id: GenerationId, file_name: &str) -> Result<()> {
+        if self.archive_id != archive_id
+            || self.generation_id != generation_id
+            || GenerationId::from_file_name(file_name)? != generation_id
+        {
+            return Err(ArchiveError::ArchiveIdentityMismatch);
+        }
+        Ok(())
+    }
+}
+
 /// Where one body lives: the block's file offset and its span inside the
 /// block's raw bytes. Stored in the SQLite index row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,22 +169,39 @@ pub struct SegmentHeader {
 }
 
 #[must_use]
-pub fn encode_file_header() -> [u8; FILE_HEADER_BYTES] {
+pub fn encode_file_header(archive_id: ArchiveId, generation_id: GenerationId) -> [u8; FILE_HEADER_BYTES] {
     let mut header = [0u8; FILE_HEADER_BYTES];
     header[..8].copy_from_slice(FILE_MAGIC);
     header[8..10].copy_from_slice(&FILE_VERSION.to_le_bytes());
+    header[12..16].copy_from_slice(&(FILE_HEADER_BYTES as u32).to_le_bytes());
+    header[16..32].copy_from_slice(archive_id.as_bytes());
+    header[32..48].copy_from_slice(generation_id.as_bytes());
+    let hash = blake3::hash(&header[..48]);
+    header[48..].copy_from_slice(hash.as_bytes());
     header
 }
 
 /// Accept only this crate's own magic and version. Anything else is another
 /// file that happens to sit at the archive path -- including an archive of an
 /// earlier version, which this reader does not decode.
-pub fn decode_file_header(bytes: &[u8]) -> Result<()> {
+pub fn decode_file_header(bytes: &[u8]) -> Result<FileHeader> {
     let header = bytes.get(..FILE_HEADER_BYTES).ok_or(ArchiveError::BadFileHeader)?;
-    if &header[..8] != FILE_MAGIC || u16::from_le_bytes([header[8], header[9]]) != FILE_VERSION {
+    if &header[..8] != FILE_MAGIC
+        || u16::from_le_bytes([header[8], header[9]]) != FILE_VERSION
+        || header[10..12] != [0, 0]
+        || u32::from_le_bytes(header[12..16].try_into().expect("4 bytes")) != FILE_HEADER_BYTES as u32
+        || blake3::hash(&header[..48]).as_bytes() != &header[48..]
+    {
         return Err(ArchiveError::BadFileHeader);
     }
-    Ok(())
+    let archive_id =
+        ArchiveId::from_bytes(header[16..32].try_into().expect("16 bytes")).map_err(|_| ArchiveError::BadFileHeader)?;
+    let generation_id = GenerationId::from_bytes(header[32..48].try_into().expect("16 bytes"))
+        .map_err(|_| ArchiveError::BadFileHeader)?;
+    Ok(FileHeader {
+        archive_id,
+        generation_id,
+    })
 }
 
 #[must_use]
