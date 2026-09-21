@@ -230,6 +230,8 @@ jobs:
             build_system/release_site/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync --project build_system --frozen
+      - name: Build release administration CLI
+        run: cargo build -p capsem-admin
       - name: macOS release portability preflight
         run: >-
           uv run --project build_system --frozen python -m pytest
