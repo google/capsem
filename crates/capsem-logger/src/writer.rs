@@ -19,9 +19,9 @@ mod bodies;
 mod flush_faults;
 mod model_rows;
 mod producer;
-pub(crate) use bodies::archive_path_for_db;
 #[cfg(test)]
 pub(crate) use bodies::close_blocks_at_every_flush_for_tests;
+pub(crate) use bodies::{archive_lock_path_for_db, archive_path_for_db};
 use bodies::{BodyArchive, EventBodyBlob};
 use flush_faults::take_disk_flush_failure_for_tests;
 #[cfg(test)]

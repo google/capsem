@@ -6,9 +6,12 @@
 //! opens one, and never sees an `ArchiveError`: a body the index names and the
 //! file cannot produce is a broken ledger and fails loudly.
 
-use std::path::Path;
+use std::time::{Duration, Instant};
 
-use capsem_archive::{ArchiveError, BodyLogReader, BodyRef};
+use capsem_archive::{ArchiveError, BlockExtent, BodyLogReader, BodyRef};
+use capsem_foundation::unix::contained::ContainedDir;
+use capsem_foundation::unix::lock::{self, LockMode};
+use rusqlite::{Connection, Row};
 use serde_json::Value;
 
 use super::{DbHandle, DbResult};
@@ -89,18 +92,103 @@ pub(super) struct IndexRow {
     pub(super) truncated: bool,
     pub(super) body_hash: String,
     pub(super) reference: BodyRef,
+    pub(super) extent: BlockExtent,
 }
+
+pub(super) struct CapturedBodies {
+    pub(super) reader: BodyLogReader,
+    pub(super) rows: Vec<IndexRow>,
+}
+
+pub(super) struct ArchiveSqlDeadline<'a> {
+    conn: &'a Connection,
+    deadline: Instant,
+}
+
+impl<'a> ArchiveSqlDeadline<'a> {
+    pub(super) fn install(conn: &'a Connection, deadline: Instant) -> Self {
+        conn.progress_handler(1_000, Some(move || Instant::now() >= deadline));
+        Self { conn, deadline }
+    }
+
+    pub(super) fn check(&self, operation: &str) -> DbResult<()> {
+        if Instant::now() >= self.deadline {
+            Err(format!("{operation} exceeded its deadline"))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Drop for ArchiveSqlDeadline<'_> {
+    fn drop(&mut self) {
+        self.conn.progress_handler(0, None::<fn() -> bool>);
+    }
+}
+
+const INTERACTIVE_CAPTURE_MAX_IDS: usize = 10_000;
+const INTERACTIVE_CAPTURE_MAX_METADATA_BYTES: usize = 16 * 1024 * 1024;
+const INTERACTIVE_CAPTURE_DEADLINE: Duration = Duration::from_secs(5);
+
+#[cfg(test)]
+struct CapturePause {
+    reached: std::sync::mpsc::SyncSender<()>,
+    resume: std::sync::mpsc::Receiver<()>,
+}
+
+#[cfg(test)]
+static CAPTURE_PAUSES: std::sync::Mutex<Option<std::collections::HashMap<std::path::PathBuf, CapturePause>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) fn pause_next_archive_capture_for_tests(
+    db_path: &std::path::Path,
+) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::SyncSender<()>) {
+    let (reached_tx, reached_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+    CAPTURE_PAUSES
+        .lock()
+        .unwrap()
+        .get_or_insert_with(std::collections::HashMap::new)
+        .insert(
+            db_path.to_path_buf(),
+            CapturePause {
+                reached: reached_tx,
+                resume: resume_rx,
+            },
+        );
+    (reached_rx, resume_tx)
+}
+
+#[cfg(test)]
+pub(super) fn pause_archive_capture_for_tests(db_path: &std::path::Path) {
+    let pause = CAPTURE_PAUSES
+        .lock()
+        .unwrap()
+        .as_mut()
+        .and_then(|map| map.remove(db_path));
+    if let Some(pause) = pause {
+        pause.reached.send(()).unwrap();
+        pause.resume.recv().unwrap();
+    }
+}
+
+#[cfg(not(test))]
+pub(super) fn pause_archive_capture_for_tests(_db_path: &std::path::Path) {}
 
 /// The ten index columns, in the order [`index_row`] reads them. A query that
 /// carries extra columns of its own -- the WARC export joins each body to its
 /// source row -- puts them after these.
-pub(super) const INDEX_COLUMNS: &str = "event_id, source_table, direction, content_type, original_bytes, truncated, \
-                                        body_hash, block_offset, body_offset, body_len";
+pub(super) const INDEX_COLUMNS: &str = "b.event_id, b.source_table, b.direction, b.content_type, b.original_bytes, \
+                                        b.truncated, b.body_hash, b.block_offset, b.body_offset, b.body_len, \
+                                        blocks.disk_len, blocks.raw_len";
+pub(super) const INDEX_FROM: &str =
+    "event_body_blobs AS b JOIN body_blocks AS blocks ON blocks.block_offset = b.block_offset";
 
 /// Rows are ordered by block so the reader inflates each block once: the
 /// request and response of one exchange are staged together and almost always
 /// share a block.
-const INDEX_ORDER: &str = "ORDER BY block_offset, body_offset";
+const INDEX_ORDER: &str = "ORDER BY b.block_offset, b.body_offset";
 
 impl DbHandle {
     /// Read one archived body, or `None` when the ledger has no such row.
@@ -119,20 +207,26 @@ impl DbHandle {
         direction: BodyDirection,
     ) -> DbResult<Option<StoredBody>> {
         let sql = format!(
-            "SELECT {INDEX_COLUMNS} FROM event_body_blobs
-             WHERE event_id = ?1 AND source_table = ?2 AND direction = ?3 {INDEX_ORDER}"
+            "SELECT {INDEX_COLUMNS} FROM {INDEX_FROM}
+             WHERE b.event_id = ?1 AND b.source_table = ?2 AND b.direction = ?3 {INDEX_ORDER}"
         );
-        let rows = self
-            .body_index_rows(&sql, &[event_id.into(), source_table.into(), direction.as_str().into()])
+        let captured = self
+            .capture_body_rows(
+                vec![(
+                    sql,
+                    vec![event_id.into(), source_table.into(), direction.as_str().into()],
+                )],
+                1,
+            )
             .await?;
-        Ok(self.read_archived(rows).await?.into_iter().next())
+        Ok(self.read_archived(captured).await?.into_iter().next())
     }
 
     /// Read every archived body of one event, in one index query.
     pub async fn read_bodies(&self, event_id: &str) -> DbResult<Vec<StoredBody>> {
-        let sql = format!("SELECT {INDEX_COLUMNS} FROM event_body_blobs WHERE event_id = ?1 {INDEX_ORDER}");
-        let rows = self.body_index_rows(&sql, &[event_id.into()]).await?;
-        self.read_archived(rows).await
+        let sql = format!("SELECT {INDEX_COLUMNS} FROM {INDEX_FROM} WHERE b.event_id = ?1 {INDEX_ORDER}");
+        let captured = self.capture_body_rows(vec![(sql, vec![event_id.into()])], 1).await?;
+        self.read_archived(captured).await
     }
 
     /// Read one direction's archived body for a named set of events.
@@ -168,6 +262,7 @@ impl DbHandle {
         max_total_bytes: usize,
     ) -> DbResult<ArchivedBodies> {
         let mut archived = ArchivedBodies::default();
+        let mut queries = Vec::new();
         // One budget for the whole page, not one per chunk: the chunking is a
         // SQLite parameter limit, not a unit of memory anyone agreed to.
         let mut budget = max_total_bytes;
@@ -177,29 +272,31 @@ impl DbHandle {
                 .collect::<Vec<_>>()
                 .join(", ");
             let sql = format!(
-                "SELECT {INDEX_COLUMNS} FROM event_body_blobs
-                 WHERE source_table = ?1 AND direction = ?2 AND event_id IN ({placeholders})
+                "SELECT {INDEX_COLUMNS} FROM {INDEX_FROM}
+                 WHERE b.source_table = ?1 AND b.direction = ?2 AND b.event_id IN ({placeholders})
                  {INDEX_ORDER}"
             );
             let mut params: Vec<Value> = Vec::with_capacity(chunk.len() + 2);
             params.push(source_table.into());
             params.push(direction.as_str().into());
             params.extend(chunk.iter().map(|event_id| Value::from(*event_id)));
-            let rows = self.body_index_rows(&sql, &params).await?;
-            // Split before reading, so the budget bounds what is inflated and
-            // held rather than what is thrown away afterwards.
-            let mut affordable = Vec::with_capacity(rows.len());
-            for row in rows {
-                let cost = row.reference.len as usize;
-                if cost > budget {
-                    archived.truncated_rows += 1;
-                    continue;
-                }
-                budget -= cost;
-                affordable.push(row);
-            }
-            archived.bodies.extend(self.read_archived(affordable).await?);
+            queries.push((sql, params));
         }
+        let mut captured = self.capture_body_rows(queries, event_ids.len()).await?;
+        // Split before reading, so the budget bounds what is inflated and
+        // held rather than what is thrown away afterwards.
+        let mut affordable = Vec::with_capacity(captured.rows.len());
+        for row in captured.rows.drain(..) {
+            let cost = row.reference.len as usize;
+            if cost > budget {
+                archived.truncated_rows += 1;
+                continue;
+            }
+            budget -= cost;
+            affordable.push(row);
+        }
+        captured.rows = affordable;
+        archived.bodies.extend(self.read_archived(captured).await?);
         Ok(archived)
     }
 
@@ -223,108 +320,44 @@ impl DbHandle {
             );
             return Err(error);
         };
-        // The cached reader is not reset here. Retention replaces the
-        // archive file, and `read_archived_blocking` notices that for every
-        // handle rather than only for the one that asked -- the handles that
-        // most need noticing are in the other process.
         writer.retain_bodies_since(cutoff).await
     }
 
-    async fn body_index_rows(&self, sql: &str, params: &[Value]) -> DbResult<Vec<IndexRow>> {
-        self.body_index_values(sql, params)
-            .await?
-            .iter()
-            .map(index_row)
-            .collect()
-    }
-
-    /// The raw JSON rows of an index query, for a caller that selects more
-    /// than [`INDEX_COLUMNS`] and reads the rest of each row itself.
-    ///
-    /// The rows are taken out of the decoded value rather than cloned: this is
-    /// the interactive per-event read path as well as the export's, and a
-    /// session's worth of index rows is not worth a second copy that is
-    /// dropped one line later.
-    pub(super) async fn body_index_values(&self, sql: &str, params: &[Value]) -> DbResult<Vec<Value>> {
-        let raw = self.query(sql, params).await?;
-        let mut value: Value =
-            serde_json::from_str(&raw).map_err(|error| format!("body index rows were not decodable: {error}"))?;
-        match value.get_mut("rows").map(Value::take) {
-            Some(Value::Array(rows)) => Ok(rows),
-            _ => Err("body index query returned no rows array".to_string()),
-        }
+    async fn capture_body_rows(
+        &self,
+        queries: Vec<super::DbQueryOwned>,
+        requested_ids: usize,
+    ) -> DbResult<CapturedBodies> {
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        self.inner
+            .reader_tx
+            .send(super::ReadRequest::CaptureBodies {
+                queries,
+                requested_ids,
+                reply,
+            })
+            .map_err(|error| format!("db reader worker closed: {error}"))?;
+        rx.await
+            .map_err(|error| format!("db reader worker dropped archive capture reply: {error}"))?
+            .map(|observed| self.take_observed(observed))
     }
 
     /// Resolve index rows to bytes on a blocking thread: inflating a block is
     /// CPU work on a file, and neither belongs on the async runtime.
-    async fn read_archived(&self, rows: Vec<IndexRow>) -> DbResult<Vec<StoredBody>> {
-        if rows.is_empty() {
-            return Ok(Vec::new());
-        }
+    async fn read_archived(&self, captured: CapturedBodies) -> DbResult<Vec<StoredBody>> {
         let handle = self.clone();
-        tokio::task::spawn_blocking(move || handle.read_archived_blocking(rows))
+        tokio::task::spawn_blocking(move || handle.read_archived_blocking(captured))
             .await
             .map_err(|error| format!("session body archive read task failed: {error}"))?
     }
 
-    fn read_archived_blocking(&self, rows: Vec<IndexRow>) -> DbResult<Vec<StoredBody>> {
-        self.with_archive_reader(|reader| rows.into_iter().map(|row| read_one(reader, row)).collect())
-    }
-
-    /// Take the reader out of its slot, do the work with the lock released,
-    /// and put it back. The lock guards the cached reader, not the file:
-    /// holding it across the inflate would make one slow read block every
-    /// other one.
-    ///
-    /// Everything that resolves a `BodyRef` goes through here, so the archive
-    /// is opened once per batch and each block inflates once for rows given in
-    /// archive order -- and so the staleness check below is not something a
-    /// new caller has to remember.
-    ///
-    /// Blocking: the caller is already on a blocking thread.
-    pub(super) fn with_archive_reader<T>(&self, work: impl FnOnce(&BodyLogReader) -> DbResult<T>) -> DbResult<T> {
-        let cached = self.take_archive_reader();
-        let reader = match cached {
-            // A cached reader that is still on the archive, which is every
-            // read but the first one after a retention.
-            //
-            // This handle may be an external reader in the service, watching
-            // a ledger `capsem-process` owns. That process compacts the
-            // archive when a persistent VM stops, by renaming the new file
-            // over the old one, and this handle's descriptor stays on the old
-            // inode -- where every surviving block has moved and the index it
-            // is about to be asked with names the new offsets. Without this
-            // check its next read returns another body's bytes and fails the
-            // hash comparison below: correct, in that nothing wrong is
-            // served, and useless, in that the body is there and readable.
-            //
-            // One `stat` per read batch, against the file identity the reader
-            // recorded when it opened, so the block cursor survives
-            // everything except an actual replacement. Keying it to the
-            // ledger's own change signal instead would throw that cache away
-            // on every commit during a live session.
-            Some(reader) if !reader.file_was_replaced() => reader,
-            _ => open_archive(&crate::writer::archive_path_for_db(&self.inner.path))?,
-        };
-        let done = work(&reader);
-        self.put_archive_reader(reader);
-        done
-    }
-
-    fn take_archive_reader(&self) -> Option<BodyLogReader> {
+    fn read_archived_blocking(&self, captured: CapturedBodies) -> DbResult<Vec<StoredBody>> {
+        let CapturedBodies { reader, rows } = captured;
+        let result = rows.into_iter().map(|row| read_one(&reader, row)).collect();
         self.inner
-            .archive_reader
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .take()
-    }
-
-    fn put_archive_reader(&self, reader: BodyLogReader) {
-        *self
-            .inner
-            .archive_reader
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) = Some(reader);
+            .archive_blocks_inflated
+            .fetch_add(reader.blocks_inflated(), std::sync::atomic::Ordering::Relaxed);
+        result
     }
 
     /// Drop the cached archive reader, so the next read opens the file again.
@@ -332,23 +365,14 @@ impl DbHandle {
     /// Test-only: production discards a stale reader by noticing the archive
     /// was replaced, which needs no one to remember to call anything.
     #[cfg(test)]
-    pub(crate) fn archive_reader_reset(&self) {
-        *self
-            .inner
-            .archive_reader
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) = None;
-    }
+    pub(crate) fn archive_reader_reset(&self) {}
 
     /// How many blocks this handle's reader has inflated.
     #[cfg(test)]
     pub(crate) fn archive_blocks_inflated_for_tests(&self) -> u64 {
         self.inner
-            .archive_reader
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .as_ref()
-            .map_or(0, BodyLogReader::blocks_inflated)
+            .archive_blocks_inflated
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -397,7 +421,7 @@ pub(super) fn read_one(reader: &BodyLogReader, row: IndexRow) -> DbResult<Stored
 
 /// Resolve one index row to its bytes, keeping the two failure kinds apart.
 pub(super) fn read_one_checked(reader: &BodyLogReader, row: IndexRow) -> Result<StoredBody, BodyFault> {
-    let bytes = reader.read(row.reference).map_err(|error| {
+    let bytes = reader.read_bounded(row.reference, row.extent).map_err(|error| {
         let message = format!(
             "session body archive could not resolve {}/{} of event {}: {error}",
             row.source_table,
@@ -439,40 +463,156 @@ pub(super) fn read_one_checked(reader: &BodyLogReader, row: IndexRow) -> Result<
     })
 }
 
-fn open_archive(path: &Path) -> DbResult<BodyLogReader> {
-    BodyLogReader::open(path)
-        .map_err(|error| format!("session body archive {} could not be opened: {error}", path.display()))
+pub(super) fn capture_body_rows(
+    conn: &Connection,
+    db_path: &std::path::Path,
+    queries: Vec<super::DbQueryOwned>,
+    requested_ids: usize,
+) -> DbResult<CapturedBodies> {
+    if requested_ids > INTERACTIVE_CAPTURE_MAX_IDS {
+        return Err(format!(
+            "archive capture requested {requested_ids} ids; limit is {INTERACTIVE_CAPTURE_MAX_IDS}"
+        ));
+    }
+    let deadline = Instant::now() + INTERACTIVE_CAPTURE_DEADLINE;
+    let archive_lock = lock::acquire_existing_until(
+        &crate::writer::archive_lock_path_for_db(db_path),
+        LockMode::Shared,
+        deadline,
+    )
+    .map_err(|error| format!("acquire archive capture lock: {error}"))?;
+    let sql_deadline = ArchiveSqlDeadline::install(conn, deadline);
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| format!("begin archive capture snapshot: {error}"))?;
+    let state = crate::schema::archive_state(&tx).map_err(|error| format!("read archive_state: {error}"))?;
+    let directory = ContainedDir::open_root(&crate::writer::archive_path_for_db(db_path))
+        .and_then(|directory| {
+            directory.validate_private()?;
+            Ok(directory)
+        })
+        .map_err(|error| format!("open archive generation directory: {error}"))?;
+    let reader = BodyLogReader::open_generation(&directory, state.header, state.committed_end)
+        .map_err(|error| format!("open captured archive generation: {error}"))?;
+    drop(archive_lock);
+    pause_archive_capture_for_tests(db_path);
+
+    const MAX_CAPTURED_ROWS: usize = 10_000;
+    let mut captured = Vec::new();
+    let mut metadata_bytes = 0usize;
+    for (sql, params) in queries {
+        sql_deadline.check("archive metadata capture")?;
+        let mut statement = tx.prepare(&sql).map_err(|error| error.to_string())?;
+        let owned = sqlite_params(&params);
+        let refs: Vec<&dyn rusqlite::types::ToSql> = owned.iter().map(|value| value.as_ref()).collect();
+        let mut rows = statement.query(refs.as_slice()).map_err(|error| error.to_string())?;
+        while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+            if captured.len() == MAX_CAPTURED_ROWS {
+                return Err(format!("archive capture exceeds {MAX_CAPTURED_ROWS} rows"));
+            }
+            let index = index_row_sql(row)?;
+            metadata_bytes = checked_interactive_metadata_bytes(metadata_bytes, index_metadata_bytes(&index))?;
+            captured.push(index);
+        }
+    }
+    tx.commit()
+        .map_err(|error| format!("commit archive capture snapshot: {error}"))?;
+    Ok(CapturedBodies { reader, rows: captured })
 }
 
-pub(super) fn index_row(row: &Value) -> DbResult<IndexRow> {
-    let text = |index: usize| -> DbResult<String> {
-        row.get(index)
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| format!("body index row is missing column {index}"))
-    };
-    let number = |index: usize| -> DbResult<u64> {
-        row.get(index)
-            .and_then(Value::as_u64)
-            .ok_or_else(|| format!("body index row is missing column {index}"))
-    };
-    let direction_text = text(2)?;
+pub(super) fn checked_interactive_metadata_bytes(current: usize, additional: usize) -> DbResult<usize> {
+    let next = current
+        .checked_add(additional)
+        .ok_or_else(|| "archive capture metadata size overflow".to_string())?;
+    if next > INTERACTIVE_CAPTURE_MAX_METADATA_BYTES {
+        return Err(format!(
+            "archive capture metadata exceeds {INTERACTIVE_CAPTURE_MAX_METADATA_BYTES} bytes"
+        ));
+    }
+    Ok(next)
+}
+
+fn index_metadata_bytes(index: &IndexRow) -> usize {
+    std::mem::size_of::<IndexRow>()
+        + index.event_id.len()
+        + index.source_table.len()
+        + index.content_type.as_ref().map_or(0, String::len)
+        + index.body_hash.len()
+}
+
+pub(super) fn sqlite_params(params: &[Value]) -> Vec<Box<dyn rusqlite::types::ToSql>> {
+    params
+        .iter()
+        .map(|value| -> Box<dyn rusqlite::types::ToSql> {
+            match value {
+                Value::Null => Box::new(rusqlite::types::Null),
+                Value::Bool(value) => Box::new(i64::from(*value)),
+                Value::Number(value) => value.as_i64().map_or_else(
+                    || Box::new(value.as_f64()) as Box<dyn rusqlite::types::ToSql>,
+                    |v| Box::new(v),
+                ),
+                Value::String(value) => Box::new(value.clone()),
+                Value::Array(_) | Value::Object(_) => Box::new(rusqlite::types::Null),
+            }
+        })
+        .collect()
+}
+
+pub(super) fn index_row_sql(row: &Row<'_>) -> DbResult<IndexRow> {
+    let direction_text = bounded_sql_text(row, 2, 32)?;
     let direction = BodyDirection::parse(&direction_text)
         .ok_or_else(|| format!("body index row has unknown direction {direction_text}"))?;
-    let len = u32::try_from(number(9)?).map_err(|_| "body index row has an unreadable length".to_string())?;
-    let offset = u32::try_from(number(8)?).map_err(|_| "body index row has an unreadable offset".to_string())?;
+    let block_offset = unsigned(row, 7, "block offset")?;
+    let body_offset = u32::try_from(unsigned(row, 8, "body offset")?)
+        .map_err(|_| "body index row has an unreadable offset".to_string())?;
+    let body_len = u32::try_from(unsigned(row, 9, "body length")?)
+        .map_err(|_| "body index row has an unreadable length".to_string())?;
+    let raw_len = u32::try_from(unsigned(row, 11, "block raw extent")?)
+        .map_err(|_| "body index row has an unreadable raw extent".to_string())?;
     Ok(IndexRow {
-        event_id: text(0)?,
-        source_table: text(1)?,
+        event_id: bounded_sql_text(row, 0, 256)?,
+        source_table: bounded_sql_text(row, 1, 256)?,
         direction,
-        content_type: row.get(3).and_then(Value::as_str).map(str::to_string),
-        original_bytes: number(4)?,
-        truncated: number(5)? != 0,
-        body_hash: text(6)?,
+        content_type: bounded_optional_sql_text(row, 3, 64 * 1024)?,
+        original_bytes: unsigned(row, 4, "original byte count")?,
+        truncated: row.get::<_, i64>(5).map_err(|error| error.to_string())? != 0,
+        body_hash: bounded_sql_text(row, 6, 256)?,
         reference: BodyRef {
-            block_offset: number(7)?,
-            offset,
-            len,
+            block_offset,
+            offset: body_offset,
+            len: body_len,
+        },
+        extent: BlockExtent {
+            disk_len: unsigned(row, 10, "block disk extent")?,
+            raw_len,
         },
     })
+}
+
+fn bounded_sql_text(row: &Row<'_>, index: usize, max: usize) -> DbResult<String> {
+    match row.get_ref(index).map_err(|error| error.to_string())? {
+        rusqlite::types::ValueRef::Text(bytes) if bytes.len() <= max => std::str::from_utf8(bytes)
+            .map(str::to_owned)
+            .map_err(|error| format!("body index column {index} is not UTF-8: {error}")),
+        rusqlite::types::ValueRef::Text(bytes) => Err(format!(
+            "body index column {index} exceeds its {max}-byte bound: {} bytes",
+            bytes.len()
+        )),
+        value => Err(format!(
+            "body index column {index} is {:?}, not text",
+            value.data_type()
+        )),
+    }
+}
+
+fn bounded_optional_sql_text(row: &Row<'_>, index: usize, max: usize) -> DbResult<Option<String>> {
+    match row.get_ref(index).map_err(|error| error.to_string())? {
+        rusqlite::types::ValueRef::Null => Ok(None),
+        _ => bounded_sql_text(row, index, max).map(Some),
+    }
+}
+
+fn unsigned(row: &Row<'_>, index: usize, field: &str) -> DbResult<u64> {
+    let value: i64 = row.get(index).map_err(|error| error.to_string())?;
+    u64::try_from(value).map_err(|_| format!("body index row has a negative {field}"))
 }

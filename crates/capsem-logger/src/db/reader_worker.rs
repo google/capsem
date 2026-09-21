@@ -129,6 +129,30 @@ pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
                 }
                 let _ = reply.send(result);
             }
+            ReadRequest::CaptureBodies {
+                queries,
+                requested_ids,
+                reply,
+            } => {
+                let result = observe_change(&reader).and_then(|observed| {
+                    super::bodies::capture_body_rows(reader.connection(), &path, queries, requested_ids).map(|value| {
+                        Observed {
+                            changed: commit(&reader, observed),
+                            value,
+                        }
+                    })
+                });
+                let _ = reply.send(result);
+            }
+            ReadRequest::CaptureWarc { reply } => {
+                let result = observe_change(&reader).and_then(|observed| {
+                    super::warc_export::capture_warc(reader.connection(), &path).map(|value| Observed {
+                        changed: commit(&reader, observed),
+                        value,
+                    })
+                });
+                let _ = reply.send(result);
+            }
             #[cfg(test)]
             ReadRequest::Introspect { reply } => {
                 let result = reader

@@ -4,8 +4,6 @@
 //! whose block survived reads back byte for byte at its new offset, and a body
 //! whose block went away leaves no row behind pointing at where it used to be.
 
-use std::os::unix::fs::PermissionsExt;
-
 use super::*;
 use crate::db::BodyDirection;
 use crate::writer::archive_path_for_db;
@@ -50,7 +48,7 @@ async fn blocks(db: &DbHandle) -> Vec<(i64, String)> {
 }
 
 fn archive_len(db_path: &std::path::Path) -> u64 {
-    std::fs::metadata(archive_path_for_db(db_path))
+    std::fs::metadata(super::bodies::archive_path(db_path))
         .expect("the session archive exists")
         .len()
 }
@@ -62,6 +60,105 @@ async fn foreign_key_violations(db: &DbHandle) -> usize {
             .expect("run the foreign key check"),
     );
     value["rows"].as_array().expect("check rows").len()
+}
+
+async fn wait_for_capture(reached: std::sync::mpsc::Receiver<()>) {
+    tokio::task::spawn_blocking(move || reached.recv_timeout(std::time::Duration::from_secs(5)))
+        .await
+        .expect("capture wait task")
+        .expect("capture reached the generation-pinned point");
+}
+
+/// The SQL snapshot and open descriptor remain a matched G pair after H is
+/// published and G is unlinked. This is the schedule that path reopening
+/// cannot make safe.
+#[tokio::test]
+async fn a_pinned_body_capture_survives_publication_and_unlink() {
+    let p = temp_db_path("retention-pinned-body");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
+    let writer = DbHandle::open(&p).expect("open writer");
+    write_block(&writer, "0000000000ab", r#"{"old":1}"#).await;
+    write_block(&writer, "0000000000cd", r#"{"new":2}"#).await;
+    let sealed = blocks(&writer).await;
+    let reader = DbHandle::open_external_reader(&p).expect("open reader");
+    let (reached, resume) = crate::db::bodies::pause_next_archive_capture_for_tests(&p);
+    let read = tokio::spawn(async move {
+        reader
+            .read_body("0000000000cd", "security_rule_events", BodyDirection::Payload)
+            .await
+    });
+    wait_for_capture(reached).await;
+    writer.retain_bodies_since(&sealed[1].1).await.expect("publish H");
+    resume.send(()).expect("resume G capture");
+    let body = read
+        .await
+        .expect("read task")
+        .expect("captured read")
+        .expect("survivor");
+    assert_eq!(body.bytes, br#"{"new":2}"#);
+}
+
+/// Parameter chunking stays inside one snapshot. Publication between capture
+/// and materialization cannot make later chunks switch to H.
+#[tokio::test]
+async fn a_chunked_capture_uses_one_generation_snapshot() {
+    let p = temp_db_path("retention-pinned-chunks");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
+    let writer = DbHandle::open(&p).expect("open writer");
+    write_block(&writer, "0000000000ab", r#"{"old":1}"#).await;
+    write_block(&writer, "0000000000cd", r#"{"new":2}"#).await;
+    let sealed = blocks(&writer).await;
+    let reader = DbHandle::open_external_reader(&p).expect("open reader");
+    let (reached, resume) = crate::db::bodies::pause_next_archive_capture_for_tests(&p);
+    let read = tokio::spawn(async move {
+        let mut ids = (0..998).map(|i| format!("{i:012x}")).collect::<Vec<_>>();
+        ids.push("0000000000cd".into());
+        let refs = ids.iter().map(String::as_str).collect::<Vec<_>>();
+        reader
+            .read_bodies_for_events(&refs, "security_rule_events", BodyDirection::Payload, 1024)
+            .await
+    });
+    wait_for_capture(reached).await;
+    writer.retain_bodies_since(&sealed[1].1).await.expect("publish H");
+    resume.send(()).expect("resume chunked capture");
+    let archived = read.await.expect("read task").expect("captured read");
+    assert_eq!(archived.truncated_rows, 0);
+    assert_eq!(archived.bodies.len(), 3, "each query chunk is materialized from G");
+    let mut payloads = archived.bodies.into_iter().map(|body| body.bytes).collect::<Vec<_>>();
+    payloads.sort();
+    assert_eq!(
+        payloads,
+        vec![
+            br#"{"new":2}"#.to_vec(),
+            br#"{"new":2}"#.to_vec(),
+            br#"{"old":1}"#.to_vec()
+        ]
+    );
+}
+
+/// WARC metadata is fully captured from G before output begins. Publishing H
+/// and unlinking G while the capture is paused induces no skip and no hash
+/// mismatch.
+#[tokio::test]
+async fn a_pinned_warc_capture_survives_publication_and_unlink() {
+    let p = temp_db_path("retention-pinned-warc");
+    crate::writer::close_blocks_at_every_flush_for_tests(&p);
+    let writer = DbHandle::open(&p).expect("open writer");
+    write_block(&writer, "0000000000ab", r#"{"old":1}"#).await;
+    write_block(&writer, "0000000000cd", r#"{"new":2}"#).await;
+    let sealed = blocks(&writer).await;
+    let reader = DbHandle::open_external_reader(&p).expect("open reader");
+    let reader_path = p.clone();
+    let (reached, resume) = crate::db::bodies::pause_next_archive_capture_for_tests(&p);
+    let export = tokio::spawn(async move { super::warc_export::export_to_bytes(&reader, &reader_path).await });
+    wait_for_capture(reached).await;
+    writer.retain_bodies_since(&sealed[1].1).await.expect("publish H");
+    resume.send(()).expect("resume WARC capture");
+    let (summary, bytes) = export.await.expect("export task");
+    assert!(summary.skipped.is_empty(), "publication must induce no WARC skips");
+    let bodies = super::warc_export::body_members(&bytes);
+    assert_eq!(bodies.len(), 2);
+    assert_eq!(super::warc_export::block(&bodies[1]), br#"{"new":2}"#);
 }
 
 /// A handle that reads a ledger another process writes must not rewrite its
@@ -210,10 +307,7 @@ async fn writes_after_retention_append_to_the_compacted_archive() {
 /// holds.
 #[tokio::test]
 async fn a_failed_compaction_leaves_the_index_and_the_bodies_alone() {
-    // Its own directory, because this test makes the directory unwritable and
-    // the shared temp directory is not this test's to seal.
-    let directory = tempfile::tempdir().expect("a private directory");
-    let p = directory.path().join("session.db");
+    let p = temp_db_path("retention-sync-failure");
     crate::writer::close_blocks_at_every_flush_for_tests(&p);
     let db = DbHandle::open(&p).expect("open handle");
     write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
@@ -221,22 +315,15 @@ async fn a_failed_compaction_leaves_the_index_and_the_bodies_alone() {
     let sealed = blocks(&db).await;
     let before = archive_len(&p);
 
-    // The compaction writes its replacement as a sibling of the archive, so a
-    // directory it cannot create one in fails it before anything is touched.
-    let sealed_directory = directory.path();
-    let original = std::fs::metadata(sealed_directory)
-        .expect("stat the directory")
-        .permissions();
-    std::fs::set_permissions(sealed_directory, std::fs::Permissions::from_mode(0o500)).expect("seal the directory");
-    let error = db.retain_bodies_since(&sealed[1].1).await.expect_err(
-        "a compaction that cannot write its replacement must fail; \
-         if this passes, the test is running with rights that ignore the mode",
-    );
-    std::fs::set_permissions(sealed_directory, original).expect("restore the directory");
+    fail_retention_for_path_for_tests(&p, RetentionFault::CandidateSync);
+    let error = db
+        .retain_bodies_since(&sealed[1].1)
+        .await
+        .expect_err("a candidate that did not sync must not publish");
 
     assert!(
-        error.contains("could not be compacted"),
-        "the failure must say the archive was not rewritten: {error}"
+        error.contains("candidate-sync") && error.contains("not published"),
+        "the failure must name the pre-publication phase: {error}"
     );
     assert_eq!(blocks(&db).await, sealed, "no index row moved or went away");
     assert_eq!(archive_len(&p), before, "and no byte left the archive");
@@ -259,7 +346,7 @@ async fn a_failed_index_transaction_leaves_the_archive_and_the_index_untouched()
     write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
     write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
     let sealed = blocks(&db).await;
-    let archive_before = std::fs::read(archive_path_for_db(&p)).expect("read the archive");
+    let archive_before = std::fs::read(super::bodies::archive_path(&p)).expect("read the archive");
 
     fail_retention_for_path_for_tests(&p, RetentionFault::IndexTransaction);
     let error = db
@@ -268,11 +355,11 @@ async fn a_failed_index_transaction_leaves_the_archive_and_the_index_untouched()
         .expect_err("the injected failure must fail the retention");
 
     assert!(
-        error.contains("left the archive") && error.contains("untouched"),
-        "the failure must say the archive was not replaced: {error}"
+        error.contains("sqlite-transaction") && error.contains("not published"),
+        "the failure must say publication did not happen: {error}"
     );
     assert_eq!(
-        std::fs::read(archive_path_for_db(&p)).expect("read the archive"),
+        std::fs::read(super::bodies::archive_path(&p)).expect("read the archive"),
         archive_before,
         "the archive is still the pre-retention file, byte for byte"
     );
@@ -285,76 +372,13 @@ async fn a_failed_index_transaction_leaves_the_archive_and_the_index_untouched()
             .expect("every body is still archived");
         assert_eq!(body.bytes, payload.as_bytes(), "{event_id} still reads");
     }
-    // This ledger's own staging only: the temp directory is shared, and other
-    // tests have their own retentions in flight.
-    let staging_prefix = format!(
-        ".{}",
-        archive_path_for_db(&p)
-            .file_name()
-            .expect("the archive has a name")
-            .to_string_lossy()
-    );
-    assert!(
-        std::fs::read_dir(p.parent().expect("a parent"))
-            .expect("list the directory")
-            .flatten()
-            .all(|entry| !entry.file_name().to_string_lossy().starts_with(&staging_prefix)),
-        "the staged replacement is removed with the staging"
-    );
-}
-
-/// The one syscall the ordering cannot make atomic. The index has committed
-/// the new offsets and the rename did not happen, so the file still holds the
-/// old ones -- and the remap is reversed, which puts the ledger back to
-/// readable rather than merely loud.
-#[tokio::test]
-async fn a_failed_rename_puts_the_old_offsets_back_and_every_body_still_reads() {
-    let p = temp_db_path("retention-rename-failure");
-    crate::writer::close_blocks_at_every_flush_for_tests(&p);
-    let db = DbHandle::open(&p).expect("open handle");
-    write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
-    write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
-    let sealed = blocks(&db).await;
-    let archive_before = std::fs::read(archive_path_for_db(&p)).expect("read the archive");
-
-    fail_retention_for_path_for_tests(&p, RetentionFault::Rename);
-    let error = db
-        .retain_bodies_since(&sealed[1].1)
-        .await
-        .expect_err("the injected failure must fail the retention");
-
-    assert!(
-        error.contains("the index was put back"),
-        "the failure must say the ledger was restored, not merely that it broke: {error}"
-    );
     assert_eq!(
-        std::fs::read(archive_path_for_db(&p)).expect("read the archive"),
-        archive_before,
-        "the rename never happened, so the archive is the old file"
+        std::fs::read_dir(archive_path_for_db(&p))
+            .expect("list generations")
+            .count(),
+        1,
+        "the unpublished candidate is removed"
     );
-    assert_eq!(
-        blocks(&db).await,
-        vec![sealed[1].clone()],
-        "the surviving block is back at the offset the unreplaced file still holds it at"
-    );
-    // The point of the restore: this reads, rather than failing its hash check
-    // against bytes that belong to the block the compaction would have dropped.
-    let kept = db
-        .read_body("0000000000cd", "security_rule_events", BodyDirection::Payload)
-        .await
-        .expect("read the kept body")
-        .expect("the newer body is still archived");
-    assert_eq!(kept.bytes, br#"{"new":2}"#);
-    // Its rows are gone and its bytes are unreferenced in the file, which is
-    // the archive's documented cost -- and it was the body retention was asked
-    // to forget, so this is the intended outcome reached by an unintended road.
-    assert!(db
-        .read_body("0000000000ab", "security_rule_events", BodyDirection::Payload)
-        .await
-        .expect("read the dropped body")
-        .is_none());
-    assert_eq!(foreign_key_violations(&db).await, 0);
-    db.ready().await.expect("a restored ledger is still a ready ledger");
 }
 
 /// The service reads session ledgers `capsem-process` writes, and holds its
@@ -464,44 +488,6 @@ async fn a_retention_leaves_no_orphan_index_rows() {
     );
 }
 
-/// The unrecoverable state, and the only response to it: stop archiving.
-///
-/// The rename failed *and* the index could not be put back, so the ledger
-/// names offsets the file does not have. Appending more bodies into that
-/// archive would add rows to a ledger whose existing ones already lie, and a
-/// later reopen would carry the disagreement forward.
-#[tokio::test]
-async fn an_unrecoverable_retention_takes_the_archive_out_of_service() {
-    let p = temp_db_path("retention-unrecoverable");
-    crate::writer::close_blocks_at_every_flush_for_tests(&p);
-    let db = DbHandle::open(&p).expect("open handle");
-    write_block(&db, "0000000000ab", r#"{"old":1}"#).await;
-    write_block(&db, "0000000000cd", r#"{"new":2}"#).await;
-    let sealed = blocks(&db).await;
-
-    fail_retention_for_path_for_tests(&p, RetentionFault::Rename);
-    fail_retention_for_path_for_tests(&p, RetentionFault::Restore);
-    let error = db
-        .retain_bodies_since(&sealed[1].1)
-        .await
-        .expect_err("a retention that cannot be undone must fail");
-    assert!(
-        error.contains("no further bodies will be stored"),
-        "the failure must say the archive is out of service: {error}"
-    );
-
-    // Written after the archive gave up: accepted as a ledger row, with no
-    // body archived, rather than appended into a file the index disagrees with.
-    write_block(&db, "0000000000ef", r#"{"after":3}"#).await;
-    assert!(
-        db.read_body("0000000000ef", "security_rule_events", BodyDirection::Payload)
-            .await
-            .expect("read the later body")
-            .is_none(),
-        "a retired archive stores no bodies, and says so through the drop counter"
-    );
-}
-
 /// Reopening a ledger whose index outran its archive.
 ///
 /// This is what a crash inside retention's one-syscall window leaves behind,
@@ -521,24 +507,16 @@ async fn an_index_naming_bytes_past_the_archive_refuses_to_open() {
     // index still describing what used to be there.
     std::fs::OpenOptions::new()
         .write(true)
-        .open(archive_path_for_db(&p))
+        .open(super::bodies::archive_path(&p))
         .expect("open the archive")
         .set_len(capsem_archive::FILE_HEADER_BYTES as u64)
         .expect("truncate to the header");
 
-    let db = DbHandle::open(&p).expect("the ledger still opens; it is the archive that is refused");
-    write_block(&db, "0000000000cd", r#"{"after":2}"#).await;
-
+    let error = DbHandle::open(&p)
+        .err()
+        .expect("a writer must fail closed before readiness");
     assert!(
-        db.read_body("0000000000cd", "security_rule_events", BodyDirection::Payload)
-            .await
-            .expect("read the new body")
-            .is_none(),
-        "a writer that cannot trust the archive must not append into it"
-    );
-    assert_eq!(
-        blocks(&db).await.len(),
-        1,
-        "and must not add a block row beside the one it refused to believe"
+        error.to_string().contains("shorter") || error.to_string().contains("generation"),
+        "the refusal names the invalid authoritative generation: {error}"
     );
 }

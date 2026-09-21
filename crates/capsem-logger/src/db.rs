@@ -173,6 +173,14 @@ enum ReadRequest {
         cache_valid: bool,
         reply: tokio::sync::oneshot::Sender<DbResult<QueryManyReply>>,
     },
+    CaptureBodies {
+        queries: Vec<DbQueryOwned>,
+        requested_ids: usize,
+        reply: tokio::sync::oneshot::Sender<DbResult<Observed<bodies::CapturedBodies>>>,
+    },
+    CaptureWarc {
+        reply: tokio::sync::oneshot::Sender<DbResult<Observed<warc_export::CapturedWarc>>>,
+    },
     #[cfg(test)]
     Introspect {
         reply: tokio::sync::oneshot::Sender<DbResult<ReaderIntrospection>>,
@@ -209,10 +217,7 @@ struct DbHandleInner {
     reader_join: Mutex<Option<JoinHandle<()>>>,
     writer: Option<Arc<DbWriter>>,
     ready_cache: Mutex<Option<DbResult<()>>>,
-    /// The session's body archive, opened on the first body read and kept for
-    /// its block cursor. `BodyLogReader` is not `Sync`, and one reader per
-    /// handle is also what makes "one inflate for one exchange" true.
-    archive_reader: Mutex<Option<capsem_archive::BodyLogReader>>,
+    archive_blocks_inflated: AtomicU64,
     query_many_cache: Mutex<DbQueryManyCache>,
     read_cache_epoch: AtomicU64,
     session_summary_cache_epoch: AtomicU64,
@@ -297,7 +302,7 @@ impl DbHandle {
                 reader_join: Mutex::new(Some(reader_join)),
                 writer: None,
                 ready_cache: Mutex::new(None),
-                archive_reader: Mutex::new(None),
+                archive_blocks_inflated: AtomicU64::new(0),
                 query_many_cache: Mutex::new(DbQueryManyCache::new()),
                 read_cache_epoch: AtomicU64::new(0),
                 session_summary_cache_epoch: AtomicU64::new(0),

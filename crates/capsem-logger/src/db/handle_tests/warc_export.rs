@@ -6,7 +6,7 @@
 //! still costs one inflate per block.
 
 use std::collections::BTreeSet;
-use std::io::Read;
+use std::io::{Read, Write};
 
 use super::*;
 use crate::db::SkipReason;
@@ -88,6 +88,132 @@ pub(super) async fn export_to_bytes(db: &DbHandle, db_path: &std::path::Path) ->
     let bytes = std::fs::read(&out).expect("read the export back");
     let _ = std::fs::remove_file(&out);
     (summary, bytes)
+}
+
+struct CancelledWriter;
+
+impl Write for CancelledWriter {
+    fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "cancelled test export",
+        ))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+struct HeldWriter {
+    reached: Option<std::sync::mpsc::SyncSender<()>>,
+    resume: Option<std::sync::mpsc::Receiver<()>>,
+}
+
+impl Write for HeldWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if let Some(reached) = self.reached.take() {
+            reached.send(()).unwrap();
+            self.resume.take().unwrap().recv().unwrap();
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn held_writer() -> (
+    HeldWriter,
+    std::sync::mpsc::Receiver<()>,
+    std::sync::mpsc::SyncSender<()>,
+) {
+    let (reached_tx, reached_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+    (
+        HeldWriter {
+            reached: Some(reached_tx),
+            resume: Some(resume_rx),
+        },
+        reached_rx,
+        resume_tx,
+    )
+}
+
+async fn wait_until_held(reached: std::sync::mpsc::Receiver<()>, which: &'static str) {
+    tokio::task::spawn_blocking(move || reached.recv_timeout(std::time::Duration::from_secs(5)))
+        .await
+        .unwrap()
+        .unwrap_or_else(|error| panic!("{which} export did not reach its writer: {error}"));
+}
+
+async fn session_with_one_body(name: &str, event_id: &str) -> DbHandle {
+    let path = temp_db_path(name);
+    let db = DbHandle::open(&path).expect("open handle");
+    db.write(WriteOp::NetEvent(net_event_with_response(
+        event_id,
+        "permit.example",
+        "body",
+    )))
+    .await
+    .expect("write event");
+    db.flush().await.expect("flush");
+    db
+}
+
+#[tokio::test]
+async fn a_second_export_for_one_session_is_rejected_without_a_queue_and_the_permit_is_released() {
+    let first = session_with_one_body("warc-permit-first", "0e0e0e0e0e01").await;
+
+    let (first_writer, first_reached, first_resume) = held_writer();
+    let first_export = {
+        let db = first.clone();
+        tokio::spawn(async move { db.export_warc(first_writer).await })
+    };
+    wait_until_held(first_reached, "first").await;
+    let same_session = first
+        .export_warc(std::io::sink())
+        .await
+        .expect_err("a second export for one session is rejected");
+    assert!(
+        same_session.contains("already active for this session"),
+        "{same_session}"
+    );
+
+    first_resume.send(()).unwrap();
+    first_export.await.unwrap().unwrap();
+    first
+        .export_warc(std::io::sink())
+        .await
+        .expect("the released session permit is immediately reusable");
+}
+
+#[tokio::test]
+async fn a_cancelled_export_releases_its_descriptor_spool_and_capture_lock() {
+    let p = temp_db_path("warc-cancel-release");
+    let db = DbHandle::open(&p).expect("open handle");
+    db.write(WriteOp::NetEvent(net_event_with_response(
+        "0c0c0c0c0c01",
+        "cancel.example",
+        "body",
+    )))
+    .await
+    .expect("write event");
+    db.flush().await.expect("flush");
+
+    let error = db
+        .export_warc(CancelledWriter)
+        .await
+        .expect_err("the output was cancelled");
+    assert!(error.contains("cancelled test export"), "{error}");
+    db.retain_bodies_since("2999-01-01T00:00:00Z")
+        .await
+        .expect("publication immediately acquires EX after cancellation");
+    let generations = std::fs::read_dir(p.with_extension("bodies"))
+        .expect("list archive generations")
+        .count();
+    assert_eq!(generations, 1, "the cancelled capture pins no old generation");
 }
 
 /// The `WARC-Record-ID` header a body of the ledger at `db_path` is exported

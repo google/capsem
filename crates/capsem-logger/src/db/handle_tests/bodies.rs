@@ -12,13 +12,40 @@ use crate::writer::PREVIEW_BYTES;
 use super::correctness::make_correctness_tool_response_model_call;
 
 pub(super) fn archive_path(db_path: &std::path::Path) -> std::path::PathBuf {
-    db_path.with_extension("bodies")
+    let directory = db_path.with_extension("bodies");
+    if !db_path.exists() {
+        return directory;
+    }
+    let Ok(conn) = rusqlite::Connection::open(db_path) else {
+        return directory;
+    };
+    crate::schema::archive_state(&conn).map_or(directory.clone(), |state| {
+        directory.join(state.header.generation_id.file_name())
+    })
 }
 
 pub(super) async fn count(db: &DbHandle, sql: &str) -> i64 {
     query_json(&db.query(sql, &[]).await.expect("count query"))["rows"][0][0]
         .as_i64()
         .expect("count column")
+}
+
+#[test]
+fn interactive_capture_refuses_id_and_metadata_budgets_before_unbounded_work() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    let error = crate::db::bodies::capture_body_rows(&conn, std::path::Path::new("unused.db"), Vec::new(), 10_001)
+        .err()
+        .expect("too many ids are rejected before archive acquisition");
+    assert!(error.contains("limit is 10000"), "{error}");
+
+    let limit = 16 * 1024 * 1024;
+    assert_eq!(
+        crate::db::bodies::checked_interactive_metadata_bytes(limit - 1, 1).unwrap(),
+        limit
+    );
+    assert!(crate::db::bodies::checked_interactive_metadata_bytes(limit, 1)
+        .unwrap_err()
+        .contains("metadata exceeds"));
 }
 
 /// One net event with a response body and nothing else to archive.

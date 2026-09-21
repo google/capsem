@@ -386,6 +386,10 @@ pub struct DbReader {
 }
 
 impl DbReader {
+    pub(crate) fn connection(&self) -> &Connection {
+        &self.conn
+    }
+
     /// Query the most recent N network events, ordered newest first.
     pub fn recent_net_events(&self, limit: usize) -> rusqlite::Result<Vec<NetEvent>> {
         let sql = format!(

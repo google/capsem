@@ -266,12 +266,13 @@ pub(crate) async fn handle_event_bodies(
 const EXPORT_CHANNEL_CHUNKS: usize = 4;
 
 /// The export's writer: each `write` hands a chunk to the response stream and
-/// blocks while the client is behind.
-///
-/// `blocking_send` is correct here because `export_warc` moves its writer onto
-/// a blocking task; this never runs on the async runtime.
+/// waits with a deadline while the client is behind. `export_warc` moves this
+/// writer onto a blocking task, so entering the runtime here cannot block one
+/// of its worker threads.
 struct ExportChannelWriter {
     chunks: tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>,
+    runtime: tokio::runtime::Handle,
+    deadline: std::time::Instant,
 }
 
 /// What a dropped receiver is reported as.
@@ -282,12 +283,29 @@ struct ExportChannelWriter {
 /// constant rather than two literals precisely because a match on a message
 /// written twice is a match that drifts.
 const EXPORT_CLIENT_GONE: &str = "the export client went away";
+const EXPORT_BLOCKED_WRITE: std::time::Duration = std::time::Duration::from_secs(30);
+const EXPORT_TOTAL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 impl std::io::Write for ExportChannelWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.chunks
-            .blocking_send(Ok(Bytes::copy_from_slice(buf)))
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, EXPORT_CLIENT_GONE))?;
+        let remaining = self
+            .deadline
+            .checked_duration_since(std::time::Instant::now())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::TimedOut, "WARC export exceeded 15 minutes"))?;
+        let wait = remaining.min(EXPORT_BLOCKED_WRITE);
+        match self.runtime.block_on(tokio::time::timeout(
+            wait,
+            self.chunks.send(Ok(Bytes::copy_from_slice(buf))),
+        )) {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => return Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, EXPORT_CLIENT_GONE)),
+            Err(_) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "WARC export response was blocked for 30 seconds",
+                ))
+            }
+        }
         Ok(buf.len())
     }
 
@@ -333,14 +351,22 @@ pub(crate) async fn handle_bodies_warc_export(
 
     let (chunks, receiver) = tokio::sync::mpsc::channel(EXPORT_CHANNEL_CHUNKS);
     let vm_id = id.clone();
+    let runtime = tokio::runtime::Handle::current();
     tokio::spawn(async move {
-        match db.export_warc(ExportChannelWriter { chunks }).await {
+        match db
+            .export_warc(ExportChannelWriter {
+                chunks,
+                runtime,
+                deadline: std::time::Instant::now() + EXPORT_TOTAL_DEADLINE,
+            })
+            .await
+        {
             Ok(summary) => info!(
                 route = "/vms/{id}/bodies/export.warc.gz",
                 vm_id = vm_id.as_str(),
                 records = summary.records,
                 bytes_written = summary.bytes_written,
-                skipped = summary.skipped.len(),
+                skipped = summary.skipped_count,
                 "bodies_warc_export"
             ),
             // A client that closes the connection mid-download is the normal

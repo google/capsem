@@ -5,11 +5,13 @@
 //! it -- which URI a body was a capture of, when it happened, and which rows
 //! cannot honestly be described at all.
 //!
-//! One index query, joined to each body's source row, ordered by
-//! `(block_offset, body_offset)`, and the whole walk on one blocking thread
-//! through one `BodyLogReader`. Archive order is what makes the export cost
-//! one inflate per block instead of one per body; anything else would inflate
-//! a block again for every body that happens to sit in it.
+//! One SQLite snapshot is walked in indexed `(block_offset, body_offset, id)`
+//! pages, with each source row resolved by its event-id index. The typed rows
+//! are framed into a bounded private spool before network streaming begins.
+//! The body walk then runs on one blocking thread through one
+//! `BodyLogReader`. Archive order is what makes the export cost one inflate
+//! per block instead of one per body; anything else would inflate a block
+//! again for every body that happens to sit in it.
 //!
 //! **Nothing is invented, and one bad row does not cost the rest.** A body
 //! whose source row is gone has no URI; a row whose timestamp will not parse
@@ -48,15 +50,23 @@
 //! An export is evidence, and evidence that skipped the check the interactive
 //! path performs would be the one copy nobody verified.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
-use std::io::Write;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use capsem_archive::{warc, WarcRecord};
-use serde_json::Value;
+use capsem_archive::{warc, BlockExtent, BodyLogReader, BodyRef, WarcRecord};
+use capsem_foundation::unix::contained::ContainedDir;
+use capsem_foundation::unix::lock::{self, LockMode};
+use rusqlite::{Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 
-use super::bodies::{index_row, read_one_checked, BodyFault, IndexRow, INDEX_COLUMNS};
+use super::bodies::{
+    index_row_sql, read_one_checked, ArchiveSqlDeadline, BodyFault, IndexRow, INDEX_COLUMNS, INDEX_FROM,
+};
 use super::{DbHandle, DbResult};
 
 /// What an export did, and what it could not describe.
@@ -66,9 +76,13 @@ pub struct ExportSummary {
     pub records: u64,
     /// Bytes handed to the writer, gzip members included.
     pub bytes_written: u64,
-    /// Index rows that were not exported, each with why. An empty export and
+    /// Exact number of index rows that were not exported. An empty export and
     /// an export that refused every row are different statements.
+    pub skipped_count: u64,
+    /// A bounded diagnostic sample of rows that were not exported, each with
+    /// why. Exact totals live in `skipped_count` and `skipped_by_reason`.
     pub skipped: Vec<SkippedBody>,
+    skipped_by_reason: BTreeMap<&'static str, u64>,
 }
 
 impl ExportSummary {
@@ -79,12 +93,62 @@ impl ExportSummary {
     /// a reviewer, and "11 bodies omitted, all of them corrupt" is the thing
     /// they need to know before they conclude anything from what is there.
     #[must_use]
-    pub fn counts_by_reason(&self) -> BTreeMap<&'static str, usize> {
-        let mut counts = BTreeMap::new();
-        for body in &self.skipped {
-            *counts.entry(body.reason.label()).or_insert(0) += 1;
+    pub fn counts_by_reason(&self) -> BTreeMap<&'static str, u64> {
+        self.skipped_by_reason.clone()
+    }
+
+    fn record_skip(&mut self, body: SkippedBody) {
+        self.skipped_count += 1;
+        *self.skipped_by_reason.entry(body.reason.label()).or_insert(0) += 1;
+        if self.skipped.len() < MAX_SKIPPED_SAMPLES {
+            self.skipped.push(body);
         }
-        counts
+    }
+}
+
+const MAX_SKIPPED_SAMPLES: usize = 32;
+
+#[derive(Default)]
+struct ActiveWarcExports {
+    sessions: HashSet<PathBuf>,
+}
+
+impl ActiveWarcExports {
+    fn reserve(&mut self, session: &std::path::Path, process_limit: usize) -> DbResult<()> {
+        if self.sessions.contains(session) {
+            return Err("a WARC export is already active for this session".into());
+        }
+        if self.sessions.len() >= process_limit {
+            return Err(format!("the process already has {process_limit} active WARC exports"));
+        }
+        self.sessions.insert(session.to_path_buf());
+        Ok(())
+    }
+}
+
+static ACTIVE_WARC_EXPORTS: LazyLock<Mutex<ActiveWarcExports>> = LazyLock::new(Mutex::default);
+
+struct WarcExportPermit {
+    session: PathBuf,
+}
+
+impl WarcExportPermit {
+    fn acquire(session: &std::path::Path) -> DbResult<Self> {
+        let mut active = ACTIVE_WARC_EXPORTS.lock().unwrap_or_else(|error| error.into_inner());
+        active.reserve(session, active_warc_export_process_limit())?;
+        drop(active);
+        let session = session.to_path_buf();
+        Ok(Self { session })
+    }
+}
+
+impl Drop for WarcExportPermit {
+    fn drop(&mut self) {
+        ACTIVE_WARC_EXPORTS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .sessions
+            .remove(&self.session);
     }
 }
 
@@ -200,6 +264,84 @@ struct ExportRow {
     date_unix_ms: Option<i64>,
 }
 
+pub(super) struct CapturedWarc {
+    reader: BodyLogReader,
+    spool: File,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SpoolRow {
+    event_id: String,
+    source_table: String,
+    direction: String,
+    content_type: Option<String>,
+    original_bytes: u64,
+    truncated: bool,
+    body_hash: String,
+    block_offset: u64,
+    body_offset: u32,
+    body_len: u32,
+    disk_len: u64,
+    raw_len: u32,
+    target_uri: Option<String>,
+    date_text: Option<String>,
+    date_unix_ms: Option<i64>,
+}
+
+impl From<ExportRow> for SpoolRow {
+    fn from(row: ExportRow) -> Self {
+        Self {
+            event_id: row.index.event_id,
+            source_table: row.index.source_table,
+            direction: row.index.direction.as_str().to_string(),
+            content_type: row.index.content_type,
+            original_bytes: row.index.original_bytes,
+            truncated: row.index.truncated,
+            body_hash: row.index.body_hash,
+            block_offset: row.index.reference.block_offset,
+            body_offset: row.index.reference.offset,
+            body_len: row.index.reference.len,
+            disk_len: row.index.extent.disk_len,
+            raw_len: row.index.extent.raw_len,
+            target_uri: row.target_uri,
+            date_text: row.date_text,
+            date_unix_ms: row.date_unix_ms,
+        }
+    }
+}
+
+impl TryFrom<SpoolRow> for ExportRow {
+    type Error = String;
+
+    fn try_from(row: SpoolRow) -> Result<Self, Self::Error> {
+        let direction = super::bodies::BodyDirection::parse(&row.direction)
+            .ok_or_else(|| format!("WARC metadata spool has unknown direction {}", row.direction))?;
+        Ok(Self {
+            index: IndexRow {
+                event_id: row.event_id,
+                source_table: row.source_table,
+                direction,
+                content_type: row.content_type,
+                original_bytes: row.original_bytes,
+                truncated: row.truncated,
+                body_hash: row.body_hash,
+                reference: BodyRef {
+                    block_offset: row.block_offset,
+                    offset: row.body_offset,
+                    len: row.body_len,
+                },
+                extent: BlockExtent {
+                    disk_len: row.disk_len,
+                    raw_len: row.raw_len,
+                },
+            },
+            target_uri: row.target_uri,
+            date_text: row.date_text,
+            date_unix_ms: row.date_unix_ms,
+        })
+    }
+}
+
 /// A body's target URI and its source row's time, per source table.
 ///
 /// The URI is what the body was a capture of. `net_events` and `model_calls`
@@ -212,79 +354,264 @@ struct ExportRow {
 /// ledger archived the body, written in the same format and never absent. The
 /// alternative was to date it from the model call it belongs to, which is a
 /// second join that can miss and would skip a body that is perfectly readable.
-const SOURCE_BRANCHES: &[(&str, &str, &str)] = &[
-    (
-        "net_events",
-        "'https://' || s.domain || COALESCE(s.path, '')",
-        "s.timestamp, NULL",
-    ),
-    ("model_calls", "'https://' || s.provider || s.path", "s.timestamp, NULL"),
-    ("tool_calls", "'capsem://tool/' || s.tool_name", "s.timestamp, NULL"),
-    (
-        "tool_responses",
-        "'capsem://tool-response/' || s.call_id",
-        "b.created_at, NULL",
-    ),
-    ("exec_events", "'capsem://exec/' || s.exec_id", "s.timestamp, NULL"),
-    (
-        "security_rule_events",
-        "'capsem://security/' || s.rule_id",
-        "NULL, s.timestamp_unix_ms",
-    ),
-    (
-        "security_decision_events",
-        "'capsem://security-decision/' || s.actor",
-        "NULL, s.timestamp_unix_ms",
-    ),
-    (
-        "security_ask_events",
-        "'capsem://security-ask/' || s.ask_id",
-        "NULL, s.timestamp_unix_ms",
-    ),
+const WARC_CAPTURE_PAGE_ROWS: i64 = 128;
+const MAX_SPOOL_ROW_BYTES: usize = 64 * 1024;
+const MAX_WARC_SPOOL_BYTES: usize = 256 * 1024 * 1024;
+const MAX_SOURCE_TEXT_BYTES: usize = 64 * 1024;
+const MAX_WARC_EXPORTS_PER_PROCESS: usize = 2;
+const WARC_CAPTURE_DEADLINE: Duration = Duration::from_secs(30);
+
+fn active_warc_export_process_limit() -> usize {
+    #[cfg(test)]
+    {
+        // The Rust harness runs unrelated session fixtures concurrently in
+        // one process. The two-export production limit is proved against a
+        // local registry below rather than coupling otherwise independent
+        // tests through this process-global counter.
+        1_024
+    }
+    #[cfg(not(test))]
+    {
+        MAX_WARC_EXPORTS_PER_PROCESS
+    }
+}
+const SOURCE_TABLES: &[&str] = &[
+    "net_events",
+    "model_calls",
+    "tool_calls",
+    "tool_responses",
+    "exec_events",
+    "security_rule_events",
+    "security_decision_events",
+    "security_ask_events",
 ];
 
-/// One `SELECT` per source table, unioned and then ordered as a whole.
-///
-/// `LEFT JOIN`, not `JOIN`: an inner join would drop a body whose source row
-/// is gone, and the export would report a count that quietly excluded it. The
-/// left join brings it back with a NULL URI, which is what gets counted as a
-/// skip with a reason.
-///
-/// And joined to *one* source row per event, the first by id. Several rows can
-/// share an event's body: every rule a request matched, the pending ask and
-/// its resolution. A plain join on `event_id` turned one archived body into a
-/// record per such row -- the same bytes under the same id, which WARC forbids
-/// and which counted each body more than once. The first row is the one that
-/// raised it: the first rule matched, the ask as it was raised.
-///
-/// `source_table` is CHECK-constrained to exactly the tables listed here, and
-/// the coverage test parses that CHECK, so the union covers every row.
-fn export_sql() -> String {
-    let branches: Vec<String> = SOURCE_BRANCHES
-        .iter()
-        .map(|(table, uri, dates)| {
-            format!(
-                "SELECT {columns}, {uri} AS target_uri, {dates}
-                 FROM event_body_blobs AS b
-                 LEFT JOIN (
-                     SELECT * FROM {table}
-                     WHERE id IN (SELECT MIN(id) FROM {table} GROUP BY event_id)
-                 ) AS s ON s.event_id = b.event_id
-                 WHERE b.source_table = '{table}'",
-                columns = INDEX_COLUMNS
-                    .split(", ")
-                    .map(|column| format!("b.{column}"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            )
-        })
-        .collect();
-    // Archive order over the whole union, not per branch: one block holds
-    // bodies from several tables, and it must inflate once.
+fn warc_page_sql() -> String {
     format!(
-        "SELECT * FROM ({}) ORDER BY block_offset, body_offset",
-        branches.join(" UNION ALL ")
+        "SELECT {INDEX_COLUMNS}, b.id, b.created_at FROM {INDEX_FROM}
+         WHERE b.block_offset > ?1
+            OR (b.block_offset = ?1 AND b.body_offset > ?2)
+            OR (b.block_offset = ?1 AND b.body_offset = ?2 AND b.id > ?3)
+         ORDER BY b.block_offset, b.body_offset, b.id LIMIT ?4"
     )
+}
+
+pub(super) fn capture_warc(conn: &Connection, db_path: &std::path::Path) -> DbResult<CapturedWarc> {
+    let deadline = std::time::Instant::now() + WARC_CAPTURE_DEADLINE;
+    let archive_lock = lock::acquire_existing_until(
+        &crate::writer::archive_lock_path_for_db(db_path),
+        LockMode::Shared,
+        (std::time::Instant::now() + Duration::from_secs(5)).min(deadline),
+    )
+    .map_err(|error| format!("acquire WARC archive capture lock: {error}"))?;
+    let sql_deadline = ArchiveSqlDeadline::install(conn, deadline);
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| format!("begin WARC capture snapshot: {error}"))?;
+    let state = crate::schema::archive_state(&tx).map_err(|error| format!("read archive_state: {error}"))?;
+    let directory = ContainedDir::open_root(&crate::writer::archive_path_for_db(db_path))
+        .and_then(|directory| {
+            directory.validate_private()?;
+            Ok(directory)
+        })
+        .map_err(|error| format!("open WARC generation directory: {error}"))?;
+    let reader = BodyLogReader::open_generation(&directory, state.header, state.committed_end)
+        .map_err(|error| format!("open WARC generation: {error}"))?;
+    drop(archive_lock);
+    super::bodies::pause_archive_capture_for_tests(db_path);
+
+    let mut spool = tempfile::tempfile().map_err(|error| format!("create WARC metadata spool: {error}"))?;
+    let mut spool_bytes = 0usize;
+    let mut last = (-1i64, -1i64, -1i64);
+    loop {
+        sql_deadline.check("WARC metadata capture")?;
+        let sql = warc_page_sql();
+        let mut statement = tx.prepare_cached(&sql).map_err(|error| error.to_string())?;
+        let mut rows = statement
+            .query(rusqlite::params![last.0, last.1, last.2, WARC_CAPTURE_PAGE_ROWS])
+            .map_err(|error| error.to_string())?;
+        let mut page = Vec::with_capacity(WARC_CAPTURE_PAGE_ROWS as usize);
+        while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+            let index = index_row_sql(row)?;
+            let id: i64 = row.get(12).map_err(|error| error.to_string())?;
+            let created_at = bounded_text(row, 13).map_err(|error| error.to_string())?;
+            last = (
+                index.reference.block_offset as i64,
+                i64::from(index.reference.offset),
+                id,
+            );
+            page.push((index, created_at));
+        }
+        drop(rows);
+        drop(statement);
+        let count = page.len();
+        for (index, created_at) in page {
+            let (target_uri, date_text, date_unix_ms) = source_metadata(&tx, &index, &created_at)?;
+            write_spool_row(
+                &mut spool,
+                ExportRow {
+                    index,
+                    target_uri,
+                    date_text,
+                    date_unix_ms,
+                },
+                &mut spool_bytes,
+            )?;
+        }
+        if count < WARC_CAPTURE_PAGE_ROWS as usize {
+            break;
+        }
+    }
+    tx.commit()
+        .map_err(|error| format!("commit WARC capture snapshot: {error}"))?;
+    spool
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| format!("rewind WARC metadata spool: {error}"))?;
+    Ok(CapturedWarc { reader, spool })
+}
+
+fn source_metadata(
+    conn: &Connection,
+    index: &IndexRow,
+    created_at: &str,
+) -> DbResult<(Option<String>, Option<String>, Option<i64>)> {
+    if !SOURCE_TABLES.contains(&index.source_table.as_str()) {
+        return Err(format!(
+            "archive index has unsupported source table {}",
+            index.source_table
+        ));
+    }
+    let text = |sql: &str| -> DbResult<Option<(String, String)>> {
+        conn.query_row(sql, [&index.event_id], |row| {
+            Ok((bounded_text(row, 0)?, bounded_text(row, 1)?))
+        })
+        .optional()
+        .map_err(|error| error.to_string())
+    };
+    let millis = |sql: &str| -> DbResult<Option<(String, i64)>> {
+        conn.query_row(sql, [&index.event_id], |row| Ok((bounded_text(row, 0)?, row.get(1)?)))
+            .optional()
+            .map_err(|error| error.to_string())
+    };
+    match index.source_table.as_str() {
+        "net_events" => Ok(text(
+            "SELECT 'https://' || domain || COALESCE(path, ''), timestamp
+             FROM net_events WHERE event_id = ?1 ORDER BY id LIMIT 1",
+        )?
+        .map_or((None, None, None), |(uri, date)| (Some(uri), Some(date), None))),
+        "model_calls" => Ok(text(
+            "SELECT 'https://' || provider || path, timestamp
+             FROM model_calls WHERE event_id = ?1 ORDER BY id LIMIT 1",
+        )?
+        .map_or((None, None, None), |(uri, date)| (Some(uri), Some(date), None))),
+        "tool_calls" => Ok(text(
+            "SELECT 'capsem://tool/' || tool_name, timestamp
+             FROM tool_calls WHERE event_id = ?1 ORDER BY id LIMIT 1",
+        )?
+        .map_or((None, None, None), |(uri, date)| (Some(uri), Some(date), None))),
+        "tool_responses" => {
+            let uri = conn
+                .query_row(
+                    "SELECT 'capsem://tool-response/' || call_id
+                     FROM tool_responses WHERE event_id = ?1 ORDER BY id LIMIT 1",
+                    [&index.event_id],
+                    |row| bounded_text(row, 0),
+                )
+                .optional()
+                .map_err(|error| error.to_string())?;
+            Ok((uri, Some(created_at.to_string()), None))
+        }
+        "exec_events" => Ok(text(
+            "SELECT 'capsem://exec/' || exec_id, timestamp
+             FROM exec_events WHERE event_id = ?1 ORDER BY id LIMIT 1",
+        )?
+        .map_or((None, None, None), |(uri, date)| (Some(uri), Some(date), None))),
+        "security_rule_events" => Ok(millis(
+            "SELECT 'capsem://security/' || rule_id, timestamp_unix_ms
+             FROM security_rule_events WHERE event_id = ?1 ORDER BY id LIMIT 1",
+        )?
+        .map_or((None, None, None), |(uri, date)| (Some(uri), None, Some(date)))),
+        "security_decision_events" => Ok(millis(
+            "SELECT 'capsem://security-decision/' || actor, timestamp_unix_ms
+             FROM security_decision_events WHERE event_id = ?1 ORDER BY id LIMIT 1",
+        )?
+        .map_or((None, None, None), |(uri, date)| (Some(uri), None, Some(date)))),
+        "security_ask_events" => Ok(millis(
+            "SELECT 'capsem://security-ask/' || ask_id, timestamp_unix_ms
+             FROM security_ask_events WHERE event_id = ?1 ORDER BY id LIMIT 1",
+        )?
+        .map_or((None, None, None), |(uri, date)| (Some(uri), None, Some(date)))),
+        table => unreachable!("{table} was checked against SOURCE_TABLES"),
+    }
+}
+
+fn bounded_text(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<String> {
+    let value = row.get_ref(index)?;
+    let rusqlite::types::ValueRef::Text(bytes) = value else {
+        return Err(rusqlite::Error::InvalidColumnType(
+            index,
+            "WARC metadata text".into(),
+            value.data_type(),
+        ));
+    };
+    if bytes.len() > MAX_SOURCE_TEXT_BYTES {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "WARC source metadata exceeds its per-field bound",
+            )),
+        ));
+    }
+    std::str::from_utf8(bytes)
+        .map(str::to_owned)
+        .map_err(|error| rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(error)))
+}
+
+fn write_spool_row(spool: &mut File, row: ExportRow, spool_bytes: &mut usize) -> DbResult<()> {
+    let encoded = serde_json::to_vec(&SpoolRow::from(row)).map_err(|error| error.to_string())?;
+    if encoded.len() > MAX_SPOOL_ROW_BYTES {
+        return Err(format!("WARC metadata row exceeds {MAX_SPOOL_ROW_BYTES} bytes"));
+    }
+    let next = checked_spool_bytes(*spool_bytes, encoded.len())?;
+    let len = u32::try_from(encoded.len()).map_err(|_| "WARC metadata row length overflow".to_string())?;
+    spool.write_all(&len.to_le_bytes()).map_err(|error| error.to_string())?;
+    spool.write_all(&encoded).map_err(|error| error.to_string())?;
+    *spool_bytes = next;
+    Ok(())
+}
+
+fn checked_spool_bytes(current: usize, encoded_row: usize) -> DbResult<usize> {
+    let framed_len = encoded_row
+        .checked_add(std::mem::size_of::<u32>())
+        .ok_or_else(|| "WARC metadata spool length overflow".to_string())?;
+    let next = current
+        .checked_add(framed_len)
+        .ok_or_else(|| "WARC metadata spool length overflow".to_string())?;
+    if next > MAX_WARC_SPOOL_BYTES {
+        return Err(format!("WARC metadata spool exceeds {MAX_WARC_SPOOL_BYTES} bytes"));
+    }
+    Ok(next)
+}
+
+fn read_spool_row(spool: &mut File) -> DbResult<Option<ExportRow>> {
+    let mut len = [0u8; 4];
+    let read = spool.read(&mut len).map_err(|error| error.to_string())?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if read != len.len() {
+        return Err("truncated WARC metadata spool frame".into());
+    }
+    let len = u32::from_le_bytes(len) as usize;
+    if len > MAX_SPOOL_ROW_BYTES {
+        return Err("oversized WARC metadata spool frame".into());
+    }
+    let mut encoded = vec![0u8; len];
+    spool.read_exact(&mut encoded).map_err(|error| error.to_string())?;
+    let row: SpoolRow = serde_json::from_slice(&encoded).map_err(|error| error.to_string())?;
+    row.try_into().map(Some)
 }
 
 impl DbHandle {
@@ -324,22 +651,29 @@ impl DbHandle {
     /// that did not finish, and must not read its record list as the whole
     /// session.
     pub async fn export_warc<W: Write + Send + 'static>(&self, out: W) -> DbResult<ExportSummary> {
-        let rows = self.export_rows().await?;
+        let permit = WarcExportPermit::acquire(&self.inner.path)?;
+        let captured = self.capture_warc().await?;
         let handle = self.clone();
-        tokio::task::spawn_blocking(move || handle.export_blocking(rows, out))
-            .await
-            .map_err(|error| format!("session body WARC export task failed: {error}"))?
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            handle.export_blocking(captured, out)
+        })
+        .await
+        .map_err(|error| format!("session body WARC export task failed: {error}"))?
     }
 
-    async fn export_rows(&self) -> DbResult<Vec<ExportRow>> {
-        self.body_index_values(&export_sql(), &[])
-            .await?
-            .iter()
-            .map(export_row)
-            .collect()
+    async fn capture_warc(&self) -> DbResult<CapturedWarc> {
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        self.inner
+            .reader_tx
+            .send(super::ReadRequest::CaptureWarc { reply })
+            .map_err(|error| format!("db reader worker closed: {error}"))?;
+        rx.await
+            .map_err(|error| format!("db reader worker dropped WARC capture reply: {error}"))?
+            .map(|observed| self.take_observed(observed))
     }
 
-    fn export_blocking<W: Write>(&self, rows: Vec<ExportRow>, out: W) -> DbResult<ExportSummary> {
+    fn export_blocking<W: Write>(&self, mut captured: CapturedWarc, out: W) -> DbResult<ExportSummary> {
         let mut counting = CountingWriter { inner: out, count: 0 };
         let mut summary = ExportSummary::default();
         let exported_at = warc_date_now();
@@ -356,80 +690,74 @@ impl DbHandle {
             &opening_fields(&session, &exported_at),
         )?;
 
-        self.with_archive_reader(|reader| {
-            for row in rows {
-                let identity = RowIdentity::of(&row.index);
-                let Some(target_uri) = row.target_uri.clone() else {
-                    summary.skipped.push(identity.because(SkipReason::MissingSourceRow));
-                    continue;
-                };
-                // Checked here rather than left to `write_record`, so a URI a
-                // counterparty chose is a counted skip instead of a refusal
-                // that would end the walk. It is the only header value in a
-                // record that a counterparty can reach: the record id is the
-                // ledger's own directory name -- already in the opening
-                // `warcinfo` id, which would have refused it first -- and an
-                // event id SQLite CHECKs to twelve hex digits, the date is
-                // generated here, and `content_type` is cut out of a header
-                // line and trimmed on the way in -- which
-                // `a_stored_content_type_can_never_carry_a_line_break` in
-                // writer/tests/headers.rs holds, so this remains the only one.
-                if target_uri.contains(['\r', '\n']) {
-                    summary
-                        .skipped
-                        .push(identity.because(SkipReason::UnrepresentableUri(target_uri)));
+        while let Some(row) = read_spool_row(&mut captured.spool)? {
+            let identity = RowIdentity::of(&row.index);
+            let Some(target_uri) = row.target_uri.clone() else {
+                summary.record_skip(identity.because(SkipReason::MissingSourceRow));
+                continue;
+            };
+            // Checked here rather than left to `write_record`, so a URI a
+            // counterparty chose is a counted skip instead of a refusal
+            // that would end the walk. It is the only header value in a
+            // record that a counterparty can reach: the record id is the
+            // ledger's own directory name -- already in the opening
+            // `warcinfo` id, which would have refused it first -- and an
+            // event id SQLite CHECKs to twelve hex digits, the date is
+            // generated here, and `content_type` is cut out of a header
+            // line and trimmed on the way in -- which
+            // `a_stored_content_type_can_never_carry_a_line_break` in
+            // writer/tests/headers.rs holds, so this remains the only one.
+            if target_uri.contains(['\r', '\n']) {
+                summary.record_skip(identity.because(SkipReason::UnrepresentableUri(target_uri)));
+                continue;
+            }
+            let Some(date) = row.warc_date() else {
+                let stamp = row.date_text.clone().unwrap_or_else(|| {
+                    row.date_unix_ms
+                        .map_or_else(|| "<none>".to_string(), |ms| ms.to_string())
+                });
+                summary.record_skip(identity.because(SkipReason::UnreadableTimestamp(stamp)));
+                continue;
+            };
+            let id = record_id(&session, &row.index);
+            let truncated = row.index.truncated;
+            // The hash-verified read path, not a shortcut around it.
+            // Damage to this row or its block costs this row: a span that
+            // falls outside its block and a span that falls inside the
+            // wrong part of it are the same edit, one byte apart, and
+            // there is no reading on which one should end the export. Only
+            // a failed seek is about the file, and the next row would be
+            // read through the same handle.
+            let body = match read_one_checked(&captured.reader, row.index) {
+                Ok(body) => body,
+                Err(BodyFault::Corrupt(detail)) => {
+                    summary.record_skip(identity.because(SkipReason::CorruptBody(detail)));
                     continue;
                 }
-                let Some(date) = row.warc_date() else {
-                    let stamp = row.date_text.clone().unwrap_or_else(|| {
-                        row.date_unix_ms
-                            .map_or_else(|| "<none>".to_string(), |ms| ms.to_string())
-                    });
-                    summary
-                        .skipped
-                        .push(identity.because(SkipReason::UnreadableTimestamp(stamp)));
+                Err(BodyFault::Unreadable(detail)) => {
+                    summary.record_skip(identity.because(SkipReason::UnreadableBody(detail)));
                     continue;
-                };
-                let id = record_id(&session, &row.index);
-                let truncated = row.index.truncated;
-                // The hash-verified read path, not a shortcut around it.
-                // Damage to this row or its block costs this row: a span that
-                // falls outside its block and a span that falls inside the
-                // wrong part of it are the same edit, one byte apart, and
-                // there is no reading on which one should end the export. Only
-                // a failed seek is about the file, and the next row would be
-                // read through the same handle.
-                let body = match read_one_checked(reader, row.index) {
-                    Ok(body) => body,
-                    Err(BodyFault::Corrupt(detail)) => {
-                        summary.skipped.push(identity.because(SkipReason::CorruptBody(detail)));
-                        continue;
-                    }
-                    Err(BodyFault::Unreadable(detail)) => {
-                        summary
-                            .skipped
-                            .push(identity.because(SkipReason::UnreadableBody(detail)));
-                        continue;
-                    }
-                    Err(fault) => return Err(fault.into_message()),
-                };
-                warc::write_record(
-                    &mut counting,
-                    &WarcRecord {
-                        record_type: warc::WARC_TYPE_RESOURCE,
-                        record_id: &id,
-                        target_uri: Some(&target_uri),
-                        date: &date,
-                        content_type: body.content_type.as_deref(),
-                        truncated,
-                        body: &body.bytes,
-                    },
-                )
-                .map_err(|error| format!("session body WARC export could not write record {id}: {error}"))?;
-                summary.records += 1;
-            }
-            Ok(())
-        })?;
+                }
+                Err(fault) => return Err(fault.into_message()),
+            };
+            warc::write_record(
+                &mut counting,
+                &WarcRecord {
+                    record_type: warc::WARC_TYPE_RESOURCE,
+                    record_id: &id,
+                    target_uri: Some(&target_uri),
+                    date: &date,
+                    content_type: body.content_type.as_deref(),
+                    truncated,
+                    body: &body.bytes,
+                },
+            )
+            .map_err(|error| format!("session body WARC export could not write record {id}: {error}"))?;
+            summary.records += 1;
+        }
+        self.inner
+            .archive_blocks_inflated
+            .fetch_add(captured.reader.blocks_inflated(), std::sync::atomic::Ordering::Relaxed);
 
         write_warcinfo(
             &mut counting,
@@ -497,7 +825,7 @@ fn closing_fields(summary: &ExportSummary) -> Vec<(String, String)> {
     let mut fields = vec![
         ("software".into(), format!("capsem/{}", env!("CARGO_PKG_VERSION"))),
         ("capsem-records".into(), summary.records.to_string()),
-        ("capsem-skipped".into(), summary.skipped.len().to_string()),
+        ("capsem-skipped".into(), summary.skipped_count.to_string()),
     ];
     fields.extend(
         summary
@@ -633,15 +961,6 @@ fn warc_date_from_unix_ms(millis: i64) -> Option<String> {
     let millis = u64::try_from(millis).ok()?;
     let instant = UNIX_EPOCH.checked_add(Duration::from_millis(millis))?;
     Some(humantime::format_rfc3339_seconds(instant).to_string())
-}
-
-fn export_row(row: &Value) -> DbResult<ExportRow> {
-    Ok(ExportRow {
-        index: index_row(row)?,
-        target_uri: row.get(10).and_then(Value::as_str).map(str::to_string),
-        date_text: row.get(11).and_then(Value::as_str).map(str::to_string),
-        date_unix_ms: row.get(12).and_then(Value::as_i64),
-    })
 }
 
 /// Counts what reaches the writer, so the summary can report bytes without the

@@ -138,6 +138,8 @@ pub const CREATE_SCHEMA: &str = "
         ON event_body_blobs(body_hash);
     CREATE INDEX IF NOT EXISTS idx_event_body_blobs_block
         ON event_body_blobs(block_offset);
+    CREATE INDEX IF NOT EXISTS idx_event_body_blobs_archive_order
+        ON event_body_blobs(block_offset, body_offset, id);
 
     CREATE TABLE IF NOT EXISTS tool_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,8 +194,12 @@ pub const CREATE_SCHEMA: &str = "
         ON model_calls(provider, timestamp);
     CREATE INDEX IF NOT EXISTS idx_tool_calls_model_call
         ON tool_calls(model_call_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_event_id
+        ON tool_calls(event_id, id);
     CREATE INDEX IF NOT EXISTS idx_tool_responses_model_call
         ON tool_responses(model_call_id);
+    CREATE INDEX IF NOT EXISTS idx_tool_responses_event_id
+        ON tool_responses(event_id, id);
     CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id
         ON model_calls(trace_id);
 

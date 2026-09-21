@@ -1,17 +1,14 @@
-//! Test-only fault injection for the two steps retention cannot retry.
+//! Test-only fault injection at generation publication boundaries.
 //!
-//! Retention's whole shape is an ordering: stage the replacement, commit the
-//! index, then rename. What that ordering is *for* only shows up when one of
-//! the last two steps fails, and neither fails on demand -- a full disk and a
-//! read-only directory are not things a unit test can arrange around a writer
-//! thread it does not own. So the two are injectable.
+//! Candidate sync and uncertain COMMIT outcomes do not fail on demand, so
+//! deterministic tests inject them at the production ordering seams.
 //!
 //! A set of (archive, step) pairs, not one slot for the whole process. A
 //! single slot made two tests that arm faults on different ledgers clobber
 //! each other whenever they overlapped, and the loser passed: its retention
 //! succeeded, which is exactly the outcome it was written to prove
-//! impossible. The pair is the key rather than the path, because one test
-//! arms two steps at once to reach the state where neither worked.
+//! impossible. The archive and step together are the key so concurrent
+//! ledgers cannot consume each other's faults.
 //!
 //! Outside `cfg(test)` the hook compiles to a constant `false`, so the
 //! retention path has one shape in both builds.
@@ -30,15 +27,6 @@ pub(crate) enum RetentionFault {
     CommitUnknownBefore,
     /// Report COMMIT as uncertain after SQLite has elected H.
     CommitUnknownAfter,
-    /// Fail the rename that puts the compacted archive in place, after the
-    /// index has committed. The old offsets must come back.
-    #[cfg(test)]
-    Rename,
-    /// Fail putting the old offsets back after a failed rename. This is the
-    /// one state nothing can repair, so the archive must stop accepting
-    /// bodies rather than keep writing into a ledger it cannot vouch for.
-    #[cfg(test)]
-    Restore,
 }
 
 #[cfg(test)]
@@ -48,11 +36,13 @@ static RETENTION_FAULTS: std::sync::Mutex<Option<std::collections::HashSet<(std:
 /// Fail `fault` once, for the archive beside `db_path`.
 #[cfg(test)]
 pub(crate) fn fail_retention_for_path_for_tests(db_path: &Path, fault: RetentionFault) {
+    let archive = super::bodies::archive_path_for_db(db_path);
+    let archive = archive.canonicalize().unwrap_or(archive);
     RETENTION_FAULTS
         .lock()
         .unwrap()
         .get_or_insert_with(std::collections::HashSet::new)
-        .insert((super::bodies::archive_path_for_db(db_path), fault));
+        .insert((archive, fault));
 }
 
 #[cfg(test)]
