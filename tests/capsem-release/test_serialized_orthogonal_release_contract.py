@@ -672,11 +672,14 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     assert '--channel "stable"' in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "--bootstrap-missing-first-party" in workflow
-    assert '--source-commit "${{ inputs.source_commit }}"' in workflow
-    assert '--profile "${{ inputs.profile }}"' in workflow
+    assert "RELEASE_SOURCE_COMMIT: ${{ inputs.source_commit }}" in workflow
+    assert '--source-commit "$RELEASE_SOURCE_COMMIT"' in workflow
+    assert "RELEASE_PROFILE: ${{ inputs.profile }}" in workflow
+    assert '--profile "$RELEASE_PROFILE"' in workflow
     assert "Project inactive first-channel public-before state" in workflow
     assert "build_system/scripts/release/project-first-channel-before.py" in workflow
-    assert '--retired "${{ steps.public-before.outputs.retired }}"' in workflow
+    assert "PUBLIC_BEFORE_RETIRED: ${{ steps.public-before.outputs.retired }}" in workflow
+    assert '--retired "$PUBLIC_BEFORE_RETIRED"' in workflow
     assert "Select public-before authority for exact pairing" in workflow
     assert "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}" in workflow
     assert "Fetch exact deployed public-before package" in workflow

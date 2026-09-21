@@ -408,7 +408,11 @@ def test_profile_activation_readiness_requires_the_pulled_binary_functional_coho
     assert "needs.resolve-current-binary.outputs.functional_ready" in author
     assert "compatible_with_current_binary" in author
     assert "PRODUCT_COMPATIBLE=" in author
-    assert "FUNCTIONAL_READY=" in author
+    assert (
+        "FUNCTIONAL_READY: ${{ needs.resolve-current-binary.outputs.functional_ready }}"
+        in author
+    )
+    assert '"$FUNCTIONAL_READY" == "true"' in author
     assert "ACTIVATION_READY=false" in author
 
 
@@ -444,8 +448,9 @@ def test_profile_publication_retry_verifies_owned_bytes_and_uploads_only_missing
     immutable = _step(publish, "Publish immutable GitHub profile release", None)
 
     assert "build_system/scripts/release/publish-immutable-release-assets.sh" in immutable
+    assert "RELEASE_PROFILE: ${{ inputs.profile }}" in immutable
     assert (
-        'CAPSEM_RELEASE_CREATE_TITLE="Capsem $CHANNEL/${{ inputs.profile }} '
+        'CAPSEM_RELEASE_CREATE_TITLE="Capsem $CHANNEL/$RELEASE_PROFILE '
         '$PROFILE_REVISION ($SOURCE_COMMIT)"' in immutable
     )
     assert "CAPSEM_RELEASE_CREATE_NOTES_FILE=" in immutable
