@@ -2302,6 +2302,19 @@ class TestKernelConfig:
         assert 'boot_mark "$ROOTFS_LABEL"' in content
         assert "FATAL: cannot mount /dev/vda" in content
 
+    def test_init_watchdog_does_not_turn_health_checks_into_audit_traffic(self):
+        content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+        watchdog = content.split("# The guest's side of a link failure.", 1)[1]
+        watchdog = watchdog.split('init_log "starting PTY agent', 1)[0]
+
+        assert "while sleep 60; do" in watchdog
+        assert "while sleep 3; do" not in watchdog
+        for helper in ["cut -d.", "grep -c", "wc -l", "awk '"]:
+            assert helper not in watchdog, helper
+        assert "count_watch_events" in watchdog
+        assert "count_lines" in watchdog
+        assert "virtio_irq_count" in watchdog
+
     def test_init_uses_iptables_nft_only(self):
         content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
         assert "iptables-nft" in content

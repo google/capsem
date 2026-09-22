@@ -90,6 +90,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The guest link watchdog now samples once per minute and counts steady-state
+  diagnostics with shell builtins. Its former three-second helper-command loop
+  turned health checks into audited security events, inflating long-session
+  archive storage and capsem-process memory.
+
 - `just shell`, `just exec`, and `just run-service` now describe runtime
   preparation, host compilation, per-binary signing, service startup, and the
   guest action in one gate graph. Their former private Just prerequisites ran
