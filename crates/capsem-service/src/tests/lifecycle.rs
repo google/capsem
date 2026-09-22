@@ -1748,7 +1748,11 @@ async fn db_boundary_route_contract_db_handle_route_rewire() {
     .await;
     assert_eq!(status, StatusCode::OK, "{stats_detail}");
     assert_eq!(stats_detail["model_stats"], json!([]));
-    assert_eq!(stats_detail["body_blobs"], json!({}));
+    let expected_bodies: serde_json::Value = serde_json::from_str(
+        r#"{"abcdef123456":[{"body_hash":"blake3:53dca07dcaaf7b5ef5791340118bccbfd97da9ac5809e86925d9edd1ad7542df","content_type":"application/json","direction":"payload","event_id":"abcdef123456","original_bytes":29,"source_table":"security_rule_events","stored_bytes":29,"truncated":false}]}"#,
+    )
+    .unwrap();
+    assert_eq!(stats_detail["body_blobs"], expected_bodies);
 
     let (status, security_status) = route_request(
         app,

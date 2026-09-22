@@ -435,14 +435,14 @@ async fn ledger_snapshot_copies_the_archive_the_db_references() {
     source_directory.sync().unwrap();
 
     let source_db = src_dir.join("session.db");
-    let (vacuumed, resume) = crate::db::maintenance::pause_next_snapshot_after_vacuum_for_tests(&source_db);
+    let (snapshot_ready, resume) = crate::db::maintenance::pause_next_snapshot_after_vacuum_for_tests(&source_db);
     let snapshot_src = src_dir.clone();
     let snapshot_dst = dst_dir.clone();
     let snapshot = tokio::task::spawn_blocking(move || crate::snapshot_session_ledger(&snapshot_src, &snapshot_dst));
-    tokio::task::spawn_blocking(move || vacuumed.recv_timeout(std::time::Duration::from_secs(5)))
+    tokio::task::spawn_blocking(move || snapshot_ready.recv_timeout(std::time::Duration::from_secs(5)))
         .await
         .expect("snapshot wait task")
-        .expect("snapshot reached the post-VACUUM barrier");
+        .expect("snapshot reached the cloned-ledger barrier");
 
     let later = "this append belongs only to the source after its snapshot".repeat(32);
     db.write(WriteOp::NetEvent(net_event_with_response(
@@ -474,7 +474,7 @@ async fn ledger_snapshot_copies_the_archive_the_db_references() {
             .await
             .expect("query post-snapshot body")
             .is_none(),
-        "an append after VACUUM cannot widen the captured destination"
+        "an append after the ledger clone cannot widen the captured destination"
     );
 
     let destination_db = dst_dir.join("session.db");

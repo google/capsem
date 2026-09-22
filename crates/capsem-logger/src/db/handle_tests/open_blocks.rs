@@ -191,8 +191,7 @@ async fn retention_closes_the_open_block_and_writing_carries_on() {
         .retain_bodies_since("1970-01-01T00:00:00.000000Z")
         .await
         .expect("retain nothing");
-    assert_eq!(outcome.blocks_kept, 1);
-    assert_eq!(outcome.blocks_dropped, 0);
+    assert_eq!(outcome, crate::writer::RetainOutcome::default());
 
     db.write(WriteOp::NetEvent(net_event_with_response(
         "0000000000c2",
@@ -250,9 +249,7 @@ async fn closing_an_idle_block_for_retention_does_not_make_it_newer() {
     assert_eq!(response(&db, "0000000000e1").await, None);
 }
 
-/// An archive of another version beside the ledger is not appended to: the
-/// writer cannot place a block in a file it does not understand, so the
-/// session stores no bodies and leaves the file as it found it.
+/// An archive of another version beside the ledger is refused and left alone.
 #[tokio::test]
 async fn an_archive_of_an_earlier_version_is_left_alone() {
     let p = temp_db_path("open-block-old-version");
@@ -263,16 +260,10 @@ async fn an_archive_of_an_earlier_version_is_left_alone() {
     header[8..10].copy_from_slice(&1u16.to_le_bytes());
     std::fs::write(archive_path(&p), header).expect("plant a version 1 header");
 
-    let db = DbHandle::open(&p).expect("open handle");
-    db.write(WriteOp::NetEvent(net_event_with_response(
-        "0000000000d1",
-        "old-version.example",
-        "a body with nowhere to go",
-    )))
-    .await
-    .expect("write event");
-    db.flush().await.expect("flush");
-
-    assert_eq!(response(&db, "0000000000d1").await, None, "no body was stored");
+    let error = match DbHandle::open(&p) {
+        Ok(_) => panic!("v2 archive must not be adopted"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("legacy v2 archive"), "{error}");
     assert_eq!(std::fs::read(archive_path(&p)).expect("read archive"), header);
 }

@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 import platform
 import shutil
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 from .constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 

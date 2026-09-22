@@ -98,7 +98,11 @@ fn a_refused_ledger_is_not_rewritten() {
 fn a_writer_will_not_open_a_ledger_with_an_older_check() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.db");
+    crate::DbWriter::open(&path, 8).unwrap().shutdown_blocking();
     let conn = Connection::open(&path).unwrap();
+    for table in super::TABLES {
+        conn.execute_batch(&format!("DROP TABLE {table}")).unwrap();
+    }
     ledger_with_the_older_check(&conn);
     drop(conn);
 

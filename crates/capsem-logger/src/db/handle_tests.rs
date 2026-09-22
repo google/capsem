@@ -453,9 +453,11 @@ async fn db_flushed_rows_survive_reopen() {
 #[tokio::test]
 async fn db_reads_rows_already_on_disk_when_it_opens() {
     let p = temp_db_path("startup-rehydrate-existing-disk");
+    DbWriter::open(&p, 8)
+        .expect("initialize the v3 ledger")
+        .shutdown_blocking();
     {
         let conn = rusqlite::Connection::open(&p).expect("open disk fixture");
-        crate::schema::create_tables(&conn).expect("create disk schema");
         conn.execute(
             "INSERT INTO main.net_events (
                 event_id, timestamp, domain, port, decision, process_name, pid,

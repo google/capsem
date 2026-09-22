@@ -127,6 +127,7 @@ fn reopening_a_large_ledger_copies_nothing_into_memory() {
     const ROWS: i64 = 100_000;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.db");
+    DbWriter::open(&path, 64).unwrap().shutdown_blocking();
     {
         let mut conn = disk(&path);
         crate::schema::apply_pragmas(&conn).unwrap();
