@@ -4,15 +4,15 @@ use crate::control_writer::CtrlSender;
 use crate::send_guest_msg;
 use crate::vsock_io::{vsock_connect, VSOCK_HOST_CID};
 use capsem_foundation::unix::{
-    fd::{shutdown, SocketShutdown},
+    fd::{shutdown, wait_readable, SocketShutdown},
     process::{send_process_group_signal, ProcessId, Signal},
 };
 use capsem_proto::{GuestToHost, VSOCK_PORT_EXEC};
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use std::io::{self, Write as _};
 use std::os::fd::{AsFd, FromRawFd, RawFd};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::thread;
+use std::time::Duration;
 
 /// Maximum vsock_connect attempts when the host returns ECONNRESET, e.g.
 /// briefly after `restoreMachineStateFromURL` while the kernel-side
@@ -308,7 +308,7 @@ pub(super) fn run_exec_on_fds_with_cancel(
 const EXEC_OUTPUT_READ_BYTES: usize = 64 * 1024;
 const _: () = assert!(EXEC_OUTPUT_READ_BYTES <= capsem_proto::MAX_EXEC_DATA_BYTES);
 /// A short idle window combines pipe reads while preserving interactive output.
-const EXEC_OUTPUT_COALESCE_MS: u16 = 5;
+const EXEC_OUTPUT_COALESCE: Duration = Duration::from_millis(5);
 
 fn forward_exec_output<R: io::Read + AsFd>(
     mut reader: R,
@@ -335,11 +335,9 @@ fn forward_exec_output<R: io::Read + AsFd>(
             if used == buf.len() {
                 break;
             }
-            let mut readiness = [PollFd::new(reader.as_fd(), PollFlags::POLLIN | PollFlags::POLLHUP)];
-            match poll(&mut readiness, PollTimeout::from(EXEC_OUTPUT_COALESCE_MS)) {
-                Ok(0) => break,
-                Ok(_) => {}
-                Err(nix::errno::Errno::EINTR) => continue,
+            match wait_readable(reader.as_fd(), EXEC_OUTPUT_COALESCE) {
+                Ok(false) => break,
+                Ok(true) => {}
                 Err(_) => {
                     ended = true;
                     break;

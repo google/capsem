@@ -2,9 +2,11 @@
 
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::time::Duration;
 
 use nix::errno::Errno;
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use nix::sys::socket::{self, Shutdown};
 
 use super::errno;
@@ -54,6 +56,16 @@ pub fn set_nonblocking(fd: BorrowedFd<'_>, enabled: bool) -> io::Result<bool> {
         retry_eintr(|| fcntl(fd.as_raw_fd(), FcntlArg::F_SETFL(updated))).map_err(errno::io)?;
     }
     Ok(was_enabled)
+}
+
+/// Wait until reading can make progress, including observing end-of-file.
+pub fn wait_readable(fd: BorrowedFd<'_>, timeout: Duration) -> io::Result<bool> {
+    let timeout = PollTimeout::try_from(timeout)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "poll timeout is too large"))?;
+    let mut descriptors = [PollFd::new(fd, PollFlags::POLLIN | PollFlags::POLLHUP)];
+    retry_eintr(|| poll(&mut descriptors, timeout))
+        .map(|ready| ready > 0)
+        .map_err(errno::io)
 }
 
 /// Shut down one or both halves of a connected socket.
