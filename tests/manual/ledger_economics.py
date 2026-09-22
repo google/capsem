@@ -40,7 +40,6 @@ import contextlib
 import itertools
 import json
 import os
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -54,6 +53,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from helpers.body_archive import generation_path_for_db
 from helpers.constants import CODE_PROFILE_ID
 from helpers.service import ServiceInstance, vm_session_dir
 
@@ -168,7 +168,8 @@ LEDGER_SQL = """SELECT
 
 
 def sample(session_dir: Path, vm_id: str, service_pid: int) -> dict:
-    db, bodies = session_dir / "session.db", session_dir / "session.bodies"
+    db = session_dir / "session.db"
+    bodies = generation_path_for_db(db)
     with closing_ro(db) as conn:
         conn.row_factory = sqlite3.Row
         snapshot = dict(conn.execute(LEDGER_SQL).fetchone())
@@ -183,13 +184,32 @@ def sample(session_dir: Path, vm_id: str, service_pid: int) -> dict:
 
 
 def keep_ledger(session_dir: Path) -> None:
-    """Copy the run's ledger out of the temp home, which teardown deletes."""
+    """Capture the run through the logger's coherent v3 snapshot owner."""
     assert KEEP_DIR
     dest = Path(KEEP_DIR)
     dest.mkdir(parents=True, exist_ok=True)
-    for name in ("session.db", "session.db-wal", "session.bodies"):
-        if (session_dir / name).exists():
-            shutil.copy2(session_dir / name, dest / name)
+    root = Path(__file__).resolve().parents[2]
+    env = os.environ | {
+        "CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER": "/usr/bin/env",
+        "RUSTC_WRAPPER": "",
+    }
+    subprocess.run(
+        [
+            "cargo",
+            "run",
+            "--quiet",
+            "-p",
+            "capsem-logger",
+            "--example",
+            "snapshot_session_ledger",
+            "--",
+            str(session_dir),
+            str(dest),
+        ],
+        cwd=root,
+        env=env,
+        check=True,
+    )
     print(f"  kept the ledger in {dest}")
 
 

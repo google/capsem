@@ -421,7 +421,44 @@ async fn ledger_snapshot_copies_the_archive_the_db_references() {
     .expect("write event");
     db.flush().await.expect("flush");
 
-    crate::snapshot_session_ledger(&src_dir, &dst_dir).expect("snapshot the ledger");
+    let source_conn = rusqlite::Connection::open(src_dir.join("session.db")).unwrap();
+    let captured = crate::schema::archive_state(&source_conn).unwrap();
+    drop(source_conn);
+    let source_archive = crate::writer::archive_path_for_db(&src_dir.join("session.db"));
+    let source_directory = capsem_foundation::unix::contained::ContainedDir::open_root(&source_archive).unwrap();
+    let orphan_id = capsem_archive::GenerationId::new_v4();
+    let mut orphan =
+        capsem_archive::BodyLogWriter::create_generation(&source_directory, captured.header.archive_id, orphan_id)
+            .unwrap();
+    orphan.sync().unwrap();
+    drop(orphan);
+    source_directory.sync().unwrap();
+
+    let source_db = src_dir.join("session.db");
+    let (vacuumed, resume) = crate::db::maintenance::pause_next_snapshot_after_vacuum_for_tests(&source_db);
+    let snapshot_src = src_dir.clone();
+    let snapshot_dst = dst_dir.clone();
+    let snapshot = tokio::task::spawn_blocking(move || crate::snapshot_session_ledger(&snapshot_src, &snapshot_dst));
+    tokio::task::spawn_blocking(move || vacuumed.recv_timeout(std::time::Duration::from_secs(5)))
+        .await
+        .expect("snapshot wait task")
+        .expect("snapshot reached the post-VACUUM barrier");
+
+    let later = "this append belongs only to the source after its snapshot".repeat(32);
+    db.write(WriteOp::NetEvent(net_event_with_response(
+        "0123456789b0",
+        "later.example",
+        &later,
+    )))
+    .await
+    .expect("write during snapshot");
+    db.flush().await.expect("flush during snapshot");
+    assert!(
+        db.retain_bodies_since("2999-01-01T00:00:00Z").await.is_err(),
+        "retention publication cannot acquire EX while the snapshot holds SH"
+    );
+    resume.send(()).expect("resume snapshot generation pin");
+    snapshot.await.expect("snapshot task").expect("snapshot the ledger");
 
     let forked = DbHandle::open_external_reader(&dst_dir.join("session.db")).expect("open the forked ledger");
     forked.ready().await.expect("forked ledger ready");
@@ -431,6 +468,47 @@ async fn ledger_snapshot_copies_the_archive_the_db_references() {
         .expect("read forked body")
         .expect("the fork carries the body its index references");
     assert_eq!(stored.bytes, body.as_bytes());
+    assert!(
+        forked
+            .read_body("0123456789b0", "net_events", BodyDirection::Response)
+            .await
+            .expect("query post-snapshot body")
+            .is_none(),
+        "an append after VACUUM cannot widen the captured destination"
+    );
+
+    let destination_db = dst_dir.join("session.db");
+    let destination_conn = rusqlite::Connection::open(&destination_db).unwrap();
+    let destination_state = crate::schema::archive_state(&destination_conn).unwrap();
+    assert_eq!(destination_state.header, captured.header);
+    assert_eq!(destination_state.committed_end, captured.committed_end);
+    let destination_archive = crate::writer::archive_path_for_db(&destination_db);
+    let entries: Vec<_> = std::fs::read_dir(&destination_archive)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        entries,
+        [std::ffi::OsString::from(captured.header.generation_id.file_name())],
+        "the destination carries only the generation its singleton selected"
+    );
+    assert_eq!(
+        std::fs::metadata(destination_archive.join(captured.header.generation_id.file_name()))
+            .unwrap()
+            .len(),
+        captured.committed_end,
+        "the copy stops at the captured committed extent"
+    );
+    assert!(!destination_db.with_extension("db-wal").exists());
+    assert!(!destination_db.with_extension("db-shm").exists());
+    assert!(crate::writer::archive_lock_path_for_db(&destination_db).exists());
+    assert!(
+        crate::snapshot_session_ledger(&src_dir, &dst_dir)
+            .unwrap_err()
+            .to_string()
+            .contains("refusing to overwrite"),
+        "a completed destination is never replaced in place"
+    );
 
     drop(db);
     let _ = std::fs::remove_dir_all(&src_dir);

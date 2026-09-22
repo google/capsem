@@ -18,7 +18,7 @@ FIXTURE = REPOSITORY_ROOT / "tests" / "fixtures" / "session"
 def ledger(tmp_path: Path) -> Path:
     """A writable copy of the fixture session: its ledger and its archive."""
     shutil.copy(FIXTURE / "test.db", tmp_path / "session.db")
-    shutil.copy(FIXTURE / "test.bodies", tmp_path / "session.bodies")
+    shutil.copytree(FIXTURE / "test.bodies", tmp_path / "session.bodies")
     return tmp_path / "session.db"
 
 
@@ -41,6 +41,10 @@ def _edit(db: Path, sql: str) -> None:
         conn.close()
 
 
+def _archive(db: Path) -> Path:
+    return check_session_archive.body_archive_helper().generation_path_for_db(db)
+
+
 def test_an_intact_ledger_agrees_with_its_archive_body_for_body(ledger: Path) -> None:
     found = _findings(ledger, verify=True)
     assert found.problems == []
@@ -50,7 +54,7 @@ def test_an_intact_ledger_agrees_with_its_archive_body_for_body(ledger: Path) ->
 
 
 def test_a_truncated_archive_is_reported_against_the_blocks_it_lost(ledger: Path) -> None:
-    archive = ledger.with_suffix(".bodies")
+    archive = _archive(ledger)
     archive.write_bytes(archive.read_bytes()[:-1])
     found = _findings(ledger)
     assert len(found.problems) == 1
@@ -97,7 +101,7 @@ def _cut_block_at(ledger: Path, cut: int) -> None:
     The file stops where a segment began, the block's recorded extent stops
     there too, and the rows whose bytes were past it never committed.
     """
-    archive = ledger.with_suffix(".bodies")
+    archive = _archive(ledger)
     helper = check_session_archive.body_archive_helper()
     committed_raw = int.from_bytes(archive.read_bytes()[cut + 8 : cut + 12], "little")
     archive.write_bytes(archive.read_bytes()[:cut])
@@ -107,11 +111,15 @@ def _cut_block_at(ledger: Path, cut: int) -> None:
         ledger,
         f"UPDATE body_blocks SET disk_len = {cut - first_block}, raw_len = {committed_raw}",
     )
+    _edit(
+        ledger,
+        f"UPDATE archive_state SET committed_end = {cut}, revision = revision + 1",
+    )
 
 
 def test_the_fixture_block_has_several_segments_and_a_final_one(ledger: Path) -> None:
     helper = check_session_archive.body_archive_helper()
-    archive = ledger.with_suffix(".bodies")
+    archive = _archive(ledger)
     starts = _segment_starts(archive)
     assert len(starts) >= 3, "the fixture must exercise reads across segment boundaries"
     data = archive.read_bytes()
@@ -120,7 +128,7 @@ def test_the_fixture_block_has_several_segments_and_a_final_one(ledger: Path) ->
 
 def test_a_block_still_open_reads_body_for_body(ledger: Path) -> None:
     # Everything but the FINAL segment: the block a live session is writing.
-    _cut_block_at(ledger, _segment_starts(ledger.with_suffix(".bodies"))[-1])
+    _cut_block_at(ledger, _segment_starts(_archive(ledger))[-1])
     found = _findings(ledger, verify=True)
     assert found.problems == []
     assert found.bodies > 0
@@ -130,7 +138,7 @@ def test_a_block_still_open_reads_body_for_body(ledger: Path) -> None:
 
 def test_a_block_cut_before_its_last_segments_reads_what_it_committed(ledger: Path) -> None:
     before = _findings(ledger).bodies
-    _cut_block_at(ledger, _segment_starts(ledger.with_suffix(".bodies"))[1])
+    _cut_block_at(ledger, _segment_starts(_archive(ledger))[1])
     found = _findings(ledger, verify=True)
     assert found.problems == []
     assert 0 < found.bodies < before, "the cut must leave some rows and drop others"
@@ -138,7 +146,7 @@ def test_a_block_cut_before_its_last_segments_reads_what_it_committed(ledger: Pa
 
 
 def test_a_flipped_byte_in_a_later_segment_fails_only_the_bodies_that_need_it(ledger: Path) -> None:
-    archive = ledger.with_suffix(".bodies")
+    archive = _archive(ledger)
     second = _segment_starts(archive)[1]
     data = bytearray(archive.read_bytes())
     data[second + 60] ^= 0x5A
@@ -166,6 +174,6 @@ def test_the_command_exits_nonzero_on_a_broken_archive(
 ) -> None:
     monkeypatch.setattr(sys, "argv", ["check_session.py", "--db", str(ledger)])
     assert check_session.main() == 0
-    ledger.with_suffix(".bodies").write_bytes(b"")
+    _archive(ledger).write_bytes(b"")
     assert check_session.main() == 1
     assert "last recorded block ends at" in capsys.readouterr().out

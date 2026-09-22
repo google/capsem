@@ -25,6 +25,7 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::time::Instant;
 
 use capsem_foundation::unix::contained::ContainedDir;
 use capsem_foundation::unix::fs as unix_fs;
@@ -34,7 +35,7 @@ use super::format::{
     self, ArchiveId, BodyRef, FileHeader, GenerationId, SegmentHeader, BLOCK_HEADER_BYTES, CODEC_DEFLATE,
     DEFLATE_LEVEL, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES, SEGMENT_HEADER_BYTES, TARGET_BLOCK_BYTES,
 };
-use crate::{ArchiveError, Result};
+use crate::{ArchiveError, BodyLogReader, Result};
 
 /// What one flush or close put on disk. The owner records `raw_len` and
 /// `disk_len` against `block_offset` in the same transaction as the index
@@ -176,7 +177,7 @@ impl BodyLogWriter {
         if self.block.is_some() {
             return Err(ArchiveError::Poisoned);
         }
-        super::retain::check_extent(source, block_offset, disk_len)?;
+        super::retain::validate_block_extent(source, block_offset, disk_len)?;
         source.seek(SeekFrom::Start(block_offset))?;
         let new_offset = self.end;
         let copied = io::copy(&mut source.take(disk_len), &mut self.file)?;
@@ -185,6 +186,40 @@ impl BodyLogWriter {
         }
         self.end = self.end.checked_add(disk_len).ok_or(ArchiveError::CommittedExtent)?;
         Ok(new_offset)
+    }
+
+    /// Copy one captured generation through its committed extent.
+    ///
+    /// The destination is a fresh generation with the same immutable header.
+    /// Bytes after `committed_end` are an append or torn tail that the SQLite
+    /// snapshot did not select, so they are deliberately left behind.
+    pub fn copy_committed_prefix_from(&mut self, source: &File, committed_end: u64, deadline: Instant) -> Result<()> {
+        if self.block.is_some() || self.poisoned || self.end != FILE_HEADER_BYTES as u64 {
+            return Err(ArchiveError::Poisoned);
+        }
+        BodyLogReader::from_descriptor(source.try_clone()?, self.header, committed_end)?;
+        let mut source = source.try_clone()?;
+        source.seek(SeekFrom::Start(FILE_HEADER_BYTES as u64))?;
+        let remaining = committed_end
+            .checked_sub(FILE_HEADER_BYTES as u64)
+            .ok_or(ArchiveError::CommittedExtent)?;
+        let mut remaining = remaining;
+        let mut buffer = vec![0u8; 1024 * 1024];
+        while remaining > 0 {
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "archive generation copy timed out").into());
+            }
+            let wanted = usize::try_from(remaining.min(buffer.len() as u64))
+                .expect("copy chunk is bounded by the buffer length");
+            let read = source.read(&mut buffer[..wanted])?;
+            if read == 0 {
+                return Err(ArchiveError::CommittedExtent);
+            }
+            self.file.write_all(&buffer[..read])?;
+            remaining -= read as u64;
+        }
+        self.end = committed_end;
+        Ok(())
     }
 
     fn at(file: File, header: FileHeader, end: u64) -> Self {

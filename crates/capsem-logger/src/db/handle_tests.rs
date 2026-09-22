@@ -46,7 +46,9 @@ fn db_handle_contract_names_db_ownership_and_schema_failures() {
 pub(super) fn temp_db_path(name: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!("capsem-test-db-handle-{name}-{}.db", std::process::id()));
     for extension in ["db", "db-wal", "db-shm", "bodies"] {
-        let _ = std::fs::remove_file(p.with_extension(extension));
+        let path = p.with_extension(extension);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(path);
     }
     p
 }

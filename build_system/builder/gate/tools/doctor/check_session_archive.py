@@ -1,6 +1,8 @@
 """Check a session's body archive against the index that points into it.
 
-Bodies live in ``session.bodies`` beside ``session.db``; the database keeps
+Bodies live in one v3 generation under ``session.bodies`` beside
+``session.db``; the database singleton selects that generation and its
+committed extent. The database also keeps
 ``body_blocks`` (one row per block, with its committed extent) and
 ``event_body_blobs`` (one row per body, naming its block and its span inside
 the block's raw bytes). A
@@ -90,19 +92,25 @@ def _file_problems(
     findings: ArchiveFindings, archive: Path, db_path: Path, helper: ModuleType
 ) -> list[str]:
     if not archive.exists():
-        if findings.blocks:
-            return [f"{archive.name} is missing and {findings.blocks} blocks are recorded"]
-        return []
-    findings.archive_bytes = archive.stat().st_size
+        return [f"{archive.name} generation directory is missing"]
+    try:
+        selected_path = helper.generation_path_for_db(db_path)
+    except (AssertionError, OSError, sqlite3.Error) as error:
+        return [str(error)]
+    findings.archive = selected_path
+    if not selected_path.exists():
+        return [f"selected archive generation {selected_path.name} is missing"]
+    findings.archive_bytes = selected_path.stat().st_size
     if findings.archive_bytes < findings.blocks_end:
         return [
-            f"{archive.name} is {findings.archive_bytes} bytes but its last recorded"
+            f"{selected_path.name} is {findings.archive_bytes} bytes but its last recorded"
             f" block ends at {findings.blocks_end}"
         ]
     try:
-        helper.SessionArchive(db_path).close()
-    except AssertionError as error:
+        selected = helper.SessionArchive(db_path)
+    except (AssertionError, OSError, sqlite3.Error) as error:
         return [str(error)]
+    selected.close()
     return []
 
 

@@ -129,7 +129,7 @@ fn copy_kept_blocks(
     let mut moved = BTreeMap::new();
     let ascending: BTreeMap<u64, u64> = keep.iter().copied().collect();
     for (block_offset, disk_len) in ascending {
-        check_extent(source, block_offset, disk_len)?;
+        validate_block_extent(source, block_offset, disk_len)?;
         source.seek(SeekFrom::Start(block_offset))?;
         let copied = io::copy(&mut (&mut *source).take(disk_len), destination)?;
         if copied != disk_len {
@@ -143,7 +143,7 @@ fn copy_kept_blocks(
 
 /// Prove `disk_len` bytes from `block_offset` are one block header followed
 /// by whole segments, by walking the segment headers without inflating.
-pub(crate) fn check_extent(source: &mut File, block_offset: u64, disk_len: u64) -> Result<()> {
+pub fn validate_block_extent(source: &mut File, block_offset: u64, disk_len: u64) -> Result<u32> {
     source.seek(SeekFrom::Start(block_offset))?;
     let mut head = [0u8; BLOCK_HEADER_BYTES];
     source
@@ -151,7 +151,9 @@ pub(crate) fn check_extent(source: &mut File, block_offset: u64, disk_len: u64) 
         .map_err(|_| ArchiveError::BadBlockHeader(block_offset))?;
     format::parse_block_header(&head, block_offset)?;
     let mut at = block_offset + BLOCK_HEADER_BYTES as u64;
-    let extent_end = block_offset.saturating_add(disk_len);
+    let extent_end = block_offset
+        .checked_add(disk_len)
+        .ok_or(ArchiveError::CommittedExtent)?;
     let mut raw_start = 0u32;
     let mut last = false;
     while at < extent_end {
@@ -165,14 +167,18 @@ pub(crate) fn check_extent(source: &mut File, block_offset: u64, disk_len: u64) 
             .read_exact(&mut head)
             .map_err(|_| ArchiveError::TruncatedBlock(block_offset))?;
         let segment = format::parse_segment_header(&head, at, raw_start)?;
-        raw_start += segment.raw_len;
+        raw_start = raw_start
+            .checked_add(segment.raw_len)
+            .ok_or(ArchiveError::BadSegment(at))?;
         last = segment.last;
-        at += (SEGMENT_HEADER_BYTES + segment.comp_len as usize) as u64;
+        at = at
+            .checked_add((SEGMENT_HEADER_BYTES + segment.comp_len as usize) as u64)
+            .ok_or(ArchiveError::CommittedExtent)?;
     }
     if at != extent_end || raw_start == 0 {
         return Err(ArchiveError::BadSegment(at.min(extent_end)));
     }
-    Ok(())
+    Ok(raw_start)
 }
 
 #[cfg(test)]

@@ -31,11 +31,11 @@
 //!
 //! The recorded request and response text does survive, but not where it used
 //! to live: the current writer puts bodies in the block archive, so the replay
-//! produces a `test.bodies` beside the ledger and both files are committed
-//! together.
+//! produces a selected generation under `test.bodies` beside the ledger; the
+//! database, generation and fresh archive lock are committed together.
 //!
 //! Regeneration is byte-reproducible: two runs over the same source produce
-//! the same `test.db` and the same `test.bodies`, down to the byte. Three
+//! the same `test.db` and selected generation, down to the byte. Three
 //! values used to stand in the way, and each is now derived from what was
 //! recorded rather than from the run. `event_body_blobs.created_at` and
 //! `body_blocks.sealed_at` were the wall clock; the replay pins them
@@ -68,6 +68,75 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, UNIX_EPOCH};
 
 use rusqlite::Connection;
+
+const FIXTURE_ARCHIVE_ID: [u8; 16] = [0x22, 0x70, 0, 0, 0, 0, 0x40, 0, 0x80, 0, 0, 0, 0, 0, 0, 0];
+const FIXTURE_GENERATION_ID: [u8; 16] = [0x22, 0x70, 0, 0, 0, 0, 0x40, 0, 0x80, 0, 0, 0, 0, 0, 0, 1];
+
+fn fixture_generation_id() -> capsem_archive::GenerationId {
+    capsem_archive::GenerationId::from_bytes(FIXTURE_GENERATION_ID).unwrap()
+}
+
+fn archive_lock_path(db_path: &std::path::Path) -> std::path::PathBuf {
+    let mut name = db_path.file_name().unwrap().to_os_string();
+    name.push("-archive.lock");
+    db_path.with_file_name(name)
+}
+
+fn pin_fixture_archive_identity(db_path: &std::path::Path) {
+    use std::io::{Seek as _, SeekFrom, Write as _};
+
+    let conn = Connection::open(db_path).unwrap();
+    let old_generation_bytes: Vec<u8> = conn
+        .query_row(
+            "SELECT generation_id FROM archive_state WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let old_generation = capsem_archive::GenerationId::from_bytes(old_generation_bytes.try_into().unwrap()).unwrap();
+    let directory = db_path.with_extension("bodies");
+    let old_generation = directory.join(old_generation.file_name());
+    let archive_id = capsem_archive::ArchiveId::from_bytes(FIXTURE_ARCHIVE_ID).unwrap();
+    let generation_id = fixture_generation_id();
+    let generation = directory.join(generation_id.file_name());
+    std::fs::rename(&old_generation, &generation).expect("pin fixture generation name");
+    let mut file = std::fs::OpenOptions::new().write(true).open(&generation).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write_all(&capsem_archive::format::encode_file_header(archive_id, generation_id))
+        .unwrap();
+    file.sync_all().unwrap();
+    conn.execute(
+        "UPDATE archive_state SET archive_id = ?1, generation_id = ?2 WHERE singleton = 1",
+        rusqlite::params![&archive_id.as_bytes()[..], &generation_id.as_bytes()[..]],
+    )
+    .unwrap();
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
+}
+
+fn replace_directory(source: &std::path::Path, destination: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    if destination.is_dir() {
+        std::fs::remove_dir_all(destination).unwrap();
+    } else if destination.exists() {
+        std::fs::remove_file(destination).unwrap();
+    }
+    std::fs::create_dir(destination).unwrap();
+    std::fs::set_permissions(destination, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        assert!(entry.file_type().unwrap().is_file(), "fixture archive is flat");
+        std::fs::copy(entry.path(), destination.join(entry.file_name())).unwrap();
+    }
+}
+
+fn remove_file_or_directory(path: &std::path::Path) {
+    if path.is_dir() {
+        std::fs::remove_dir_all(path).unwrap();
+    } else if path.exists() {
+        std::fs::remove_file(path).unwrap();
+    }
+}
 
 /// The instant the replay's archive index is stamped with, in nanoseconds
 /// since the epoch.
@@ -150,12 +219,83 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
 /// silently truncates every run after that, which is how a 42 KB request
 /// becomes 2 KB.
 ///
-/// A ledger with no archive returns nothing, and the replay falls back to the
-/// columns; that is the pre-archive case, and the byte accounting at the end
-/// is what says whether the fallback lost anything.
+/// A v2 fixture gets a temporary v3 header and shifted block offsets only for
+/// this deliberate regeneration. Production still refuses v2; the fixture
+/// owner can use the current reader because the block and segment layout did
+/// not change between v2 and v3.
+fn archived_v2_bodies(db_path: &std::path::Path, conn: &Connection) -> SourceBodies {
+    use std::io::Write as _;
+
+    let legacy = std::fs::read(db_path.with_extension("bodies")).expect("read the v2 fixture archive");
+    assert!(legacy.len() >= 16, "v2 fixture archive has a complete header");
+    assert_eq!(&legacy[..8], capsem_archive::format::FILE_MAGIC);
+    assert_eq!(u16::from_le_bytes(legacy[8..10].try_into().unwrap()), 2);
+    assert!(legacy[10..16].iter().all(|byte| *byte == 0));
+
+    let staging = tempfile::tempdir().unwrap();
+    let upgraded = staging.path().join("fixture-v3.cbl");
+    let archive_id = capsem_archive::ArchiveId::from_bytes(FIXTURE_ARCHIVE_ID).unwrap();
+    let generation_id = fixture_generation_id();
+    let mut file = std::fs::File::create(&upgraded).unwrap();
+    file.write_all(&capsem_archive::format::encode_file_header(archive_id, generation_id))
+        .unwrap();
+    file.write_all(&legacy[16..]).unwrap();
+    file.sync_all().unwrap();
+    drop(file);
+
+    let reader = capsem_archive::BodyLogReader::open(&upgraded).unwrap();
+    let shift = u64::try_from(capsem_archive::FILE_HEADER_BYTES - 16).unwrap();
+    let mut statement = conn
+        .prepare(
+            "SELECT b.source_table, b.event_id, b.direction, b.body_hash,
+                    b.block_offset, b.body_offset, b.body_len,
+                    blocks.disk_len, blocks.raw_len
+             FROM event_body_blobs AS b
+             JOIN body_blocks AS blocks ON blocks.block_offset = b.block_offset
+             ORDER BY b.block_offset, b.body_offset",
+        )
+        .unwrap();
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, u64>(4)?,
+                row.get::<_, u32>(5)?,
+                row.get::<_, u32>(6)?,
+                row.get::<_, u64>(7)?,
+                row.get::<_, u32>(8)?,
+            ))
+        })
+        .unwrap();
+    let mut bodies = SourceBodies::new();
+    for row in rows {
+        let (source_table, event_id, direction, expected_hash, block_offset, offset, len, disk_len, raw_len) =
+            row.unwrap();
+        let bytes = reader
+            .read_bounded(
+                capsem_archive::BodyRef {
+                    block_offset: block_offset + shift,
+                    offset,
+                    len,
+                },
+                capsem_archive::BlockExtent { disk_len, raw_len },
+            )
+            .unwrap();
+        assert_eq!(format!("blake3:{}", blake3::hash(&bytes).to_hex()), expected_hash);
+        bodies.insert((source_table, event_id, direction), bytes);
+    }
+    bodies
+}
+
 fn archived_bodies(db_path: &std::path::Path, conn: &Connection) -> SourceBodies {
     if !table_exists(conn, "event_body_blobs") {
         return SourceBodies::new();
+    }
+    if !table_exists(conn, "archive_state") {
+        return archived_v2_bodies(db_path, conn);
     }
     let mut stmt = conn
         .prepare("SELECT DISTINCT event_id FROM event_body_blobs ORDER BY event_id")
@@ -703,6 +843,7 @@ fn regenerate_session_fixture() {
     let files = replay_file_events(&source, &writer);
     drop(bodies);
     writer.shutdown_blocking();
+    pin_fixture_archive_identity(&rebuilt);
 
     // Checked before anything else opens the file: only the ledger is
     // committed, so everything has to be in it and not in a WAL beside it.
@@ -808,6 +949,8 @@ fn regenerate_session_fixture() {
     let indexed_bodies = count(&rebuilt_conn, "SELECT COUNT(*) FROM event_body_blobs");
     let rebuilt_bodies = rebuilt.with_extension("bodies");
     let fixture_bodies = fixture.with_extension("bodies");
+    let rebuilt_lock = archive_lock_path(&rebuilt);
+    let fixture_lock = archive_lock_path(&fixture);
     println!("indexed bodies: {indexed_bodies}");
     // The same ordering the writer itself keeps: bytes before the index that
     // names them. If the second copy fails, the pair left behind is a stale
@@ -815,13 +958,13 @@ fn regenerate_session_fixture() {
     // there. Removal runs the other way for the same reason -- the index goes
     // first, so nothing is left naming an archive that is gone.
     if indexed_bodies > 0 {
-        std::fs::copy(&rebuilt_bodies, &fixture_bodies).expect("write the regenerated body archive");
+        replace_directory(&rebuilt_bodies, &fixture_bodies);
+        std::fs::copy(&rebuilt_lock, &fixture_lock).expect("write the regenerated archive lock");
         std::fs::copy(&rebuilt, &fixture).expect("write the regenerated fixture");
     } else {
         std::fs::copy(&rebuilt, &fixture).expect("write the regenerated fixture");
-        if fixture_bodies.exists() {
-            std::fs::remove_file(&fixture_bodies).unwrap();
-        }
+        remove_file_or_directory(&fixture_bodies);
+        remove_file_or_directory(&fixture_lock);
     }
 
     let reader = DbReader::open(&fixture).unwrap();
@@ -854,12 +997,16 @@ fn regenerate_session_fixture() {
         }
     }
 
-    assert_recorded_digests(&fixture, &fixture_bodies);
+    assert_recorded_digests(&[
+        fixture,
+        fixture_bodies.join(fixture_generation_id().file_name()),
+        fixture_lock,
+    ]);
 }
 
 /// Fail unless what was just written is what `fixture_ownership.toml` records.
 ///
-/// `tests/citadel/test_fixture_ownership.py` compares the same two digests, so
+/// `tests/citadel/test_fixture_ownership.py` compares the same digests, so
 /// a stale entry is caught either way. What it cannot do is catch it *here*,
 /// at the moment the bytes change, with the digests to record printed in the
 /// failure. Without that, forgetting the toml is a green regeneration followed
@@ -890,7 +1037,7 @@ fn recorded_digest(ownership: &str, name: &str) -> Option<String> {
     None
 }
 
-fn assert_recorded_digests(fixture: &std::path::Path, bodies: &std::path::Path) {
+fn assert_recorded_digests(paths: &[std::path::PathBuf]) {
     use sha2::{Digest, Sha256};
 
     let ownership = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -900,7 +1047,7 @@ fn assert_recorded_digests(fixture: &std::path::Path, bodies: &std::path::Path) 
     let recorded = std::fs::read_to_string(&ownership).expect("read fixture_ownership.toml");
 
     let mut stale = Vec::new();
-    for path in [fixture, bodies] {
+    for path in paths {
         let name = path.file_name().expect("fixture name").to_string_lossy().into_owned();
         assert!(
             path.exists(),

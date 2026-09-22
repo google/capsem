@@ -1,4 +1,4 @@
-"""Read archived bodies out of a session's ``session.bodies`` from a test.
+"""Read archived bodies out of a session's v3 generation from a test.
 
 Bodies left SQLite for a block archive beside it: ``event_body_blobs`` says
 which block a body is in and where inside that block it starts, and the block
@@ -15,9 +15,11 @@ exist -- ``tests/citadel/test_body_archive_format_is_one_place.py`` allowlists e
 this path, for exactly that reason, so that a third parser cannot appear
 quietly.
 
-The layout, from that file (version 2)::
+The layout, from that file (version 3)::
 
-    file header (16 bytes):  magic "CAPSEMBL"  u16 version=2  u16 pad  u32 pad
+    file header (80 bytes):  magic "CAPSEMBL"  u16 version=3  u16 flags=0
+                             u32 header_len=80  archive_id[16]
+                             generation_id[16]  blake3(bytes[0:48])[32]
     block header (8 bytes):  magic "BLK2"  u8 codec (1 = raw deflate)  u8 flags  u16 pad
     segment (repeated):      magic "SGMT"  u8 flags (bit 0 FINAL)  u8[3] pad
                              u32 raw_start  u32 raw_len  u32 comp_len
@@ -41,11 +43,11 @@ import json
 import sqlite3
 import zlib
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Self
 
 FILE_MAGIC = b"CAPSEMBL"
-FILE_VERSION = 2
-FILE_HEADER_BYTES = 16
+FILE_VERSION = 3
+FILE_HEADER_BYTES = 80
 BLOCK_MAGIC = b"BLK2"
 BLOCK_HEADER_BYTES = 8
 CODEC_DEFLATE = 1
@@ -66,7 +68,7 @@ SECURITY_PAYLOAD_TABLES = frozenset(
 
 
 def archive_path_for_db(db_path: Path | str) -> Path:
-    """``session.bodies`` beside ``session.db``."""
+    """The private ``session.bodies`` generation directory beside the DB."""
     return Path(db_path).with_suffix(".bodies")
 
 
@@ -80,11 +82,54 @@ def _blake3(data: bytes) -> str:
     return _hash(data).hexdigest()
 
 
+def _archive_state(db_path: Path) -> tuple[bytes, bytes, int]:
+    with contextlib.closing(
+        sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    ) as conn:
+        rows = conn.execute(
+            "SELECT archive_id, generation_id, format_version, committed_end, revision "
+            "FROM archive_state WHERE singleton = 1"
+        ).fetchall()
+    if len(rows) != 1:
+        raise AssertionError(f"{db_path} must select exactly one archive generation")
+    archive_id, generation_id, version, committed_end, revision = rows[0]
+    if (
+        not isinstance(archive_id, bytes)
+        or len(archive_id) != 16
+        or not isinstance(generation_id, bytes)
+        or len(generation_id) != 16
+        or version != FILE_VERSION
+        or not isinstance(committed_end, int)
+        or committed_end < FILE_HEADER_BYTES
+        or not isinstance(revision, int)
+        or revision < 1
+        or archive_id[6] >> 4 != 4
+        or archive_id[8] >> 6 != 2
+        or generation_id[6] >> 4 != 4
+        or generation_id[8] >> 6 != 2
+    ):
+        raise AssertionError(f"{db_path} has an invalid v3 archive_state singleton")
+    return archive_id, generation_id, committed_end
+
+
+def _generation_name(generation_id: bytes) -> str:
+    return f"g-{generation_id.hex()}.cbl"
+
+
+def generation_path_for_db(db_path: Path | str) -> Path:
+    """The exact generation selected by the database singleton."""
+    path = Path(db_path)
+    _archive_id, generation_id, _committed_end = _archive_state(path)
+    return archive_path_for_db(path) / _generation_name(generation_id)
+
+
 class _Cursor:
     """One block inflated up to the end of some segment, as the product keeps it."""
 
-    def __init__(self, block_offset: int) -> None:
+    def __init__(self, block_offset: int, disk_len: int, raw_len: int) -> None:
         self.block_offset = block_offset
+        self.block_end = block_offset + disk_len
+        self.raw_limit = raw_len
         self.inflater = zlib.decompressobj(-15)
         self.raw = bytearray()
         self.next_segment_at = block_offset + BLOCK_HEADER_BYTES
@@ -109,6 +154,10 @@ class SessionArchive:
     def __init__(self, db_path: Path | str) -> None:
         self.db_path = Path(db_path)
         self._archive = archive_path_for_db(self.db_path)
+        archive_id, generation_id, self.committed_end = _archive_state(self.db_path)
+        self.generation_path = self._archive / _generation_name(generation_id)
+        self._expected_archive_id = archive_id
+        self._expected_generation_id = generation_id
         self._verify_file_header()
         self._cursor: _Cursor | None = None
 
@@ -116,7 +165,7 @@ class SessionArchive:
         """Nothing is held open; drop the cursor."""
         self._cursor = None
 
-    def __enter__(self) -> SessionArchive:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *_exc: object) -> None:
@@ -129,18 +178,22 @@ class SessionArchive:
         ) as conn:
             row = conn.execute(
                 """
-                SELECT block_offset, body_offset, body_len, body_hash
-                FROM event_body_blobs
-                WHERE event_id = ? AND source_table = ? AND direction = ?
+                SELECT b.block_offset, b.body_offset, b.body_len, b.body_hash,
+                       k.disk_len, k.raw_len
+                FROM event_body_blobs b
+                JOIN body_blocks k ON k.block_offset = b.block_offset
+                WHERE b.event_id = ? AND b.source_table = ? AND b.direction = ?
                 """,
                 (event_id, source_table, direction),
             ).fetchone()
         if row is None:
             return None
-        block_offset, body_offset, body_len, body_hash = (int(row[0]), int(row[1]), int(row[2]), row[3])
+        block_offset, body_offset, body_len, body_hash, disk_len, raw_len = (
+            int(row[0]), int(row[1]), int(row[2]), row[3], int(row[4]), int(row[5])
+        )
         end = body_offset + body_len
         try:
-            body = self._span(block_offset, body_offset, end)
+            body = self._span(block_offset, body_offset, end, disk_len, raw_len)
         except AssertionError:
             # A cursor that failed part-way holds an inflater in an unknown
             # state; nothing may read from it again.
@@ -171,46 +224,71 @@ class SessionArchive:
         return json.loads(body.decode())
 
     def _verify_file_header(self) -> None:
-        with self._archive.open("rb") as file:
+        with self.generation_path.open("rb") as file:
             header = file.read(FILE_HEADER_BYTES)
-        if header[:8] != FILE_MAGIC or int.from_bytes(header[8:10], "little") != FILE_VERSION:
-            raise AssertionError(f"{self._archive} is not a capsem body archive")
+        if (
+            len(header) != FILE_HEADER_BYTES
+            or header[:8] != FILE_MAGIC
+            or int.from_bytes(header[8:10], "little") != FILE_VERSION
+            or header[10:12] != b"\x00\x00"
+            or int.from_bytes(header[12:16], "little") != FILE_HEADER_BYTES
+            or header[16:32] != self._expected_archive_id
+            or header[32:48] != self._expected_generation_id
+            or _blake3(header[:48]) != header[48:80].hex()
+            or self.generation_path.stat().st_size < self.committed_end
+        ):
+            raise AssertionError(f"{self.generation_path} is not the selected v3 archive generation")
 
-    def _span(self, block_offset: int, start: int, end: int) -> bytes:
+    def _span(
+        self, block_offset: int, start: int, end: int, disk_len: int, raw_len: int
+    ) -> bytes:
         """Raw bytes ``start..end`` of a block, inflating as far as they need."""
-        if end > MAX_BLOCK_RAW_BYTES:
+        if (
+            start < 0
+            or end < start
+            or end > raw_len
+            or raw_len > MAX_BLOCK_RAW_BYTES
+            or block_offset < FILE_HEADER_BYTES
+            or disk_len < BLOCK_HEADER_BYTES
+            or block_offset + disk_len > self.committed_end
+        ):
             raise AssertionError(f"a span ending at {end} is past any block's bounds")
         cursor = self._cursor
-        if cursor is None or cursor.block_offset != block_offset:
-            cursor = self._cursor = self._start_block(block_offset)
+        if (
+            cursor is None
+            or cursor.block_offset != block_offset
+            or cursor.block_end != block_offset + disk_len
+            or cursor.raw_limit != raw_len
+        ):
+            cursor = self._cursor = self._start_block(block_offset, disk_len, raw_len)
         if len(cursor.raw) < end:
-            with self._archive.open("rb") as file:
+            with self.generation_path.open("rb") as file:
                 while len(cursor.raw) < end:
-                    if cursor.finished:
+                    if cursor.finished or cursor.next_segment_at >= cursor.block_end:
                         raise AssertionError(
                             f"span ending at {end} runs past the end of block {block_offset}"
                         )
                     self._inflate_segment(file, cursor)
         return bytes(cursor.raw[start:end])
 
-    def _start_block(self, block_offset: int) -> _Cursor:
-        with self._archive.open("rb") as file:
+    def _start_block(self, block_offset: int, disk_len: int, raw_len: int) -> _Cursor:
+        with self.generation_path.open("rb") as file:
             file.seek(block_offset)
             header = file.read(BLOCK_HEADER_BYTES)
         if len(header) != BLOCK_HEADER_BYTES or header[:4] != BLOCK_MAGIC:
             raise AssertionError(f"no block at offset {block_offset} of {self._archive}")
         if header[4] != CODEC_DEFLATE or header[5:] != b"\x00\x00\x00":
             raise AssertionError(
-                f"block at {block_offset} of {self._archive} uses codec {header[4]}, "
+                f"block at {block_offset} of {self.generation_path} uses codec {header[4]}, "
                 "which this reader does not know"
             )
-        return _Cursor(block_offset)
+        return _Cursor(block_offset, disk_len, raw_len)
 
     def _inflate_segment(self, file: BinaryIO, cursor: _Cursor) -> None:
         at = cursor.next_segment_at
         file.seek(at)
         header = file.read(SEGMENT_HEADER_BYTES)
-        where = f"segment at {at} of {self._archive}"
+        where = f"segment at {at} of {self.generation_path}"
         if len(header) != SEGMENT_HEADER_BYTES:
             raise AssertionError(f"{where} is truncated: the block was never written this far")
         flags = header[4]
@@ -231,9 +309,10 @@ class SessionArchive:
             or flags & ~SEGMENT_FINAL
             or header[5:8] != b"\x00\x00\x00"
             or raw_start != len(cursor.raw)
-            or raw_start + raw_len > MAX_BLOCK_RAW_BYTES
+            or raw_start + raw_len > cursor.raw_limit
             or comp_len > raw_len + MAX_SEGMENT_EXPANSION
             or (raw_len == 0 and not final)
+            or at + SEGMENT_HEADER_BYTES + comp_len > cursor.block_end
         ):
             raise AssertionError(
                 f"{where} declares flags={flags:#x} raw_start={raw_start} raw_len={raw_len} "
@@ -269,6 +348,10 @@ class SessionArchive:
         cursor.raw += raw
         cursor.next_segment_at = at + SEGMENT_HEADER_BYTES + comp_len
         cursor.finished = final
+        if cursor.next_segment_at == cursor.block_end and len(cursor.raw) != cursor.raw_limit:
+            raise AssertionError(f"{where} ends at {len(cursor.raw)} raw bytes, not {cursor.raw_limit}")
+        if final and cursor.next_segment_at != cursor.block_end:
+            raise AssertionError(f"{where} is final before the recorded block extent ends")
 
 
 def archived_bodies(db_path: Path | str) -> list[tuple[str, str, str, bytes]]:
