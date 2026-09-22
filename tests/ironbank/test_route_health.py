@@ -547,6 +547,21 @@ def _assert_uuid_route_id(vm_id: str) -> None:
     assert str(parsed) == vm_id
 
 
+def _assert_archived_exec_body(client: Any, vm_id: str, event_id: str) -> None:
+    archived = client.get(f"/vms/{vm_id}/bodies/{event_id}", timeout=30)
+    assert archived["event_id"] == event_id
+    stdout = [body for body in archived["bodies"] if body["direction"] == "stdout"]
+    assert len(stdout) == 1, archived
+    body = stdout[0]
+    assert body["source_table"] == "exec_events"
+    assert body["encoding"] == "utf8"
+    assert body["content"] == "route-lifecycle-ok"
+    assert body["original_bytes"] == body["stored_bytes"] == len(body["content"])
+    assert body["truncated"] is False
+    assert body["truncated_for_transport"] is False
+    assert body["body_hash"].startswith("blake3:")
+
+
 def _service_route_contracts() -> list[RouteContract]:
     profile = CODE_PROFILE_ID
     return [
@@ -1200,6 +1215,11 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         assert exec_payload["exit_code"] == 0
         assert exec_output_text(exec_payload) == "route-lifecycle-ok"
         _assert_timing_budget(timing, p95_ms=10_000.0, max_ms=10_000.0, cpu_s=1.0)
+        detail = service_client.get(f"/vms/{source_id}/stats/detail", timeout=30)
+        exec_rows = [row for row in detail["process_events"] if row["command"] == "printf route-lifecycle-ok"]
+        assert len(exec_rows) == 1, exec_rows
+        exec_event_id = exec_rows[0]["event_id"]
+        _assert_archived_exec_body(service_client, source_id, exec_event_id)
 
         fork_payload, timing = _measure_once(
             "service /vms/{id}/fork",
@@ -1221,6 +1241,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         assert child_status["status"] == "Stopped"
         assert child_status["persistent"] is True
         assert child_status["can_resume"] is True
+        _assert_archived_exec_body(gateway_client, child_id, exec_event_id)
 
         delete_child, timing = _measure_once(
             "service /vms/{child}/delete",
@@ -1252,6 +1273,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         assert resume_payload["profile_id"] == CODE_PROFILE_ID
         _assert_timing_budget(timing, p95_ms=45_000.0, max_ms=45_000.0, cpu_s=10.0)
         assert wait_exec_ready(service_client, source_id, timeout=EXEC_READY_TIMEOUT)
+        _assert_archived_exec_body(service_client, source_id, exec_event_id)
 
         stop_payload, timing = _measure_once(
             "service /vms/{id}/stop",
@@ -1273,6 +1295,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         assert resume_payload["id"] == source_id
         _assert_timing_budget(timing, p95_ms=45_000.0, max_ms=45_000.0, cpu_s=10.0)
         assert wait_exec_ready(service_client, source_id, timeout=EXEC_READY_TIMEOUT)
+        _assert_archived_exec_body(gateway_client, source_id, exec_event_id)
 
         delete_source, timing = _measure_once(
             "service /vms/{id}/delete",
