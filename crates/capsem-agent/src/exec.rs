@@ -8,7 +8,8 @@ use capsem_foundation::unix::{
     process::{send_process_group_signal, ProcessId, Signal},
 };
 use capsem_proto::{GuestToHost, VSOCK_PORT_EXEC};
-use std::io::{self, Read as _, Write as _};
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+use std::io::{self, Write as _};
 use std::os::fd::{AsFd, FromRawFd, RawFd};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::thread;
@@ -270,46 +271,14 @@ pub(super) fn run_exec_on_fds_with_cancel(
 
     // Serialize complete typed frames so stdout and stderr retain their lanes
     // without interleaving frame bytes from the two reader threads.
-    let stderr_thread = child.stderr.take().map(|mut stderr| {
+    let stderr_thread = child.stderr.take().map(|stderr| {
         let output = std::sync::Arc::clone(&output);
-        thread::spawn(move || {
-            let mut buf = vec![0u8; EXEC_OUTPUT_READ_BYTES];
-            loop {
-                match stderr.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        let channel = capsem_proto::ExecOutputChannel::Stderr;
-                        if capsem_proto::write_exec_output_data(&mut *output.lock().unwrap(), channel, &buf[..n])
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
-        })
+        thread::spawn(move || forward_exec_output(stderr, &output, capsem_proto::ExecOutputChannel::Stderr))
     });
 
-    let stdout_thread = child.stdout.take().map(|mut stdout| {
+    let stdout_thread = child.stdout.take().map(|stdout| {
         let output = std::sync::Arc::clone(&output);
-        thread::spawn(move || {
-            let mut buf = vec![0u8; EXEC_OUTPUT_READ_BYTES];
-            loop {
-                match stdout.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        let channel = capsem_proto::ExecOutputChannel::Stdout;
-                        if capsem_proto::write_exec_output_data(&mut *output.lock().unwrap(), channel, &buf[..n])
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(_) => break,
-                }
-            }
-        })
+        thread::spawn(move || forward_exec_output(stdout, &output, capsem_proto::ExecOutputChannel::Stdout))
     });
 
     // Drain before reaping. A grandchild holding the stdout pipe keeps these
@@ -335,10 +304,58 @@ pub(super) fn run_exec_on_fds_with_cancel(
     exit_code
 }
 
-/// One read of a child's stdout or stderr, sent as one frame. An 8 KiB buffer
-/// turned 256 KiB of output into 32 frames, each copied and written apart.
+/// Large enough to amortize framing without exceeding the protocol payload.
 const EXEC_OUTPUT_READ_BYTES: usize = 64 * 1024;
 const _: () = assert!(EXEC_OUTPUT_READ_BYTES <= capsem_proto::MAX_EXEC_DATA_BYTES);
+/// A short idle window combines pipe reads while preserving interactive output.
+const EXEC_OUTPUT_COALESCE_MS: u16 = 5;
+
+fn forward_exec_output<R: io::Read + AsFd>(
+    mut reader: R,
+    output: &std::sync::Arc<std::sync::Mutex<std::fs::File>>,
+    channel: capsem_proto::ExecOutputChannel,
+) {
+    let mut buf = vec![0u8; EXEC_OUTPUT_READ_BYTES];
+    loop {
+        let mut used = 0;
+        let mut ended = false;
+        loop {
+            match reader.read(&mut buf[used..]) {
+                Ok(0) => {
+                    ended = true;
+                    break;
+                }
+                Ok(n) => used += n,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    ended = true;
+                    break;
+                }
+            }
+            if used == buf.len() {
+                break;
+            }
+            let mut readiness = [PollFd::new(reader.as_fd(), PollFlags::POLLIN | PollFlags::POLLHUP)];
+            match poll(&mut readiness, PollTimeout::from(EXEC_OUTPUT_COALESCE_MS)) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(nix::errno::Errno::EINTR) => continue,
+                Err(_) => {
+                    ended = true;
+                    break;
+                }
+            }
+        }
+        if used > 0
+            && capsem_proto::write_exec_output_data(&mut *output.lock().unwrap(), channel, &buf[..used]).is_err()
+        {
+            break;
+        }
+        if ended {
+            break;
+        }
+    }
+}
 
 fn finish_exec_io(
     output: &std::sync::Arc<std::sync::Mutex<std::fs::File>>,
