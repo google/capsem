@@ -145,6 +145,7 @@ component_management:
     - component_id: monitoring
       name: Monitoring
       paths:
+        - crates/capsem-archive/src/**
         - crates/capsem-logger/src/**
         - crates/capsem-core/src/pty_log.rs
         - crates/capsem-core/src/session/**
