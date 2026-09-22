@@ -67,15 +67,6 @@ release-profile channel profile source_commit force="false":
     uv run --project build_system --frozen capsem-gate release-profile {{quote(channel)}} {{quote(profile)}} {{quote(source_commit)}} --force {{quote(force)}}
 
 
-# Compile all host binaries
-_build-host:
-    uv run --project build_system --frozen capsem-gate build-host
-
-# Codesign all host binaries (macOS only, needed for Virtualization.framework)
-_sign:
-    uv run --project build_system --frozen capsem-gate sign
-
-
 # Ensure capsem-service daemon is running with the current binary.
 # Kills any existing dev-owned instance (via pidfile -- never pkill-by-name)
 # and relaunches fresh. Honors CAPSEM_HOME / CAPSEM_RUN_DIR env vars so
@@ -123,9 +114,10 @@ build profile="debug":
 # VM/release assets remain profile-owned and are built by the canonical test
 # and release workflows, not hidden inside a routine source build.
 build-all profile="debug":
-    just build {{quote(profile)}}
-    just _build-host
-    just build-docs
+    uv run --project build_system --frozen capsem-gate build-ui {{quote(profile)}}
+    uv run --project build_system --frozen capsem-gate build-host
+    bash build_system/scripts/web/check-web-surface.sh docs
+    bash build_system/scripts/web/check-web-surface.sh site
 
 # Start service daemon + boot temporary VM + shell (~10s after first build)
 shell: _prepared-runtime _ensure-service

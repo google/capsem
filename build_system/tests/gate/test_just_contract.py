@@ -49,21 +49,19 @@ def test_justfile_does_not_expose_legacy_guest_dir_knob() -> None:
     assert "capsem-builder agent --arch" not in justfile
 
 
-def test_host_build_and_signing_are_gate_dispatches_not_recipe_work() -> None:
-    """A recipe dependency put one timeout around compilation and signing.
+def test_host_build_and_signing_have_no_hidden_just_shortcuts() -> None:
+    """The gate graph owns host production and signing from every entry point.
 
-    Both stages belong to the gate graph, where their edge, logs, and separate
-    config-owned bounds are visible. This source guard makes the split-owner
-    shape fail before another agent waits through a cold build to discover it.
+    A callable ``just _sign`` once let scripts bypass the owning plan. Even
+    after its body became a gate dispatch, the duplicate entry point remained
+    available for the next caller to mistake for a primitive. Keep both host
+    mutation aliases absent; callers dispatch the gate command whose plan
+    carries the producer edge and the separate config-owned timeouts.
     """
-    justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
-    build = justfile.split("\n_build-host:\n", 1)[1].split("\n\n", 1)[0]
-    signing = justfile.split("\n_sign:\n", 1)[1].split("\n\n", 1)[0]
+    recipes = _recipes()
 
-    assert build.strip() == "uv run --project build_system --frozen capsem-gate build-host"
-    assert signing.strip() == "uv run --project build_system --frozen capsem-gate sign"
-    assert "_sign: _build-host" not in justfile
-    assert "cargo build" not in build
+    assert "_build-host" not in recipes
+    assert "_sign" not in recipes
 
 
 def test_host_build_and_signing_are_not_hidden_in_other_recipe_dependencies() -> None:
@@ -102,6 +100,10 @@ def test_public_build_aliases_cross_one_gate_boundary() -> None:
         assert len(lines) == 1
         assert command in lines[0]
         assert "just " not in lines[0]
+
+    build_all = _body(recipes["build-all"])
+    assert any("capsem-gate build-host" in line for line in build_all)
+    assert all("just " not in line for line in build_all)
 
 
 def test_justfile_routes_assets_through_profile_admin_rail() -> None:
