@@ -39,6 +39,7 @@ before anything is allocated or inflated, because it comes off disk.
 from __future__ import annotations
 
 import contextlib
+import importlib
 import json
 import sqlite3
 import zlib
@@ -74,12 +75,12 @@ def archive_path_for_db(db_path: Path | str) -> Path:
 
 def _blake3(data: bytes) -> str:
     try:
-        from blake3 import blake3 as _hash  # type: ignore[import-not-found]
-    except ImportError as error:  # pragma: no cover - environment-dependent
+        module = importlib.import_module("blake3")
+    except ModuleNotFoundError as error:  # pragma: no cover - environment-dependent
         raise AssertionError(
             "reading an archived body verifies its blake3 hash; install the blake3 package"
         ) from error
-    return _hash(data).hexdigest()
+    return str(module.blake3(data).hexdigest())
 
 
 def _archive_state(db_path: Path) -> tuple[bytes, bytes, int]:

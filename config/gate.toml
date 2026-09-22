@@ -906,7 +906,7 @@ unused-type-ignore-comment = 3
 # policy change. This is historical debt, not capacity: every value may shrink
 # and no value may grow.
 [lint.suppression_budget]
-noqa = 228
+noqa = 227
 type_ignore = 22
 ty_ignore = 5
 ruff_global_ignore = 1
@@ -991,6 +991,7 @@ direct_machine_access = [
     # The process half of proc's one execution funnel, split at the module
     # ceiling. It owns exact foreground process trees across sandbox sessions.
     "processgroup.py",
+    "processstop.py",
     "pidfiles.py",
     "locks.py",
     "runlog.py",

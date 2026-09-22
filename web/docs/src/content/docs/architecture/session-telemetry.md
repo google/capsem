@@ -354,6 +354,10 @@ protocol tables keep compact display fields (2 KB previews) for table scans;
 forensic body truth lives in the archive and joins by `event_id` plus
 `direction`.
 
+The blob table is the ledger index for archived bodies; `session.bodies` is
+the forensic byte source those rows authenticate and locate. A valid session
+ledger requires both.
+
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER PK | Auto-increment |
