@@ -185,6 +185,75 @@ reason = "corp block"
     );
 }
 
+#[tokio::test]
+async fn http_security_payload_references_the_primary_body_without_copying_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.observe_body]
+name = "observe_body"
+action = "allow"
+match = 'http.body.contains("kept-exact")'
+"#,
+    )
+    .unwrap();
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+    let rule = rules
+        .iter()
+        .find(|rule| rule.rule_id == "profiles.rules.observe_body")
+        .unwrap();
+    let body = format!("kept-exact:{}:tail", "x".repeat(16 * 1024));
+    let mut primary = match net_write(None) {
+        WriteOp::NetEvent(event) => event,
+        _ => unreachable!("net_write returns a network event"),
+    };
+    primary.request_body = Some(body.as_bytes().to_vec());
+    let event_id = emit_security_write(&writer, WriteOp::NetEvent(primary))
+        .await
+        .expect("the primary HTTP event receives an id");
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+        host: Some("example.com".into()),
+        method: Some("POST".into()),
+        path: Some("/".into()),
+        body: Some(body.clone()),
+        ..Default::default()
+    });
+
+    emit_security_rule_match(
+        &writer,
+        event_id.clone(),
+        RuntimeSecurityEventType::HttpRequest,
+        rule,
+        &event,
+        1_789_000_000_100,
+    )
+    .await
+    .unwrap();
+    writer.shutdown_blocking();
+
+    let payload: serde_json::Value =
+        serde_json::from_str(&archived_payload(&db_path, event_id.as_str()).await).unwrap();
+    assert_eq!(payload["http"]["body"].as_str().unwrap().len(), 2 * 1024);
+    assert_eq!(payload["http"]["body_bytes"], body.len());
+    assert_eq!(
+        payload["http"]["body_hash"],
+        format!("blake3:{}", blake3::hash(body.as_bytes()).to_hex())
+    );
+    assert_eq!(payload["http"]["body_truncated"], true);
+    assert_eq!(payload["http"]["body_source"]["source_table"], "net_events");
+    assert_eq!(payload["http"]["body_source"]["direction"], "request");
+
+    let primary = capsem_logger::DbHandle::open_external_reader(&db_path)
+        .unwrap()
+        .read_body(event_id.as_str(), "net_events", capsem_logger::BodyDirection::Request)
+        .await
+        .unwrap()
+        .expect("the primary network event keeps the exact request body");
+    assert_eq!(primary.bytes, body.as_bytes());
+}
+
 #[test]
 fn security_rule_trace_labels_are_low_cardinality_rule_fields() {
     let profile = SecurityRuleProfile::parse_toml(

@@ -115,8 +115,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Display previews in the session ledger -- the short excerpts of request and
   response bodies, system prompts and tool results that list views show -- are
   capped at 2 KB instead of 256 KB. The full body is unaffected: it is stored
-  in the session's body archive. A ten-day session had carried 75 MB of
-  previews.
+  in the session's body archive. HTTP and model security payloads also keep a
+  2 KB request preview plus its full byte count, hash, and primary archive
+  source instead of archiving another full copy under every matching rule. A
+  ten-day session had carried 75 MB of previews.
 
 - The per-VM `stats/summary` and `security/status` polls can no longer keep
   serving a pre-commit answer after the ledger changes; a race between the two

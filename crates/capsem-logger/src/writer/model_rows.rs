@@ -229,11 +229,12 @@ fn insert_model_items(
         })
         .to_string();
         let content_hash = blake3_ref(&hash_material);
-        // A tool_response item's full content is in the archive, reachable
-        // from the tool_responses row with the same call_id, so this column
-        // keeps a display excerpt. The other kinds have no archive row of
-        // their own and stay at the full field cap.
-        let content = if kind == "tool_response" {
+        // Request and response bodies are archived under the parent model
+        // event; tool responses are archived under their own event row. These
+        // columns are display excerpts, while the original content above
+        // remains the dedup identity. Reasoning and tool-call arguments have
+        // no complete archive representation of their own.
+        let content = if matches!(kind, "request" | "response" | "tool_response") {
             cap_preview(&content)
         } else {
             cap_field(&content)
@@ -290,9 +291,8 @@ fn insert_model_items(
     // A tool-result continuation request is represented by tool_response rows;
     // do not also log it as another user request for the same trace.
     if call.tool_responses.is_empty() {
-        // The item content is capped at the field ceiling, not the preview
-        // ceiling, and its hash is taken over the uncapped text -- so the
-        // whole captured body is what reaches `insert_item`, not an excerpt.
+        // The whole captured body reaches `insert_item`: it is archived and
+        // hashed before only its display value is capped to a preview.
         if let Some(body) = call.request_body.as_deref().filter(|body| !body.is_empty()) {
             let content = String::from_utf8_lossy(body).into_owned();
             insert_item("request", None, None, None, Some(content))?;

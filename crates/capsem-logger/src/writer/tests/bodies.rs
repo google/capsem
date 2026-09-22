@@ -202,6 +202,87 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     assert_eq!(response.trace_id, trace_id);
 }
 
+#[test]
+fn model_items_keep_previews_while_the_archive_keeps_full_bodies() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("model-body-previews.db");
+    let prefix = "p".repeat(PREVIEW_BYTES);
+    let requests = [
+        format!("{prefix}{}", "a".repeat(4096)),
+        format!("{prefix}{}", "b".repeat(4096)),
+    ];
+    let responses = [
+        format!("{prefix}{}", "c".repeat(4096)),
+        format!("{prefix}{}", "d".repeat(4096)),
+    ];
+
+    let writer = DbWriter::open(&db_path, 64).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+    rt.block_on(async {
+        for (index, (request, response)) in requests.iter().zip(&responses).enumerate() {
+            let WriteOp::ModelCall(mut call) = super::minimal_model_call("trace-body-previews") else {
+                unreachable!()
+            };
+            call.event_id = Some(format!("abc123def45{index}"));
+            call.request_bytes = request.len() as u64;
+            call.request_body = Some(request.as_bytes().to_vec());
+            call.response_bytes = response.len() as u64;
+            call.response_body = Some(response.as_bytes().to_vec());
+            call.text_content = Some(response.clone());
+            writer.write(WriteOp::ModelCall(call)).await;
+        }
+        writer.flush().await;
+    });
+    writer.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let items = conn
+        .prepare(
+            "SELECT kind, content, content_hash FROM model_items
+             WHERE trace_id = 'trace-body-previews' AND kind IN ('request', 'response')
+             ORDER BY model_call_id, kind",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(items.len(), 4);
+    for (_, content, _) in &items {
+        assert_eq!(content, &prefix, "SQLite keeps only the display preview");
+    }
+    assert_ne!(items[0].2, items[2].2, "request hashes cover bytes after the preview");
+    assert_ne!(items[1].2, items[3].2, "response hashes cover bytes after the preview");
+
+    let archive = archive_reader(&conn, &db_path);
+    for (index, (request, response)) in requests.iter().zip(&responses).enumerate() {
+        let event_id = format!("abc123def45{index}");
+        for (direction, expected) in [("request", request), ("response", response)] {
+            let reference = conn
+                .query_row(
+                    "SELECT block_offset, body_offset, body_len FROM event_body_blobs
+                     WHERE event_id = ?1 AND direction = ?2",
+                    rusqlite::params![event_id, direction],
+                    |row| {
+                        Ok(capsem_archive::BodyRef {
+                            block_offset: row.get::<_, i64>(0)? as u64,
+                            offset: row.get::<_, i64>(1)? as u32,
+                            len: row.get::<_, i64>(2)? as u32,
+                        })
+                    },
+                )
+                .unwrap();
+            assert_eq!(archive.read(reference).unwrap(), expected.as_bytes());
+        }
+    }
+}
+
 fn body_blob<'a>(event_id: &'a str, body: &'a str) -> EventBodyBlob<'a> {
     EventBodyBlob {
         event_id,

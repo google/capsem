@@ -57,7 +57,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from helpers.body_archive import generation_path_for_db
 from helpers.constants import CODE_PROFILE_ID
-from helpers.service import ServiceInstance, vm_session_dir
+from helpers.service import ServiceInstance, exec_output_text, vm_session_dir
 
 from tests.fixtures.oci.registry import registry
 from tests.manual.vm_ollama import boot, closing_ro, guest
@@ -332,7 +332,7 @@ def main() -> int:
                 )
             runner.join(timeout=600)
 
-            out = str(result.get("stdout", ""))
+            out = exec_output_text(result)
             done = next((line for line in out.splitlines() if line.startswith("LOOP DONE")), "")
             print(
                 f"\n  guest loop: exit={result.get('exit_code')} {done or '(no completion marker)'}"

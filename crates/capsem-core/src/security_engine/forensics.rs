@@ -2,6 +2,8 @@
 
 use super::*;
 
+const SECURITY_BODY_PREVIEW_BYTES: usize = 2 * 1024;
+
 pub(super) fn logged_rule_action(action: SecurityRuleAction) -> LoggedRuleAction {
     match action {
         SecurityRuleAction::Allow => LoggedRuleAction::Allow,
@@ -73,16 +75,84 @@ pub(super) fn security_event_forensic_json(event: &SecurityEvent) -> serde_json:
         "plugin_executions": event.plugin_executions,
         "container": event.container,
         "http_request": event.http_request.as_ref().map(http_request_forensic_json),
-        "http": event.http,
+        "http": event.http.as_ref().map(http_forensic_json),
         "dns": event.dns,
         "mcp": event.mcp,
-        "model": event.model,
+        "model": event.model.as_ref().map(model_forensic_json),
         "file": event.file,
         "process": event.process,
         "ip": event.ip,
         "tcp": event.tcp,
         "udp": event.udp,
         "network": event.network,
+    })
+}
+
+/// Keep the security projection compact while preserving an auditable link to
+/// the exact request body owned by the primary event. Policy evaluation runs
+/// on the full in-memory value before this projection is built; the rule row
+/// carries the same event id as `net_events` or `model_calls`, whose archived
+/// request body remains exact.
+fn referenced_request_body(body: Option<&str>) -> (Option<&str>, Option<String>, Option<usize>, bool) {
+    let Some(body) = body else {
+        return (None, None, None, false);
+    };
+    let mut end = body.len().min(SECURITY_BODY_PREVIEW_BYTES);
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    (
+        Some(&body[..end]),
+        Some(format!("blake3:{}", blake3::hash(body.as_bytes()).to_hex())),
+        Some(body.len()),
+        end < body.len(),
+    )
+}
+
+fn http_forensic_json(http: &HttpSecurityEvent) -> serde_json::Value {
+    let (body, body_hash, body_bytes, body_truncated) = referenced_request_body(http.body.as_deref());
+    json!({
+        "host": http.host,
+        "method": http.method,
+        "path": http.path,
+        "query": http.query,
+        "status": http.status,
+        "body": body,
+        "body_hash": body_hash,
+        "body_bytes": body_bytes,
+        "body_truncated": body_truncated,
+        "body_source": http.body.as_ref().map(|_| json!({
+            "source_table": "net_events",
+            "direction": "request",
+        })),
+    })
+}
+
+fn model_forensic_json(model: &ModelSecurityEvent) -> serde_json::Value {
+    let (request_body, request_body_hash, request_body_bytes, request_body_truncated) =
+        referenced_request_body(model.request_body.as_deref());
+    json!({
+        "provider": model.provider,
+        "name": model.name,
+        "request_body": request_body,
+        "request_body_hash": request_body_hash,
+        "request_body_bytes": request_body_bytes,
+        "request_body_truncated": request_body_truncated,
+        "request_body_source": model.request_body.as_ref().map(|_| json!({
+            "source_table": "model_calls",
+            "direction": "request",
+        })),
+        "response_body": model.response_body,
+        "tool_calls": model.tool_calls,
+        "request": {
+            "valid": model.request_body.is_some() || model.tool_calls.is_some(),
+        },
+        "response": {
+            "valid": model.response_body.is_some(),
+        },
+        "tool_call": {
+            "valid": model.tool_calls.is_some(),
+        },
     })
 }
 

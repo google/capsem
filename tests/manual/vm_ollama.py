@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from helpers.constants import BIN_DIR, CODE_PROFILE_ID
-from helpers.service import ServiceInstance
+from helpers.service import ServiceInstance, exec_output_text
 
 from tests.fixtures.oci.registry import registry
 
@@ -122,11 +122,11 @@ def main() -> int:
             print(f"\n== the VM prompts {MODEL} through capsem's egress ==")
             print(f"  prompt: {PROMPT}")
             response = guest(service, box["id"], GENERATE.format(model=MODEL, prompt=PROMPT), timeout=200)
-            out = response.get("stdout", "")
+            out = exec_output_text(response)
             if response.get("exit_code") != 0:
                 print(f"  [FAIL] the call did not complete (exit {response.get('exit_code')})")
                 print("  stdout:", out.strip()[:500])
-                print("  stderr:", response.get("stderr", "").strip()[:500])
+                print("  stderr:", exec_output_text(response, "stderr").strip()[:500])
                 return 1
             answered_model = next((line[6:] for line in out.splitlines() if line.startswith("MODEL=")), "")
             answer = next((line[7:] for line in out.splitlines() if line.startswith("ANSWER=")), "")
