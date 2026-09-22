@@ -201,6 +201,7 @@ match = 'http.body.contains("kept-exact")'
     .unwrap();
     let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
     let rule = rules
+        .rules()
         .iter()
         .find(|rule| rule.rule_id == "profiles.rules.observe_body")
         .unwrap();
