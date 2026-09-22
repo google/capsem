@@ -12,7 +12,7 @@ for it.
 Point it at whatever model `ollama list` shows on the host (default gemma4).
 
 Usage (build first, then bound the run so no VM leaks):
-    just _sign
+    uv run --project build_system --frozen capsem-gate sign
     python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 900 \
         -- uv run --project build_system --frozen python tests/manual/vm_ollama.py
 

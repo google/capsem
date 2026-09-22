@@ -27,7 +27,7 @@ CAPSEM_GYM_MODEL at a stronger local model and raise CAPSEM_GYM_TURNS for a
 real capability signal.
 
 Usage:
-    just _sign
+    uv run --project build_system --frozen capsem-gate sign
     python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 900 \
         -- uv run --project build_system --frozen python tests/manual/ctf_gemma.py
 

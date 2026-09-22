@@ -26,7 +26,9 @@ floor) and the compression ratio actually achieved: raw body bytes the index
 holds against the size of session.bodies.
 
 Usage (build first, then bound the run so no VM leaks):
-    just _sign
+    uv run --project build_system --frozen capsem-gate sign
+    uv run --project build_system --frozen python tests/fixtures/oci/prepare_redis.py \
+        --output cache/target/tests/redis-image --image redis
     python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 2700 \
         -- uv run --project build_system --frozen python tests/manual/ledger_economics.py
 
@@ -66,6 +68,7 @@ MODEL = os.environ.get("CAPSEM_ECON_MODEL", "gemma4")
 MINUTES = int(os.environ.get("CAPSEM_ECON_MINUTES", "30"))
 SAMPLE_EVERY_S = 300
 KEEP_DIR = os.environ.get("CAPSEM_ECON_KEEP_DIR")
+REDIS_FIXTURE = Path(__file__).resolve().parents[2] / "cache/target/tests/redis-image"
 SITES = [
     "https://en.wikipedia.org/wiki/Special:Random",
     "https://news.ycombinator.com/",
@@ -114,6 +117,24 @@ def host_has_model() -> bool:
         print(f"  [FAIL] host Ollama has no {MODEL!r}; `ollama list` shows {names}")
         return False
     return True
+
+
+def host_has_redis_fixture() -> bool:
+    """Fail before starting the service when the pinned OCI fixture is absent."""
+    required = (
+        REDIS_FIXTURE / "redis-image.json",
+        REDIS_FIXTURE / "redis-rootfs.tar.gz",
+    )
+    missing = [str(path) for path in required if not path.is_file()]
+    if not missing:
+        return True
+    print(f"  [FAIL] Redis OCI fixture is missing: {', '.join(missing)}")
+    print(
+        "  run: uv run --project build_system --frozen python "
+        "tests/fixtures/oci/prepare_redis.py "
+        "--output cache/target/tests/redis-image --image redis"
+    )
+    return False
 
 
 def rss_kb(pids: list[str]) -> int:
@@ -270,6 +291,8 @@ def main() -> int:
         return 0
     print(f"\n== preflight: host Ollama serves {MODEL} ==")
     if not host_has_model():
+        return 1
+    if not host_has_redis_fixture():
         return 1
     service = ServiceInstance()
     service.start()

@@ -18,12 +18,13 @@ capsem-bench-rs), and the "agent" attacks it:
   5. Audit -- the network's ledger admits and records the flow from both ends.
 
 Usage (run under the build_system interpreter, and bound it so no VM leaks):
-    just _sign                         # build + codesign the host binaries
+    uv run --project build_system --frozen capsem-gate sign
     python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 1200 \
         -- uv run --project build_system --frozen python tests/manual/cyber_gym.py
 
-The Redis image fixture must be materialized (the kingslanding suite does this;
-otherwise run `just focus-test kingslanding slow` once). The binaries are read
+The Redis image fixture must be materialized with
+`uv run --project build_system --frozen python tests/fixtures/oci/prepare_redis.py
+--output cache/target/tests/redis-image --image redis`. The binaries are read
 from cache/target/cargo/debug, or CAPSEM_RELEASE_BIN_DIR if set; nothing here
 touches an installed service.
 """

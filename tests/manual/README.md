@@ -15,11 +15,15 @@ network, and a sandboxed VM reaching a local model through capsem's egress.
   `cache/target/cargo/debug`, which the scenarios read):
 
   ```bash
-  just _sign
+  uv run --project build_system --frozen capsem-gate sign
   ```
 
-- The Redis image fixture must be materialized (any kingslanding run does
-  this; otherwise `just focus-test kingslanding slow` once).
+- Materialize the pinned Redis image fixture once:
+
+  ```bash
+  uv run --project build_system --frozen python tests/fixtures/oci/prepare_redis.py \
+      --output cache/target/tests/redis-image --image redis
+  ```
 - Each scenario stands up its own throwaway `capsem-service` on a private
   socket under a temp home. It never registers or mutates an installed
   service. Run it under the build-system interpreter, and wrap it in the
