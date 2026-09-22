@@ -20,7 +20,7 @@ import socket
 import time
 from pathlib import Path
 
-from . import host, pidfiles
+from . import host, hostpackage, pidfiles
 from .actions import Action, Launch, Run
 from .command import GateCommand
 from .config import GateConfig
@@ -185,6 +185,25 @@ class _StopExisting(Action, name="stop-existing-service"):
         Remove(directory / context.config.service.socket).perform(context)
 
 
+class _RequireGeneratedProfiles(Action, name="require-generated-profiles"):
+    """Fail before service state changes when its generated catalog is absent."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    def render(self) -> str:
+        return f"require generated profiles at {self._path}"
+
+    def perform(self, context: Context) -> None:
+        if context.observing:
+            return
+        if not self._path.is_dir():
+            raise GateError(
+                f"generated profiles are missing at {self._path}; run "
+                "`just _materialize-config` or a recipe that depends on it"
+            )
+
+
 class EnsureServiceCommand(
     GateCommand, name="ensure-service", help="start the development daemon idempotently"
 ):
@@ -197,15 +216,13 @@ class EnsureServiceCommand(
         target = home(config)
         generated = config.path(settings.generated_profiles)
 
-        if not generated.is_dir():
-            raise GateError(
-                f"generated profiles are missing at {generated}; run "
-                "`just _materialize-config` or a recipe that depends on it"
-            )
+        built = plan.add(hostpackage.build_step(config))
+        signed = plan.add(hostpackage.sign_step(config), after=(built,))
 
         prepared = plan.add(
             step(
                 "prepare",
+                _RequireGeneratedProfiles(generated),
                 MakeDir(run_dir(config)),
                 _StopExisting(),
                 # An older layout wrote these into the home. Removed on every
@@ -215,7 +232,8 @@ class EnsureServiceCommand(
                 kind=Kind.CAPSEM,
                 needs=frozenset({Needs.DISK}),
                 speed=Speed.FAST,
-            )
+            ),
+            after=(signed,),
         )
 
         materialized = plan.add(

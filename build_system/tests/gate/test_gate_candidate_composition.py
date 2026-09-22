@@ -145,6 +145,23 @@ def test_standalone_host_build_is_the_same_bounded_gate_step() -> None:
     )
 
 
+def test_ensure_service_owns_the_bounded_host_build_and_signing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from capsem_builder.gate import host
+
+    monkeypatch.setattr(host, "on_macos", lambda: True)
+    plan = GateCommand.registry["ensure-service"](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+    )._describe()
+
+    assert plan.after_of("sign") == {"build-binaries"}
+    assert plan.after_of("prepare") == {"sign"}
+    assert plan.after_of("materialize") == {"prepare"}
+    assert plan.after_of("start") == {"materialize"}
+
+
 def test_local_package_rails_defer_to_the_authoritative_install_transaction() -> None:
     """The complete gate must not need a mutable public channel to recover one.
 

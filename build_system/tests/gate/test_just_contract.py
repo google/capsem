@@ -1,9 +1,29 @@
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _recipes() -> dict[str, dict]:
+    just = shutil.which("just")
+    assert just is not None
+    dumped = subprocess.run(
+        [just, "--dump", "--dump-format", "json"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(dumped.stdout)["recipes"]
+
+
+def _body(recipe: dict) -> list[str]:
+    return ["".join(part for part in line if isinstance(part, str)) for line in recipe["body"]]
 
 
 def _gate_issues(name: str | None = None) -> str:
@@ -44,6 +64,44 @@ def test_host_build_and_signing_are_gate_dispatches_not_recipe_work() -> None:
     assert signing.strip() == "uv run --project build_system --frozen capsem-gate sign"
     assert "_sign: _build-host" not in justfile
     assert "cargo build" not in build
+
+
+def test_host_build_and_signing_are_not_hidden_in_other_recipe_dependencies() -> None:
+    """A gate plan owns the producer edge to the binaries it executes.
+
+    Hiding `_sign` or `_build-host` in a Just dependency starts another gate
+    process and leaves the outer command unable to show, bound, or resume that
+    work. Raw Cargo predecessors are the same defect without a journal at all.
+    """
+    recipes = _recipes()
+    forbidden = {"_build-host", "_sign", "_compile", "_sign-release"}
+    offenders = {
+        name: sorted(dependency["recipe"] for dependency in recipe["dependencies"])
+        for name, recipe in recipes.items()
+        if forbidden & {dependency["recipe"] for dependency in recipe["dependencies"]}
+    }
+
+    assert not offenders, (
+        "host build/signing is hidden in Just dependencies; compose the "
+        f"hostpackage steps into the owning gate plan: {offenders}"
+    )
+    assert not ({"_compile", "_sign-release"} & recipes.keys())
+
+
+def test_public_build_aliases_cross_one_gate_boundary() -> None:
+    """Aliases must not split one operation into nested Just invocations."""
+    recipes = _recipes()
+    expected = {
+        "build": "capsem-gate build-ui",
+        "build-assets": "capsem-gate build-assets",
+        "test-linux-rust": "capsem-gate linux-rust",
+    }
+
+    for name, command in expected.items():
+        lines = _body(recipes[name])
+        assert len(lines) == 1
+        assert command in lines[0]
+        assert "just " not in lines[0]
 
 
 def test_justfile_routes_assets_through_profile_admin_rail() -> None:

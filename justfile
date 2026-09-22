@@ -32,15 +32,14 @@ cache *command:
 _stamp-version:
     @uv run --project build_system --frozen capsem-gate stamp-version
 
-# Build one profile's VM assets for one architecture: kernel, then rootfs.
+# Build one profile's VM assets for one architecture.
 build-assets arch profile="":
-    just _build-kernel {{quote(arch)}} {{quote(profile)}}
-    just _build-rootfs {{quote(arch)}} {{quote(profile)}}
+    uv run --project build_system --frozen capsem-gate build-assets {{quote(profile)}} {{quote(arch)}}
 
 
 # Host-crate unit tests against the Linux KVM backend, with coverage.
 test-linux-rust:
-    just _gate-linux-rust
+    uv run --project build_system --frozen capsem-gate linux-rust
 
 
 # Qualify the candidate packages against the manifest-selected profiles.
@@ -82,7 +81,7 @@ _sign:
 # and relaunches fresh. Honors CAPSEM_HOME / CAPSEM_RUN_DIR env vars so
 # `just test` and `just vm-smoke` run against an isolated test home
 # without ever touching the user's locally installed capsem.
-_ensure-service: _sign
+_ensure-service:
     uv run --project build_system --frozen capsem-gate ensure-service
 
 
@@ -118,7 +117,7 @@ dev surface="ui": _ensure-dev-ready _pnpm-install
 
 # Build the desktop application with its embedded frontend.
 build profile="debug":
-    just _build-ui {{quote(profile)}}
+    uv run --project build_system --frozen capsem-gate build-ui {{quote(profile)}}
 
 # Build every host binary plus the desktop and documentation surfaces.
 # VM/release assets remain profile-owned and are built by the canonical test
@@ -164,7 +163,7 @@ _build-assets profile="" arch="":
 # architectures, the exact CI-facing build primitives, generated-manifest
 # validation, and a real shell marker from each profile-owned host-arch image.
 # Outputs stay under cache/target/ so the gate never mutates a source-owned directory.
-_gate-assets: _bootstrap _install-tools _generate-settings _sign
+_gate-assets: _bootstrap _install-tools _generate-settings
     @uv run --project build_system --frozen capsem-gate assets
 
 # Run ALL tests: Rust + frontend + Python + injection + integration + bench + cross-compile + install e2e. No shortcuts.
@@ -369,16 +368,6 @@ _pnpm-install:
 
 _release-site-pnpm-install:
     cd build_system/release_site && CI=true pnpm install --frozen-lockfile
-
-_frontend: _pnpm-install
-    bash build_system/scripts/web/check-web-surface.sh frontend-build
-
-_compile: _frontend _clean-stale
-    cargo build -p capsem
-
-_sign-release: _compile
-    uv run --project build_system --frozen capsem-gate sign
-
 
 _pack-initrd:
     uv run --project build_system --frozen capsem-gate pack-initrd
