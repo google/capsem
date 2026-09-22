@@ -46,6 +46,7 @@ class Runner:
     """
 
     observing = False
+
     def __init__(
         self,
         root: Path,
@@ -56,6 +57,7 @@ class Runner:
         self.root = Path(root)
         self._stream: TextIO = stream if stream is not None else sys.stderr
         self._configured_stop_policy = stop_policy
+
     @property
     def run_id(self) -> str | None:
         return None
@@ -104,6 +106,7 @@ class Runner:
             env=environment,
             capture=command.capture,
             policy=self._stop_policy(),
+            timeout_seconds=command.timeout_seconds,
         )
 
     def _teed(self, command: Command, log: Path, environment: dict[str, str]) -> Completed:
@@ -144,6 +147,7 @@ class Runner:
                 env=environment,
                 write=record,
                 policy=self._stop_policy(),
+                timeout_seconds=command.timeout_seconds,
             )
         return subprocess.CompletedProcess(args=list(command.argv), returncode=status)
 
@@ -157,6 +161,7 @@ class Runner:
         log: Path | None = None,
         console: ConsoleMode = ConsoleMode.STREAM,
         secret_env: frozenset[str] = frozenset(),
+        timeout_seconds: float | None = None,
     ) -> int:
         """Run a command, streaming its output. Returns the exit status."""
         command = Command(
@@ -167,6 +172,7 @@ class Runner:
             log=log,
             console=console,
             secret_env=secret_env,
+            timeout_seconds=timeout_seconds,
         )
         # Checked here rather than in `execute`, which subclasses replace: a
         # recording runner in a test overrides `execute` wholesale, and a seal

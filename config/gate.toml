@@ -1727,6 +1727,11 @@ built_elsewhere = ["capsem-app"]
 guest_crate = "capsem-agent"
 
 release_binary = "cache/target/cargo/debug/capsem"
+# A cold host cohort is large enough that compilation is its own bounded gate
+# step. Signing is deliberately much tighter: ad-hoc local codesign does no
+# network work and a stuck invocation should fail where it is attributed.
+build_timeout_seconds = 1800
+sign_timeout_seconds = 30
 
 [frontend]
 workspace = "web/app"

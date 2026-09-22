@@ -68,6 +68,7 @@ def run(
     env: Mapping[str, str],
     capture: bool,
     policy: StopPolicy,
+    timeout_seconds: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a foreground command and keep its whole process group owned."""
     process = subprocess.Popen(
@@ -80,11 +81,12 @@ def run(
         start_new_session=True,
     )
     owned: OwnedTree = {}
+    deadline = _deadline(timeout_seconds)
     try:
         if capture:
-            stdout, stderr = _communicate(process, policy, owned)
+            stdout, stderr = _communicate(process, policy, owned, deadline, timeout_seconds)
         else:
-            _wait(process, policy, owned)
+            _wait(process, policy, owned, deadline, timeout_seconds)
             stdout = stderr = None
         _refuse_descendants(process, policy, owned)
     except BaseException:
@@ -103,6 +105,7 @@ def tee(
     env: Mapping[str, str],
     write: Callable[[str], None],
     policy: StopPolicy,
+    timeout_seconds: float | None = None,
 ) -> int:
     """Run a foreground command while filing each available output chunk."""
     process = subprocess.Popen(
@@ -116,17 +119,19 @@ def tee(
         start_new_session=True,
     )
     owned: OwnedTree = {}
+    deadline = _deadline(timeout_seconds)
     assert process.stdout is not None
     try:
         with selectors.DefaultSelector() as ready:
             ready.register(process.stdout, selectors.EVENT_READ)
             while ready.get_map():
                 _remember_descendants(process.pid, owned)
-                events = ready.select(timeout=policy.poll_seconds)
+                events = ready.select(timeout=_poll_seconds(policy, deadline, timeout_seconds))
                 if not events:
                     if process.poll() is not None:
                         _refuse_descendants(process, policy, owned)
                     cancellation.check(f"foreground process {process.pid}")
+                    _check_deadline(deadline, timeout_seconds)
                     continue
                 for key, _mask in events:
                     chunk = os.read(key.fd, 65536)
@@ -134,7 +139,7 @@ def tee(
                         write(chunk.decode("utf-8", errors="replace"))
                     else:
                         ready.unregister(key.fileobj)
-        _wait(process, policy, owned)
+        _wait(process, policy, owned, deadline, timeout_seconds)
         _refuse_descendants(process, policy, owned)
     except BaseException:
         terminate(process, policy, owned)
@@ -148,27 +153,58 @@ def _wait(
     process: ForegroundProcess,
     policy: StopPolicy,
     owned: OwnedTree,
+    deadline: float | None = None,
+    timeout_seconds: float | None = None,
 ) -> None:
     while True:
         _remember_descendants(process.pid, owned)
         try:
-            process.wait(timeout=policy.poll_seconds)
+            process.wait(timeout=_poll_seconds(policy, deadline, timeout_seconds))
             return
         except subprocess.TimeoutExpired:
             cancellation.check(f"foreground process {process.pid}")
+            _check_deadline(deadline, timeout_seconds)
 
 
 def _communicate(
-    process: subprocess.Popen[str], policy: StopPolicy, owned: OwnedTree
+    process: subprocess.Popen[str],
+    policy: StopPolicy,
+    owned: OwnedTree,
+    deadline: float | None = None,
+    timeout_seconds: float | None = None,
 ) -> tuple[str | None, str | None]:
     while True:
         _remember_descendants(process.pid, owned)
         try:
-            return process.communicate(timeout=policy.poll_seconds)
+            return process.communicate(timeout=_poll_seconds(policy, deadline, timeout_seconds))
         except subprocess.TimeoutExpired:
             if process.poll() is not None:
                 _refuse_descendants(process, policy, owned)
             cancellation.check(f"foreground process {process.pid}")
+            _check_deadline(deadline, timeout_seconds)
+
+
+def _deadline(timeout_seconds: float | None) -> float | None:
+    if timeout_seconds is None:
+        return None
+    if timeout_seconds <= 0:
+        raise ValueError("foreground command timeout must be positive")
+    return time.monotonic() + timeout_seconds
+
+
+def _poll_seconds(
+    policy: StopPolicy, deadline: float | None, timeout_seconds: float | None
+) -> float:
+    _check_deadline(deadline, timeout_seconds)
+    if deadline is None:
+        return policy.poll_seconds
+    return min(policy.poll_seconds, max(deadline - time.monotonic(), 0.001))
+
+
+def _check_deadline(deadline: float | None, timeout_seconds: float | None) -> None:
+    if deadline is not None and time.monotonic() >= deadline:
+        assert timeout_seconds is not None
+        raise GateError(f"foreground command timed out after {timeout_seconds:g}s")
 
 
 def _refuse_descendants(process: ForegroundProcess, policy: StopPolicy, owned: OwnedTree) -> None:

@@ -29,9 +29,28 @@ def test_justfile_does_not_expose_legacy_guest_dir_knob() -> None:
     assert "capsem-builder agent --arch" not in justfile
 
 
+def test_host_build_and_signing_are_gate_dispatches_not_recipe_work() -> None:
+    """A recipe dependency put one timeout around compilation and signing.
+
+    Both stages belong to the gate graph, where their edge, logs, and separate
+    config-owned bounds are visible. This source guard makes the split-owner
+    shape fail before another agent waits through a cold build to discover it.
+    """
+    justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
+    build = justfile.split("\n_build-host:\n", 1)[1].split("\n\n", 1)[0]
+    signing = justfile.split("\n_sign:\n", 1)[1].split("\n\n", 1)[0]
+
+    assert build.strip() == "uv run --project build_system --frozen capsem-gate build-host"
+    assert signing.strip() == "uv run --project build_system --frozen capsem-gate sign"
+    assert "_sign: _build-host" not in justfile
+    assert "cargo build" not in build
+
+
 def test_justfile_routes_assets_through_profile_admin_rail() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
-    materialize_config = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh").read_text()
+    materialize_config = (
+        PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh"
+    ).read_text()
 
     # An image build without a profile is unrepresentable now: the argv is
     # built from one, so there is nothing to guard against with an `echo`.

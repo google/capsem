@@ -22,8 +22,6 @@
 # Underscore recipes are implementation detail. No workflow may call one:
 # `tests/citadel/test_ci_calls_only_public_recipes.py` refuses it.
 
-host_crates := "-p capsem-service -p capsem-process -p capsem-router -p capsem -p capsem-tui -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
-
 # Inventory and control the repository cache. Positional arguments preserve
 # every caller-owned argv boundary, including multiword option values.
 [positional-arguments]
@@ -72,10 +70,10 @@ release-profile channel profile source_commit force="false":
 
 # Compile all host binaries
 _build-host:
-    cargo build {{host_crates}}
+    uv run --project build_system --frozen capsem-gate build-host
 
 # Codesign all host binaries (macOS only, needed for Virtualization.framework)
-_sign: _build-host
+_sign:
     uv run --project build_system --frozen capsem-gate sign
 
 

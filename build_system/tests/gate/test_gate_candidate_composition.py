@@ -106,6 +106,45 @@ def test_macos_signing_step_keeps_codesign_and_artifact_ownership(
     assert signing.produces == tuple(CONFIG.path(path) for path in CONFIG.signing.binaries)
 
 
+def test_standalone_signing_owns_its_build_dependency_and_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Just prerequisite hid compilation outside the gate and its journal.
+
+    The standalone command must preserve the same producer edge as every
+    composed qualification plan. Each stage carries its own config-owned bound,
+    so a cold build cannot consume signing's failure budget.
+    """
+    from capsem_builder.gate import host
+
+    monkeypatch.setattr(host, "on_macos", lambda: True)
+    plan = GateCommand.registry["sign"](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+    )._describe()
+
+    assert plan.after_of("sign") == {"build-binaries"}
+    assert f"[timeout {CONFIG.signing.build_timeout_seconds}s]" in "\n".join(
+        plan.step_named("build-binaries").render()
+    )
+    signing = "\n".join(plan.step_named("sign").render())
+    assert signing.count(f"[timeout {CONFIG.signing.sign_timeout_seconds}s]") == len(
+        CONFIG.signing.binaries
+    )
+
+
+def test_standalone_host_build_is_the_same_bounded_gate_step() -> None:
+    plan = GateCommand.registry["build-host"](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+    )._describe()
+
+    assert plan.labels == ("build-binaries",)
+    assert f"[timeout {CONFIG.signing.build_timeout_seconds}s]" in "\n".join(
+        plan.step_named("build-binaries").render()
+    )
+
+
 def test_local_package_rails_defer_to_the_authoritative_install_transaction() -> None:
     """The complete gate must not need a mutable public channel to recover one.
 

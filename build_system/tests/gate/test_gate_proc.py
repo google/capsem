@@ -119,6 +119,23 @@ def test_the_real_runner_defaults_the_working_directory_to_the_checkout(
     assert runner.capture(["ls"]) == "marker"
 
 
+@pytest.mark.parametrize("logged", [False, True])
+def test_a_command_timeout_reaps_its_process_group(tmp_path: Path, logged: bool) -> None:
+    """Gate-owned bounds must stop both ordinary and journal-filed commands."""
+    runner = Runner(tmp_path, stop_policy=StopPolicy(grace_seconds=1, poll_seconds=0.01))
+    log = tmp_path / "step.log" if logged else None
+    started = time.monotonic()
+
+    with pytest.raises(GateError, match=r"timed out after 0\.05s"):
+        runner.run(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            log=log,
+            timeout_seconds=0.05,
+        )
+
+    assert time.monotonic() - started < 2
+
+
 def test_index_of_names_the_missing_command_rather_than_returning_nothing(
     tmp_path: Path,
 ) -> None:

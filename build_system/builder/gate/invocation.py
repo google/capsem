@@ -54,6 +54,8 @@ class Command:
     lane's tail is surfaced.
     """
     console: ConsoleMode = ConsoleMode.STREAM
+    timeout_seconds: float | None = None
+    """Maximum runtime for this invocation; absent only when its owner has no bound."""
 
     secret_env: frozenset[str] = frozenset()
     """Names in `env` whose values must never be rendered anywhere.
@@ -105,4 +107,7 @@ class Command:
             f"{name}={value if name in self.secret_env else shlex.quote(value)}"
             for name, value in sorted(self.evidence_env.items())
         )
-        return f"{assignments} {shlex.join(self.evidence_argv)}".strip()
+        rendered = f"{assignments} {shlex.join(self.evidence_argv)}".strip()
+        if self.timeout_seconds is not None:
+            rendered = f"{rendered} [timeout {self.timeout_seconds:g}s]"
+        return rendered
