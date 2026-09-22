@@ -53,15 +53,15 @@ PAYLOADS = [
 
 
 def _planned(payload: str) -> RecordingRunner:
-    """Drive the real command through the real parser, as the recipe does."""
+    """Drive the guest action through the real parser and owning plan."""
     runner = RecordingRunner(PROJECT_ROOT)
     # `--` exactly as the recipe passes it: without it a payload beginning with
     # a dash is claimed by argparse, and `just exec --help` prints the gate's
     # own help instead of running anything in the guest.
     args = cli.build_parser().parse_args(["exec", "--", payload])
-    GateCommand.registry[args.gate_command](runner, args).plan().run(
-        _context(runner)
-    )
+    plan = GateCommand.registry[args.gate_command](runner, args).plan()
+    (guest,) = plan.step_named("exec").actions
+    guest.perform(_context(runner))
     return runner
 
 

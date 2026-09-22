@@ -106,6 +106,29 @@ def test_public_build_aliases_cross_one_gate_boundary() -> None:
     assert all("just " not in line for line in build_all)
 
 
+def test_public_runtime_entrypoints_cross_one_gate_boundary() -> None:
+    """Runtime preparation belongs to the plan that consumes it.
+
+    Just prerequisites run as separate gate processes, so their edges,
+    config-owned timeouts and journals are invisible to the final shell or
+    service command.  Each public entrypoint must enter one owning graph.
+    """
+    recipes = _recipes()
+    expected = {
+        "shell": "capsem-gate shell",
+        "run-service": "capsem-gate ensure-service",
+        "exec": "capsem-gate exec",
+    }
+
+    for name, command in expected.items():
+        recipe = recipes[name]
+        assert recipe["dependencies"] == []
+        lines = _body(recipe)
+        assert len(lines) == 1
+        assert command in lines[0]
+        assert "just " not in lines[0]
+
+
 def test_justfile_routes_assets_through_profile_admin_rail() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
     materialize_config = (

@@ -9,6 +9,7 @@ recipe hands it `{{quote(CMD)}}` and it keeps the payload as one exact string.
 
 from __future__ import annotations
 
+from . import runtimeprepare, service
 from .actions import Run
 from .command import GateCommand
 from .execution import Kind, Needs, Speed, step
@@ -20,6 +21,8 @@ class ShellCommand(GateCommand, name="shell", help="start the service and enter 
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
+        prepared = runtimeprepare.prepare(plan, self._config)
+        started = service.fragment(plan, self._config, after=(prepared.ready,))
         plan.add(
             step(
                 "shell",
@@ -28,7 +31,8 @@ class ShellCommand(GateCommand, name="shell", help="start the service and enter 
                 kind=Kind.CAPSEM,
                 needs=frozenset({Needs.VM, Needs.KVM, Needs.DISK}),
                 speed=Speed.SLOW,
-            )
+            ),
+            after=(started,),
         )
         return plan
 
@@ -55,6 +59,8 @@ class ExecCommand(GateCommand, name="exec", help="run one command in a fresh tem
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
+        prepared = runtimeprepare.prepare(plan, self._config)
+        started = service.fragment(plan, self._config, after=(prepared.ready,))
         plan.add(
             step(
                 "exec",
@@ -63,6 +69,7 @@ class ExecCommand(GateCommand, name="exec", help="run one command in a fresh tem
                 kind=Kind.CAPSEM,
                 needs=frozenset({Needs.VM, Needs.KVM, Needs.DISK}),
                 speed=Speed.SLOW,
-            )
+            ),
+            after=(started,),
         )
         return plan

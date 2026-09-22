@@ -67,17 +67,8 @@ release-profile channel profile source_commit force="false":
     uv run --project build_system --frozen capsem-gate release-profile {{quote(channel)}} {{quote(profile)}} {{quote(source_commit)}} --force {{quote(force)}}
 
 
-# Ensure capsem-service daemon is running with the current binary.
-# Kills any existing dev-owned instance (via pidfile -- never pkill-by-name)
-# and relaunches fresh. Honors CAPSEM_HOME / CAPSEM_RUN_DIR env vars so
-# `just test` and `just vm-smoke` run against an isolated test home
-# without ever touching the user's locally installed capsem.
-_ensure-service:
-    uv run --project build_system --frozen capsem-gate ensure-service
-
-
 # Start service daemon + Tauri GUI with hot-reloading
-_dev-ui: _ensure-dev-ready _pnpm-install run-service
+_dev-ui: _ensure-dev-ready _pnpm-install
     uv run --project build_system --frozen capsem-gate dev ui
 
 
@@ -120,16 +111,17 @@ build-all profile="debug":
     bash build_system/scripts/web/check-web-surface.sh site
 
 # Start service daemon + boot temporary VM + shell (~10s after first build)
-shell: _prepared-runtime _ensure-service
+shell:
     uv run --project build_system --frozen capsem-gate shell
 
 
 # Start capsem-service daemon (builds, signs, launches or reuses running instance)
-run-service: _prepared-runtime _ensure-service
+run-service:
+    uv run --project build_system --frozen capsem-gate ensure-service
 
 # Execute a command in a fresh temporary VM (auto-provisioned and destroyed)
 # Usage: just exec "echo hello"   or   just exec "ls -la"
-exec +CMD: run-service
+exec +CMD:
     uv run --project build_system --frozen capsem-gate exec -- {{quote(CMD)}}
 
 
@@ -367,10 +359,3 @@ _pack-initrd:
 
 _materialize-config:
     bash build_system/scripts/build/materialize-config.sh
-
-
-# One bootable local runtime: verified assets, the initrd repacked around the
-# current guest binaries, and a materialized profile catalog. `test` and
-# `vm-smoke` both need exactly this before they can run anything against a VM,
-# so they name it once instead of repeating the sequence.
-_prepared-runtime: _check-assets _pack-initrd _materialize-config

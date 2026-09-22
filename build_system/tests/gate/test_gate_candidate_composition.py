@@ -156,10 +156,30 @@ def test_ensure_service_owns_the_bounded_host_build_and_signing(
         argparse.Namespace(dry_run=False, graph=False, timing=False),
     )._describe()
 
-    assert plan.after_of("sign") == {"build-binaries"}
-    assert plan.after_of("prepare") == {"sign"}
+    assert plan.after_of("prepare.sign") == {"prepare.build-binaries"}
+    assert plan.after_of("prepare") == {"prepare.sign"}
     assert plan.after_of("materialize") == {"prepare"}
     assert plan.after_of("start") == {"materialize"}
+
+
+def test_runtime_commands_own_preparation_service_and_guest_edges() -> None:
+    """No runtime prerequisite may live in a separate Just process."""
+    for command, final in (("shell", "shell"), ("exec", "exec")):
+        args = argparse.Namespace(
+            dry_run=False,
+            graph=False,
+            timing=False,
+            guest_command="true",
+        )
+        plan = GateCommand.registry[command](RecordingRunner(PROJECT_ROOT), args)._describe()
+
+        assert plan.after_of("prepare.materialize-config")
+        assert plan.after_of("prepare.build-binaries") == {"prepare.materialize-config"}
+        assert plan.after_of("prepare.sign") == {"prepare.build-binaries"}
+        assert plan.after_of("prepare") == {"prepare.sign"}
+        assert plan.after_of("materialize") == {"prepare"}
+        assert plan.after_of("start") == {"materialize"}
+        assert plan.after_of(final) == {"start"}
 
 
 def test_local_package_rails_defer_to_the_authoritative_install_transaction() -> None:

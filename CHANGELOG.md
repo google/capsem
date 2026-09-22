@@ -90,6 +90,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `just shell`, `just exec`, and `just run-service` now describe runtime
+  preparation, host compilation, per-binary signing, service startup, and the
+  guest action in one gate graph. Their former private Just prerequisites ran
+  as separate processes, hiding dependency edges and applying one outer wait
+  instead of the configured 1800-second build and 30-second signing bounds.
+
 - capsem-process memory no longer grows with the length of a session. The
   ledger writer copied the whole session ledger into RAM when it opened and
   kept every row it wrote there until the VM stopped -- about 138 KB per

@@ -20,13 +20,13 @@ import socket
 import time
 from pathlib import Path
 
-from . import host, hostpackage, pidfiles
+from . import host, pidfiles, runtimeprepare
 from .actions import Action, Launch, Run
 from .command import GateCommand
 from .config import GateConfig
 from .context import Context
 from .errors import GateError
-from .execution import Kind, Needs, Speed, step
+from .execution import Kind, Needs, Speed, Step, step
 from .fileactions import Copy, MakeDir, Remove
 from .lifecycle import Resource
 from .plan import Plan
@@ -211,60 +211,67 @@ class EnsureServiceCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        config = self._config
-        settings = config.service
-        target = home(config)
-        generated = config.path(settings.generated_profiles)
-
-        built = plan.add(hostpackage.build_step(config))
-        signed = plan.add(hostpackage.sign_step(config), after=(built,))
-
-        prepared = plan.add(
-            step(
-                "prepare",
-                _RequireGeneratedProfiles(generated),
-                MakeDir(run_dir(config)),
-                _StopExisting(),
-                # An older layout wrote these into the home. Removed on every
-                # start, so a checkout that predates the change cannot keep
-                # booting from them.
-                *[Remove(target / name) for name in settings.retired_config],
-                kind=Kind.CAPSEM,
-                needs=frozenset({Needs.DISK}),
-                speed=Speed.FAST,
-            ),
-            after=(signed,),
-        )
-
-        materialized = plan.add(
-            step(
-                "materialize",
-                Run(
-                    [
-                        "bash",
-                        settings.sync_assets_script,
-                        settings.assets_dir,
-                        str(target / settings.home_assets),
-                    ]
-                ),
-                Remove(target / settings.home_profiles),
-                Copy(generated, target / settings.home_profiles),
-                kind=Kind.CAPSEM,
-                needs=frozenset({Needs.DISK}),
-                speed=Speed.FAST,
-            ),
-            after=(prepared,),
-        )
-
-        plan.add(
-            step(
-                "start",
-                launch(config, home=target, run_dir=run_dir(config)),
-                WaitForSocket(),
-                kind=Kind.CAPSEM,
-                needs=frozenset({Needs.DISK}),
-                speed=Speed.FAST,
-            ),
-            after=(materialized,),
-        )
+        prepared = runtimeprepare.prepare(plan, self._config)
+        fragment(plan, self._config, after=(prepared.ready,))
         return plan
+
+
+def fragment(
+    plan: Plan,
+    config: GateConfig,
+    *,
+    after: tuple[Step, ...] = (),
+) -> Step:
+    """Start the development service after its complete runtime exists."""
+    settings = config.service
+    target = home(config)
+    generated = config.path(settings.generated_profiles)
+
+    service_prepared = plan.add(
+        step(
+            "prepare",
+            _RequireGeneratedProfiles(generated),
+            MakeDir(run_dir(config)),
+            _StopExisting(),
+            # An older layout wrote these into the home. Removed on every
+            # start, so a checkout that predates the change cannot keep
+            # booting from them.
+            *[Remove(target / name) for name in settings.retired_config],
+            kind=Kind.CAPSEM,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
+        ),
+        after=after,
+    )
+
+    materialized = plan.add(
+        step(
+            "materialize",
+            Run(
+                [
+                    "bash",
+                    settings.sync_assets_script,
+                    settings.assets_dir,
+                    str(target / settings.home_assets),
+                ]
+            ),
+            Remove(target / settings.home_profiles),
+            Copy(generated, target / settings.home_profiles),
+            kind=Kind.CAPSEM,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
+        ),
+        after=(service_prepared,),
+    )
+
+    return plan.add(
+        step(
+            "start",
+            launch(config, home=target, run_dir=run_dir(config)),
+            WaitForSocket(),
+            kind=Kind.CAPSEM,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
+        ),
+        after=(materialized,),
+    )
