@@ -628,10 +628,10 @@ async fn profile_mcp_info_summarizes_profile_mcp_config() {
         .await
         .expect("mcp info should summarize profile mcp config");
 
-    assert_eq!(info["profile_id"], "code");
-    assert_eq!(info["server_count"], 1);
-    assert_eq!(info["manual_server_count"], 0);
-    assert_eq!(info["builtin_local_enabled"], true);
+    assert_eq!(info.profile_id, "code");
+    assert_eq!(info.server_count, 1);
+    assert_eq!(info.manual_server_count, 0);
+    assert!(info.builtin_local_enabled);
 }
 
 #[tokio::test]

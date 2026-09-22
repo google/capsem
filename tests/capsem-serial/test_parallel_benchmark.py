@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from helpers.benchmark_output import benchmark_output_dir
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
 pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
 
@@ -49,7 +49,7 @@ def _run_benchmark_in_vm(client, vm_name):
         return {"vm": vm_name, "status": "failed", "duration_ms": duration_ms}
     
     print(f"Benchmark completed in {vm_name} in {duration_ms:.0f}ms")
-    return {"vm": vm_name, "status": "success", "duration_ms": duration_ms, "stdout": resp.get("stdout")}
+    return {"vm": vm_name, "status": "success", "duration_ms": duration_ms, "stdout": exec_output_text(resp)}
 
 def test_parallel_benchmark():
     """Spawn 4 VMs and run benchmarks in parallel."""

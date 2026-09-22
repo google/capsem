@@ -63,6 +63,10 @@ pub fn security_event_type_is_known(value: &str) -> bool {
 
 /// Sorted rule-authoring contract for fields exposed by security events.
 pub const SECURITY_EVENT_CEL_FIELDS: &[&str] = &[
+    "container.digest",
+    "container.image",
+    "container.registry",
+    "container.valid",
     "dns.qname",
     "dns.qtype",
     "dns.valid",
@@ -139,6 +143,7 @@ pub const SECURITY_EVENT_CEL_FIELDS: &[&str] = &[
     "model.response.valid",
     "model.tool_call.valid",
     "model.valid",
+    "network.action",
     "network.destination.generation",
     "network.destination.ip",
     "network.destination.port",
@@ -155,6 +160,7 @@ pub const SECURITY_EVENT_CEL_FIELDS: &[&str] = &[
     "network.source.port",
     "network.source.vm_id",
     "network.source.vm_name",
+    "network.target",
     "network.valid",
     "process.audit.valid",
     "process.command",

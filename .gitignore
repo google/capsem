@@ -29,6 +29,8 @@ web/app/_tmp_*
 web/docs/_tmp_*
 web/marketing/_tmp_*
 build_system/release_site/_tmp_*
+sdk/typescript/_tmp_*
+mcp/typescript/_tmp_*
 *.pyc
 __pycache__/
 .ipynb_checkpoints

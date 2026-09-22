@@ -28,7 +28,7 @@ from helpers.constants import (
     EXEC_READY_TIMEOUT,
     EXEC_TIMEOUT_SECS,
 )
-from helpers.service import vm_name, wait_exec_ready
+from helpers.service import exec_output_text, vm_name, wait_exec_ready
 
 pytestmark = pytest.mark.integration
 
@@ -53,7 +53,7 @@ def _exec(client, name, command):
 def _dmesg_offending_lines(client, name):
     """Return dmesg lines from the guest that match the bug signatures."""
     resp = _exec(client, name, "dmesg")
-    out = resp.get("stdout", "")
+    out = exec_output_text(resp)
     matches = []
     for line in out.splitlines():
         for pat in LOOP_ERROR_PATTERNS:

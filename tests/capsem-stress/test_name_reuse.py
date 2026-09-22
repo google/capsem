@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.stress
 
@@ -28,7 +28,7 @@ def test_create_delete_reuse_name():
                 f"Cycle {cycle}: VM never exec-ready"
 
             exec_resp = client.post(f"/vms/{name}/exec", {"command": f"echo cycle-{cycle}"})
-            assert f"cycle-{cycle}" in exec_resp.get("stdout", ""), \
+            assert f"cycle-{cycle}" in exec_output_text(exec_resp), \
                 f"Cycle {cycle}: exec output wrong"
 
             client.delete(f"/vms/{name}/delete")

@@ -13,7 +13,6 @@ SIGNED_BINARIES = {
     "capsem-process": TARGET_DIR / "capsem-process",
     "capsem-service": TARGET_DIR / "capsem-service",
     "capsem": TARGET_DIR / "capsem",
-    "capsem-mcp": TARGET_DIR / "capsem-mcp",
 }
 
 pytestmark = pytest.mark.codesign
@@ -56,16 +55,4 @@ class TestAllBinariesSigned:
         )
         assert result.returncode == 0, (
             f"capsem not signed: {result.stderr}"
-        )
-
-    def test_mcp_signed(self):
-        """capsem-mcp is signed with valid signature."""
-        binary = SIGNED_BINARIES["capsem-mcp"]
-        assert binary.exists(), f"capsem-mcp not built at {binary}"
-        result = subprocess.run(
-            ["codesign", "--verify", "--verbose", str(binary)],
-            capture_output=True, text=True,
-        )
-        assert result.returncode == 0, (
-            f"capsem-mcp not signed: {result.stderr}"
         )

@@ -42,7 +42,7 @@ graph LR
     end
 
     subgraph "capsem-mcp-aggregator"
-        MAIN["NDJSON loop"]
+        MAIN["frame loop"]
         MGR["McpServerManager"]
     end
 
@@ -54,11 +54,11 @@ graph LR
     AGENT -->|"framed MCP<br/>vsock:5002"| EP
     EP --> CLIENT
     CLIENT --> WRITER
-    WRITER -->|"stdin<br/>NDJSON"| MAIN
+    WRITER -->|"stdin<br/>MessagePack frames"| MAIN
     MAIN --> MGR
     MGR -->|"HTTP/SSE"| EXT1
     MGR -->|"HTTP/SSE"| EXT2
-    MAIN -->|"stdout<br/>NDJSON"| READER
+    MAIN -->|"stdout<br/>MessagePack frames"| READER
     READER --> CLIENT
 ```
 
@@ -72,7 +72,7 @@ Four layers handle the flow:
 
 1. **AggregatorClient** (in capsem-process) -- typed async API wrapping an mpsc channel. Multiple endpoint sessions share one client via `Arc`.
 2. **Driver tasks** (in capsem-process) -- writer task serializes requests to subprocess stdin; reader task deserializes responses from stdout and routes them to pending callers via oneshot channels.
-3. **NDJSON loop** (in capsem-mcp-aggregator) -- reads requests from stdin, dispatches to `McpServerManager`, writes responses to stdout.
+3. **Frame loop** (in capsem-mcp-aggregator) -- reads requests from stdin, dispatches to `McpServerManager`, writes responses to stdout.
 4. **McpServerManager** (in capsem-core) -- manages `rmcp` HTTP connections to external servers, builds unified tool/resource/prompt catalogs with namespacing.
 
 ## Subprocess lifecycle
@@ -92,7 +92,7 @@ sequenceDiagram
     Agg->>Ext: HTTP MCP initialize (per enabled server)
     Ext-->>Agg: tools/list, resources/list, prompts/list
     Note over Agg: Build unified catalogs
-    Note over Agg: Enter NDJSON request loop
+    Note over Agg: Enter frame request loop
 ```
 
 The binary is located next to `capsem-process` in `~/.capsem/bin/`. If not found (dev builds without a full install), capsem-process falls back to an in-process mock that returns empty results for catalog queries and errors for tool calls.
@@ -112,13 +112,13 @@ Two paths:
 
 If the aggregator crashes, the reader and writer driver tasks in capsem-process exit (broken pipe / EOF). Subsequent requests from the endpoint receive a channel-closed error. The endpoint returns a JSON-RPC error to the guest -- the VM continues running, only external MCP tools become unavailable.
 
-## NDJSON protocol
+## Frame protocol
 
-Communication uses newline-delimited JSON over stdin/stdout. Each message is a single JSON object terminated by `\n`. Maximum line length is 1 MB.
+Communication uses length-prefixed MessagePack frames over stdin/stdout: a 4-byte big-endian payload length, then a MessagePack map with named fields (`capsem_proto::mcp_aggregator::{read_frame, write_frame}`). The maximum frame is 16 MiB. The examples below show each message's fields as JSON for readability; on the wire they are MessagePack.
 
 ### Initialization
 
-The first line on stdin is a JSON array of server definitions:
+The first frame on stdin is the list of server definitions:
 
 ```json
 [
@@ -263,7 +263,7 @@ The aggregator is designed for graceful degradation:
 
 | File | Purpose |
 |------|---------|
-| `capsem-mcp-aggregator/src/main.rs` | Subprocess binary: init, NDJSON loop, request dispatch |
+| `capsem-mcp-aggregator/src/main.rs` | Subprocess binary: init, frame loop, request dispatch |
 | `capsem-core/src/mcp/aggregator.rs` | Protocol types (`AggregatorRequest/Response`) and `AggregatorClient` |
 | `capsem-core/src/mcp/server_manager.rs` | `McpServerManager`: rmcp connections, tool catalog, namespacing |
 | `capsem-core/src/mcp/mod.rs` | `build_profile_server_list()`: profile-owned MCP servers plus the local builtin server |

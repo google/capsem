@@ -16,13 +16,12 @@ ENTITLEMENTS = PROJECT_ROOT / "build_system/packaging/macos/entitlements.plist"
 
 IS_MACOS = os.uname().sysname == "Darwin"
 
-DAEMON_CRATES = ["capsem-service", "capsem-process", "capsem", "capsem-app", "capsem-mcp"]
+DAEMON_CRATES = ["capsem-service", "capsem-process", "capsem", "capsem-app"]
 DAEMON_BINARIES = {
     "capsem-service": TARGET_DIR / "capsem-service",
     "capsem-process": TARGET_DIR / "capsem-process",
     "capsem": TARGET_DIR / "capsem",
     "capsem-app": TARGET_DIR / "capsem-app",
-    "capsem-mcp": TARGET_DIR / "capsem-mcp",
 }
 
 pytestmark = pytest.mark.build_chain

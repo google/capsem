@@ -1,91 +1,15 @@
 use super::*;
-
 pub(crate) mod bodies;
-mod query;
-pub(crate) mod security;
-
-pub(super) use bodies::{body_blob_map, handle_bodies_warc_export, handle_event_bodies, STATS_DETAIL_BODY_BLOBS_SQL};
-pub(super) use query::{
-    decode_query_rows, ledger_route_error, main_ledger_route_error, open_ready_session_db, parse_query_json,
-    query_json_to_objects, query_route_db_json, query_route_error, query_route_objects, query_route_typed_rows,
-};
-pub(super) use security::{
-    is_detection_rule_event, read_profile_security_ledgers, read_security_session_ledger, security_latest_for_vm,
-    security_stats_for_vm,
-};
-
-/// `GET /vms/{id}/timeline?trace_id=<X>&since=10m&limit=200&layers=tool,exec,...`
-/// -- unified time-ordered event stream for one session. Used by the
-/// `capsem_timeline` MCP tool.
-///
-/// W6 added `trace_id` to every layer; this handler filters with
-/// with matching `trace_id` or pre-W4 NULL trace rows so older rows still
-/// surface for the user.
-pub(super) async fn handle_timeline(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    axum::extract::Query(params): axum::extract::Query<TimelineQuery>,
-) -> Result<impl IntoResponse, AppError> {
-    let limit = params.limit.unwrap_or(200).min(2000);
-    let since_filter = params
-        .since
-        .as_deref()
-        .and_then(triage::parse_since)
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs());
-
-    // Layers the caller wants. Default to all five. C1: filter against
-    // a hard allowlist BEFORE building SQL so even a future careless
-    // copy-paste of this format!() can't leak attacker-supplied
-    // tokens into the query string.
-    const ALLOWED_LAYERS: &[&str] = &["exec", "tool", "net", "fs", "model"];
-    let layers: Vec<&str> = params
-        .layers
-        .as_deref()
-        .map(|s| {
-            s.split(',')
-                .filter(|x| !x.is_empty())
-                .filter(|x| ALLOWED_LAYERS.contains(x))
-                .collect()
-        })
-        .unwrap_or_else(|| ALLOWED_LAYERS.to_vec());
-
-    if layers.is_empty() {
-        return Err(AppError(StatusCode::BAD_REQUEST, "no layers selected".into()));
-    }
-
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let cutoff = since_filter.map(secs_to_rfc3339);
-    let db_path = session_dir.join("session.db");
-    let sql = timeline_base_sql();
-    let rows = read_timeline_rows_from_session_db(&state, &id, &db_path, &sql)
-        .await?
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|row| layers.contains(&row.layer.as_str()))
-        .filter(|row| {
-            params
-                .trace_id
-                .as_deref()
-                .is_none_or(|trace_id| row.trace_id.as_deref() == Some(trace_id) || row.trace_id.is_none())
-        })
-        .filter(|row| cutoff.as_deref().is_none_or(|cutoff| row.timestamp.as_str() >= cutoff))
-        .take(limit)
-        .map(|row| row.to_values())
-        .collect::<Vec<_>>();
-    let json_str = serde_json::to_string(&json!({
-        "columns": TIMELINE_COLUMNS,
-        "rows": rows,
-    }))
-    .map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("timeline ledger serialization failed: {error}"),
-        )
-    })?;
-
-    Ok(json_bytes_response(Bytes::from(json_str)))
-}
+pub(super) use bodies::{handle_bodies_warc_export, handle_event_bodies};
+mod response_cache;
+pub(crate) use response_cache::{forget_session_responses, session_response_cache_lookup, SessionResponseCache};
+mod stats_detail;
+pub(super) use stats_detail::read_stats_detail_payload_from_session_db;
+use stats_detail::STATS_DETAIL_MODEL_STATS_SQL;
+mod timeline;
+pub(super) use timeline::handle_timeline;
+mod vm_info;
+pub(super) use vm_info::populate_vm_info;
 
 #[derive(Deserialize, Debug, Default)]
 pub(super) struct SecurityLedgerQuery {
@@ -104,6 +28,13 @@ pub(super) async fn handle_security_latest(
     Query(params): Query<SecurityLedgerQuery>,
 ) -> Result<axum::response::Response, AppError> {
     let limit = params.limit.unwrap_or(100).min(2000);
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    let route_key = format!("security_latest:limit={limit}");
+    let slot = match session_response_cache_lookup(&state, &id, &route_key, "security", &db_path).await? {
+        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
+        SessionResponseCache::Miss(slot) => slot,
+    };
     let rows = security_latest_for_vm(&state, &id, limit, false).await?;
     info!(
         route = "/vms/{id}/security/latest",
@@ -118,6 +49,7 @@ pub(super) async fn handle_security_latest(
             format!("failed to serialize security latest response: {error}"),
         )
     })?;
+    slot.store(&state, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -128,6 +60,13 @@ pub(super) async fn handle_detection_latest(
     Query(params): Query<SecurityLedgerQuery>,
 ) -> Result<axum::response::Response, AppError> {
     let limit = params.limit.unwrap_or(100).min(2000);
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    let route_key = format!("detection_latest:limit={limit}");
+    let slot = match session_response_cache_lookup(&state, &id, &route_key, "security", &db_path).await? {
+        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
+        SessionResponseCache::Miss(slot) => slot,
+    };
     let rows = security_latest_for_vm(&state, &id, limit, true).await?;
     let body = serde_json::to_vec(&rows).map_err(|error| {
         AppError(
@@ -135,6 +74,7 @@ pub(super) async fn handle_detection_latest(
             format!("failed to serialize detection latest response: {error}"),
         )
     })?;
+    slot.store(&state, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -143,6 +83,12 @@ pub(super) async fn handle_security_info(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    let slot = match session_response_cache_lookup(&state, &id, "security_status", "security", &db_path).await? {
+        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
+        SessionResponseCache::Miss(slot) => slot,
+    };
     let stats = security_stats_for_vm(&state, &id).await?;
     let body = serde_json::to_vec(&stats).map_err(|error| {
         AppError(
@@ -150,6 +96,7 @@ pub(super) async fn handle_security_info(
             format!("failed to serialize security status response: {error}"),
         )
     })?;
+    slot.store(&state, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -186,20 +133,237 @@ fn session_dirs_for_profile(state: &ServiceState, profile_id: Option<&str>) -> V
     sessions.into_iter().collect()
 }
 
-const BROKERED_CREDENTIAL_STATS_SQL: &str = r#"
-SELECT MAX(provider) AS provider, substitution_ref AS credential_ref, COUNT(*) AS observed_count,
-       SUM(CASE WHEN outcome = 'injected' THEN 1 ELSE 0 END) AS injected_count,
-       MAX(timestamp) AS last_seen
-FROM substitution_events
-WHERE material_class = 'credential'
-GROUP BY substitution_ref
-ORDER BY MAX(timestamp) DESC
-LIMIT 100
-"#;
+pub(crate) mod security;
+pub(crate) use security::{
+    is_detection_rule_event, read_profile_security_ledgers, read_security_session_ledger, security_latest_for_vm,
+    security_stats_for_vm,
+};
+
+pub(super) fn ledger_route_error(
+    vm_id: &str,
+    ledger: &str,
+    operation: &str,
+    db_path: &StdPath,
+    error: impl std::fmt::Display,
+) -> AppError {
+    let error = error.to_string();
+    error!(
+        vm_id,
+        ledger,
+        operation,
+        db_path = %db_path.display(),
+        error = %error,
+        "session ledger route DB operation failed"
+    );
+    AppError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("failed to {operation} {ledger} ledger for {vm_id}: {error}"),
+    )
+}
+
+pub(super) async fn open_ready_session_db(
+    state: &ServiceState,
+    vm_id: &str,
+    ledger: &str,
+    db_path: &StdPath,
+) -> Result<Arc<capsem_logger::DbHandle>, AppError> {
+    if !db_path.exists() {
+        error!(
+            vm_id,
+            ledger,
+            operation = "ready",
+            db_path = %db_path.display(),
+            "session ledger DB is absent"
+        );
+        return Err(ledger_route_error(vm_id, ledger, "ready", db_path, "session.db absent"));
+    }
+    let db = match state.session_db_handle(vm_id) {
+        Some(handle) if handle.path() == db_path => handle,
+        Some(handle) => {
+            warn!(
+                vm_id,
+                ledger,
+                operation = "replace_stale_session_db_handle",
+                cached_db_path = %handle.path().display(),
+                db_path = %db_path.display(),
+                "session DB handle path did not match resolved session path"
+            );
+            state.unregister_session_db_handle(vm_id);
+            let session_dir = db_path
+                .parent()
+                .ok_or_else(|| ledger_route_error(vm_id, ledger, "resolve session dir", db_path, "missing parent"))?;
+            state
+                .register_session_db_handle(vm_id, session_dir)
+                .map_err(|error| ledger_route_error(vm_id, ledger, "open", db_path, error))?
+        }
+        None => {
+            let session_dir = db_path
+                .parent()
+                .ok_or_else(|| ledger_route_error(vm_id, ledger, "resolve session dir", db_path, "missing parent"))?;
+            let handle = state
+                .register_session_db_handle(vm_id, session_dir)
+                .map_err(|error| ledger_route_error(vm_id, ledger, "open", db_path, error))?;
+            info!(
+                vm_id,
+                ledger,
+                operation = "lazy_register_session_db_handle",
+                db_path = %db_path.display(),
+                "registered missing session DB handle for route"
+            );
+            handle
+        }
+    };
+    db.ready()
+        .await
+        .map_err(|error| ledger_route_error(vm_id, ledger, "ready", db_path, error))?;
+    Ok(db)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn query_route_db_json(
+    vm_id: &str,
+    ledger: &str,
+    operation: &str,
+    query_name: &str,
+    db_path: &StdPath,
+    db: &capsem_logger::DbHandle,
+    sql: &str,
+    params: &[serde_json::Value],
+) -> Result<serde_json::Value, AppError> {
+    let raw = db.query(sql, params).await.map_err(|error| {
+        error!(
+            vm_id,
+            ledger,
+            operation,
+            query_name,
+            db_path = %db_path.display(),
+            error = %error,
+            "session ledger route DB query failed"
+        );
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("{ledger} ledger query {query_name} failed for {vm_id}: {error}"),
+        )
+    })?;
+    serde_json::from_str(&raw).map_err(|error| {
+        error!(
+            vm_id,
+            ledger,
+            operation = "parse query json",
+            query_name,
+            db_path = %db_path.display(),
+            error = %error,
+            "session ledger route DB query returned invalid JSON"
+        );
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("{ledger} ledger query {query_name} returned invalid json for {vm_id}: {error}"),
+        )
+    })
+}
+
+pub(super) fn query_json_to_objects(raw: serde_json::Value) -> Vec<serde_json::Value> {
+    let columns: Vec<String> = raw
+        .get("columns")
+        .and_then(|value| value.as_array())
+        .map(|columns| {
+            columns
+                .iter()
+                .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    let rows = raw
+        .get("rows")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut objects = Vec::with_capacity(rows.len());
+    for row in rows {
+        let values = row.as_array().cloned().unwrap_or_default();
+        let mut object = serde_json::Map::new();
+        for (index, column) in columns.iter().enumerate() {
+            object.insert(
+                column.clone(),
+                values.get(index).cloned().unwrap_or(serde_json::Value::Null),
+            );
+        }
+        objects.push(serde_json::Value::Object(object));
+    }
+    objects
+}
+
+pub(super) async fn query_route_objects(
+    vm_id: &str,
+    ledger: &str,
+    query_name: &str,
+    db_path: &StdPath,
+    db: &capsem_logger::DbHandle,
+    sql: &str,
+    params: &[serde_json::Value],
+) -> Result<Vec<serde_json::Value>, AppError> {
+    let raw = query_route_db_json(vm_id, ledger, "query", query_name, db_path, db, sql, params).await?;
+    Ok(query_json_to_objects(raw))
+}
+
+pub(super) async fn query_route_typed_rows<T>(
+    vm_id: &str,
+    ledger: &str,
+    query_name: &str,
+    db_path: &StdPath,
+    db: &capsem_logger::DbHandle,
+    sql: &str,
+    params: &[serde_json::Value],
+) -> Result<Vec<T>, AppError>
+where
+    T: DeserializeOwned,
+{
+    let objects = query_route_objects(vm_id, ledger, query_name, db_path, db, sql, params).await?;
+    objects
+        .into_iter()
+        .map(|object| {
+            serde_json::from_value::<T>(object).map_err(|error| {
+                error!(
+                    vm_id,
+                    ledger,
+                    operation = "decode query rows",
+                    query_name,
+                    db_path = %db_path.display(),
+                    error = %error,
+                    "session ledger route DB query mapping failed"
+                );
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("{ledger} ledger query {query_name} mapping failed for {vm_id}: {error}"),
+                )
+            })
+        })
+        .collect()
+}
+
+pub(super) fn main_ledger_route_error(
+    ledger: &str,
+    operation: &str,
+    db_path: &StdPath,
+    error: impl std::fmt::Display,
+) -> AppError {
+    let error = error.to_string();
+    error!(
+        ledger,
+        operation,
+        db_path = %db_path.display(),
+        error = %error,
+        "main ledger route DB operation failed"
+    );
+    AppError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("failed to {operation} {ledger} main ledger: {error}"),
+    )
+}
 
 #[derive(Clone, Debug)]
 pub(super) struct HistorySessionLedger {
-    pub(super) entries: Vec<capsem_logger::HistoryEntry>,
+    pub(super) entries: Vec<api::HistoryEntry>,
     pub(super) processes: Vec<capsem_logger::ProcessEntry>,
     pub(super) counts: capsem_logger::HistoryCounts,
 }
@@ -268,22 +432,21 @@ pub(super) async fn read_history_session_ledger(
     db_path: &StdPath,
 ) -> Result<Option<HistorySessionLedger>, AppError> {
     let db = open_ready_session_db(state, vm_id, "history", db_path).await?;
-    let mut entries = query_route_typed_rows::<capsem_logger::HistoryEntry>(
-        vm_id,
-        "history",
-        "entries",
-        db_path,
-        &db,
-        HISTORY_ENTRIES_SQL,
-        &[],
-    )
-    .await?;
-    for entry in &mut entries {
-        if let serde_json::Value::String(details) = &entry.details {
-            entry.details = serde_json::from_str(details)
-                .map_err(|error| ledger_route_error(vm_id, "history", "parse entry details", db_path, error))?;
-        }
-    }
+    let rows = query_route_objects(vm_id, "history", "entries", db_path, &db, HISTORY_ENTRIES_SQL, &[]).await?;
+    let entries = rows
+        .into_iter()
+        .map(|mut row| {
+            let details = row
+                .get_mut("details")
+                .ok_or_else(|| ledger_route_error(vm_id, "history", "entry details", db_path, "missing details"))?;
+            if let serde_json::Value::String(text) = details {
+                *details = serde_json::from_str(text)
+                    .map_err(|error| ledger_route_error(vm_id, "history", "parse entry details", db_path, error))?;
+            }
+            serde_json::from_value::<api::HistoryEntry>(row)
+                .map_err(|error| ledger_route_error(vm_id, "history", "decode entry", db_path, error))
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
     let processes = query_route_typed_rows(
         vm_id,
         "history",
@@ -317,140 +480,6 @@ pub(super) async fn read_history_session_ledger(
     }))
 }
 
-const TIMELINE_RECOVERY_LIMIT: usize = 50_000;
-const TIMELINE_COLUMNS: [&str; 7] = [
-    "timestamp",
-    "layer",
-    "ref",
-    "summary",
-    "status",
-    "duration_ms",
-    "trace_id",
-];
-
-#[derive(Clone, Debug)]
-pub(super) struct TimelineRow {
-    timestamp: String,
-    layer: String,
-    ref_value: serde_json::Value,
-    summary: String,
-    status: serde_json::Value,
-    duration_ms: serde_json::Value,
-    trace_id: Option<String>,
-}
-
-impl TimelineRow {
-    fn to_values(&self) -> Vec<serde_json::Value> {
-        vec![
-            json!(self.timestamp),
-            json!(self.layer),
-            self.ref_value.clone(),
-            json!(self.summary),
-            self.status.clone(),
-            self.duration_ms.clone(),
-            self.trace_id
-                .as_ref()
-                .map(|trace_id| json!(trace_id))
-                .unwrap_or(serde_json::Value::Null),
-        ]
-    }
-}
-
-pub(super) fn timeline_base_sql() -> String {
-    let parts = [
-        "SELECT timestamp, 'exec' AS layer, exec_id AS ref, command AS summary, \
-         exit_code AS status, duration_ms, trace_id FROM exec_events",
-        "SELECT COALESCE(NULLIF(tc.timestamp, ''), '1970-01-01T00:00:00Z') AS timestamp, \
-         'tool' AS layer, tc.event_id AS ref, \
-         COALESCE(tc.server_name, tc.origin) || '/' || tc.tool_name || COALESCE(' (call_id=' || tc.call_id || ')', '') AS summary, \
-         tc.decision AS status, tc.duration_ms AS duration_ms, tc.trace_id AS trace_id \
-         FROM tool_calls tc \
-         WHERE tc.origin IN ('model', 'native', 'mcp', 'builtin', 'local', 'mcp_proxy')",
-        "SELECT timestamp, 'net' AS layer, id AS ref, \
-         COALESCE(method, 'GET') || ' ' || domain || COALESCE(path, '') AS summary, \
-         status_code AS status, duration_ms, trace_id FROM net_events",
-        "SELECT timestamp, 'fs' AS layer, id AS ref, action || ' ' || path AS summary, \
-         NULL AS status, NULL AS duration_ms, trace_id FROM fs_events",
-        "SELECT timestamp, 'model' AS layer, id AS ref, \
-         provider || '/' || COALESCE(model, '?') AS summary, \
-         status_code AS status, duration_ms, trace_id FROM model_calls",
-    ];
-    format!(
-        "SELECT * FROM ({}) ORDER BY timestamp ASC LIMIT {TIMELINE_RECOVERY_LIMIT}",
-        parts.join(" UNION ALL ")
-    )
-}
-
-pub(super) fn json_value_as_string(value: &serde_json::Value) -> Option<String> {
-    match value {
-        serde_json::Value::String(value) => Some(value.clone()),
-        serde_json::Value::Number(value) => Some(value.to_string()),
-        serde_json::Value::Bool(value) => Some(value.to_string()),
-        _ => None,
-    }
-}
-
-pub(super) fn timeline_rows_from_query_json(raw: serde_json::Value) -> Vec<TimelineRow> {
-    let columns = raw
-        .get("columns")
-        .and_then(|value| value.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let rows = raw
-        .get("rows")
-        .and_then(|value| value.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let column_index = |name: &str| columns.iter().position(|column| column.as_str() == Some(name));
-    let Some(timestamp_idx) = column_index("timestamp") else {
-        return Vec::new();
-    };
-    let Some(layer_idx) = column_index("layer") else {
-        return Vec::new();
-    };
-    let Some(ref_idx) = column_index("ref") else {
-        return Vec::new();
-    };
-    let Some(summary_idx) = column_index("summary") else {
-        return Vec::new();
-    };
-    let Some(status_idx) = column_index("status") else {
-        return Vec::new();
-    };
-    let Some(duration_idx) = column_index("duration_ms") else {
-        return Vec::new();
-    };
-    let Some(trace_idx) = column_index("trace_id") else {
-        return Vec::new();
-    };
-
-    rows.into_iter()
-        .filter_map(|row| {
-            let row = row.as_array()?;
-            Some(TimelineRow {
-                timestamp: json_value_as_string(row.get(timestamp_idx)?)?,
-                layer: json_value_as_string(row.get(layer_idx)?)?,
-                ref_value: row.get(ref_idx).cloned().unwrap_or(serde_json::Value::Null),
-                summary: json_value_as_string(row.get(summary_idx)?)?,
-                status: row.get(status_idx).cloned().unwrap_or(serde_json::Value::Null),
-                duration_ms: row.get(duration_idx).cloned().unwrap_or(serde_json::Value::Null),
-                trace_id: row.get(trace_idx).and_then(json_value_as_string),
-            })
-        })
-        .collect()
-}
-
-pub(super) async fn read_timeline_rows_from_session_db(
-    state: &ServiceState,
-    vm_id: &str,
-    db_path: &StdPath,
-    sql: &str,
-) -> Result<Option<Vec<TimelineRow>>, AppError> {
-    let db = open_ready_session_db(state, vm_id, "timeline", db_path).await?;
-    let raw = query_route_db_json(vm_id, "timeline", "query", "timeline", db_path, &db, sql, &[]).await?;
-    Ok(Some(timeline_rows_from_query_json(raw)))
-}
-
 pub(super) async fn history_ledger_for_vm(state: &ServiceState, id: &str) -> Result<HistorySessionLedger, AppError> {
     let session_dir = resolve_session_dir(state, id)?;
     Ok(read_history_session_ledger(state, id, &session_dir.join("session.db"))
@@ -458,7 +487,7 @@ pub(super) async fn history_ledger_for_vm(state: &ServiceState, id: &str) -> Res
         .unwrap_or_default())
 }
 
-pub(super) fn history_entry_matches_search(entry: &capsem_logger::HistoryEntry, query: &str) -> bool {
+pub(super) fn history_entry_matches_search(entry: &api::HistoryEntry, query: &str) -> bool {
     entry.command.contains(query)
         || entry
             .stdout_preview
@@ -468,14 +497,14 @@ pub(super) fn history_entry_matches_search(entry: &capsem_logger::HistoryEntry, 
             .stderr_preview
             .as_deref()
             .is_some_and(|value| value.contains(query))
-        || entry.details.to_string().contains(query)
+        || serde_json::to_string(&entry.details).is_ok_and(|details| details.contains(query))
 }
 
 pub(super) fn query_history_ledger(session: &HistorySessionLedger, params: &api::HistoryQuery) -> api::HistoryResponse {
     let mut entries = session
         .entries
         .iter()
-        .filter(|entry| params.layer == "all" || entry.layer == params.layer)
+        .filter(|entry| params.layer.includes(entry.layer))
         .filter(|entry| {
             params
                 .search
@@ -489,152 +518,14 @@ pub(super) fn query_history_ledger(session: &HistorySessionLedger, params: &api:
     let commands = entries
         .into_iter()
         .skip(params.offset)
-        .take(params.limit)
+        .take(params.limit.min(2000))
         .collect::<Vec<_>>();
-    let has_more = (params.offset + commands.len()) < total as usize;
+    let has_more = params.offset.saturating_add(commands.len()) < total as usize;
     api::HistoryResponse {
         commands,
         total,
         has_more,
     }
-}
-
-const STATS_DETAIL_MODEL_STATS_SQL: &str = r#"
-SELECT provider, COALESCE(model, 'unknown') AS model,
-       COUNT(*) AS call_count,
-       COALESCE(SUM(input_tokens), 0) AS input_tokens,
-       COALESCE(SUM(output_tokens), 0) AS output_tokens,
-       COALESCE(SUM(estimated_cost_usd), 0.0) AS estimated_cost_usd,
-       COALESCE(SUM(duration_ms), 0) AS duration_ms
-FROM model_calls
-GROUP BY provider, model
-ORDER BY call_count DESC, provider ASC
-"#;
-
-const STATS_DETAIL_MODEL_EVENTS_SQL: &str = r#"
-SELECT event_id, timestamp, provider, model, method, path, status_code,
-       input_tokens, output_tokens, duration_ms, response_bytes,
-       stop_reason, trace_id, credential_ref
-FROM model_calls
-ORDER BY id DESC
-LIMIT 200
-"#;
-
-const STATS_DETAIL_TOOL_EVENTS_SQL: &str = r#"
-SELECT event_id, timestamp, process_name, server_name, tool_name, method, call_id,
-       model_call_id, model_parent_missing,
-       decision, duration_ms, bytes, arguments, response_preview,
-       error_message, source, credential_ref
-FROM (
-    SELECT tc.event_id,
-           COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) AS timestamp,
-           tc.process_name,
-           COALESCE(tc.server_name, 'model') AS server_name,
-           tc.tool_name,
-           tc.method,
-           tc.call_id,
-           tc.model_call_id,
-           CASE
-               WHEN tc.model_call_id IS NOT NULL AND mc.id IS NULL THEN 1
-               ELSE 0
-           END AS model_parent_missing,
-           tc.decision,
-           COALESCE(tc.duration_ms, mc.duration_ms, 0) AS duration_ms,
-           COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) AS bytes,
-           tc.arguments,
-           COALESCE(tc.response_preview, tr.content_preview) AS response_preview,
-           tc.error_message,
-           tc.origin AS source,
-           COALESCE(tc.credential_ref, tr.credential_ref) AS credential_ref
-    FROM tool_calls tc
-    LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
-    LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
-    WHERE tc.origin IN ('model', 'native', 'mcp', 'builtin', 'local', 'mcp_proxy')
-)
-ORDER BY timestamp DESC
-LIMIT 200
-"#;
-
-const STATS_DETAIL_HTTP_EVENTS_SQL: &str = r#"
-SELECT event_id, timestamp, domain, port, method, path, query, status_code,
-       decision, duration_ms, bytes_sent, bytes_received, matched_rule, policy_rule,
-       trace_id, credential_ref, request_headers, response_headers
-FROM net_events
-ORDER BY id DESC
-LIMIT 200
-"#;
-
-const STATS_DETAIL_DNS_EVENTS_SQL: &str = r#"
-SELECT event_id, timestamp, qname, qtype, qclass, rcode, decision,
-       matched_rule, policy_rule, source_proto, process_name,
-       upstream_resolver_ms, trace_id, credential_ref
-FROM dns_events
-ORDER BY id DESC
-LIMIT 200
-"#;
-
-const STATS_DETAIL_FILE_EVENTS_SQL: &str = r#"
-SELECT event_id, timestamp, action, path, size, kind, trace_id, credential_ref
-FROM fs_events
-ORDER BY id DESC
-LIMIT 200
-"#;
-
-const STATS_DETAIL_PROCESS_EVENTS_SQL: &str = r#"
-SELECT event_id, timestamp, exec_id, command, exit_code, duration_ms,
-       stdout_bytes, stderr_bytes, source, process_name, pid, trace_id,
-       credential_ref
-FROM exec_events
-ORDER BY id DESC
-LIMIT ?1
-"#;
-
-const STATS_DETAIL_AUDIT_EVENTS_SQL: &str = r#"
-SELECT event_id, timestamp, pid, ppid, uid, exe, comm, argv, cwd,
-       exit_code, session_id, tty, audit_id, exec_event_id, parent_exe,
-       trace_id, credential_ref
-FROM audit_events
-ORDER BY id DESC
-LIMIT 100
-"#;
-
-const STATS_DETAIL_CREDENTIAL_EVENTS_SQL: &str = r#"
-SELECT event_id, timestamp, material_class, source, event_type,
-       event_type AS origin, outcome AS verb, provider,
-       trace_id, context_json
-FROM substitution_events
-ORDER BY id DESC
-LIMIT 100
-"#;
-
-pub(super) async fn stats_detail_query_objects(
-    vm_id: &str,
-    db_path: &StdPath,
-    db: &capsem_logger::DbHandle,
-    query_name: &str,
-    sql: &str,
-) -> Result<Vec<serde_json::Value>, AppError> {
-    query_route_objects(vm_id, "stats_detail", query_name, db_path, db, sql, &[]).await
-}
-
-pub(super) async fn read_stats_detail_payload_from_session_db(
-    state: &ServiceState,
-    vm_id: &str,
-    db_path: &StdPath,
-) -> Result<serde_json::Value, AppError> {
-    let db = open_ready_session_db(state, vm_id, "stats_detail", db_path).await?;
-    Ok(json!({
-        "model_stats": stats_detail_query_objects(vm_id, db_path, &db, "model_stats", STATS_DETAIL_MODEL_STATS_SQL).await?,
-        "model_events": stats_detail_query_objects(vm_id, db_path, &db, "model_events", STATS_DETAIL_MODEL_EVENTS_SQL).await?,
-        "tool_events": stats_detail_query_objects(vm_id, db_path, &db, "tool_events", STATS_DETAIL_TOOL_EVENTS_SQL).await?,
-        "http_events": stats_detail_query_objects(vm_id, db_path, &db, "http_events", STATS_DETAIL_HTTP_EVENTS_SQL).await?,
-        "dns_events": stats_detail_query_objects(vm_id, db_path, &db, "dns_events", STATS_DETAIL_DNS_EVENTS_SQL).await?,
-        "file_events": stats_detail_query_objects(vm_id, db_path, &db, "file_events", STATS_DETAIL_FILE_EVENTS_SQL).await?,
-        "process_events": query_route_objects(vm_id, "stats_detail", "process_events", db_path, &db, STATS_DETAIL_PROCESS_EVENTS_SQL, &[json!(bodies::STATS_DETAIL_PROCESS_EVENTS_LIMIT)]).await?,
-        "audit_events": stats_detail_query_objects(vm_id, db_path, &db, "audit_events", STATS_DETAIL_AUDIT_EVENTS_SQL).await?,
-        "credential_events": stats_detail_query_objects(vm_id, db_path, &db, "credential_events", STATS_DETAIL_CREDENTIAL_EVENTS_SQL).await?,
-        "body_blobs": body_blob_map(query_route_objects(vm_id, "stats_detail", "body_blobs", db_path, &db, STATS_DETAIL_BODY_BLOBS_SQL, &[json!(bodies::STATS_DETAIL_PROCESS_EVENTS_LIMIT)]).await?),
-    }))
 }
 
 const STATS_RESPONSE_SQL: &str = r#"
@@ -788,7 +679,7 @@ pub(super) async fn read_stats_response_from_main_db_handle(state: &ServiceState
     match payload {
         serde_json::Value::String(payload) => {
             let bytes = payload.as_bytes().to_vec();
-            *state.stats_response_cache.lock().unwrap() = Some(CachedStatsResponse {
+            *state.stats_response_cache.lock().unwrap() = Some(CachedLedgerResponse {
                 db_epoch,
                 bytes: bytes.clone(),
             });
@@ -797,7 +688,7 @@ pub(super) async fn read_stats_response_from_main_db_handle(state: &ServiceState
         serde_json::Value::Object(_) => {
             let bytes = serde_json::to_vec(payload)
                 .map_err(|error| main_ledger_route_error("stats", "serialize response payload", &db_path, error))?;
-            *state.stats_response_cache.lock().unwrap() = Some(CachedStatsResponse {
+            *state.stats_response_cache.lock().unwrap() = Some(CachedLedgerResponse {
                 db_epoch,
                 bytes: bytes.clone(),
             });
@@ -817,54 +708,6 @@ pub(super) fn hydrate_startup_route_caches(state: &ServiceState) -> Result<(), A
         AppError(status, format!("failed to build profile status cache: {message}"))
     })?;
     Ok(())
-}
-
-pub(super) async fn apply_session_db_status(state: &ServiceState, info: &mut SandboxInfo, session_dir: &StdPath) {
-    let db_path = session_db_path_for_session_dir(session_dir);
-    if !db_path.exists() {
-        info.session_db = Some(api::SessionDbStatus {
-            ready: false,
-            error: Some("session.db absent".to_string()),
-        });
-        info!(
-            vm_id = info.id.as_str(),
-            operation = "session_db_status",
-            db_path = %db_path.display(),
-            ready = false,
-            "session DB absent while building session status"
-        );
-        return;
-    }
-    match open_ready_session_db(state, &info.id, "session status", &db_path).await {
-        Ok(_) => {
-            info.session_db = Some(api::SessionDbStatus {
-                ready: true,
-                error: None,
-            });
-            info!(
-                vm_id = info.id.as_str(),
-                operation = "session_db_status",
-                db_path = %db_path.display(),
-                ready = true,
-                "session DB ready for session status"
-            );
-        }
-        Err(error) => {
-            let message = error.1;
-            info.session_db = Some(api::SessionDbStatus {
-                ready: false,
-                error: Some(message.clone()),
-            });
-            warn!(
-                vm_id = info.id.as_str(),
-                operation = "session_db_status",
-                db_path = %db_path.display(),
-                ready = false,
-                error = %message,
-                "session DB not ready for session status"
-            );
-        }
-    }
 }
 
 pub(super) fn security_detection_count(stats: &capsem_logger::SecurityRuleStats) -> u64 {
@@ -1233,14 +1076,15 @@ pub(super) async fn hydrate_plugin_execution_runtime(
     let mut seen_executions = HashSet::<(String, String)>::new();
     let mut seen_detections = HashSet::<(String, String)>::new();
     for (_vm_id, session) in sessions {
-        for event in &session.latest {
-            let Some(payload) = session
-                .payloads
-                .get(&event.event_id)
-                .and_then(|payload| serde_json::from_str::<serde_json::Value>(payload).ok())
-            else {
+        let payloads = session.payloads;
+        for event in session.latest {
+            let Some(event_json) = payloads.get(&event.event_id) else {
+                status.last_error = Some(format!("missing plugin execution payload for {}", event.event_id));
+                continue;
+            };
+            let Ok(payload) = serde_json::from_str::<serde_json::Value>(event_json) else {
                 status.last_error = Some(format!(
-                    "failed to read plugin execution payload for {}",
+                    "failed to parse plugin execution payload for {}",
                     event.event_id
                 ));
                 continue;
@@ -1368,14 +1212,15 @@ pub(super) async fn hydrate_credential_broker_runtime(
                 .saturating_add(credential.observed_count.saturating_add(credential.injected_count));
             status.rewrite_count = status.rewrite_count.saturating_add(credential.injected_count);
         }
-        for event in &session.latest {
-            let Some(payload) = session
-                .payloads
-                .get(&event.event_id)
-                .and_then(|payload| serde_json::from_str::<serde_json::Value>(payload).ok())
-            else {
+        let payloads = session.payloads;
+        for event in session.latest {
+            let Some(event_json) = payloads.get(&event.event_id) else {
+                status.last_error = Some(format!("missing credential broker payload for {}", event.event_id));
+                continue;
+            };
+            let Ok(payload) = serde_json::from_str::<serde_json::Value>(event_json) else {
                 status.last_error = Some(format!(
-                    "failed to read credential broker payload for {}",
+                    "failed to parse credential broker payload for {}",
                     event.event_id
                 ));
                 continue;
@@ -1574,7 +1419,7 @@ pub(super) async fn handle_profile_plugin_update(
         .entry(scope.profile_id.clone())
         .or_default()
         .insert(plugin_id.clone(), config);
-    push_profile_to_running_instances(&state, Some(scope.profile_id.as_str())).await?;
+    let _reload = handle_reload_config_for_profile(Arc::clone(&state), Some(&scope.profile_id)).await?;
     let info = plugin_info_for(&state, &plugin_id, scope, true).await?;
     Ok(Json(info))
 }
@@ -2316,42 +2161,4 @@ impl EnforcementEventInput {
         }
         Ok(event)
     }
-}
-
-#[derive(Deserialize, Debug, Default)]
-pub(super) struct TimelineQuery {
-    /// Filter to one trace_id. Rows with NULL trace_id are also returned
-    /// (they pre-date W4's trace propagation).
-    trace_id: Option<String>,
-    /// Lookback window. "30m", "1h", "24h", "7d", "300s", or RFC3339.
-    since: Option<String>,
-    /// Max rows. Default 200, capped at 2000.
-    limit: Option<usize>,
-    /// Comma-separated subset of layers to include. Default all:
-    /// "exec,mcp,net,fs,model".
-    layers: Option<String>,
-}
-
-pub(super) fn secs_to_rfc3339(secs: u64) -> String {
-    // Pure-stdlib RFC3339 (UTC, second precision). Mirrors the helper in
-    // the support_bundle crate; we pay the duplication tax to keep
-    // capsem-service free of `chrono`.
-    let secs = secs as i64;
-    let days = secs.div_euclid(86400);
-    let secs_in_day = secs.rem_euclid(86400);
-    let hh = (secs_in_day / 3600) as u32;
-    let mm = ((secs_in_day % 3600) / 60) as u32;
-    let ss = (secs_in_day % 60) as u32;
-
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = i64::from(yoe) + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
 }

@@ -12,7 +12,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
 use nix::errno::Errno;
-use nix::fcntl::{openat, AtFlags, OFlag};
+use nix::fcntl::{openat, readlinkat, AtFlags, OFlag};
 use nix::sys::stat::{fstatat, mkdirat, Mode, SFlag};
 use nix::unistd::{unlinkat, UnlinkatFlags};
 
@@ -83,6 +83,20 @@ pub struct ContainedEntry {
     pub kind: EntryKind,
     pub size: u64,
     pub mtime_secs: u64,
+    pub identity: EntryIdentity,
+}
+
+/// What changes whenever an entry's content or metadata does. A writer can set
+/// mtime back after an edit; it cannot set ctime or choose the inode, so two
+/// equal identities mean the entry was not touched in between -- provided its
+/// ctime is strictly older than the moment the first identity was taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EntryIdentity {
+    pub ino: u64,
+    pub size: u64,
+    /// (seconds, nanoseconds) since the epoch.
+    pub mtime: (i64, i64),
+    pub ctime: (i64, i64),
 }
 
 /// `O_NOFOLLOW` on a symlink fails with `ELOOP` on Linux and macOS alike.
@@ -234,6 +248,17 @@ impl ContainedDir {
         }
     }
 
+    /// Read a symlink's target relative to this directory; never follow it.
+    /// Non-symlink entries return None, including FIFOs and devices.
+    pub fn read_link(&self, name: &OsStr) -> io::Result<Option<OsString>> {
+        check_component(name)?;
+        match readlinkat(Some(self.fd.as_raw_fd()), name) {
+            Ok(target) => Ok(Some(target)),
+            Err(Errno::EINVAL) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// Open a regular child without following links or blocking on a FIFO.
     pub fn open_file(&self, name: &OsStr, options: ContainedOpenOptions) -> io::Result<File> {
         check_component(name)?;
@@ -355,11 +380,21 @@ impl ContainedDir {
                 kind: kind_of(stat.st_mode),
                 size: u64::try_from(stat.st_size).unwrap_or(0),
                 mtime_secs: u64::try_from(stat.st_mtime).unwrap_or(0),
+                identity: identity_of(&stat),
             })? {
                 break;
             }
         }
         Ok(())
+    }
+}
+
+fn identity_of(stat: &nix::sys::stat::FileStat) -> EntryIdentity {
+    EntryIdentity {
+        ino: stat.st_ino,
+        size: u64::try_from(stat.st_size).unwrap_or(0),
+        mtime: (stat.st_mtime, stat.st_mtime_nsec),
+        ctime: (stat.st_ctime, stat.st_ctime_nsec),
     }
 }
 

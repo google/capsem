@@ -1,7 +1,9 @@
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use capsem_proto::mcp_contracts::JsonRpcError;
+use capsem_proto::mcp_contracts::{JsonRpcError, McpToolDef};
+
+use crate::net::mitm_proxy::ScopedMcpTools;
 
 use super::*;
 
@@ -447,8 +449,6 @@ fn gated_endpoint(inflight: usize, hold: bool) -> (Arc<McpEndpointState>, GatedD
     });
     let endpoint = Arc::new(McpEndpointState::new(
         aggregator,
-        Arc::new(capsem_logger::DbWriter::open_in_memory(8).unwrap()),
-        std::collections::BTreeSet::new(),
         Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new())))),
         Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
         Arc::new(tokio::sync::Semaphore::new(inflight)),
@@ -590,16 +590,7 @@ fn count(reader: &capsem_logger::DbReader, table: &str) -> i64 {
 
 /// Endpoint whose rules match every MCP tool call, so a rule-ledger row is
 /// owed for each one.
-fn endpoint_with_matching_rule() -> Arc<McpEndpointState> {
-    let (aggregator, mut rx) = capsem_proto::mcp_aggregator::AggregatorClient::channel(8);
-    tokio::spawn(async move {
-        while let Some((req, resp_tx)) = rx.recv().await {
-            let body = AggregatorResult::CallResult {
-                result: serde_json::json!({"content": [{"type": "text", "text": "pong"}]}),
-            };
-            let _ = resp_tx.send(AggregatorResponse { id: req.id, body });
-        }
-    });
+fn matching_mcp_rules() -> SecurityRuleSet {
     let profile = crate::net::policy_config::SecurityRuleProfile::parse_toml(
         r#"
         [profiles.rules.every_tool_call]
@@ -610,17 +601,102 @@ fn endpoint_with_matching_rule() -> Arc<McpEndpointState> {
         "#,
     )
     .unwrap();
-    let rules =
-        SecurityRuleSet::compile_profile(&profile, crate::net::policy_config::SecurityRuleSource::User).unwrap();
+    SecurityRuleSet::compile_profile(&profile, crate::net::policy_config::SecurityRuleSource::User).unwrap()
+}
+
+fn endpoint_with_matching_rule() -> Arc<McpEndpointState> {
+    let (aggregator, mut rx) = capsem_proto::mcp_aggregator::AggregatorClient::channel(8);
+    tokio::spawn(async move {
+        while let Some((req, resp_tx)) = rx.recv().await {
+            let body = AggregatorResult::CallResult {
+                result: serde_json::json!({"content": [{"type": "text", "text": "pong"}]}),
+            };
+            let _ = resp_tx.send(AggregatorResponse { id: req.id, body });
+        }
+    });
     Arc::new(McpEndpointState::new(
         aggregator,
-        Arc::new(capsem_logger::DbWriter::open_in_memory(8).unwrap()),
-        std::collections::BTreeSet::new(),
-        Arc::new(std::sync::RwLock::new(Arc::new(rules))),
+        Arc::new(std::sync::RwLock::new(Arc::new(matching_mcp_rules()))),
         Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
         Arc::new(tokio::sync::Semaphore::new(4)),
         super::super::McpTimeouts::default(),
     ))
+}
+
+struct ScopedAuditTool;
+
+impl ScopedMcpTools for ScopedAuditTool {
+    fn definitions(&self) -> Vec<McpToolDef> {
+        vec![McpToolDef {
+            namespaced_name: "capsem__expose_port".to_string(),
+            original_name: "expose_port".to_string(),
+            description: None,
+            input_schema: json!({"type": "object"}),
+            server_name: "capsem".to_string(),
+            annotations: None,
+            timeout_secs: None,
+        }]
+    }
+
+    fn call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        _arguments: serde_json::Value,
+    ) -> futures::future::BoxFuture<'a, Result<serde_json::Value, String>> {
+        Box::pin(async move {
+            assert_eq!(name, "capsem__expose_port");
+            Ok(json!({"structuredContent": {"host_port": 49152}}))
+        })
+    }
+}
+
+fn endpoint_with_scoped_matching_rule() -> Arc<McpEndpointState> {
+    let (aggregator, mut rx) = capsem_proto::mcp_aggregator::AggregatorClient::channel(8);
+    tokio::spawn(async move {
+        while let Some((req, resp_tx)) = rx.recv().await {
+            let _ = resp_tx.send(AggregatorResponse {
+                id: req.id,
+                body: AggregatorResult::Error {
+                    error: "scoped calls must stay in the VM owner".to_string(),
+                },
+            });
+        }
+    });
+    Arc::new(
+        McpEndpointState::new(
+            aggregator,
+            Arc::new(std::sync::RwLock::new(Arc::new(matching_mcp_rules()))),
+            Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
+            Arc::new(tokio::sync::Semaphore::new(4)),
+            super::super::McpTimeouts::default(),
+        )
+        .with_scoped_tools(Arc::new(ScopedAuditTool)),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scoped_owner_tool_calls_keep_mcp_policy_and_logger_admission() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 64).unwrap());
+    let endpoint = endpoint_with_scoped_matching_rule();
+    let (mut guest, server) = tokio::io::duplex(1 << 16);
+    let serve = tokio::spawn(serve_io(Vec::new(), server, endpoint, Arc::clone(&db)));
+    let payload = br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"capsem__expose_port","arguments":{"guest_port":8080,"target":"container"}}}"#;
+    guest
+        .write_all(&capsem_proto::encode_mcp_frame(1, 0, "codex", payload).unwrap())
+        .await
+        .unwrap();
+
+    let reply = read_reply(&mut guest).await;
+    assert_eq!(reply.result.as_ref().unwrap()["structuredContent"]["host_port"], 49152);
+    db.flush().await;
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    assert_eq!(count(&reader, "tool_calls"), 1);
+    assert_eq!(count(&reader, "security_rule_events"), 1);
+
+    drop(guest);
+    serve.await.unwrap().unwrap();
 }
 
 #[tokio::test]

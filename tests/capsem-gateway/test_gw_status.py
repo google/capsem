@@ -43,7 +43,7 @@ class TestStatusEndpoint:
         resp = gw_client.get("/status")
         profiles = resp.get("profiles")
         assert profiles is not None
-        assert profiles["source"] == "directory"
+        assert profiles["source"] == "profile"
         assert profiles["profile_count"] == 2
         assert profiles["ready_count"] == 1
 

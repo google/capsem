@@ -7,6 +7,7 @@ Verifies that requests are correctly proxied from TCP to UDS.
 import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.service import exec_output_text
 
 pytestmark = pytest.mark.gateway
 
@@ -34,7 +35,7 @@ class TestProxyForwarding:
         resp = gw_client.post("/vms/11111111-1111-4111-8111-111111111111/exec", {"command": "echo hello"})
         assert resp is not None
         assert resp.get("exit_code") == 0
-        assert "echo hello" in resp.get("stdout", "")
+        assert "echo hello" in exec_output_text(resp)
 
     def test_delete_through_gateway(self, gw_client):
         """DELETE /vms/{id}/delete returns success."""

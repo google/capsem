@@ -12,7 +12,7 @@
 "crates/capsem-agent/src/audit.rs" = "2ff815c166e12c8323e75f8d5259072f9f3247877d0cdab6238eaf192fe078ab"
 "crates/capsem-agent/src/bin/capsem_sysutil.rs" = "2456e6eea72b13097ac6f4a3204861deb89f36706ac53d6fc4973c1518aa0592"
 "crates/capsem-agent/src/control_writer.rs" = "7bb055fc33322daf9f68fabd409338a10da68f7c92ddc19343d271c8be051f75"
-"crates/capsem-agent/src/main.rs" = "ce0b2b7cb0299eb8b097100221b251d00e3729bdd1b2bae314cc562554845a51"
+"crates/capsem-agent/src/main.rs" = "dbde8b0eca805967ff23606659be4fcf68e447f143b16122e5972cf6de4f620c"
 "crates/capsem-agent/src/port_bridge/setup.rs" = "c314ef519d011b48444e2429508459a2d9fab5aa44191ebfae51e48a6e70bcbb"
 "crates/capsem-agent/src/mcp_server.rs" = "1039dbef8877a5f86c6eebeeea069dcb0b2098cb2eb20d46eba878894afce98f"
 "crates/capsem-agent/src/shutdown.rs" = "c59308ad70e3e026ca82edd165eba2a776fc247b8d11c7b5fc816966560005da"

@@ -27,6 +27,17 @@ def test_run_signed_reuses_only_verified_matching_entitlements(tmp_path: Path) -
     commands.mkdir()
     mocks = {
         "uname": "echo Darwin",
+        "find": """
+exec "$TEST_PYTHON" - "$1" <<'PY'
+import os
+import sys
+import time
+
+path = sys.argv[1]
+if time.time() - os.stat(path).st_mtime > 5:
+    print(path)
+PY
+""",
         "plutil": 'if [ "$5" = - ]; then cat; else cat "$5"; fi',
         "cp": """
 if [ "${1:-}" = -c ]; then
@@ -114,6 +125,7 @@ for path in sys.argv[3:]:
         "VERIFY_CALLS": str(verifies),
         "SIGN_STATE": str(state),
         "SOURCE_BINARY": str(binary),
+        "TEST_PYTHON": sys.executable,
     }
     command = ["bash", str(package / "run_signed.sh"), str(binary)]
 

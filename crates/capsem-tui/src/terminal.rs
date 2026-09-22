@@ -2,11 +2,14 @@ use std::collections::BTreeMap;
 use std::sync::mpsc;
 use std::thread;
 
+use capsem_sdk::models::stream::{
+    self as protocol, ServerFrame, StreamChannel, StreamControl, StreamKind, StreamStatus,
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message};
 
 const MAX_SCROLLBACK_LINES: usize = 2_000;
 const MAX_TERMINAL_INPUTS_PER_SEND: usize = 128;
@@ -203,18 +206,30 @@ async fn run_terminal_connection(
             return;
         }
     };
-    let url = terminal_ws_url(&base_url, &session_id, &token);
-    let (socket, _) = match connect_async(&url).await {
+    let mut request = match stream_ws_url(&base_url, &session_id, &token).into_client_request() {
+        Ok(request) => request,
+        Err(error) => {
+            send_status(&events, &session_id, format!("connect failed: {error:#}"));
+            return;
+        }
+    };
+    request
+        .headers_mut()
+        .insert("sec-websocket-protocol", http_header(protocol::STREAM_SUBPROTOCOL));
+    let (socket, _) = match connect_async(request).await {
         Ok(socket) => socket,
         Err(error) => {
             send_status(&events, &session_id, format!("connect failed: {error:#}"));
             return;
         }
     };
-    send_status(&events, &session_id, "connected");
     let (mut write, mut read) = socket.split();
-    let resize = resize_message(cols, rows);
-    let _ = write.send(Message::Text(resize.into())).await;
+    for frame in stream_start_frames(cols, rows) {
+        if let Err(error) = write.send(Message::Binary(frame.into())).await {
+            send_status(&events, &session_id, format!("send failed: {error:#}"));
+            return;
+        }
+    }
 
     loop {
         tokio::select! {
@@ -223,11 +238,10 @@ async fn run_terminal_connection(
                     break;
                 };
                 for input in coalesced_terminal_inputs(input, &mut input_rx) {
-                    let message = match input {
-                        TerminalInput::Bytes(bytes) => Message::Binary(bytes.into()),
-                        TerminalInput::Resize { cols, rows } => Message::Text(resize_message(cols, rows).into()),
+                    let Some(frame) = stream_input_frame(input) else {
+                        continue;
                     };
-                    if let Err(error) = write.send(message).await {
+                    if let Err(error) = write.send(Message::Binary(frame.into())).await {
                         send_status(&events, &session_id, format!("send failed: {error:#}"));
                         return;
                     }
@@ -235,23 +249,21 @@ async fn run_terminal_connection(
             }
             message = read.next() => {
                 match message {
-                    Some(Ok(Message::Text(text))) => {
-                        let _ = events.send(TerminalEvent::Output {
-                            session_id: session_id.clone(),
-                            bytes: text.to_string().into_bytes(),
-                        });
-                    }
-                    Some(Ok(Message::Binary(bytes))) => {
-                        let _ = events.send(TerminalEvent::Output {
-                            session_id: session_id.clone(),
-                            bytes: bytes.to_vec(),
-                        });
-                    }
+                    Some(Ok(Message::Binary(bytes))) => match stream_server_event(&bytes) {
+                        Some(StreamEvent::Output(bytes)) => {
+                            let _ = events.send(TerminalEvent::Output {
+                                session_id: session_id.clone(),
+                                bytes,
+                            });
+                        }
+                        Some(StreamEvent::Status(status)) => send_status(&events, &session_id, status),
+                        None => {}
+                    },
                     Some(Ok(Message::Close(_))) | None => {
                         send_status(&events, &session_id, "disconnected");
                         break;
                     }
-                    Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) | Some(Ok(Message::Frame(_))) => {}
+                    Some(Ok(Message::Text(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {}
                     Some(Err(error)) => {
                         send_status(&events, &session_id, format!("read failed: {error:#}"));
                         break;
@@ -259,6 +271,47 @@ async fn run_terminal_connection(
                 }
             }
         }
+    }
+}
+
+fn http_header(value: &'static str) -> tokio_tungstenite::tungstenite::http::HeaderValue {
+    tokio_tungstenite::tungstenite::http::HeaderValue::from_static(value)
+}
+
+/// What a terminal stream opens with: `start`, then the window size.
+fn stream_start_frames(cols: u16, rows: u16) -> Vec<Vec<u8>> {
+    let mut frames = vec![protocol::encode_control(&StreamControl::Start {
+        kind: StreamKind::Terminal,
+        command: None,
+    })];
+    frames.extend(stream_input_frame(TerminalInput::Resize { cols, rows }));
+    frames
+}
+
+/// One client frame for terminal input; a zero-sized window is not a resize.
+fn stream_input_frame(input: TerminalInput) -> Option<Vec<u8>> {
+    match input {
+        TerminalInput::Bytes(bytes) => Some(protocol::encode_data(StreamChannel::Stdin, &bytes)),
+        TerminalInput::Resize { cols, rows } if cols > 0 && rows > 0 => {
+            Some(protocol::encode_control(&StreamControl::Resize { cols, rows }))
+        }
+        TerminalInput::Resize { .. } => None,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum StreamEvent {
+    Output(Vec<u8>),
+    Status(String),
+}
+
+fn stream_server_event(frame: &[u8]) -> Option<StreamEvent> {
+    match protocol::decode_server_frame(frame) {
+        Ok(ServerFrame::Stdout(bytes) | ServerFrame::Stderr(bytes)) => Some(StreamEvent::Output(bytes.to_vec())),
+        Ok(ServerFrame::Status(StreamStatus::Started)) => Some(StreamEvent::Status("connected".into())),
+        Ok(ServerFrame::Status(StreamStatus::Error { message })) => Some(StreamEvent::Status(message)),
+        Ok(ServerFrame::Status(StreamStatus::Exit { code, .. })) => Some(StreamEvent::Status(format!("exited {code}"))),
+        Err(error) => Some(StreamEvent::Status(format!("protocol error: {error}"))),
     }
 }
 
@@ -299,7 +352,7 @@ async fn fetch_token(client: &reqwest::Client, base_url: &str) -> anyhow::Result
     Ok(token.token)
 }
 
-fn terminal_ws_url(base_url: &str, session_id: &str, token: &str) -> String {
+fn stream_ws_url(base_url: &str, session_id: &str, token: &str) -> String {
     let base = base_url.trim_end_matches('/');
     let ws_base = if let Some(rest) = base.strip_prefix("https://") {
         format!("wss://{rest}")
@@ -309,7 +362,7 @@ fn terminal_ws_url(base_url: &str, session_id: &str, token: &str) -> String {
         base.to_string()
     };
     format!(
-        "{ws_base}/terminal/{}?token={}",
+        "{ws_base}/vms/{}/stream?token={}",
         url_encode_component(session_id),
         url_encode_component(token)
     )
@@ -325,10 +378,6 @@ fn url_encode_component(value: &str) -> String {
             _ => format!("%{byte:02X}").chars().collect(),
         })
         .collect()
-}
-
-fn resize_message(cols: u16, rows: u16) -> String {
-    format!(r#"{{"type":"resize","cols":{cols},"rows":{rows}}}"#)
 }
 
 fn send_status(events: &mpsc::Sender<TerminalEvent>, session_id: &str, status: impl Into<String>) {

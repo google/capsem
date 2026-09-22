@@ -54,7 +54,7 @@ if [[ ! -d "$CONFIG_ROOT/profiles" ]]; then
 fi
 
 # Copy binaries
-for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
     src="$BIN_SRC/$bin"
     if [[ ! -f "$src" ]]; then
         echo "ERROR: binary not found: $src" >&2

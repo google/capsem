@@ -48,7 +48,7 @@ fn refresh_rule_caches(state: &ServiceState, profile: &Profile) -> Result<Vec<ap
     let permission = profile
         .mcp_default_permission()
         .map(|permission| api::McpDefaultPermissionResponse {
-            action: permission.action,
+            action: api::mcp_permission_action(permission.action),
             source: permission.source,
             rule_id: permission.rule_id,
         });

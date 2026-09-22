@@ -26,6 +26,7 @@ from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
+    exec_output_text,
     vm_name,
     vm_session_db_path,
     wait_exec_ready,
@@ -287,7 +288,7 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         )
         assert exec_resp is not None
         assert exec_resp["exit_code"] == 0, exec_resp
-        result = _one_json_line(exec_resp.get("stdout") or "", "IRONBANK_HTTP_RESULT=")
+        result = _one_json_line(exec_output_text(exec_resp), "IRONBANK_HTTP_RESULT=")
         assert result["status"] == 200
         assert result["content_type"].startswith("application/json")
         assert result["body"]["method"] == "POST"
@@ -407,14 +408,11 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
             ),
             lambda payload: any(
                 row["layer"] == "net" and row["ref"] == net["id"]
-                for row in [
-                    dict(zip(payload["columns"], row, strict=True))
-                    for row in payload["rows"]
-                ]
+                for row in payload["events"]
             ),
         )
-        assert set(timeline) == {"columns", "rows"}
-        timeline_rows = [dict(zip(timeline["columns"], row, strict=True)) for row in timeline["rows"]]
+        assert set(timeline) == {"events"}
+        timeline_rows = timeline["events"]
         assert any(row["layer"] == "net" and row["ref"] == net["id"] for row in timeline_rows)
         assert any(row["summary"] == "POST 127.0.0.1/echo" for row in timeline_rows)
 
@@ -611,7 +609,7 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
         assert exec_resp is not None
         assert exec_resp["exit_code"] == 0, exec_resp
         result = _one_json_line(
-            exec_resp.get("stdout") or "", "IRONBANK_HTTP_BODY_MATRIX="
+            exec_output_text(exec_resp), "IRONBANK_HTTP_BODY_MATRIX="
         )
         assert result["nonce"] == nonce
         by_name = {case["name"]: case for case in result["cases"]}
@@ -963,7 +961,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
         assert capture_exec is not None
         assert capture_exec["exit_code"] == 0, capture_exec
         capture_result = _one_json_line(
-            capture_exec.get("stdout") or "", "IRONBANK_HTTP_REWRITE_CAPTURE="
+            exec_output_text(capture_exec), "IRONBANK_HTTP_REWRITE_CAPTURE="
         )
         assert capture_result == {
             "kind": "synthetic_oauth_token_fixture",
@@ -1089,7 +1087,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
         assert replay_exec is not None
         assert replay_exec["exit_code"] == 0, replay_exec
         replay_result = _one_json_line(
-            replay_exec.get("stdout") or "", "IRONBANK_HTTP_REWRITE_REPLAY="
+            exec_output_text(replay_exec), "IRONBANK_HTTP_REWRITE_REPLAY="
         )
         assert replay_result == {
             "header_authorization_is_broker_ref": False,
@@ -1475,7 +1473,7 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert exec_resp is not None
         assert exec_resp["exit_code"] == 0, exec_resp
         result = _one_json_line(
-            exec_resp.get("stdout") or "", "IRONBANK_HTTP_DENY_RESULT="
+            exec_output_text(exec_resp), "IRONBANK_HTTP_DENY_RESULT="
         )
         assert result["status"] == 403
         assert (
@@ -1734,7 +1732,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         )
         assert exec_resp is not None
         assert exec_resp["exit_code"] == 0, exec_resp
-        result = _one_json_line(exec_resp.get("stdout") or "", "IRONBANK_HTTP_ASK_RESULT=")
+        result = _one_json_line(exec_output_text(exec_resp), "IRONBANK_HTTP_ASK_RESULT=")
         assert result["status"] == 403
         assert (
             result["body"]

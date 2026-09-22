@@ -11,17 +11,25 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import (
-    PositiveFloat,
-    PositiveInt,
-    StringConstraints,
-    model_validator,
-)
+from pydantic import PositiveFloat, PositiveInt, StringConstraints, model_validator
 
 from ..cache.tools import CachedToolPolicy
 from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from .configschema import SafeToken, Strict
 from .releaseschema import ReleasePairingEnvironment
+
+
+class SdkConfig(Strict):
+    project: str
+    manifest: str
+    specification: str
+    source: str
+    tests: str
+    build_output: str
+
+
+class NodePackageConfig(Strict):
+    project: str
 
 
 class ModulesConfig(Strict):
@@ -33,7 +41,7 @@ class ModulesConfig(Strict):
     rust_coverage_floors: tuple[str, ...]
     rust_coverage_report: str
     rust_coverage_ratchet: str
-    rust_coverage_crate_root: str
+    rust_coverage_workspace_manifest: str
     rust_coverage_crate_minimum: PositiveFloat
     rust_coverage_ratchet_headroom: PositiveFloat
     rust_coverage_crate_floors: dict[str, float]
@@ -92,6 +100,7 @@ class FunctionalConfig(Strict):
     config_root: str
     profiles_subdir: str
     node_workspaces: tuple[str, ...]
+    sdk_rust_example: tuple[str, ...]
     binary_variable: str
     assets_variable: str
     config_root_variable: str

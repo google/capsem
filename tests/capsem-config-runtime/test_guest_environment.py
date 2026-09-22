@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import wait_exec_ready
+from helpers.service import exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.config_runtime
 
@@ -23,7 +23,7 @@ def test_env_var_injected(config_svc):
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         resp = client.post(f"/vms/{name}/exec", {"command": "echo $TEST_VAR"})
-        stdout = resp.get("stdout", "") if resp else ""
+        stdout = exec_output_text(resp) if resp else ""
         assert "hello_from_host" in stdout, f"Env var not found in guest: {stdout}"
 
     finally:
@@ -41,7 +41,7 @@ def test_guest_has_python3(config_svc):
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         resp = client.post(f"/vms/{name}/exec", {"command": "python3 --version"})
-        stdout = resp.get("stdout", "") if resp else ""
+        stdout = exec_output_text(resp) if resp else ""
         assert "Python 3" in stdout, f"python3 not available: {stdout}"
 
     finally:
@@ -60,7 +60,7 @@ def test_guest_arch_matches_host(config_svc):
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         resp = client.post(f"/vms/{name}/exec", {"command": "uname -m"})
-        stdout = resp.get("stdout", "").strip() if resp else ""
+        stdout = exec_output_text(resp).strip() if resp else ""
 
         host_arch = os.uname().machine
         if host_arch == "arm64":

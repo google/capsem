@@ -4,8 +4,9 @@
 use anyhow::Result;
 
 use crate::client::{self, ProvisionRequest, ProvisionResponse, UdsClient};
-use crate::container_image::{self, Blobs, ImageArgs, Workload};
+use crate::container_image::{self, ImageArgs, Workload};
 use crate::container_run::ram_mb;
+use capsem_api::ContainerState;
 
 #[derive(clap::Args)]
 pub(super) struct CreateArgs {
@@ -37,6 +38,7 @@ pub(super) struct CreateArgs {
 pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> {
     client::validate_id(&args.profile)?;
     let persistent = args.name.is_some() || args.from.is_some();
+    let workload = Workload::of(&args.image, &args.env)?;
     let request = ProvisionRequest {
         name: args.name.clone(),
         profile_id: args.profile.clone(),
@@ -44,20 +46,21 @@ pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> 
         cpus: args.cpu,
         persistent,
         // With an image, the environment is the container's.
-        env: match args.image.image.is_empty() {
-            true => client::parse_env_vars(&args.env)?,
-            false => None,
+        env: match workload {
+            None => client::parse_env_vars(&args.env)?,
+            Some(_) => None,
         },
         from: args.from.clone(),
         networks: args.network.clone(),
+        container: match &workload {
+            Some(workload) => Some(workload.spec(false).await?),
+            None => None,
+        },
     };
-    let vm = match Workload::of(&args.image, &args.env)? {
-        None => container_image::provision(client, &request).await?,
-        Some(workload) => {
-            let pulled = container_image::pull(&workload).await?;
-            start_image(client, &request, pulled.blobs(), &workload).await?
-        }
-    };
+    let vm = container_image::provision(client, &request).await?;
+    if let Some(workload) = &workload {
+        start_image(client, &vm, workload).await?;
+    }
     if persistent {
         println!("{} (persistent)", vm.id);
     } else {
@@ -66,17 +69,15 @@ pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> 
     Ok(())
 }
 
-/// A VM this command could not start is not left behind half-configured.
-async fn start_image(
-    client: &UdsClient,
-    request: &ProvisionRequest,
-    blobs: Blobs<'_>,
-    workload: &Workload<'_>,
-) -> Result<ProvisionResponse> {
-    let vm = container_image::provision(client, request).await?;
+/// Follow the service until the workload is launched, then publish its
+/// ports. A VM this command could not start is not left behind.
+async fn start_image(client: &UdsClient, vm: &ProvisionResponse, workload: &Workload<'_>) -> Result<()> {
     let started = async {
-        container_image::stage(client, &vm, blobs, workload).await?;
-        container_image::launch_detached(client, &vm).await
+        container_image::follow(client, &vm.id, |state| {
+            matches!(state, ContainerState::Starting | ContainerState::Running)
+        })
+        .await?;
+        container_image::expose(client, &vm.id, &workload.image.publish).await
     };
     if let Err(error) = started.await {
         return Err(match container_image::destroy(client, &vm.id).await {
@@ -84,7 +85,7 @@ async fn start_image(
             Err(cleanup) => error.context(format!("container VM delete also failed: {cleanup:#}")),
         });
     }
-    Ok(vm)
+    Ok(())
 }
 
 #[cfg(test)]

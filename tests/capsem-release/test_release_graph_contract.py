@@ -108,7 +108,6 @@ def test_fixture_has_stable_and_nightly() -> None:
         "capsem-admin": "SPDXRef-File-capsem-admin",
         "capsem-app": "SPDXRef-File-capsem-app",
         "capsem-gateway": "SPDXRef-File-capsem-gateway",
-        "capsem-mcp": "SPDXRef-File-capsem-mcp",
         "capsem-mcp-aggregator": "SPDXRef-File-capsem-mcp-aggregator",
         "capsem-mcp-builtin": "SPDXRef-File-capsem-mcp-builtin",
         "capsem-mock-server": "SPDXRef-File-capsem-mock-server",

@@ -1,17 +1,99 @@
 """Real expose authorization: deny before Redis accepts a TCP connection."""
 
+import contextlib
+import json
+import re
 import socket
+import sqlite3
 
 import pytest
-from helpers.body_archive import SessionArchive
-from helpers.constants import CODE_PROFILE_ID
-from helpers.service import vm_session_db_path
+from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 
+from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_publish import redis
 from tests.ironbank.kingslanding.test_run import service, wait_for
 
 __all__ = ["redis", "service"]
 pytestmark = pytest.mark.integration
+
+
+def test_container_pull_policy_stops_before_registry_egress_and_redacts_credentials(service, tmp_path):
+    client = service.client()
+    name = "container-pull-denied"
+    password = "registry-password-must-not-leak"
+    username = "registry-user-must-not-leak"
+
+    with registry(tmp_path) as (reference, certificate, requests):
+        registry_host = reference.split("/", 1)[0]
+        result = client.put(
+            f"/profiles/{CODE_PROFILE_ID}/enforcement/rules/container_pull_test/edit",
+            {
+                "name": "container_pull_test",
+                "action": "block",
+                "match": (
+                    f'container.registry == "{registry_host}" && '
+                    f'container.image == "{reference}"'
+                ),
+                "reason": "Kingslanding container pull boundary proof.",
+            },
+        )
+        assert result["rule"]["action"] == "block"
+
+        created = client.post(
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "persistent": True,
+                "container": {
+                    "image": reference,
+                    "env": {},
+                    "registry": {
+                        "username": username,
+                        "password": password,
+                        "ca_pem": certificate.read_text(),
+                    },
+                },
+            },
+            timeout=90,
+        )
+        # Create waits for the workload, so the refusal is its answer. The VM
+        # is discarded and its name freed, but its ledger and logs are kept as
+        # a failed session: they are the record of the refusal.
+        assert "id" not in created, created
+        refusal = created["error"]
+        assert "policy refused" in refusal, created
+        assert not requests, requests
+        assert password not in refusal and username not in refusal
+        named = re.search(r"for VM ([0-9a-f-]{36})", refusal)
+        assert named is not None, f"the refusal names the discarded VM: {refusal}"
+        vm_id = named.group(1)
+        assert all(vm["id"] != vm_id for vm in client.get("/vms/list")["sandboxes"])
+
+        kept = sorted((service.tmp_dir / "sessions").glob(f"{vm_id}-failed-*"))
+        assert len(kept) == 1, f"the refused create's ledger is kept: {kept}"
+        with contextlib.closing(sqlite3.connect(f"file:{kept[0] / 'session.db'}?mode=ro", uri=True)) as db:
+            rows = [
+                {"event_type": event_type, "event_json": event_json}
+                for event_type, event_json in db.execute("SELECT event_type, event_json FROM security_rule_events")
+            ]
+        assert any(
+            row["event_type"] == "network.lifecycle"
+            and json.loads(row["event_json"]).get("container", {}).get("image") == reference
+            for row in rows
+        ), rows
+        rendered = json.dumps(rows)
+        assert reference in rendered and registry_host in rendered
+        assert password not in rendered and username not in rendered
+        logs = "\n".join(
+            path.read_text(errors="replace")
+            for root in (service.home_dir, service.tmp_dir)
+            for path in root.rglob("*.log*")
+            if path.is_file()
+        )
+        assert password not in logs and username not in logs
 
 
 def _redis_command(stream, *arguments):
@@ -103,36 +185,31 @@ def test_expose_security_prevents_redis_accept_and_retains_trusted_facts(redis, 
         assert _redis_command(stream, "PING") == b"PONG"
 
         rows = []
-        # The matched event's payload is archive-backed: the route hands back
-        # the row, and the network facts are read from the session archive.
-        session_db = vm_session_db_path(service.tmp_dir, client, vm_id)
 
         def audited():
             rows[:] = client.get(f"/vms/{vm_id}/security/latest?limit=2000")
-            with SessionArchive(session_db) as archive:
-                seen = {
-                    archive.security_payload(row["event_id"])["network"]["source"]["address"]
-                    for row in rows
-                    if row["event_type"] == "network.connect"
-                }
+            seen = {
+                json.loads(row["event_json"])["network"]["source"]["address"]
+                for row in rows
+                if row["event_type"] == "network.connect"
+            }
             return denied_peers <= seen
 
         wait_for(audited, "denied connection security rows", timeout=15)
-        with SessionArchive(session_db) as archive:
-            for row in rows:
-                if row["event_type"] != "network.connect":
-                    continue
-                event = archive.security_payload(row["event_id"])
-                facts = event["network"]
-                if facts["source"]["address"] not in denied_peers:
-                    continue
-                assert event["decision"]["effective"] == ("ask" if policy == "ask" else "block")
-                assert facts["source"]["vm"] is None
-                assert facts["destination"]["address"] == "127.0.0.1:6379"
-                assert facts["destination"]["vm"]["id"] == vm_id
-                # An unnamed VM is known by its route id; its list label is the UI's.
-                assert facts["destination"]["vm"]["name"] == redis["vm"]["id"]
-                assert int(facts["destination"]["vm"]["generation"]) > 0
-                assert facts["route"]["listener"] == f"127.0.0.1:{port}"
-                assert facts["route"]["publication_id"] and facts["connection_id"]
-                assert facts["protocol"] == "tcp" and facts["side"] == "destination"
+        for row in rows:
+            if row["event_type"] != "network.connect":
+                continue
+            event = json.loads(row["event_json"])
+            facts = event["network"]
+            if facts["source"]["address"] not in denied_peers:
+                continue
+            assert event["decision"]["effective"] == ("ask" if policy == "ask" else "block")
+            assert facts["source"]["vm"] is None
+            assert facts["destination"]["address"] == "127.0.0.1:6379"
+            assert facts["destination"]["vm"]["id"] == vm_id
+            # An unnamed VM is known by its route id; its list label is the UI's.
+            assert facts["destination"]["vm"]["name"] == redis["vm"]["id"]
+            assert int(facts["destination"]["vm"]["generation"]) > 0
+            assert facts["route"]["listener"] == f"127.0.0.1:{port}"
+            assert facts["route"]["publication_id"] and facts["connection_id"]
+            assert facts["protocol"] == "tcp" and facts["side"] == "destination"

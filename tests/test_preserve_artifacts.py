@@ -11,7 +11,6 @@ in CI rather than on the next `just test` run.
 import tomllib
 from pathlib import Path
 
-import conftest as tests_conftest
 import pytest
 
 # Import the module under test. Fixture below resets the module-level
@@ -23,9 +22,13 @@ from tests.helpers import service as svc_mod
 @pytest.fixture
 def artifact_env(tmp_path, monkeypatch, request):
     """Point ARTIFACTS_ROOT at tmp_path and seed a single failed nodeid."""
-    monkeypatch.setattr(tests_conftest, "ARTIFACTS_ROOT", tmp_path / "test-artifacts")
+    monkeypatch.setattr(svc_mod.failures, "ARTIFACTS_ROOT", tmp_path / "test-artifacts")
+    # The skip rules are the subject here, so the ambient escape hatches that
+    # override them must not leak in from whoever launched the run.
+    monkeypatch.delenv("CAPSEM_TEST_PRESERVE_ALWAYS", raising=False)
+    monkeypatch.delenv("CAPSEM_TEST_ARTIFACTS_ROOT", raising=False)
     # Replace, don't mutate -- other tests may run in the same process.
-    monkeypatch.setattr(tests_conftest, "FAILED_NODEIDS", [request.node.nodeid])
+    monkeypatch.setattr(svc_mod.failures, "FAILED_NODEIDS", [request.node.nodeid])
     return tmp_path / "test-artifacts"
 
 
@@ -66,7 +69,7 @@ def test_failure_artifact_limits_come_from_cache_policy() -> None:
 
     assert (
         svc_mod.PROJECT_ROOT / policy["root"] / stage["path"]
-        == tests_conftest.ARTIFACTS_ROOT
+        == svc_mod.failures.ARTIFACTS_ROOT
     )
     assert debug["minimum_count"] == svc_mod.ARTIFACT_MIN_KEPT_DIRS
     assert debug["maximum_count"] == svc_mod.ARTIFACT_MAX_KEPT_DIRS
@@ -128,6 +131,20 @@ def test_logs_and_session_db_are_preserved(artifact_env, tmp_path):
         assert any(p.endswith(rel) for p in copied), (
             f"{rel} missing from archive (copied: {sorted(copied)})"
         )
+
+
+def test_configured_artifact_root_overrides_source_tree(
+    artifact_env, tmp_path, monkeypatch
+):
+    configured = tmp_path / "installed-winterfell-evidence"
+    monkeypatch.setenv("CAPSEM_TEST_ARTIFACTS_ROOT", str(configured))
+    src = _seed_tmp_dir(tmp_path)
+
+    svc_mod.preserve_tmp_dir_on_failure(src)
+
+    copied = _copied_files(configured)
+    assert any(path.endswith("service.log") for path in copied)
+    assert not artifact_env.exists()
 
 
 def test_service_client_preserves_failure_evidence_before_delete(tmp_path, monkeypatch):
@@ -202,7 +219,7 @@ def test_service_client_preserves_explicit_diagnostic_evidence_before_delete(
 
 def test_no_op_when_no_failures(artifact_env, tmp_path, monkeypatch):
     # Override artifact_env's FAILED_NODEIDS to be empty.
-    monkeypatch.setattr(tests_conftest, "FAILED_NODEIDS", [])
+    monkeypatch.setattr(svc_mod.failures, "FAILED_NODEIDS", [])
     src = _seed_tmp_dir(tmp_path)
     svc_mod.preserve_tmp_dir_on_failure(src)
     assert not artifact_env.exists(), (
@@ -215,7 +232,7 @@ def test_forced_preserve_uses_current_test_not_prior_worker_failure(
 ):
     src = _seed_tmp_dir(tmp_path)
     monkeypatch.setattr(
-        tests_conftest, "FAILED_NODEIDS", ["tests/fake/test_x.py::test_thing"]
+        svc_mod.failures, "FAILED_NODEIDS", ["tests/fake/test_x.py::test_thing"]
     )
     monkeypatch.setenv(
         "PYTEST_CURRENT_TEST",
@@ -235,7 +252,7 @@ def test_prior_worker_failure_does_not_archive_later_passing_test(
 ):
     src = _seed_tmp_dir(tmp_path)
     monkeypatch.setattr(
-        tests_conftest, "FAILED_NODEIDS", ["tests/fake/test_x.py::test_thing"]
+        svc_mod.failures, "FAILED_NODEIDS", ["tests/fake/test_x.py::test_thing"]
     )
     monkeypatch.setenv(
         "PYTEST_CURRENT_TEST", "tests/ironbank/test_later.py::test_passes (teardown)"
@@ -251,7 +268,7 @@ def test_session_archive_uses_prior_worker_failure_after_later_pass(
 ):
     src = _seed_tmp_dir(tmp_path)
     failed = "tests/capsem-mcp/test_errors.py::test_two_vms_isolated"
-    monkeypatch.setattr(tests_conftest, "FAILED_NODEIDS", [failed])
+    monkeypatch.setattr(svc_mod.failures, "FAILED_NODEIDS", [failed])
     monkeypatch.setenv(
         "PYTEST_CURRENT_TEST",
         "tests/capsem-mcp/test_tools.py::test_later_pass (teardown)",
@@ -389,3 +406,37 @@ def test_rotation_size_budget_never_discards_minimum_recent_failures(tmp_path):
         "20260101-000002-failure",
         "20260101-000003-failure",
     ]
+
+
+def test_preserve_works_when_conftest_names_another_suite(artifact_env, tmp_path, monkeypatch):
+    """`conftest` is not a unique module name.
+
+    Every suite with its own conftest.py (capsem-e2e, capsem-cli, capsem-service,
+    capsem-gateway, ...) shadows it, and the helper that imported the registry
+    from `conftest` silently preserved nothing there -- which is why a
+    concurrency failure in the e2e suite left no service or VM logs behind.
+    """
+    import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "conftest", types.ModuleType("conftest"))
+    tmp = _seed_tmp_dir(tmp_path)
+    svc_mod.preserve_tmp_dir_on_failure(tmp, force=True)
+    assert list(artifact_env.rglob("service.log")), "a suite's own conftest must not disable evidence"
+
+
+def test_a_failure_preserves_live_service_homes_before_teardown(artifact_env, tmp_path, monkeypatch):
+    """Evidence must be taken when a test fails, not at session teardown.
+
+    A module-scoped VM fixture deletes its VM -- and with it process.log,
+    serial.log and session.db -- before the session-scoped service preserves
+    its home, so a failing exec left only the service log behind.
+    """
+    home = _seed_tmp_dir(tmp_path)
+    monkeypatch.setattr(svc_mod.failures, "LIVE_HOMES", {home})
+    monkeypatch.setattr(svc_mod.failures, "FAILED_NODEIDS", [])
+
+    svc_mod.record_failure("tests/x.py::test_y")
+
+    assert svc_mod.failures.FAILED_NODEIDS == ["tests/x.py::test_y"]
+    assert list(artifact_env.rglob("process.log")), "the live VM's own log is kept at failure time"

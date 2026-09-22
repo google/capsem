@@ -1,6 +1,7 @@
 use super::*;
 
 mod dns_frames;
+mod exec_output_protocol;
 mod validation;
 
 // -------------------------------------------------------------------
@@ -332,17 +333,6 @@ fn boot_timing_fails_as_host_msg() {
     };
     let frame = encode_guest_msg(&msg).unwrap();
     assert!(decode_host_msg(&frame[4..]).is_err());
-}
-
-#[test]
-fn roundtrip_exec_started() {
-    let msg = GuestToHost::ExecStarted { id: 42 };
-    let frame = encode_guest_msg(&msg).unwrap();
-    let decoded = decode_guest_msg(&frame[4..]).unwrap();
-    match decoded {
-        GuestToHost::ExecStarted { id } => assert_eq!(id, 42),
-        other => panic!("expected ExecStarted, got {other:?}"),
-    }
 }
 
 #[test]
@@ -1428,14 +1418,10 @@ fn encode_host_msg_refuses_a_frame_the_guest_would_drop() {
 }
 
 #[test]
-fn fits_frame_answers_from_the_real_encoding_not_the_byte_count() {
-    // rmp encodes a Vec<u8> element by element: 0..=127 take one byte,
-    // 128..=255 take two. The same length fits or does not depending on
-    // content, so a length-only budget would lie in one direction or the
-    // other.
+fn byte_payloads_use_msgpack_binary_without_content_dependent_expansion() {
     let ascii = GuestToHost::FileContent {
         id: 1,
-        path: "/root/notes.txt".to_string(),
+        path: "/root/blob.bin".to_string(),
         data: vec![b'a'; MAX_FRAME_SIZE as usize - 64],
     };
     assert!(guest_msg_fits_frame(&ascii));
@@ -1444,7 +1430,10 @@ fn fits_frame_answers_from_the_real_encoding_not_the_byte_count() {
         path: "/root/blob.bin".to_string(),
         data: vec![0xFF; MAX_FRAME_SIZE as usize - 64],
     };
-    assert!(!guest_msg_fits_frame(&binary));
+    assert!(guest_msg_fits_frame(&binary));
+    let ascii_len = encode_guest_msg(&ascii).unwrap().len();
+    let binary_len = encode_guest_msg(&binary).unwrap().len();
+    assert_eq!(ascii_len, binary_len, "byte values must not alter frame size");
     let one_mib_binary = HostToGuest::FileWrite {
         id: 1,
         path: "/root/blob.bin".to_string(),

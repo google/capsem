@@ -8,6 +8,8 @@ export NEXTEST_STATE_DIR="$OUTPUT_DIR/nextest"
 
 packages=(
     capsem-assets
+    capsem-api
+    capsem-sdk
     capsem-config
     capsem-credentials
     capsem-foundation
@@ -21,7 +23,6 @@ packages=(
     capsem-service
     capsem
     capsem-tui
-    capsem-mcp
     capsem-mcp-aggregator
     capsem-mcp-builtin
     capsem-process
@@ -37,13 +38,18 @@ done
 
 cd "$ROOT"
 
-# capsem-app embeds web/app/dist at compile time. The macOS full gate builds
-# it before mounting this checkout read-only in the Linux parity container;
-# the independent native-Linux CI job has to materialize it for itself.
-if [[ ! -s "$ROOT/web/app/dist/index.html" ]]; then
-    pnpm --dir web/app install --frozen-lockfile
-    bash build_system/scripts/web/check-web-surface.sh frontend-build
+# The macOS-hosted sealed lane inherits these dependency trees from its
+# networked base. Native Linux CI starts from a clean checkout and installs
+# them here before rebuilding the current source.
+if [[ ! -d "$ROOT/sdk/typescript/node_modules" ]]; then
+    pnpm --dir sdk/typescript install --frozen-lockfile
 fi
+if [[ ! -d "$ROOT/web/app/node_modules" ]]; then
+    pnpm --dir web/app install --frozen-lockfile
+fi
+pnpm --dir sdk/typescript run build
+bash build_system/scripts/web/check-web-surface.sh frontend-build
+test -s "$ROOT/web/app/dist/index.html"
 
 cross_target=$(python3 build_system/scripts/bootstrap/provision-linux-workspace.py --cross-rust-target)
 cargo clippy --target "$cross_target" -p capsem-core --lib --tests -- -D warnings

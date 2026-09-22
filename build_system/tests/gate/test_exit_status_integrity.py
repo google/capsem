@@ -132,7 +132,7 @@ REQUIRED_JUST_STEPS = (
         "release-assets.yaml",
         "build-assets",
         "Build VM assets (kernel + rootfs)",
-        ('just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"',),
+        ('just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"',),
     ),
     RequiredJustStep(
         "release-assets.yaml",
@@ -140,9 +140,9 @@ REQUIRED_JUST_STEPS = (
         "Qualify the profile assets",
         (
             'just qualify-assets "$PWD/cache/target/candidate-profile-inputs" '
-            '"${{ inputs.profile }}" '
+            '"$RELEASE_PROFILE" '
             '"$PWD" '
-            '"${{ needs.author-profile-release.outputs.activation_ready }}"',
+            '"$ACTIVATION_READY"',
         ),
     ),
     RequiredJustStep(
@@ -395,8 +395,8 @@ def test_repository_guard_rejects_the_reviewers_actual_fail_open_mutations() -> 
     masked_shell = deepcopy(original)
     step = _asset_build_step(masked_shell)
     step["run"] = step["run"].replace(
-        'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"',
-        'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}" || true',
+        'just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"',
+        'just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE" || true',
     )
     with pytest.raises(AssertionError):
         assert_required_just_steps(masked_shell, REQUIRED_JUST_STEPS)
@@ -409,7 +409,7 @@ def test_repository_guard_rejects_the_reviewers_actual_fail_open_mutations() -> 
     removed_proof = deepcopy(original)
     step = _asset_build_step(removed_proof)
     step["run"] = step["run"].replace(
-        'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n', ""
+        'just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"\n', ""
     )
     with pytest.raises(AssertionError):
         assert_required_just_steps(removed_proof, REQUIRED_JUST_STEPS)

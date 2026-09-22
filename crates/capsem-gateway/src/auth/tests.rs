@@ -17,6 +17,7 @@ fn test_state(token: &str) -> Arc<AppState> {
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
+        previews: crate::preview::PreviewState::new(0),
     })
 }
 
@@ -30,6 +31,7 @@ fn test_app(token: &str) -> Router {
         .route("/status", get(|| async { "status" }))
         .route("/events", get(|| async { "events" }))
         .route("/terminal/{id}", get(|| async { "terminal" }))
+        .route("/vms/{id}/stream", get(|| async { "stream" }))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth_middleware))
         .with_state(state)
 }
@@ -97,11 +99,12 @@ fn token_uniqueness_over_100_samples() {
 #[test]
 fn auth_state_lifecycle() {
     let dir = tempfile::tempdir().unwrap();
-    let state = AuthState::new(dir.path(), "test-token", 19222).unwrap();
+    let state = AuthState::new(dir.path(), "test-token", 19222, 19223).unwrap();
 
     assert!(state.token_path.exists());
     assert_eq!(std::fs::read_to_string(&state.token_path).unwrap(), "test-token");
     assert_eq!(std::fs::read_to_string(&state.port_path).unwrap(), "19222");
+    assert_eq!(std::fs::read_to_string(&state.preview_port_path).unwrap(), "19223");
     assert!(state.pid_path.exists());
 
     #[cfg(unix)]
@@ -109,12 +112,15 @@ fn auth_state_lifecycle() {
         use std::os::unix::fs::PermissionsExt;
         let perms = std::fs::metadata(&state.token_path).unwrap().permissions();
         assert_eq!(perms.mode() & 0o777, 0o600);
+        let preview_perms = std::fs::metadata(&state.preview_port_path).unwrap().permissions();
+        assert_eq!(preview_perms.mode() & 0o777, 0o600);
     }
 
     state.cleanup();
     assert!(!state.token_path.exists());
     assert!(!state.port_path.exists());
     assert!(!state.pid_path.exists());
+    assert!(!state.preview_port_path.exists());
 }
 
 #[test]
@@ -123,7 +129,7 @@ fn auth_state_creates_run_dir_if_missing() {
     let nested = dir.path().join("nested/deep");
     assert!(!nested.exists());
 
-    let state = AuthState::new(&nested, "tok", 9999).unwrap();
+    let state = AuthState::new(&nested, "tok", 9999, 10000).unwrap();
     assert!(nested.exists());
     assert!(state.token_path.exists());
     state.cleanup();
@@ -132,7 +138,7 @@ fn auth_state_creates_run_dir_if_missing() {
 #[test]
 fn auth_state_pid_file_contains_current_pid() {
     let dir = tempfile::tempdir().unwrap();
-    let state = AuthState::new(dir.path(), "tok", 1234).unwrap();
+    let state = AuthState::new(dir.path(), "tok", 1234, 1235).unwrap();
     let pid: u32 = std::fs::read_to_string(&state.pid_path).unwrap().parse().unwrap();
     assert_eq!(pid, std::process::id());
     state.cleanup();
@@ -141,7 +147,7 @@ fn auth_state_pid_file_contains_current_pid() {
 #[test]
 fn cleanup_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
-    let state = AuthState::new(dir.path(), "tok", 1234).unwrap();
+    let state = AuthState::new(dir.path(), "tok", 1234, 1235).unwrap();
     state.cleanup();
     state.cleanup(); // second call should not panic
 }
@@ -448,12 +454,12 @@ async fn events_rejects_a_missing_token() {
 }
 
 #[tokio::test]
-async fn terminal_accepts_query_param_token() {
+async fn stream_accepts_query_param_token() {
     let app = test_app("my-secret");
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/terminal/vm1?token=my-secret")
+                .uri("/vms/vm1/stream?token=my-secret")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -463,12 +469,12 @@ async fn terminal_accepts_query_param_token() {
 }
 
 #[tokio::test]
-async fn terminal_rejects_wrong_query_param_token() {
+async fn stream_rejects_wrong_query_param_token() {
     let app = test_app("correct");
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/terminal/vm1?token=wrong")
+                .uri("/vms/vm1/stream?token=wrong")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -478,7 +484,7 @@ async fn terminal_rejects_wrong_query_param_token() {
 }
 
 #[tokio::test]
-async fn non_terminal_path_ignores_query_param_token() {
+async fn non_websocket_path_ignores_query_param_token() {
     let app = test_app("tok");
     // /vms/list with ?token= should still require header auth
     let resp = app
@@ -494,13 +500,13 @@ async fn non_terminal_path_ignores_query_param_token() {
 }
 
 #[tokio::test]
-async fn terminal_extra_query_params_ignored() {
+async fn stream_extra_query_params_ignored() {
     let app = test_app("tok");
     // Extra params present but only token is checked
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/terminal/vm1?evil=payload&token=tok&other=stuff")
+                .uri("/vms/vm1/stream?evil=payload&token=tok&other=stuff")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -510,13 +516,13 @@ async fn terminal_extra_query_params_ignored() {
 }
 
 #[tokio::test]
-async fn terminal_header_auth_still_works() {
+async fn stream_header_auth_still_works() {
     let app = test_app("tok");
-    // Header auth should still work on terminal paths (no query needed)
+    // Header auth should still work on stream paths (no query needed)
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/terminal/vm1")
+                .uri("/vms/vm1/stream")
                 .header("authorization", "Bearer tok")
                 .body(Body::empty())
                 .unwrap(),
@@ -524,6 +530,23 @@ async fn terminal_header_auth_still_works() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+/// The retired `/terminal/{id}` relay no longer takes a query token: a
+/// leftover route there must not become a header-less way in.
+#[tokio::test]
+async fn retired_terminal_path_ignores_query_param_token() {
+    let app = test_app("tok");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/terminal/vm1?token=tok")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

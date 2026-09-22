@@ -12,7 +12,8 @@ fn engine(action: &str, plugin_block: bool) -> Arc<NetworkSecurity> {
     } else {
         format!(
             "[profiles.rules.expose]\nname = \"expose\"\naction = \"{action}\"\nmatch = 'network.mode == \"expose\"'\n\
-             [profiles.rules.private]\nname = \"private\"\naction = \"{action}\"\nmatch = 'network.mode == \"private\"'"
+             [profiles.rules.private]\nname = \"private\"\naction = \"{action}\"\nmatch = 'network.mode == \"private\"'\n\
+             [profiles.rules.preview]\nname = \"preview\"\naction = \"{action}\"\nmatch = 'network.mode == \"http_preview\"'"
         )
     };
     let rules = SecurityRuleSet::compile_profile(
@@ -75,7 +76,16 @@ async fn deny_ask_plugin_and_closed_audit_never_open_a_guest_destination() {
         let stop = CancellationToken::new();
         let broker = tokio::spawn(broker::serve(
             owner.clone(),
-            owner.clone().accept_publication(listener, 6379, stop.clone()).unwrap(),
+            owner
+                .clone()
+                .accept_publication(
+                    listener,
+                    uuid::Uuid::new_v4(),
+                    6379,
+                    capsem_proto::PublicationTarget::Container,
+                    stop.clone(),
+                )
+                .unwrap(),
             control,
             router,
             stop.clone(),
@@ -97,6 +107,79 @@ async fn deny_ask_plugin_and_closed_audit_never_open_a_guest_destination() {
         assert!(
             !opened,
             "destination opened: action={action}, plugin={plugin_block}, closed={closed}"
+        );
+        if !closed {
+            result.unwrap();
+        }
+        assert!(owner.pending.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn preview_denial_never_opens_a_guest_destination() {
+    for (action, plugin_block, closed) in [
+        ("", false, false),
+        ("block", false, false),
+        ("ask", false, false),
+        ("allow", true, false),
+        ("allow", false, true),
+    ] {
+        let security = engine(action, plugin_block);
+        if closed {
+            security.db.shutdown_blocking();
+        }
+        let owner = Arc::new(Publisher::default().with_security("vm-id".into(), "web".into(), security));
+        owner.control_ready().unwrap();
+        let (parent, _child) = StdUnixStream::pair().unwrap();
+        let router = Arc::new(companion::Router::new(
+            0,
+            capsem_foundation::unix::router_channel::Sender::new(parent).unwrap(),
+            CancellationToken::new(),
+        ));
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let _client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let source = Source(listener.accept().await.unwrap().0.into_std().unwrap());
+        let audit = security::AuditFlow::preview(
+            owner.security.clone().unwrap(),
+            uuid::Uuid::new_v4(),
+            source.0.local_addr().unwrap(),
+            source.0.peer_addr().unwrap(),
+            8080,
+            capsem_proto::PreviewAdmissionKind::Request,
+        );
+        let (feed, incoming) = mpsc::channel(1);
+        feed.send(Incoming {
+            source,
+            audit,
+            port: 8080,
+            target: capsem_proto::PublicationTarget::Container,
+            preview: Some(capsem_proto::PreviewAdmissionKind::Request),
+            session: None,
+        })
+        .await
+        .unwrap();
+        drop(feed);
+        let (control, mut requests) = mpsc::channel(32);
+        let stop = CancellationToken::new();
+        let broker = tokio::spawn(broker::serve(owner.clone(), incoming, control, router, stop.clone()));
+        let opened = tokio::time::timeout(Duration::from_millis(100), async {
+            while let Some(request) = requests.recv().await {
+                if matches!(request, ServiceToProcess::ConnectPort { .. }) {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+        stop.cancel();
+        let result = broker.await.unwrap();
+        owner.shutdown().await;
+        assert!(
+            !opened,
+            "preview destination opened: action={action}, plugin={plugin_block}, closed={closed}"
         );
         if !closed {
             result.unwrap();
@@ -145,7 +228,13 @@ async fn missing_security_context_never_requests_a_guest_connection() {
     let _client = tokio::net::TcpStream::connect(address).await.unwrap();
     // Without a security context there is no feeder at all: the listener is
     // never served, so no broker exists to request a guest destination.
-    let feeder = owner.clone().accept_publication(listener, 6379, stop.clone());
+    let feeder = owner.clone().accept_publication(
+        listener,
+        uuid::Uuid::new_v4(),
+        6379,
+        capsem_proto::PublicationTarget::Container,
+        stop.clone(),
+    );
     assert!(feeder.is_err(), "a publisher without security fed a broker");
     let (feed, incoming) = mpsc::channel(1);
     drop(feed);
@@ -228,7 +317,16 @@ async fn a_control_lease_that_never_came_up_is_audited_as_unreachable() {
     let stop = CancellationToken::new();
     let broker = tokio::spawn(broker::serve(
         owner.clone(),
-        owner.clone().accept_publication(listener, 6379, stop.clone()).unwrap(),
+        owner
+            .clone()
+            .accept_publication(
+                listener,
+                uuid::Uuid::new_v4(),
+                6379,
+                capsem_proto::PublicationTarget::Container,
+                stop.clone(),
+            )
+            .unwrap(),
         control,
         fake_router(),
         stop.clone(),
@@ -258,7 +356,16 @@ async fn a_control_lease_lost_while_setup_waits_is_audited_as_cancelled() {
     let stop = CancellationToken::new();
     let broker = tokio::spawn(broker::serve(
         owner.clone(),
-        owner.clone().accept_publication(listener, 6379, stop.clone()).unwrap(),
+        owner
+            .clone()
+            .accept_publication(
+                listener,
+                uuid::Uuid::new_v4(),
+                6379,
+                capsem_proto::PublicationTarget::Container,
+                stop.clone(),
+            )
+            .unwrap(),
         control,
         fake_router(),
         stop.clone(),
@@ -309,4 +416,206 @@ async fn the_link_audit_is_this_vms_own_portless_private_flow() {
         )
         .await
         .unwrap();
+}
+
+/// A ledger-backed engine with `rules`, for exposure lifecycle tests.
+pub(super) fn lifecycle_engine(dir: &tempfile::TempDir, rules: &str) -> (Arc<NetworkSecurity>, std::path::PathBuf) {
+    let path = dir.path().join("session.db");
+    let rules = SecurityRuleSet::compile_profile(
+        &SecurityRuleProfile::parse_toml(rules).unwrap(),
+        SecurityRuleSource::User,
+    )
+    .unwrap();
+    let engine = Arc::new(NetworkSecurity {
+        db: Arc::new(capsem_logger::DbWriter::open(&path, 128).unwrap()),
+        rules: Arc::new(RwLock::new(Arc::new(rules))),
+        plugins: Arc::new(RwLock::new(Arc::new(std::collections::BTreeMap::new()))),
+    });
+    (engine, path)
+}
+
+async fn lifecycle_rows(engine: &NetworkSecurity, path: &std::path::Path) -> String {
+    engine.db.flush_checked().await.unwrap();
+    capsem_logger::DbReader::open(path)
+        .unwrap()
+        .query_raw_with_params(
+            "SELECT network_id, connection_id, event_json FROM transport_events WHERE event_type = 'network.lifecycle'",
+            &[],
+        )
+        .unwrap()
+}
+
+fn free_port() -> u16 {
+    std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+const BLOCK_REDIS: &str = "[profiles.rules.no_redis]\nname = \"no_redis\"\naction = \"block\"\n\
+                           match = 'network.action != \"revoked\" && network.destination.port == \"6379\"'";
+const ASK_REDIS: &str = "[profiles.rules.ask_redis]\nname = \"ask_redis\"\naction = \"ask\"\n\
+                         match = 'network.action != \"revoked\" && network.destination.port == \"6379\"'";
+
+const BLOCK_CONTAINER_IMAGE: &str = "[profiles.rules.no_registry_image]\nname = \"no_registry_image\"\n\
+                                     action = \"block\"\n\
+                                     match = 'container.registry == \"registry.example\" && \
+                                     container.image == \"registry.example/private/app:1\"'";
+
+#[tokio::test]
+async fn a_refused_container_pull_is_audited_with_image_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, path) = lifecycle_engine(&dir, BLOCK_CONTAINER_IMAGE);
+    let owner = Publisher::default().with_security("vm-id".into(), "builder".into(), engine.clone());
+
+    let error = owner
+        .admit_container_pull("registry.example/private/app:1".into(), "registry.example".into(), None)
+        .await
+        .expect_err("the image rule must refuse the pull");
+
+    assert!(
+        error.is::<crate::container::publish::ContainerPullRefused>(),
+        "{error:#}"
+    );
+    let rows = lifecycle_rows(&engine, &path).await;
+    assert!(rows.contains("container_pull"), "{rows}");
+    assert!(rows.contains("registry.example/private/app:1"), "{rows}");
+    assert!(rows.contains("registry.example"), "{rows}");
+    let decisions = capsem_logger::DbReader::open(&path)
+        .unwrap()
+        .query_raw_with_params(
+            "SELECT event_json FROM security_decision_events WHERE event_type = 'network.lifecycle'",
+            &[],
+        )
+        .unwrap();
+    assert!(decisions.contains("registry.example/private/app:1"), "{decisions}");
+    assert!(decisions.contains("registry.example"), "{decisions}");
+}
+
+#[tokio::test]
+async fn a_container_pull_whose_audit_cannot_be_admitted_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, _path) = lifecycle_engine(&dir, "");
+    engine.db.shutdown_blocking();
+    let owner = Publisher::default().with_security("vm-id".into(), "builder".into(), engine);
+
+    let error = owner
+        .admit_container_pull("registry.example/app:1".into(), "registry.example".into(), None)
+        .await
+        .expect_err("a closed audit ledger must refuse the pull");
+
+    assert!(
+        !error.is::<crate::container::publish::ContainerPullRefused>(),
+        "audit failure must stay distinct from a policy refusal: {error:#}"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_exposure_is_audited_and_leaves_its_port_unbound() {
+    for (rules, refusal) in [(BLOCK_REDIS, "blocked by policy"), (ASK_REDIS, "needs approval")] {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, path) = lifecycle_engine(&dir, rules);
+        let owner = Arc::new(Publisher::default().with_security("vm-id".into(), "redis".into(), engine.clone()));
+        let (control, _requests) = mpsc::channel(8);
+        let port = free_port();
+        let error = owner
+            .publish(port, 6379, capsem_proto::PublicationTarget::Container, control)
+            .await
+            .err()
+            .expect("the rules refuse this exposure");
+        assert!(error.is::<crate::container::publish::ExposureRefused>(), "{error:#}");
+        assert!(error.to_string().contains(refusal), "{error:#}");
+        std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).expect("a refused exposure keeps no listener");
+        assert!(owner.publications().is_empty());
+        let rows = lifecycle_rows(&engine, &path).await;
+        assert!(rows.contains("published") && rows.contains("6379"), "{rows}");
+        owner.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn an_exposure_whose_audit_cannot_be_admitted_is_not_opened() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, _path) = lifecycle_engine(&dir, "");
+    engine.db.shutdown_blocking();
+    let owner = Arc::new(Publisher::default().with_security("vm-id".into(), "redis".into(), engine));
+    let (control, _requests) = mpsc::channel(8);
+    let port = free_port();
+    let error = owner
+        .publish(port, 6379, capsem_proto::PublicationTarget::Container, control)
+        .await
+        .err()
+        .expect("a closed ledger refuses the exposure");
+    assert!(
+        !error.is::<crate::container::publish::ExposureRefused>(),
+        "an audit failure is not a policy refusal: {error:#}"
+    );
+    std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).expect("no listener survives a failed audit");
+    owner.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_revoked_exposure_closes_then_is_audited_under_its_publication() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, path) = lifecycle_engine(&dir, BLOCK_REDIS);
+    let owner = Arc::new(Publisher::default().with_security("vm-id".into(), "redis".into(), engine.clone()));
+    let cancellation = CancellationToken::new();
+    let publication_id = uuid::Uuid::new_v4();
+    let task = tokio::spawn(std::future::pending::<()>());
+    owner.declared.insert(registry::Declared {
+        id: "41234".into(),
+        host_port: Some(41234),
+        guest_port: 6379,
+        target: capsem_proto::PublicationTarget::Container,
+        access: capsem_proto::PublicationAccess::LoopbackTcp,
+        handle: Publication {
+            host_port: Some(41234),
+            listener: "127.0.0.1:41234".parse().unwrap(),
+            router_pid: 0,
+            publication_id,
+            task: task.abort_handle(),
+            cancellation: cancellation.clone(),
+            preview: None,
+        },
+    });
+    assert!(
+        owner.revoke("41234").await.unwrap(),
+        "revoke proceeds even under a blocking rule"
+    );
+    assert!(cancellation.is_cancelled(), "the publication was closed");
+    let rows = lifecycle_rows(&engine, &path).await;
+    assert!(
+        rows.contains("revoked") && rows.contains(&publication_id.to_string()),
+        "{rows}"
+    );
+    task.abort();
+    owner.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_saved_exposure_the_rules_now_refuse_is_forgotten_on_restore() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, path) = lifecycle_engine(&dir, BLOCK_REDIS);
+    let port = free_port();
+    std::fs::write(
+        dir.path().join("published-ports.json"),
+        format!(r#"[{{"host":{port},"guest":6379,"target":"container"}}]"#),
+    )
+    .unwrap();
+    let owner = Arc::new(
+        Publisher::for_session(dir.path(), capsem_config::router::RouterConfig::default())
+            .unwrap()
+            .with_security("vm-id".into(), "redis".into(), engine.clone()),
+    );
+    let (control, _requests) = mpsc::channel(8);
+    assert_eq!(owner.restore(control).await.unwrap(), 0);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("published-ports.json")).unwrap(),
+        "[]"
+    );
+    let rows = lifecycle_rows(&engine, &path).await;
+    assert!(rows.contains("restored"), "{rows}");
+    std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).expect("nothing listens for a refused restore");
+    owner.shutdown().await;
 }

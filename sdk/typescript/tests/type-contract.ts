@@ -1,0 +1,47 @@
+import {
+  FileEntryType, HostLogSource, ToolDecision,
+  type ExecRequest, type FileListEntry, type TimelineStatus, type UpdateApplyRequest,
+  type VmStatsDetailResponse,
+} from '../src/models/index.js';
+import type {Networks, Ports, Profiles} from '../src/resources.js';
+
+const request: UpdateApplyRequest = {};
+const status: TimelineStatus = ToolDecision.DENIED;
+const numeric: TimelineStatus = 403;
+const leaf: FileListEntry = {
+  name: 'large.bin', path: '/large.bin', type: FileEntryType.FILE,
+  size: 4294967296, mtime: 0, children: null,
+};
+const tree: FileListEntry = { ...leaf, type: FileEntryType.DIRECTORY, children: [leaf] };
+const bodies: VmStatsDetailResponse['body_blobs'] = { event: [] };
+declare const networks: Networks;
+declare const ports: Ports;
+declare const profiles: Profiles;
+
+// @ts-expect-error An optional boolean cannot be explicit null.
+request.confirmed = null;
+// @ts-expect-error Exact optional fields cannot be explicitly undefined.
+request.confirmed = undefined;
+// @ts-expect-error Enums require named members, not magic strings.
+const magic: HostLogSource = 'service';
+// @ts-expect-error A numeric status does not accept numeric strings.
+const badStatus: TimelineStatus = '403';
+// @ts-expect-error Arrays retain their element type.
+tree.children = [1];
+// @ts-expect-error Required execution fields cannot be omitted.
+const incomplete: ExecRequest = {};
+// @ts-expect-error Counters cannot become strings.
+leaf.size = '4294967296';
+// @ts-expect-error Network deletion requires an object returned by the SDK.
+void networks.delete('net-1');
+// @ts-expect-error Network audit requires an object returned by the SDK.
+void networks.logs('net-1');
+// @ts-expect-error Port closure requires an object returned by the SDK.
+void ports.close('exp-1');
+// @ts-expect-error Profile MCP access starts from a catalog object.
+void profiles.mcp('code');
+
+if (numeric !== 403 || status !== ToolDecision.DENIED || !Array.isArray(bodies.event)) {
+  throw new Error('Generated type usage failed');
+}
+void magic; void badStatus; void incomplete;

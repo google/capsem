@@ -1,43 +1,54 @@
-//! Compile-time hash of the protocol enum source bytes. Detects "I added
-//! a variant in the middle without bumping PROTOCOL_VERSION" -- silent
-//! re-numbering of bincode variants. Hashes the source bytes (FNV-1a 64),
-//! emits a `schema_hash.txt` file containing a `u64` literal which
-//! `lib.rs` includes via `include!()`.
+//! Compile-time hash of normalized protocol syntax.
 //!
-//! Hand-rolled FNV (no extra crate deps); the cost is negligible because
-//! the input is small (a few thousand bytes of enum source), and we get
-//! to keep `[build-dependencies]` empty.
+//! Rust parsing removes comments, token rendering normalizes formatting, and
+//! only type/constant declarations enter the digest. Documentation, rustfmt,
+//! and implementation-only edits therefore do not make compatible binaries
+//! refuse each other. Serde attributes, field names, variants and framing
+//! constants remain in the token stream and change the hash.
+
+use quote::ToTokens;
+use syn::visit_mut::VisitMut;
+
+struct StripDocs;
+
+impl VisitMut for StripDocs {
+    fn visit_attributes_mut(&mut self, attributes: &mut Vec<syn::Attribute>) {
+        attributes.retain(|attribute| !attribute.path().is_ident("doc"));
+        for attribute in attributes {
+            syn::visit_mut::visit_attribute_mut(self, attribute);
+        }
+    }
+}
 
 fn main() {
-    // Files whose bytes we hash. Adding a new file that defines protocol
-    // types? Add it here. Comment-only edits trip the hash; we accept
-    // that fast-and-loud cost in exchange for not pulling in `syn`.
-    let files = ["lib.rs", "ipc.rs", "handshake.rs", "router.rs"];
+    let files = ["lib.rs", "ipc.rs", "handshake.rs", "router.rs", "exec_stream.rs"];
+    let mut hash = 0xcbf29ce484222325_u64;
 
-    let mut hash: u64 = 0xcbf29ce484222325; // FNV-1a 64 offset basis
     for f in files {
         let path = format!("src/{f}");
-        let bytes = match std::fs::read(&path) {
-            Ok(b) => b,
-            Err(e) => {
-                // handshake.rs may legitimately not exist on first build
-                // before the file is created; treat as empty so the
-                // bootstrap commit can compile.
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    Vec::new()
-                } else {
-                    panic!("schema_hash build script: read {path}: {e}");
+        let source = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("schema hash: read {path}: {error}"));
+        let mut syntax = syn::parse_file(&source).unwrap_or_else(|error| panic!("schema hash: parse {path}: {error}"));
+        StripDocs.visit_file_mut(&mut syntax);
+        for item in syntax.items {
+            if matches!(
+                &item,
+                syn::Item::Const(_)
+                    | syn::Item::Enum(_)
+                    | syn::Item::Static(_)
+                    | syn::Item::Struct(_)
+                    | syn::Item::Type(_)
+                    | syn::Item::Union(_)
+            ) {
+                for byte in item.into_token_stream().to_string().bytes() {
+                    hash ^= u64::from(byte);
+                    hash = hash.wrapping_mul(0x100000001b3);
                 }
             }
-        };
-        for b in &bytes {
-            hash ^= u64::from(*b);
-            hash = hash.wrapping_mul(0x100000001b3);
         }
         println!("cargo:rerun-if-changed={path}");
     }
 
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
-    std::fs::write(format!("{}/schema_hash.txt", out_dir), format!("{}u64", hash))
-        .expect("schema_hash build script: write OUT_DIR/schema_hash.txt");
+    std::fs::write(format!("{out_dir}/schema_hash.txt"), format!("{hash}u64"))
+        .expect("schema hash: write generated constant");
 }

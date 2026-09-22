@@ -2,8 +2,13 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use super::*;
+
+mod classification;
+mod publications;
+mod streams;
 use capsem_proto::mcp_aggregator::{AggregatorClient, AggregatorResponse, AggregatorResult, AggregatorServerStatus};
 use capsem_proto::mcp_contracts::McpToolDef;
+use classification::{classify_ipc_message, IpcAction};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
 
@@ -55,7 +60,8 @@ async fn negotiated_channel_carries_typed_messages_in_both_directions() {
         channel
     });
 
-    let (process_tx, process_rx) = open_ipc_channel(process_stream).await.unwrap().unwrap();
+    let ((process_tx, process_rx), stream_role) = open_ipc_channel(process_stream).await.unwrap().unwrap();
+    assert!(!stream_role, "a service connection is a command connection");
     let (service_tx, service_rx) = service.await.unwrap();
 
     service_tx.send(ServiceToProcess::Ping).await.unwrap();
@@ -314,12 +320,13 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
     sender
         .send(ProcessToService::ExecOutput {
             id: 19,
+            channel: capsem_proto::ExecOutputChannel::Stdout,
             data: b"live\0\xff".to_vec(),
         })
         .await
         .unwrap();
     assert!(
-        matches!(service_rx.recv().await.unwrap(), ProcessToService::ExecOutput { id: 19, data } if data == b"live\0\xff")
+        matches!(service_rx.recv().await.unwrap(), ProcessToService::ExecOutput { id: 19, channel: capsem_proto::ExecOutputChannel::Stdout, data } if data == b"live\0\xff")
     );
     job_store
         .jobs
@@ -884,6 +891,19 @@ fn classify_log_file_boundary() {
             data: vec![],
             size: 0,
             mime_type: None,
+        }),
+        IpcAction::Job
+    );
+}
+
+#[test]
+fn classify_container_pull_admission() {
+    assert_eq!(
+        classify_ipc_message(&ServiceToProcess::AdmitContainerPull {
+            id: 1,
+            image: "registry.example/app:1".into(),
+            registry: "registry.example".into(),
+            digest: None,
         }),
         IpcAction::Job
     );

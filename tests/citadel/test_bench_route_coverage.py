@@ -23,6 +23,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parents[2]
 SERVICE = PROJECT_ROOT / "crates" / "capsem-service" / "src" / "router_runtime.rs"
 GATEWAY = PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "main.rs"
+GATEWAY_OWNED = {"/vms/{id}/exposures/{exposure_id}/preview-session"}
 
 
 def _route_literals(body: str) -> set[str]:
@@ -124,11 +125,10 @@ def test_each_route_has_exactly_one_benchmark_classification() -> None:
 def test_internal_routes_carry_a_reason_and_are_a_tight_inventory() -> None:
     internal = _config()["internal"]
     assert all(reason.strip() for reason in internal.values())
-    # Three real exceptions: the doctor's failure preservation, and VM owners
-    # asking the service to admit a private connection or a private datagram
-    # flow -- all control traffic between local processes over the service
-    # UDS, never a page the gateway would proxy or a benchmark would time.
-    assert len(internal) <= 3, (
+    # Five real exceptions: doctor failure preservation, private-network
+    # resolution, and the three preview admission exchanges between the
+    # gateway and service over the local UDS.
+    assert len(internal) <= 5, (
         "the internal service-only route inventory grew; prefer a public, "
         "measured gateway route unless the control-plane exception is real"
     )
@@ -139,11 +139,12 @@ def test_the_gateway_proxies_what_the_service_serves() -> None:
     service = _routes(SERVICE, "fn build_service_router")
     proxied = _routes(GATEWAY, "fn service_proxy_routes")
 
-    orphaned = sorted(proxied - service)
+    orphaned = sorted(proxied - service - GATEWAY_OWNED)
     assert not orphaned, (
         "the gateway proxies routes the service does not register:\n  "
         + "\n  ".join(orphaned)
     )
+    assert proxied >= GATEWAY_OWNED, "the gateway-owned preview route disappeared"
 
 
 def test_every_service_only_route_is_explicitly_known() -> None:
@@ -164,7 +165,9 @@ def test_the_debt_is_a_ratchet_that_can_only_shrink() -> None:
     """
     coverage = _config()
     unmeasured = len(coverage["unmeasured"])
-    assert unmeasured <= 101, (
+    # Restart adds one explicitly unmeasured supervisor mutation. Preserve the
+    # six routes already removed from debt instead of retaining old headroom.
+    assert unmeasured <= 95, (
         f"{unmeasured} routes are unmeasured, more than when this guard was "
         "written. A new route should be measured, not added to the debt."
     )

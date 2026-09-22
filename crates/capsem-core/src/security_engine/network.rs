@@ -95,8 +95,18 @@ impl NetworkProtocol {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum NetworkRoute {
-    Expose { publication_id: Uuid, listener: SocketAddr },
-    Private { network: NetworkIdentity },
+    Expose {
+        publication_id: Uuid,
+        listener: SocketAddr,
+    },
+    Preview {
+        publication_id: Uuid,
+        listener: SocketAddr,
+        kind: capsem_proto::PreviewAdmissionKind,
+    },
+    Private {
+        network: NetworkIdentity,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -116,6 +126,10 @@ pub enum NetworkReason {
     Cancelled,
     Io,
     Unreachable,
+    /// A preview flow outlived the session that admitted it.
+    SessionExpired,
+    /// The session that admitted a preview flow was revoked.
+    SessionRevoked,
 }
 
 /// Never exposed through CEL: child reports cannot authorize a connection.
@@ -148,6 +162,45 @@ pub enum NetworkLifecycleAction {
     Resumed,
     Retired,
     Deleted,
+    /// An exposure's loopback listener was opened on request.
+    Published,
+    /// A saved exposure was reopened when its VM owner started again.
+    Restored,
+    /// An exposure was closed for good.
+    Revoked,
+}
+
+impl NetworkLifecycleAction {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Connected => "connected",
+            Self::Disconnected => "disconnected",
+            Self::Stopped => "stopped",
+            Self::Resumed => "resumed",
+            Self::Retired => "retired",
+            Self::Deleted => "deleted",
+            Self::Published => "published",
+            Self::Restored => "restored",
+            Self::Revoked => "revoked",
+        }
+    }
+
+    const fn is_exposure(self) -> bool {
+        matches!(self, Self::Published | Self::Restored | Self::Revoked)
+    }
+}
+
+/// A loopback exposure opening or closing on its VM owner: the listener the
+/// host reaches and the guest endpoint its connections will be sent to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NetworkExposure {
+    pub publication_id: Uuid,
+    pub target: capsem_proto::PublicationTarget,
+    pub access: capsem_proto::PublicationAccess,
+    pub action: NetworkLifecycleAction,
+    pub listener: SocketAddr,
+    pub destination: NetworkEndpoint,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -159,18 +212,49 @@ pub enum NetworkSecurityEvent {
         vm: Option<NetworkVm>,
         action: NetworkLifecycleAction,
     },
+    Exposure(NetworkExposure),
+    ContainerPull {
+        vm: NetworkVm,
+    },
 }
 
 impl NetworkSecurityEvent {
     pub(super) fn validate(&self, kind: RuntimeSecurityEventType) -> Result<(), SecurityActionError> {
         use RuntimeSecurityEventType as Type;
         match self {
-            Self::Lifecycle { network, vm, .. } => {
+            Self::Lifecycle {
+                network, vm, action, ..
+            } => {
                 require(kind == Type::NetworkLifecycle, "lifecycle context on a flow event")?;
+                require(!action.is_exposure(), "exposure action on a network lifecycle")?;
                 validate_network(network)?;
                 if let Some(vm) = vm {
                     validate_vm(vm)?;
                 }
+            }
+            Self::Exposure(exposure) => {
+                require(kind == Type::NetworkLifecycle, "exposure context on a flow event")?;
+                require(exposure.action.is_exposure(), "network action on an exposure")?;
+                require(!exposure.publication_id.is_nil(), "missing publication identity")?;
+                require(
+                    exposure.listener.ip().is_loopback() && exposure.listener.port() != 0,
+                    "invalid publication listener",
+                )?;
+                let vm = exposure
+                    .destination
+                    .vm
+                    .as_ref()
+                    .ok_or_else(|| SecurityActionError::new("network event: missing destination VM identity"))?;
+                validate_vm(vm)?;
+                require(
+                    exposure.destination.address.ip().is_loopback()
+                        && exposure.target.admits(exposure.destination.address.port()),
+                    "invalid exposure destination",
+                )?;
+            }
+            Self::ContainerPull { vm } => {
+                require(kind == Type::NetworkLifecycle, "container pull context on a flow event")?;
+                validate_vm(vm)?;
             }
             Self::Flow(flow) => {
                 require(!flow.connection_id.is_nil(), "missing connection identity")?;
@@ -197,6 +281,11 @@ impl NetworkSecurityEvent {
                     NetworkRoute::Expose {
                         publication_id,
                         listener,
+                    }
+                    | NetworkRoute::Preview {
+                        publication_id,
+                        listener,
+                        ..
                     } => {
                         require(
                             listener.ip().is_loopback() && listener.port() != 0,
@@ -228,14 +317,27 @@ impl NetworkSecurityEvent {
         if field == "valid" {
             return Some(PolicySubjectValue::Bool(true));
         }
+        if let Self::Exposure(exposure) = self {
+            return exposure_field(exposure, field);
+        }
+        if let Self::ContainerPull { vm } = self {
+            return match field {
+                "mode" => Some(borrowed("registry_pull")),
+                "action" => Some(borrowed("pull")),
+                _ => field.strip_prefix("destination.").and_then(|field| vm_field(vm, field)),
+            };
+        }
         let network = match self {
             Self::Lifecycle { network, .. } => Some(network),
             Self::Flow(NetworkFlow {
                 route: NetworkRoute::Private { network },
                 ..
             }) => Some(network),
-            Self::Flow(_) => None,
+            Self::Flow(_) | Self::Exposure(_) | Self::ContainerPull { .. } => None,
         };
+        if let (Self::Lifecycle { action, .. }, "action") = (self, field) {
+            return Some(borrowed(action.as_str()));
+        }
         match field {
             "id" => return network.map(|network| owned(network.id)),
             "name" => return network.map(|network| borrowed(&network.name)),
@@ -245,6 +347,7 @@ impl NetworkSecurityEvent {
         match field {
             "mode" => Some(borrowed(match flow.route {
                 NetworkRoute::Expose { .. } => "expose",
+                NetworkRoute::Preview { .. } => "http_preview",
                 NetworkRoute::Private { .. } => "private",
             })),
             "side" => Some(borrowed(match flow.side {
@@ -257,7 +360,20 @@ impl NetworkSecurityEvent {
                 NetworkProtocol::SyntheticPing => "synthetic_ping",
             })),
             "publication.id" => match flow.route {
-                NetworkRoute::Expose { publication_id, .. } => Some(owned(publication_id)),
+                NetworkRoute::Expose { publication_id, .. } | NetworkRoute::Preview { publication_id, .. } => {
+                    Some(owned(publication_id))
+                }
+                _ => None,
+            },
+            "action" => match flow.route {
+                NetworkRoute::Preview {
+                    kind: capsem_proto::PreviewAdmissionKind::Request,
+                    ..
+                } => Some(borrowed("preview_request")),
+                NetworkRoute::Preview {
+                    kind: capsem_proto::PreviewAdmissionKind::WebsocketUpgrade,
+                    ..
+                } => Some(borrowed("preview_upgrade")),
                 _ => None,
             },
             _ => field
@@ -272,6 +388,29 @@ impl NetworkSecurityEvent {
     }
 }
 
+/// An exposure's rule-visible facts: its mode, action, namespace and
+/// publication, the loopback listener as its source, and the guest endpoint.
+/// It has no side or protocol, so connection rules never match it.
+fn exposure_field<'a>(exposure: &'a NetworkExposure, field: &str) -> Option<PolicySubjectValue<'a>> {
+    match field {
+        "mode" => Some(borrowed(match exposure.access {
+            capsem_proto::PublicationAccess::LoopbackTcp => "expose",
+            capsem_proto::PublicationAccess::HttpPreview => "http_preview",
+        })),
+        "action" => Some(borrowed(exposure.action.as_str())),
+        "target" => Some(borrowed(match exposure.target {
+            capsem_proto::PublicationTarget::Container => "container",
+            capsem_proto::PublicationTarget::Vm => "vm",
+        })),
+        "publication.id" => Some(owned(exposure.publication_id)),
+        "source.ip" => Some(owned(exposure.listener.ip())),
+        "source.port" => Some(owned(exposure.listener.port())),
+        _ => field
+            .strip_prefix("destination.")
+            .and_then(|field| endpoint_field(&exposure.destination, field)),
+    }
+}
+
 fn endpoint_field<'a>(endpoint: &'a NetworkEndpoint, field: &str) -> Option<PolicySubjectValue<'a>> {
     match field {
         "vm_id" => endpoint.vm.as_ref().map(|vm| borrowed(&vm.id)),
@@ -279,6 +418,15 @@ fn endpoint_field<'a>(endpoint: &'a NetworkEndpoint, field: &str) -> Option<Poli
         "generation" => endpoint.vm.as_ref().map(|vm| owned(vm.generation)),
         "ip" => Some(owned(endpoint.address.ip())),
         "port" => Some(owned(endpoint.address.port())),
+        _ => None,
+    }
+}
+
+fn vm_field<'a>(vm: &'a NetworkVm, field: &str) -> Option<PolicySubjectValue<'a>> {
+    match field {
+        "vm_id" => Some(borrowed(&vm.id)),
+        "vm_name" => Some(borrowed(&vm.name)),
+        "generation" => Some(owned(vm.generation)),
         _ => None,
     }
 }

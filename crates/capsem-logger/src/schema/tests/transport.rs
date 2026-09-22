@@ -186,6 +186,8 @@ fn invalid_identity_phase_or_oversized_facts_cannot_enter_the_producer_queue() {
     ] {
         assert!(TransportEvent::new(id.into(), 1, kind, network, flow, &()).is_err());
     }
+    // An exposure opening or closing belongs to no network and no connection.
+    assert!(TransportEvent::new("abcdef123456".into(), 1, TransportEventKind::Lifecycle, None, None, &()).is_ok());
     assert!(TransportEvent::new(
         "abcdef123456".into(),
         1,

@@ -16,19 +16,21 @@ pub(crate) fn control_loop(
     child_pid: Pid,
     boot_env: &[(String, String)],
     ctrl_tx: CtrlSender,
-    exec_inflight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
+    exec_inflight: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<crate::ExecCancellation>>>,
+    >,
     exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>>,
     pending_responses: PendingResponses,
 ) {
     let mut publications: Option<port_bridge::Bridge> = None;
     loop {
         match recv_host_msg(control_fd) {
-            Ok(HostToGuest::ConnectPort { flow, port }) => {
+            Ok(HostToGuest::ConnectPort { flow, port, target }) => {
                 let result = (|| {
                     if publications.is_none() {
                         publications = Some(port_bridge::Bridge::new(ctrl_tx.clone())?);
                     }
-                    publications.as_mut().unwrap().connect(flow, port)
+                    publications.as_mut().unwrap().connect(flow, port, target)
                 })();
                 if let Err(error) = result {
                     tracing::debug!(connection_id = flow.id, generation = flow.generation, %error, "guest publication refused");
@@ -126,7 +128,16 @@ pub(crate) fn control_loop(
                     }
                     continue;
                 }
-                let inserted = exec_inflight.lock().unwrap().insert(id);
+                let cancellation = std::sync::Arc::new(crate::ExecCancellation::default());
+                let inserted = {
+                    let mut inflight = exec_inflight.lock().unwrap();
+                    if let std::collections::hash_map::Entry::Vacant(entry) = inflight.entry(id) {
+                        entry.insert(std::sync::Arc::clone(&cancellation));
+                        true
+                    } else {
+                        false
+                    }
+                };
                 if !inserted {
                     eprintln!("[capsem-agent] exec[{id}] duplicate (still inflight); ignoring");
                     continue;
@@ -137,7 +148,7 @@ pub(crate) fn control_loop(
                 let inflight = std::sync::Arc::clone(&exec_inflight);
                 let done = std::sync::Arc::clone(&exec_done);
                 thread::spawn(move || {
-                    let outcome = run_exec(&tx, id, &command, &boot_env);
+                    let outcome = run_exec(&tx, id, &command, &boot_env, &cancellation);
                     // Record completion *before* dropping inflight so a
                     // host replay that arrives between the two
                     // unlocks cannot miss both maps. Only cache real
@@ -154,6 +165,14 @@ pub(crate) fn control_loop(
                     }
                     inflight.lock().unwrap().remove(&id);
                 });
+            }
+            Ok(HostToGuest::CancelExec { id, cancellation_id }) => {
+                if ctrl_tx.send(GuestToHost::Ack { id: cancellation_id }).is_err() {
+                    break;
+                }
+                if let Some(cancellation) = exec_inflight.lock().unwrap().get(&id).cloned() {
+                    cancellation.cancel();
+                }
             }
             Ok(HostToGuest::FileWrite { id, path, data, mode }) => {
                 // Ack on receipt so the host bridge clears the

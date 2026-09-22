@@ -52,6 +52,10 @@ pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
                 }
                 let _ = reply.send(result);
             }
+            ReadRequest::Observe { reply } => {
+                let result = observe_change(&reader).map(|observed| commit(&reader, observed));
+                let _ = reply.send(result);
+            }
             ReadRequest::Query { sql, params, reply } => {
                 let started = Instant::now();
                 let sql_hash = sql_fingerprint(&sql);

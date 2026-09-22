@@ -21,7 +21,7 @@ from helpers.constants import (
     EXEC_READY_TIMEOUT,
     EXEC_TIMEOUT_SECS,
 )
-from helpers.service import vm_name, wait_exec_ready
+from helpers.service import exec_output_text, vm_name, wait_exec_ready
 
 pytestmark = pytest.mark.integration
 
@@ -59,14 +59,14 @@ class TestResumePathPersistence:
                 f"mkdir -p $(dirname {path}) && echo {marker} > {path} && cat {path}",
             )
             assert resp.get("exit_code") == 0, f"write to {path} failed: {resp}"
-            assert marker in resp.get("stdout", ""), \
+            assert marker in exec_output_text(resp), \
                 f"write/read-back of {path} did not see marker: {resp}"
 
     def _check_markers(self, client, name, marker):
         missing = []
         for path in self._paths_for(marker):
             resp = _exec(client, name, f"cat {path} 2>&1")
-            stdout = resp.get("stdout", "")
+            stdout = exec_output_text(resp)
             if marker not in stdout:
                 missing.append((path, resp.get("exit_code"), stdout.strip()[:200]))
         return missing

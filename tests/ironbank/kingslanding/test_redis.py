@@ -15,6 +15,7 @@ from helpers.service import vm_name, vm_session_db_path, wait_exec_ready
 
 from tests.fixtures.oci.prepare_redis import native_pin
 from tests.ironbank.kingslanding.test_oci_container import FIXTURES, oci_vm
+from tests.ironbank.kingslanding.test_run import exec_output_text
 
 __all__ = ["oci_vm"]
 
@@ -71,6 +72,7 @@ def test_real_redis_persistence_limits_and_fresh_vm(oci_vm, tmp_path):
                 ) == {
                     "success": True,
                     "size": len(contents),
+                    "vm_path": f"/root/oci/{filename}",
                 }
             result = client.post(
                 f"/vms/{name}/exec",
@@ -104,7 +106,7 @@ def test_real_redis_persistence_limits_and_fresh_vm(oci_vm, tmp_path):
                 "timeout_secs": 10,
             },
         )
-        assert retained["exit_code"] == 0 and retained["stdout"].split()[0] == first_rdb
+        assert retained["exit_code"] == 0 and exec_output_text(retained).split()[0] == first_rdb
     finally:
         client.delete(f"/vms/{second}/delete")
     db_path = vm_session_db_path(service.tmp_dir, client, first)
@@ -119,8 +121,8 @@ def test_real_redis_persistence_limits_and_fresh_vm(oci_vm, tmp_path):
         (
             0,
             "api",
-            len(first_result["stdout"].encode()),
-            len(first_result["stderr"].encode()),
+            len(exec_output_text(first_result).encode()),
+            len(exec_output_text(first_result, "stderr").encode()),
             None,
         )
     ]

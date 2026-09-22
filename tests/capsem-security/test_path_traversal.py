@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import wait_exec_ready
+from helpers.service import exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.security
 
@@ -33,7 +33,7 @@ def test_virtiofs_path_traversal(client):
         traversal_path = "/root/../session.db"
         
         resp = client.post(f"/vms/{vm_name}/exec", {"command": f"cat {traversal_path} 2>&1"})
-        stdout = resp.get("stdout", "") if resp else ""
+        stdout = exec_output_text(resp) if resp else ""
         
         # If it leaked, we might see SQLite header or content.
         # If it failed safely, it should be "No such file or directory" or similar.

@@ -459,8 +459,9 @@ def test_profile_release_builds_both_published_architectures() -> None:
     build_assets = _workflow_job_block("build-assets", "release-assets.yaml")
     assert "- arch: arm64" in build_assets
     assert "- arch: x86_64" in build_assets
-    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in build_assets
-    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in build_assets
+    assert "ASSET_ARCH: ${{ matrix.arch }}" in build_assets
+    assert "RELEASE_PROFILE: ${{ inputs.profile }}" in build_assets
+    assert 'just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"' in build_assets
 
 
 def test_parallel_asset_gate_preserves_and_names_failed_architecture_logs() -> None:
@@ -861,8 +862,9 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "output: cache/target/profile-public-before/packages" in workflow
     assert "--input-dir cache/target/profile-public-before/packages" in workflow
     assert "--print-package-path" in workflow
-    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
-    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
+    assert "ASSET_ARCH: ${{ matrix.arch }}" in workflow
+    assert "RELEASE_PROFILE: ${{ inputs.profile }}" in workflow
+    assert 'just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"' in workflow
     assert "- arch: arm64" in workflow
     assert "- arch: x86_64" in workflow
     assert "cargo run -p capsem-admin -- release" in workflow
@@ -1565,9 +1567,10 @@ def test_installed_service_owns_one_serial_automatic_update_path() -> None:
     router_runtime = _source_text("crates/capsem-service/src/router_runtime.rs")
     service_runtime = _source_text("crates/capsem-service/src/service_runtime.rs")
     update_command = _source_text("crates/capsem-service/src/update_command.rs")
-    api = _source_text("crates/capsem-service/src/api.rs")
+    service_api = _source_text("crates/capsem-service/src/api.rs")
+    shared_api = _source_text("crates/capsem-api/src/updates.rs")
     route_tests = _source_text("tests/capsem-service/test_update_routes.py")
-    apply_request = api.split("pub struct UpdateApplyRequest", maxsplit=1)[1].split(
+    apply_request = shared_api.split("pub struct UpdateApplyRequest", maxsplit=1)[1].split(
         "}", maxsplit=1
     )[0]
 
@@ -1601,7 +1604,8 @@ def test_installed_service_owns_one_serial_automatic_update_path() -> None:
     assert "std::process::id()" in update_command
     assert "UpdateCommandKind::Assets" not in update_command
     assert '"--assets".to_string()' not in update_command
-    assert "UpdateApplyAction" not in api
+    assert "pub struct UpdateApplyRequest" not in service_api
+    assert "UpdateApplyAction" not in shared_api
     assert "action" not in apply_request
     assert '["update", "--yes"]' in route_tests
     assert '["update", "--assets"]' not in route_tests
@@ -1743,7 +1747,11 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "pages deploy" not in workflow
     assert "tests/capsem-release/test_binary_lane_gate.py" in workflow
     assert "tests/capsem-release/test_release_lane_diff_policy.py" in workflow
-    assert "CLOUDFLARE_" not in workflow
+    deploy = workflow.split("  deploy-release-channel:", maxsplit=1)[1].split(
+        "\n  verify-release-downloads:", maxsplit=1
+    )[0]
+    assert "CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" in deploy
+    assert "CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}" in deploy
     for logical_name in (
         "vmlinuz",
         "initrd.img",
@@ -2056,7 +2064,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'test -d "/Applications/Capsem.app"' in macos
     assert 'test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"' in macos
     assert (
-        "for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
+        "for bin in capsem capsem-admin capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
         in macos
     )
     assert 'grep -F "Installed: true" /tmp/capsem-status.txt' in macos
@@ -2083,7 +2091,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
         "install-manifest-request.sh write"
     )
     assert (
-        "for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
+        "for bin in capsem capsem-admin capsem-app capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
         in linux
     )
     assert "dpkg-query -W -f='${Version}' capsem | grep -Fx \"$VERSION\"" in linux
@@ -4926,7 +4934,7 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
         "capsem-service",
         "capsem-process",
         "capsem-tui",
-        "capsem-mcp",
+
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
         "capsem-gateway",
@@ -5005,7 +5013,6 @@ def test_helper_version_surfaces_support_installed_update_smoke() -> None:
         assert "#[command" in command and "version" in command, path
 
     for path, binary in [
-        ("crates/capsem-mcp/src/main.rs", "capsem-mcp"),
         ("crates/capsem-mcp-builtin/src/main.rs", "capsem-mcp-builtin"),
     ]:
         source = _source_text(path)
@@ -5592,7 +5599,7 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
     tray_main = _source_text("crates/capsem-tray/src/main.rs")
     tray_gateway = _source_text("crates/capsem-tray/src/gateway.rs")
     cli = _source_text("crates/capsem/src/create_command.rs")
-    mcp = _source_text("crates/capsem-mcp/src/main.rs")
+    mcp = _source_text("mcp/typescript/src/profile-tools.ts")
 
     assert "vmStore.openCreateModal()" in app
     assert "profile_id: 'code'" not in app
@@ -5604,7 +5611,7 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
     assert "provision_temp" not in tray_gateway
     assert 'profile_id":"code' not in tray_gateway
     assert "profile_id: args.profile.clone()" in cli
-    assert "params.profile.as_deref().unwrap_or(DEFAULT_PROFILE_ID)" in mcp
+    assert "hypervisor.profiles.mcp(profile)" in mcp
 
 
 def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> None:
@@ -5633,6 +5640,32 @@ def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> No
     assert "channel:\n        type: string\n        required: true" in reusable_channel
     assert "inputs.channel || 'stable'" not in reusable_channel
     assert "CHANNEL: ${{ inputs.channel }}" in reusable_channel
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "sdk/python/capsem/hypervisor.py",
+        "sdk/typescript/src/hypervisor.ts",
+        "sdk/rust/src/hypervisor.rs",
+        "mcp/typescript/src/profile-tools.ts",
+    ],
+)
+def test_sdk_surfaces_may_not_compile_in_a_profile_name(surface: str, tmp_path: Path) -> None:
+    """Which profile a client gets when it names none is the gateway catalog's
+    answer. An SDK that spells a profile name is one more place to change when
+    the catalog changes, and one that cannot be corrected by an installation."""
+    source = tmp_path / surface
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text('profile_id = "code"\n', encoding="utf-8")
+
+    label, pattern, paths = next(
+        guard for guard in release_selections.MATCH_GUARDS if "SDK or MCP surface" in guard[0]
+    )
+    assert release_selections.reject_matches(tmp_path, label, pattern, paths), surface
+
+    source.write_text("profile_id = resolve_default()\n", encoding="utf-8")
+    assert not release_selections.reject_matches(tmp_path, label, pattern, paths), surface
 
 
 def test_release_selection_match_guard_is_directly_unit_testable(
@@ -5687,7 +5720,7 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         "config/profiles",
         "web/app/src/lib/components",
         "crates/capsem-tray/src",
-        "crates/capsem-mcp/src/main.rs",
+        "mcp/typescript/src/profile-tools.ts",
         "crates/capsem/src/main.rs",
         "crates/capsem/src/update.rs",
         "crates/capsem-service/src/main.rs",
@@ -5810,18 +5843,6 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         assert rejected.returncode != 0, f"guard accepted picker regression {regression}"
         assert "profile picker fabricates" in rejected.stderr
     dialog.write_text(original)
-
-    mcp = tmp_path / "crates/capsem-mcp/src/main.rs"
-    original = mcp.read_text()
-    for regression, message in (
-        ('// "profile_id": DEFAULT_PROFILE_ID\n', "MCP request bypasses"),
-        ('// "/profiles/{}/mcp/servers", DEFAULT_PROFILE_ID\n', "silently uses the default"),
-    ):
-        mcp.write_text(original + "\n" + regression)
-        rejected = run_guard()
-        assert rejected.returncode != 0, f"guard accepted {regression.strip()}"
-        assert message in rejected.stderr
-    mcp.write_text(original)
 
     release_workflow = tmp_path / ".github/workflows/release.yaml"
     original = release_workflow.read_text()
@@ -6033,7 +6054,8 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
 
     asset_pos = block.find("bash build_system/scripts/test/prepare-install-test-assets.sh")
     build_pos = block.find(
-        "cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mcp"
+        "cargo build -p capsem-process -p capsem-service -p capsem "
+        "-p capsem-mock-server -p capsem-bench"
     )
     bench_package_pos = block.find("-p capsem-bench")
     bench_binary_pos = block.find("cache/target/cargo/debug/capsem-bench-rs")
@@ -6047,6 +6069,7 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
 
     assert asset_pos != -1
     assert build_pos != -1
+    assert "-p capsem-mcp " not in block
     assert bench_package_pos != -1
     assert bench_binary_pos != -1
     assert "cache/target/cargo/debug/capsem-bench;" not in block

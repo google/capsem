@@ -864,11 +864,7 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
         )
         reload_response = svc.client().post(f"/profiles/{CODE_PROFILE_ID}/reload", {}, timeout=15)
         assert reload_response["success"] is True
-        svc.client().post(
-            f"/vms/{vm}/files/write",
-            {"path": "/root/reload-go", "content": "go\n"},
-            timeout=30,
-        )
+        svc.client().upload_file(vm, "/root/reload-go", "go\n", timeout=30)
 
         stdout, stderr = proc.communicate(timeout=60)
         assert proc.returncode == 0, stderr

@@ -28,6 +28,7 @@ from helpers.constants import (
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
+    exec_output_text,
     vm_name,
     vm_session_db_path,
     wait_exec_ready,
@@ -116,11 +117,6 @@ def _assert_ledger_id(value: object) -> None:
     assert re.fullmatch(r"[0-9a-f]{12}", value), value
 
 
-def _columnar_rows(payload: dict) -> list[dict]:
-    assert set(payload) == {"columns", "rows"}
-    columns = payload["columns"]
-    assert columns == ["timestamp", "layer", "ref", "summary", "status", "duration_ms", "trace_id"]
-    return [dict(zip(columns, row, strict=True)) for row in payload["rows"]]
 
 
 def _package_probe_script() -> str:
@@ -326,7 +322,7 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             script_bytes,
             timeout=30,
         )
-        assert upload == {"success": True, "size": len(script_bytes)}
+        assert upload == {"success": True, "size": len(script_bytes), "vm_path": f"/root/{script_name}"}
 
         exec_resp = client.post(
             f"/vms/{session_id}/exec",
@@ -335,8 +331,8 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
         )
         assert exec_resp is not None
         assert exec_resp["exit_code"] == 0, exec_resp
-        stdout = exec_resp.get("stdout", "")
-        stderr = exec_resp.get("stderr", "")
+        stdout = exec_output_text(exec_resp)
+        stderr = exec_output_text(exec_resp, "stderr")
         output = stdout + stderr
         expected_lines = {
             "IRONBANK:node:IRONBANK-PACKAGE-BYTES",
@@ -540,7 +536,7 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
         assert counts["audit_count"] >= 4
 
         timeline = client.get(f"/vms/{session_id}/timeline?layers=exec,fs&limit=250", timeout=30)
-        timeline_rows = _columnar_rows(timeline)
+        timeline_rows = timeline["events"]
         assert {"exec", "fs"} <= {row["layer"] for row in timeline_rows}
         summaries = "\n".join(row["summary"] for row in timeline_rows)
         assert script_name in summaries

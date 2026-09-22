@@ -1,3 +1,6 @@
+mod gateway_fixtures;
+use gateway_fixtures::*;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Color, Modifier};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -890,19 +893,18 @@ fn gateway_status_json_maps_to_tui_state() {
     assert_eq!(active.stats.duration, std::time::Duration::from_secs(2840));
     assert_eq!(active.stats.tokens, 38_912);
     assert_eq!(active.stats.cost_micros, 215_000);
-    assert!(
-        active.attention.is_empty(),
-        "current profile status should not be marked stale"
-    );
+    assert!(active.attention.is_empty(), "a running VM should not be marked stale");
 
     let attention = &state.sessions[1];
     assert_eq!(attention.lifecycle, SessionLifecycle::Suspended);
     assert!(attention.attention.contains(&Attention::PolicyDeny));
-    assert_eq!(attention.profile_status.as_deref(), Some("corrupted"));
-    assert!(
-        attention.attention.contains(&Attention::CredentialIssue),
-        "corrupted profile status should be surfaced as a credential/profile issue"
+    assert_eq!(attention.profile_status, None);
+    assert_eq!(attention.branch, None);
+    assert_eq!(
+        attention.resume_blocked_reason.as_deref(),
+        Some("profile payload hash drift")
     );
+    assert!(!attention.attention.contains(&Attention::CredentialIssue));
 }
 
 #[test]
@@ -1153,13 +1155,16 @@ fn gateway_status_can_resume_false_blocks_tui_resume_even_when_profile_ready() {
     let state = state_from_status_json_for_test(
         r#"{
             "service": "running",
+            "gateway_version": "test",
+            "vm_count": 1,
+            "resource_summary": null,
             "vms": [{
                 "id": "stale-vm",
                 "name": "Stale VM",
                 "status": "Stopped",
                 "persistent": true,
                 "profile_id": "code",
-                "profile_status": "current",
+                "available_actions": [],
                 "can_resume": false,
                 "resume_blocked_reason": "profile payload hash drift"
             }]
@@ -1231,26 +1236,24 @@ async fn gateway_provider_loads_update_status_over_http_gateway() {
         .expect("bind test gateway");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
-        for _ in 0..4 {
+        for _ in 0..3 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
             if request.contains("GET /token ") {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else if request.contains("GET /status ") {
-                write_json_response(&mut stream, gateway_empty_status_body()).await;
-            } else if request.contains("GET /profiles/list ") {
-                write_json_response(&mut stream, gateway_profiles_body()).await;
+                let mut overview: serde_json::Value = serde_json::from_str(gateway_empty_status_body()).unwrap();
+                overview["updates"] = serde_json::from_str(gateway_update_status_body()).unwrap();
+                write_json_response(&mut stream, &overview.to_string()).await;
             } else {
                 assert!(
-                    request.contains("GET /update/status "),
+                    request.contains("GET /profiles/list "),
                     "unexpected request: {request:?}"
                 );
-                assert!(
-                    request.contains("authorization: Bearer test-token")
-                        || request.contains("Authorization: Bearer test-token"),
-                    "missing bearer auth: {request:?}"
-                );
-                write_json_response(&mut stream, gateway_update_status_body()).await;
+                assert!(request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer test-token"));
+                write_json_response(&mut stream, gateway_profiles_body()).await;
             }
         }
     });
@@ -1365,8 +1368,7 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
         let mut token_requests = 0;
         let mut status_requests = 0;
         let mut profile_requests = 0;
-        let mut update_requests = 0;
-        for _ in 0..7 {
+        for _ in 0..5 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
             if request.contains("GET /token ") {
@@ -1375,9 +1377,6 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
             } else if request.contains("GET /profiles/list ") {
                 profile_requests += 1;
                 write_json_response(&mut stream, gateway_profiles_body()).await;
-            } else if request.contains("GET /update/status ") {
-                update_requests += 1;
-                write_json_response(&mut stream, gateway_update_current_status_body()).await;
             } else {
                 status_requests += 1;
                 assert!(request.contains("GET /status "), "unexpected request: {request:?}");
@@ -1392,10 +1391,6 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
         assert_eq!(token_requests, 1, "token should be cached across refreshes");
         assert_eq!(status_requests, 2);
         assert_eq!(profile_requests, 2, "profile list should stay live across refreshes");
-        assert_eq!(
-            update_requests, 2,
-            "update status should use the cached token across refreshes"
-        );
     });
 
     let provider = GatewayProvider::new(format!("http://{addr}"));
@@ -1440,292 +1435,6 @@ async fn gateway_provider_only_offers_tui_launchable_profiles() {
     assert_eq!(state.profiles.len(), 1);
     assert_eq!(state.profiles[0].id, "code");
 
-    server.await.expect("server task");
-}
-
-#[tokio::test]
-async fn gateway_provider_invokes_stop_over_authenticated_gateway() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind test gateway");
-    let addr = listener.local_addr().expect("local addr");
-    let server = tokio::spawn(async move {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept().await.expect("accept request");
-            let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
-                assert!(
-                    request.contains("POST /vms/vm-1/stop "),
-                    "unexpected request: {request:?}"
-                );
-                assert!(
-                    request.contains("authorization: Bearer test-token")
-                        || request.contains("Authorization: Bearer test-token"),
-                    "missing bearer auth: {request:?}"
-                );
-                write_json_response(&mut stream, r#"{"success":true}"#).await;
-            }
-        }
-    });
-
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
-        .invoke_async(&ControlAction::Stop {
-            id: "vm-1".to_string(),
-            label: "profile-main".to_string(),
-        })
-        .await
-        .expect("invoke stop");
-
-    assert_eq!(outcome.message, "stopped profile-main");
-    server.await.expect("server task");
-}
-
-#[tokio::test]
-async fn gateway_provider_invokes_named_profile_create_over_authenticated_gateway() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind test gateway");
-    let addr = listener.local_addr().expect("local addr");
-    let server = tokio::spawn(async move {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept().await.expect("accept request");
-            let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
-                assert!(request.contains("POST /vms/create "), "unexpected request: {request:?}");
-                assert!(request.contains(r#""name":"code-1-proof""#));
-                assert!(request.contains(r#""persistent":true"#));
-                assert!(request.contains(r#""profile_id":"co-work""#));
-                write_json_response(&mut stream, r#"{"id":"code-1-proof"}"#).await;
-            }
-        }
-    });
-
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
-        .invoke_async(&ControlAction::CreateSession {
-            name: Some("code-1-proof".to_string()),
-            profile_id: "co-work".to_string(),
-        })
-        .await
-        .expect("invoke create");
-
-    assert_eq!(outcome.message, "created code-1-proof");
-    assert_eq!(outcome.focus_session.as_deref(), Some("code-1-proof"));
-    server.await.expect("server task");
-}
-
-#[tokio::test]
-async fn gateway_provider_omits_generated_create_name_for_service_owned_counter() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind test gateway");
-    let addr = listener.local_addr().expect("local addr");
-    let server = tokio::spawn(async move {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept().await.expect("accept request");
-            let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
-                assert!(request.contains("POST /vms/create "), "unexpected request: {request:?}");
-                assert!(!request.contains(r#""name":"#), "{request}");
-                assert!(request.contains(r#""persistent":true"#));
-                assert!(request.contains(r#""profile_id":"code""#));
-                write_json_response(&mut stream, r#"{"id":"code-7"}"#).await;
-            }
-        }
-    });
-
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
-        .invoke_async(&ControlAction::CreateSession {
-            name: None,
-            profile_id: "code".to_string(),
-        })
-        .await
-        .expect("invoke create");
-
-    assert_eq!(outcome.message, "created session");
-    assert_eq!(outcome.focus_session.as_deref(), Some("code-7"));
-    server.await.expect("server task");
-}
-
-#[tokio::test]
-async fn gateway_provider_invokes_fork_over_authenticated_gateway() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind test gateway");
-    let addr = listener.local_addr().expect("local addr");
-    let server = tokio::spawn(async move {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept().await.expect("accept request");
-            let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
-                assert!(
-                    request.contains("POST /vms/profile-v2/fork "),
-                    "unexpected request: {request:?}"
-                );
-                assert!(request.contains(r#""name":"profile-v2-fork-copy""#));
-                write_json_response(&mut stream, r#"{"name":"profile-v2-fork-copy","size_bytes":1024}"#).await;
-            }
-        }
-    });
-
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
-        .invoke_async(&ControlAction::Fork {
-            id: "profile-v2".to_string(),
-            name: "profile-v2-fork-copy".to_string(),
-        })
-        .await
-        .expect("invoke fork");
-
-    assert_eq!(outcome.message, "forked profile-v2-fork-copy");
-    assert_eq!(outcome.focus_session.as_deref(), Some("profile-v2-fork-copy"));
-    server.await.expect("server task");
-}
-
-#[tokio::test]
-async fn gateway_provider_invokes_checkpoint_over_suspend_endpoint() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind test gateway");
-    let addr = listener.local_addr().expect("local addr");
-    let server = tokio::spawn(async move {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept().await.expect("accept request");
-            let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
-                assert!(
-                    request.contains("POST /vms/vm-1/pause "),
-                    "unexpected request: {request:?}"
-                );
-                write_json_response(&mut stream, r#"{"success":true}"#).await;
-            }
-        }
-    });
-
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
-        .invoke_async(&ControlAction::Checkpoint {
-            id: "vm-1".to_string(),
-            label: "profile-main".to_string(),
-        })
-        .await
-        .expect("invoke checkpoint");
-
-    assert_eq!(outcome.message, "checkpointed profile-main");
-    server.await.expect("server task");
-}
-
-#[tokio::test]
-async fn gateway_provider_invokes_purge_over_authenticated_gateway() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind test gateway");
-    let addr = listener.local_addr().expect("local addr");
-    let server = tokio::spawn(async move {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept().await.expect("accept request");
-            let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
-                assert!(request.contains("POST /purge "), "unexpected request: {request:?}");
-                assert!(
-                    request.contains("authorization: Bearer test-token")
-                        || request.contains("Authorization: Bearer test-token"),
-                    "missing bearer auth: {request:?}"
-                );
-                assert!(request.contains(r#""all":false"#));
-                write_json_response(
-                    &mut stream,
-                    r#"{"purged":3,"persistent_purged":0,"ephemeral_purged":3}"#,
-                )
-                .await;
-            }
-        }
-    });
-
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
-        .invoke_async(&ControlAction::Purge { all: false })
-        .await
-        .expect("invoke purge");
-
-    assert_eq!(outcome.message, "purged 3 temporary sessions");
-    assert_eq!(outcome.focus_session, None);
-    server.await.expect("server task");
-}
-
-#[tokio::test]
-async fn gateway_provider_reports_defunct_persistent_purge() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind test gateway");
-    let addr = listener.local_addr().expect("local addr");
-    let server = tokio::spawn(async move {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept().await.expect("accept request");
-            let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
-                assert!(request.contains("POST /purge "), "unexpected request: {request:?}");
-                assert!(request.contains(r#""all":false"#));
-                write_json_response(
-                    &mut stream,
-                    r#"{"purged":2,"persistent_purged":1,"ephemeral_purged":1}"#,
-                )
-                .await;
-            }
-        }
-    });
-
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
-        .invoke_async(&ControlAction::Purge { all: false })
-        .await
-        .expect("invoke purge");
-
-    assert_eq!(outcome.message, "purged 2 sessions (1 broken persistent, 1 temporary)");
-    server.await.expect("server task");
-}
-
-#[tokio::test]
-async fn gateway_provider_surfaces_action_error_body() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind test gateway");
-    let addr = listener.local_addr().expect("local addr");
-    let server = tokio::spawn(async move {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept().await.expect("accept request");
-            let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
-                assert!(
-                    request.contains("DELETE /vms/vm-1/delete "),
-                    "unexpected request: {request:?}"
-                );
-                write_response(&mut stream, "500 Internal Server Error", r#"{"error":"boom"}"#).await;
-            }
-        }
-    });
-
-    let error = GatewayProvider::new(format!("http://{addr}"))
-        .invoke_async(&ControlAction::Delete {
-            id: "vm-1".to_string(),
-            label: "profile-main".to_string(),
-        })
-        .await
-        .expect_err("delete should fail");
-
-    assert!(error.to_string().contains("500"));
-    assert!(error.to_string().contains("boom"));
     server.await.expect("server task");
 }
 
@@ -1805,7 +1514,7 @@ fn fake_capsem_script(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     (script, log)
 }
 
-async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
+pub(crate) async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
     let mut request = Vec::new();
     let mut buffer = [0_u8; 256];
     loop {
@@ -1840,351 +1549,15 @@ async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
     String::from_utf8_lossy(&request).into_owned()
 }
 
-async fn write_json_response(stream: &mut tokio::net::TcpStream, body: &str) {
+pub(crate) async fn write_json_response(stream: &mut tokio::net::TcpStream, body: &str) {
     write_response(stream, "200 OK", body).await;
 }
 
-async fn write_response(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
+pub(crate) async fn write_response(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
     let response = format!(
         "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
         body.len(),
         body
     );
     stream.write_all(response.as_bytes()).await.expect("write response");
-}
-
-fn gateway_status_body() -> &'static str {
-    r#"{
-        "service": "running",
-        "gateway_version": "test",
-        "vm_count": 2,
-        "resource_summary": null,
-        "vms": [
-            {
-                "id": "vm-1",
-                "name": "profile-main",
-                "status": "Running",
-                "persistent": true,
-                "profile_id": "profile-v2",
-                "profile_revision": "main",
-                "profile_status": "current",
-                "uptime_secs": 2840,
-                "total_input_tokens": 30000,
-                "total_output_tokens": 8912,
-                "total_estimated_cost": 0.215,
-                "total_tool_calls": 7,
-                "total_requests": 11,
-                "total_file_events": 3
-            },
-            {
-                "id": "vm-2",
-                "status": "Suspended",
-                "persistent": true,
-                "profile_id": "linux-os",
-                "profile_status": "corrupted",
-                "uptime_secs": 7860,
-                "total_input_tokens": 10000,
-                "total_output_tokens": 2900,
-                "total_estimated_cost": 0.076,
-                "denied_requests": 1
-            }
-        ]
-    }"#
-}
-
-fn gateway_empty_status_body() -> &'static str {
-    r#"{
-        "service": "running",
-        "gateway_version": "test",
-        "vm_count": 0,
-        "resource_summary": null,
-        "vms": []
-    }"#
-}
-
-fn gateway_update_status_body() -> &'static str {
-    r#"{
-        "checked_at": 1718444400,
-        "channel_url": "https://release.capsem.org/health.json",
-        "stale": false,
-        "binary": {
-            "current": "1.4.0",
-            "latest": "1.4.1",
-            "update_available": true,
-            "state": "update_available",
-            "compatibility": "compatible"
-        },
-        "assets": {
-            "current": "assets-1",
-            "latest": "assets-2",
-            "update_available": true,
-            "state": "update_available",
-            "compatibility": "compatible"
-        },
-        "profiles": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        },
-        "images": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        }
-    }"#
-}
-
-fn gateway_update_current_status_body() -> &'static str {
-    r#"{
-        "checked_at": 1718444400,
-        "channel_url": "https://release.capsem.org/health.json",
-        "stale": false,
-        "binary": {
-            "current": "1.4.0",
-            "latest": "1.4.0",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible"
-        },
-        "assets": {
-            "current": "assets-1",
-            "latest": "assets-1",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible"
-        },
-        "profiles": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        },
-        "images": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        }
-    }"#
-}
-
-fn gateway_update_blocked_profile_status_body() -> &'static str {
-    r#"{
-        "checked_at": 1718444400,
-        "channel_url": "https://release.capsem.org/health.json",
-        "stale": false,
-        "binary": {
-            "current": "1.4.0",
-            "latest": "1.4.0",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible"
-        },
-        "assets": {
-            "current": "assets-1",
-            "latest": "assets-1",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible"
-        },
-        "profiles": {
-            "current": "profiles-2030.0101.0",
-            "latest": "profiles-2030.0101.1",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible",
-            "blocked_reason": "requires binary 1.4.1 or newer"
-        },
-        "images": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        }
-    }"#
-}
-
-fn gateway_update_blocked_asset_status_body() -> &'static str {
-    r#"{
-        "checked_at": 1718444400,
-        "channel_url": "https://release.capsem.org/health.json",
-        "stale": false,
-        "binary": {
-            "current": "1.4.0",
-            "latest": "1.4.0",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible"
-        },
-        "assets": {
-            "current": "2026.0627.1",
-            "latest": "2030.0101.1",
-            "update_available": false,
-            "state": "unknown",
-            "compatibility": "unknown",
-            "blocked_reason": "requires binary 99.99.99 or newer"
-        },
-        "profiles": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        },
-        "images": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        }
-    }"#
-}
-
-fn gateway_update_binary_with_blocked_profile_status_body() -> &'static str {
-    r#"{
-        "checked_at": 1718444400,
-        "channel_url": "https://release.capsem.org/health.json",
-        "stale": false,
-        "binary": {
-            "current": "1.4.0",
-            "latest": "1.4.1",
-            "update_available": true,
-            "state": "update_available",
-            "compatibility": "compatible"
-        },
-        "assets": {
-            "current": "assets-1",
-            "latest": "assets-1",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible"
-        },
-        "profiles": {
-            "current": "profiles-2030.0101.0",
-            "latest": "profiles-2030.0101.1",
-            "update_available": false,
-            "state": "current",
-            "compatibility": "compatible",
-            "blocked_reason": "requires binary 1.4.1 or newer"
-        },
-        "images": {
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        }
-    }"#
-}
-
-fn gateway_update_matrix_body(
-    binary_update: bool,
-    asset_update: bool,
-    profile_update: bool,
-    last_error: Option<&str>,
-) -> String {
-    let binary_latest = if binary_update { "1.4.1" } else { "1.4.0" };
-    let asset_latest = if asset_update { "assets-2" } else { "assets-1" };
-    let profile_latest = if profile_update {
-        "profiles-2030.0101.1"
-    } else {
-        "profiles-2030.0101.0"
-    };
-    let error_field = last_error
-        .map(|error| format!(r#","last_error":"{error}""#))
-        .unwrap_or_default();
-    format!(
-        r#"{{
-        "checked_at": 1718444400,
-        "channel_url": "https://release.capsem.org/health.json",
-        "stale": false{error_field},
-        "binary": {{
-            "current": "1.4.0",
-            "latest": "{binary_latest}",
-            "update_available": {binary_update},
-            "state": "current",
-            "compatibility": "compatible"
-        }},
-        "assets": {{
-            "current": "assets-1",
-            "latest": "{asset_latest}",
-            "update_available": {asset_update},
-            "state": "current",
-            "compatibility": "compatible"
-        }},
-        "profiles": {{
-            "current": "profiles-2030.0101.0",
-            "latest": "{profile_latest}",
-            "update_available": {profile_update},
-            "state": "current",
-            "compatibility": "compatible"
-        }},
-        "images": {{
-            "update_available": false,
-            "state": "not_published",
-            "compatibility": "not_applicable"
-        }}
-    }}"#
-    )
-}
-
-fn gateway_profiles_body() -> &'static str {
-    r#"{
-        "profiles": [
-            {
-                "id": "code",
-                "name": "Code",
-                "description": "Optimized for coding and long-running agents.",
-                "availability": { "web": true, "shell": true, "mobile": false },
-                "source": "profile",
-                "rule_count": 3,
-                "default_rule_count": 2,
-                "plugin_count": 1,
-                "mcp_server_count": 1
-            },
-            {
-                "id": "co-work",
-                "name": "Co-work",
-                "description": "Shared profile for collaborative agent sessions.",
-                "availability": { "web": true, "shell": true, "mobile": false },
-                "source": "profile",
-                "rule_count": 4,
-                "default_rule_count": 2,
-                "plugin_count": 1,
-                "mcp_server_count": 1
-            }
-        ]
-    }"#
-}
-
-fn gateway_profiles_with_unlaunchable_body() -> &'static str {
-    r#"{
-        "profiles": [
-            {
-                "id": "code",
-                "name": "Code",
-                "description": "Optimized for coding and long-running agents.",
-                "availability": { "web": true, "shell": true, "mobile": false },
-                "source": "profile",
-                "rule_count": 3,
-                "default_rule_count": 2,
-                "plugin_count": 1,
-                "mcp_server_count": 1
-            },
-            {
-                "id": "web-only",
-                "name": "Web Only",
-                "description": "browser-only workflow",
-                "availability": { "web": true, "shell": false, "mobile": false },
-                "source": "corp",
-                "rule_count": 1,
-                "default_rule_count": 1,
-                "plugin_count": 0,
-                "mcp_server_count": 0
-            },
-            {
-                "id": "mobile-only",
-                "name": "Mobile Only",
-                "description": "mobile-only workflow",
-                "availability": { "web": false, "shell": false, "mobile": true },
-                "source": "corp",
-                "rule_count": 1,
-                "default_rule_count": 1,
-                "plugin_count": 0,
-                "mcp_server_count": 0
-            }
-        ]
-    }"#
 }

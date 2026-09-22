@@ -6,7 +6,6 @@ mod job_store;
 mod mcp_runtime;
 mod private_names;
 mod private_seats;
-mod retention;
 mod runtime_config;
 mod terminal;
 mod vsock;
@@ -25,7 +24,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info, warn};
 
 use job_store::JobStore;
-use mcp_runtime::McpRuntime;
+use mcp_runtime::{GuestExposureTools, McpRuntime};
 use vsock::VsockOptions;
 
 /// Owns the background-thread resources that MUST drain before the main
@@ -38,11 +37,6 @@ pub(crate) struct Shutdown {
     publisher: Option<Arc<capsem_core::container::publish::Publisher>>,
     db: Option<Arc<DbWriter>>,
     fs_monitor: Option<FsMonitor>,
-    /// How many days of archived bodies this session keeps, when its ledger
-    /// outlives the process. `None` for an ephemeral session: its whole
-    /// directory is deleted, so trimming its archive first would be work
-    /// whose only result is a shorter file nobody will open.
-    retention_days: Option<u64>,
 }
 
 impl Shutdown {
@@ -66,12 +60,6 @@ pub(crate) async fn drain_background_owners(shutdown: &Arc<Mutex<Shutdown>>) {
     let mut owned = std::mem::take(&mut *guard);
     if let Some(publisher) = owned.publisher.take() {
         publisher.shutdown().await;
-    }
-    // Before the writer is joined, and from the process that owns it: the
-    // service holds only external readers of this ledger, so this is the one
-    // place a session's archive can be trimmed at all.
-    if let (Some(db), Some(retention_days)) = (owned.db.as_deref(), owned.retention_days) {
-        retention::retain_session_bodies(db, retention_days).await;
     }
     if let Err(error) = tokio::task::spawn_blocking(move || owned.drain_blocking()).await {
         error!(%error, "background owner drain failed");
@@ -152,16 +140,6 @@ struct Args {
     service_socket: Option<PathBuf>,
     #[arg(long)]
     checkpoint_path: Option<PathBuf>,
-    /// Days of archived bodies to keep when this session's ledger outlives
-    /// the process. The service passes it for a persistent VM and omits it
-    /// for an ephemeral one, whose directory it deletes outright.
-    ///
-    /// Taken as given, including `0`, which drops every archived body. The
-    /// setting's floor of 1 is the service's to enforce -- it is the side
-    /// that reads the setting -- and a process told to keep nothing is a
-    /// process being told something, not one being misconfigured.
-    #[arg(long)]
-    retention_days: Option<u64>,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
     #[arg(long = "env")]
     env: Vec<String>,
@@ -419,11 +397,7 @@ async fn run_async_main_loop(
     // Register the DbWriter with the SIGTERM handler BEFORE any work that
     // produces writes. If the signal fires before the workspace monitor
     // starts, we still want a clean checkpoint.
-    {
-        let mut guard = shutdown.lock().await;
-        guard.db = Some(Arc::clone(&db));
-        guard.retention_days = args.retention_days;
-    }
+    shutdown.lock().await.db = Some(Arc::clone(&db));
 
     let security_rule_ids = runtime_config
         .security_rules
@@ -480,7 +454,7 @@ async fn run_async_main_loop(
         .restore(ctrl_tx.clone())
         .await
         .context("restore published ports")?;
-    *job_store.publications.lock().unwrap() = restored;
+    info!(restored, "restored published ports");
     let model_trace_state = Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new()));
 
     // Start host file monitor to record fs_events.
@@ -512,6 +486,8 @@ async fn run_async_main_loop(
         .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
     let mut builtin_env = std::collections::HashMap::new();
     builtin_env.insert("CAPSEM_SESSION_DIR".into(), session_dir.to_string_lossy().to_string());
+    let db_path = session_dir.join("session.db");
+    builtin_env.insert("CAPSEM_SESSION_DB".into(), db_path.to_string_lossy().to_string());
     builtin_env.insert(
         "CAPSEM_ACTIVE_PROFILE".into(),
         runtime_config.active_profile_path.to_string_lossy().to_string(),
@@ -586,15 +562,19 @@ async fn run_async_main_loop(
     info!(inflight_cap, "MITM MCP endpoint in-flight handler cap");
     let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.model_endpoints.clone())));
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
-    let mcp_endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
-        aggregator_client.clone(),
-        Arc::clone(&db),
-        capsem_core::mcp::builtin_server_names(&mcp_servers),
-        Arc::clone(&security_rules),
-        Arc::clone(&plugin_policy),
-        Arc::clone(&mcp_inflight),
-        capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
-    ));
+    let mcp_endpoint = Arc::new(
+        capsem_core::net::mitm_proxy::McpEndpointState::new(
+            aggregator_client.clone(),
+            Arc::clone(&security_rules),
+            Arc::clone(&plugin_policy),
+            Arc::clone(&mcp_inflight),
+            capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
+        )
+        .with_scoped_tools(Arc::new(GuestExposureTools::new(
+            Arc::clone(&job_store.publisher),
+            ctrl_tx.clone(),
+        ))),
+    );
     let mcp_runtime = Arc::new(McpRuntime {
         aggregator: aggregator_client,
         endpoint: Arc::clone(&mcp_endpoint),
@@ -705,7 +685,6 @@ async fn run_async_main_loop(
 
     let ctrl_tx_ipc = ctrl_tx.clone();
     let uds_path = args.uds_path.clone();
-    let vm_id_ws = args.id.clone();
     let is_restore = args.checkpoint_path.is_some();
     let vm_for_vsock = Arc::clone(&vm);
     let vm_ready_vsock = Arc::clone(&vm_ready);
@@ -782,58 +761,14 @@ async fn run_async_main_loop(
         std::fs::set_permissions(&launched_path, std::fs::Permissions::from_mode(0o600))?;
     }
 
-    // Through `capsem_foundation::uds`, which owns the length rule -- the gateway
-    // derives this same path independently, so both must apply it identically
-    // *and* start from the same run directory. The fallback keeps the old
-    // derivation for a caller that passes no run directory; it is only correct
-    // when the IPC path was not itself shortened, which is why the service
-    // passes one.
-    let walked_up = uds_path
-        .parent()
-        .and_then(|instances| instances.parent())
-        .unwrap_or_else(|| std::path::Path::new("/tmp"));
-    let ws_run_dir = args.run_dir.as_deref().unwrap_or(walked_up);
-    let ws_sock_path = capsem_foundation::uds::terminal_socket_path(ws_run_dir, &vm_id_ws)?;
-    if ws_sock_path.exists() {
-        std::fs::remove_file(&ws_sock_path)?;
-    }
-    let ws_listener = tokio::net::UnixListener::bind(&ws_sock_path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&ws_sock_path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    info!(socket = %ws_sock_path.display(), "listening for terminal WS (mode 0600)");
-
-    // Terminal relay: fan-out broadcast + ring buffer so a newly-connecting
-    // WS client sees the shell's startup banner (printed before it joined).
+    // Terminal relay: fan-out broadcast + ring buffer so a newly-attached
+    // terminal stream sees the shell's startup banner (printed before it joined).
     let term_relay = terminal::TerminalRelay::new(1024);
     let term_c_bcast = Arc::clone(&terminal_output);
     let term_relay_pump = Arc::clone(&term_relay);
     tokio::spawn(async move {
         while let Some(data) = term_c_bcast.poll().await {
             term_relay_pump.publish(data);
-        }
-    });
-
-    let ctrl_tx_ws = ctrl_tx_ipc.clone();
-    let term_relay_app = Arc::clone(&term_relay);
-
-    let ws_app =
-        axum::Router::new().route(
-            "/terminal",
-            axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade| {
-                let ctrl_tx = ctrl_tx_ws.clone();
-                let (replay, term_rx) = term_relay_app.subscribe();
-                async move {
-                    ws.on_upgrade(move |socket| terminal::handle_terminal_socket(socket, ctrl_tx, replay, term_rx))
-                }
-            }),
-        );
-
-    tokio::spawn(async move {
-        if let Err(e) = axum::serve(ws_listener, ws_app).await {
-            error!("WS server error: {}", e);
         }
     });
 

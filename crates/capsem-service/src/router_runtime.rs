@@ -1,8 +1,13 @@
 use super::*;
 
+mod exposures;
+pub(crate) mod restart;
+mod streams;
+
 pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
     Router::new()
         .route("/status", get(handle_service_status))
+        .route("/restart", post(restart::handle_restart))
         .route("/update/status", get(handle_update_status))
         .route("/system/status", get(handle_system_status))
         .route("/update/check", post(handle_update_check))
@@ -32,12 +37,37 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/status", get(handle_vm_status))
+        .route("/vms/{id}/container", get(container_setup::handle_container_status))
+        .route("/vms/{id}/stream", get(streams::handle_stream))
+        .route(
+            "/vms/{id}/exposures",
+            get(exposures::handle_list_exposures).post(exposures::handle_create_exposure),
+        )
+        .route(
+            "/vms/{id}/exposures/{exposure_id}",
+            delete(exposures::handle_delete_exposure),
+        )
+        .route(
+            "/vms/{id}/exposures/{exposure_id}/preview-session",
+            delete(exposures::handle_revoke_preview_sessions),
+        )
+        .route(
+            "/internal/vms/{id}/exposures/{exposure_id}/preview-session",
+            post(exposures::handle_create_preview_session),
+        )
+        .route(
+            "/internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap",
+            post(exposures::handle_exchange_preview_bootstrap),
+        )
+        .route(
+            "/internal/vms/{id}/exposures/{exposure_id}/preview-admission",
+            post(exposures::handle_admit_preview_connection),
+        )
         .route("/vms/{id}/snapshots/status", get(handle_vm_snapshots_status))
         .route("/vms/{id}/snapshots/list", get(handle_vm_snapshots_list))
+        .route("/vms/{id}/changes", get(handle_vm_changes))
         .route("/vms/{id}/logs", get(handle_logs))
         .route("/vms/{id}/exec", post(handle_exec))
-        .route("/vms/{id}/files/write", post(handle_write_file))
-        .route("/vms/{id}/files/read", post(handle_read_file))
         .route("/vms/{id}/stop", post(handle_stop))
         .route("/vms/{id}/pause", post(handle_suspend))
         .route("/vms/{id}/delete", delete(handle_delete))
@@ -208,6 +238,9 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             "/vms/{id}/files/content",
             get(handle_download_file).post(handle_upload_file),
         )
+        // Accept what the gateway forwards; axum's implicit 2 MiB default
+        // refused file uploads the API documents.
+        .layer(axum::extract::DefaultBodyLimit::max(capsem_api::MAX_REQUEST_BODY_BYTES))
         .layer(TraceLayer::new_for_http().on_request(()).on_response(()))
         .with_state(state)
 }
@@ -312,7 +345,7 @@ pub(super) async fn handle_update_apply(
 
 pub(super) fn planned_update_response(plan: api::UpdateCommandPlan) -> api::UpdateActionResponse {
     api::UpdateActionResponse {
-        status: "planned".to_string(),
+        status: api::UpdateActionStatus::Planned,
         command: plan,
         exit_code: None,
         stdout: None,
@@ -334,7 +367,7 @@ pub(super) async fn execute_update_apply(
 ) -> Result<api::UpdateActionResponse, AppError> {
     let _update_guard = state.update_lock.lock().await;
     let response = execute_update_command_unlocked(plan).await?;
-    if response.status == "succeeded" {
+    if response.status == api::UpdateActionStatus::Succeeded {
         reload_activated_update_runtime(state)?;
     }
     Ok(response)
@@ -353,9 +386,13 @@ pub(super) async fn execute_update_command_unlocked(
                 format!("failed to start update command: {error}"),
             )
         })?;
-    let status = if output.status.success() { "succeeded" } else { "failed" };
+    let status = if output.status.success() {
+        api::UpdateActionStatus::Succeeded
+    } else {
+        api::UpdateActionStatus::Failed
+    };
     Ok(api::UpdateActionResponse {
-        status: status.to_string(),
+        status,
         command: plan,
         exit_code: output.status.code(),
         stdout: Some(String::from_utf8_lossy(&output.stdout).to_string()),
@@ -430,7 +467,7 @@ pub(super) async fn run_automatic_update_once(state: &ServiceState) -> Automatic
         Ok(response) => response,
         Err(error) => return AutomaticUpdateOutcome::Failed(error.1),
     };
-    if response.status != "succeeded" {
+    if response.status != api::UpdateActionStatus::Succeeded {
         let detail = response
             .stderr
             .as_deref()

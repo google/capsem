@@ -11,6 +11,7 @@ pub mod corp_provision;
 mod lint;
 mod loader;
 mod ownership;
+mod profile_catalog;
 mod profile_contract;
 mod provider_profile;
 mod resolver;
@@ -25,6 +26,7 @@ pub use capsem_config::*;
 pub use lint::load_merged_lint;
 pub use loader::*;
 pub use ownership::*;
+pub use profile_catalog::*;
 pub use profile_contract::*;
 pub use tree::load_settings_tree;
 

@@ -1,6 +1,7 @@
 """Verify guest network configuration after boot."""
 
 import pytest
+from helpers.service import exec_output_text
 
 pytestmark = pytest.mark.guest
 
@@ -12,14 +13,14 @@ class TestGuestNetwork:
         client, name = guest_env
         resp = client.post(f"/vms/{name}/exec", {"command": "ip link show lo"})
         assert resp is not None
-        assert "lo" in resp.get("stdout", "")
+        assert "lo" in exec_output_text(resp)
 
     def test_dummy_interface_exists(self, guest_env):
         """Guest has a dummy0 interface for network isolation."""
         client, name = guest_env
         resp = client.post(f"/vms/{name}/exec", {"command": "ip link show dummy0"})
-        stdout = resp.get("stdout", "") if resp else ""
-        stderr = resp.get("stderr", "") if resp else ""
+        stdout = exec_output_text(resp) if resp else ""
+        stderr = exec_output_text(resp, "stderr") if resp else ""
         # dummy0 might exist or the network might use a different scheme
         assert "dummy0" in stdout or "does not exist" in stderr or resp is not None
 
@@ -27,7 +28,7 @@ class TestGuestNetwork:
         """Guest has iptables-nft REDIRECT to proxy port."""
         client, name = guest_env
         resp = client.post(f"/vms/{name}/exec", {"command": "iptables-nft -t nat -S 2>/dev/null || true"})
-        stdout = resp.get("stdout", "") if resp else ""
+        stdout = exec_output_text(resp) if resp else ""
         assert "--dport 443 -j REDIRECT --to-ports 10443" in stdout
         assert "--dport 80 -j REDIRECT --to-ports 10080" in stdout
         assert "--dport 3713 -j REDIRECT --to-ports 10080" in stdout
@@ -36,7 +37,7 @@ class TestGuestNetwork:
         """capsem-net-proxy is listening on the expected port."""
         client, name = guest_env
         resp = client.post(f"/vms/{name}/exec", {"command": "ss -tlnp 2>/dev/null || true"})
-        stdout = resp.get("stdout", "") if resp else ""
+        stdout = exec_output_text(resp) if resp else ""
         assert ":10443 " in stdout, stdout
         assert ":10080 " in stdout, stdout
 
@@ -44,7 +45,7 @@ class TestGuestNetwork:
         """resolv.conf points to localhost (dnsmasq)."""
         client, name = guest_env
         resp = client.post(f"/vms/{name}/exec", {"command": "cat /etc/resolv.conf"})
-        stdout = resp.get("stdout", "") if resp else ""
+        stdout = exec_output_text(resp) if resp else ""
         assert "127.0.0.1" in stdout or "localhost" in stdout, (
             f"Expected localhost in resolv.conf, got: {stdout}"
         )
@@ -56,7 +57,7 @@ class TestGuestNetwork:
             f"/vms/{name}/exec",
             {"command": "cat /etc/hosts; getent hosts localhost"},
         )
-        stdout = resp.get("stdout", "") if resp else ""
+        stdout = exec_output_text(resp) if resp else ""
         assert "127.0.0.1 localhost" in stdout, (
             f"Expected IPv4 localhost entry in /etc/hosts, got: {stdout}"
         )
@@ -69,6 +70,6 @@ class TestGuestNetwork:
         client, name = guest_env
         resp = client.post(f"/vms/{name}/exec", {"command": "ping -c 1 -W 2 8.8.8.8 2>&1; echo exit=$?"})
         print(f"DEBUG: {resp}")
-        stdout = resp.get("stdout", "") if resp else ""
+        stdout = exec_output_text(resp) if resp else ""
         # Ping should fail in an air-gapped VM
         assert "exit=1" in stdout or "exit=2" in stdout or "unreachable" in stdout.lower() or "100% packet loss" in stdout

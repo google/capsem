@@ -4,6 +4,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
 mod security;
+mod sessions;
 
 fn source_fixture() -> Arc<Source> {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
@@ -270,7 +271,13 @@ async fn serve_fixture(
     let result = broker::serve(
         owner.clone(),
         owner
-            .accept_publication(listener, guest_port, cancellation.clone())
+            .accept_publication(
+                listener,
+                uuid::Uuid::new_v4(),
+                guest_port,
+                capsem_proto::PublicationTarget::Container,
+                cancellation.clone(),
+            )
             .unwrap(),
         control,
         router.clone(),
@@ -352,7 +359,13 @@ async fn shared_admission_budget(budgets: capsem_config::router::RouterConfig, e
             owner.clone(),
             owner
                 .clone()
-                .accept_publication(listener, guest_port, cancellation.clone())
+                .accept_publication(
+                    listener,
+                    uuid::Uuid::new_v4(),
+                    guest_port,
+                    capsem_proto::PublicationTarget::Container,
+                    cancellation.clone(),
+                )
                 .unwrap(),
             control.clone(),
             router.clone(),
@@ -637,7 +650,7 @@ async fn child_control_eof_cancels_guest_setup_and_closes_accepted_tcp() {
         CancellationToken::new(),
     ));
     let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
-    let ServiceToProcess::ConnectPort { flow, port: 6379 } = requests.recv().await.unwrap() else {
+    let ServiceToProcess::ConnectPort { flow, port: 6379, .. } = requests.recv().await.unwrap() else {
         panic!("expected guest setup");
     };
     drop(child);
@@ -656,5 +669,32 @@ async fn child_control_eof_cancels_guest_setup_and_closes_accepted_tcp() {
             .unwrap_err()
             .kind(),
         std::io::ErrorKind::ConnectionReset
+    );
+}
+
+#[test]
+fn preview_bootstrap_and_handoff_credentials_are_scoped_and_single_use() {
+    let (incoming, _requests) = mpsc::channel(1);
+    let preview = PreviewState::new(incoming);
+    let bootstrap = preview.create_session().unwrap();
+    let session = preview.exchange(&bootstrap).unwrap();
+    assert!(
+        preview.exchange(&bootstrap).is_err(),
+        "a bootstrap token must not replay"
+    );
+    assert!(preview
+        .admit("not-a-session", capsem_proto::PreviewAdmissionKind::Request)
+        .is_err());
+
+    let handoff = preview
+        .admit(&session, capsem_proto::PreviewAdmissionKind::WebsocketUpgrade)
+        .unwrap();
+    assert_eq!(
+        preview.redeem(handoff).map(|(kind, _)| kind),
+        Some(capsem_proto::PreviewAdmissionKind::WebsocketUpgrade)
+    );
+    assert!(
+        preview.redeem(handoff).is_none(),
+        "a descriptor handoff must not replay"
     );
 }

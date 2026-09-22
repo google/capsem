@@ -18,6 +18,7 @@ from contextlib import contextmanager
 
 from . import snapshot
 from .cachetooling import CompilerCache
+from .cargotarget import CheckoutBuildRoot
 from .config import GateConfig
 from .errors import GateError
 from .lifecycle import Resource, held
@@ -83,6 +84,7 @@ def holdings(
         return declared
     return (
         StaleProcesses(config, runner),
+        CheckoutBuildRoot(config, runner),
         CompilerCache(config, runner),
         *declared,
     )

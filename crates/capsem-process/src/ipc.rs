@@ -15,8 +15,10 @@ use crate::mcp_runtime::McpRuntime;
 use crate::runtime_config::RuntimeProfileSource;
 use crate::terminal::TerminalRelay;
 
+mod container_pull;
 mod exec;
 mod private;
+mod publication;
 mod snapshot;
 use snapshot::snapshot_status_from_scheduler;
 
@@ -50,7 +52,7 @@ const GUEST_FILE_WRITE_MODE: u32 = 0o644;
 /// Negotiate the synchronous Hello side-channel away from Tokio's worker
 /// threads, then hand the verified socket to the typed async IPC transport.
 /// A peer mismatch is a refused connection, not a process-fatal error.
-async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<ProcessIpcChannel>> {
+async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<(ProcessIpcChannel, bool)>> {
     let std_stream = stream.into_std()?;
     let traceparent = capsem_foundation::telemetry::current_parent_traceparent();
     let (std_stream, handshake) = tokio::task::spawn_blocking(move || {
@@ -62,15 +64,18 @@ async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<Proce
     .await
     .context("join IPC handshake task")?;
 
-    match handshake {
-        Ok(peer) => info!(target: "ipc", peer = %peer.peer, "IPC handshake ok"),
+    let stream_role = match handshake {
+        Ok(peer) => {
+            info!(target: "ipc", peer = %peer.peer, "IPC handshake ok");
+            peer.peer == capsem_proto::handshake::STREAM_PEER_ID
+        }
         Err(error) => {
             error!(target: "ipc", %error, "IPC handshake failed; refusing connection");
             return Ok(None);
         }
-    }
+    };
 
-    Ok(Some(channel_from_std(std_stream)?))
+    Ok(Some((channel_from_std(std_stream)?, stream_role)))
 }
 
 async fn await_exec_result(j_rx: oneshot::Receiver<JobResult>) -> Result<JobResult, String> {
@@ -132,14 +137,13 @@ pub(crate) async fn handle_ipc_connection(
     // First frame on every IPC connection is a Hello -- detect cross-version
     // mixes (capsem-service built before X, capsem-process built after) in
     // ~1s with a structured log line instead of a 30s silent timeout.
-    let Some((tx, rx)) = open_ipc_channel(stream).await? else {
+    let Some(((tx, rx), stream_role)) = open_ipc_channel(stream).await? else {
         return Ok(());
     };
 
-    // Serialize all IPC writes through a single channel to prevent concurrent
-    // sendmsg() interleaving that corrupts the data stream. tokio_unix_ipc's
-    // Sender::send() writes header + payload as two separate syscalls with no
-    // internal locking, so concurrent use from multiple tasks is unsafe.
+    // Funnel owner output through one bounded queue. The transport also locks
+    // each complete frame, while this queue supplies connection-level
+    // backpressure and one place to stop after a write failure.
     let (ipc_tx_out, mut ipc_rx_out) = mpsc::channel::<ProcessToService>(256);
     let mut connection_tasks = tokio::task::JoinSet::new();
     connection_tasks.spawn(async move {
@@ -155,7 +159,8 @@ pub(crate) async fn handle_ipc_connection(
     // is high-volume and still opt-in via StartTerminalStream. Without this,
     // a suspend-only connection never sees StateChanged { state: "Suspended" }
     // and the service times out waiting for confirmation.
-    {
+    // A stream-role connection carries one stream and nothing else.
+    if !stream_role {
         let out_tx = ipc_tx_out.clone();
         let mut rx_bcast = ipc_tx.subscribe();
         connection_tasks.spawn(async move {
@@ -174,6 +179,7 @@ pub(crate) async fn handle_ipc_connection(
     // StopTerminalStream and connection teardown can abort it instead of
     // letting it outlive the IPC connection.
     let mut stream_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut connection_execs = std::collections::HashSet::new();
 
     loop {
         let received = tokio::select! {
@@ -232,12 +238,21 @@ pub(crate) async fn handle_ipc_connection(
                             return;
                         }
                     }
-                    while let Ok(data) = term_rx.recv().await {
-                        warn_if_ipc_shaped(&data);
-                        if out_tx.send(ProcessToService::TerminalOutput { data }).await.is_err() {
-                            break;
+                    let reason = loop {
+                        match term_rx.recv().await {
+                            Ok(data) => {
+                                warn_if_ipc_shaped(&data);
+                                if out_tx.send(ProcessToService::TerminalOutput { data }).await.is_err() {
+                                    return;
+                                }
+                            }
+                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                                break format!("terminal output fell behind by {skipped} chunks");
+                            }
+                            Err(broadcast::error::RecvError::Closed) => break "terminal closed".to_string(),
                         }
-                    }
+                    };
+                    let _ = out_tx.send(ProcessToService::TerminalStreamEnded { reason }).await;
                 });
                 stream_task = Some(h);
             }
@@ -273,47 +288,90 @@ pub(crate) async fn handle_ipc_connection(
                     ServiceToProcess::ExecStream { id, command } => (id, command, true),
                     _ => unreachable!(),
                 };
+                connection_execs.insert(id);
+                // Registered here, inline, so stdin arriving immediately after
+                // this frame finds the exec running.
+                let registration = exec::install(id, streaming, &job_store, &ipc_tx_out);
                 tokio::spawn(exec::run(
                     id,
                     command,
-                    streaming,
                     Arc::clone(&job_store),
                     ctrl_tx.clone(),
                     ipc_tx_out.clone(),
                     Arc::clone(&net_state.db),
+                    registration,
                 ));
+            }
+            ServiceToProcess::ExecStreamInput { id, data } => {
+                if let Err(error) = exec::input(id, capsem_proto::ExecInputFrame::Data(data), &job_store) {
+                    warn!(id, %error, "exec stdin input refused");
+                }
+            }
+            ServiceToProcess::ExecStreamCloseStdin { id } => {
+                if let Err(error) = exec::input(id, capsem_proto::ExecInputFrame::StdinEof, &job_store) {
+                    warn!(id, %error, "exec stdin EOF refused");
+                }
+            }
+            ServiceToProcess::CancelExec { id } => {
+                if let Err(error) = exec::cancel(id, &job_store, &ctrl_tx).await {
+                    warn!(id, %error, "exec cancellation failed");
+                }
             }
             ServiceToProcess::PublishPort {
                 id,
                 host_port,
                 guest_port,
-            } => {
-                let jobs = job_store.clone();
-                let control = ctrl_tx.clone();
-                let output = ipc_tx_out.clone();
-                tokio::spawn(async move {
-                    let response = match jobs.publisher.publish_saved(host_port, guest_port, control).await {
-                        Ok(publication) => {
-                            let response = ProcessToService::PortPublished {
-                                id,
-                                host_port: publication.host_port,
-                                router_pid: publication.router_pid,
-                                error: None,
-                            };
-                            let mut publications = jobs.publications.lock().unwrap();
-                            publications.retain(|p| !p.is_finished());
-                            publications.push(publication);
-                            response
-                        }
-                        Err(error) => ProcessToService::PortPublished {
-                            id,
-                            host_port: 0,
-                            router_pid: 0,
-                            error: Some(format!("{error:#}")),
-                        },
-                    };
-                    capsem_core::try_send!("publication_result", output.send(response).await);
-                });
+                target,
+            } => publication::spawn_declare(
+                &job_store,
+                &ctrl_tx,
+                &ipc_tx_out,
+                id,
+                None,
+                host_port,
+                guest_port,
+                target,
+            ),
+            ServiceToProcess::DeclarePreview {
+                id,
+                listener_port,
+                guest_port,
+                target,
+            } => publication::spawn_declare(
+                &job_store,
+                &ctrl_tx,
+                &ipc_tx_out,
+                id,
+                Some(listener_port),
+                0,
+                guest_port,
+                target,
+            ),
+            message @ ServiceToProcess::AdmitContainerPull { .. } => {
+                container_pull::spawn(&job_store, &ipc_tx_out, message)
+            }
+            ServiceToProcess::RevokeExposure { id, exposure_id } => {
+                publication::spawn_revoke(&job_store, &ipc_tx_out, id, exposure_id)
+            }
+            ServiceToProcess::CreatePreviewSession { id, exposure_id } => {
+                publication::create_session(&job_store, &ipc_tx_out, id, &exposure_id).await;
+            }
+            ServiceToProcess::RevokePreviewSessions { id, exposure_id } => {
+                publication::revoke_sessions(&job_store, &ipc_tx_out, id, &exposure_id).await;
+            }
+            ServiceToProcess::ExchangePreviewBootstrap {
+                id,
+                exposure_id,
+                bootstrap_token,
+            } => publication::exchange_bootstrap(&job_store, &ipc_tx_out, id, &exposure_id, &bootstrap_token).await,
+            ServiceToProcess::AdmitPreviewConnection {
+                id,
+                exposure_id,
+                session_token,
+                kind,
+            } => publication::admit(&job_store, &ipc_tx_out, id, &exposure_id, &session_token, kind).await,
+            ServiceToProcess::ListPublications { id } => {
+                publication::list(&job_store, &ipc_tx_out, id).await;
             }
             ServiceToProcess::ConnectPort { .. }
             | ServiceToProcess::AbortPorts { .. }
@@ -743,7 +801,7 @@ pub(crate) async fn handle_ipc_connection(
                                     original_name: t.original_name,
                                     description: t.description,
                                     server_name: t.server_name,
-                                    annotations: t.annotations.as_ref().map(|a| a.to_mcp_json()),
+                                    annotations: t.annotations,
                                 })
                                 .collect();
                             capsem_core::try_send!(
@@ -841,10 +899,9 @@ pub(crate) async fn handle_ipc_connection(
                 let mcp = Arc::clone(&mcp_runtime);
                 let ipc_tx_out = ipc_tx_out.clone();
                 tokio::spawn(async move {
-                    // arguments travels as a JSON string because bincode
-                    // (tokio-unix-ipc's wire format) cannot round-trip
-                    // serde_json::Value through its non-self-describing
-                    // deserialize_any. See crates/capsem-proto/src/ipc.rs.
+                    // The MCP boundary remains JSON even though internal IPC
+                    // is MessagePack, so its dynamic result shape stays owned
+                    // by the MCP contract rather than the transport.
                     let arguments: serde_json::Value =
                         serde_json::from_str(&arguments_json).unwrap_or(serde_json::Value::Null);
                     let request = capsem_proto::mcp_contracts::JsonRpcRequest {
@@ -898,6 +955,11 @@ pub(crate) async fn handle_ipc_connection(
             }
         }
     }
+    for id in connection_execs {
+        if let Err(error) = exec::cancel(id, &job_store, &ctrl_tx).await {
+            warn!(id, %error, "IPC disconnect could not cancel exec");
+        }
+    }
     // Connection ended: cancel any in-flight stream task. Without this the
     // task lives on the runtime, holds its `out_tx`, and may attempt one
     // more send after the client has already closed the IPC socket --
@@ -907,52 +969,6 @@ pub(crate) async fn handle_ipc_connection(
         h.abort();
     }
     Ok(())
-}
-
-/// Maps an IPC ServiceToProcess message to the action category it triggers.
-/// Used for dispatch validation and testing.
-#[cfg(test)]
-fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
-    match msg {
-        ServiceToProcess::StartTerminalStream => IpcAction::StreamSetup,
-        ServiceToProcess::StopTerminalStream => IpcAction::StreamSetup,
-        ServiceToProcess::Ping => IpcAction::HealthCheck,
-        ServiceToProcess::TerminalInput { .. } => IpcAction::Forward,
-        ServiceToProcess::TerminalResize { .. } => IpcAction::Forward,
-        ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => IpcAction::Job,
-        ServiceToProcess::PublishPort { .. } => IpcAction::Job,
-        ServiceToProcess::ConnectPort { .. }
-        | ServiceToProcess::AbortPorts { .. }
-        | ServiceToProcess::PlugCable { .. }
-        | ServiceToProcess::UnplugCable { .. } => IpcAction::Unexpected,
-        ServiceToProcess::LinkAttach { .. } | ServiceToProcess::LinkDetach { .. } => IpcAction::Job,
-        ServiceToProcess::WriteFile { .. } => IpcAction::Job,
-        ServiceToProcess::ReadFile { .. } => IpcAction::Job,
-        ServiceToProcess::LogFileBoundary { .. } => IpcAction::Job,
-        ServiceToProcess::ReloadConfig => IpcAction::Reload,
-        ServiceToProcess::Shutdown => IpcAction::Lifecycle,
-        ServiceToProcess::Suspend { .. } => IpcAction::Lifecycle,
-        ServiceToProcess::PrepareSnapshot | ServiceToProcess::Unfreeze | ServiceToProcess::Resume => {
-            IpcAction::Unexpected
-        }
-        ServiceToProcess::McpListServers { .. }
-        | ServiceToProcess::McpListTools { .. }
-        | ServiceToProcess::McpRefreshTools { .. }
-        | ServiceToProcess::McpCallTool { .. }
-        | ServiceToProcess::SnapshotStatus { .. } => IpcAction::Job,
-    }
-}
-
-#[cfg(test)]
-#[derive(Debug, PartialEq)]
-enum IpcAction {
-    StreamSetup,
-    HealthCheck,
-    Forward,
-    Job,
-    Reload,
-    Lifecycle,
-    Unexpected,
 }
 
 #[cfg(test)]

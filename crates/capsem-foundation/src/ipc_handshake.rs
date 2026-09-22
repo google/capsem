@@ -1,11 +1,11 @@
-//! Side-channel handshake for the typed bincode IPC channels.
+//! Side-channel handshake for the typed MessagePack IPC channels.
 //!
 //! Run [`negotiate_initiator`] / [`negotiate_responder`] on a fresh
 //! `std::os::unix::net::UnixStream` *before* handing it to
 //! `ipc_channel::channel_from_std`. The handshake writes/reads a
 //! length-prefixed `[u32 BE len][rmp-serde encoded Hello]` frame on the
 //! raw socket. After both sides verify, ownership of the stream returns
-//! to the caller and the bincode channel layer takes over.
+//! to the caller and the bounded channel layer takes over.
 //!
 //! This is intentionally a side-channel rather than wrapping every
 //! `Sender<T>` in `Frame<T>` because (a) it keeps the W1 try_send! sites
@@ -173,7 +173,7 @@ fn read_hello(stream: &mut UnixStream, timeout: Duration) -> Result<Hello, Hands
         rmp_serde::from_slice::<Hello>(&buf).map_err(|e| HandshakeError::Decode(format!("decode Hello: {e}")))
     })();
 
-    // Restore the previous timeout so the bincode channel that takes
+    // Restore the previous timeout so the async channel that takes
     // over after handshake doesn't inherit our 5-second cap.
     let _ = stream.set_read_timeout(prev_timeout);
     result

@@ -13,7 +13,6 @@ use capsem_logger::{
 use serde::ser::{SerializeStruct, Serializer};
 use serde::Serialize;
 use serde_json::json;
-use uuid::Uuid;
 
 use crate::credential_broker::{BrokeredUpstreamCredentials, CredentialInjection, CredentialObservation};
 use crate::net::ai_traffic::provider::ProviderKind;
@@ -23,6 +22,10 @@ use crate::net::policy_config::{
 };
 
 mod builtin_actions;
+mod container;
+pub use container::ContainerSecurityEvent;
+mod event_id;
+pub use event_id::SecurityEventId;
 mod forensics;
 pub mod network;
 use forensics::{
@@ -47,29 +50,6 @@ use file_facts::explicit_primary_file_event;
 pub use file_facts::{security_event_from_explicit_file_event, security_event_from_file_event};
 mod event_type;
 pub use event_type::{RuntimeSecurityEventFamily, RuntimeSecurityEventType, SecurityEventTypeParseError};
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SecurityEventId(String);
-
-impl SecurityEventId {
-    pub fn new_uuid4() -> Self {
-        let value = Uuid::new_v4().simple().to_string();
-        Self(value[..12].to_string())
-    }
-
-    pub fn parse(value: impl Into<String>) -> Result<Self, String> {
-        let value = value.into();
-        if value.len() == 12 && value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')) {
-            Ok(Self(value))
-        } else {
-            Err("security event id must be 12 lowercase hex characters".to_string())
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
 
 pub async fn emit_file_security_write_and_rules(
     db: &DbWriter,
@@ -1226,6 +1206,7 @@ pub struct SecurityPluginExecution {
 /// transport should hang off `SecurityEventEmitter`, not protocol-owned writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityEvent {
+    pub container: Option<ContainerSecurityEvent>,
     pub network: Option<NetworkSecurityEvent>,
     pub event_type: RuntimeSecurityEventType,
     pub trace_id: Option<String>,
@@ -1250,6 +1231,7 @@ pub struct SecurityEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SerializableSecurityEvent {
+    pub container: Option<ContainerSecurityEvent>,
     pub network: Option<NetworkSecurityEvent>,
     pub event_type: String,
     pub trace_id: Option<String>,
@@ -1272,6 +1254,7 @@ pub struct SerializableSecurityEvent {
 impl From<&SecurityEvent> for SerializableSecurityEvent {
     fn from(event: &SecurityEvent) -> Self {
         Self {
+            container: event.container.clone(),
             network: event.network.clone(),
             event_type: event.event_type.as_str().to_string(),
             trace_id: event.trace_id.clone(),
@@ -1300,6 +1283,7 @@ impl From<&SecurityEvent> for SerializableSecurityEvent {
 impl SecurityEvent {
     pub fn new(event_type: RuntimeSecurityEventType) -> Self {
         Self {
+            container: None,
             network: None,
             event_type,
             trace_id: None,
@@ -1441,6 +1425,9 @@ pub use capsem_config::SECURITY_EVENT_CEL_FIELDS;
 
 impl PolicySubject for SecurityEvent {
     fn get_policy_field(&self, field: &str) -> Option<PolicySubjectValue<'_>> {
+        if let Some(rest) = field.strip_prefix("container.") {
+            return self.container.as_ref().and_then(|event| event.get(rest));
+        }
         if let Some(rest) = field.strip_prefix("network.") {
             return self.network.as_ref().and_then(|event| event.get(rest));
         }

@@ -43,9 +43,12 @@ fn verify_matches_when_ours() {
 #[test]
 fn verify_detects_version_mismatch() {
     let mut h = Hello::ours("capsem-process-old", "");
-    h.version = h.version.wrapping_add(1);
+    h.version = 7;
     let err = verify(&h).unwrap_err();
-    assert!(matches!(err, HandshakeError::Version { .. }), "{err:?}");
+    assert!(
+        matches!(err, HandshakeError::Version { ours: 9, peer: 7, .. }),
+        "{err:?}"
+    );
     let msg = err.to_string();
     assert!(msg.contains("capsem-process-old"), "msg should name peer: {msg}");
 }

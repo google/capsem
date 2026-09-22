@@ -66,7 +66,7 @@ use util::{
     parse_http_host_target, provider_label, request_can_replay_empty_body, split_path_query,
 };
 
-pub use mcp_endpoint::{McpEndpointState, McpTimeouts};
+pub use mcp_endpoint::{McpEndpointState, McpTimeouts, ScopedMcpTools};
 pub use mcp_frame::dispatch_logged_mcp_request;
 
 /// Re-exported so capsem-app can reference the type without depending on rustls.

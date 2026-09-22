@@ -28,7 +28,7 @@ use capsem_core::security_engine::{RuntimeSecurityEventType, SecurityEnforcement
 use capsem_core::VsockConnection;
 use capsem_foundation::unix::router_channel::{Receiver, Sender};
 use capsem_proto::ipc::ServiceToProcess;
-use capsem_proto::privatelink::{decode_seat_frame, seat_frame, SEAT_LINK};
+use capsem_proto::privatelink::{decode_seat_frame, seat_frame, SEAT_LINK, SEAT_PREVIEW};
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::os::fd::AsRawFd;
@@ -294,6 +294,18 @@ impl Cables {
             .await
             .context("seat frame timed out")??;
         let (kind, token) = decode_seat_frame(&frame.bytes).map_err(anyhow::Error::msg)?;
+        if kind == SEAT_PREVIEW {
+            ensure!(frame.fds.len() == 1, "a preview handoff carries one descriptor");
+            let source = capsem_core::container::publish::Source(std::net::TcpStream::from(
+                frame.fds.into_iter().next().unwrap(),
+            ));
+            self.publisher.accept_preview_handoff(token, source).await?;
+            Sender::new(socket)?
+                .send(&seat_frame(SEAT_PREVIEW, token), &[])
+                .await
+                .context("acknowledge preview descriptor adoption")?;
+            return Ok(());
+        }
         ensure!(kind == SEAT_LINK, "seat frame kind {kind} is not a plug request");
         ensure!(frame.fds.is_empty(), "a plug request carries no descriptor");
         drop(receiver);

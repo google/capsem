@@ -1,10 +1,12 @@
 mod auth;
 mod cors;
 mod listener;
+mod preview;
 mod proxy;
+mod schema;
 mod service_client;
 mod status;
-mod terminal;
+mod stream;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -64,6 +66,7 @@ pub struct AppState {
     pub auth_failures: AuthFailureTracker,
     /// Broadcast channel for real-time events to WebSocket /events clients.
     pub events_tx: tokio::sync::broadcast::Sender<String>,
+    pub previews: preview::PreviewState,
 }
 
 #[tokio::main]
@@ -128,9 +131,15 @@ async fn main() -> Result<()> {
         .context("failed to bind TCP listener")?;
     let bound_port = listener.local_addr().context("failed to read bound TCP port")?.port();
 
-    // Generate auth token and write runtime files (token/port/pid).
+    let preview_listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .await
+        .context("failed to bind preview listener")?;
+    let preview_port = preview_listener.local_addr()?.port();
+
+    // Generate auth token and write runtime files only after both listeners
+    // exist. gateway.token is the final readiness marker.
     let token = auth::generate_token();
-    let auth_state = AuthState::new(&run_dir, &token, bound_port)?;
+    let auth_state = AuthState::new(&run_dir, &token, bound_port, preview_port)?;
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<String>(64);
     let service_client = ServiceClient::new(&uds_path);
@@ -141,6 +150,12 @@ async fn main() -> Result<()> {
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx,
+        previews: preview::PreviewState::new(preview_port),
+    });
+
+    let preview_state = state.clone();
+    tokio::spawn(async move {
+        preview::serve(preview_listener, preview_state).await;
     });
 
     let app = Router::new()
@@ -148,8 +163,8 @@ async fn main() -> Result<()> {
         .route("/health", get(handle_health))
         .route("/token", get(handle_token))
         .route("/status", get(status::handle_status))
-        .route("/terminal/{id}", get(terminal::handle_terminal_ws))
         .route("/events", get(handle_events_ws))
+        .merge(schema::routes())
         .merge(service_proxy_routes())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -201,6 +216,7 @@ fn gateway_run_dir(args: &Args) -> PathBuf {
 fn service_proxy_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/version", get(proxy::handle_proxy))
+        .route("/restart", post(proxy::handle_proxy))
         .route("/update/status", get(proxy::handle_proxy))
         .route("/system/status", get(proxy::handle_proxy))
         .route("/update/check", post(proxy::handle_proxy))
@@ -216,12 +232,22 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/list", get(proxy::handle_proxy))
         .route("/vms/{id}/info", get(proxy::handle_proxy))
         .route("/vms/{id}/status", get(proxy::handle_proxy))
+        .route("/vms/{id}/container", get(proxy::handle_proxy))
+        .route("/vms/{id}/stream", get(stream::handle_stream_tunnel))
+        .route(
+            "/vms/{id}/exposures",
+            get(proxy::handle_proxy).post(proxy::handle_proxy),
+        )
+        .route("/vms/{id}/exposures/{exposure_id}", delete(proxy::handle_proxy))
+        .route(
+            "/vms/{id}/exposures/{exposure_id}/preview-session",
+            post(preview::create_session).delete(proxy::handle_proxy),
+        )
         .route("/vms/{id}/snapshots/status", get(proxy::handle_proxy))
         .route("/vms/{id}/snapshots/list", get(proxy::handle_proxy))
+        .route("/vms/{id}/changes", get(proxy::handle_proxy))
         .route("/vms/{id}/logs", get(proxy::handle_proxy))
         .route("/vms/{id}/exec", post(proxy::handle_proxy))
-        .route("/vms/{id}/files/write", post(proxy::handle_proxy))
-        .route("/vms/{id}/files/read", post(proxy::handle_proxy))
         .route("/vms/{id}/stop", post(proxy::handle_proxy))
         .route("/vms/{id}/pause", post(proxy::handle_proxy))
         .route("/vms/{id}/delete", delete(proxy::handle_proxy))
@@ -420,7 +446,7 @@ async fn handle_events_ws(
 ///
 /// tower-http's default span records the full URI at debug, and the gateway
 /// log runs `tower_http=debug`. The browser WebSocket API cannot set headers,
-/// so `/events` and `/terminal/{id}` authenticate with `?token=`; with the
+/// so `/events` and `/vms/{id}/stream` authenticate with `?token=`; with the
 /// default span every such request wrote the bearer token into gateway.log.
 fn request_trace_layer() -> TraceLayer<
     tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,

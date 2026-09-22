@@ -20,9 +20,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from helpers import failures
 from helpers.constants import ASSETS_DIR, EXEC_READY_TIMEOUT, PROFILES_DIR
 from helpers.http_transport import Transport
-from helpers.service import make_capsem_tmp_dir, preserve_tmp_dir_on_failure
+from helpers.service import make_service_home_run_dirs, preserve_tmp_dir_on_failure
 from helpers.sign import sign_binary
 from log_streams import read_log_stream
 
@@ -30,7 +31,6 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 SERVICE_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem-service"
 PROCESS_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem-process"
 CLI_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem"
-MCP_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem-mcp"
 
 pytestmark = pytest.mark.e2e
 
@@ -48,13 +48,17 @@ class RealService:
     """
 
     def __init__(self):
-        self.tmp_dir = make_capsem_tmp_dir("capsem-e2e-")
+        # The installed layout: CAPSEM_HOME owns run/, and sessions/main.db
+        # sits beside it. One directory for both put main.db in the run-wide
+        # temporary parent, shared by every worker's service.
+        self.home_dir, self.tmp_dir = make_service_home_run_dirs()
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.proc = None
         self._log_file = None
         self._stderr_file = None
 
     def start(self):
+        failures.LIVE_HOMES.add(self.home_dir)
         sign_binary(PROCESS_BINARY)
         sign_binary(SERVICE_BINARY)
 
@@ -64,12 +68,12 @@ class RealService:
         env = os.environ.copy()
         env["RUST_LOG"] = "capsem=debug"
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
-        env["CAPSEM_HOME"] = str(self.tmp_dir)
+        env["CAPSEM_HOME"] = str(self.home_dir)
         env["CAPSEM_PROFILES_DIR"] = str(PROFILES_DIR)
         env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
-            self.tmp_dir / "credential-store.json"
+            self.home_dir / "credential-store.json"
         )
-        env["HOME"] = str(self.tmp_dir)
+        env["HOME"] = str(self.home_dir)
 
         log_path = self.tmp_dir / "service.log"
         stderr_path = self.tmp_dir / "service.stderr.log"
@@ -126,8 +130,9 @@ class RealService:
             self._stderr_file.close()
         # The service is session-scoped; its home belongs to every test this
         # worker ran, not only to the last PYTEST_CURRENT_TEST value.
-        preserve_tmp_dir_on_failure(self.tmp_dir, any_worker_failure=True)
-        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+        preserve_tmp_dir_on_failure(self.home_dir, any_worker_failure=True)
+        failures.LIVE_HOMES.discard(self.home_dir)
+        shutil.rmtree(self.home_dir, ignore_errors=True)
 
     def cli(self, *args, timeout=60):
         """Run the real capsem CLI binary. Returns CompletedProcess."""

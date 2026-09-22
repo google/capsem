@@ -281,7 +281,7 @@ match = 'http.host.matches("(^|.*\\.)(openai\\.com|chatgpt\\.com|oaistatic\\.com
 ## First-Party Fields
 
 Rules must use one of these roots: `http`, `dns`, `mcp`, `model`, `file`,
-`process`, `ip`, `tcp`, `udp`, or `network`.
+`process`, `ip`, `tcp`, `udp`, `container`, or `network`.
 
 Every field a rule can read is listed below. The compiler rejects anything else,
 including a misspelled leaf (`file.wrte.path`) and a bare root (`has(http)`),
@@ -293,7 +293,8 @@ at all -- `has(http.valid)`, not `has(http)`.
 |---|---|
 | `http` | `http.valid`, `http.host`, `http.method`, `http.path`, `http.query`, `http.status`, `http.body` |
 | `dns` | `dns.valid`, `dns.qname`, `dns.qtype` |
-| `network` | `network.valid`, `network.id`, `network.name`, `network.mode`, `network.side`, `network.protocol`, `network.publication.id`, `network.source.vm_id`, `network.source.vm_name`, `network.source.generation`, `network.source.ip`, `network.source.port`, `network.destination.vm_id`, `network.destination.vm_name`, `network.destination.generation`, `network.destination.ip`, `network.destination.port` |
+| `container` | `container.valid`, `container.image`, `container.registry`, `container.digest` |
+| `network` | `network.valid`, `network.id`, `network.name`, `network.mode`, `network.action`, `network.target`, `network.side`, `network.protocol`, `network.publication.id`, `network.source.vm_id`, `network.source.vm_name`, `network.source.generation`, `network.source.ip`, `network.source.port`, `network.destination.vm_id`, `network.destination.vm_name`, `network.destination.generation`, `network.destination.ip`, `network.destination.port` |
 | `mcp` | `mcp.valid`, `mcp.method`, `mcp.server.valid`, `mcp.server.name`, `mcp.tool_call.valid`, `mcp.tool_call.name`, `mcp.tool_list.valid`, `mcp.tool_list`, `mcp.request.valid`, `mcp.request.id`, `mcp.request.method`, `mcp.request.arguments`, `mcp.response.valid`, `mcp.response.content`, `mcp.event.valid` |
 | `model` | `model.valid`, `model.provider`, `model.name`, `model.request.valid`, `model.request.body`, `model.request.tool_calls`, `model.response.valid`, `model.response.body`, `model.tool_call.valid` |
 | `file` | `file.valid`, `file.content`, `file.kind` |
@@ -314,8 +315,9 @@ status and BLAKE3 references on real events. It is not a CEL root. Neither is
 Workspace snapshots are MCP/tool/runtime activity unless and until we
 deliberately add a first-party snapshot parser and rules contract.
 
-The `network` contract describes owner-supplied routing facts. Modes are `expose`
-and `private`; sides are `source` and `destination`, identifying the endpoint
+The `network` contract describes owner-supplied routing facts. Modes are
+`expose`, `http_preview`, and `private`; preview actions are `preview_request`
+and `preview_upgrade`. Sides are `source` and `destination`, identifying the endpoint
 whose policy is evaluated. Ports and boot generations use decimal strings in
 CEL, like the existing `tcp.port` field. Boot generations also serialize as
 decimal strings in audit JSON to preserve their full 64-bit identity. Network names and IDs exist for private
@@ -324,6 +326,30 @@ VM identity. Connection and synthetic probe authorization require complete
 facts and an explicit allow rule. Missing facts are errors. Counters, close
 reasons, connection IDs, and decision state are audit data and cannot be read
 by rules. Expose records also include the actual loopback listener address.
+
+Opening an exposure is itself a `network.lifecycle` event, evaluated on the VM
+owner against the VM's current rules and plugins before its listener accepts
+anything, and recorded in the session ledger first: if that row cannot be
+written the exposure is refused. Its facts are `network.mode == "expose"`,
+`network.action` (`published` on request, `restored` when a saved exposure
+reopens after the owner starts again, `revoked` when it is closed),
+`network.target` (`container` or `vm`), `network.publication.id`, the loopback
+listener as `network.source.ip`/`network.source.port`, and the guest endpoint as
+`network.destination.*`. It carries no `network.side` or `network.protocol`, so
+connection rules never match it, and with no matching rule it is allowed. A
+block or ask refuses it, since an exposure change has no one to approve it; a
+saved exposure the rules now refuse is forgotten rather than reopened. Revoking
+always closes the listener and is recorded afterwards. To keep an exposure
+from existing, match `network.action != "revoked"`:
+
+```toml
+[profiles.rules.no_published_ssh]
+name = "no_published_ssh"
+action = "block"
+match = 'network.action != "revoked" && network.destination.port == "22"'
+```
+
+Lifecycle events for named networks also carry `network.action`.
 
 Published TCP ports evaluate the destination VM's current rules and plugins
 before requesting any guest connection. Both profiles have a visible default

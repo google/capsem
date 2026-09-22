@@ -100,6 +100,17 @@ GROUP BY sre.rule_id, sre.rule_action, sre.detection_level
 ORDER BY latest_timestamp_unix_ms DESC
 "#;
 
+const BROKERED_CREDENTIAL_STATS_SQL: &str = r#"
+SELECT MAX(provider) AS provider, substitution_ref AS credential_ref, COUNT(*) AS observed_count,
+       SUM(CASE WHEN outcome = 'injected' THEN 1 ELSE 0 END) AS injected_count,
+       MAX(timestamp) AS last_seen
+FROM substitution_events
+WHERE material_class = 'credential'
+GROUP BY substitution_ref
+ORDER BY MAX(timestamp) DESC
+LIMIT 100
+"#;
+
 /// How many recent matches a security ledger read reports on. The payload
 /// read, when one is asked for, covers the same window.
 const SECURITY_LATEST_LIMIT: usize = 2000;
@@ -310,15 +321,14 @@ async fn security_stats(
     let raw = db
         .query_many(security_stats_batch())
         .await
-        .map_err(|error| query_route_error(vm_id, "security", "query", "stats", db_path, &error))?;
+        .map_err(|error| ledger_route_error(vm_id, "security", "query stats", db_path, &error))?;
     let [total, by_action, by_event_type, by_level, by_rule] = raw.as_slice() else {
-        return Err(query_route_error(
+        return Err(ledger_route_error(
             vm_id,
             "security",
-            "query",
-            "stats",
+            "query stats",
             db_path,
-            &format!("stats batch returned {} results, expected 5", raw.len()),
+            format!("stats batch returned {} results, expected 5", raw.len()),
         ));
     };
     Ok(capsem_logger::SecurityRuleStats {
@@ -342,7 +352,9 @@ fn stats_objects(
     query_name: &'static str,
     raw: &str,
 ) -> Result<Vec<serde_json::Value>, AppError> {
-    parse_query_json(vm_id, "security", query_name, db_path, raw).map(query_json_to_objects)
+    let value =
+        serde_json::from_str(raw).map_err(|error| ledger_route_error(vm_id, "security", query_name, db_path, error))?;
+    Ok(query_json_to_objects(value))
 }
 
 /// The same, decoded onto the ledger type the statement describes.
@@ -352,6 +364,11 @@ fn stats_rows<T: DeserializeOwned>(
     query_name: &'static str,
     raw: &str,
 ) -> Result<Vec<T>, AppError> {
-    let objects = stats_objects(vm_id, db_path, query_name, raw)?;
-    decode_query_rows(vm_id, "security", query_name, db_path, objects)
+    stats_objects(vm_id, db_path, query_name, raw)?
+        .into_iter()
+        .map(|object| {
+            serde_json::from_value(object)
+                .map_err(|error| ledger_route_error(vm_id, "security", query_name, db_path, error))
+        })
+        .collect()
 }

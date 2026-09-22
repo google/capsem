@@ -46,6 +46,90 @@ pub fn sanitize_file_path(raw: &str) -> Result<String, AppError> {
     Ok(trimmed.to_string())
 }
 
+#[derive(serde::Deserialize)]
+pub struct FileListQuery {
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default = "default_file_depth")]
+    pub depth: u32,
+    /// Take `path` literally inside the workspace; see [`resolve_file_path`].
+    #[serde(default)]
+    pub exact: bool,
+}
+
+fn default_file_depth() -> u32 {
+    1
+}
+
+#[derive(serde::Deserialize)]
+pub struct FileContentQuery {
+    pub path: String,
+    /// Take `path` literally inside the workspace; see [`resolve_file_path`].
+    #[serde(default)]
+    pub exact: bool,
+}
+
+/// Where a files-API path lands: the workspace-relative path on disk, and the
+/// paths the VM and, when one runs, its container see for that same file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilePath {
+    pub relative: String,
+    pub vm_path: String,
+    pub container_path: Option<String>,
+}
+
+/// Resolve a caller's path. A relative path is workspace-relative. An absolute
+/// path is the path the caller sees: under `/root` in a VM, or under the
+/// container's workspace mount when the VM runs a container; anything else is
+/// refused rather than silently placed somewhere else, which is what stripping
+/// the leading `/` used to do. `exact` keeps that literal workspace form.
+pub fn resolve_file_path(raw: &str, exact: bool, container: bool) -> Result<FilePath, AppError> {
+    let relative = sanitize_file_path(workspace_relative(raw, exact, container)?)?;
+    Ok(FilePath {
+        vm_path: format!("{}/{relative}", capsem_proto::GUEST_WORKSPACE),
+        container_path: container.then(|| format!("{}/{relative}", capsem_core::container::CONTAINER_WORKSPACE)),
+        relative,
+    })
+}
+
+/// Like [`resolve_file_path`] for a directory listing, which may name the
+/// workspace root itself (empty result).
+pub fn resolve_dir_path(raw: &str, exact: bool, container: bool) -> Result<String, AppError> {
+    match workspace_relative(raw, exact, container)?.trim_matches('/') {
+        "" => Ok(String::new()),
+        _ => Ok(resolve_file_path(raw, exact, container)?.relative),
+    }
+}
+
+/// The part of `raw` below the workspace, before sanitizing.
+fn workspace_relative(raw: &str, exact: bool, container: bool) -> Result<&str, AppError> {
+    if exact || !raw.starts_with('/') {
+        return Ok(raw);
+    }
+    let root = if container {
+        capsem_core::container::CONTAINER_WORKSPACE
+    } else {
+        capsem_proto::GUEST_WORKSPACE
+    };
+    match raw.strip_prefix(root) {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => Ok(rest),
+        _ if container => Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "{raw} is not reachable: this VM runs a container, which sees the workspace at {root}; \
+                 pass a path under {root}, a relative path, or exact=true to place the path as written in the workspace"
+            ),
+        )),
+        _ => Err(AppError(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "{raw} is outside the workspace: only paths under {root} are reachable; \
+                 pass a relative path, or exact=true to place the path as written in the workspace"
+            ),
+        )),
+    }
+}
+
 /// Extract file-type info from Magika `FileType` as `(label, mime, group, is_text)`.
 pub fn extract_magika_info(ft: &magika::FileType) -> (String, String, String, bool) {
     let info = ft.info();

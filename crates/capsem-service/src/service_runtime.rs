@@ -1,5 +1,7 @@
 use super::*;
 
+mod shutdown;
+
 pub(super) async fn run_service() -> Result<()> {
     let args = Args::parse();
 
@@ -270,6 +272,8 @@ pub(super) async fn run_service() -> Result<()> {
         profile_mutation_db,
         last_defunct_reconcile_ms: AtomicU64::new(0),
         stats_response_cache: Mutex::new(None),
+        stats_detail_response_cache: Mutex::new(HashMap::new()),
+        containers: Default::default(),
         storage_diagnostics_cache: Mutex::new(HashMap::new()),
         persistent_resume_state_cache: Mutex::new(HashMap::new()),
         evaluate_rule_cache: Mutex::new(HashMap::new()),
@@ -278,7 +282,7 @@ pub(super) async fn run_service() -> Result<()> {
         evaluate_response_cache: Mutex::new(HashMap::new()),
         list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
-        save_restore_lock: tokio::sync::RwLock::new(()),
+        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
         update_restart: tokio::sync::Notify::new(),
@@ -421,45 +425,29 @@ pub(super) async fn run_service() -> Result<()> {
     companions.lock().unwrap().spawn_task = Some(spawn_task);
 
     let shutdown_state = state.clone();
-    let companions_for_shutdown = Arc::clone(&companions);
-    axum::serve(uds, app)
-        .with_graceful_shutdown(async move {
-            tokio::select! {
-                _ = shutdown_signal() => {}
-                _ = shutdown_state.update_restart.notified() => {
-                    info!("service restart requested after binary update");
-                }
+    let result = shutdown::serve(uds, app, async move {
+        tokio::select! {
+            _ = shutdown_signal() => {}
+            _ = shutdown_state.update_restart.notified() => {
+                info!("managed service restart requested");
             }
-            info!("service shutting down, killing companions and VM processes");
-            // Companions FIRST. kill_all_vm_processes has an unconditional
-            // 500ms SIGTERM grace sleep; if companion-kill ran after it, a
-            // downstream `_ensure-service` (which itself sleeps 500ms before
-            // spawning the next service) would race with companion exit and
-            // the new gateway would fail to bind :19222.
+        }
+        info!("service shutting down, stopping VM processes and draining replies");
+        kill_all_vm_processes(&shutdown_state);
+    })
+    .await;
 
-            // Scoped so the MutexGuard is definitely dropped before the
-            // awaits below; relying on `drop(manager)` alone was fragile
-            // enough that the compiler's Send analysis tripped once the
-            // surrounding future gained other Send requirements.
-            let children = {
-                let mut manager = companions_for_shutdown.lock().unwrap();
-                if let Some(task) = manager.spawn_task.take() {
-                    task.abort();
-                }
-                std::mem::take(&mut manager.children)
-            };
-
-            info!(count = children.len(), "killing companions");
-            for mut child in children {
-                info!(pid = child.id(), "killing companion process");
-                let _ = child.kill().await;
-            }
-            info!("killing all VM processes");
-            kill_all_vm_processes(&shutdown_state);
-            info!("shutdown complete");
-        })
-        .await
-        .context("server error")?;
+    // Reap companions before the service exits and its manager starts a new
+    // cohort. Finish the bounded startup task too: cancellation would kill a
+    // gateway that is already serving but has not entered this collection yet.
+    let spawn_task = companions.lock().unwrap().spawn_task.take();
+    if let Some(task) = spawn_task {
+        let _ = task.await;
+    }
+    let children = std::mem::take(&mut companions.lock().unwrap().children);
+    shutdown::stop_companions(children).await;
+    info!("shutdown complete");
+    result.context("server error")?;
 
     Ok(())
 }
@@ -711,7 +699,7 @@ pub(super) async fn spawn_companions(
     // A previous service may have exited before its gateway removed runtime
     // markers. Never let those stale files satisfy our readiness poll for the
     // replacement gateway.
-    for name in ["gateway.token", "gateway.port", "gateway.pid"] {
+    for name in ["gateway.token", "gateway.port", "gateway.pid", "preview.port"] {
         let path = run_dir.join(name);
         if let Err(error) = std::fs::remove_file(&path) {
             if error.kind() != std::io::ErrorKind::NotFound {
@@ -749,16 +737,19 @@ pub(super) async fn spawn_companions(
             // Wait for gateway to write token + port files (up to 5s)
             let token_path = run_dir.join("gateway.token");
             let port_path = run_dir.join("gateway.port");
+            let preview_port_path = run_dir.join("preview.port");
             {
                 let tp = token_path.clone();
                 let pp = port_path.clone();
+                let ppp = preview_port_path.clone();
                 let _ = capsem_foundation::poll::poll_until(
                     capsem_foundation::poll::PollOpts::new("gateway-ready", std::time::Duration::from_secs(5)),
                     || {
                         let tp = tp.clone();
                         let pp = pp.clone();
+                        let ppp = ppp.clone();
                         async move {
-                            if tp.exists() && pp.exists() {
+                            if tp.exists() && pp.exists() && ppp.exists() {
                                 Some(())
                             } else {
                                 None
@@ -769,7 +760,7 @@ pub(super) async fn spawn_companions(
                 .instrument(gateway_span.clone())
                 .await;
             }
-            if token_path.exists() && port_path.exists() {
+            if token_path.exists() && port_path.exists() && preview_port_path.exists() {
                 gateway_span.record("status", "ok");
             } else {
                 gateway_span.record("status", "error");

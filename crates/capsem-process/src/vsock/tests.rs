@@ -20,17 +20,50 @@ impl std::io::Read for InterruptedThenData {
     }
 }
 
+fn encoded_exec_output(channel: capsem_proto::ExecOutputChannel, total: usize) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut remaining = total;
+    while remaining > 0 {
+        let size = remaining.min(capsem_proto::MAX_EXEC_DATA_BYTES);
+        capsem_proto::write_exec_output(
+            &mut bytes,
+            &capsem_proto::ExecOutputFrame {
+                channel,
+                data: vec![b'y'; size],
+            },
+        )
+        .unwrap();
+        remaining -= size;
+    }
+    bytes
+}
+
 #[test]
 fn exec_output_read_retries_interrupted_socket_reads() {
     let mut reader = InterruptedThenData {
         interrupted: false,
-        data: std::io::Cursor::new(b"IRONBANK_CLIENT_RESULT={\"ok\":true}\n".to_vec()),
+        data: std::io::Cursor::new({
+            let mut bytes = Vec::new();
+            capsem_proto::write_exec_output(
+                &mut bytes,
+                &capsem_proto::ExecOutputFrame {
+                    channel: capsem_proto::ExecOutputChannel::Stdout,
+                    data: b"IRONBANK_CLIENT_RESULT={\"ok\":true}\n".to_vec(),
+                },
+            )
+            .unwrap();
+            bytes
+        }),
     };
 
-    let (captured, total) = read_exec_output(&mut reader);
+    let captured = exec_output::read_exec_output(&mut reader);
 
-    assert_eq!(captured, b"IRONBANK_CLIENT_RESULT={\"ok\":true}\n");
-    assert_eq!(total, captured.len() as u64, "nothing was dropped");
+    assert_eq!(captured.stdout, b"IRONBANK_CLIENT_RESULT={\"ok\":true}\n");
+    assert_eq!(
+        captured.stdout_bytes,
+        captured.stdout.len() as u64,
+        "nothing was dropped"
+    );
 }
 
 #[test]
@@ -444,10 +477,26 @@ async fn concurrent_exec_completions_keep_each_stdout() {
         active.insert(first_id, ActiveExec::new());
         active.insert(second_id, ActiveExec::new());
     }
-    if let Some(notify) = deposit_exec_output(&js, first_id, b"first\n".to_vec(), 6) {
+    if let Some(notify) = exec_output::deposit(
+        &js,
+        first_id,
+        exec_output::ExecCapture {
+            stdout: b"first\n".to_vec(),
+            stdout_bytes: 6,
+            ..Default::default()
+        },
+    ) {
         notify.notify_one();
     }
-    if let Some(notify) = deposit_exec_output(&js, second_id, b"second\n".to_vec(), 7) {
+    if let Some(notify) = exec_output::deposit(
+        &js,
+        second_id,
+        exec_output::ExecCapture {
+            stdout: b"second\n".to_vec(),
+            stdout_bytes: 7,
+            ..Default::default()
+        },
+    ) {
         notify.notify_one();
     }
 
@@ -691,47 +740,21 @@ match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
 //
 // The Exec vsock port is a raw stream, so the MAX_FRAME_SIZE bound that
 // read_control_msg applies to length-prefixed control frames never reaches it.
-// Before the cap, a guest running `yes` grew this process until the OOM killer
-// took it and every in-flight job with it -- and the 5s deposit timeout did not
-// help, because the reader thread is detached and keeps allocating after
-// ExecDone has given up and dropped the slot.
-
-/// A reader that never reaches EOF, standing in for `yes` or `cat /dev/urandom`.
-struct EndlessReader {
-    served: usize,
-    limit: usize,
-}
-
-impl std::io::Read for EndlessReader {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        // Stop eventually so a regression fails the test instead of hanging it.
-        if self.served >= self.limit {
-            return Ok(0);
-        }
-        let n = buffer.len().min(self.limit - self.served);
-        buffer[..n].fill(b'y');
-        self.served += n;
-        Ok(n)
-    }
-}
-
 #[test]
 fn exec_output_is_capped_against_an_endless_guest_stream() {
-    // Offer twice the cap. A pre-fix build retains all of it.
-    let mut reader = EndlessReader {
-        served: 0,
-        limit: MAX_EXEC_OUTPUT_BYTES * 2,
-    };
-
-    let (captured, total) = read_exec_output(&mut reader);
+    let mut reader = std::io::Cursor::new(encoded_exec_output(
+        capsem_proto::ExecOutputChannel::Stdout,
+        MAX_EXEC_OUTPUT_BYTES * 2,
+    ));
+    let captured = exec_output::read_exec_output(&mut reader);
 
     assert_eq!(
-        captured.len(),
+        captured.stdout.len(),
         MAX_EXEC_OUTPUT_BYTES,
         "retained buffer must stop at the cap"
     );
     assert_eq!(
-        total,
+        captured.stdout_bytes,
         (MAX_EXEC_OUTPUT_BYTES * 2) as u64,
         "the reported total is what the guest wrote, not what was kept"
     );
@@ -741,65 +764,79 @@ fn exec_output_is_capped_against_an_endless_guest_stream() {
 fn exec_output_keeps_the_prefix_and_drains_to_eof() {
     // Draining past the cap matters: stopping the read early would leave the
     // guest blocked on a full socket instead of finishing its command.
-    let mut reader = EndlessReader {
-        served: 0,
-        limit: MAX_EXEC_OUTPUT_BYTES + 4096,
-    };
+    let mut reader = std::io::Cursor::new(encoded_exec_output(
+        capsem_proto::ExecOutputChannel::Stdout,
+        MAX_EXEC_OUTPUT_BYTES + 4096,
+    ));
+    let captured = exec_output::read_exec_output(&mut reader);
 
-    let (captured, total) = read_exec_output(&mut reader);
-
-    assert!(captured.iter().all(|b| *b == b'y'), "prefix is intact");
-    assert_eq!(captured.len(), MAX_EXEC_OUTPUT_BYTES);
-    assert_eq!(total, (MAX_EXEC_OUTPUT_BYTES + 4096) as u64);
+    assert!(captured.stdout.iter().all(|b| *b == b'y'), "prefix is intact");
+    assert_eq!(captured.stdout.len(), MAX_EXEC_OUTPUT_BYTES);
+    assert_eq!(captured.stdout_bytes, (MAX_EXEC_OUTPUT_BYTES + 4096) as u64);
 }
 
 #[test]
 fn output_at_exactly_the_cap_is_not_reported_as_truncated() {
-    let mut reader = EndlessReader {
-        served: 0,
-        limit: MAX_EXEC_OUTPUT_BYTES,
-    };
+    let mut reader = std::io::Cursor::new(encoded_exec_output(
+        capsem_proto::ExecOutputChannel::Stdout,
+        MAX_EXEC_OUTPUT_BYTES,
+    ));
+    let captured = exec_output::read_exec_output(&mut reader);
 
-    let (captured, total) = read_exec_output(&mut reader);
-
-    assert_eq!(captured.len(), MAX_EXEC_OUTPUT_BYTES);
+    assert_eq!(captured.stdout.len(), MAX_EXEC_OUTPUT_BYTES);
     assert_eq!(
-        total,
-        captured.len() as u64,
+        captured.stdout_bytes,
+        captured.stdout.len() as u64,
         "the boundary case must not look truncated"
     );
 }
 
 #[test]
 fn ordinary_output_is_unaffected_by_the_cap() {
-    let mut reader = std::io::Cursor::new(b"total 42\r\n".to_vec());
+    let mut bytes = Vec::new();
+    capsem_proto::write_exec_output(
+        &mut bytes,
+        &capsem_proto::ExecOutputFrame {
+            channel: capsem_proto::ExecOutputChannel::Stderr,
+            data: b"total 42\r\n".to_vec(),
+        },
+    )
+    .unwrap();
+    let captured = exec_output::read_exec_output(&mut std::io::Cursor::new(bytes));
 
-    let (captured, total) = read_exec_output(&mut reader);
-
-    assert_eq!(captured, b"total 42\r\n");
-    assert_eq!(total, 10);
+    assert_eq!(captured.stderr, b"total 42\r\n");
+    assert_eq!(captured.stderr_bytes, 10);
 }
 
 #[test]
 fn a_read_error_ends_capture_without_losing_what_was_already_read() {
     struct DataThenError {
-        sent: bool,
+        data: std::io::Cursor<Vec<u8>>,
     }
     impl std::io::Read for DataThenError {
         fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-            if self.sent {
+            let read = self.data.read(buffer)?;
+            if read == 0 {
                 return Err(std::io::Error::other("socket died"));
             }
-            self.sent = true;
-            buffer[..5].copy_from_slice(b"hello");
-            Ok(5)
+            Ok(read)
         }
     }
+    let mut bytes = Vec::new();
+    capsem_proto::write_exec_output(
+        &mut bytes,
+        &capsem_proto::ExecOutputFrame {
+            channel: capsem_proto::ExecOutputChannel::Stdout,
+            data: b"hello".to_vec(),
+        },
+    )
+    .unwrap();
+    let captured = exec_output::read_exec_output(&mut DataThenError {
+        data: std::io::Cursor::new(bytes),
+    });
 
-    let (captured, total) = read_exec_output(&mut DataThenError { sent: false });
-
-    assert_eq!(captured, b"hello");
-    assert_eq!(total, 5);
+    assert_eq!(captured.stdout, b"hello");
+    assert_eq!(captured.stdout_bytes, 5);
 }
 
 fn emission_with(

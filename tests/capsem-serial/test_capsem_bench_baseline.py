@@ -24,7 +24,7 @@ from helpers.benchmark_gates import validate_capsem_bench_result
 from helpers.benchmark_output import benchmark_output_dir
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import start_mock_server, stop_process
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.serial
 
@@ -136,8 +136,8 @@ def test_capsem_bench_baseline():
         )
         assert resp and resp.get("exit_code") == 0, (
             f"capsem-bench all failed: exit={resp.get('exit_code') if resp else None}\n"
-            f"stdout: {(resp or {}).get('stdout', '')[:500]}\n"
-            f"stderr: {(resp or {}).get('stderr', '')[:500]}"
+            f"stdout: {(resp or {}).get('stdout', {}).get('data', '')[:500]}\n"
+            f"stderr: {(resp or {}).get('stderr', {}).get('data', '')[:500]}"
         )
 
         # capsem-bench writes /tmp/capsem-benchmark.json on success (see
@@ -151,7 +151,7 @@ def test_capsem_bench_baseline():
         assert resp and resp.get("exit_code") == 0, (
             "capsem-bench did not produce /tmp/capsem-benchmark.json"
         )
-        raw = resp.get("stdout", "").strip()
+        raw = exec_output_text(resp).strip()
         data = json.loads(raw)
         # Archive the raw measurement before judging it. A threshold failure
         # is the run whose complete values matter most, and validating first

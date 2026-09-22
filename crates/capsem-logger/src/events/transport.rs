@@ -58,9 +58,9 @@ impl TransportEvent {
         {
             return Err("invalid transport timestamp or routing identity".into());
         }
-        if (kind == TransportEventKind::Lifecycle) != connection_id.is_none()
-            || (kind == TransportEventKind::Lifecycle && network_id.is_none())
-        {
+        // A lifecycle row names no connection. It names a network when it is
+        // one's; an exposure opening or closing belongs to no network.
+        if (kind == TransportEventKind::Lifecycle) != connection_id.is_none() {
             return Err("transport phase and routing identity disagree".into());
         }
         let event_json = serde_json::to_string(facts).map_err(|error| error.to_string())?;

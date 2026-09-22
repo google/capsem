@@ -234,7 +234,8 @@ and hydrates the live manifest through `capsem update --assets --manifest
 packaged root content; credentials are brokered at runtime.
 
 **Install layout** (`~/.capsem/`):
-- `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
+- `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp-aggregator, capsem-mcp-builtin, capsem-gateway, capsem-tray
+- `@capsem/mcp` -- separately installed npm host MCP package
 - `assets/` -- manifest.json, manifest-metadata.json, and profile-selected VM
   assets such as `vmlinuz`, `initrd.img`, and EROFS rootfs images
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/{id}.sock

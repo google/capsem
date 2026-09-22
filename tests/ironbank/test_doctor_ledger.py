@@ -30,6 +30,7 @@ from helpers.constants import (
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
+    exec_output_text,
     preserve_tmp_dir_on_failure,
     vm_name,
     vm_session_db_path,
@@ -252,8 +253,8 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             timeout=DOCTOR_CLIENT_TIMEOUT_SECONDS,
         )
         assert exec_resp is not None, "doctor exec returned no body"
-        stdout = exec_resp.get("stdout", "")
-        stderr = exec_resp.get("stderr", "")
+        stdout = exec_output_text(exec_resp)
+        stderr = exec_output_text(exec_resp, "stderr")
         output = stdout + stderr
         assert not exec_resp.get("error"), (
             f"capsem-doctor IPC failed: {exec_resp.get('error')}\n"

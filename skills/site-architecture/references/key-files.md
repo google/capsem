@@ -30,7 +30,8 @@
 - `crates/capsem-gateway/src/auth.rs` -- Bearer token auth middleware, runtime file lifecycle (token/port/pid)
 - `crates/capsem-gateway/src/proxy.rs` -- UDS reverse proxy (method/header/body forwarding, 10MB limit, 30s timeout)
 - `crates/capsem-gateway/src/status.rs` -- Aggregated status with 2s thundering-herd-safe cache
-- `crates/capsem-gateway/src/terminal.rs` -- WebSocket relay from TCP to per-VM UDS for terminal I/O
+- `crates/capsem-gateway/src/stream.rs` -- authenticates `/vms/{id}/stream` and tunnels the WebSocket upgrade to the service without parsing frames
+- `crates/capsem-service/src/router_runtime/streams.rs` -- `capsem.stream.v1` sessions translated to stream-role VM-owner IPC
 
 ## App (thin Tauri webview shell)
 
@@ -56,7 +57,7 @@
 
 ## MCP
 
-- `crates/capsem-mcp/src/` -- host MCP server and service-facing tool handlers
+- `mcp/typescript/src/` -- SDK-backed npm host MCP server and typed tool handlers
 - `crates/capsem-mcp-aggregator/src/` -- external-server lifecycle and transport
 - `crates/capsem-mcp-builtin/src/main.rs` -- built-in HTTP and file/snapshot tools
 - `crates/capsem-core/src/mcp/` -- VM/session-side MCP runtime integration

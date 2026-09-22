@@ -1,7 +1,5 @@
 use super::*;
 
-mod db_boundary;
-
 #[test]
 fn tempdir_test_states_use_distinct_session_index_databases() {
     let (first, first_dir) = make_test_state_with_tempdir();
@@ -1137,52 +1135,6 @@ fn sandbox_info_new_defaults_telemetry_to_none() {
     assert!(info.uptime_secs.is_none());
 }
 
-#[tokio::test]
-async fn vm_list_and_info_are_in_memory_only() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    let session_dir = state.run_dir.join("sessions/list-hot-vm");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    let db_path = session_dir.join("session.db");
-    tokio::task::spawn_blocking(move || {
-        let writer = capsem_logger::DbWriter::open(&db_path, 8).unwrap();
-        writer.write_blocking(capsem_logger::WriteOp::FileEvent(capsem_logger::FileEvent {
-            event_id: Some("abcdef123456".into()),
-            timestamp: std::time::SystemTime::now(),
-            action: capsem_logger::FileAction::Created,
-            path: "/root/list-hot-proof.txt".into(),
-            size: Some(12),
-            kind: capsem_logger::FileKind::File,
-            trace_id: Some("tracelisthot".into()),
-            credential_ref: None,
-        }));
-        writer.shutdown_blocking();
-    })
-    .await
-    .unwrap();
-    insert_fake_instance_with_session_dir(&state, "list-hot-vm", 4242, session_dir);
-
-    let list: ListResponse = decode_response_json(handle_list(State(Arc::clone(&state))).await).await;
-    let listed = list
-        .sandboxes
-        .iter()
-        .find(|vm| vm.id == "list-hot-vm")
-        .expect("running VM listed");
-    assert!(
-        listed.total_input_tokens.is_none(),
-        "/vms/list is a hot route and must not read session.db telemetry"
-    );
-    assert!(listed.model_call_count.is_none());
-
-    let Json(info) = handle_info(State(state), Path("list-hot-vm".into()))
-        .await
-        .expect("detail route stays lifecycle/storage only");
-    assert!(
-        info.total_file_events.is_none(),
-        "/vms/{{id}}/info must not inline raw telemetry SQL; use ledger DB APIs"
-    );
-    assert!(info.model_call_count.is_none());
-}
-
 #[test]
 fn vm_lifecycle_available_actions_are_contractual() {
     use api::VmAction;
@@ -1390,12 +1342,16 @@ async fn stats_detail_route_reads_session_db_ledger() {
         messages_count: 1,
         tools_count: 1,
         request_bytes: 32,
-        request_body: Some(br#"{"contents":[{"text":"write full bounded body"}]}"#.to_vec()),
+        request_body: Some(r#"{"contents":[{"text":"write full bounded body"}]}"#.as_bytes().to_vec()),
         message_id: Some("msg-1".to_string()),
         status_code: Some(200),
         text_content: Some("created poem.md".to_string()),
         thinking_content: Some("plan file write".to_string()),
-        response_body: Some(br#"{"candidates":[{"content":{"parts":[{"text":"created poem.md"}]}}]}"#.to_vec()),
+        response_body: Some(
+            r#"{"candidates":[{"content":{"parts":[{"text":"created poem.md"}]}}]}"#
+                .as_bytes()
+                .to_vec(),
+        ),
         stop_reason: Some("end_turn".to_string()),
         input_tokens: Some(12),
         output_tokens: Some(7),
@@ -1442,8 +1398,12 @@ async fn stats_detail_route_reads_session_db_ledger() {
             matched_rule: Some("profiles.rules.ai_google_http_googleapis".to_string()),
             request_headers: Some("content-type: application/json".to_string()),
             response_headers: Some("content-type: application/json".to_string()),
-            request_body: Some(br#"{"model":"gemini-3.5-flash","contents":[{"text":"write full body"}]}"#.to_vec()),
-            response_body: Some(br#"{"ok":true,"body":"full response body from gateway"}"#.to_vec()),
+            request_body: Some(
+                r#"{"model":"gemini-3.5-flash","contents":[{"text":"write full body"}]}"#
+                    .as_bytes()
+                    .to_vec(),
+            ),
+            response_body: Some(r#"{"ok":true,"body":"full response body from gateway"}"#.as_bytes().to_vec()),
             conn_type: Some("https".to_string()),
             policy_mode: None,
             policy_action: Some("allow".to_string()),
@@ -1480,7 +1440,7 @@ async fn stats_detail_route_reads_session_db_ledger() {
     assert_eq!(body["tool_events"][0]["tool_name"], "Create");
     assert_eq!(body["tool_events"][0]["call_id"], "tool-1");
     assert_eq!(body["tool_events"][0]["source"], "native");
-    assert_eq!(body["tool_events"][0]["model_parent_missing"], 0);
+    assert_eq!(body["tool_events"][0]["model_parent_missing"], false);
     assert!(body["tool_events"][0]["model_call_id"].as_i64().is_some());
     assert_eq!(body["tool_events"][0]["arguments"], r#"{"path":"/root/poem.md"}"#);
     assert_eq!(body["tool_events"][0]["response_preview"], "Wrote 4 lines to poem.md");
@@ -1488,22 +1448,18 @@ async fn stats_detail_route_reads_session_db_ledger() {
     assert_eq!(body["http_events"][0]["domain"], "generativelanguage.googleapis.com");
     assert!(body["http_events"][0].get("request_body_preview").is_none());
     assert!(body["http_events"][0].get("response_body_preview").is_none());
-    // The route carries what each body is; the bytes come from the archive
-    // through the DB handle, and the bodies route that serves them is its own
-    // change. Metadata is what this payload still owes the UI.
     assert_eq!(body["body_blobs"]["abc123abc123"][0]["direction"], "request");
-    assert_eq!(body["body_blobs"]["abc123abc123"][0]["source_table"], "model_calls");
+    assert!(body["body_blobs"]["abc123abc123"][0].get("body").is_none());
     assert_eq!(body["body_blobs"]["abc123abc123"][1]["direction"], "response");
+    assert!(body["body_blobs"]["abc123abc123"][1].get("body").is_none());
     assert_eq!(body["body_blobs"]["def456def456"][0]["direction"], "request");
+    assert!(body["body_blobs"]["def456def456"][0].get("body").is_none());
     assert_eq!(
         body["body_blobs"]["def456def456"][0]["stored_bytes"],
         r#"{"model":"gemini-3.5-flash","contents":[{"text":"write full body"}]}"#.len()
     );
     assert_eq!(body["body_blobs"]["def456def456"][1]["direction"], "response");
-    assert!(
-        body["body_blobs"]["def456def456"][1].get("body").is_none(),
-        "the stats payload must not carry body bytes inline"
-    );
+    assert!(body["body_blobs"]["def456def456"][1].get("body").is_none());
 
     let (status, summary) = route_request(
         app.clone(),
@@ -1755,6 +1711,62 @@ async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
 }
 
 #[tokio::test]
+async fn db_boundary_route_contract_db_handle_route_rewire() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("db-handle-route-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "db-handle-route-vm", std::process::id(), session_dir.clone());
+
+    assert!(
+        state.session_db_handle("db-handle-route-vm").is_none(),
+        "session handles are registered lazily after capsem-process creates session.db"
+    );
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    writer
+        .write(capsem_logger::WriteOp::SecurityRuleEvent(
+            capsem_logger::SecurityRuleEvent::new(
+                1_789_111_000_000,
+                "abcdef123456",
+                "http.request",
+                "profiles.rules.default_http",
+                r#"{"name":"default_http"}"#,
+                r#"{"event_type":"http.request"}"#,
+            )
+            .with_rule_action(capsem_logger::SecurityRuleAction::Allow),
+        ))
+        .await;
+    writer.shutdown_blocking();
+
+    let (status, stats_detail) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/db-handle-route-vm/stats/detail",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{stats_detail}");
+    assert_eq!(stats_detail["model_stats"], json!([]));
+    assert_eq!(stats_detail["body_blobs"], json!({}));
+
+    let (status, security_status) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/db-handle-route-vm/security/status",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{security_status}");
+    assert_eq!(security_status["total"], 1);
+    assert_eq!(security_status["by_action"][0]["rule_action"], "allow");
+    assert!(
+        state.session_db_handle("db-handle-route-vm").is_some(),
+        "first ledger route registers the external DB reader once session.db exists"
+    );
+}
+
+#[tokio::test]
 async fn db_boundary_route_contract_stats_routes_do_not_return_empty_on_broken_schema() {
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
@@ -1785,13 +1797,18 @@ async fn db_boundary_route_contract_stats_routes_do_not_return_empty_on_broken_s
 
 #[test]
 fn logged_data_routes_do_not_bypass_logger_db_boundary() {
-    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
-        .expect("service source must be readable");
-    // The three `*_blocking` bridges are gone from `DbHandle` entirely, so
-    // there is nothing here for main.rs to call; that rule now lives in
-    // tests/citadel/test_ledger_no_blocking_bridges.py, which guards the
-    // definitions rather than one caller's source text.
+    let source = ["main.rs", "ledger_routes/vm_info.rs"]
+        .into_iter()
+        .map(|path| {
+            std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(path))
+                .expect("service source must be readable")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let forbidden = [
+        "ready_blocking(",
+        "query_raw_blocking(",
+        "with_reader_blocking(",
         "DbReader::open(",
         "SessionIndex::open(",
         "SessionDb::new(",
@@ -1866,9 +1883,8 @@ fn session_db_handle_registration_is_idempotent_for_same_session_path() {
     assert!(
         Arc::ptr_eq(&first, &second),
         "route races must not create parallel external reader handles for the same session DB; \
-         the UI polls stats and security ledgers concurrently, and each handle carries its own \
-         reader worker, connection and read cache, so a second one doubles the work and serves \
-         the same poll from a cache the first never invalidates"
+         the UI polls stats and security ledgers concurrently, and multiple reader workers each \
+         syncing hot tables from disk can surface SQLite table-lock errors"
     );
 }
 
@@ -1904,142 +1920,6 @@ async fn service_rehydrates_session_db_handles() {
         .ready()
         .await
         .expect("hydrated handle must prove schema readiness");
-}
-
-#[tokio::test]
-async fn status_reports_db_readiness() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    let app = build_service_router(Arc::clone(&state));
-    let session_dir = state.run_dir.join("sessions").join("status-db-vm");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
-    writer.shutdown_blocking();
-    insert_fake_instance_with_session_dir(&state, "status-db-vm", std::process::id(), session_dir);
-
-    let (status, body) = route_request(app, axum::http::Method::GET, "/vms/status-db-vm/info", None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        body["session_db"]["ready"], true,
-        "session status must expose DB readiness from the service-owned DbHandle: {body}"
-    );
-    assert!(
-        body["session_db"].get("error").is_none(),
-        "ready session DB status must not invent an error: {body}"
-    );
-}
-
-#[tokio::test]
-async fn info_route_reports_db_readiness_without_inline_ledger_stats() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    let app = build_service_router(Arc::clone(&state));
-    let session_dir = state.run_dir.join("sessions").join("toolbar-stats-vm");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    let mut usage_details = BTreeMap::new();
-    usage_details.insert("thinking".to_string(), 3);
-    usage_details.insert("reasoning".to_string(), 4);
-    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
-    writer.write_blocking(capsem_logger::WriteOp::ModelCall(capsem_logger::ModelCall {
-        event_id: Some("abc123abc123".to_string()),
-        timestamp: std::time::SystemTime::now(),
-        provider: "openai".to_string(),
-        protocol: Some("openai".to_string()),
-        model: Some("gpt-5-demo".to_string()),
-        process_name: Some("codex".to_string()),
-        pid: Some(42),
-        method: "POST".to_string(),
-        path: "/v1/responses".to_string(),
-        stream: false,
-        system_prompt_preview: None,
-        messages_count: 1,
-        tools_count: 1,
-        request_bytes: 32,
-        request_body: None,
-        message_id: Some("msg-toolbar".to_string()),
-        status_code: Some(200),
-        text_content: Some("done".to_string()),
-        thinking_content: Some("checking stats".to_string()),
-        response_body: None,
-        stop_reason: Some("end_turn".to_string()),
-        input_tokens: Some(12),
-        output_tokens: Some(7),
-        usage_details,
-        duration_ms: 25,
-        response_bytes: 64,
-        estimated_cost_usd: 0.001,
-        trace_id: Some("trace-toolbar".to_string()),
-        credential_ref: None,
-        tool_calls: vec![capsem_logger::ToolCallEntry {
-            event_id: None,
-            call_index: 0,
-            call_id: "tool-toolbar".to_string(),
-            tool_name: "Read".to_string(),
-            arguments: Some(r#"{"path":"/root/demo.md"}"#.to_string()),
-            origin: "model".to_string(),
-            trace_id: Some("trace-toolbar".to_string()),
-        }],
-        tool_responses: vec![],
-    }));
-    writer.shutdown_blocking();
-    insert_fake_instance_with_session_dir(&state, "toolbar-stats-vm", std::process::id(), session_dir);
-
-    let (status, body) = route_request(app, axum::http::Method::GET, "/vms/toolbar-stats-vm/info", None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["session_db"]["ready"], true);
-    assert!(
-        body.get("model_call_count").is_none(),
-        "/vms/{{id}}/info must not inline ledger counters; use /vms/{{id}}/stats/detail"
-    );
-    assert!(body.get("total_input_tokens").is_none());
-    assert!(body.get("total_thinking_tokens").is_none());
-    assert!(body.get("total_output_tokens").is_none());
-    assert!(body.get("total_tool_calls").is_none());
-    assert!(body.get("total_estimated_cost").is_none());
-}
-
-#[tokio::test]
-async fn broken_session_db_schema_is_explicit_error_for_session_status() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    let app = build_service_router(Arc::clone(&state));
-    let session_dir = state.run_dir.join("sessions").join("status-broken-db-vm");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
-    writer.shutdown_blocking();
-    let conn = rusqlite::Connection::open(session_dir.join("session.db")).unwrap();
-    conn.execute("DROP TABLE net_events", []).unwrap();
-    conn.execute("CREATE TABLE net_events (id INTEGER PRIMARY KEY)", [])
-        .unwrap();
-    drop(conn);
-    let entry = test_persistent_entry("status-broken-db-vm", session_dir);
-    let vm_id = entry.id.clone();
-    state
-        .persistent_registry
-        .lock()
-        .unwrap()
-        .data
-        .vms
-        .insert("status-broken-db-vm".to_string(), entry);
-    state.hydrate_session_db_handles();
-    let handle = state
-        .session_db_handle(&vm_id)
-        .expect("startup hydration installs the handle so routes surface the schema error explicitly");
-    assert!(
-        handle.ready().await.is_err(),
-        "a malformed session schema must fail readiness instead of being treated as ready"
-    );
-
-    let (status, body) = route_request(app, axum::http::Method::GET, &format!("/vms/{vm_id}/info"), None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        body["session_db"]["ready"], false,
-        "broken session schemas must be visible in status instead of being treated as ready: {body}"
-    );
-    let error = body["session_db"]["error"]
-        .as_str()
-        .expect("broken DB status must carry the explicit DB readiness error");
-    assert!(
-        error.contains("not ready") || error.contains("missing required column") || error.contains("no such column"),
-        "broken DB status must expose the schema failure, got: {error}"
-    );
 }
 
 #[tokio::test]
@@ -2124,7 +2004,7 @@ async fn stats_detail_ledger_exposes_orphan_tool_parent_inconsistency() {
     assert_eq!(tool["event_id"], "badbad000001");
     assert_eq!(tool["call_id"], "orphan-tool");
     assert_eq!(tool["model_call_id"], 99_999);
-    assert_eq!(tool["model_parent_missing"], 1);
+    assert_eq!(tool["model_parent_missing"], true);
     assert_eq!(tool["source"], "model");
     assert_eq!(tool["server_name"], "model");
     assert_eq!(tool["tool_name"], "Write");
@@ -2164,12 +2044,12 @@ async fn stats_detail_ledger_exposes_orphan_tool_parent_inconsistency() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{timeline}");
-    let rows = timeline["rows"].as_array().unwrap();
+    let rows = timeline["events"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{timeline}");
-    assert_eq!(rows[0][1], "tool");
-    assert_eq!(rows[0][3], "model/Write (call_id=orphan-tool)");
-    assert_eq!(rows[0][4], "allowed");
-    assert_eq!(rows[0][6], "trace-orphan-tool");
+    assert_eq!(rows[0]["layer"], "tool");
+    assert_eq!(rows[0]["summary"], "model/Write (call_id=orphan-tool)");
+    assert_eq!(rows[0]["status"], "allowed");
+    assert_eq!(rows[0]["trace_id"], "trace-orphan-tool");
 }
 
 // -----------------------------------------------------------------------

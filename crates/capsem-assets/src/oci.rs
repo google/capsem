@@ -8,6 +8,8 @@ mod cache;
 mod pull;
 pub use oci_client::secrets::RegistryAuth;
 pub use pull::{ImageLayout, Puller};
+mod transfer;
+pub use transfer::{transfer_manifest, TransferEntry};
 
 /// Require a qualified registry reference or explicit `docker://` prefix so
 /// existing shell-command arguments cannot silently turn into image pulls.

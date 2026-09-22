@@ -9,6 +9,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -376,7 +377,7 @@ def test_guest_installs_and_verifies_the_exact_shared_package() -> None:
         "capsem-service",
         "capsem-process",
         "capsem-tui",
-        "capsem-mcp",
+
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
         "capsem-gateway",
@@ -766,9 +767,41 @@ def test_installed_winterfell_runner_loads_without_pytest_path_side_effects() ->
     module = _load_script(INSTALLED_WINTERFELL_IMPLEMENTATION, "installed_winterfell_direct")
 
     assert module.WINTERFELL_TESTS == (
-        "tests/capsem-mcp/test_winterfell_rw.py",
-        "tests/capsem-mcp/test_winterfell_exec.py",
+        "tests/capsem-installed/test_winterfell_gateway.py",
     )
+
+
+def test_installed_winterfell_does_not_write_pytest_state_to_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_script(INSTALLED_WINTERFELL_IMPLEMENTATION, "installed_winterfell_cache")
+    commands: list[list[str]] = []
+    roots = SimpleNamespace(
+        assets_dir=tmp_path / "assets",
+        binary_dir=tmp_path / "bin",
+        profiles_dir=tmp_path / "profiles",
+    )
+    monkeypatch.setattr(module, "_resolve_winterfell_artifact_roots", lambda _overrides: roots)
+
+    def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+
+    assert module.main(
+        [
+            "--bin-dir",
+            str(roots.binary_dir),
+            "--assets-dir",
+            str(roots.assets_dir),
+            "--profiles-dir",
+            str(roots.profiles_dir),
+            "--evidence-out",
+            str(tmp_path / "evidence.json"),
+        ]
+    ) == 0
+    assert commands[0][3:5] == ["-o", f"cache_dir={tmp_path / '.pytest_cache'}"]
 
 
 def test_tart_harness_promotes_guest_evidence_to_a_durable_report() -> None:

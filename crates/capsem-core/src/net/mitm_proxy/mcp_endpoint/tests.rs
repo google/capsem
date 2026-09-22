@@ -10,7 +10,144 @@ use capsem_proto::mcp_contracts::{JsonRpcRequest, McpPromptDef, McpResourceDef, 
 
 use super::*;
 
-mod builtin_ledger;
+struct ScopedToolsFixture {
+    calls: Arc<Mutex<Vec<serde_json::Value>>>,
+    fail: bool,
+}
+
+type ScopedEndpointFixture = (
+    Arc<McpEndpointState>,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Vec<serde_json::Value>>>,
+);
+
+impl ScopedMcpTools for ScopedToolsFixture {
+    fn definitions(&self) -> Vec<McpToolDef> {
+        vec![McpToolDef {
+            namespaced_name: "capsem__expose_port".to_string(),
+            original_name: "expose_port".to_string(),
+            description: Some("Expose one declared guest port".to_string()),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "guest_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+                    "host_port": {"type": "integer", "minimum": 0, "maximum": 65535},
+                    "target": {"type": "string", "enum": ["container", "vm"]}
+                },
+                "required": ["guest_port", "target"],
+                "additionalProperties": false
+            }),
+            server_name: "capsem".to_string(),
+            annotations: None,
+            timeout_secs: None,
+        }]
+    }
+
+    fn call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        arguments: serde_json::Value,
+    ) -> futures::future::BoxFuture<'a, Result<serde_json::Value, String>> {
+        Box::pin(async move {
+            assert_eq!(name, "capsem__expose_port");
+            self.calls.lock().await.push(arguments.clone());
+            if self.fail {
+                return Err("profile blocks this exposure".to_string());
+            }
+            Ok(serde_json::json!({
+                "structuredContent": {
+                    "guest_port": arguments["guest_port"],
+                    "host_port": 49152,
+                    "target": arguments["target"]
+                }
+            }))
+        })
+    }
+}
+
+fn endpoint_with_scoped_tools(fail: bool) -> ScopedEndpointFixture {
+    let (aggregator, mut rx) = capsem_proto::mcp_aggregator::AggregatorClient::channel(16);
+    let aggregator_calls = Arc::new(Mutex::new(Vec::new()));
+    let aggregator_calls_h = Arc::clone(&aggregator_calls);
+    tokio::spawn(async move {
+        while let Some((req, resp_tx)) = rx.recv().await {
+            aggregator_calls_h.lock().await.push(match req.method {
+                AggregatorMethod::ListTools => "list_tools".to_string(),
+                AggregatorMethod::CallTool { .. } => "call_tool".to_string(),
+                _ => "other".to_string(),
+            });
+            let body = match req.method {
+                AggregatorMethod::ListTools => AggregatorResult::Tools { tools: Vec::new() },
+                _ => AggregatorResult::Error {
+                    error: "scoped calls must not reach the aggregator".to_string(),
+                },
+            };
+            let _ = resp_tx.send(AggregatorResponse { id: req.id, body });
+        }
+    });
+    let scoped_calls = Arc::new(Mutex::new(Vec::new()));
+    let endpoint = McpEndpointState::new(
+        aggregator,
+        Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new())))),
+        Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
+        Arc::new(tokio::sync::Semaphore::new(crate::mcp::default_inflight_cap())),
+        McpTimeouts::default(),
+    )
+    .with_scoped_tools(Arc::new(ScopedToolsFixture {
+        calls: Arc::clone(&scoped_calls),
+        fail,
+    }));
+    (Arc::new(endpoint), aggregator_calls, scoped_calls)
+}
+
+#[tokio::test]
+async fn endpoint_discovers_and_dispatches_scoped_owner_tools_without_credentials_or_aggregator_handoff() {
+    let (endpoint, aggregator_calls, scoped_calls) = endpoint_with_scoped_tools(false);
+
+    let listed = endpoint
+        .handle_request(&json_request("tools/list", serde_json::json!({})))
+        .await
+        .unwrap();
+    let tool = &listed.result.as_ref().unwrap()["tools"][0];
+    assert_eq!(tool["name"], "capsem__expose_port");
+    let schema = tool["inputSchema"].to_string();
+    for forbidden in ["token", "gateway", "socket", "vm_id", "vm_name"] {
+        assert!(!schema.contains(forbidden), "scoped schema exposed {forbidden}");
+    }
+
+    let called = endpoint
+        .handle_request(&json_request(
+            "tools/call",
+            serde_json::json!({
+                "name": "capsem__expose_port",
+                "arguments": {"guest_port": 8080, "host_port": 0, "target": "container"}
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(called.result.as_ref().unwrap()["structuredContent"]["host_port"], 49152);
+    assert_eq!(aggregator_calls.lock().await.as_slice(), ["list_tools"]);
+    assert_eq!(scoped_calls.lock().await.len(), 1);
+}
+
+#[tokio::test]
+async fn endpoint_maps_scoped_owner_tool_refusal_to_json_rpc_error() {
+    let (endpoint, aggregator_calls, _) = endpoint_with_scoped_tools(true);
+    let response = endpoint
+        .handle_request(&json_request(
+            "tools/call",
+            serde_json::json!({
+                "name": "capsem__expose_port",
+                "arguments": {"guest_port": 8080, "target": "container"}
+            }),
+        ))
+        .await
+        .unwrap();
+    let error = response.error.as_ref().unwrap();
+    assert_eq!(error.code, -32603);
+    assert!(error.message.contains("profile blocks this exposure"));
+    assert!(aggregator_calls.lock().await.is_empty());
+}
 
 fn json_request(method: &str, params: serde_json::Value) -> JsonRpcRequest {
     JsonRpcRequest {
@@ -56,8 +193,6 @@ where
     (
         Arc::new(McpEndpointState::new(
             aggregator,
-            Arc::new(capsem_logger::DbWriter::open_in_memory(8).unwrap()),
-            std::collections::BTreeSet::new(),
             Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new())))),
             Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
             Arc::new(tokio::sync::Semaphore::new(crate::mcp::default_inflight_cap())),

@@ -161,6 +161,12 @@ enum ReadRequest {
         /// the handle can expire read caches keyed on its epochs.
         reply: tokio::sync::oneshot::Sender<DbResult<bool>>,
     },
+    Observe {
+        /// Carries whether the ledger changed since the worker last looked.
+        /// Cached readiness still needs this probe before a caller can trust
+        /// response bytes keyed on the read epoch.
+        reply: tokio::sync::oneshot::Sender<DbResult<bool>>,
+    },
     Query {
         sql: String,
         params: Vec<serde_json::Value>,
@@ -342,11 +348,17 @@ impl DbHandle {
     /// internal storage strategy.
     pub async fn ready(&self) -> DbResult<()> {
         let started = Instant::now();
-        if let Some(cached) = self.inner.ready_cache.lock().unwrap().clone() {
+        let cached = { self.inner.ready_cache.lock().unwrap().clone() };
+        if let Some(cached) = cached {
+            let changed = self.observe_reader_change().await?;
+            if changed {
+                self.invalidate_read_cache();
+            }
             tracing::debug!(
                 db_path = %self.inner.path.display(),
                 operation = "ready",
                 cached = true,
+                changed,
                 duration_ms = elapsed_ms(started),
                 "session db handle operation completed"
             );
@@ -398,6 +410,16 @@ impl DbHandle {
             *self.inner.ready_cache.lock().unwrap() = Some(Ok(()));
         }
         result
+    }
+
+    async fn observe_reader_change(&self) -> DbResult<bool> {
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        self.inner
+            .reader_tx
+            .send(ReadRequest::Observe { reply })
+            .map_err(|error| format!("db reader worker closed: {error}"))?;
+        rx.await
+            .map_err(|error| format!("db reader worker dropped observe reply: {error}"))?
     }
 
     /// Execute one read-only query through the DB-owned worker.

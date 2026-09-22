@@ -65,22 +65,6 @@ pub(crate) const STATS_DETAIL_PROCESS_EVENTS_LIMIT: usize = 100;
 
 /// Index rows grouped by the event they describe, so the detail view can look
 /// up one event's metadata without scanning the list.
-pub(crate) fn body_blob_map(rows: Vec<serde_json::Value>) -> serde_json::Value {
-    let mut by_event = serde_json::Map::new();
-    for row in rows {
-        let Some(id) = row.get("event_id").and_then(|value| value.as_str()) else {
-            continue;
-        };
-        let entry = by_event
-            .entry(id.to_string())
-            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
-        if let serde_json::Value::Array(rows) = entry {
-            rows.push(row);
-        }
-    }
-    serde_json::Value::Object(by_event)
-}
-
 /// Twelve lowercase hex characters, which is what the ledger's CHECK
 /// constraints enforce on the way in.
 const EVENT_ID_LEN: usize = 12;
@@ -109,8 +93,6 @@ const MAX_TRANSPORT_BYTES: usize = 16 * 1024 * 1024;
 ///   direction, so a response carries at most `directions * max_bytes`.
 #[derive(Deserialize, Debug, Default)]
 pub(crate) struct EventBodiesQuery {
-    /// Bytes per body. Absent means [`DEFAULT_TRANSPORT_BYTES`]; anything
-    /// above [`MAX_TRANSPORT_BYTES`] is clamped to it.
     pub(crate) max_bytes: Option<usize>,
 }
 
@@ -158,20 +140,20 @@ pub(crate) fn validate_event_id(raw: &str) -> Result<&str, AppError> {
 /// the capture did, upstream, before the archive ever saw the body -- the two
 /// are reported separately because a reviewer looking at a partial body needs
 /// to know whether the rest of it exists anywhere.
-pub(crate) fn bounded_body_response(stored: StoredBody, max_bytes: usize) -> api::bodies::EventBody {
+pub(crate) fn bounded_body_response(stored: StoredBody, max_bytes: usize) -> api::bodies::ArchivedEventBody {
     let stored_bytes = stored.bytes.len();
     let (encoding, content, cut_at) = match std::str::from_utf8(&stored.bytes) {
         Ok(text) => {
             let cut = floor_char_boundary(text, max_bytes);
-            (api::bodies::BodyEncoding::Utf8, text[..cut].to_string(), cut)
+            (api::BodyEncoding::Utf8, text[..cut].to_string(), cut)
         }
         Err(_) => {
             let cut = max_bytes.min(stored_bytes);
             let encoded = base64::engine::general_purpose::STANDARD.encode(&stored.bytes[..cut]);
-            (api::bodies::BodyEncoding::Base64, encoded, cut)
+            (api::BodyEncoding::Base64, encoded, cut)
         }
     };
-    api::bodies::EventBody {
+    api::bodies::ArchivedEventBody {
         event_id: stored.event_id,
         source_table: stored.source_table,
         direction: stored.direction.as_str().to_string(),
@@ -231,7 +213,7 @@ pub(crate) async fn handle_event_bodies(
     State(state): State<Arc<ServiceState>>,
     Path((id, event_id)): Path<(String, String)>,
     Query(params): Query<EventBodiesQuery>,
-) -> Result<Json<api::bodies::EventBodiesResponse>, AppError> {
+) -> Result<Json<api::EventBodiesResponse>, AppError> {
     let event_id = validate_event_id(&event_id)?;
     let max_bytes = params.transport_budget();
     let session_dir = resolve_session_dir(&state, &id)?;
@@ -241,7 +223,7 @@ pub(crate) async fn handle_event_bodies(
         .read_bodies(event_id)
         .await
         .map_err(|error| ledger_route_error(&id, "bodies", "read bodies", &db_path, error))?;
-    let bodies: Vec<api::bodies::EventBody> = stored
+    let bodies: Vec<api::bodies::ArchivedEventBody> = stored
         .into_iter()
         .map(|body| bounded_body_response(body, max_bytes))
         .collect();
@@ -252,7 +234,7 @@ pub(crate) async fn handle_event_bodies(
         body_count = bodies.len(),
         "event_bodies"
     );
-    Ok(Json(api::bodies::EventBodiesResponse {
+    Ok(Json(api::EventBodiesResponse {
         event_id: event_id.to_string(),
         bodies,
     }))

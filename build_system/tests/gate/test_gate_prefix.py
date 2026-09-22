@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 from helpers.gate import RecordingRunner
-from test_gate_socket_length import GATEWAY_SUFFIX, SUN_LEN
+from test_gate_socket_length import OWNER_SOCKET_SUFFIX, SUN_LEN
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -266,18 +266,18 @@ def test_source_changes_while_waiting_for_the_machine_are_refused(tmp_path: Path
 
 
 def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
-    """The gateway's sockets are built somewhere the prefix does not reach.
+    """Per-VM owner sockets are built somewhere the prefix does not reach.
 
     `/tmp/capsem-gate-<32hex>` -- an early draft of this design -- is 41
     characters and reproduced the 12,024-error socket failure, because the
-    gateway appends `instances/<uuid>-ws.sock` and macOS stops at 104 bytes.
+    VM owner appends `instances/<uuid>-handoff.sock` and macOS stops at 104 bytes.
     The escape is that the socket root is absolute and outside the checkout, so
     relocating the run adds nothing to it.
 
     Worth stating as its own property, because the obvious reading is wrong:
     the *workspace* run dir is relative to the checkout root, and at
-    `<root>/cache/target/tests/home/.capsem/run` it is already 105 bytes with the
-    gateway suffix -- over the limit today, prefix or no prefix. It is not the
+    `<root>/cache/target/tests/home/.capsem/run` it is already over the limit with
+    the owner socket suffix -- over the limit today, prefix or no prefix. It is not the
     binding path, and a test that measured it would fail for a reason that has
     nothing to do with isolation. Mutation: point `[assets] run_dir_template`
     at a relative path and this goes red.
@@ -289,13 +289,13 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
 
     assert root.is_absolute(), (
         f"{root} is relative, so it resolves inside the prefix and every "
-        "terminal socket grows by the length of the prefix"
+        "owner socket grows by the length of the prefix"
     )
     assert prefixidentity.example(config) not in root.parents
 
-    longest = len(str(root / "capsem-a.XXXXXX")) + 1 + GATEWAY_SUFFIX
+    longest = len(str(root / "capsem-a.XXXXXX")) + 1 + OWNER_SOCKET_SUFFIX
     assert longest <= SUN_LEN, (
-        f"a terminal socket would be {longest} bytes against a {SUN_LEN} limit"
+        f"an owner socket would be {longest} bytes against a {SUN_LEN} limit"
     )
 
 

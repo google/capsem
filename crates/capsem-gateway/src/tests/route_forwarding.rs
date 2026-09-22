@@ -8,6 +8,7 @@ fn service_proxy_app(uds_path: &str) -> axum::Router {
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
+        previews: crate::preview::PreviewState::new(0),
     });
     service_proxy_routes().with_state(state)
 }
@@ -98,7 +99,7 @@ async fn gateway_update_status_route_is_get_only() {
 
 #[tokio::test]
 async fn gateway_update_action_routes_are_post_only() {
-    for uri in ["/update/check", "/update/apply"] {
+    for uri in ["/update/check", "/update/apply", "/restart"] {
         let app = service_proxy_app("/tmp/capsem-gateway-missing-service.sock");
         let post_resp = app
             .clone()
@@ -187,10 +188,9 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
         ("GET", "/vms/test-vm/status"),
         ("GET", "/vms/test-vm/snapshots/status"),
         ("GET", "/vms/test-vm/snapshots/list"),
+        ("GET", "/vms/test-vm/changes?checkpoint=cp-0"),
         ("GET", "/vms/test-vm/logs"),
         ("POST", "/vms/test-vm/exec"),
-        ("POST", "/vms/test-vm/files/write"),
-        ("POST", "/vms/test-vm/files/read"),
         ("GET", "/vms/test-vm/files/list"),
         ("GET", "/vms/test-vm/files/content?path=/root/a.txt"),
         ("POST", "/vms/test-vm/files/content?path=/root/a.txt"),

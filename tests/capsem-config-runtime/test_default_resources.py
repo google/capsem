@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import wait_exec_ready
+from helpers.service import exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.config_runtime
 
@@ -20,7 +20,7 @@ def test_default_cpu_count(config_svc):
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         resp = client.post(f"/vms/{name}/exec", {"command": "nproc"})
-        nproc = int(resp.get("stdout", "0").strip()) if resp else 0
+        nproc = int(exec_output_text(resp).strip() or "0") if resp else 0
         assert nproc == 4, f"Expected 4 CPUs, got {nproc}"
     finally:
         with contextlib.suppress(Exception):
@@ -37,7 +37,7 @@ def test_default_ram(config_svc):
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
 
         resp = client.post(f"/vms/{name}/exec", {"command": "free -m | awk '/Mem:/ {print $2}'"})
-        total_mb = int(resp.get("stdout", "0").strip()) if resp else 0
+        total_mb = int(exec_output_text(resp).strip() or "0") if resp else 0
         # Allow 10% tolerance for kernel overhead
         assert total_mb > 3600, f"Expected ~4096MB, got {total_mb}MB"
     finally:

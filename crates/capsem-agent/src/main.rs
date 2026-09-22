@@ -6,6 +6,7 @@ mod boot_timing;
 mod control_reader;
 mod control_writer;
 use control_reader::control_loop;
+mod exec;
 mod port_bridge;
 use boot_timing::{parse_boot_timing, BOOT_TIMING_PATH};
 mod shutdown;
@@ -17,6 +18,7 @@ mod venv;
 use control_writer::{control_writer_loop, heartbeat_loop, BridgeShared, CtrlSender, PendingResponses};
 #[cfg(test)]
 use control_writer::{frame_or_drop, SharedCtrlReceiver};
+use exec::{run_exec, ExecCancellation};
 #[cfg(test)]
 use shutdown::HostShutdown;
 use terminal_bridge::bridge_loop;
@@ -31,7 +33,7 @@ use std::thread;
 use capsem_proto::{
     decode_host_msg, encode_guest_msg, validate_env_key, validate_env_value, validate_file_path, GuestToHost,
     HostToGuest, MAX_BOOT_ENV_VARS, MAX_BOOT_FILES, MAX_BOOT_FILE_BYTES, MAX_FRAME_SIZE, VSOCK_PORT_CONTROL,
-    VSOCK_PORT_EXEC, VSOCK_PORT_TERMINAL,
+    VSOCK_PORT_TERMINAL,
 };
 use nix::libc;
 use nix::pty::openpty;
@@ -39,7 +41,7 @@ use nix::sys::signal::{signal, SigHandler, Signal};
 use nix::unistd::{close, dup2, execvp, fork, setsid, ForkResult, Pid};
 
 use audit::audit_reader_loop;
-use vsock_io::{read_exact_fd, vsock_connect, vsock_connect_retry, write_all_fd, VSOCK_HOST_CID};
+use vsock_io::{read_exact_fd, vsock_connect_retry, write_all_fd, VSOCK_HOST_CID};
 /// Boot log persisted on the host-visible workspace mount for post-boot diagnosis.
 const BOOT_LOG_PATH: &str = "/root/.capsem-agent-boot.log";
 /// Fallback boot log inside the guest overlay when /root is not mounted yet.
@@ -492,7 +494,7 @@ fn main() {
             // File ops are intentionally NOT deduped -- write/read/delete
             // are idempotent, and re-acking lets the host recover from a
             // FileOpDone lost on return.
-            let exec_inflight = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::<u64>::new()));
+            let exec_inflight = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
             let exec_done: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, i32>>> =
                 std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
             // Symmetric guest-side replay buffer: every ackable
@@ -811,197 +813,7 @@ fn run_bridge(
     eprintln!("[capsem-agent] bridge exited");
 }
 
-/// Maximum vsock_connect attempts when the host returns ECONNRESET, e.g.
-/// briefly after `restoreMachineStateFromURL` while the kernel-side
-/// accept queue is still settling. 5 attempts × ECONNRESET_BACKOFF_MS
-/// keeps the transient retry short without hiding real connect failures.
-const ECONNRESET_MAX_ATTEMPTS: usize = 5;
-const ECONNRESET_BACKOFF_MS: u64 = 20;
-
-/// Connect via the supplied closure, retrying on ECONNRESET only.
-/// All other error kinds bail immediately so we don't paper over real
-/// misconfiguration (refused, address-family-unsupported, etc.).
-///
-/// Bug C: post-`restoreState` the agent's `vsock_connect` to host port
-/// 5005 (EXEC) can transiently see ECONNRESET while the kernel-side
-/// accept queue is still attaching to the freshly-registered VZ
-/// listener. A single-shot connect failed -> run_exec returned 126 ->
-/// `exec_done` cached the bad code -> every host retry/replay was
-/// poisoned. The retry isolates this transient transport state.
-fn vsock_connect_with_econnreset_retry<F>(mut connect_fn: F) -> io::Result<RawFd>
-where
-    F: FnMut() -> io::Result<RawFd>,
-{
-    let mut last_err = None;
-    for attempt in 1..=ECONNRESET_MAX_ATTEMPTS {
-        match connect_fn() {
-            Ok(fd) => return Ok(fd),
-            Err(e) if e.kind() == io::ErrorKind::ConnectionReset => {
-                last_err = Some(e);
-                if attempt < ECONNRESET_MAX_ATTEMPTS {
-                    std::thread::sleep(std::time::Duration::from_millis(ECONNRESET_BACKOFF_MS));
-                }
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    Err(last_err.unwrap_or_else(|| io::Error::from(io::ErrorKind::ConnectionReset)))
-}
-
-/// Outcome of a `run_exec` call. Distinguishes a real child exit
-/// (cache it for dedup-replay on host duplicate Exec delivery) from a
-/// transport failure that never reached the child (do NOT cache --
-/// the next host replay deserves a fresh attempt against a possibly
-/// recovered transport).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExecOutcome {
-    /// Child process ran to completion with `i32` exit code.
-    Done(i32),
-    /// vsock_connect to the host EXEC port exhausted retries; ExecStarted
-    /// or any subsequent step never landed. The host still gets an
-    /// ExecDone {exit_code: 126} (so the caller sees a result), but the
-    /// agent does not poison `exec_done` with this transient.
-    TransportFailed,
-}
-
-impl ExecOutcome {
-    fn should_cache(&self) -> bool {
-        matches!(self, ExecOutcome::Done(_))
-    }
-
-    fn exit_code(&self) -> i32 {
-        match self {
-            ExecOutcome::Done(code) => *code,
-            ExecOutcome::TransportFailed => 126,
-        }
-    }
-}
-
-/// Execute a command as a direct child process, streaming output over vsock:5005.
-///
-/// Runs in a background thread so control_loop remains responsive to heartbeats.
-/// Output flows as raw bytes on a dedicated exec vsock connection. The exit code
-/// is sent as ExecDone via the serialized control write channel.
-fn run_exec(ctrl_tx: &CtrlSender, id: u64, command: &str, boot_env: &[(String, String)]) -> ExecOutcome {
-    // Connect to host exec port. Retry on ECONNRESET only -- post-restore
-    // VZ transient (Bug C). Other errors bail immediately.
-    let exec_fd = match vsock_connect_with_econnreset_retry(|| vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_EXEC)) {
-        Ok(fd) => fd,
-        Err(e) => {
-            eprintln!("[capsem-agent] exec[{id}] vsock connect failed: {e}");
-            let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code: 126 });
-            return ExecOutcome::TransportFailed;
-        }
-    };
-
-    ExecOutcome::Done(run_exec_on_fds(exec_fd, ctrl_tx, id, command, boot_env))
-}
-
-/// Inner exec implementation that takes pre-connected fds (testable without vsock).
-/// `ctrl_tx` serializes writes to the control channel (prevents frame corruption
-/// from concurrent writers). `exec_fd` is consumed: closed on all exit paths.
-fn run_exec_on_fds(exec_fd: RawFd, ctrl_tx: &CtrlSender, id: u64, command: &str, boot_env: &[(String, String)]) -> i32 {
-    // RAII guard to ensure exec_fd is closed on all paths.
-    struct FdGuard(RawFd);
-    impl Drop for FdGuard {
-        fn drop(&mut self) {
-            unsafe {
-                libc::close(self.0);
-            }
-        }
-    }
-    let _exec_guard = FdGuard(exec_fd);
-
-    // Send ExecStarted handshake so host knows which exec ID this connection belongs to.
-    if let Err(e) = send_guest_msg(exec_fd, &GuestToHost::ExecStarted { id }) {
-        eprintln!("[capsem-agent] exec[{id}] handshake failed: {e}");
-        let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code: 126 });
-        return 126;
-    }
-
-    // Spawn child process with piped stdout and stderr.
-    let cwd = default_exec_cwd();
-    let mut child = match std::process::Command::new("bash")
-        .arg("-c")
-        .arg(command)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .current_dir(cwd)
-        .envs(boot_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("[capsem-agent] exec[{id}] spawn failed: {e}");
-            let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code: 126 });
-            return 126;
-        }
-    };
-
-    // Forward child stdout and stderr to exec vsock fd as a merged stream.
-    // The host reads all exec output as opaque bytes (no stdout/stderr separation),
-    // so interleaving between the two is acceptable -- same as `docker exec` or `2>&1`.
-    // Stderr is forwarded from a background thread; stdout is forwarded inline.
-    let stderr_thread = child.stderr.take().map(|mut stderr| {
-        let efd = exec_fd;
-        thread::spawn(move || {
-            let mut buf = [0u8; 8192];
-            loop {
-                match stderr.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        let _ = write_all_fd(efd, &buf[..n]);
-                    }
-                }
-            }
-        })
-    });
-
-    if let Some(mut stdout) = child.stdout.take() {
-        let mut buf = [0u8; 8192];
-        loop {
-            match stdout.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if write_all_fd(exec_fd, &buf[..n]).is_err() {
-                        break;
-                    }
-                }
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(_) => break,
-            }
-        }
-    }
-
-    if let Some(t) = stderr_thread {
-        let _ = t.join();
-    }
-
-    // Wait for child to exit and get exit code.
-    let exit_code = match child.wait() {
-        Ok(status) => status.code().unwrap_or(1),
-        Err(_) => 126,
-    };
-
-    // exec_fd closed by _exec_guard drop (signals EOF to host).
-    drop(_exec_guard);
-
-    // Send ExecDone via serialized control write channel.
-    eprintln!("[capsem-agent] exec[{id}] done: exit_code={exit_code}");
-    let _ = ctrl_tx.send(GuestToHost::ExecDone { id, exit_code });
-    exit_code
-}
-
-fn default_exec_cwd() -> &'static str {
-    if unsafe { libc::geteuid() } == 0 && std::path::Path::new("/root").is_dir() {
-        "/root"
-    } else {
-        "/"
-    }
-}
-
-/// Guest workspace root (VirtioFS mount point).
-const GUEST_WORKSPACE_ROOT: &str = "/root";
+use capsem_proto::GUEST_WORKSPACE as GUEST_WORKSPACE_ROOT;
 
 // ---------------------------------------------------------------------------
 // Symlink-safe file I/O (O_NOFOLLOW on final component)

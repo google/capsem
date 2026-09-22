@@ -249,6 +249,7 @@ fn compiles_checked_in_enforcement_file() {
         BTreeSet::from([
             "profiles.rules.capsem_mock_server",
             "profiles.rules.default_http",
+            "profiles.rules.default_http_preview",
             "profiles.rules.default_dns",
             "profiles.rules.default_mcp",
             "profiles.rules.default_model",

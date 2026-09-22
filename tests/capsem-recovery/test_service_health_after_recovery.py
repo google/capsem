@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
 pytestmark = pytest.mark.recovery
 
@@ -79,7 +79,7 @@ def test_service_healthy_after_orphan_cleanup():
                 "New VM should become exec-ready after recovery"
 
             exec_resp = client2.post(f"/vms/{name2}/exec", {"command": "echo recovered"})
-            assert "recovered" in exec_resp.get("stdout", ""), "Exec should work after recovery"
+            assert "recovered" in exec_output_text(exec_resp), "Exec should work after recovery"
 
             client2.delete(f"/vms/{name2}/delete")
 

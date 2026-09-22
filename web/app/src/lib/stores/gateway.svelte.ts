@@ -84,12 +84,19 @@ class GatewayStore {
       }
     } else {
       // Just probe health to detect disconnection
-      const ok = await api.healthCheck();
-      if (!ok) {
-        this.connected = false;
-        this.reachable = false;
-        this.error = 'Gateway connection lost';
-        this.#failCount = 1;
+      try {
+        const ok = await api.healthCheck();
+        if (!ok) {
+          this.connected = false;
+          this.reachable = false;
+          this.error = 'Gateway connection lost';
+          this.#failCount = 1;
+        } else {
+          this.error = null;
+        }
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : 'Invalid gateway status';
+        console.error('[gateway] health check FAIL:', this.error);
       }
     }
 
