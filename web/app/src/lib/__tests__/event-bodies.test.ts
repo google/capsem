@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { EventBody } from '../api';
+import type { ArchivedEventBody } from '@capsem/sdk';
 import {
   bodyContent,
   createDetailLoader,
@@ -11,7 +11,7 @@ import {
   type DetailSelection,
 } from '../event-bodies';
 
-function body(overrides: Partial<EventBody> = {}): EventBody {
+function body(overrides: Partial<ArchivedEventBody> = {}): ArchivedEventBody {
   return {
     event_id: '0123456789ab',
     source_table: 'net_events',
@@ -73,8 +73,8 @@ describe('event id validation', () => {
 describe('detail selection sequencing', () => {
   it('drops a fetch that lands after the user has selected another event', async () => {
     const pane = recordingView();
-    const first = deferred<EventBody[]>();
-    const second = deferred<EventBody[]>();
+    const first = deferred<ArchivedEventBody[]>();
+    const second = deferred<ArchivedEventBody[]>();
     const pending = [first, second];
     const loader = createDetailLoader(pane.view, {
       ...NO_INDEX_ROWS,
@@ -98,7 +98,7 @@ describe('detail selection sequencing', () => {
     // so this second selection never superseded the first, and the first
     // fetch painted its bodies over a row that has no bodies at all.
     const pane = recordingView();
-    const first = deferred<EventBody[]>();
+    const first = deferred<ArchivedEventBody[]>();
     const loader = createDetailLoader(pane.view, {
       ...NO_INDEX_ROWS,
       fetchBodies: () => first.promise,
@@ -117,7 +117,7 @@ describe('detail selection sequencing', () => {
 
   it('does not let a failed fetch complain about an event the user has left', async () => {
     const pane = recordingView();
-    const first = deferred<EventBody[]>();
+    const first = deferred<ArchivedEventBody[]>();
     const loader = createDetailLoader(pane.view, {
       ...NO_INDEX_ROWS,
       fetchBodies: () => first.promise,
@@ -157,7 +157,7 @@ describe('detail selection sequencing', () => {
     // no token meant an in-flight fetch landed, found itself current, and
     // reopened the pane on the event the user had just closed.
     const pane = recordingView();
-    const first = deferred<EventBody[]>();
+    const first = deferred<ArchivedEventBody[]>();
     const loader = createDetailLoader(pane.view, {
       ...NO_INDEX_ROWS,
       fetchBodies: () => first.promise,
@@ -174,7 +174,7 @@ describe('detail selection sequencing', () => {
 
   it('does not let a dismissed pane be given an error by its own fetch', async () => {
     const pane = recordingView();
-    const first = deferred<EventBody[]>();
+    const first = deferred<ArchivedEventBody[]>();
     const loader = createDetailLoader(pane.view, {
       ...NO_INDEX_ROWS,
       fetchBodies: () => first.promise,

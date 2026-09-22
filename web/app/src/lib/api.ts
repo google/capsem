@@ -2,7 +2,7 @@
 
 import * as gateway from '@capsem/sdk/operations';
 import { HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
-import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, SnapshotsStatus, SnapshotsList } from '@capsem/sdk';
+import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, SnapshotsStatus, SnapshotsList, EventBodiesResponse } from '@capsem/sdk';
 import type { ProfileSummary, ProfilesListResponse, UpdateApplyRequest } from '@capsem/sdk';
 export type { ProfileSummary, ProfilesListResponse } from '@capsem/sdk';
 export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse,
@@ -662,6 +662,10 @@ export async function getVmStatsDetail(id: string): Promise<VmStatsDetailRespons
     }
     throw err;
   }
+}
+
+export async function fetchEventBodies(id: string, eventId: string): Promise<EventBodiesResponse> {
+  return _sdk.call(transport => gateway.getVmEventBodies(transport, { id, event_id: eventId }));
 }
 
 // -- Images --

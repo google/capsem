@@ -74,6 +74,7 @@ BENCHMARK_DB_INTERNALS = {
 
 LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/db.rs"),
+    Path("crates/capsem-logger/src/db/bodies.rs"),
     Path("crates/capsem-logger/src/db/handle_tests.rs"),
     Path("crates/capsem-logger/src/db/handle_tests/bodies.rs"),
     Path("crates/capsem-logger/src/db/handle_tests/external_reader.rs"),
@@ -86,6 +87,7 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/db/handle_tests/warc_export.rs"),
     Path("crates/capsem-logger/src/db/maintenance.rs"),
     Path("crates/capsem-logger/src/db/reader_worker.rs"),
+    Path("crates/capsem-logger/src/db/warc_export.rs"),
     Path("crates/capsem-logger/src/network_db.rs"),
     Path("crates/capsem-logger/src/reader.rs"),
     Path("crates/capsem-logger/src/reader/open.rs"),

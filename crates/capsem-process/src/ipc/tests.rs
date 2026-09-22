@@ -163,15 +163,16 @@ revision = "test.1"
                 let _ = response_tx.send(AggregatorResponse { id: request.id, body });
             }
         });
-        let endpoint = Arc::new(capsem_core::net::mitm_proxy::McpEndpointState::new(
-            aggregator.clone(),
-            Arc::clone(&db),
-            std::collections::BTreeSet::new(),
-            Arc::clone(&security_rules),
-            Arc::clone(&plugin_policy),
-            Arc::new(tokio::sync::Semaphore::new(4)),
-            capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
-        ));
+        let endpoint = Arc::new(
+            capsem_core::net::mitm_proxy::McpEndpointState::new(
+                aggregator.clone(),
+                Arc::clone(&security_rules),
+                Arc::clone(&plugin_policy),
+                Arc::new(tokio::sync::Semaphore::new(4)),
+                capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
+            )
+            .with_builtin_ledger(Arc::clone(&db), std::collections::BTreeSet::new()),
+        );
         let mcp_runtime = Arc::new(McpRuntime {
             aggregator,
             endpoint,

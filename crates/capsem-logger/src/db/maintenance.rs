@@ -198,11 +198,7 @@ fn refuse_existing_destination(db: &Path, archive: &Path, lock: &Path) -> anyhow
     Ok(())
 }
 
-fn snapshot_session_db(
-    src: &Path,
-    dst: &Path,
-    deadline: Instant,
-) -> anyhow::Result<SnapshotDatabase> {
+fn snapshot_session_db(src: &Path, dst: &Path, deadline: Instant) -> anyhow::Result<SnapshotDatabase> {
     let src_conn = Connection::open_with_flags(
         src,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -278,11 +274,7 @@ fn validate_body_bounds(conn: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn validate_generation_blocks(
-    source: &mut File,
-    blocks: &[SnapshotBlock],
-    deadline: Instant,
-) -> anyhow::Result<()> {
+fn validate_generation_blocks(source: &mut File, blocks: &[SnapshotBlock], deadline: Instant) -> anyhow::Result<()> {
     for &(block_offset, disk_len, expected_raw_len) in blocks {
         if Instant::now() >= deadline {
             bail!("ledger snapshot validation timed out");

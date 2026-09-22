@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import json
 import platform
-import tomllib
+import shutil
 from pathlib import Path
+
+import tomllib
 
 from .constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 
 VM_ID = "f02b6a6c-a141-4411-a032-cc79912fb248"
 CHANGES_ROUTE = "/vms/{id}/changes"
 CHANGES_URL = f"/vms/{VM_ID}/changes?checkpoint=cp-10"
+BODY_ROUTE = "/vms/{id}/bodies/{event_id}"
+BODY_EVENT_ID = "88d18d157b28"
+BODY_URL = f"/vms/{VM_ID}/bodies/{BODY_EVENT_ID}?max_bytes=64"
 
 
 def seed_workspace_changes(run_dir: Path, profiles_dir: Path) -> None:
@@ -35,6 +40,10 @@ def seed_workspace_changes(run_dir: Path, profiles_dir: Path) -> None:
         "slot": 10, "timestamp": "2026-09-10T00:00:00Z", "epoch_secs": 1788998400,
         "epoch_millis": 1788998400000, "origin": "manual", "name": "baseline", "hash": None,
     }))
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "session"
+    shutil.copy2(fixture / "test.db", session / "session.db")
+    shutil.copy2(fixture / "test.db-archive.lock", session / "session.db-archive.lock")
+    shutil.copytree(fixture / "test.bodies", session / "session.bodies")
     profile = tomllib.loads((profiles_dir / CODE_PROFILE_ID / "profile.toml").read_text())
     arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x86_64"
     assets = profile["assets"]["arch"][arch]
@@ -56,3 +65,10 @@ def assert_workspace_changes(payload: dict) -> None:
     assert {(row["path"], row["kind"]) for row in payload["changes"]} == {
         ("created.txt", "created"), ("deleted.txt", "deleted"), ("modified.txt", "modified"),
     }, payload
+
+
+def assert_event_bodies(payload: dict) -> None:
+    """The measured route must read authenticated bytes, not a fast empty result."""
+    assert payload["event_id"] == BODY_EVENT_ID, payload
+    assert {body["direction"] for body in payload["bodies"]} == {"request", "response"}, payload
+    assert all(body["content"] and body["truncated_for_transport"] for body in payload["bodies"]), payload

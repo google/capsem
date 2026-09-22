@@ -2967,6 +2967,7 @@ slowest_steps = 10
 [benchmark.routes]
 internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route", "/internal/vms/{id}/exposures/{exposure_id}/preview-session" = "The authenticated gateway asks the service for owner-scoped bootstrap material over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap" = "The authenticated gateway exchanges a single-use browser bootstrap token over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-admission" = "The authenticated gateway asks the service and VM owner to admit one browser descriptor over the local service UDS" }
 measured = [
+    "/vms/{id}/bodies/{event_id}",
     "/vms/{id}/changes",
     "/vms/{id}/status",
     "/vms/{id}/exposures",
@@ -3059,7 +3060,6 @@ unmeasured = [
     "/vms/{id}/detection/status",
     "/vms/{id}/enforcement/latest",
     "/vms/{id}/enforcement/status",
-    "/vms/{id}/bodies/{event_id}",
     "/vms/{id}/bodies/export.warc.gz",
     "/vms/{id}/exec",
     "/vms/{id}/files/content",

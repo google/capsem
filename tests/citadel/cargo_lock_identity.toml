@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "0c1a5cafc3e553d55bc9b32f39e8381673f22223c72d96e875e5988c50d935c1"
-reason = "authenticated browser previews add capsem-proto and URL parsing to the gateway, plus Hyper streaming and WebSocket support to the confined router"
+sha256 = "dcbaf8437374ee9dbe730e316e96fbc35bb69d3c8a3ab22774d167c4df9b9bed"
+reason = "the v3 body archive adds miniz_oxide, flate2, and sha2 while file-monitor polling removes notify"

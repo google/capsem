@@ -14,6 +14,10 @@ const detailSource = readFileSync(
   new URL('../stats-detail.ts', import.meta.url),
   'utf8',
 );
+const eventBodiesSource = readFileSync(
+  new URL('../event-bodies.ts', import.meta.url),
+  'utf8',
+);
 const interactionSource = readFileSync(
   new URL('../components/views/stats/InteractionViewer.svelte', import.meta.url),
   'utf8',
@@ -29,7 +33,7 @@ describe('StatsView process contract', () => {
     expect(source).toContain('Observed Processes');
     expect(source).toContain('Unique Binaries');
     expect(source).toContain('auditCommand(row)');
-    expect(source).toContain("type: 'observed process'");
+    expect(source).toContain("showDetail('observed process', row)");
     expect(source).not.toContain('Process Audit Events');
     expect(source).not.toContain("type: 'process audit'");
   });
@@ -93,7 +97,7 @@ describe('StatsView credential broker contract', () => {
     expect(source).toContain("'credentials'");
     expect(source).toContain("label: 'Credentials'");
     expect(source).toContain('Credential Broker Events');
-    expect(source).toContain("type: 'credential broker event'");
+    expect(source).toContain("showDetail('credential broker event', row)");
     expect(source).toContain('substitutionRows = detailRows.credential_events');
     expect(source).toContain('Captured');
     expect(source).toContain('Brokered');
@@ -187,7 +191,8 @@ describe('StatsView detail drawer contract', () => {
     expect(interactionSource).toContain('interactionBodies(report, item.event_id)');
     expect(detailSource).toContain("'request_body'");
     expect(detailSource).toContain("'response_body'");
-    expect(source).toContain('`${direction}_body`');
+    expect(source).toContain('api.fetchEventBodies(vmId, eventId)');
+    expect(eventBodiesSource).toContain('withBodies[key] = bodyContent(body)');
     expect(source).toContain("void showDetail('http', row)");
     expect(source).not.toContain('request_body_preview');
     expect(source).not.toContain('response_body_preview');
@@ -199,16 +204,16 @@ describe('StatsView detail drawer contract', () => {
   it('keeps body ledger metadata out of the generic field grid', () => {
     expect(detailSource).toContain('DETAIL_BODY_METADATA_KEYS');
     expect(source).toContain('payloadSectionMeta(section, detail.data)');
-    expect(source).toContain('Original');
-    expect(source).toContain('Stored');
-    expect(source).toContain('Truncated');
-    expect(source).toContain('Hash');
+    expect(detailSource).toContain("label: 'Original'");
+    expect(detailSource).toContain("label: 'Stored'");
+    expect(detailSource).toContain("label: 'Truncated'");
+    expect(detailSource).toContain("label: 'Hash'");
     expect(detailSource).toContain('&& !DETAIL_BODY_METADATA_KEYS.has(key)');
   });
 
   it('renders compact structured snapshots instead of null-heavy security projections', () => {
     expect(source).toContain('compactJsonForDisplay(detail.data.rule_json)');
-    expect(source).toContain('compactJsonForDisplay(detail.data.event_json)');
+    expect(eventBodiesSource).toContain("const PAYLOAD_SOURCE_TABLE = 'security_rule_events'");
     expect(detailSource).toContain('stripEmptyDetailValues');
     expect(source).not.toContain("formatAndHighlight(detail.data.event_json, 'json')");
     expect(source).not.toContain("formatAndHighlight(detail.data.rule_json, 'json')");

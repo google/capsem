@@ -51,13 +51,12 @@ fn endpoint_answering(db: &Arc<DbWriter>, result: serde_json::Value) -> Arc<McpE
     });
     Arc::new(McpEndpointState::new(
         aggregator,
-        Arc::clone(db),
-        BTreeSet::from(["local".to_string()]),
         Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new())))),
         Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
         Arc::new(tokio::sync::Semaphore::new(4)),
         McpTimeouts::default(),
-    ))
+    )
+    .with_builtin_ledger(Arc::clone(db), BTreeSet::from(["local".to_string()])))
 }
 
 /// What one dispatched call left behind.

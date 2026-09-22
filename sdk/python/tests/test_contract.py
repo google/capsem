@@ -77,7 +77,8 @@ def test_optional_nonnullable_fields_cannot_be_explicitly_null() -> None:
 def test_each_packaged_operation_uses_http_and_returns_typed_data(operation: dict[str, Any]) -> None:
     status = "200" if "200" in operation["responses"] else "202"
     content = operation["responses"][status]["content"]
-    binary = "application/octet-stream" in content
+    response_media_type = next(iter(content))
+    binary = response_media_type in {"application/octet-stream", "application/gzip"}
     expected = b"\x00\xff" if binary else sample(content["application/json"]["schema"])
     response = expected if isinstance(expected, bytes) else json.dumps(expected).encode()
     arguments = {parameter["name"]: sample(parameter["schema"])

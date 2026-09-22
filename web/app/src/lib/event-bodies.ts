@@ -20,7 +20,7 @@
  * and reopened the pane on the event the user had just dismissed.
  */
 
-import type { EventBody } from './api';
+import type { ArchivedEventBody } from '@capsem/sdk';
 import { BODY_DIRECTIONS } from './stats-detail';
 
 export type DetailRow = Record<string, any>;
@@ -45,7 +45,7 @@ export type DetailSources = {
   /** The body index rows the list response already carried for this event. */
   indexRowsFor(eventId: string): DetailRow[];
   /** The bytes, from `GET /vms/{id}/bodies/{event_id}`. */
-  fetchBodies(eventId: string): Promise<EventBody[]>;
+  fetchBodies(eventId: string): Promise<ArchivedEventBody[]>;
 };
 
 /** An event id as the ledger writes one, or nothing. */
@@ -74,7 +74,7 @@ function belongsInPane(direction: string, sourceTable: unknown): boolean {
  * The route says that it cut one, not where. For text that is the encoded
  * length of what came back; for base64 it is what those characters decode to.
  */
-export function shownBytes(body: EventBody): number {
+export function shownBytes(body: ArchivedEventBody): number {
   if (body.encoding === 'base64') {
     const padding = (body.content.match(/=+$/)?.[0].length) ?? 0;
     return Math.max(0, Math.floor((body.content.length * 3) / 4) - padding);
@@ -87,7 +87,7 @@ export function shownBytes(body: EventBody): number {
  * says what they are; base64 through a syntax highlighter is noise dressed as
  * evidence.
  */
-export function bodyContent(body: EventBody): string {
+export function bodyContent(body: ArchivedEventBody): string {
   if (body.encoding !== 'base64') return body.content;
   return `[binary body, ${shownBytes(body)} bytes, not text]`;
 }
@@ -108,7 +108,7 @@ export function withIndexMetadata(row: DetailRow, indexRows: DetailRow[]): Detai
 }
 
 /** The row plus the bytes the route sent and what it did to them. */
-export function withFetchedBodies(row: DetailRow, bodies: EventBody[]): DetailRow {
+export function withFetchedBodies(row: DetailRow, bodies: ArchivedEventBody[]): DetailRow {
   const withBodies: DetailRow = { ...row };
   for (const body of bodies) {
     if (!isBodyDirection(body.direction) || !belongsInPane(body.direction, body.source_table)) continue;
@@ -161,7 +161,7 @@ export function createDetailLoader(view: DetailView, sources: DetailSources): De
       const enriched = withIndexMetadata(row, sources.indexRowsFor(eventId));
       view.show({ type, data: enriched });
 
-      let fetched: EventBody[];
+      let fetched: ArchivedEventBody[];
       try {
         fetched = await sources.fetchBodies(eventId);
       } catch (e) {

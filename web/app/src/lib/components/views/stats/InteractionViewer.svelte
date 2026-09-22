@@ -94,7 +94,6 @@
                 <span>{formatBytes(body.stored_bytes)} of {formatBytes(body.original_bytes)}</span>
                 <span class="font-mono">{body.body_hash}</span>
               </div>
-              <InteractionPayload label={`${body.direction} body`} payload={body.payload} />
             </div>
           {/each}
         </div>
