@@ -1,15 +1,8 @@
-"""Running commands, and recording which ones ran in what order.
+"""Run commands through one observable funnel.
 
-Every recipe extracted into this package spends most of its body invoking other
-programs, so the order of those invocations *is* the behaviour under test. The
-`_gate-install` ordering defect -- handing the installer a manifest URL before
-anything had written that manifest -- is not visible in any single command; it
-is visible only in the sequence.
-
-`Runner` therefore funnels every invocation through one overridable method. In
-the gate it runs the command; in a unit test a subclass records it and answers
-with canned output, so a test can assert that staging precedes the handoff
-without Docker, a package, or a network.
+Command order is behavior: the old installer once consumed a manifest before
+another command wrote it. Tests override ``Runner.execute`` to record that
+order without invoking Docker, package tools, or the network.
 """
 
 from __future__ import annotations
@@ -77,8 +70,6 @@ class Runner:
 
     def note(self, message: str) -> None:
         print(message, file=self._stream, flush=True)
-
-    # -- execution ---------------------------------------------------------
 
     # -- where a command's output belongs ----------------------------------
     #

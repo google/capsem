@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 import pytest
-from capsem_builder.gate import cancellation, processgroup
+from capsem_builder.gate import cancellation, processstop
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.invocation import Command
@@ -271,10 +271,10 @@ def test_cancellation_does_not_adopt_an_unsignalable_process_group(
     def denied(_group: int, _sent: int) -> None:
         raise PermissionError(1, "Operation not permitted")
 
-    monkeypatch.setattr(processgroup.os, "killpg", denied)
+    monkeypatch.setattr(processstop.os, "killpg", denied)
 
-    assert not processgroup._group_exists(42)
-    processgroup._signal_group(42, signal.SIGKILL)
+    assert not processstop._group_exists(42)
+    processstop._signal_group(42, signal.SIGKILL)
 
 
 # The guard samples the process table every poll, so a leader that detaches
