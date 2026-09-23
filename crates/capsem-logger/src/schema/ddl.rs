@@ -130,14 +130,8 @@ pub const CREATE_SCHEMA: &str = "
         created_at TEXT NOT NULL,
         UNIQUE(event_id, source_table, direction)
     );
-    CREATE INDEX IF NOT EXISTS idx_event_body_blobs_event_id
-        ON event_body_blobs(event_id);
-    CREATE INDEX IF NOT EXISTS idx_event_body_blobs_trace_id
-        ON event_body_blobs(trace_id);
     CREATE INDEX IF NOT EXISTS idx_event_body_blobs_hash
         ON event_body_blobs(body_hash);
-    CREATE INDEX IF NOT EXISTS idx_event_body_blobs_block
-        ON event_body_blobs(block_offset);
     CREATE INDEX IF NOT EXISTS idx_event_body_blobs_archive_order
         ON event_body_blobs(block_offset, body_offset, id);
 
@@ -542,7 +536,6 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_model_items_turn_id ON model_items(turn_id);
     CREATE INDEX IF NOT EXISTS idx_tool_calls_turn_id ON tool_calls(turn_id);
     CREATE INDEX IF NOT EXISTS idx_tool_responses_turn_id ON tool_responses(turn_id);
-    CREATE INDEX IF NOT EXISTS idx_event_body_blobs_turn_id ON event_body_blobs(turn_id);
     CREATE INDEX IF NOT EXISTS idx_fs_events_turn_id ON fs_events(turn_id);
     CREATE INDEX IF NOT EXISTS idx_exec_events_turn_id ON exec_events(turn_id);
     CREATE INDEX IF NOT EXISTS idx_dns_events_turn_id ON dns_events(turn_id);
