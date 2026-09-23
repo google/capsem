@@ -90,6 +90,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Focused host builds and direct bounded Cargo commands now enforce the shared
+  Cargo target's configured size before compiling. These paths previously
+  bypassed the 180 GiB retention contract, allowing worktree-specific units to
+  accumulate until the target exceeded 670 GiB and compiler/signing probes
+  stalled on its artifacts.
+
 - `capsem-gate pack-initrd` now rematerializes generated profile config after
   publishing the new asset manifest. The standalone command previously left
   the runtime projection pinned to the prior initrd hash, so the next VM

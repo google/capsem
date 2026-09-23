@@ -123,7 +123,11 @@ def test_standalone_signing_owns_its_build_dependency_and_timeouts(
         argparse.Namespace(dry_run=False, graph=False, timing=False),
     )._describe()
 
+    assert plan.after_of("build-binaries") == {"cargo-cache-enforcement"}
     assert plan.after_of("sign") == {"build-binaries"}
+    assert "enforce the Cargo cache maximum before host compilation" in "\n".join(
+        plan.step_named("cargo-cache-enforcement").render()
+    )
     assert f"[timeout {CONFIG.signing.build_timeout_seconds}s]" in "\n".join(
         plan.step_named("build-binaries").render()
     )
@@ -139,7 +143,8 @@ def test_standalone_host_build_is_the_same_bounded_gate_step() -> None:
         argparse.Namespace(dry_run=False, graph=False, timing=False),
     )._describe()
 
-    assert plan.labels == ("build-binaries",)
+    assert plan.labels == ("cargo-cache-enforcement", "build-binaries")
+    assert plan.after_of("build-binaries") == {"cargo-cache-enforcement"}
     assert f"[timeout {CONFIG.signing.build_timeout_seconds}s]" in "\n".join(
         plan.step_named("build-binaries").render()
     )
@@ -156,10 +161,26 @@ def test_ensure_service_owns_the_bounded_host_build_and_signing(
         argparse.Namespace(dry_run=False, graph=False, timing=False),
     )._describe()
 
+    assert plan.after_of("prepare.build-binaries") == {"prepare.cargo-cache-enforcement"}
     assert plan.after_of("prepare.sign") == {"prepare.build-binaries"}
     assert plan.after_of("prepare") == {"prepare.sign"}
     assert plan.after_of("materialize") == {"prepare"}
     assert plan.after_of("start") == {"materialize"}
+
+
+def test_only_complete_qualification_may_reuse_prior_cache_enforcement() -> None:
+    """A focused composer cannot opt out of the host-build cache prerequisite."""
+    gate = PROJECT_ROOT / "build_system/builder/gate"
+    claims = [
+        path.relative_to(gate)
+        for path in gate.rglob("*.py")
+        if "cache_already_enforced=True" in path.read_text(encoding="utf-8")
+    ]
+
+    assert claims == [Path("candidateprepare.py")]
+    candidate = _plan()
+    assert "prepare.cargo-cache-enforcement" not in candidate.labels
+    assert "prepare.cache-enforcement" in ancestors(candidate, "prepare.build-binaries")
 
 
 def test_runtime_commands_own_preparation_service_and_guest_edges() -> None:
@@ -174,7 +195,10 @@ def test_runtime_commands_own_preparation_service_and_guest_edges() -> None:
         plan = GateCommand.registry[command](RecordingRunner(PROJECT_ROOT), args)._describe()
 
         assert plan.after_of("prepare.materialize-config")
-        assert plan.after_of("prepare.build-binaries") == {"prepare.materialize-config"}
+        assert plan.after_of("prepare.cargo-cache-enforcement") == {
+            "prepare.materialize-config"
+        }
+        assert plan.after_of("prepare.build-binaries") == {"prepare.cargo-cache-enforcement"}
         assert plan.after_of("prepare.sign") == {"prepare.build-binaries"}
         assert plan.after_of("prepare") == {"prepare.sign"}
         assert plan.after_of("materialize") == {"prepare"}
