@@ -138,12 +138,17 @@ def host_has_redis_fixture() -> bool:
 
 
 def rss_kb(pids: list[str]) -> int:
+    if not pids:
+        raise RuntimeError("no process PID available for RSS sample")
     total = 0
     for pid in pids:
-        out = subprocess.run(
+        result = subprocess.run(
             ["ps", "-o", "rss=", "-p", pid], capture_output=True, text=True, check=False
-        ).stdout.strip()
-        total += int(out or 0)
+        )
+        out = result.stdout.strip()
+        if result.returncode != 0 or not out:
+            raise RuntimeError(f"RSS unavailable for PID {pid}")
+        total += int(out)
     return total
 
 
