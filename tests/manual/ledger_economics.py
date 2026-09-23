@@ -182,10 +182,14 @@ def _size(path: Path) -> int:
     return path.stat().st_size if path.exists() else 0
 
 
-# Request/model counts, and the body archive from the block side and the index side.
+# Request/model counts, counted rule occurrences, and the body archive from
+# the block side and the index side.
 LEDGER_SQL = """SELECT
     (SELECT COUNT(*) FROM net_events) AS reqs,
     (SELECT COUNT(*) FROM model_calls) AS models,
+    (SELECT COUNT(*) FROM security_rule_events) AS rule_occurrences,
+    (SELECT COALESCE(SUM(count), 0) FROM security_rule_runs) AS rules_counted,
+    (SELECT COUNT(*) FROM security_rule_runs WHERE count > 1) AS repeated_rule_runs,
     (SELECT COUNT(*) FROM body_blocks) AS blocks,
     (SELECT COALESCE(SUM(raw_len), 0) FROM body_blocks) AS raw,
     (SELECT COALESCE(SUM(disk_len), 0) FROM body_blocks) AS comp,
@@ -251,6 +255,17 @@ def judge(samples: list[dict], failures: list[str]) -> None:
     last, kb = samples[-1], 1024
     if last["models"] == 0:
         fail(f"no model_calls rows: {MODEL} was never called through the egress")
+    print(
+        f"  rule counter: {last['rules_counted']} matches in "
+        f"{last['repeated_rule_runs']} repeated runs"
+    )
+    if last["rules_counted"] != last["rule_occurrences"]:
+        fail(
+            f"rule counter covers {last['rules_counted']} of "
+            f"{last['rule_occurrences']} occurrences"
+        )
+    if last["repeated_rule_runs"] == 0:
+        fail("no rule counter has count > 1: repeated-event compaction was not exercised")
 
     overall = _disk(last) / max(last["reqs"], 1)
     print(f"\n  disk / requests, including the empty schema's fixed floor: {overall / kb:.2f} KB")
