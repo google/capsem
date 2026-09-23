@@ -105,8 +105,14 @@ class PackInitrdCommand(
     exclusive = True
 
     def plan(self) -> Plan:
+        from .runtimeprepare import materialize_config_step
+
         plan = Plan(self.name)
-        pack(plan, self._config)
+        packed = pack(plan, self._config)
+        plan.phase("prepare").add(
+            materialize_config_step(self._config),
+            after=(packed,),
+        )
         return plan
 
 

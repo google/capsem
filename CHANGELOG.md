@@ -90,6 +90,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem-gate pack-initrd` now rematerializes generated profile config after
+  publishing the new asset manifest. The standalone command previously left
+  the runtime projection pinned to the prior initrd hash, so the next VM
+  refused the correctly repacked image as a hash mismatch.
+
 - The guest link watchdog now samples once per minute and counts steady-state
   diagnostics with shell builtins. Its former three-second helper-command loop
   turned health checks into audited security events, inflating long-session
