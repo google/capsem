@@ -75,6 +75,90 @@ async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
 }
 
 #[tokio::test]
+async fn repeated_rule_matches_store_one_snapshot_and_count_every_occurrence() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("repeated-rules.db");
+    let mut writer = DbWriter::open(&db_path, 64).unwrap();
+    let rule_json = r#"{"name":"default_dns","match":"dns.qname != ''"}"#;
+    for (timestamp, event_id, action) in [
+        (100, "000000000001", crate::events::SecurityRuleAction::Allow),
+        (130, "000000000002", crate::events::SecurityRuleAction::Allow),
+        (140, "000000000003", crate::events::SecurityRuleAction::Block),
+    ] {
+        writer
+            .write(WriteOp::SecurityRuleEvent(
+                crate::events::SecurityRuleEvent::new(
+                    timestamp,
+                    event_id,
+                    "dns.query",
+                    "profiles.rules.default_dns",
+                    rule_json,
+                    r#"{"dns":{"qname":"example.test"}}"#,
+                )
+                .with_rule_action(action),
+            ))
+            .await;
+        if event_id == "000000000001" {
+            writer.flush().await;
+            drop(writer);
+            writer = DbWriter::open(&db_path, 64).unwrap();
+        }
+    }
+    writer.flush().await;
+    drop(writer);
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let runs = conn
+        .prepare(
+            "SELECT rule_action, count, first_timestamp_unix_ms, last_timestamp_unix_ms, rule_json
+             FROM security_rule_runs ORDER BY rule_action",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        runs,
+        vec![
+            ("allow".into(), 2, 100, 130, rule_json.into()),
+            ("block".into(), 1, 140, 140, rule_json.into())
+        ]
+    );
+    let repeated_json_bytes: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(LENGTH(rule_json)), 0) FROM security_rule_events",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        repeated_json_bytes, 0,
+        "rule snapshots belong to counted runs, not every occurrence"
+    );
+    drop(conn);
+
+    let rows = crate::reader::DbReader::open(&db_path)
+        .unwrap()
+        .recent_security_rule_events(10)
+        .unwrap();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(
+        rows.iter().map(|row| row.event_id.as_str()).collect::<Vec<_>>(),
+        ["000000000003", "000000000002", "000000000001"]
+    );
+    assert!(rows.iter().all(|row| row.rule_json == rule_json));
+}
+
+#[tokio::test]
 async fn security_ask_event_roundtrip_preserves_lifecycle_rows() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("security-ask.db");

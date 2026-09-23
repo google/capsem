@@ -274,16 +274,24 @@ fn security_rule_stats_are_db_only() {
     let r = DbReader::open_in_memory().unwrap();
     r.conn
         .execute_batch(
-            "INSERT INTO security_rule_events (
+            "INSERT INTO security_rule_runs (
+                    event_type, rule_id, rule_action, detection_level, rule_json,
+                    count, first_timestamp_unix_ms, last_timestamp_unix_ms
+                 ) VALUES
+                    ('model.call', 'block_openai', 'block', 'critical', '{}',
+                     2, 1789000000000, 1789000000001),
+                    ('http.request', 'allow_github', 'allow', 'none', '{}',
+                     1, 1789000000002, 1789000000002);
+             INSERT INTO security_rule_events (
                     timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json
+                    rule_action, detection_level, rule_json, run_id
                  ) VALUES
                     (1789000000000, '111111111111', 'model.call', 'block_openai',
-                     'block', 'critical', '{}'),
+                     'block', 'critical', NULL, 1),
                     (1789000000001, '222222222222', 'model.call', 'block_openai',
-                     'block', 'critical', '{}'),
+                     'block', 'critical', NULL, 1),
                     (1789000000002, '333333333333', 'http.request', 'allow_github',
-                     'allow', 'none', '{}')",
+                     'allow', 'none', NULL, 2)",
         )
         .unwrap();
 

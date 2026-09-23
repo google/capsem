@@ -456,11 +456,13 @@ impl DbReader {
     /// Endpoints may project less, but must not consult live rules for truth.
     pub fn recent_security_rule_events(&self, limit: usize) -> rusqlite::Result<Vec<SecurityRuleMatch>> {
         let mut stmt = self.conn.prepare(
-            "SELECT timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, trace_id,
-                    turn_id, credential_ref
-             FROM security_rule_events
-             ORDER BY timestamp_unix_ms DESC, id DESC
+            "SELECT event.timestamp_unix_ms, event.event_id, event.event_type, event.rule_id,
+                    event.rule_action, event.detection_level,
+                    COALESCE(event.rule_json, run.rule_json), event.trace_id,
+                    event.turn_id, event.credential_ref
+             FROM security_rule_events AS event
+             LEFT JOIN security_rule_runs AS run ON run.id = event.run_id
+             ORDER BY event.timestamp_unix_ms DESC, event.id DESC
              LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], read_security_rule_event_row)?;
@@ -498,12 +500,12 @@ impl DbReader {
     pub fn security_rule_stats(&self) -> rusqlite::Result<SecurityRuleStats> {
         let total = self
             .conn
-            .query_row("SELECT COUNT(*) FROM security_rule_events", [], |row| {
+            .query_row("SELECT COALESCE(SUM(count), 0) FROM security_rule_runs", [], |row| {
                 row.get::<_, i64>(0).map(|value| value as u64)
             })?;
 
         let mut action_stmt = self.conn.prepare(
-            "SELECT rule_action, COUNT(*) FROM security_rule_events
+            "SELECT rule_action, SUM(count) FROM security_rule_runs
              GROUP BY rule_action ORDER BY rule_action",
         )?;
         let by_action = action_stmt
@@ -516,7 +518,7 @@ impl DbReader {
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         let mut event_type_stmt = self.conn.prepare(
-            "SELECT event_type, COUNT(*) FROM security_rule_events
+            "SELECT event_type, SUM(count) FROM security_rule_runs
              GROUP BY event_type ORDER BY event_type",
         )?;
         let by_event_type = event_type_stmt
@@ -529,7 +531,7 @@ impl DbReader {
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         let mut level_stmt = self.conn.prepare(
-            "SELECT detection_level, COUNT(*) FROM security_rule_events
+            "SELECT detection_level, SUM(count) FROM security_rule_runs
              GROUP BY detection_level ORDER BY detection_level",
         )?;
         let by_level = level_stmt
@@ -546,7 +548,7 @@ impl DbReader {
                 sre.rule_id,
                 sre.rule_action,
                 sre.detection_level,
-                COUNT(*) AS count,
+                SUM(sre.count) AS count,
                 (
                     SELECT latest.event_id
                     FROM security_rule_events latest
@@ -556,8 +558,8 @@ impl DbReader {
                     ORDER BY latest.timestamp_unix_ms DESC, latest.id DESC
                     LIMIT 1
                 ) AS latest_event_id,
-                MAX(sre.timestamp_unix_ms) AS latest_timestamp_unix_ms
-             FROM security_rule_events sre
+                MAX(sre.last_timestamp_unix_ms) AS latest_timestamp_unix_ms
+             FROM security_rule_runs sre
              GROUP BY sre.rule_id, sre.rule_action, sre.detection_level
              ORDER BY latest_timestamp_unix_ms DESC",
         )?;

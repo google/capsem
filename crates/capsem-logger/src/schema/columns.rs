@@ -230,6 +230,20 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "security_rule_runs",
+        &[
+            "id",
+            "event_type",
+            "rule_id",
+            "rule_action",
+            "detection_level",
+            "rule_json",
+            "count",
+            "first_timestamp_unix_ms",
+            "last_timestamp_unix_ms",
+        ],
+    ),
+    (
         "security_rule_events",
         &[
             "event_id",
@@ -237,6 +251,7 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "rule_action",
             "detection_level",
             "rule_json",
+            "run_id",
             "credential_ref",
         ],
     ),

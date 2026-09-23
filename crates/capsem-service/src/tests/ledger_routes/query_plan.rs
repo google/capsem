@@ -67,20 +67,18 @@ async fn security_status_aggregates_run_on_indexes() {
     let db = capsem_logger::DbHandle::open_external_reader(&db_path).unwrap();
     db.ready().await.unwrap();
 
-    // The covering index each statement, in `security_stats_batch` order, must
-    // be answered from -- every table node of its plan names it. The total is
-    // not pinned: an unfiltered `COUNT(*)` is answered from whichever index is
-    // narrowest, which is SQLite's choice to make and costs no index of ours.
-    // The level count shares `rule_stats` rather than keeping an index of its
-    // own: three values grouped in a temp B-tree do not justify a write on
-    // every rule match.
-    const RULE_STATS: &str = "idx_security_rule_events_rule_stats";
-    let pinned: [Option<&str>; 5] = [
-        None,
-        Some(RULE_STATS),
-        Some("idx_security_rule_events_event_type"),
-        Some(RULE_STATS),
-        Some(RULE_STATS),
+    // Aggregates read the small counted-run index; only the latest-event
+    // lookup reads occurrence rows. Pin both covering reads so a poll never
+    // scans every occurrence in the session.
+    const RUN_ACTION: &str = "idx_security_rule_runs_action";
+    const RUN_EVENT_TYPE: &str = "idx_security_rule_runs_event_type";
+    const OCCURRENCE_STATS: &str = "idx_security_rule_events_rule_stats";
+    let pinned: [&[&str]; 5] = [
+        &[RUN_ACTION],
+        &[RUN_ACTION],
+        &[RUN_EVENT_TYPE],
+        &[RUN_ACTION],
+        &[RUN_ACTION, OCCURRENCE_STATS],
     ];
     let batch = security_stats_batch();
     assert_eq!(
@@ -88,7 +86,7 @@ async fn security_status_aggregates_run_on_indexes() {
         pinned.len(),
         "pin an index for every security/status statement"
     );
-    for ((sql, _), index) in batch.into_iter().zip(pinned) {
+    for ((sql, _), indexes) in batch.into_iter().zip(pinned) {
         let raw = db
             .query(&format!("EXPLAIN QUERY PLAN {sql}"), &[])
             .await
@@ -100,10 +98,8 @@ async fn security_status_aggregates_run_on_indexes() {
             .iter()
             .map(|row| row[3].as_str().unwrap_or_default().to_string())
             .collect();
-        // Every statement here reads `security_rule_events` alone, so any
-        // `SCAN` is a scan of it -- including under an alias. The per-rule
-        // breakdown names it `sre` and `latest`, and SQLite reports the alias,
-        // so matching on the table name would wave its scans through unseen.
+        // SQLite reports aliases (`sre`, `latest`) in the plan, so inspect
+        // every table node rather than matching table names alone.
         let offenders: Vec<&String> = plan
             .iter()
             .filter(|node| {
@@ -122,15 +118,17 @@ async fn security_status_aggregates_run_on_indexes() {
              rewrite the statement so an existing one serves it.",
             plan.join("\n  ")
         );
-        let Some(index) = index else { continue };
         let table_nodes: Vec<&String> = plan
             .iter()
             .filter(|node| node.trim().starts_with("SCAN ") || node.trim().starts_with("SEARCH "))
             .collect();
-        let covering = format!("USING COVERING INDEX {index}");
         assert!(
-            !table_nodes.is_empty() && table_nodes.iter().all(|node| node.contains(&covering)),
-            "a security/status statement is no longer answered from {index}\n\
+            table_nodes.len() == indexes.len()
+                && indexes.iter().all(|index| {
+                    let covering = format!("USING COVERING INDEX {index}");
+                    table_nodes.iter().any(|node| node.contains(&covering))
+                }),
+            "a security/status statement is no longer answered from {indexes:?}\n\
              statement:{sql}\nfull plan:\n  {}\n\
              Every table read here must be a covering read of that index. If the index was \
              dropped, or the statement no longer lines up with its columns, the plan falls back \

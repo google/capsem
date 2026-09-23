@@ -175,7 +175,10 @@ fn forensic_msgpack_omits_defaults_but_preserves_mutations_and_opaque_json() {
     });
     let event = SecurityForensicEvent::from_json(&json.to_string(), "mcp.request").unwrap();
     let encoded = event.encode().unwrap();
-    assert!(encoded.len() < json.to_string().len(), "omission must save stored bytes");
+    assert!(
+        encoded.len() < json.to_string().len(),
+        "omission must save stored bytes"
+    );
     let fields: serde_json::Value = rmp_serde::from_slice(&encoded).unwrap();
     assert!(fields.get("credential_ref").is_none());
     assert!(fields.get("credential_observations").is_none());

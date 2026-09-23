@@ -184,6 +184,25 @@ pub fn flush_memory_tables_to_disk<'a>(
                     ),
                     [last_flushed_id],
                 )?;
+            } else if table == "security_rule_events" {
+                compact_security_rule_snapshots(conn, last_flushed_id)?;
+                conn.execute(
+                    "INSERT OR REPLACE INTO main.security_rule_events
+                     SELECT event.id, event.timestamp_unix_ms, event.event_id, event.event_type,
+                            event.rule_id, event.rule_action, event.detection_level,
+                            NULL,
+                            COALESCE(event.run_id, (
+                                SELECT run.id FROM main.security_rule_runs AS run
+                                WHERE run.event_type = event.event_type
+                                  AND run.rule_id = event.rule_id
+                                  AND run.rule_action = event.rule_action
+                                  AND run.detection_level = event.detection_level
+                                  AND run.rule_json = event.rule_json
+                            )),
+                            event.trace_id, event.turn_id, event.credential_ref
+                     FROM mem.security_rule_events AS event WHERE event.id > ?1",
+                    [last_flushed_id],
+                )?;
             } else {
                 conn.execute(
                     &format!(
@@ -204,6 +223,30 @@ pub fn flush_memory_tables_to_disk<'a>(
         }
     }
     Ok(advanced)
+}
+
+/// Normalize repeated rule snapshots at the same commit boundary as their
+/// occurrence rows and archive indexes. The hot memory rows are still ordinary
+/// complete events; an interrupted disk flush leaves them available to retry.
+fn compact_security_rule_snapshots(conn: &Connection, last_flushed_id: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO main.security_rule_runs (
+            event_type, rule_id, rule_action, detection_level, rule_json,
+            count, first_timestamp_unix_ms, last_timestamp_unix_ms
+         )
+         SELECT event_type, rule_id, rule_action, detection_level, rule_json,
+                COUNT(*), MIN(timestamp_unix_ms), MAX(timestamp_unix_ms)
+         FROM mem.security_rule_events
+         WHERE id > ?1 AND rule_json IS NOT NULL
+         GROUP BY event_type, rule_id, rule_action, detection_level, rule_json
+         ON CONFLICT (event_type, rule_id, rule_action, detection_level, rule_json)
+         DO UPDATE SET
+            count = count + excluded.count,
+            first_timestamp_unix_ms = MIN(first_timestamp_unix_ms, excluded.first_timestamp_unix_ms),
+            last_timestamp_unix_ms = MAX(last_timestamp_unix_ms, excluded.last_timestamp_unix_ms)",
+        [last_flushed_id],
+    )?;
+    Ok(())
 }
 
 pub(super) fn non_id_table_columns(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<Vec<String>> {

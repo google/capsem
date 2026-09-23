@@ -51,33 +51,36 @@ pub(crate) fn empty_security_rule_stats() -> capsem_logger::SecurityRuleStats {
 // `BodyDirection::Payload`, and the index metadata travels with the other
 // bodies in the stats-detail payload.
 const SECURITY_LATEST_SQL: &str = r#"
-SELECT timestamp_unix_ms, event_id, event_type, rule_id,
-       rule_action, detection_level, rule_json, trace_id,
-       turn_id, credential_ref
-FROM security_rule_events
-ORDER BY timestamp_unix_ms DESC, id DESC
+SELECT event.timestamp_unix_ms, event.event_id, event.event_type, event.rule_id,
+       event.rule_action, event.detection_level,
+       COALESCE(event.rule_json, run.rule_json), event.trace_id,
+       event.turn_id, event.credential_ref
+FROM security_rule_events AS event
+LEFT JOIN security_rule_runs AS run ON run.id = event.run_id
+ORDER BY event.timestamp_unix_ms DESC, event.id DESC
 LIMIT ?
 "#;
 
-const SECURITY_STATS_TOTAL_SQL: &str = r#"SELECT COUNT(*) AS total FROM security_rule_events"#;
+const SECURITY_STATS_TOTAL_SQL: &str =
+    r#"SELECT COALESCE(SUM(count), 0) AS total FROM security_rule_runs INDEXED BY idx_security_rule_runs_action"#;
 
 const SECURITY_STATS_BY_ACTION_SQL: &str = r#"
-SELECT rule_action, COUNT(*) AS count
-FROM security_rule_events
+SELECT rule_action, SUM(count) AS count
+FROM security_rule_runs INDEXED BY idx_security_rule_runs_action
 GROUP BY rule_action
 ORDER BY rule_action
 "#;
 
 const SECURITY_STATS_BY_EVENT_TYPE_SQL: &str = r#"
-SELECT event_type, COUNT(*) AS count
-FROM security_rule_events
+SELECT event_type, SUM(count) AS count
+FROM security_rule_runs INDEXED BY idx_security_rule_runs_event_type
 GROUP BY event_type
 ORDER BY event_type
 "#;
 
 const SECURITY_STATS_BY_LEVEL_SQL: &str = r#"
-SELECT detection_level, COUNT(*) AS count
-FROM security_rule_events
+SELECT detection_level, SUM(count) AS count
+FROM security_rule_runs INDEXED BY idx_security_rule_runs_action
 GROUP BY detection_level
 ORDER BY detection_level
 "#;
@@ -87,7 +90,7 @@ SELECT
     sre.rule_id,
     sre.rule_action,
     sre.detection_level,
-    COUNT(*) AS count,
+    SUM(sre.count) AS count,
     (
         SELECT latest.event_id
         FROM security_rule_events latest
@@ -97,8 +100,8 @@ SELECT
         ORDER BY latest.timestamp_unix_ms DESC, latest.id DESC
         LIMIT 1
     ) AS latest_event_id,
-    MAX(sre.timestamp_unix_ms) AS latest_timestamp_unix_ms
-FROM security_rule_events sre
+    MAX(sre.last_timestamp_unix_ms) AS latest_timestamp_unix_ms
+FROM security_rule_runs AS sre INDEXED BY idx_security_rule_runs_action
 GROUP BY sre.rule_id, sre.rule_action, sre.detection_level
 ORDER BY latest_timestamp_unix_ms DESC
 "#;

@@ -127,11 +127,9 @@ pub(super) fn insert_substitution_event(
     Ok(())
 }
 
-/// The row keeps what routes filter and group on; the matched event's payload
-/// goes to the archive as this event's one body. It is the same forensic JSON
-/// it always was -- it simply stops being carried by every scan of this table
-/// and every byte of the RAM mirror it once had, and is read back by event id with
-/// `BodyDirection::Payload`.
+/// The row keeps its event identity for correlation while disk flush stores a
+/// shared counted rule snapshot. The matched event's payload goes to the
+/// archive as this event's body and is read by `BodyDirection::Payload`.
 pub(super) fn insert_security_rule_event(
     conn: &Connection,
     event: &SecurityRuleEvent,

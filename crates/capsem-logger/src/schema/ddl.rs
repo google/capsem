@@ -389,6 +389,27 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_substitution_events_material
         ON substitution_events(material_class);
 
+    -- One canonical rule snapshot for repeated matches. Occurrence rows retain
+    -- their own event ID and timestamp so decisions and source events still
+    -- correlate exactly. The counter and bounds commit with those rows.
+    CREATE TABLE IF NOT EXISTS security_rule_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT NOT NULL,
+        rule_id TEXT NOT NULL,
+        rule_action TEXT NOT NULL,
+        detection_level TEXT NOT NULL,
+        rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
+        count INTEGER NOT NULL CHECK (count > 0),
+        first_timestamp_unix_ms INTEGER NOT NULL,
+        last_timestamp_unix_ms INTEGER NOT NULL,
+        CHECK (last_timestamp_unix_ms >= first_timestamp_unix_ms),
+        UNIQUE (event_type, rule_id, rule_action, detection_level, rule_json)
+    );
+    CREATE INDEX IF NOT EXISTS idx_security_rule_runs_action
+        ON security_rule_runs(rule_action, detection_level, rule_id, event_type, count, last_timestamp_unix_ms);
+    CREATE INDEX IF NOT EXISTS idx_security_rule_runs_event_type
+        ON security_rule_runs(event_type, count);
+
     CREATE TABLE IF NOT EXISTS security_rule_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
@@ -397,7 +418,8 @@ pub const CREATE_SCHEMA: &str = "
         rule_id TEXT NOT NULL,
         rule_action TEXT NOT NULL CHECK (rule_action IN ('allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess')),
         detection_level TEXT NOT NULL DEFAULT 'none' CHECK (detection_level IN ('none', 'informational', 'low', 'medium', 'high', 'critical')),
-        rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
+        rule_json TEXT,
+        run_id INTEGER REFERENCES security_rule_runs(id),
         -- The matched event's payload is NOT here: it is a body like any
         -- other and lives in `session.bodies`, indexed by `event_body_blobs`
         -- with direction 'payload'. It averaged a kilobyte and peaked at
@@ -405,7 +427,9 @@ pub const CREATE_SCHEMA: &str = "
         -- in RAM.
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*')),
+        CHECK ((rule_json IS NOT NULL AND json_valid(rule_json) AND run_id IS NULL)
+            OR (rule_json IS NULL AND run_id IS NOT NULL))
     );
     CREATE INDEX IF NOT EXISTS idx_security_rule_events_timestamp
         ON security_rule_events(timestamp_unix_ms);
@@ -428,7 +452,6 @@ pub const CREATE_SCHEMA: &str = "
     -- capsem-service's `security_status_aggregates_run_on_indexes` pins it.
     CREATE INDEX IF NOT EXISTS idx_security_rule_events_rule_stats
         ON security_rule_events(rule_action, detection_level, rule_id, timestamp_unix_ms, id, event_id);
-
     CREATE TABLE IF NOT EXISTS security_decision_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,

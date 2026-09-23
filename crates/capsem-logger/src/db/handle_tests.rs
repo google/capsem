@@ -534,10 +534,13 @@ async fn db_write_event_contract() {
 
     let raw = db
         .query(
-            "SELECT timestamp_unix_ms, event_id, event_type, rule_id, rule_action,
-                    detection_level, rule_json, trace_id, turn_id,
-                    credential_ref
-             FROM security_rule_events WHERE event_id = ?",
+            "SELECT event.timestamp_unix_ms, event.event_id, event.event_type,
+                    event.rule_id, event.rule_action, event.detection_level,
+                    COALESCE(event.rule_json, run.rule_json), event.trace_id,
+                    event.turn_id, event.credential_ref
+             FROM security_rule_events AS event
+             LEFT JOIN security_rule_runs AS run ON run.id = event.run_id
+             WHERE event.event_id = ?",
             &[json!("abcdef123456")],
         )
         .await
