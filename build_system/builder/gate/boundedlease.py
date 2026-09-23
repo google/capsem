@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from pathlib import Path, PurePath
 
 from ..cache.config import load_paths, load_policy
-from ..cache.enforcement import enforce_repository
+from ..cache.enforcement import EnforcementResult, enforce_repository
 from . import config as gate_config
 from .errors import GateError
 from .lifecycle import held
@@ -90,7 +90,11 @@ def _enforce_cargo_cache(root: Path, command: Sequence[str]) -> None:
     if result.violations:
         raise GateError("; ".join(result.violations))
     if result.pruned:
-        _to_stderr(
-            f"Cargo cache exceeded its contract; reclaimed {result.reclaim_bytes} bytes "
-            f"in {result.action_count} actions before starting the command"
-        )
+        _to_stderr(_maintenance_notice(result))
+
+
+def _maintenance_notice(result: EnforcementResult) -> str:
+    return (
+        f"Cargo cache maintenance applied {result.action_count} prune actions; "
+        f"owned usage {result.before_size_bytes} -> {result.after_size_bytes} bytes"
+    )

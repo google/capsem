@@ -58,8 +58,9 @@ class DiskBackend:
                 violations=result.violations,
             )
         retention = request.operation is not CacheOperation.CLEAN
+        stage_ids = None if request.cache_id == "all" else frozenset({request.cache_id})
         inventory = select_inventory(
-            scan_inventory(self._paths, self._policy, retention=retention), request.cache_id,
+            scan_inventory(self._paths, self._policy, retention=retention, stage_ids=stage_ids), request.cache_id,
         )
         before = inventory.logical_bytes
         plan = (
@@ -71,9 +72,9 @@ class DiskBackend:
             apply_prune(self._paths, plan, reason=request.reason)
         after = (
             select_inventory(
-                scan_inventory(self._paths, self._policy, retention=retention), request.cache_id
+                scan_inventory(self._paths, self._policy, retention=retention, stage_ids=stage_ids), request.cache_id
             ).logical_bytes
-            if request.apply
+            if request.apply and plan.actions
             else before
         )
         return CacheMutationResult(

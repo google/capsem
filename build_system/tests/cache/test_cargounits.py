@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.cargounits import unaccounted_size
 from capsem_builder.cache.inventory import scan_retention_inventory
 from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
 from capsem_builder.cache.operations import apply_prune
@@ -111,6 +112,35 @@ def test_a_building_cargo_keeps_every_unit(tmp_path: Path) -> None:
         inventory = scan_retention_inventory(paths, policy, now_ns=now)
     assert all(entry.protected for entry in inventory.stages[0].entries)
     assert not plan_prune(inventory, policy).actions
+
+
+def test_unaccounted_walk_does_not_search_every_unit_for_each_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "cargo"
+    accounted = set()
+    for index in range(100):
+        member = root / "debug" / "deps" / f"unit-{index:04d}"
+        member.parent.mkdir(parents=True, exist_ok=True)
+        member.write_bytes(b"x")
+        accounted.add(member)
+    (root / "debug" / "uplifted").write_bytes(b"unowned")
+    for index in range(100):
+        unowned = root / "debug" / f"extra-{index:04d}"
+        unowned.mkdir()
+        (unowned / "bytes").write_bytes(b"z")
+
+    original = Path.parents
+    parent_lookups = 0
+
+    def counted_parents(path: Path):
+        nonlocal parent_lookups
+        parent_lookups += 1
+        return original.__get__(path, type(path))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "parents", property(counted_parents))
+        logical, _ = unaccounted_size(root, frozenset(accounted), set())
+    assert logical == len(b"unowned") + 100
+    assert parent_lookups < 500, "inventory must not compare every unowned subtree with every unit"
 
 
 @pytest.mark.parametrize("value", ["../outside", "/tmp/outside", "."])

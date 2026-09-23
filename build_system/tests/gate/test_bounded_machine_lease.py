@@ -186,6 +186,22 @@ def test_direct_cargo_enforces_its_cache_contract_inside_the_machine_lease(
         assert enforced == [(ROOT, ("cargo", "test", "-p", "capsem-core"))]
 
 
+def test_zero_byte_expiry_does_not_claim_cargo_exceeded_its_limit() -> None:
+    from capsem_builder.cache.enforcement import EnforcementResult
+    from capsem_builder.gate.boundedlease import _maintenance_notice
+
+    result = EnforcementResult(
+        cache_id="cargo",
+        before_size_bytes=100,
+        after_size_bytes=100,
+        pruned=True,
+        reclaim_bytes=0,
+        action_count=17,
+        violations=(),
+    )
+    assert _maintenance_notice(result) == "Cargo cache maintenance applied 17 prune actions; owned usage 100 -> 100 bytes"
+
+
 def test_cargo_in_an_argument_is_not_cargo_in_command_position(tmp_path: Path) -> None:
     with (
         _gate_holds_the_machine(tmp_path),

@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+from capsem_builder.cache import registry as registry_module
 from capsem_builder.cache.api import CacheOperation, CacheRequest
 from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
 from capsem_builder.cache.paths import CachePaths
@@ -62,3 +64,20 @@ def test_registry_prunes_a_disk_cache_through_the_common_request(tmp_path: Path)
 
     assert result.applied and result.action_count == 1
     assert result.after_size_bytes == configured.stages["objects"].warm_size_bytes
+
+
+@pytest.mark.parametrize("operation", [CacheOperation.PRUNE, CacheOperation.CLEAN])
+def test_single_owner_preview_scans_only_that_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: CacheOperation) -> None:
+    configured = policy()
+    paths = CachePaths(repository_root=tmp_path, policy=configured)
+    seen: list[frozenset[str] | None] = []
+    original = registry_module.scan_inventory
+
+    def scan(*args, **kwargs):
+        seen.append(kwargs.get("stage_ids"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(registry_module, "scan_inventory", scan)
+    registry = CacheRegistry(paths, configured)
+    registry.mutate(CacheRequest(operation=operation, cache_id="objects", apply=False, reason="preview"))
+    assert seen == [frozenset({"objects"})]
