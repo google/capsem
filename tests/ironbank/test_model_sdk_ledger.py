@@ -13,7 +13,12 @@ import uuid
 from pathlib import Path
 
 import pytest
-from helpers.body_archive import archived_bodies, ledger_path, security_payload, session_archive
+from helpers.body_archive import (
+    archived_bodies,
+    ledger_path,
+    security_payload,
+    session_archive,
+)
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
