@@ -35,7 +35,8 @@ fn named_msgpack_omits_default_fields_and_restores_them_on_decode() {
         process_name: None,
     };
     let frame = encode_dns_request(&req).unwrap();
-    let fields: std::collections::BTreeMap<String, serde::de::IgnoredAny> = rmp_serde::from_slice(&frame[4..]).unwrap();
+    let fields: std::collections::BTreeMap<String, Option<serde::de::IgnoredAny>> =
+        rmp_serde::from_slice(&frame[4..]).unwrap();
     assert!(!fields.contains_key("id"));
     assert!(!fields.contains_key("process_name"));
     assert_eq!(decode_dns_request(&frame[4..]).unwrap(), req);
@@ -149,4 +150,56 @@ fn repeated_events_store_only_mutation_count_and_time_range() {
     .unwrap();
     assert!(EventRun::<String>::decode(&reversed).is_err());
     assert!(EventRun::<String>::decode(&vec![0; crate::repeated::MAX_ENCODED_EVENT_BYTES + 1]).is_err());
+}
+
+#[test]
+fn forensic_msgpack_omits_defaults_but_preserves_mutations_and_opaque_json() {
+    use crate::forensic::SecurityForensicEvent;
+
+    let json = serde_json::json!({
+        "event_type": "mcp.request",
+        "credential_ref": null,
+        "credential_observations": [],
+        "action_trace": [],
+        "decision": {"kind": "allow", "reason": null},
+        "http": null,
+        "mcp": {
+            "method": "tools/call",
+            "server_name": null,
+            "request": {"arguments": {"nullable": null, "empty": []}},
+            "response": null,
+            "event": {"valid": true},
+            "tool_call": {"valid": false}
+        },
+        "future_extension": {"meaningful": 0, "explicit_null": null}
+    });
+    let event = SecurityForensicEvent::from_json(&json.to_string(), "mcp.request").unwrap();
+    let encoded = event.encode().unwrap();
+    assert!(encoded.len() < json.to_string().len(), "omission must save stored bytes");
+    let fields: serde_json::Value = rmp_serde::from_slice(&encoded).unwrap();
+    assert!(fields.get("credential_ref").is_none());
+    assert!(fields.get("credential_observations").is_none());
+    assert!(fields.get("http").is_none());
+    assert!(fields["decision"].get("reason").is_none());
+    assert!(fields["mcp"].get("server_name").is_none());
+    assert!(fields["mcp"].get("tool_call").is_none());
+    assert_eq!(
+        fields["mcp"]["request"]["arguments"]["nullable"],
+        serde_json::Value::Null
+    );
+    assert_eq!(fields["mcp"]["request"]["arguments"]["empty"], serde_json::json!([]));
+    assert_eq!(fields["future_extension"]["meaningful"], 0);
+    assert_eq!(fields["future_extension"]["explicit_null"], serde_json::Value::Null);
+    let decoded = SecurityForensicEvent::decode(&encoded).unwrap();
+    assert_eq!(decoded.event_type, "mcp.request");
+    assert!(decoded.credential_observations.is_empty());
+    assert_eq!(decoded.to_json().unwrap(), event.to_json().unwrap());
+
+    let fragment = SecurityForensicEvent::from_json(r#"{"http":{"host":"api.openai.com"}}"#, "http.request").unwrap();
+    assert_eq!(fragment.event_type, "http.request");
+    assert!(fragment.decision.is_none());
+    assert_eq!(
+        SecurityForensicEvent::decode(&fragment.encode().unwrap()).unwrap(),
+        fragment
+    );
 }

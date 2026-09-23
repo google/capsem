@@ -502,7 +502,14 @@ async fn a_refused_container_pull_is_audited_with_image_identity() {
         .await
         .unwrap()
         .expect("the denied pull decision payload is archived");
-    let decisions = String::from_utf8(decision.bytes).unwrap();
+    assert_eq!(
+        decision.content_type.as_deref(),
+        Some("application/vnd.capsem.security+msgpack")
+    );
+    let decisions = capsem_proto::forensic::SecurityForensicEvent::decode(&decision.bytes)
+        .unwrap()
+        .to_json()
+        .unwrap();
     assert!(decisions.contains("registry.example/private/app:1"), "{decisions}");
     assert!(decisions.contains("registry.example"), "{decisions}");
 }

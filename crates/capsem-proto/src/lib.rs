@@ -12,6 +12,7 @@
 
 pub mod credential_reference;
 mod exec_stream;
+pub mod forensic;
 pub mod handshake;
 pub mod ipc;
 pub mod mcp;

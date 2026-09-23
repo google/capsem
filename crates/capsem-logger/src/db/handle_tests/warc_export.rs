@@ -277,7 +277,7 @@ async fn write_a_session_of_every_kind(db: &DbHandle) -> String {
     let mut security = make_correctness_security_event(&credential_reference("test", "warc-not-a-secret"));
     security.event_id = "0123456789ad".into();
     security.rule_id = "block-secrets".into();
-    security.event_json = r#"{"rule":"matched"}"#.repeat(60);
+    security.event_json = format!(r#"{{"rule":"{}"}}"#, "matched".repeat(60));
     db.write(WriteOp::SecurityRuleEvent(security))
         .await
         .expect("write security rule event");
@@ -379,6 +379,18 @@ async fn every_archived_body_becomes_one_record_named_by_where_it_came_from() {
         })
         .expect("the net event's record");
     assert_eq!(block(net), br#"{"answer":"yes"}"#, "the block is the archived body");
+
+    let security = members
+        .iter()
+        .find(|member| {
+            header(member, "WARC-Record-ID")
+                == Some(body_record_id(&p, "security_rule_events", "0123456789ad", "payload"))
+        })
+        .expect("the security event's record");
+    assert_eq!(header(security, "Content-Type").as_deref(), Some("application/json"));
+    let forensic: serde_json::Value = serde_json::from_slice(&block(security)).unwrap();
+    assert_eq!(forensic["event_type"], "http.request");
+    assert_eq!(forensic["rule"], "matched".repeat(60));
 }
 
 /// WARC requires record ids to be globally unique, and an event id is only

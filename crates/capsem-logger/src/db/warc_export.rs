@@ -728,7 +728,7 @@ impl DbHandle {
             // there is no reading on which one should end the export. Only
             // a failed seek is about the file, and the next row would be
             // read through the same handle.
-            let body = match read_one_checked(&captured.reader, row.index) {
+            let mut body = match read_one_checked(&captured.reader, row.index) {
                 Ok(body) => body,
                 Err(BodyFault::Corrupt(detail)) => {
                     summary.record_skip(identity.because(SkipReason::CorruptBody(detail)));
@@ -740,6 +740,19 @@ impl DbHandle {
                 }
                 Err(fault) => return Err(fault.into_message()),
             };
+            if body.content_type.as_deref() == Some("application/vnd.capsem.security+msgpack") {
+                let decoded = capsem_proto::forensic::SecurityForensicEvent::decode(&body.bytes)
+                    .and_then(|event| event.to_json());
+                let json = match decoded {
+                    Ok(json) => json,
+                    Err(error) => {
+                        summary.record_skip(identity.because(SkipReason::CorruptBody(error.to_string())));
+                        continue;
+                    }
+                };
+                body.bytes = json.into_bytes();
+                body.content_type = Some("application/json".to_string());
+            }
             warc::write_record(
                 &mut counting,
                 &WarcRecord {

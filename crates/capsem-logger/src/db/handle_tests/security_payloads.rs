@@ -9,6 +9,15 @@ use super::correctness::make_correctness_security_event;
 use super::*;
 use crate::db::BodyDirection;
 
+fn decoded_security_body(body: &crate::StoredBody) -> serde_json::Value {
+    assert_eq!(
+        body.content_type.as_deref(),
+        Some("application/vnd.capsem.security+msgpack")
+    );
+    let event = capsem_proto::forensic::SecurityForensicEvent::decode(&body.bytes).expect("typed forensic payload");
+    serde_json::from_str(&event.to_json().unwrap()).unwrap()
+}
+
 /// A rule match's forensic payload averaged a kilobyte and peaked at 297 KB in
 /// one real session, and every one of those bytes sat in the RAM mirror as
 /// well as on disk. The row keeps what routes filter on; the payload is a body
@@ -19,7 +28,7 @@ async fn security_rule_payload_is_archived_not_inlined() {
     let db = DbHandle::open(&p).expect("open handle");
     let mut event = make_correctness_security_event(&credential_reference("test", "not-a-real-secret"));
     event.event_id = "0123456789ab".into();
-    event.event_json = r#"{"rule":"x"}"#.repeat(200);
+    event.event_json = format!(r#"{{"rule":"{}"}}"#, "x".repeat(2400));
 
     db.write(WriteOp::SecurityRuleEvent(event))
         .await
@@ -51,12 +60,12 @@ async fn security_rule_payload_is_archived_not_inlined() {
         .expect("read the archived payload")
         .expect("a rule match's payload is archived");
     assert_eq!(body.source_table, "security_rule_events");
-    assert_eq!(body.content_type.as_deref(), Some("application/json"));
-    assert!(
-        body.bytes.starts_with(br#"{"rule""#),
-        "the archived payload must be the payload that was written"
+    let decoded = decoded_security_body(&body);
+    assert_eq!(
+        decoded["rule"].as_str().unwrap().len(),
+        2400,
+        "all of it, not a preview"
     );
-    assert_eq!(body.bytes.len(), 2400, "and all of it, not a preview");
 }
 
 /// The decision table was measured at 7.5 MB of a 10.5 MB ledger, about 6 KB a
@@ -72,7 +81,11 @@ async fn security_decision_and_ask_payloads_are_archived_not_inlined() {
 
     let p = temp_db_path("security-decision-ask-payload");
     let db = DbHandle::open(&p).expect("open handle");
-    let payload = r#"{"event_type":"process.audit","process":{"command":"cat"}}"#.repeat(100);
+    let payload = serde_json::json!({
+        "event_type": "process.audit",
+        "process": {"command": "cat".repeat(100)}
+    })
+    .to_string();
 
     db.write(WriteOp::SecurityDecisionEvent(SecurityDecisionEvent {
         timestamp_unix_ms: 1_789_000_000_000,
@@ -132,8 +145,12 @@ async fn security_decision_and_ask_payloads_are_archived_not_inlined() {
             .expect("read the archived payload")
             .unwrap_or_else(|| panic!("{table} archives its payload"));
         assert_eq!(body.source_table, table);
-        assert_eq!(body.content_type.as_deref(), Some("application/json"));
-        assert_eq!(body.bytes, payload.as_bytes(), "{table}: all of it, not a preview");
+        let decoded = decoded_security_body(&body);
+        assert_eq!(
+            decoded["process"]["command"],
+            "cat".repeat(100),
+            "{table}: all of it, not a preview"
+        );
     }
 }
 
@@ -173,14 +190,14 @@ async fn bodies_for_events_read_the_named_page_in_one_pass() {
         .await
         .expect("read the named payloads");
 
-    let seen: Vec<String> = archived
+    let seen: Vec<i64> = archived
         .bodies
         .iter()
-        .map(|body| String::from_utf8(body.bytes.clone()).expect("payloads are JSON text"))
+        .map(|body| decoded_security_body(body)["match"].as_i64().unwrap())
         .collect();
     assert_eq!(
         seen,
-        vec![r#"{"match":0}"#, r#"{"match":2}"#, r#"{"match":3}"#],
+        vec![0, 2, 3],
         "the read must return exactly the named rows, in the order the archive holds them"
     );
     assert_eq!(archived.truncated_rows, 0, "a budget this large refuses nothing");
@@ -206,7 +223,11 @@ async fn the_payload_budget_stops_accumulating_and_counts_what_it_refused() {
     let asked: Vec<&str> = event_ids.iter().map(String::as_str).collect();
 
     // Every payload is the same length, so a budget of two admits exactly two.
-    let one_payload = r#"{"match":0}"#.len();
+    let one_payload = capsem_proto::forensic::SecurityForensicEvent::from_json(r#"{"match":0}"#, "http.request")
+        .unwrap()
+        .encode()
+        .unwrap()
+        .len();
     let archived = db
         .read_bodies_for_events(&asked, "security_rule_events", BodyDirection::Payload, one_payload * 2)
         .await
@@ -214,14 +235,14 @@ async fn the_payload_budget_stops_accumulating_and_counts_what_it_refused() {
 
     assert_eq!(archived.bodies.len(), 2, "the budget admits two of the three");
     assert_eq!(archived.truncated_rows, 1, "and says the third was refused");
-    let seen: Vec<String> = archived
+    let seen: Vec<i64> = archived
         .bodies
         .iter()
-        .map(|body| String::from_utf8(body.bytes.clone()).expect("payloads are JSON text"))
+        .map(|body| decoded_security_body(body)["match"].as_i64().unwrap())
         .collect();
     assert_eq!(
         seen,
-        vec![r#"{"match":0}"#, r#"{"match":1}"#],
+        vec![0, 1],
         "the budget takes them in archive order, not an arbitrary two"
     );
 }

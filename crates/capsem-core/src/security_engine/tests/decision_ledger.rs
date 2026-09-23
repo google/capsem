@@ -12,7 +12,14 @@ pub(super) async fn archived_payload_of(db_path: &std::path::Path, source_table:
         .await
         .unwrap()
         .unwrap_or_else(|| panic!("the {source_table} payload of {event_id} must be archived"));
-    String::from_utf8(body.bytes).expect("a forensic payload is JSON text")
+    assert_eq!(
+        body.content_type.as_deref(),
+        Some("application/vnd.capsem.security+msgpack")
+    );
+    capsem_proto::forensic::SecurityForensicEvent::decode(&body.bytes)
+        .expect("typed forensic payload")
+        .to_json()
+        .expect("forensic JSON view")
 }
 
 /// A rule match's payload, which is what most of these tests assert on.
@@ -97,7 +104,10 @@ match = 'network.destination.vm_name == "redis"'
         .iter()
         .any(|execution| execution["plugin_id"] == "log_sanitizer" && execution["applied"] == true));
     assert!(!payload.contains("sk-must-not-reach-network-ledger"));
-    assert!(json["credential_observations"].as_array().unwrap().is_empty());
+    assert!(
+        json.get("credential_observations").is_none(),
+        "the default list is omitted"
+    );
 }
 
 #[tokio::test]

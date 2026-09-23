@@ -6,6 +6,17 @@
 
 use super::*;
 
+fn archived_forensic_json(body: capsem_logger::StoredBody) -> String {
+    assert_eq!(
+        body.content_type.as_deref(),
+        Some("application/vnd.capsem.security+msgpack")
+    );
+    capsem_proto::forensic::SecurityForensicEvent::decode(&body.bytes)
+        .unwrap()
+        .to_json()
+        .unwrap()
+}
+
 #[tokio::test]
 async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contract() {
     let _lock = SETTINGS_ENV_LOCK.lock().await;
@@ -78,7 +89,7 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
         .await
         .unwrap()
         .expect("the matched event payload is archived");
-    assert!(String::from_utf8(payload.bytes).unwrap().contains(&credential_ref));
+    assert!(archived_forensic_json(payload).contains(&credential_ref));
     let (status, before) = route_request(
         app.clone(),
         axum::http::Method::GET,
@@ -181,9 +192,7 @@ async fn credential_broker_plugin_runtime_reports_security_ledger_activity() {
         .await
         .unwrap()
         .expect("the matched event payload is archived");
-    assert!(String::from_utf8(payload.bytes)
-        .unwrap()
-        .contains("credential_observations"));
+    assert!(archived_forensic_json(payload).contains("credential_observations"));
     let (status, list) = route_request(
         app.clone(),
         axum::http::Method::GET,

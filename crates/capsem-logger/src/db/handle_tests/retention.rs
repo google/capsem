@@ -11,6 +11,13 @@ use crate::writer::{fail_retention_for_path_for_tests, RetentionFault};
 
 use super::correctness::make_correctness_security_event;
 
+fn encoded(payload: &str) -> Vec<u8> {
+    capsem_proto::forensic::SecurityForensicEvent::from_json(payload, "http.request")
+        .unwrap()
+        .encode()
+        .unwrap()
+}
+
 /// Write one security payload and flush, which -- with every test here
 /// closing its block at each flush -- is exactly one block. What these tests
 /// hold is what retention does with separate blocks, not when one closes.
@@ -95,7 +102,7 @@ async fn a_pinned_body_capture_survives_publication_and_unlink() {
         .expect("read task")
         .expect("captured read")
         .expect("survivor");
-    assert_eq!(body.bytes, br#"{"new":2}"#);
+    assert_eq!(body.bytes, encoded(r#"{"new":2}"#));
 }
 
 /// Parameter chunking stays inside one snapshot. Publication between capture
@@ -129,9 +136,9 @@ async fn a_chunked_capture_uses_one_generation_snapshot() {
     assert_eq!(
         payloads,
         vec![
-            br#"{"new":2}"#.to_vec(),
-            br#"{"new":2}"#.to_vec(),
-            br#"{"old":1}"#.to_vec()
+            encoded(r#"{"new":2}"#),
+            encoded(r#"{"new":2}"#),
+            encoded(r#"{"old":1}"#)
         ]
     );
 }
@@ -158,7 +165,9 @@ async fn a_pinned_warc_capture_survives_publication_and_unlink() {
     assert!(summary.skipped.is_empty(), "publication must induce no WARC skips");
     let bodies = super::warc_export::body_members(&bytes);
     assert_eq!(bodies.len(), 2);
-    assert_eq!(super::warc_export::block(&bodies[1]), br#"{"new":2}"#);
+    let forensic: serde_json::Value = serde_json::from_slice(&super::warc_export::block(&bodies[1])).unwrap();
+    assert_eq!(forensic["event_type"], "http.request");
+    assert_eq!(forensic["new"], 2);
 }
 
 /// A handle that reads a ledger another process writes must not rewrite its
@@ -260,7 +269,7 @@ async fn a_cutoff_between_two_blocks_keeps_the_newer_one() {
         .await
         .expect("read the kept body")
         .expect("the newer body survives");
-    assert_eq!(kept.bytes, br#"{"new":2}"#);
+    assert_eq!(kept.bytes, encoded(r#"{"new":2}"#));
     assert!(db
         .read_body("0000000000ab", "security_rule_events", BodyDirection::Payload)
         .await
@@ -296,7 +305,11 @@ async fn writes_after_retention_append_to_the_compacted_archive() {
             .await
             .expect("read a body")
             .expect("both bodies are archived");
-        assert_eq!(body.bytes, payload.as_bytes(), "{event_id} reads back byte for byte");
+        assert_eq!(
+            body.bytes,
+            encoded(payload),
+            "{event_id} reads back encoded bytes exactly"
+        );
     }
     assert_eq!(foreign_key_violations(&db).await, 0);
 }
@@ -332,7 +345,7 @@ async fn a_failed_compaction_leaves_the_index_and_the_bodies_alone() {
         .await
         .expect("read the oldest body")
         .expect("it is still archived");
-    assert_eq!(body.bytes, br#"{"old":1}"#);
+    assert_eq!(body.bytes, encoded(r#"{"old":1}"#));
 }
 
 /// The whole reason retention stages the file and renames it last: a failure
@@ -370,7 +383,7 @@ async fn a_failed_index_transaction_leaves_the_archive_and_the_index_untouched()
             .await
             .expect("read a body")
             .expect("every body is still archived");
-        assert_eq!(body.bytes, payload.as_bytes(), "{event_id} still reads");
+        assert_eq!(body.bytes, encoded(payload), "{event_id} still reads");
     }
     assert_eq!(
         std::fs::read_dir(archive_path_for_db(&p))
@@ -403,7 +416,7 @@ async fn an_external_reader_follows_the_archive_across_a_retention() {
             .expect("read a body")
             .expect("the body is archived")
             .bytes,
-        br#"{"new":2}"#
+        encoded(r#"{"new":2}"#)
     );
 
     writer.retain_bodies_since(&sealed[1].1).await.expect("retain bodies");
@@ -414,7 +427,8 @@ async fn an_external_reader_follows_the_archive_across_a_retention() {
         .expect("a reader that notices the archive moved does not fail here")
         .expect("the surviving body is still archived");
     assert_eq!(
-        kept.bytes, br#"{"new":2}"#,
+        kept.bytes,
+        encoded(r#"{"new":2}"#),
         "the same read returns the same bytes from the compacted file"
     );
     assert!(
@@ -484,7 +498,7 @@ async fn a_retention_leaves_no_orphan_index_rows() {
             .expect("read the kept body")
             .expect("the newer body survives")
             .bytes,
-        br#"{"new":2}"#
+        encoded(r#"{"new":2}"#)
     );
 }
 

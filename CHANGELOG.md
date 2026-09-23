@@ -528,12 +528,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each file to typed archive and generation identities, and descriptor-based
   reads enforce the exact file and block extents selected by the database.
   The database keeps only the index that finds each body: typically 6-11x
-  smaller on disk, with the same bytes returned and every read checked against
+  smaller on disk, with captured raw bytes returned unchanged and every read checked against
   the hash recorded when it was stored. The security, detection and
   enforcement views list rule metadata as before and show each payload's size
   and hash, fetching the payload itself on demand. Forking a session, or
   anything else that copies a session ledger, copies the database and its
   selected generation.
+
+- Security forensic projections in the archive now use sparse named
+  MessagePack: default null and empty fields take no storage, while the
+  original captured request and response bodies remain exact. JSON-facing
+  security views and WARC exports decode the typed projection on read.
 
 - Security decisions and asks store the event they are about in the body
   archive too, the way rule matches do. The decision ledger was the largest

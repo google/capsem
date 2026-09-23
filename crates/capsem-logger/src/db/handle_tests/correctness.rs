@@ -396,6 +396,11 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
             ]),
             "model_items must preserve ordered request/reasoning/response/tool_call/tool_response truth before flush. {DB_BOUNDARY_RATIONALE}"
         );
+        let forensic =
+            capsem_proto::forensic::SecurityForensicEvent::from_json(CORRECTNESS_SECURITY_PAYLOAD, "http.request")
+                .unwrap()
+                .encode()
+                .unwrap();
         assert_eq!(
             snapshot["blobs"]["rows"],
             json!([
@@ -404,11 +409,11 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
                     "security.rule",
                     "security_rule_events",
                     "payload",
-                    "application/json",
-                    CORRECTNESS_SECURITY_PAYLOAD.len(),
-                    CORRECTNESS_SECURITY_PAYLOAD.len(),
+                    "application/vnd.capsem.security+msgpack",
+                    forensic.len(),
+                    forensic.len(),
                     0,
-                    blake3_test_ref(CORRECTNESS_SECURITY_PAYLOAD),
+                    format!("blake3:{}", blake3::hash(&forensic).to_hex()),
                     "trace-correctness-1",
                     "trace-correctness-1"
                 ],

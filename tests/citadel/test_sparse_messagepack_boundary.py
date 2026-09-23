@@ -17,6 +17,7 @@ ENCODER_OWNERS = {
     Path("crates/capsem-proto/src/exec_stream.rs"),
     Path("crates/capsem-proto/src/mcp_aggregator.rs"),
     Path("crates/capsem-proto/src/repeated.rs"),
+    Path("crates/capsem-proto/src/forensic.rs"),
     Path("crates/capsem-foundation/src/ipc_channel.rs"),
     Path("crates/capsem-foundation/src/ipc_handshake.rs"),
 }

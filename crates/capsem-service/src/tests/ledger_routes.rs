@@ -68,7 +68,13 @@ async fn security_routes_read_security_ledger_from_session_db() {
         .await
         .unwrap()
         .expect("the matched event payload is archived");
-    assert!(String::from_utf8(payload.bytes)
+    assert_eq!(
+        payload.content_type.as_deref(),
+        Some("application/vnd.capsem.security+msgpack")
+    );
+    assert!(capsem_proto::forensic::SecurityForensicEvent::decode(&payload.bytes)
+        .unwrap()
+        .to_json()
         .unwrap()
         .contains(r#""provider":"ollama""#));
 

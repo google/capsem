@@ -152,7 +152,10 @@ async fn a_body_several_rows_share_is_exported_once() {
         Some("capsem://security/first-rule"),
         "the payload is named by the first rule that matched it"
     );
-    assert_eq!(block(&members[0]), br#"{"matched":"twice"}"#);
+    assert_eq!(header(&members[0], "Content-Type").as_deref(), Some("application/json"));
+    let forensic: serde_json::Value = serde_json::from_slice(&block(&members[0])).unwrap();
+    assert_eq!(forensic["event_type"], "http.request");
+    assert_eq!(forensic["matched"], "twice");
 }
 
 /// A rule match, the decision it drove and the ask it raised all archive a
@@ -219,22 +222,14 @@ async fn decision_and_ask_payloads_are_exported_under_their_own_ids() {
         .collect();
     assert_eq!(ids.len(), 3, "the three records must not share an id: {ids:?}");
 
-    for (table, uri, bytes) in [
-        (
-            "security_rule_events",
-            "capsem://security/ask-rule",
-            br#"{"seen_by":"rule"}"#.as_slice(),
-        ),
+    for (table, uri, seen_by) in [
+        ("security_rule_events", "capsem://security/ask-rule", "rule"),
         (
             "security_decision_events",
             "capsem://security-decision/profiles.rules.ask_rule",
-            br#"{"seen_by":"decision"}"#.as_slice(),
+            "decision",
         ),
-        (
-            "security_ask_events",
-            "capsem://security-ask/0123456789b0",
-            br#"{"seen_by":"ask"}"#.as_slice(),
-        ),
+        ("security_ask_events", "capsem://security-ask/0123456789b0", "ask"),
     ] {
         let id = body_record_id(&p, table, event_id, "payload");
         let member = members
@@ -242,10 +237,9 @@ async fn decision_and_ask_payloads_are_exported_under_their_own_ids() {
             .find(|member| header(member, "WARC-Record-ID").as_deref() == Some(id.as_str()))
             .unwrap_or_else(|| panic!("{table}'s payload is exported as {id}"));
         assert_eq!(header(member, "WARC-Target-URI").as_deref(), Some(uri), "{table}");
-        assert_eq!(
-            block(member),
-            bytes,
-            "{table}: the record's block is the archived payload"
-        );
+        assert_eq!(header(member, "Content-Type").as_deref(), Some("application/json"));
+        let forensic: serde_json::Value = serde_json::from_slice(&block(member)).unwrap();
+        assert_eq!(forensic["event_type"], "http.request", "{table}");
+        assert_eq!(forensic["seen_by"], seen_by, "{table}: the projection is complete");
     }
 }

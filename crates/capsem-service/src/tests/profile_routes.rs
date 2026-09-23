@@ -2066,7 +2066,15 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         .await
         .unwrap()
         .expect("the matched event payload is archived");
-    assert!(String::from_utf8_lossy(&payload.bytes).contains(r#""api.openai.com""#));
+    assert_eq!(
+        payload.content_type.as_deref(),
+        Some("application/vnd.capsem.security+msgpack")
+    );
+    assert!(capsem_proto::forensic::SecurityForensicEvent::decode(&payload.bytes)
+        .unwrap()
+        .to_json()
+        .unwrap()
+        .contains(r#""api.openai.com""#));
 
     let detection_response = app
         .oneshot(

@@ -358,7 +358,16 @@ match = 'file.read.path.contains("skills/") && file.read.ext == "md" && file.rea
             .await
             .unwrap()
             .unwrap_or_else(|| panic!("the payload of {} must be archived", rule.0));
-        payloads.push(String::from_utf8(body.bytes).unwrap());
+        assert_eq!(
+            body.content_type.as_deref(),
+            Some("application/vnd.capsem.security+msgpack")
+        );
+        payloads.push(
+            capsem_proto::forensic::SecurityForensicEvent::decode(&body.bytes)
+                .unwrap()
+                .to_json()
+                .unwrap(),
+        );
     }
     assert!(payloads[0].contains(r#""import_content":"incoming""#));
     assert!(payloads[1].contains(r#""export_mime_type":"application/json""#));

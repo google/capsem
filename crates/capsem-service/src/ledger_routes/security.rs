@@ -7,6 +7,9 @@
 
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) fn is_detection_rule_event(event: &capsem_logger::SecurityRuleMatch) -> bool {
     event.detection_level != capsem_logger::SecurityDetectionLevel::None
 }
@@ -230,11 +233,20 @@ async fn security_payloads(
         .bodies
         .into_iter()
         .filter_map(|body| {
-            String::from_utf8(body.bytes)
-                .ok()
-                .map(|payload| (body.event_id, payload))
+            let payload = forensic_payload_json(body.content_type.as_deref(), &body.bytes);
+            payload.map(|payload| (body.event_id, payload))
         })
         .collect())
+}
+
+fn forensic_payload_json(content_type: Option<&str>, bytes: &[u8]) -> Option<String> {
+    if content_type == Some("application/vnd.capsem.security+msgpack") {
+        capsem_proto::forensic::SecurityForensicEvent::decode(bytes)
+            .and_then(|event| event.to_json())
+            .ok()
+    } else {
+        String::from_utf8(bytes.to_vec()).ok()
+    }
 }
 
 pub(crate) async fn read_profile_security_ledgers(

@@ -21,6 +21,13 @@ use crate::events::{
 const PAYLOAD: &str =
     r#"{"event_type":"http.request","http":{"host":"dedup.example"},"decision":{"effective":"allow"}}"#;
 
+fn encoded(payload: &str) -> Vec<u8> {
+    capsem_proto::forensic::SecurityForensicEvent::from_json(payload, "http.request")
+        .unwrap()
+        .encode()
+        .unwrap()
+}
+
 async fn write_rule(db: &DbHandle, event_id: &str, rule_id: &str, payload: &str) {
     let mut event = make_correctness_security_event(&credential_reference("test", "dedup-not-a-secret"));
     event.event_id = event_id.into();
@@ -134,11 +141,11 @@ async fn a_rule_payload_and_its_decision_share_one_copy() {
         "both rows name the same block, offset and length"
     );
     for table in ["security_rule_events", "security_decision_events"] {
-        assert_eq!(payload(&db, "0123456789a0", table).await, PAYLOAD.as_bytes(), "{table}");
+        assert_eq!(payload(&db, "0123456789a0", table).await, encoded(PAYLOAD), "{table}");
     }
     assert_eq!(
         archived_raw_bytes(&db).await,
-        PAYLOAD.len() as i64,
+        encoded(PAYLOAD).len() as i64,
         "the archive grew by one copy, not two"
     );
 }
@@ -162,12 +169,12 @@ async fn an_event_matching_three_rules_stores_its_payload_once() {
     );
     assert_eq!(
         archived_raw_bytes(&db).await,
-        PAYLOAD.len() as i64,
+        encoded(PAYLOAD).len() as i64,
         "and the payload is stored once"
     );
     assert_eq!(
         payload(&db, "0123456789a1", "security_rule_events").await,
-        PAYLOAD.as_bytes()
+        encoded(PAYLOAD)
     );
 }
 
@@ -199,9 +206,13 @@ async fn a_large_body_in_an_earlier_block_is_reused() {
         (spans[1].1, spans[1].2),
         "one span: {spans:?}"
     );
-    assert_eq!(archived_raw_bytes(&db).await, large.len() as i64, "stored once");
+    assert_eq!(
+        archived_raw_bytes(&db).await,
+        encoded(&large).len() as i64,
+        "stored once"
+    );
     for table in ["security_rule_events", "security_decision_events"] {
-        assert_eq!(payload(&db, "0123456789a2", table).await, large.as_bytes(), "{table}");
+        assert_eq!(payload(&db, "0123456789a2", table).await, encoded(&large), "{table}");
     }
 }
 
@@ -217,7 +228,7 @@ async fn a_small_body_in_an_earlier_block_is_stored_again() {
     write_decision(&db, "0123456789a2", PAYLOAD).await;
     db.flush().await.expect("flush commits the second row");
 
-    assert_eq!(archived_raw_bytes(&db).await, 2 * PAYLOAD.len() as i64);
+    assert_eq!(archived_raw_bytes(&db).await, 2 * encoded(PAYLOAD).len() as i64);
 }
 
 /// A block past its own age is kept while a newer row still points into it,
@@ -239,7 +250,7 @@ async fn retention_keeps_an_old_block_a_newer_row_still_reads() {
     db.retain_bodies_since(&cutoff).await.expect("retain");
     assert_eq!(
         payload(&db, "0123456789b1", "security_decision_events").await,
-        large.as_bytes(),
+        encoded(&large),
         "the newer row still reads its bytes from the older block"
     );
     assert_eq!(count(&db, "SELECT COUNT(*) FROM pragma_foreign_key_check").await, 0);
@@ -264,14 +275,20 @@ async fn equal_length_different_bytes_are_not_reused() {
     write_decision(&db, "0123456789a3", &other).await;
     db.flush().await.expect("flush");
 
-    assert_eq!(archived_raw_bytes(&db).await, 2 * PAYLOAD.len() as i64);
+    assert_eq!(
+        encoded(&other).len(),
+        encoded(PAYLOAD).len(),
+        "equal-length wire bodies"
+    );
+    assert_ne!(encoded(&other), encoded(PAYLOAD), "different wire bodies");
+    assert_eq!(archived_raw_bytes(&db).await, 2 * encoded(PAYLOAD).len() as i64);
     assert_eq!(
         payload(&db, "0123456789a3", "security_rule_events").await,
-        PAYLOAD.as_bytes()
+        encoded(PAYLOAD)
     );
     assert_eq!(
         payload(&db, "0123456789a3", "security_decision_events").await,
-        other.as_bytes(),
+        encoded(&other),
         "each row reads its own bytes, verified against its own hash"
     );
 }
@@ -315,7 +332,7 @@ async fn retention_keeps_and_drops_a_shared_span_with_every_row_that_names_it() 
     assert_eq!(spans.len(), 2);
     assert_eq!((spans[0].1, spans[0].2), (spans[1].1, spans[1].2), "still one span");
     for table in ["security_rule_events", "security_decision_events"] {
-        assert_eq!(payload(&db, "0123456789a5", table).await, PAYLOAD.as_bytes(), "{table}");
+        assert_eq!(payload(&db, "0123456789a5", table).await, encoded(PAYLOAD), "{table}");
     }
     assert_eq!(count(&db, "SELECT COUNT(*) FROM pragma_foreign_key_check").await, 0);
 
@@ -341,7 +358,11 @@ async fn the_export_writes_every_row_of_a_shared_span_once() {
     write_decision(&db, "0123456789a6", PAYLOAD).await;
     write_ask(&db, "0123456789a6", "0123456789a7", PAYLOAD).await;
     db.flush().await.expect("flush");
-    assert_eq!(archived_raw_bytes(&db).await, PAYLOAD.len() as i64, "one stored copy");
+    assert_eq!(
+        archived_raw_bytes(&db).await,
+        encoded(PAYLOAD).len() as i64,
+        "one stored copy"
+    );
 
     let (summary, out) = export_to_bytes(&db, &p).await;
     assert!(summary.skipped.is_empty(), "{:?}", summary.skipped);
@@ -362,10 +383,11 @@ async fn the_export_writes_every_row_of_a_shared_span_once() {
             .iter()
             .find(|member| header(member, "WARC-Record-ID").as_deref() == Some(id.as_str()))
             .unwrap_or_else(|| panic!("{table}'s record is exported as {id}"));
+        assert_eq!(header(member, "Content-Type").as_deref(), Some("application/json"));
         assert_eq!(
-            block(member),
-            PAYLOAD.as_bytes(),
-            "{table}: the shared bytes, read whole"
+            serde_json::from_slice::<serde_json::Value>(&block(member)).unwrap(),
+            serde_json::from_str::<serde_json::Value>(PAYLOAD).unwrap(),
+            "{table}: the shared projection is exported whole"
         );
     }
 }

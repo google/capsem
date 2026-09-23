@@ -7,6 +7,15 @@
 
 use super::*;
 
+fn decoded_security_payload(body: &crate::StoredBody) -> serde_json::Value {
+    assert_eq!(
+        body.content_type.as_deref(),
+        Some("application/vnd.capsem.security+msgpack")
+    );
+    let event = capsem_proto::forensic::SecurityForensicEvent::decode(&body.bytes).unwrap();
+    serde_json::from_str(&event.to_json().unwrap()).unwrap()
+}
+
 #[tokio::test]
 async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
     let dir = tempfile::tempdir().unwrap();
@@ -58,11 +67,11 @@ async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
         .await
         .unwrap()
         .expect("the matched event payload is archived");
-    assert_eq!(payload.content_type.as_deref(), Some("application/json"));
-    assert_eq!(
-        payload.bytes,
-        br#"{"common":{"event_type":"model.call"},"model":{"provider":"openai"}}"#
-    );
+    let event = decoded_security_payload(&payload);
+    assert_eq!(event["event_type"], "model.call");
+    assert_eq!(event["common"]["event_type"], "model.call");
+    assert_eq!(event["model"]["provider"], "openai");
+    assert!(event.get("credential_ref").is_none());
 }
 
 #[tokio::test]
@@ -111,8 +120,9 @@ async fn security_ask_event_roundtrip_preserves_lifecycle_rows() {
         .await
         .unwrap()
         .expect("the asked-about event is archived");
-    assert_eq!(payload.bytes, br#"{"http":{"host":"api.openai.com"}}"#);
-    assert_eq!(payload.content_type.as_deref(), Some("application/json"));
+    let event = decoded_security_payload(&payload);
+    assert_eq!(event["event_type"], "http.request");
+    assert_eq!(event["http"]["host"], "api.openai.com");
     let bodies = db.read_bodies("111111abcdef").await.unwrap();
     assert_eq!(bodies.len(), 1, "two lifecycle rows of one ask index one body, not two");
 }
@@ -194,7 +204,9 @@ async fn security_decision_event_roundtrip_preserves_explicit_transition() {
         .await
         .unwrap()
         .expect("the decided-about event is archived");
-    assert_eq!(payload.bytes, br#"{"file":{"import":{"name":"eicar.txt"}}}"#);
+    let event = decoded_security_payload(&payload);
+    assert_eq!(event["event_type"], "file.import");
+    assert_eq!(event["file"]["import"]["name"], "eicar.txt");
     assert_eq!(payload.source_table, "security_decision_events");
 }
 
