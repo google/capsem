@@ -241,9 +241,14 @@ async fn security_decision_event_roundtrip_preserves_explicit_transition() {
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     let row: (String, String, String, String, String, String, String, String, String) = conn
         .query_row(
-            "SELECT stage, actor, previous_decision, requested_decision,
-                    effective_decision, reason, trace_id, turn_id, credential_ref
-             FROM security_decision_events WHERE event_id = 'abcdef123456'",
+            "SELECT COALESCE(event.stage, run.stage), COALESCE(event.actor, run.actor),
+                    COALESCE(event.previous_decision, run.previous_decision),
+                    COALESCE(event.requested_decision, run.requested_decision),
+                    COALESCE(event.effective_decision, run.effective_decision),
+                    COALESCE(event.reason, run.reason), event.trace_id, event.turn_id, event.credential_ref
+             FROM security_decision_events AS event
+             LEFT JOIN security_decision_runs AS run ON run.id = event.run_id
+             WHERE event.event_id = 'abcdef123456'",
             [],
             |row| {
                 Ok((
@@ -292,6 +297,67 @@ async fn security_decision_event_roundtrip_preserves_explicit_transition() {
     assert_eq!(event["event_type"], "file.import");
     assert_eq!(event["file"]["import"]["name"], "eicar.txt");
     assert_eq!(payload.source_table, "security_decision_events");
+}
+
+#[tokio::test]
+async fn repeated_decisions_share_a_counted_snapshot_without_losing_occurrences() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("decision-runs.db");
+    let writer = DbWriter::open(&db_path, 16).unwrap();
+    for (timestamp, event_id, decision, reason) in [
+        (100, "000000000001", crate::events::SecurityDecision::Allow, None),
+        (120, "000000000002", crate::events::SecurityDecision::Allow, None),
+        (130, "000000000003", crate::events::SecurityDecision::Block, None),
+        (140, "000000000004", crate::events::SecurityDecision::Allow, Some("")),
+    ] {
+        writer
+            .write(WriteOp::SecurityDecisionEvent(crate::events::SecurityDecisionEvent {
+                timestamp_unix_ms: timestamp,
+                event_id: event_id.into(),
+                event_type: "dns.query".into(),
+                stage: crate::events::SecurityDecisionStage::Rule,
+                actor: "profiles.rules.dns".into(),
+                rule_id: Some("profiles.rules.dns".into()),
+                plugin_id: None,
+                previous_decision: crate::events::SecurityDecision::Allow,
+                requested_decision: decision,
+                effective_decision: decision,
+                reason: reason.map(str::to_owned),
+                event_json: r#"{"dns":{"qname":"example.org"}}"#.into(),
+                trace_id: None,
+                turn_id: None,
+                credential_ref: None,
+            }))
+            .await;
+        if timestamp == 100 {
+            writer.flush().await;
+        }
+    }
+    drop(writer);
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let runs: Vec<(i64, i64, i64)> = conn
+        .prepare(
+            "SELECT count, first_timestamp_unix_ms, last_timestamp_unix_ms FROM security_decision_runs ORDER BY first_timestamp_unix_ms",
+        )
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(runs, vec![(2, 100, 120), (1, 130, 130), (1, 140, 140)]);
+    let occurrences: Vec<(String, i64, Option<String>, i64)> = conn
+        .prepare("SELECT event_id, timestamp_unix_ms, actor, run_id FROM security_decision_events ORDER BY id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(occurrences.len(), 4);
+    assert_eq!(occurrences[0].0, "000000000001");
+    assert_eq!(occurrences[1].0, "000000000002");
+    assert_eq!(occurrences[0].3, occurrences[1].3);
+    assert_ne!(occurrences[1].3, occurrences[2].3);
+    assert!(occurrences.iter().all(|row| row.2.is_none()));
 }
 
 #[tokio::test]

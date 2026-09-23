@@ -203,6 +203,28 @@ pub fn flush_memory_tables_to_disk<'a>(
                      FROM mem.security_rule_events AS event WHERE event.id > ?1",
                     [last_flushed_id],
                 )?;
+            } else if table == "security_decision_events" {
+                compact_security_decision_snapshots(conn, last_flushed_id)?;
+                conn.execute(
+                    "INSERT OR REPLACE INTO main.security_decision_events (
+                        id, timestamp_unix_ms, event_id, event_type, stage, actor,
+                        rule_id, plugin_id, previous_decision, requested_decision,
+                        effective_decision, reason, trace_id, turn_id, credential_ref, run_id
+                     )
+                     SELECT event.id, event.timestamp_unix_ms, event.event_id, event.event_type,
+                            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                            event.trace_id, event.turn_id, event.credential_ref,
+                            (SELECT run.id FROM main.security_decision_runs AS run
+                             WHERE run.event_type = event.event_type
+                               AND run.stage = event.stage AND run.actor = event.actor
+                               AND run.rule_id IS event.rule_id AND run.plugin_id IS event.plugin_id
+                               AND run.previous_decision = event.previous_decision
+                               AND run.requested_decision = event.requested_decision
+                               AND run.effective_decision = event.effective_decision
+                               AND run.reason IS event.reason)
+                     FROM mem.security_decision_events AS event WHERE event.id > ?1",
+                    [last_flushed_id],
+                )?;
             } else {
                 conn.execute(
                     &format!(
@@ -241,6 +263,29 @@ fn compact_security_rule_snapshots(conn: &Connection, last_flushed_id: i64) -> r
          GROUP BY event_type, rule_id, rule_action, detection_level, rule_json
          ON CONFLICT (event_type, rule_id, rule_action, detection_level, rule_json)
          DO UPDATE SET
+            count = count + excluded.count,
+            first_timestamp_unix_ms = MIN(first_timestamp_unix_ms, excluded.first_timestamp_unix_ms),
+            last_timestamp_unix_ms = MAX(last_timestamp_unix_ms, excluded.last_timestamp_unix_ms)",
+        [last_flushed_id],
+    )?;
+    Ok(())
+}
+
+fn compact_security_decision_snapshots(conn: &Connection, last_flushed_id: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO main.security_decision_runs (
+            event_type, stage, actor, rule_id, plugin_id,
+            previous_decision, requested_decision, effective_decision, reason,
+            count, first_timestamp_unix_ms, last_timestamp_unix_ms
+         )
+         SELECT event_type, stage, actor, rule_id, plugin_id,
+                previous_decision, requested_decision, effective_decision, reason,
+                COUNT(*), MIN(timestamp_unix_ms), MAX(timestamp_unix_ms)
+         FROM mem.security_decision_events
+         WHERE id > ?1 AND run_id IS NULL
+         GROUP BY event_type, stage, actor, rule_id, plugin_id,
+                  previous_decision, requested_decision, effective_decision, reason
+         ON CONFLICT DO UPDATE SET
             count = count + excluded.count,
             first_timestamp_unix_ms = MIN(first_timestamp_unix_ms, excluded.first_timestamp_unix_ms),
             last_timestamp_unix_ms = MAX(last_timestamp_unix_ms, excluded.last_timestamp_unix_ms)",

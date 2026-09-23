@@ -532,8 +532,10 @@ fn source_metadata(
         )?
         .map_or((None, None, None), |(uri, date)| (Some(uri), None, Some(date)))),
         "security_decision_events" => Ok(millis(
-            "SELECT 'capsem://security-decision/' || actor, timestamp_unix_ms
-             FROM security_decision_events WHERE event_id = ?1 ORDER BY id LIMIT 1",
+            "SELECT 'capsem://security-decision/' || COALESCE(event.actor, run.actor), event.timestamp_unix_ms
+             FROM security_decision_events AS event
+             LEFT JOIN security_decision_runs AS run ON run.id = event.run_id
+             WHERE event.event_id = ?1 ORDER BY event.id LIMIT 1",
         )?
         .map_or((None, None, None), |(uri, date)| (Some(uri), None, Some(date)))),
         "security_ask_events" => Ok(millis(

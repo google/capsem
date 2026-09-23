@@ -190,6 +190,9 @@ LEDGER_SQL = """SELECT
     (SELECT COUNT(*) FROM security_rule_events) AS rule_occurrences,
     (SELECT COALESCE(SUM(count), 0) FROM security_rule_runs) AS rules_counted,
     (SELECT COUNT(*) FROM security_rule_runs WHERE count > 1) AS repeated_rule_runs,
+    (SELECT COUNT(*) FROM security_decision_events) AS decision_occurrences,
+    (SELECT COALESCE(SUM(count), 0) FROM security_decision_runs) AS decisions_counted,
+    (SELECT COUNT(*) FROM security_decision_runs WHERE count > 1) AS repeated_decision_runs,
     (SELECT COUNT(*) FROM body_blocks) AS blocks,
     (SELECT COALESCE(SUM(raw_len), 0) FROM body_blocks) AS raw,
     (SELECT COALESCE(SUM(disk_len), 0) FROM body_blocks) AS comp,
@@ -255,17 +258,15 @@ def judge(samples: list[dict], failures: list[str]) -> None:
     last, kb = samples[-1], 1024
     if last["models"] == 0:
         fail(f"no model_calls rows: {MODEL} was never called through the egress")
-    print(
-        f"  rule counter: {last['rules_counted']} matches in "
-        f"{last['repeated_rule_runs']} repeated runs"
-    )
-    if last["rules_counted"] != last["rule_occurrences"]:
-        fail(
-            f"rule counter covers {last['rules_counted']} of "
-            f"{last['rule_occurrences']} occurrences"
-        )
-    if last["repeated_rule_runs"] == 0:
-        fail("no rule counter has count > 1: repeated-event compaction was not exercised")
+    for kind in ("rule", "decision"):
+        counted = last[f"{kind}s_counted"]
+        occurrences = last[f"{kind}_occurrences"]
+        repeated = last[f"repeated_{kind}_runs"]
+        print(f"  {kind} counter: {counted} occurrences in {repeated} repeated runs")
+        if counted != occurrences:
+            fail(f"{kind} counter covers {counted} of {occurrences} occurrences")
+        if repeated == 0:
+            fail(f"no {kind} counter has count > 1: repeated-event compaction was not exercised")
 
     overall = _disk(last) / max(last["reqs"], 1)
     print(f"\n  disk / requests, including the empty schema's fixed floor: {overall / kb:.2f} KB")

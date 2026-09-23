@@ -446,18 +446,47 @@ pub const CREATE_SCHEMA: &str = "
     -- capsem-service's `security_status_aggregates_run_on_indexes` pins it.
     CREATE INDEX IF NOT EXISTS idx_security_rule_events_rule_stats
         ON security_rule_events(rule_action, detection_level, rule_id, timestamp_unix_ms, id, event_id);
+
+    CREATE TABLE IF NOT EXISTS security_decision_runs (
+        id INTEGER PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        rule_id TEXT,
+        plugin_id TEXT,
+        previous_decision TEXT NOT NULL,
+        requested_decision TEXT NOT NULL,
+        effective_decision TEXT NOT NULL,
+        reason TEXT,
+        count INTEGER NOT NULL CHECK (count > 0),
+        first_timestamp_unix_ms INTEGER NOT NULL,
+        last_timestamp_unix_ms INTEGER NOT NULL,
+        CHECK (last_timestamp_unix_ms >= first_timestamp_unix_ms)
+    );
+    -- Nullable shape fields need an unambiguous key: N for absent, S plus
+    -- the original UTF-8 bytes for present. The index is tiny (one entry per
+    -- distinct decision), while no JSON null placeholders enter storage.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_security_decision_runs_shape
+        ON security_decision_runs(
+            event_type, stage, actor,
+            CASE WHEN rule_id IS NULL THEN 'N' ELSE 'S' || hex(CAST(rule_id AS BLOB)) END,
+            CASE WHEN plugin_id IS NULL THEN 'N' ELSE 'S' || hex(CAST(plugin_id AS BLOB)) END,
+            previous_decision, requested_decision, effective_decision,
+            CASE WHEN reason IS NULL THEN 'N' ELSE 'S' || hex(CAST(reason AS BLOB)) END
+        );
+
     CREATE TABLE IF NOT EXISTS security_decision_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
         event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result')),
-        stage TEXT NOT NULL CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution')),
-        actor TEXT NOT NULL,
+        stage TEXT CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution')),
+        actor TEXT,
         rule_id TEXT,
         plugin_id TEXT,
-        previous_decision TEXT NOT NULL CHECK (previous_decision IN ('allow', 'ask', 'block')),
-        requested_decision TEXT NOT NULL CHECK (requested_decision IN ('allow', 'ask', 'block')),
-        effective_decision TEXT NOT NULL CHECK (effective_decision IN ('allow', 'ask', 'block')),
+        previous_decision TEXT CHECK (previous_decision IN ('allow', 'ask', 'block')),
+        requested_decision TEXT CHECK (requested_decision IN ('allow', 'ask', 'block')),
+        effective_decision TEXT CHECK (effective_decision IN ('allow', 'ask', 'block')),
         reason TEXT,
         -- The event this decision was made about is archive-backed, like a
         -- rule match's: `event_body_blobs` with direction 'payload'. Roughly
@@ -466,14 +495,17 @@ pub const CREATE_SCHEMA: &str = "
         -- mirrored in RAM.
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*')),
+        run_id INTEGER REFERENCES security_decision_runs(id),
+        CHECK ((run_id IS NULL AND stage IS NOT NULL AND actor IS NOT NULL
+                AND previous_decision IS NOT NULL AND requested_decision IS NOT NULL AND effective_decision IS NOT NULL)
+            OR (run_id IS NOT NULL AND stage IS NULL AND actor IS NULL AND rule_id IS NULL AND plugin_id IS NULL
+                AND previous_decision IS NULL AND requested_decision IS NULL AND effective_decision IS NULL AND reason IS NULL))
     );
     CREATE INDEX IF NOT EXISTS idx_security_decision_events_timestamp
         ON security_decision_events(timestamp_unix_ms);
     CREATE INDEX IF NOT EXISTS idx_security_decision_events_event_id
         ON security_decision_events(event_id);
-    CREATE INDEX IF NOT EXISTS idx_security_decision_events_actor
-        ON security_decision_events(actor);
 
     CREATE TABLE IF NOT EXISTS security_ask_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

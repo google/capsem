@@ -2480,10 +2480,16 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
 
             security_decision_rows = conn.execute(
                 """
-                SELECT *
-                FROM security_decision_events
-                WHERE event_id IN (?, ?, ?, ?)
-                ORDER BY id
+                SELECT event.event_id, event.event_type,
+                       COALESCE(event.stage, run.stage) AS stage,
+                       COALESCE(event.rule_id, run.rule_id) AS rule_id,
+                       COALESCE(event.previous_decision, run.previous_decision) AS previous_decision,
+                       COALESCE(event.requested_decision, run.requested_decision) AS requested_decision,
+                       COALESCE(event.effective_decision, run.effective_decision) AS effective_decision
+                FROM security_decision_events AS event
+                LEFT JOIN security_decision_runs AS run ON run.id = event.run_id
+                WHERE event.event_id IN (?, ?, ?, ?)
+                ORDER BY event.id
                 """,
                 (
                     tool_net["event_id"],

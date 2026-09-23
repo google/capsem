@@ -514,9 +514,14 @@ match = 'model.provider == "openai"'
     let decision_rows: Vec<(String, String, String, String, String)> = {
         let mut stmt = conn
             .prepare(
-                "SELECT actor, previous_decision, requested_decision, effective_decision, rule_id
-                 FROM security_decision_events
-                 ORDER BY id",
+                "SELECT COALESCE(event.actor, run.actor),
+                        COALESCE(event.previous_decision, run.previous_decision),
+                        COALESCE(event.requested_decision, run.requested_decision),
+                        COALESCE(event.effective_decision, run.effective_decision),
+                        COALESCE(event.rule_id, run.rule_id)
+                 FROM security_decision_events AS event
+                 LEFT JOIN security_decision_runs AS run ON run.id = event.run_id
+                 ORDER BY event.id",
             )
             .unwrap();
         stmt.query_map([], |row| {
@@ -589,8 +594,11 @@ match = 'http.host == "api.example.com"'
     let decisions: Vec<(String, String)> = {
         let mut stmt = conn
             .prepare(
-                "SELECT rule_id, effective_decision
-                 FROM security_decision_events ORDER BY id",
+                "SELECT COALESCE(event.rule_id, run.rule_id),
+                        COALESCE(event.effective_decision, run.effective_decision)
+                 FROM security_decision_events AS event
+                 LEFT JOIN security_decision_runs AS run ON run.id = event.run_id
+                 ORDER BY event.id",
             )
             .unwrap();
         stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
@@ -750,8 +758,12 @@ match = 'ip.value == "127.0.0.1" || http.host == "127.0.0.1"'
     let decision_rows: Vec<(String, String, String)> = {
         let mut stmt = conn
             .prepare(
-                "SELECT rule_id, requested_decision, effective_decision
-                 FROM security_decision_events ORDER BY id",
+                "SELECT COALESCE(event.rule_id, run.rule_id),
+                        COALESCE(event.requested_decision, run.requested_decision),
+                        COALESCE(event.effective_decision, run.effective_decision)
+                 FROM security_decision_events AS event
+                 LEFT JOIN security_decision_runs AS run ON run.id = event.run_id
+                 ORDER BY event.id",
             )
             .unwrap();
         stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
