@@ -109,3 +109,44 @@ fn aggregator_contracts_omit_empty_and_nonzero_defaults() {
     assert_eq!(fields["destructive_hint"], false);
     assert_eq!(rmp_serde::from_slice::<ToolAnnotations>(&encoded).unwrap(), changed);
 }
+
+#[test]
+fn repeated_events_store_only_mutation_count_and_time_range() {
+    use crate::repeated::EventRun;
+
+    let mut run = EventRun::new(100, "dns.query".to_string());
+    let encoded = run.encode().unwrap();
+    let fields: serde_json::Value = rmp_serde::from_slice(&encoded).unwrap();
+    assert!(fields.get("count").is_none());
+    assert!(fields.get("last_timestamp_unix_ms").is_none());
+    assert_eq!(run.last_timestamp_unix_ms(), 100);
+    assert!(run.validate());
+
+    assert!(!run.absorb(101, &"other".to_string()));
+    assert!(!run.absorb(99, &"dns.query".to_string()));
+    assert!(run.absorb(101, &"dns.query".to_string()));
+    assert!(run.absorb(103, &"dns.query".to_string()));
+    let encoded = run.encode().unwrap();
+    let fields: serde_json::Value = rmp_serde::from_slice(&encoded).unwrap();
+    assert_eq!(fields["count"], 3);
+    assert_eq!(fields["first_timestamp_unix_ms"], 100);
+    assert_eq!(fields["last_timestamp_unix_ms"], 103);
+    assert_eq!(EventRun::<String>::decode(&encoded).unwrap(), run);
+
+    let zero = rmp_serde::to_vec_named(&serde_json::json!({
+        "first_timestamp_unix_ms": 1,
+        "count": 0,
+        "event": "dns.query"
+    }))
+    .unwrap();
+    assert!(EventRun::<String>::decode(&zero).is_err());
+    let reversed = rmp_serde::to_vec_named(&serde_json::json!({
+        "first_timestamp_unix_ms": 2,
+        "last_timestamp_unix_ms": 1,
+        "count": 2,
+        "event": "dns.query"
+    }))
+    .unwrap();
+    assert!(EventRun::<String>::decode(&reversed).is_err());
+    assert!(EventRun::<String>::decode(&vec![0; crate::repeated::MAX_ENCODED_EVENT_BYTES + 1]).is_err());
+}

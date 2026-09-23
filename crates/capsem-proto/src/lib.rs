@@ -19,6 +19,7 @@ pub mod mcp_aggregator;
 pub mod mcp_contracts;
 pub mod poll;
 pub mod privatelink;
+pub mod repeated;
 pub mod router;
 mod sparse;
 mod wire_bytes;

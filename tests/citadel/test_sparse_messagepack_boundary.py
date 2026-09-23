@@ -19,11 +19,13 @@ WIRE_TYPES = (
     "mcp_aggregator.rs",
     "mcp_contracts.rs",
     "mcp_contracts/builtin_ledger.rs",
+    "repeated.rs",
 )
 ENCODER_OWNERS = {
     Path("crates/capsem-proto/src/lib.rs"),
     Path("crates/capsem-proto/src/exec_stream.rs"),
     Path("crates/capsem-proto/src/mcp_aggregator.rs"),
+    Path("crates/capsem-proto/src/repeated.rs"),
     Path("crates/capsem-foundation/src/ipc_channel.rs"),
     Path("crates/capsem-foundation/src/ipc_handshake.rs"),
 }
