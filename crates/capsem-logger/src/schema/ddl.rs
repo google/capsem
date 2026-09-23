@@ -393,7 +393,7 @@ pub const CREATE_SCHEMA: &str = "
         rule_action TEXT NOT NULL,
         detection_level TEXT NOT NULL,
         rule_json TEXT NOT NULL CHECK (json_valid(rule_json)),
-        count INTEGER NOT NULL CHECK (count > 0),
+        count INTEGER NOT NULL CHECK (typeof(count) = 'integer' AND count > 0),
         first_timestamp_unix_ms INTEGER NOT NULL,
         last_timestamp_unix_ms INTEGER NOT NULL,
         CHECK (last_timestamp_unix_ms >= first_timestamp_unix_ms),
@@ -458,7 +458,7 @@ pub const CREATE_SCHEMA: &str = "
         requested_decision TEXT NOT NULL,
         effective_decision TEXT NOT NULL,
         reason TEXT,
-        count INTEGER NOT NULL CHECK (count > 0),
+        count INTEGER NOT NULL CHECK (typeof(count) = 'integer' AND count > 0),
         first_timestamp_unix_ms INTEGER NOT NULL,
         last_timestamp_unix_ms INTEGER NOT NULL,
         CHECK (last_timestamp_unix_ms >= first_timestamp_unix_ms)

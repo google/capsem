@@ -88,6 +88,30 @@ fn body_index_uses_existing_keys_without_redundant_write_indexes() {
 }
 
 #[test]
+fn repeated_event_counters_require_exact_positive_integers() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    assert!(conn
+        .execute(
+            "INSERT INTO security_rule_runs
+             (event_type, rule_id, rule_action, detection_level, rule_json,
+              count, first_timestamp_unix_ms, last_timestamp_unix_ms)
+             VALUES ('dns.query', 'rule', 'allow', 'none', '{}', 1.5, 1, 2)",
+            [],
+        )
+        .is_err());
+    assert!(conn
+        .execute(
+            "INSERT INTO security_decision_runs
+             (event_type, stage, actor, previous_decision, requested_decision,
+              effective_decision, count, first_timestamp_unix_ms, last_timestamp_unix_ms)
+             VALUES ('dns.query', 'rule', 'rule', 'allow', 'allow', 'allow', 1.5, 1, 2)",
+            [],
+        )
+        .is_err());
+}
+
+#[test]
 fn create_tables_idempotent() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
