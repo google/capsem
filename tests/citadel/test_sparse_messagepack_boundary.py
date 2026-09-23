@@ -12,15 +12,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PROTOCOL = ROOT / "crates/capsem-proto/src"
-WIRE_TYPES = (
-    "lib.rs",
-    "ipc.rs",
-    "handshake.rs",
-    "mcp_aggregator.rs",
-    "mcp_contracts.rs",
-    "mcp_contracts/builtin_ledger.rs",
-    "repeated.rs",
-)
 ENCODER_OWNERS = {
     Path("crates/capsem-proto/src/lib.rs"),
     Path("crates/capsem-proto/src/exec_stream.rs"),
@@ -39,6 +30,14 @@ paired serde(default, skip_serializing_if) for optional/default values.
 Unpaired defaults write empty/null bytes; positional or ad-hoc encoders
 silently evade that contract. Keep transport framing in its existing owners.
 """
+
+
+def wire_type_sources(root: Path) -> list[Path]:
+    """Include future production protocol modules, not only today's file list."""
+    return sorted(
+        path for path in root.rglob("*.rs")
+        if "tests" not in path.relative_to(root).parts and path.name != "tests.rs"
+    )
 
 
 def default_field_violations(source: str) -> list[str]:
@@ -89,11 +88,18 @@ def test_guard_rejects_missing_omission_and_wild_encoding() -> None:
     assert encoder_violations(Path("crates/capsem-proto/src/lib.rs"), "rmp_serde::to_vec(&event)")
 
 
+def test_new_protocol_modules_are_scanned(tmp_path: Path) -> None:
+    (tmp_path / "new_wire.rs").write_text("pub struct NewWire {\n    pub value: Option<String>,\n}\n")
+    sources = wire_type_sources(tmp_path)
+    assert [path.name for path in sources] == ["new_wire.rs"]
+    assert default_field_violations(sources[0].read_text()) == ["line 2: pub value: Option<String>,"]
+
+
 def test_capsem_messagepack_is_sparse_and_owned() -> None:
     violations = [
-        f"{name}: {problem}"
-        for name in WIRE_TYPES
-        for problem in default_field_violations((PROTOCOL / name).read_text())
+        f"{path.relative_to(PROTOCOL)}: {problem}"
+        for path in wire_type_sources(PROTOCOL)
+        for problem in default_field_violations(path.read_text())
     ]
     for path in (ROOT / "crates").glob("*/src/**/*.rs"):
         relative = path.relative_to(ROOT)
