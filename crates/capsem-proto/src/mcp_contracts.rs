@@ -17,22 +17,22 @@ pub const NS_SEP: &str = "__";
 pub struct McpServerDef {
     pub name: String,
     /// HTTP endpoint URL for the MCP server (empty for stdio servers).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub url: String,
     /// Binary path for stdio-transport servers (None for HTTP servers).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     /// Command-line arguments for stdio-transport servers.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
     /// Environment variables to pass to stdio-transport servers.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub env: HashMap<String, String>,
     /// Custom HTTP headers to send with every request.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub headers: HashMap<String, String>,
     /// Broker-owned auth material for remote MCP servers.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<McpAuthConfig>,
     pub enabled: bool,
     /// Where this definition came from: "claude", "gemini", "manual", "builtin".
@@ -70,19 +70,27 @@ impl McpServerDef {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolAnnotations {
     /// Human-readable title for the tool.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// Whether the tool only reads data (no side effects).
-    #[serde(default, alias = "readOnlyHint")]
+    #[serde(default, skip_serializing_if = "crate::sparse::is_default", alias = "readOnlyHint")]
     pub read_only_hint: bool,
     /// Whether the tool may perform destructive operations.
-    #[serde(default = "default_true", alias = "destructiveHint")]
+    #[serde(
+        default = "default_true",
+        skip_serializing_if = "crate::sparse::is_true",
+        alias = "destructiveHint"
+    )]
     pub destructive_hint: bool,
     /// Whether calling the tool multiple times with same args has same effect.
-    #[serde(default, alias = "idempotentHint")]
+    #[serde(default, skip_serializing_if = "crate::sparse::is_default", alias = "idempotentHint")]
     pub idempotent_hint: bool,
     /// Whether the tool may interact with external entities.
-    #[serde(default = "default_true", alias = "openWorldHint")]
+    #[serde(
+        default = "default_true",
+        skip_serializing_if = "crate::sparse::is_true",
+        alias = "openWorldHint"
+    )]
     pub open_world_hint: bool,
 }
 
@@ -128,11 +136,12 @@ pub struct McpToolDef {
     pub namespaced_name: String,
     /// Original name sent to the real server (e.g. "search_repos").
     pub original_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub input_schema: serde_json::Value,
     pub server_name: String,
     /// MCP tool annotations (untrusted hints from the server).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ToolAnnotations>,
     /// Optional host-side execution timeout hint from the aggregator catalog.
     /// This is not exposed on the MCP wire; the MITM endpoint clamps it to
@@ -148,8 +157,11 @@ pub struct McpResourceDef {
     pub namespaced_uri: String,
     /// Original URI (e.g. "repo://owner/repo").
     pub original_uri: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
     pub server_name: String,
 }
@@ -161,7 +173,9 @@ pub struct McpPromptDef {
     pub namespaced_name: String,
     /// Original name (e.g. "review_pr").
     pub original_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub arguments: Vec<serde_json::Value>,
     pub server_name: String,
 }
@@ -171,15 +185,15 @@ pub struct McpPromptDef {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<serde_json::Value>,
     pub method: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<serde_json::Value>,
     /// W5: optional W3C trace context propagated in band so a
     /// per-tool-call trace can be carried even when the underlying
     /// stdio transport doesn't support headers.
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<JsonRpcMeta>,
 }
 
@@ -195,14 +209,14 @@ pub struct JsonRpcMeta {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<JsonRpcError>,
     /// W5: echo back so the caller can cross-check the endpoint's trace.
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<JsonRpcMeta>,
 }
 
@@ -210,7 +224,7 @@ pub struct JsonRpcResponse {
 pub struct JsonRpcError {
     pub code: i64,
     pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
 }
 

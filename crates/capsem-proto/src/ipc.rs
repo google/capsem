@@ -51,6 +51,7 @@ pub enum ServiceToProcess {
         #[serde(with = "serde_bytes")]
         data: Vec<u8>,
         size: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
     },
     /// Request the process to reload its configuration from disk.
@@ -213,6 +214,7 @@ pub enum ServiceToProcess {
         id: u64,
         image: String,
         registry: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         digest: Option<String>,
     },
 }
@@ -240,20 +242,23 @@ pub enum ProcessToService {
         /// The guest wrote more output than the per-exec cap, so `stdout`
         /// holds the retained prefix only. Callers that render output need
         /// this to say so rather than presenting a short result as complete.
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "crate::sparse::is_default")]
         truncated: bool,
     },
     /// Result of a WriteFile operation.
     WriteFileResult {
         id: u64,
         success: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     /// Result of a ReadFile operation.
     ReadFileResult {
         id: u64,
         #[serde(with = "crate::wire_bytes::option")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         data: Option<Vec<u8>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     /// Result of an explicit file import/export boundary ledger write.
@@ -261,7 +266,9 @@ pub enum ProcessToService {
         id: u64,
         success: bool,
         #[serde(with = "crate::wire_bytes::option")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         data: Option<Vec<u8>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     /// Guest requested shutdown (forwarded from capsem-sysutil via vsock:5004).
@@ -278,6 +285,7 @@ pub enum ProcessToService {
     McpRefreshResult {
         id: u64,
         success: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     /// Response to SnapshotStatus.
@@ -285,8 +293,11 @@ pub enum ProcessToService {
     /// Response to McpCallTool. `result_json` preserves the MCP JSON value.
     McpCallToolResult {
         id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         result_json: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         event_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     /// Warm suspend failed before the durable checkpoint marker was written.
@@ -305,7 +316,9 @@ pub enum ProcessToService {
     ExecInputConsumed { id: u64 },
     PortPublished {
         id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         publication: Option<PublicationInfo>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
         /// The VM's rules refused the exposure, rather than it failing to open.
         policy_refused: bool,
@@ -315,26 +328,36 @@ pub enum ProcessToService {
     LinkAttachResult {
         id: u64,
         handoff_socket: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     /// Response to LinkDetach.
-    LinkDetachResult { id: u64, error: Option<String> },
+    LinkDetachResult {
+        id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     PreviewSessionCreated {
         id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         bootstrap_token: Option<String>,
         expires_in_seconds: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     /// Response to RevokePreviewSessions: how many sessions ended.
     PreviewSessionsRevoked {
         id: u64,
         revoked: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     PreviewBootstrapExchanged {
         id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         session_token: Option<String>,
         expires_in_seconds: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     PreviewConnectionAdmitted {
@@ -342,6 +365,7 @@ pub enum ProcessToService {
         handoff_socket: String,
         handoff_token: u64,
         owner_generation: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
         policy_refused: bool,
     },
@@ -349,6 +373,7 @@ pub enum ProcessToService {
     ExposureRevoked {
         id: u64,
         revoked: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     /// Response to ListPublications.
@@ -363,6 +388,7 @@ pub enum ProcessToService {
     /// Result of owner-side policy and primary-audit admission for an OCI pull.
     ContainerPullAdmission {
         id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
         policy_refused: bool,
     },
@@ -449,6 +475,7 @@ pub struct McpServerStatus {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct PublicationInfo {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_port: Option<u16>,
     pub guest_port: u16,
     pub target: crate::PublicationTarget,
@@ -461,9 +488,11 @@ pub struct PublicationInfo {
 pub struct McpToolStatus {
     pub namespaced_name: String,
     pub original_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub server_name: String,
     /// Typed so SDK and UI consumers get one stable annotation contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotations: Option<crate::mcp_contracts::ToolAnnotations>,
 }
 
@@ -484,8 +513,10 @@ pub struct SnapshotSlotStatus {
     pub checkpoint: String,
     pub slot: usize,
     pub origin: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub timestamp: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
 }
 

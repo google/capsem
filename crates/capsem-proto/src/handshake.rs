@@ -43,7 +43,7 @@ pub struct Hello {
     /// "no parent context" (top-of-tree initiator). W5 puts the value on
     /// the connection's *first* frame so per-message overhead is zero;
     /// per-message overrides ride `Frame::Msg.trace`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub traceparent: String,
 }
 

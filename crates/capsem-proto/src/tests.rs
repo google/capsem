@@ -2,6 +2,7 @@ use super::*;
 
 mod dns_frames;
 mod exec_output_protocol;
+mod sparse;
 mod validation;
 
 // -------------------------------------------------------------------

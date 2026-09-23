@@ -51,6 +51,7 @@ pub struct HttpRequestRecord {
     pub method: String,
     pub path: String,
     pub decision: HttpDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_code: Option<u16>,
     pub bytes_sent: u64,
     pub bytes_received: u64,
@@ -58,7 +59,9 @@ pub struct HttpRequestRecord {
     /// The enforcement action the security engine chose: `allow`, `ask` or
     /// `block`.
     pub policy_action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_rule: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_reason: Option<String>,
 }
 
@@ -81,6 +84,7 @@ pub struct FileRevertedRecord {
     pub checkpoint: String,
     pub action: RevertAction,
     /// Size after a restore; absent after a delete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
 }
 

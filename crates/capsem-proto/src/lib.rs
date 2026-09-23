@@ -20,6 +20,7 @@ pub mod mcp_contracts;
 pub mod poll;
 pub mod privatelink;
 pub mod router;
+mod sparse;
 mod wire_bytes;
 
 /// Where the guest mounts the host-visible workspace share: every VM sees its
@@ -66,8 +67,9 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// big-endian length-prefixed MessagePack and binary byte payloads.
 /// Version 8 adds framed exec stdin/EOF, separated output lanes and reliable
 /// host cancellation. Version 9 adds owner-scoped HTTP preview declarations,
-/// credentials and descriptor handoff admission.
-pub const PROTOCOL_VERSION: u16 = 9;
+/// credentials and descriptor handoff admission. Version 10 omits default
+/// fields from named MessagePack maps while decoding their absence as defaults.
+pub const PROTOCOL_VERSION: u16 = 10;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
 pub const GUEST_DNS_PROXY_PORT: u16 = 1053;
@@ -473,7 +475,7 @@ pub enum HostToGuest {
     /// Empty string means "no trace context" (legacy hosts).
     BootConfig {
         epoch_secs: u64,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         traceparent: String,
     },
     /// Set a single environment variable in the guest.
@@ -527,7 +529,7 @@ pub enum HostToGuest {
     ConnectPort {
         flow: router::FlowKey,
         port: u16,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "crate::sparse::is_default")]
         target: PublicationTarget,
     },
     /// Cancel a bounded set of flows from this control connection's VM boot.
@@ -570,16 +572,21 @@ pub struct AuditRecord {
     /// Executable path (e.g. "/usr/bin/python3").
     pub exe: String,
     /// Short command name (e.g. "python3").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comm: Option<String>,
     /// Full command line (reconstructed from EXECVE record argv).
     pub argv: String,
     /// Working directory at exec time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     /// TTY name (e.g. "pts/0") or None for background processes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tty: Option<String>,
     /// Kernel session ID (tty grouping).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<u32>,
     /// Parent executable path (quick "bash spawned python" queries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_exe: Option<String>,
     /// Kernel audit event ID (for deduplication and tracing).
     pub audit_id: String,
@@ -618,14 +625,14 @@ pub struct DnsRequest {
     /// matching `DnsResponse` so many queries can be in flight on one
     /// vsock connection and be answered out of order. Peers that predate
     /// the field decode it as 0 and still speak in lock-step.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "crate::sparse::is_default")]
     pub id: u32,
     #[serde(with = "serde_bytes")]
     pub raw: Vec<u8>,
     /// "udp" or "tcp" -- the source-side transport, NOT the path used
     /// to reach the upstream nameserver (which is always UDP today).
     pub proto: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_name: Option<String>,
 }
 
@@ -641,7 +648,7 @@ pub struct DnsRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DnsResponse {
     /// The `DnsRequest::id` this answers.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "crate::sparse::is_default")]
     pub id: u32,
     #[serde(with = "serde_bytes")]
     pub raw: Vec<u8>,
@@ -695,7 +702,7 @@ pub enum GuestToHost {
     /// keeps immutable pre-streaming profile assets compatible.
     ExecStarted {
         id: u64,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "crate::sparse::is_default")]
         output_protocol: ExecOutputProtocol,
     },
     /// Command completed with exit code.
