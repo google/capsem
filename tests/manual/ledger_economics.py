@@ -290,6 +290,13 @@ def judge(samples: list[dict], failures: list[str]) -> None:
             f"  per request, t+10m..end over {dreq} requests: disk {disk / kb:.2f} KB, "
             f"process RSS {proc:.0f} B, service RSS {svc:.0f} B"
         )
+        print(
+            "  disk components / request: "
+            + ", ".join(
+                f"{part} {(b[part] - a[part]) / dreq / kb:.2f} KB"
+                for part in ("db", "wal", "bodies")
+            )
+        )
         if disk > 6 * kb:
             fail(f"each request adds {disk / kb:.1f} KB on disk (> 6 KB)")
         if proc > 2 * kb:
