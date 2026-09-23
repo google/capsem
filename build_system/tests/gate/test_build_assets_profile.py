@@ -429,20 +429,10 @@ def test_runtime_recipes_materialize_generated_config_before_service() -> None:
     # Runtime preparation is one graph now. Its profile content is produced
     # before host compilation/signing, and the service cannot prepare until
     # that exact signed runtime exists.
-    import argparse
-
-    from capsem_builder.gate.command import GateCommand
-    from helpers.gate import RecordingRunner
-
     for command in ("ensure-service", "shell", "exec"):
-        args = argparse.Namespace(
-            dry_run=False,
-            graph=False,
-            timing=False,
-            guest_command="true",
-        )
-        plan = GateCommand.registry[command](RecordingRunner(PROJECT_ROOT), args)._describe()
-        assert plan.after_of("prepare.build-binaries") == {"prepare.materialize-config"}
+        plan = _command(command, guest_command="true")._describe()
+        assert plan.after_of("prepare.cargo-cache-enforcement") == {"prepare.materialize-config"}
+        assert plan.after_of("prepare.build-binaries") == {"prepare.cargo-cache-enforcement"}
         assert plan.after_of("prepare.sign") == {"prepare.build-binaries"}
         assert plan.after_of("prepare") == {"prepare.sign"}
 

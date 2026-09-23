@@ -145,7 +145,8 @@ def test_focused_static_builds_every_runtime_binary_before_macos_signing(monkeyp
     plan = _plan(StaticModule)
     build = plan.step_named("static.build-binaries")
     assert plan.after_of("static.sign") >= {build.label, "static.rust-coverage"}
-    assert plan.after_of(build.label) >= {
+    assert plan.after_of(build.label) == {"static.cargo-cache-enforcement"}
+    assert plan.after_of("static.cargo-cache-enforcement") >= {
         "static.toolchain.ort", "static.web.frontend-bundle",
     }
     output = "\n".join(build.render())
