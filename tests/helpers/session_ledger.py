@@ -53,5 +53,14 @@ def resolve_rule_runs(conn: sqlite3.Connection) -> sqlite3.Connection:
 
 
 def open_session_ledger(db_path: Path | str) -> sqlite3.Connection:
-    """Read-only connection to a session ledger, rule matches resolved."""
-    return resolve_rule_runs(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True))
+    """Read-only connection to a session ledger, rule matches resolved.
+
+    Closed before any failure propagates: callers poll a ledger that is still
+    being created, and each failed attempt must not leave a connection behind.
+    """
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        return resolve_rule_runs(conn)
+    except BaseException:
+        conn.close()
+        raise

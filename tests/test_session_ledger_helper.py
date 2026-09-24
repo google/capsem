@@ -43,6 +43,28 @@ def test_the_view_is_read_only(tmp_path: Path) -> None:
         conn.execute("INSERT INTO main.security_rule_runs VALUES (2, '{}')")
 
 
+def test_a_failed_open_leaves_no_connection_behind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ledger caught half-created raises, and the connection is closed."""
+    db = tmp_path / "session.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE security_rule_events (id INTEGER PRIMARY KEY)")
+    opened: list[sqlite3.Connection] = []
+    real_connect = sqlite3.connect
+
+    def spy(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", spy)
+    with pytest.raises(AssertionError, match="no security_rule_runs"):
+        open_session_ledger(db)
+    monkeypatch.undo()
+    (connection,) = opened
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute("SELECT 1")
+
+
 def test_ironbank_opens_ledgers_only_through_the_helper() -> None:
     """A raw read-only connect would see NULL rule_json on every repeated match."""
     raw = [
