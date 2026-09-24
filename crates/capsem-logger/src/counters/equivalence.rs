@@ -190,6 +190,7 @@ async fn a_reopened_ledger_resumes_counting_where_it_left_off() {
 
 #[tokio::test]
 async fn a_rolled_back_flush_leaves_the_snapshot_with_its_rows() {
+    let _fault = crate::writer::DISK_FLUSH_FAULT_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.db");
     let db = DbHandle::open(&path).unwrap();

@@ -9,6 +9,12 @@ use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
 
+/// Held by every test that arms the injector. It is one slot for the whole
+/// test binary, so two tests arming it at once overwrite each other's fault.
+#[cfg(test)]
+pub(crate) static DISK_FLUSH_FAULT_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 #[cfg(test)]
 static FAIL_DISK_FLUSHES_FOR_TESTS: std::sync::Mutex<Option<(PathBuf, usize)>> = std::sync::Mutex::new(None);
 

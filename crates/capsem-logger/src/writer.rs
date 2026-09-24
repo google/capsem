@@ -26,7 +26,9 @@ pub(crate) use bodies::{archive_lock_path_for_db, archive_path_for_db};
 use bodies::{BodyArchive, EventBodyBlob};
 use flush_faults::take_disk_flush_failure_for_tests;
 #[cfg(test)]
-pub(crate) use flush_faults::{fail_disk_flushes_for_path_for_tests, fail_disk_flushes_for_tests};
+pub(crate) use flush_faults::{
+    fail_disk_flushes_for_path_for_tests, fail_disk_flushes_for_tests, DISK_FLUSH_FAULT_LOCK,
+};
 use model_rows::insert_model_call;
 
 /// Maximum bytes stored for any non-preview text field (256 KB). Callers
