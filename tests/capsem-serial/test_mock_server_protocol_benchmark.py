@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 
 import pytest
 from helpers.benchmark_output import benchmark_output_dir
+from helpers.body_archive import archived_bodies
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import ServiceInstance, exec_output_text, vm_session_db_path, wait_exec_ready
@@ -138,6 +139,13 @@ def _assert_session_db_contains_protocol_events(
     finally:
         conn.close()
     assert leaked == 0, "raw synthetic credential marker leaked into session.db"
+    # The previews are excerpts; the full bodies are in the archive.
+    archived_leaks = [
+        f"{table}/{direction} of {event_id}"
+        for table, event_id, direction, body in archived_bodies(db_path)
+        if b"capsem_test_" in body
+    ]
+    assert archived_leaks == [], f"raw synthetic credential marker leaked into archived bodies: {archived_leaks}"
 
 
 def test_mock_server_protocol_benchmark_artifact():
