@@ -131,6 +131,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Creating a VM no longer fails now and then with "session ledger predates
+  the transport ledger". Provision opened the new session's ledger before the
+  VM process had finished creating it, took the half-created file for a stale
+  one, and killed the VM it had just started.
+
 - Security latest and detection routes now return rule matches from counted
   ledger runs instead of failing to map the reconstructed rule snapshot.
 
