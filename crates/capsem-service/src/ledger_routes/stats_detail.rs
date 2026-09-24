@@ -4,18 +4,6 @@ use super::*;
 use std::collections::BTreeMap;
 mod interactions;
 
-pub(super) const STATS_DETAIL_MODEL_STATS_SQL: &str = r#"
-SELECT provider, COALESCE(model, 'unknown') AS model,
-       COUNT(*) AS call_count,
-       COALESCE(SUM(input_tokens), 0) AS input_tokens,
-       COALESCE(SUM(output_tokens), 0) AS output_tokens,
-       COALESCE(SUM(estimated_cost_usd), 0.0) AS estimated_cost_usd,
-       COALESCE(SUM(duration_ms), 0) AS duration_ms
-FROM model_calls
-GROUP BY provider, model
-ORDER BY call_count DESC, provider ASC
-"#;
-
 const STATS_DETAIL_MODEL_EVENTS_SQL: &str = r#"
 SELECT event_id, timestamp, provider, model, method, path, status_code,
        input_tokens, output_tokens, duration_ms, response_bytes,
@@ -200,7 +188,11 @@ pub(crate) async fn read_stats_detail_payload_from_session_db(
     }
     Ok(api::VmStatsDetailResponse {
         interactions: interactions::read_interactions(vm_id, db_path, &db, &body_blobs).await?,
-        model_stats: query_rows(vm_id, db_path, &db, "model_stats", STATS_DETAIL_MODEL_STATS_SQL).await?,
+        model_stats: super::activity::model_usage(
+            &db.ledger_counters()
+                .await
+                .map_err(|error| ledger_route_error(vm_id, "stats_detail", "counters", db_path, error))?,
+        ),
         model_events: query_rows(vm_id, db_path, &db, "model_events", STATS_DETAIL_MODEL_EVENTS_SQL).await?,
         tool_events: query_rows(vm_id, db_path, &db, "tool_events", STATS_DETAIL_TOOL_EVENTS_SQL).await?,
         http_events: query_rows(vm_id, db_path, &db, "http_events", STATS_DETAIL_HTTP_EVENTS_SQL).await?,

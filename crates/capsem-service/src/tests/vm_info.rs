@@ -281,9 +281,17 @@ async fn info_rejects_unknown_file_activity_instead_of_silently_dropping_it() {
         credential_ref: None,
     }));
     writer.shutdown_blocking();
+    // The writer only counts actions it can name, so an unknown one can only
+    // arrive in a snapshot something else wrote.
     let connection = rusqlite::Connection::open(&db_path).unwrap();
+    let mut counters = capsem_logger::counters::LedgerCounters::default();
+    counters.files.events = 1;
+    counters.files.by_action.insert("invented_action".into(), 1);
     connection
-        .execute("UPDATE fs_events SET action = 'invented_action'", [])
+        .execute(
+            "UPDATE ledger_counters SET counters = ?1 WHERE singleton = 1",
+            [counters.encode().unwrap()],
+        )
         .unwrap();
     drop(connection);
     insert_fake_instance_with_session_dir(&state, "invalid-action-vm", std::process::id(), session);
@@ -296,4 +304,43 @@ async fn info_rejects_unknown_file_activity_instead_of_silently_dropping_it() {
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
     assert!(body.to_string().contains("invented_action"), "{body}");
+}
+
+/// A watcher that could not keep up writes an overflow marker. The marker is
+/// not a file action, and the API has no name for one: listing it used to
+/// fail `/info` for the rest of the session.
+#[tokio::test]
+async fn info_survives_a_file_overflow_marker_and_does_not_count_it() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let app = build_service_router(Arc::clone(&state));
+    let session_dir = state.run_dir.join("sessions").join("overflow-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    for (action, path) in [
+        (capsem_logger::FileAction::Created, "/root/a.txt"),
+        (capsem_logger::FileAction::Overflow, ""),
+        (capsem_logger::FileAction::Modified, "/root/a.txt"),
+    ] {
+        writer.write_blocking(capsem_logger::WriteOp::FileEvent(capsem_logger::FileEvent {
+            event_id: None,
+            timestamp: std::time::SystemTime::now(),
+            action,
+            path: path.into(),
+            kind: capsem_logger::FileKind::File,
+            size: Some(512),
+            trace_id: None,
+            credential_ref: None,
+        }));
+    }
+    writer.flush_checked().await.unwrap();
+    writer.shutdown_blocking();
+    insert_fake_instance_with_session_dir(&state, "overflow-vm", std::process::id(), session_dir);
+
+    let (status, body) = route_request(app, axum::http::Method::GET, "/vms/overflow-vm/info", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["files"]["total_events"], 2, "{body}");
+    assert_eq!(
+        body["files"]["actions"],
+        serde_json::json!([{"action": "created", "count": 1}, {"action": "modified", "count": 1}])
+    );
 }

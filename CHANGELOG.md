@@ -131,6 +131,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `/vms/{id}/info` no longer fails for a VM whose file watcher once fell
+  behind. The overflow marker it records is not a file action, and listing it
+  made the whole route error; it is now left out of the file activity totals.
+  `/info`, `/stats/summary` and the stats detail model list read the session's
+  counter snapshot instead of aggregating the ledger on every poll.
+
 - Creating a VM no longer fails now and then with "session ledger predates
   the transport ledger". Provision opened the new session's ledger before the
   VM process had finished creating it, took the half-created file for a stale

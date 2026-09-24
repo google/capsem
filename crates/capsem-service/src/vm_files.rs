@@ -1283,21 +1283,8 @@ pub(super) async fn handle_stats_summary(
 ) -> Result<Json<api::VmStatsSummaryResponse>, AppError> {
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
-    let db = open_ready_session_db(&state, &id, "stats_summary", &db_path).await?;
-    let stats = db
-        .session_stats()
-        .await
-        .map_err(|error| ledger_route_error(&id, "stats_summary", "query", &db_path, error))?;
-    Ok(Json(api::VmStatsSummaryResponse {
-        total_requests: stats.net_total,
-        allowed_requests: stats.net_allowed,
-        denied_requests: stats.net_denied,
-        total_input_tokens: stats.total_input_tokens,
-        total_thinking_tokens: stats.total_usage_details.get("thinking").copied().unwrap_or_default(),
-        total_output_tokens: stats.total_output_tokens,
-        total_tool_calls: stats.total_tool_calls,
-        total_estimated_cost: stats.total_estimated_cost_usd,
-    }))
+    let counters = ledger_routes::activity::read_counters(&state, &id, "stats_summary", &db_path).await?;
+    Ok(Json(ledger_routes::activity::stats_summary(&counters)))
 }
 
 /// Wait until a VM signals readiness via a `.ready` sentinel file.
