@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- A short observed credential no longer rewrites stored bodies. Redaction
+  replaced every occurrence of any observed key, so `ollama launch`'s literal
+  key `ollama` turned each "ollama" in a prompt into a credential reference,
+  and a guest could scrub any word from the ledger by sending it as a key.
+  Values shorter than 12 bytes, like local-model placeholders, are still
+  referenced and brokered but left in place; every real provider key and
+  OAuth token is longer and is still redacted everywhere (google/capsem#242).
+
 - Changing an MCP permission (the profile default or a single tool) now takes
   effect in running VMs before the route returns. It used to update the
   profile file only, so running VMs kept enforcing the old permission until an

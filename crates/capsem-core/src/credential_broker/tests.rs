@@ -643,3 +643,42 @@ fn credential_provider_detection_is_case_insensitive() {
         Some(CredentialProvider::Google)
     );
 }
+
+fn header_observation(raw_value: &str) -> CredentialObservation {
+    CredentialObservation {
+        provider: CredentialProvider::Anthropic,
+        raw_value: raw_value.to_string(),
+        source: "http.header.authorization".to_string(),
+        event_type: None,
+        trace_id: None,
+        context_json: None,
+    }
+}
+
+#[test]
+fn a_placeholder_key_does_not_rewrite_the_words_it_spells() {
+    // `ollama launch` sends the literal key `ollama`; a guest can send any
+    // word it wants scrubbed. Neither is a secret, and rewriting every
+    // occurrence would make the ledger misstate what left the VM.
+    let body = "write the token to /root/claude-ollama-launch.txt with ollama";
+    for placeholder in ["ollama", "EMPTY", "lm-studio", "sk-1234", "rm -rf /"] {
+        let redacted = redact_observed_credentials_in_text(body, &[header_observation(placeholder)]);
+        assert_eq!(redacted, body, "{placeholder} rewrote the body");
+    }
+}
+
+#[test]
+fn a_key_at_the_floor_is_still_redacted_everywhere() {
+    let key = "k".repeat(MIN_REDACTED_CREDENTIAL_LEN);
+    let short = "k".repeat(MIN_REDACTED_CREDENTIAL_LEN - 1);
+    let body = format!("echo {key} and again {key}");
+    let observation = header_observation(&key);
+
+    let redacted = redact_observed_credentials_in_text(&body, std::slice::from_ref(&observation));
+    assert!(!redacted.contains(&key));
+    assert_eq!(redacted.matches(&observation.credential_ref()).count(), 2);
+    assert_eq!(
+        redact_observed_credentials_in_text(&short, &[header_observation(&short)]),
+        short
+    );
+}
