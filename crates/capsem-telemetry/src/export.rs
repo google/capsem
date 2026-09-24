@@ -69,7 +69,17 @@ impl Destination {
         {
             return Some(Self::Environment);
         }
-        corp_endpoint
+        Self::corp(corp_endpoint)
+    }
+
+    /// The corp endpoint alone, ignoring the environment.
+    ///
+    /// For a guest-facing process: the `OTEL_EXPORTER_OTLP_*` environment can
+    /// carry collector credentials, which the service never forwards into
+    /// one, so the corp config -- a file it already trusts -- is the only
+    /// place its destination may come from.
+    pub fn corp(endpoint: Option<&str>) -> Option<Self> {
+        endpoint
             .map(str::trim)
             .filter(|endpoint| !endpoint.is_empty())
             .map(|endpoint| Self::Corp(endpoint.trim_end_matches('/').to_string()))

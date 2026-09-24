@@ -367,6 +367,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- OpenTelemetry metric export. Set the corp config's `open_telemetry` to an
+  OTLP/HTTP base endpoint (metrics go to `/v1/metrics`), or the standard
+  `OTEL_EXPORTER_OTLP_*` environment for the service. The service exports its
+  own metrics and each session's totals -- requests, tokens, cost, model and
+  tool calls, file events, rule matches -- labelled only with `session.id`,
+  `profile.id` and `persistent`. Each VM process exports its ledger, proxy,
+  DNS, security and disk metrics to the corp endpoint, never with collector
+  credentials. Nothing is exported unless configured (google/capsem#223).
+
 - Captured bodies are readable in the stats view. Expanding an event fetches
   its request and response bodies, tool results, exec output or security-rule
   payload on demand from `GET /vms/{id}/bodies/{event_id}`, instead of every

@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "1370c6f75f6b03956b79982404729b24cc403f03637c934d7a7bb4806c48f535"
-reason = "capsem-service enables capsem-telemetry's export feature (no new package); that feature adds OTLP/HTTP metric export (#223): opentelemetry, opentelemetry_sdk, opentelemetry-otlp (http-proto only, no tonic transport), opentelemetry-http, opentelemetry-proto, prost and prost-derive; TLS stays on the workspace reqwest (rustls with ring)"
+sha256 = "537e38523747e59f605823f7b3d6b11ce0e18e38d01bed87e38bb4d5d18db5cb"
+reason = "capsem-service and capsem-process enable capsem-telemetry's export feature (no new package); that feature adds OTLP/HTTP metric export (#223): opentelemetry, opentelemetry_sdk, opentelemetry-otlp (http-proto only, no tonic transport), opentelemetry-http, opentelemetry-proto, prost and prost-derive; TLS stays on the workspace reqwest (rustls with ring)"

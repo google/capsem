@@ -4,6 +4,7 @@ mod helpers;
 mod ipc;
 mod job_store;
 mod mcp_runtime;
+mod metric_export;
 mod private_names;
 mod private_seats;
 mod runtime_config;
@@ -228,6 +229,8 @@ fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
 
     info!(id = %args.id, "capsem-sandbox-process starting");
+    // Held until the process exits: dropping it flushes the last measurements.
+    let _metric_export = metric_export::install(&args.id);
 
     std::fs::create_dir_all(&args.session_dir)?;
     let mut session_dir = args.session_dir.clone();

@@ -40,6 +40,16 @@ fn the_corp_endpoint_is_a_base_and_the_environment_wins() {
     }
 }
 
+#[test]
+fn a_corp_only_destination_ignores_the_environment() {
+    assert_eq!(Destination::corp(None), None);
+    assert_eq!(Destination::corp(Some(" ")), None);
+    assert_eq!(
+        Destination::corp(Some("https://otel.example/")),
+        Some(Destination::Corp("https://otel.example".into()))
+    );
+}
+
 /// Every facade shape reaches OpenTelemetry with its value, its labels as
 /// attributes, and the catalog's unit and description.
 #[test]

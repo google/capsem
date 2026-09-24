@@ -1106,6 +1106,7 @@ dependencies = [
  "capsem-foundation",
  "capsem-logger",
  "capsem-proto",
+ "capsem-telemetry",
  "clap",
  "core-foundation-sys",
  "futures",
