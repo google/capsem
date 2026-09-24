@@ -173,8 +173,10 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 
 ## Fix what you find
 
-Quality and reliability are P0, not something to trade for a smaller diff. See
-something, say something, do something.
+Capsem's quality, security and performance are the responsibility of every
+coding agent working in it, not of whoever owns the area. They are P0, not
+something to trade for a smaller diff. See something, say something, do
+something.
 
 When the work turns up a defect -- a bug, a lint or type violation, a failing
 guard, a stale path, a vulnerable dependency the audit flags -- fix it and
@@ -194,19 +196,19 @@ If it is small, fix it test-first (a failing test, then the change -- see
 open a GitHub bug (or ask to) with enough detail to act on, rather than
 dropping it silently.
 
-Stop and ask only when the fix is genuinely a judgment call: it changes
-user-visible behavior, weakens a security boundary, forces a real scope
-expansion, or picks between options a maintainer should choose (for example a
-dependency major-version bump, or suppressing an advisory instead of
-upgrading). State the finding and your recommendation, then act on the answer.
-A trivial patch bump, a lint fix, a stale-literal cleanup: just do it and say
-what you did.
+A vulnerability is the strongest case of this rule, not an exception to it.
+When you find one -- a guest-to-host path, an auth or policy bypass, a leak,
+a missing no-follow -- fix it now, in this session, test-first, as its own
+`security:` commit, even when it sits outside the task you were given. Do not
+park it waiting for a decision, and do not describe an unfixed vulnerability
+in a public issue: the fix, its test and the CHANGELOG entry are the report.
+Tell the user what you found and what you changed while you do it.
 
 Stop and ask only when the fix is genuinely a judgment call: it changes
-user-visible behavior, weakens a security boundary, forces a real scope
-expansion, or picks between options a maintainer should choose (for example a
-dependency major-version bump, or suppressing an advisory instead of
-upgrading). State the finding and your recommendation, then act on the answer.
+user-visible behavior, would weaken a security boundary (closing one is never
+a reason to wait), forces a real scope expansion, or picks between options a
+maintainer should choose (for example a dependency major-version bump, or
+suppressing an advisory instead of upgrading). State the finding and your recommendation, then act on the answer.
 A trivial patch bump, a lint fix, a stale-literal cleanup: just do it and say
 what you did.
 
