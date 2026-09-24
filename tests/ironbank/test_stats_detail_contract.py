@@ -1,42 +1,50 @@
 """Ironbank stats/detail route contract.
 
 The desktop stats UI must be a projection of session.db and public routes, not
-invented preview fields or duplicated payload renderings. This test seeds a
-real session database, uses direct fixture DB reads as the oracle, and verifies
-the public route emits the typed projection.
+invented preview fields or duplicated payload renderings. This test serves a
+real ledger -- the checked-in session fixture, which the logger keeps in the
+writer's exact shape, with its body archive -- plus rows for the layers that
+fixture never recorded, and holds each route to what the ledger itself says.
+
+It used to hand-write the schema and put bodies in a column. The ledger moved
+bodies to the block archive and grew rule runs and a transport marker, and
+that copy fell behind three times; the service now refuses such a file
+outright. The ledger here is one the writer wrote.
 """
 
 from __future__ import annotations
 
+import base64
 import json
+import os
 import platform
+import shutil
 import sqlite3
 import tomllib
 from contextlib import closing
 from pathlib import Path
 
 import pytest
+from helpers.body_archive import archived_bodies
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, materialize_test_profiles
 from helpers.session_ledger import open_session_ledger
 
 pytestmark = pytest.mark.integration
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+FIXTURE_DB = PROJECT_ROOT / "tests/fixtures/session/test.db"
+
 SESSION_ID = "code-stats-ledger"
 TRACE_ID = "trace-stats-ledger"
-HTTP_EVENT_ID = "a1b2c3d4e5f6"
-MODEL_EVENT_ID = "b1c2d3e4f5a6"
-MCP_EVENT_ID = "c1d2e3f4a5b6"
 DNS_EVENT_ID = "d1e2f3a4b5c6"
 FILE_EVENT_ID = "e1f2a3b4c5d6"
 EXEC_EVENT_ID = "f1a2b3c4d5e6"
 CRED_EVENT_ID = "abc123def456"
 SEC_EVENT_ID = "123abc456def"
 CREDENTIAL_REF = "credential:blake3:" + "1" * 64
-BLAKE3_HASH = "blake3:" + "2" * 64
-EXPECTED_REQUEST_BODY = {"prompt": "write the ledger poem", "nonce": "stats-detail"}
-EXPECTED_REQUEST_BODY_TEXT = json.dumps(EXPECTED_REQUEST_BODY)
-EXPECTED_MODEL_RESPONSE = "Thought for 2s.\nCreated /root/poeme.md with a ledger poem."
+#: Every `*_preview` column is a display excerpt of at most this many bytes.
+PREVIEW_BYTES = 2048
 
 
 def _profile_contract(tmp_dir: Path) -> dict[str, object]:
@@ -80,302 +88,32 @@ def _write_registry(tmp_dir: Path, session_dir: Path, contract: dict[str, object
     )
 
 
-def _create_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(
-        """
-        CREATE TABLE net_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            domain TEXT NOT NULL,
-            port INTEGER DEFAULT 443,
-            decision TEXT NOT NULL,
-            process_name TEXT,
-            pid INTEGER,
-            method TEXT,
-            path TEXT,
-            query TEXT,
-            status_code INTEGER,
-            bytes_sent INTEGER DEFAULT 0,
-            bytes_received INTEGER DEFAULT 0,
-            duration_ms INTEGER DEFAULT 0,
-            matched_rule TEXT,
-            request_headers TEXT,
-            response_headers TEXT,
-            request_body_preview TEXT,
-            response_body_preview TEXT,
-            conn_type TEXT DEFAULT 'https',
-            policy_mode TEXT,
-            policy_action TEXT,
-            policy_rule TEXT,
-            policy_reason TEXT,
-            trace_id TEXT,
-            credential_ref TEXT
-        );
-        CREATE TABLE model_calls (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            protocol TEXT,
-            model TEXT,
-            process_name TEXT,
-            pid INTEGER,
-            method TEXT NOT NULL,
-            path TEXT NOT NULL,
-            stream INTEGER DEFAULT 0,
-            system_prompt_preview TEXT,
-            messages_count INTEGER DEFAULT 0,
-            tools_count INTEGER DEFAULT 0,
-            request_bytes INTEGER DEFAULT 0,
-            request_body_preview TEXT,
-            message_id TEXT,
-            status_code INTEGER,
-            text_content TEXT,
-            thinking_content TEXT,
-            stop_reason TEXT,
-            input_tokens INTEGER,
-            output_tokens INTEGER,
-            duration_ms INTEGER DEFAULT 0,
-            response_bytes INTEGER DEFAULT 0,
-            estimated_cost_usd REAL DEFAULT 0,
-            trace_id TEXT,
-            usage_details TEXT,
-            credential_ref TEXT
-        );
-        CREATE TABLE tool_calls (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            model_call_id INTEGER,
-            provider TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'observed',
-            call_index INTEGER NOT NULL,
-            call_id TEXT NOT NULL,
-            tool_name TEXT NOT NULL,
-            arguments TEXT,
-            response_preview TEXT,
-            origin TEXT NOT NULL DEFAULT 'native',
-            server_name TEXT,
-            method TEXT,
-            request_id TEXT,
-            decision TEXT NOT NULL DEFAULT 'allowed',
-            duration_ms INTEGER DEFAULT 0,
-            error_message TEXT,
-            process_name TEXT,
-            bytes_sent INTEGER DEFAULT 0,
-            bytes_received INTEGER DEFAULT 0,
-            policy_mode TEXT,
-            policy_action TEXT,
-            policy_rule TEXT,
-            policy_reason TEXT,
-            trace_id TEXT,
-            credential_ref TEXT
-        );
-        CREATE TABLE tool_responses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            model_call_id INTEGER NOT NULL,
-            call_id TEXT NOT NULL,
-            content_preview TEXT,
-            is_error INTEGER DEFAULT 0,
-            trace_id TEXT,
-            credential_ref TEXT
-        );
-        CREATE TABLE model_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            model_call_id INTEGER NOT NULL,
-            timestamp TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            model TEXT,
-            path TEXT NOT NULL,
-            trace_id TEXT,
-            kind TEXT NOT NULL,
-            item_index INTEGER NOT NULL,
-            call_id TEXT NOT NULL DEFAULT '',
-            tool_name TEXT,
-            arguments TEXT,
-            content TEXT,
-            content_hash TEXT NOT NULL,
-            credential_ref TEXT
-        );
-        CREATE TABLE event_body_blobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            source_table TEXT NOT NULL,
-            direction TEXT NOT NULL,
-            content_type TEXT,
-            original_bytes INTEGER NOT NULL,
-            stored_bytes INTEGER NOT NULL,
-            truncated INTEGER NOT NULL,
-            body_hash TEXT NOT NULL,
-            body BLOB NOT NULL,
-            trace_id TEXT,
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE dns_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            qname TEXT NOT NULL,
-            qtype INTEGER NOT NULL,
-            qclass INTEGER NOT NULL,
-            rcode INTEGER NOT NULL,
-            answer_ip TEXT,
-            decision TEXT NOT NULL,
-            matched_rule TEXT,
-            source_proto TEXT,
-            process_name TEXT,
-            upstream_resolver_ms INTEGER DEFAULT 0,
-            trace_id TEXT,
-            policy_mode TEXT,
-            policy_action TEXT,
-            policy_rule TEXT,
-            policy_reason TEXT,
-            credential_ref TEXT
-        );
-        CREATE TABLE fs_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            action TEXT NOT NULL,
-            path TEXT NOT NULL,
-            directory TEXT,
-            name TEXT,
-            size INTEGER,
-            trace_id TEXT,
-            credential_ref TEXT
-        );
-        CREATE TABLE exec_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            exec_id INTEGER NOT NULL,
-            command TEXT NOT NULL,
-            exit_code INTEGER,
-            duration_ms INTEGER,
-            stdout_preview TEXT,
-            stderr_preview TEXT,
-            stdout_bytes INTEGER DEFAULT 0,
-            stderr_bytes INTEGER DEFAULT 0,
-            source TEXT NOT NULL DEFAULT 'api',
-            trace_id TEXT,
-            process_name TEXT,
-            pid INTEGER,
-            credential_ref TEXT
-        );
-        CREATE TABLE audit_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            pid INTEGER NOT NULL,
-            ppid INTEGER NOT NULL,
-            uid INTEGER NOT NULL,
-            exe TEXT NOT NULL,
-            comm TEXT,
-            argv TEXT NOT NULL,
-            cwd TEXT,
-            exit_code INTEGER,
-            session_id INTEGER,
-            tty TEXT,
-            audit_id TEXT,
-            exec_event_id INTEGER,
-            parent_exe TEXT,
-            trace_id TEXT,
-            credential_ref TEXT
-        );
-        CREATE TABLE substitution_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            material_class TEXT NOT NULL,
-            source TEXT NOT NULL,
-            event_type TEXT,
-            algorithm TEXT NOT NULL,
-            substitution_ref TEXT NOT NULL,
-            outcome TEXT NOT NULL,
-            provider TEXT,
-            confidence REAL,
-            trace_id TEXT,
-            context_json TEXT
-        );
-        CREATE TABLE security_rule_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_type TEXT NOT NULL,
-            rule_id TEXT NOT NULL,
-            rule_action TEXT NOT NULL,
-            detection_level TEXT NOT NULL,
-            rule_json TEXT NOT NULL,
-            count INTEGER NOT NULL,
-            first_timestamp_unix_ms INTEGER NOT NULL,
-            last_timestamp_unix_ms INTEGER NOT NULL,
-            UNIQUE (event_type, rule_id, rule_action, detection_level, rule_json)
-        );
-        CREATE INDEX idx_security_rule_runs_action
-            ON security_rule_runs(rule_action, detection_level, rule_id, event_type, count, last_timestamp_unix_ms);
-        CREATE INDEX idx_security_rule_runs_event_type
-            ON security_rule_runs(event_type, count);
-        -- On disk a match stores its rule once, in its run; the matched
-        -- event's payload is archive-backed, not a column.
-        CREATE TABLE security_rule_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp_unix_ms INTEGER NOT NULL,
-            event_id TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            rule_id TEXT NOT NULL,
-            rule_action TEXT NOT NULL,
-            detection_level TEXT NOT NULL DEFAULT 'none',
-            rule_json TEXT,
-            run_id INTEGER REFERENCES security_rule_runs(id),
-            trace_id TEXT
-        );
-        CREATE TABLE security_decision_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            stage TEXT NOT NULL,
-            effective_decision TEXT NOT NULL,
-            credential_ref TEXT
-        );
-        CREATE TABLE security_ask_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL,
-            ask_id TEXT NOT NULL,
-            status TEXT NOT NULL,
-            event_json TEXT NOT NULL,
-            trace_id TEXT
-        );
-        CREATE TABLE profile_mutation_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            mutation_id TEXT NOT NULL,
-            profile_id TEXT NOT NULL,
-            status TEXT NOT NULL
-        );
-        """
-    )
-    for table in (
-        "net_events",
-        "model_calls",
-        "tool_calls",
-        "tool_responses",
-        "model_items",
-        "event_body_blobs",
-        "dns_events",
-        "fs_events",
-        "exec_events",
-        "audit_events",
-        "substitution_events",
-        "security_rule_events",
-    ):
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN turn_id TEXT")
-    conn.execute("ALTER TABLE security_rule_events ADD COLUMN credential_ref TEXT")
+def _stage_fixture_ledger(db_path: Path) -> None:
+    """Copy the writer-made fixture ledger and its archive to `db_path`.
+
+    The archive lock is not copied: git stores it 0644, and the archive refuses
+    any lock that is not 0600. It is empty, so a fresh one is the same file.
+    """
+    shutil.copyfile(FIXTURE_DB, db_path)
+    source_bodies = FIXTURE_DB.with_suffix(".bodies")
+    bodies = db_path.with_suffix(".bodies")
+    bodies.mkdir(mode=0o700)
+    for generation in source_bodies.iterdir():
+        target = bodies / generation.name
+        shutil.copyfile(generation, target)
+        target.chmod(0o600)
+    lock = db_path.with_name(db_path.name + "-archive.lock")
+    os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
 
 
 def _seed_session_db(db_path: Path) -> None:
-    request_body = EXPECTED_REQUEST_BODY_TEXT
-    full_response = json.dumps({"poem": "ironbank-" + ("x" * 70_000) + "-tail"})
-    model_response = EXPECTED_MODEL_RESPONSE
-    mcp_response = json.dumps({"content": [{"type": "text", "text": "created poeme.md"}]})
+    """A real ledger with every layer the stats routes project populated.
+
+    The fixture recorded HTTP, model, tool and file activity with archived
+    bodies. DNS, exec, audit, credential and rule-match rows are added here,
+    through the ledger's own CHECK constraints.
+    """
+    _stage_fixture_ledger(db_path)
     rule_json = json.dumps(
         {
             "name": "stats_detail_google_detect",
@@ -385,198 +123,7 @@ def _seed_session_db(db_path: Path) -> None:
         },
         sort_keys=True,
     )
-
-    conn = sqlite3.connect(db_path)
-    try:
-        _create_schema(conn)
-        conn.execute(
-            """
-            INSERT INTO net_events (
-                event_id, timestamp, domain, port, decision, method, path, query,
-                status_code, bytes_sent, bytes_received, duration_ms, matched_rule,
-                request_headers, response_headers, request_body_preview,
-                response_body_preview, conn_type, policy_rule, trace_id, credential_ref
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                HTTP_EVENT_ID,
-                "2026-06-17T20:11:18.404098Z",
-                "daily-cloudcode-pa.googleapis.com",
-                443,
-                "allowed",
-                "POST",
-                "/v1internal:listExperiments",
-                None,
-                200,
-                len(request_body),
-                len(full_response),
-                124,
-                "profiles.rules.ai_google_http_googleapis",
-                "host: daily-cloudcode-pa.googleapis.com\ncontent-type: application/json",
-                "content-type: application/json",
-                request_body,
-                full_response,
-                "https-mitm",
-                "profiles.rules.ai_google_http_googleapis",
-                TRACE_ID,
-                CREDENTIAL_REF,
-            ),
-        )
-        conn.executemany(
-            """
-            INSERT INTO event_body_blobs (
-                event_id, event_type, source_table, direction, content_type,
-                original_bytes, stored_bytes, truncated, body_hash, body,
-                trace_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    HTTP_EVENT_ID,
-                    "http.request",
-                    "net_events",
-                    "request",
-                    "application/json",
-                    len(request_body.encode()),
-                    len(request_body.encode()),
-                    0,
-                    BLAKE3_HASH,
-                    request_body.encode(),
-                    TRACE_ID,
-                    "2026-06-17T20:11:18.404098Z",
-                ),
-                (
-                    HTTP_EVENT_ID,
-                    "http.request",
-                    "net_events",
-                    "response",
-                    "application/json",
-                    len(full_response.encode()),
-                    len(full_response.encode()),
-                    0,
-                    BLAKE3_HASH,
-                    full_response.encode(),
-                    TRACE_ID,
-                    "2026-06-17T20:11:18.404198Z",
-                ),
-                (
-                    MODEL_EVENT_ID,
-                    "model.call",
-                    "model_calls",
-                    "request",
-                    "application/json",
-                    len(request_body.encode()),
-                    len(request_body.encode()),
-                    0,
-                    BLAKE3_HASH,
-                    request_body.encode(),
-                    TRACE_ID,
-                    "2026-06-17T20:11:18.904098Z",
-                ),
-                (
-                    MODEL_EVENT_ID,
-                    "model.call",
-                    "model_calls",
-                    "response",
-                    "text/plain",
-                    len(model_response.encode()),
-                    len(model_response.encode()),
-                    0,
-                    BLAKE3_HASH,
-                    model_response.encode(),
-                    TRACE_ID,
-                    "2026-06-17T20:11:19Z",
-                ),
-                (
-                    MCP_EVENT_ID,
-                    "mcp.tool_call",
-                    "tool_calls",
-                    "response",
-                    "application/json",
-                    len(mcp_response.encode()),
-                    len(mcp_response.encode()),
-                    0,
-                    BLAKE3_HASH,
-                    mcp_response.encode(),
-                    TRACE_ID,
-                    "2026-06-17T20:11:20Z",
-                ),
-            ],
-        )
-        conn.execute(
-            """
-            INSERT INTO model_calls (
-                event_id, timestamp, provider, protocol, model, process_name, pid,
-                method, path, stream, messages_count, tools_count, request_bytes,
-                request_body_preview, message_id, status_code, text_content,
-                thinking_content, stop_reason, input_tokens, output_tokens,
-                duration_ms, response_bytes, estimated_cost_usd, trace_id, credential_ref
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                MODEL_EVENT_ID,
-                "2026-06-17T20:11:19Z",
-                "google",
-                "google",
-                "gemini-3.5-flash",
-                "agy",
-                215,
-                "POST",
-                "/v1beta/models/gemini-3.5-flash:streamGenerateContent",
-                1,
-                2,
-                1,
-                len(request_body),
-                request_body,
-                "msg-stats-detail",
-                200,
-                "Created poeme.md.",
-                "Clarifying file destination.",
-                "stop",
-                542,
-                27,
-                931,
-                len(model_response),
-                0.00042,
-                TRACE_ID,
-                CREDENTIAL_REF,
-            ),
-        )
-        conn.execute(
-            """
-            INSERT INTO tool_calls (
-                event_id, timestamp, model_call_id, provider, status, call_index,
-                call_id, tool_name, arguments, response_preview, origin, server_name,
-                method, request_id, decision, duration_ms, process_name, bytes_sent,
-                bytes_received, policy_rule, trace_id,
-                credential_ref
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                MCP_EVENT_ID,
-                "2026-06-17T20:11:20Z",
-                None,
-                "",
-                "responded",
-                0,
-                "mcp-req-1",
-                "create_file",
-                json.dumps({"name": "create_file", "arguments": {"path": "/root/poeme.md"}}),
-                mcp_response,
-                "mcp",
-                "builtin",
-                "tools/call",
-                "mcp-req-1",
-                "allowed",
-                12,
-                "agy",
-                88,
-                len(mcp_response),
-                "profiles.rules.default_mcp",
-                TRACE_ID,
-                None,
-            ),
-        )
+    with closing(sqlite3.connect(db_path)) as conn:
         conn.execute(
             """
             INSERT INTO dns_events (
@@ -713,6 +260,7 @@ def _seed_session_db(db_path: Path) -> None:
                 ),
             ],
         )
+        # On disk a match stores its rule once, in its run, and points at it.
         matches = [
             (
                 1_789_000_223_456,
@@ -733,18 +281,16 @@ def _seed_session_db(db_path: Path) -> None:
                 json.dumps({"name": "default_mcp", "action": "ask"}, sort_keys=True),
             ),
         ]
-        for run_id, (timestamp, event_id, event_type, rule_id, action, level, rule) in enumerate(
-            matches, start=1
-        ):
-            conn.execute(
+        for timestamp, event_id, event_type, rule_id, action, level, rule in matches:
+            run_id = conn.execute(
                 """
                 INSERT INTO security_rule_runs (
-                    id, event_type, rule_id, rule_action, detection_level, rule_json,
+                    event_type, rule_id, rule_action, detection_level, rule_json,
                     count, first_timestamp_unix_ms, last_timestamp_unix_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
                 """,
-                (run_id, event_type, rule_id, action, level, rule, timestamp, timestamp),
-            )
+                (event_type, rule_id, action, level, rule, timestamp, timestamp),
+            ).lastrowid
             conn.execute(
                 """
                 INSERT INTO security_rule_events (
@@ -755,21 +301,18 @@ def _seed_session_db(db_path: Path) -> None:
                 (timestamp, event_id, event_type, rule_id, action, level, run_id, TRACE_ID),
             )
         conn.commit()
-    finally:
-        conn.close()
 
 
-def _query(client, sql: str) -> list[dict[str, object]]:
-    root = Path(client.socket_path).parent
-    candidates = [
-        root / "sessions" / SESSION_ID / "session.db",
-        root / "persistent" / SESSION_ID / "session.db",
-    ]
-    db_path = next((path for path in candidates if path.exists()), candidates[0])
-    assert db_path.exists(), f"session DB missing at {db_path}"
+def _ledger_event_ids(db_path: Path, table: str) -> set[str]:
     with closing(open_session_ledger(db_path)) as conn:
-        conn.row_factory = sqlite3.Row
-        return [dict(row) for row in conn.execute(sql).fetchall()]
+        return {row[0] for row in conn.execute(f"SELECT event_id FROM {table}")}
+
+
+def _decode(body: dict[str, object]) -> bytes:
+    content = str(body["content"])
+    if body["encoding"] == "base64":
+        return base64.b64decode(content)
+    return content.encode()
 
 
 def test_agy_stats_detail_routes_project_session_db_without_preview_theater() -> None:
@@ -778,199 +321,62 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         session_dir = service.tmp_dir / "persistent" / SESSION_ID
         session_dir.mkdir(parents=True, exist_ok=True)
         contract = _profile_contract(service.tmp_dir)
-        _seed_session_db(session_dir / "session.db")
+        db_path = session_dir / "session.db"
+        _seed_session_db(db_path)
         _write_registry(service.tmp_dir, session_dir, contract)
+        # The oracle: what the ledger holds, read by the independent test
+        # reader before the service ever opens the file.
+        archived = {
+            (table, event_id, direction): body
+            for table, event_id, direction, body in archived_bodies(db_path)
+        }
+        assert archived, "the fixture ledger has archived bodies"
 
         service.start()
         client = service.client()
 
-        http_rows = _query(
-            client,
-            """
-            SELECT event_id, timestamp, domain, port, method, path, query,
-                   status_code, decision, duration_ms, bytes_sent, bytes_received,
-                   matched_rule, policy_rule, trace_id, credential_ref,
-                   request_headers, response_headers
-            FROM net_events
-            ORDER BY id DESC
-            LIMIT 200
-            """,
-        )
-        assert len(http_rows) == 1
-        http = http_rows[0]
-        assert http["event_id"] == HTTP_EVENT_ID
-        assert http["domain"] == "daily-cloudcode-pa.googleapis.com"
-        assert http["status_code"] == 200
-        assert http["credential_ref"] == CREDENTIAL_REF
-        assert "request_body_preview" not in http
-        assert "response_body_preview" not in http
+        detail = client.get(f"/vms/{SESSION_ID}/stats/detail", timeout=30)
+        rendered = json.dumps(detail)
+        assert "request_body_preview" not in rendered
+        assert "response_body_preview" not in rendered
 
-        body_rows = _query(
-            client,
-            f"""
-            SELECT direction, content_type, original_bytes, stored_bytes,
-                   truncated, body_hash, CAST(body AS TEXT) AS body
-            FROM event_body_blobs
-            WHERE event_id = '{HTTP_EVENT_ID}'
-            ORDER BY direction
-            """,
-        )
-        bodies = {row["direction"]: row for row in body_rows}
-        assert set(bodies) == {"request", "response"}
-        assert json.loads(bodies["request"]["body"]) == {
-            "prompt": "write the ledger poem",
-            "nonce": "stats-detail",
+        # Each list is the ledger's rows, not a projection the route invented.
+        for field, table in (
+            ("http_events", "net_events"),
+            ("dns_events", "dns_events"),
+            ("file_events", "fs_events"),
+            ("process_events", "exec_events"),
+            ("credential_events", "substitution_events"),
+        ):
+            assert {row["event_id"] for row in detail[field]} == _ledger_event_ids(db_path, table), field
+        assert {row["event_id"] for row in detail["dns_events"]} == {DNS_EVENT_ID}
+        assert [row["verb"] for row in detail["credential_events"]] == ["captured", "injected"]
+
+        # Body metadata is the archive index, and nothing else.
+        route_index = {
+            (row["source_table"], event_id, row["direction"]): row
+            for event_id, rows in detail["body_blobs"].items()
+            for row in rows
         }
-        response_body = bodies["response"]["body"]
-        assert isinstance(response_body, str)
-        assert response_body.endswith("-tail\"}")
-        assert len(response_body) > 65_536
-        assert bodies["response"]["original_bytes"] == len(response_body.encode())
-        assert bodies["response"]["stored_bytes"] == len(response_body.encode())
-        assert bodies["response"]["truncated"] == 0
-        assert str(bodies["response"]["body_hash"]).startswith("blake3:")
+        assert set(route_index) == set(archived)
+        for key, row in route_index.items():
+            assert row["original_bytes"] == len(archived[key]), key
+            assert row["truncated"] is False, key
+            assert "body" not in row and "content" not in row, key
 
-        model_body_rows = _query(
-            client,
-            f"""
-            SELECT direction, content_type, original_bytes, stored_bytes,
-                   truncated, body_hash, CAST(body AS TEXT) AS body
-            FROM event_body_blobs
-            WHERE event_id = '{MODEL_EVENT_ID}'
-            ORDER BY direction
-            """,
+        # A body larger than any preview comes back whole, byte for byte.
+        (table, event_id, direction), largest = max(archived.items(), key=lambda item: len(item[1]))
+        assert len(largest) > PREVIEW_BYTES
+        served = client.get(f"/vms/{SESSION_ID}/bodies/{event_id}", timeout=30)
+        assert served["event_id"] == event_id
+        body = next(
+            row
+            for row in served["bodies"]
+            if (row["source_table"], row["direction"]) == (table, direction)
         )
-        model_bodies = {row["direction"]: row for row in model_body_rows}
-        assert set(model_bodies) == {"request", "response"}
-        assert json.loads(model_bodies["request"]["body"]) == EXPECTED_REQUEST_BODY
-        assert model_bodies["request"]["content_type"] == "application/json"
-        assert model_bodies["request"]["stored_bytes"] == len(
-            EXPECTED_REQUEST_BODY_TEXT.encode()
-        )
-        assert model_bodies["request"]["truncated"] == 0
-        assert model_bodies["response"]["body"] == EXPECTED_MODEL_RESPONSE
-        assert model_bodies["response"]["content_type"] == "text/plain"
-        assert model_bodies["response"]["stored_bytes"] == len(
-            EXPECTED_MODEL_RESPONSE.encode()
-        )
-        assert model_bodies["response"]["truncated"] == 0
-
-        model_rows = _query(
-            client,
-            """
-            SELECT event_id, provider, protocol, model, method, path, stream,
-                   input_tokens, output_tokens, thinking_content, text_content,
-                   trace_id, credential_ref
-            FROM model_calls
-            ORDER BY id DESC
-            """,
-        )
-        assert model_rows == [
-            {
-                "event_id": MODEL_EVENT_ID,
-                "provider": "google",
-                "protocol": "google",
-                "model": "gemini-3.5-flash",
-                "method": "POST",
-                "path": "/v1beta/models/gemini-3.5-flash:streamGenerateContent",
-                "stream": 1,
-                "input_tokens": 542,
-                "output_tokens": 27,
-                "thinking_content": "Clarifying file destination.",
-                "text_content": "Created poeme.md.",
-                "trace_id": TRACE_ID,
-                "credential_ref": CREDENTIAL_REF,
-            }
-        ]
-
-        tool_rows = _query(
-            client,
-            """
-            SELECT event_id, server_name, method, tool_name, request_id,
-                   decision, duration_ms, bytes_sent, bytes_received,
-                   policy_rule, trace_id, credential_ref, error_message
-            FROM tool_calls
-            WHERE origin = 'mcp'
-            ORDER BY id DESC
-            """,
-        )
-        assert tool_rows[0]["server_name"] == "builtin"
-        assert tool_rows[0]["method"] == "tools/call"
-        assert tool_rows[0]["tool_name"] == "create_file"
-        assert tool_rows[0]["policy_rule"] == "profiles.rules.default_mcp"
-        assert tool_rows[0]["error_message"] is None
-
-        dns_rows = _query(
-            client,
-            """
-            SELECT event_id, qname, qtype, qclass, rcode, answer_ip,
-                   decision, source_proto, process_name, upstream_resolver_ms,
-                   trace_id, credential_ref
-            FROM dns_events
-            ORDER BY id DESC
-            """,
-        )
-        assert dns_rows[0]["qname"] == "daily-cloudcode-pa.googleapis.com"
-        assert dns_rows[0]["qtype"] == 1
-        assert dns_rows[0]["answer_ip"] == "142.250.72.10"
-
-        file_rows = _query(
-            client,
-            """
-            SELECT event_id, action, path, directory, name, size, trace_id, credential_ref
-            FROM fs_events
-            ORDER BY id DESC
-            """,
-        )
-        assert file_rows[0]["action"] == "created"
-        assert file_rows[0]["path"] == "/root/poeme.md"
-        assert file_rows[0]["name"] == "poeme.md"
-
-        exec_rows = _query(
-            client,
-            """
-            SELECT event_id, exec_id, command, exit_code, duration_ms,
-                   stdout_bytes, stderr_bytes, source, process_name, pid,
-                   trace_id, credential_ref
-            FROM exec_events
-            ORDER BY id DESC
-            """,
-        )
-        assert exec_rows[0]["command"] == "agy --allow-dangerous-permissions"
-        assert exec_rows[0]["source"] == "api"
-        assert exec_rows[0]["process_name"] == "agy"
-
-        audit_rows = _query(
-            client,
-            """
-            SELECT event_id, pid, ppid, uid, exe, comm, argv, cwd,
-                   exit_code, session_id, tty, audit_id, exec_event_id,
-                   parent_exe, trace_id, credential_ref
-            FROM audit_events
-            ORDER BY id DESC
-            """,
-        )
-        assert audit_rows[0]["exe"] == "/usr/local/bin/agy"
-        assert json.loads(audit_rows[0]["argv"]) == ["agy", "--allow-dangerous-permissions"]
-        assert audit_rows[0]["exec_event_id"] == 7
-
-        credential_rows = _query(
-            client,
-            """
-            SELECT event_id, timestamp, material_class, source, event_type,
-                   event_type AS origin, outcome AS verb, provider,
-                   trace_id, context_json
-            FROM substitution_events
-            ORDER BY id ASC
-            """,
-        )
-        assert [row["verb"] for row in credential_rows] == ["captured", "injected"]
-        assert all("substitution_ref" not in row for row in credential_rows)
-        assert all("confidence" not in row for row in credential_rows)
-        assert credential_rows[0]["provider"] == "google"
-        assert json.loads(credential_rows[0]["context_json"]) == {
-            "domain": "oauth2.googleapis.com"
-        }
+        assert body["truncated"] is False
+        assert body["truncated_for_transport"] is False
+        assert _decode(body) == largest
 
         latest = client.get(f"/vms/{SESSION_ID}/security/latest?limit=10", timeout=30)
         assert [row["event_id"] for row in latest] == ["223abc456def", SEC_EVENT_ID]
@@ -1004,33 +410,5 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         )
         assert detection_latest == [latest[1]]
         assert enforcement_latest == latest
-
-        detail = client.get(f"/vms/{SESSION_ID}/stats/detail", timeout=30)
-        assert "request_body_preview" not in json.dumps(detail)
-        assert "response_body_preview" not in json.dumps(detail)
-        route_http_blobs = detail["body_blobs"][HTTP_EVENT_ID]
-        assert {row["direction"] for row in route_http_blobs} == {"request", "response"}
-        route_http_response = next(
-            row for row in route_http_blobs if row["direction"] == "response"
-        )
-        assert route_http_response["body"].endswith("-tail\"}")
-        assert route_http_response["original_bytes"] > 65_536
-        assert route_http_response["stored_bytes"] == route_http_response["original_bytes"]
-        assert route_http_response["truncated"] is False
-
-        route_model_blobs = detail["body_blobs"][MODEL_EVENT_ID]
-        assert {row["direction"] for row in route_model_blobs} == {"request", "response"}
-        route_model_request = next(
-            row for row in route_model_blobs if row["direction"] == "request"
-        )
-        route_model_response = next(
-            row for row in route_model_blobs if row["direction"] == "response"
-        )
-        assert json.loads(route_model_request["body"]) == EXPECTED_REQUEST_BODY
-        assert route_model_request["content_type"] == "application/json"
-        assert route_model_request["truncated"] is False
-        assert route_model_response["body"] == EXPECTED_MODEL_RESPONSE
-        assert route_model_response["content_type"] == "text/plain"
-        assert route_model_response["truncated"] is False
     finally:
         service.stop()
