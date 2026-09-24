@@ -350,7 +350,8 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         ):
             assert {row["event_id"] for row in detail[field]} == _ledger_event_ids(db_path, table), field
         assert {row["event_id"] for row in detail["dns_events"]} == {DNS_EVENT_ID}
-        assert [row["verb"] for row in detail["credential_events"]] == ["captured", "injected"]
+        # Newest first, as every detail list is.
+        assert [row["verb"] for row in detail["credential_events"]] == ["injected", "captured"]
 
         # Body metadata is the archive index, and nothing else.
         route_index = {
