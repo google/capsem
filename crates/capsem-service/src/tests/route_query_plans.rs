@@ -17,18 +17,37 @@
 
 use super::*;
 use crate::ledger_routes::bodies::{STATS_DETAIL_BODY_BLOBS_SQL, STATS_DETAIL_PROCESS_EVENTS_LIMIT};
-use crate::ledger_routes::stats_detail::STATS_DETAIL_TOOL_EVENTS_SQL;
+use crate::ledger_routes::history::{page_sql, search_total_sql};
+use crate::ledger_routes::security::{SECURITY_LATEST_LIMIT, SECURITY_LATEST_SQL};
+use crate::ledger_routes::stats_detail::interactions::{MODEL_ITEMS_SQL, TOOL_CALLS_SQL};
+use crate::ledger_routes::stats_detail::{
+    STATS_DETAIL_AUDIT_EVENTS_SQL, STATS_DETAIL_CREDENTIAL_EVENTS_SQL, STATS_DETAIL_DNS_EVENTS_SQL,
+    STATS_DETAIL_FILE_EVENTS_SQL, STATS_DETAIL_HTTP_EVENTS_SQL, STATS_DETAIL_MODEL_EVENTS_SQL,
+    STATS_DETAIL_PROCESS_EVENTS_SQL, STATS_DETAIL_TOOL_EVENTS_SQL,
+};
+use crate::ledger_routes::timeline::timeline_sql;
+use crate::session_triage_statements;
 
 /// Rows per table in the small ledger; the large one holds four times as many.
-/// Both are well past every window, so both runs read a full window.
-const SMALL_LEDGER_ROWS: i64 = 1_000;
+/// Both are past every window a route reads -- the widest is the security
+/// latest list, at 2000 -- so both runs read a full window.
+const SMALL_LEDGER_ROWS: i64 = 2_500;
 const TRIAGE_LIMIT: usize = 20;
+const HISTORY_PAGE: i64 = 50;
+const TIMELINE_LIMIT: i64 = 200;
+/// A timeline cutoff a fifth of the way into the small ledger.
+const TIMELINE_CUTOFF: &str = "2026-09-10T00000500";
 
 /// One statement a route runs, with what its plan must show.
+///
+/// This is the registry of every SQL statement the service's ledger routes
+/// execute. `tests/citadel/test_ledger_route_statements.py` fails when a
+/// service source file holds SQL this registry does not reach, so a new route
+/// read cannot skip the plan check below.
 struct RouteStatement {
     name: &'static str,
     sql: String,
-    params: Vec<i64>,
+    params: Vec<serde_json::Value>,
     /// Plan lines that must appear: the index or rowid probes that keep the
     /// statement off a table scan.
     searches: &'static [&'static str],
@@ -36,36 +55,161 @@ struct RouteStatement {
     /// Allowed only where that result is a union of fixed windows; the step
     /// check below is what proves it is bounded.
     sorts_bounded_result: bool,
+    /// Why the statement may cost more as the ledger grows. `None` is the
+    /// rule: a window that costs the same at any size. A scan is declared
+    /// here with its reason or it fails.
+    scans: Option<&'static str>,
 }
 
-fn route_statements() -> Vec<RouteStatement> {
-    let mut statements = vec![
-        RouteStatement {
-            name: "stats_detail.tool_events",
-            sql: STATS_DETAIL_TOOL_EVENTS_SQL.to_string(),
-            params: vec![],
-            searches: &[
-                "SEARCH mc USING INTEGER PRIMARY KEY (rowid=?)",
-                "idx_tool_responses_call_id (call_id=?)",
-            ],
-            sorts_bounded_result: false,
-        },
-        RouteStatement {
-            name: "stats_detail.body_blobs",
-            sql: STATS_DETAIL_BODY_BLOBS_SQL.to_string(),
-            params: vec![STATS_DETAIL_PROCESS_EVENTS_LIMIT as i64],
-            searches: &["sqlite_autoindex_event_body_blobs_1 (event_id=?)"],
-            sorts_bounded_result: true,
-        },
-    ];
-    for (name, sql) in session_triage_statements(TRIAGE_LIMIT) {
-        statements.push(RouteStatement {
+impl RouteStatement {
+    fn window(name: &'static str, sql: impl Into<String>, params: Vec<serde_json::Value>) -> Self {
+        Self {
             name,
-            sql,
-            params: vec![],
+            sql: sql.into(),
+            params,
             searches: &[],
             sorts_bounded_result: false,
-        });
+            scans: None,
+        }
+    }
+
+    fn probing(mut self, searches: &'static [&'static str]) -> Self {
+        self.searches = searches;
+        self
+    }
+
+    fn merging_windows(mut self) -> Self {
+        self.sorts_bounded_result = true;
+        self
+    }
+
+    fn scanning(mut self, reason: &'static str) -> Self {
+        self.scans = Some(reason);
+        self
+    }
+}
+
+/// Each history arm walks its table's timestamp index newest first.
+fn history_probes(layer: api::HistoryLayerFilter) -> &'static [&'static str] {
+    match layer {
+        api::HistoryLayerFilter::All => &[
+            "SCAN exec_events USING INDEX idx_exec_events_timestamp",
+            "SCAN audit_events USING INDEX idx_audit_events_timestamp",
+        ],
+        api::HistoryLayerFilter::Exec => &["SCAN exec_events USING INDEX idx_exec_events_timestamp"],
+        api::HistoryLayerFilter::Audit => &["SCAN audit_events USING INDEX idx_audit_events_timestamp"],
+    }
+}
+
+const SUBSTRING_SEARCH: &str = "a literal substring search reads rows until it has a page of matches; \
+     the ledger has no full-text index yet";
+
+fn route_statements() -> Vec<RouteStatement> {
+    use api::HistoryLayerFilter::{All, Audit, Exec};
+    let mut statements = vec![
+        RouteStatement::window("stats_detail.model_events", STATS_DETAIL_MODEL_EVENTS_SQL, vec![]),
+        RouteStatement::window("stats_detail.tool_events", STATS_DETAIL_TOOL_EVENTS_SQL, vec![]).probing(&[
+            "SEARCH mc USING INTEGER PRIMARY KEY (rowid=?)",
+            "idx_tool_responses_call_id (call_id=?)",
+        ]),
+        RouteStatement::window("stats_detail.http_events", STATS_DETAIL_HTTP_EVENTS_SQL, vec![]),
+        RouteStatement::window("stats_detail.dns_events", STATS_DETAIL_DNS_EVENTS_SQL, vec![]),
+        RouteStatement::window("stats_detail.file_events", STATS_DETAIL_FILE_EVENTS_SQL, vec![]),
+        RouteStatement::window("stats_detail.process_events", STATS_DETAIL_PROCESS_EVENTS_SQL, vec![]),
+        RouteStatement::window("stats_detail.audit_events", STATS_DETAIL_AUDIT_EVENTS_SQL, vec![]),
+        RouteStatement::window(
+            "stats_detail.credential_events",
+            STATS_DETAIL_CREDENTIAL_EVENTS_SQL,
+            vec![],
+        ),
+        RouteStatement::window(
+            "stats_detail.body_blobs",
+            STATS_DETAIL_BODY_BLOBS_SQL,
+            vec![json!(STATS_DETAIL_PROCESS_EVENTS_LIMIT)],
+        )
+        .probing(&["sqlite_autoindex_event_body_blobs_1 (event_id=?)"])
+        .merging_windows(),
+        RouteStatement::window("interactions.model_items", MODEL_ITEMS_SQL, vec![])
+            .probing(&["SEARCH mc USING INTEGER PRIMARY KEY (rowid=?)"]),
+        RouteStatement::window("interactions.tool_calls", TOOL_CALLS_SQL, vec![])
+            .probing(&["SEARCH mc USING INTEGER PRIMARY KEY (rowid=?)"]),
+        RouteStatement::window(
+            "security.latest",
+            SECURITY_LATEST_SQL,
+            vec![json!(SECURITY_LATEST_LIMIT)],
+        ),
+    ];
+    for (name, layer) in [
+        ("history.page.all", All),
+        ("history.page.exec", Exec),
+        ("history.page.audit", Audit),
+    ] {
+        let page = vec![
+            serde_json::Value::Null,
+            json!(HISTORY_PAGE),
+            json!(HISTORY_PAGE),
+            json!(0),
+        ];
+        // Each page re-sorts its own `offset + limit` rows after the arms.
+        statements.push(
+            RouteStatement::window(name, page_sql(layer, false), page)
+                .probing(history_probes(layer))
+                .merging_windows(),
+        );
+    }
+    for (name, layer) in [
+        ("history.search_page.all", All),
+        ("history.search_page.exec", Exec),
+        ("history.search_page.audit", Audit),
+    ] {
+        let page = vec![json!("false"), json!(HISTORY_PAGE), json!(HISTORY_PAGE), json!(0)];
+        statements.push(
+            RouteStatement::window(name, page_sql(layer, true), page)
+                .probing(history_probes(layer))
+                .merging_windows()
+                .scanning(SUBSTRING_SEARCH),
+        );
+    }
+    for (name, layer) in [
+        ("history.search_total.all", All),
+        ("history.search_total.exec", Exec),
+        ("history.search_total.audit", Audit),
+    ] {
+        statements.push(
+            RouteStatement::window(name, search_total_sql(layer), vec![json!("false")])
+                .scanning("a search total counts every match; see AGGREGATE_DEBT in test_ledger_counter_boundary.py"),
+        );
+    }
+    let layers = [
+        api::TimelineLayer::Exec,
+        api::TimelineLayer::Tool,
+        api::TimelineLayer::Net,
+        api::TimelineLayer::Fs,
+        api::TimelineLayer::Model,
+    ];
+    for (name, cutoff, trace) in [
+        ("timeline.from_start", "", serde_json::Value::Null),
+        ("timeline.since", TIMELINE_CUTOFF, serde_json::Value::Null),
+        ("timeline.since_in_trace", TIMELINE_CUTOFF, json!("trace-1")),
+    ] {
+        statements.push(
+            RouteStatement::window(
+                name,
+                timeline_sql(&layers),
+                vec![json!(TIMELINE_LIMIT), json!(cutoff), json!(cutoff), trace],
+            )
+            .probing(&[
+                "idx_exec_events_timestamp (timestamp>?)",
+                "idx_tool_calls_timestamp (timestamp>?)",
+                "idx_net_events_timestamp (timestamp>?)",
+                "idx_fs_events_timestamp (timestamp>?)",
+                "idx_model_calls_timestamp (timestamp>?)",
+            ])
+            .merging_windows(),
+        );
+    }
+    for (name, sql) in session_triage_statements(TRIAGE_LIMIT) {
+        statements.push(RouteStatement::window(name, sql, vec![]));
     }
     statements
 }
@@ -110,6 +254,25 @@ fn seed_ledger(session_dir: &std::path::Path, rows: i64) -> PathBuf {
         INSERT INTO exec_events(id, event_id, timestamp, exec_id, command, exit_code)
         SELECT i, printf('d%011x', i), printf('2026-09-10T%08d', i), i, 'false', 1 FROM n;
         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {rows})
+        INSERT INTO audit_events(id, event_id, timestamp, pid, ppid, uid, exe, argv, exit_code)
+        SELECT i, printf('e%011x', i), printf('2026-09-10T%08d', i), i, 1, 0, '/bin/false', 'false', 1 FROM n;
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {rows})
+        INSERT INTO fs_events(id, event_id, timestamp, action, path)
+        SELECT i, printf('1%011x', i), printf('2026-09-10T%08d', i), 'modified', printf('/w/%d', i) FROM n;
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {rows})
+        INSERT INTO dns_events(id, event_id, timestamp, qname, qtype, qclass, rcode, decision)
+        SELECT i, printf('2%011x', i), printf('2026-09-10T%08d', i), 'evil.test', 1, 1, 5, 'denied' FROM n;
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {rows})
+        INSERT INTO substitution_events(id, event_id, timestamp, material_class, source, algorithm,
+                                        substitution_ref, outcome)
+        SELECT i, printf('3%011x', i), printf('2026-09-10T%08d', i), 'credential', 'env', 'blake3',
+               'credential:blake3:' || printf('%064x', i), 'captured' FROM n;
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {rows})
+        INSERT INTO model_items(id, event_id, model_call_id, timestamp, provider, path, kind, item_index,
+                                call_id, content_hash)
+        SELECT i, printf('4%011x', i), i, printf('2026-09-10T%08d', i), 'openai', '/v1/responses',
+               'tool_response', 0, printf('call-%d', i), 'blake3:' || printf('%064x', i) FROM n;
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {rows})
         INSERT INTO security_rule_events(id, timestamp_unix_ms, event_id, event_type, rule_id, rule_action, rule_json)
         SELECT i, i, printf('c%011x', i), 'http.request', 'rule', 'allow', '{{}}' FROM n;
         INSERT INTO body_blocks(block_offset, raw_len, disk_len, sealed_at) VALUES (80, 1, 1, '2026-09-10');
@@ -137,9 +300,8 @@ fn seed_ledger(session_dir: &std::path::Path, rows: i64) -> PathBuf {
 /// The `detail` column of each `EXPLAIN QUERY PLAN` row, read through the
 /// route's own external-reader handle.
 async fn query_plan(db: &capsem_logger::DbHandle, statement: &RouteStatement) -> Vec<String> {
-    let params: Vec<serde_json::Value> = statement.params.iter().map(|value| json!(value)).collect();
     let raw = db
-        .query(&format!("EXPLAIN QUERY PLAN {}", statement.sql), &params)
+        .query(&format!("EXPLAIN QUERY PLAN {}", statement.sql), &statement.params)
         .await
         .unwrap_or_else(|error| panic!("{}: EXPLAIN QUERY PLAN failed: {error}", statement.name));
     let plan: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -157,6 +319,15 @@ async fn query_plan(db: &capsem_logger::DbHandle, statement: &RouteStatement) ->
         .collect()
 }
 
+fn sql_value(value: &serde_json::Value) -> rusqlite::types::Value {
+    match value {
+        serde_json::Value::Null => rusqlite::types::Value::Null,
+        serde_json::Value::Number(number) => rusqlite::types::Value::Integer(number.as_i64().unwrap()),
+        serde_json::Value::String(text) => rusqlite::types::Value::Text(text.clone()),
+        other => panic!("route statement parameter {other} is not a SQL scalar"),
+    }
+}
+
 /// SQLite's VM step count for running `statement` to completion.
 ///
 /// Test-only direct read: the handle does not expose statement counters, and
@@ -166,7 +337,7 @@ fn vm_steps(db_path: &std::path::Path, statement: &RouteStatement) -> i32 {
         rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let mut prepared = connection.prepare(&statement.sql).unwrap();
     let mut rows = prepared
-        .query(rusqlite::params_from_iter(statement.params.iter()))
+        .query(rusqlite::params_from_iter(statement.params.iter().map(sql_value)))
         .unwrap();
     while rows.next().unwrap().is_some() {}
     drop(rows);
@@ -192,6 +363,9 @@ async fn route_statements_read_a_window_not_the_ledger() {
             if !plan.iter().any(|line| line.contains(search)) {
                 failures.push(format!("{} does not probe `{search}`:\n{shown}", statement.name));
             }
+        }
+        if statement.scans.is_some() {
+            continue;
         }
         let (small_steps, large_steps) = (vm_steps(&small, &statement), vm_steps(&large, &statement));
         // A window reads the same rows at any ledger size; a sort or a full

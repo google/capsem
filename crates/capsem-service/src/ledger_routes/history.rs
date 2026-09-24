@@ -56,7 +56,7 @@ const SEARCH: &str = " WHERE instr(command, ?1) > 0 OR instr(stdout_preview, ?1)
 const SEARCH_TOTAL: &str = "SELECT COUNT(*) AS total FROM ({arms})";
 
 /// The maximum rows the reader returns for one page, as the API caps it.
-const PAGE_CAP: usize = 2000;
+pub(crate) const PAGE_CAP: usize = 2000;
 
 fn arms(layer: api::HistoryLayerFilter) -> Vec<&'static str> {
     [
@@ -92,7 +92,7 @@ pub(crate) fn page_sql(layer: api::HistoryLayerFilter, search: bool) -> String {
     )
 }
 
-fn search_total_sql(layer: api::HistoryLayerFilter) -> String {
+pub(crate) fn search_total_sql(layer: api::HistoryLayerFilter) -> String {
     let arms = arms(layer)
         .into_iter()
         .map(|rows| filtered(rows, true))

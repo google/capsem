@@ -38,7 +38,7 @@ pub(crate) fn empty_security_rule_stats() -> capsem_logger::SecurityRuleStats {
 // The matched event's payload is archive-backed: it is read by event id with
 // `BodyDirection::Payload`, and the index metadata travels with the other
 // bodies in the stats-detail payload.
-const SECURITY_LATEST_SQL: &str = r#"
+pub(crate) const SECURITY_LATEST_SQL: &str = r#"
 SELECT event.timestamp_unix_ms, event.event_id, event.event_type, event.rule_id,
        event.rule_action, event.detection_level,
        COALESCE(event.rule_json, run.rule_json) AS rule_json, event.trace_id,
@@ -50,7 +50,7 @@ LIMIT ?
 "#;
 
 /// How many recent matches a security ledger read reports on.
-const SECURITY_LATEST_LIMIT: usize = 2000;
+pub(crate) const SECURITY_LATEST_LIMIT: usize = 2000;
 
 pub(crate) async fn read_security_session_ledger(
     state: &ServiceState,

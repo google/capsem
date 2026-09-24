@@ -2,9 +2,9 @@
 use super::bodies::{STATS_DETAIL_BODY_BLOBS_SQL, STATS_DETAIL_PROCESS_EVENTS_LIMIT};
 use super::*;
 use std::collections::BTreeMap;
-mod interactions;
+pub(crate) mod interactions;
 
-const STATS_DETAIL_MODEL_EVENTS_SQL: &str = r#"
+pub(crate) const STATS_DETAIL_MODEL_EVENTS_SQL: &str = r#"
 SELECT event_id, timestamp, provider, model, method, path, status_code,
        input_tokens, output_tokens, duration_ms, response_bytes,
        stop_reason, trace_id, credential_ref
@@ -53,7 +53,7 @@ ORDER BY tc.id DESC
 LIMIT 200
 "#;
 
-const STATS_DETAIL_HTTP_EVENTS_SQL: &str = r#"
+pub(crate) const STATS_DETAIL_HTTP_EVENTS_SQL: &str = r#"
 SELECT event_id, timestamp, domain, port, method, path, query, status_code,
        decision, duration_ms, bytes_sent, bytes_received, matched_rule, policy_rule,
        trace_id, credential_ref, request_headers, response_headers
@@ -62,7 +62,7 @@ ORDER BY id DESC
 LIMIT 200
 "#;
 
-const STATS_DETAIL_DNS_EVENTS_SQL: &str = r#"
+pub(crate) const STATS_DETAIL_DNS_EVENTS_SQL: &str = r#"
 SELECT event_id, timestamp, qname, qtype, qclass, rcode, decision,
        matched_rule, policy_rule, source_proto, process_name,
        upstream_resolver_ms, trace_id, credential_ref
@@ -71,14 +71,14 @@ ORDER BY id DESC
 LIMIT 200
 "#;
 
-const STATS_DETAIL_FILE_EVENTS_SQL: &str = r#"
+pub(crate) const STATS_DETAIL_FILE_EVENTS_SQL: &str = r#"
 SELECT event_id, timestamp, action, path, size, trace_id, credential_ref
 FROM fs_events
 ORDER BY id DESC
 LIMIT 200
 "#;
 
-const STATS_DETAIL_PROCESS_EVENTS_SQL: &str = r#"
+pub(crate) const STATS_DETAIL_PROCESS_EVENTS_SQL: &str = r#"
 SELECT event_id, timestamp, exec_id, command, exit_code, duration_ms,
        stdout_bytes, stderr_bytes, source, process_name, pid, trace_id,
        credential_ref
@@ -87,7 +87,7 @@ ORDER BY id DESC
 LIMIT 100
 "#;
 
-const STATS_DETAIL_AUDIT_EVENTS_SQL: &str = r#"
+pub(crate) const STATS_DETAIL_AUDIT_EVENTS_SQL: &str = r#"
 SELECT event_id, timestamp, pid, ppid, uid, exe, comm, argv, cwd,
        exit_code, session_id, tty, audit_id, exec_event_id, parent_exe,
        trace_id, credential_ref
@@ -96,7 +96,7 @@ ORDER BY id DESC
 LIMIT 100
 "#;
 
-const STATS_DETAIL_CREDENTIAL_EVENTS_SQL: &str = r#"
+pub(crate) const STATS_DETAIL_CREDENTIAL_EVENTS_SQL: &str = r#"
 SELECT event_id, timestamp, material_class, source, event_type,
        event_type AS origin, outcome AS verb, provider,
        trace_id, context_json

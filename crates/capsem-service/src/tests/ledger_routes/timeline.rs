@@ -148,36 +148,14 @@ async fn timeline_since_includes_rows_in_the_cutoff_second() {
     assert_eq!(events[0].timestamp, "2020-01-01T00:00:05.000000Z");
 }
 
-/// Every layer's window walks its table's timestamp index from the cutoff,
-/// so a request costs `limit` rows per layer, not the ledger.
-#[tokio::test]
-async fn timeline_windows_read_through_timestamp_indexes() {
-    let (_app, dir) = timeline_app().await;
-    let conn = rusqlite::Connection::open(dir.path().join("sessions/timeline-window-vm/session.db")).unwrap();
-    let all = [Exec, Tool, Net, Fs, Model];
-    let sql = crate::ledger_routes::timeline::timeline_sql(&all);
-    assert_eq!(sql.matches("LIMIT").count(), all.len() + 1, "{sql}");
-    let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
-    let plan = stmt
-        .query_map(rusqlite::params![200, "", "", "trace"], |row| row.get::<_, String>(3))
-        .unwrap()
-        .map(Result::unwrap)
-        .collect::<Vec<_>>()
-        .join("\n");
-    for index in [
-        "idx_exec_events_timestamp",
-        "idx_tool_calls_timestamp",
-        "idx_net_events_timestamp",
-        "idx_fs_events_timestamp",
-        "idx_model_calls_timestamp",
-    ] {
-        assert!(plan.contains(index), "{index} missing from plan:\n{plan}");
-    }
+/// Only the requested layers are read. Each window's plan is held by the
+/// route statement registry in `tests/route_query_plans.rs`.
+#[test]
+fn timeline_reads_only_the_requested_layers() {
     assert_eq!(
         crate::ledger_routes::timeline::timeline_sql(&[Net])
             .matches("SELECT")
             .count(),
-        2,
-        "only the requested layers are read"
+        2
     );
 }
