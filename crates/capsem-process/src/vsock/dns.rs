@@ -148,7 +148,7 @@ async fn answer_one(
     // refused is answered SERVFAIL, so no lookup succeeds unrecorded.
     let audited = capsem_core::security_engine::admit_within(
         capsem_core::security_engine::SECURITY_ADMISSION_DEADLINE,
-        emit_dns_security_write_and_rules(db, security_rules, event),
+        Box::pin(emit_dns_security_write_and_rules(db, security_rules, event)),
     )
     .await
     .is_some();

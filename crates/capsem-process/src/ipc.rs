@@ -422,7 +422,7 @@ pub(crate) async fn handle_ipc_connection(
                     // does not happen.
                     if capsem_core::security_engine::admit_within(
                         capsem_core::security_engine::SECURITY_ADMISSION_DEADLINE,
-                        record_guest_write(&net_state, &mcp_runtime, &path, data.len()),
+                        Box::pin(record_guest_write(&net_state, &mcp_runtime, &path, data.len())),
                     )
                     .await
                     .is_none()
