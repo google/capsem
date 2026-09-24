@@ -160,6 +160,15 @@ can be incorrectly considered fresh after a newer worktree compiled into the
 shared target, even with sccache disabled. Test both output correctness across
 trees and warm reuse on return; clearing the cache would hide this failure.
 
+`cargo clippy` forces `RUSTC_WORKSPACE_WRAPPER` to its own `clippy-driver`, one
+path for every checkout, so plain clippy output in the shared target loses that
+key and a checkout can take another's lint result as its own (a false green or
+red). The gate and `run-bounded-command.py` therefore run clippy as `cargo
+check` through the checkout-local `toolchain.clippy_workspace_wrapper`
+(`gate/clippyrun.py`). Never add a literal `cargo clippy` gate step;
+`build_system/tests/cache/test_clippy_checkout_key.py` refuses one and proves
+per-checkout verdicts on the pinned toolchain.
+
 Never make normal cache reuse opt-in. Do not clean caches to diagnose a product
 failure unless cold-state behavior is itself the subject under test.
 

@@ -107,12 +107,29 @@ def run(argv: Sequence[str]) -> int:
     if not command:
         _parser().error("a command is required after --")
 
+    root = _repository_root()
+    command, keyed = _keyed_clippy(command, root)
     try:
-        with _machine(command, _repository_root()) as exported:
-            return _run(command, exported, args)
+        with _machine(command, root) as exported:
+            return _run(command, {**keyed, **exported}, args)
     except _MachineBusy as busy:
         print(f"bounded command never started: {busy}", file=sys.stderr)
         return busy.exit_code
+
+
+def _keyed_clippy(command: list[str], root: Path | None) -> tuple[list[str], dict[str, str]]:
+    """Run `cargo clippy` keyed by this checkout, as the gate does.
+
+    The contained environment points every checkout at one shared target, where
+    plain `cargo clippy` output is reused across checkouts (see clippyrun).
+    """
+    if root is None:
+        return command, {}
+    from capsem_builder.gate import clippyrun, config
+
+    wrapper = root / config.load(root).toolchain.clippy_workspace_wrapper
+    keyed = clippyrun.from_cargo_clippy(command, str(wrapper))
+    return keyed if keyed is not None else (command, {})
 
 
 class _MachineBusy(Exception):

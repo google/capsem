@@ -111,6 +111,7 @@ class ToolchainConfig(Strict):
     compiler_cache_socket_name: SafeToken
     compiler_cache_client_side: StrictBool
     compiler_cache_idle_timeout_seconds: NonNegativeInt
+    clippy_workspace_wrapper: str
     reaper_module: str
     reaper_grace_seconds: float
     node_workspaces: tuple[str, ...]
