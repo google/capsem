@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import stat
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -25,10 +27,32 @@ def _contained(root: Path, target: Path) -> Path:
     return absolute_target
 
 
+def _make_owner_removable(root: Path) -> None:
+    """Give the owner back every directory under ``root``, never following links.
+
+    A test that makes a directory unwritable and dies before restoring it
+    leaves a tree no plain ``rmtree`` can delete, and one such leftover used to
+    fail every later prune. The cache owns the tree, so it takes the owner's
+    bits back, top-down so an unreadable directory is opened before it is
+    walked. A symlink is removed as a link; its target is never touched.
+    """
+    owner = stat.S_IRWXU
+    root.chmod(root.lstat().st_mode | owner)
+    for directory, subdirectories, _files in os.walk(root):
+        for name in subdirectories:
+            child = Path(directory) / name
+            if not child.is_symlink():
+                child.chmod(child.lstat().st_mode | owner)
+
+
 def _remove(path: Path) -> None:
     if path.is_symlink() or path.is_file():
         path.unlink()
-    else:
+        return
+    try:
+        shutil.rmtree(path)
+    except PermissionError:
+        _make_owner_removable(path)
         shutil.rmtree(path)
 
 
