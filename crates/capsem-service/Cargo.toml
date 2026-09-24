@@ -16,6 +16,7 @@ capsem-core = { path = "../capsem-core" }
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-guard = { path = "../capsem-guard" }
 capsem-logger = { path = "../capsem-logger" }
+capsem-telemetry = { path = "../capsem-telemetry", features = ["export"] }
 capsem-proto = { path = "../capsem-proto" }
 capsem-router = { path = "../capsem-router" }
 anyhow.workspace = true
@@ -44,6 +45,8 @@ uuid = { version = "1", features = ["v4"] }
 workspace = true
 
 [dev-dependencies]
+opentelemetry = { version = "0.33", default-features = false, features = ["metrics"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["metrics", "testing"] }
 tokio-tungstenite = "0.29.0"
 capsem-config = { path = "../capsem-config" }
 tempfile = "3"

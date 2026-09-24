@@ -24,8 +24,9 @@ use std::time::Duration;
 use metrics::{
     Counter, CounterFn, Gauge, GaugeFn, Histogram, HistogramFn, Key, KeyName, Metadata, Recorder, SharedString, Unit,
 };
-use opentelemetry::metrics::{Meter, MeterProvider as _};
-use opentelemetry::KeyValue;
+use opentelemetry::metrics::MeterProvider as _;
+/// The OpenTelemetry types a caller registering its own instruments needs.
+pub use opentelemetry::{metrics::Meter, KeyValue};
 use opentelemetry_otlp::{WithExportConfig as _, WithHttpConfig as _};
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::Resource;

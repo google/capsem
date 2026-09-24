@@ -768,6 +768,7 @@ mod session_identity;
 mod settings_files;
 mod snapshots_api;
 mod system_contracts;
+mod telemetry_export;
 mod transcript;
 mod update_routes;
 mod vm_info;

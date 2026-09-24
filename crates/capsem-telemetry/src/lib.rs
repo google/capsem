@@ -22,6 +22,7 @@ pub mod dns;
 pub mod export;
 pub mod mitm;
 pub mod security;
+pub mod session;
 pub mod virtio_blk;
 
 /// Which facade macro records a metric.
@@ -71,6 +72,7 @@ pub const DOMAINS: &[(&str, &[MetricSpec])] = &[
     ("dns", dns::SPECS),
     ("mitm", mitm::SPECS),
     ("security", security::SPECS),
+    ("session", session::SPECS),
     ("virtio_blk", virtio_blk::SPECS),
 ];
 

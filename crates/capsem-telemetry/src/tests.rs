@@ -11,6 +11,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("dns", include_str!("dns.rs")),
     ("mitm", include_str!("mitm.rs")),
     ("security", include_str!("security.rs")),
+    ("session", include_str!("session.rs")),
     ("virtio_blk", include_str!("virtio_blk.rs")),
 ];
 
