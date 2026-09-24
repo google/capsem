@@ -119,15 +119,10 @@ pub fn durable_sync_file(file: &File) -> io::Result<()> {
     #[cfg(target_os = "macos")]
     {
         loop {
-            // SAFETY: `file` owns a live descriptor and F_FULLFSYNC does not
-            // retain the integer after this synchronous call.
-            let result = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) };
-            if result == 0 {
-                return Ok(());
-            }
-            let error = io::Error::last_os_error();
-            if error.kind() != io::ErrorKind::Interrupted {
-                return Err(error);
+            match nix::fcntl::fcntl(file.as_raw_fd(), nix::fcntl::FcntlArg::F_FULLFSYNC) {
+                Ok(_) => return Ok(()),
+                Err(nix::errno::Errno::EINTR) => {}
+                Err(error) => return Err(super::errno::io(error)),
             }
         }
     }
