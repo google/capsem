@@ -214,7 +214,8 @@ def test_expose_security_prevents_redis_accept_and_retains_trusted_facts(redis, 
             if facts["source"]["address"] not in denied_peers:
                 continue
             assert event["decision"]["effective"] == ("ask" if policy == "ask" else "block")
-            assert facts["source"]["vm"] is None
+            # The payload is sparse: a host peer has no `vm` rather than a null one.
+            assert facts["source"].get("vm") is None
             assert facts["destination"]["address"] == "127.0.0.1:6379"
             assert facts["destination"]["vm"]["id"] == vm_id
             # An unnamed VM is known by its route id; its list label is the UI's.

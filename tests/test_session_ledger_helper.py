@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _ledger(tmp_path: Path) -> Path:
     db = tmp_path / "session.db"
-    with sqlite3.connect(db) as conn:
+    # `with sqlite3.connect(...)` commits but does not close; `closing` does.
+    with closing(sqlite3.connect(db)) as conn:
         conn.executescript(
             """
             CREATE TABLE security_rule_runs (id INTEGER PRIMARY KEY, rule_json TEXT NOT NULL);
@@ -30,23 +32,22 @@ def _ledger(tmp_path: Path) -> Path:
 
 
 def test_a_repeated_match_reads_its_rule_from_the_run(tmp_path: Path) -> None:
-    conn = open_session_ledger(_ledger(tmp_path))
-    rows = conn.execute("SELECT event_id, rule_json FROM security_rule_events ORDER BY id").fetchall()
+    with closing(open_session_ledger(_ledger(tmp_path))) as conn:
+        rows = conn.execute("SELECT event_id, rule_json FROM security_rule_events ORDER BY id").fetchall()
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(security_rule_events)")}
     assert rows == [("aaaaaaaaaaaa", '{"from":"run"}'), ("bbbbbbbbbbbb", '{"from":"row"}')]
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(security_rule_events)")}
     assert "run_id" not in columns and "rule_json" in columns
 
 
 def test_the_view_is_read_only(tmp_path: Path) -> None:
-    conn = open_session_ledger(_ledger(tmp_path))
-    with pytest.raises(sqlite3.OperationalError):
+    with closing(open_session_ledger(_ledger(tmp_path))) as conn, pytest.raises(sqlite3.OperationalError):
         conn.execute("INSERT INTO main.security_rule_runs VALUES (2, '{}')")
 
 
 def test_a_failed_open_leaves_no_connection_behind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A ledger caught half-created raises, and the connection is closed."""
     db = tmp_path / "session.db"
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn:
         conn.execute("CREATE TABLE security_rule_events (id INTEGER PRIMARY KEY)")
     opened: list[sqlite3.Connection] = []
     real_connect = sqlite3.connect
