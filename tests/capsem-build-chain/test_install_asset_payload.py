@@ -1502,8 +1502,13 @@ def test_host_builder_bootstraps_https_trust_before_ubuntu_package_fetches() -> 
         "/etc/ssl/certs/ca-certificates.crt"
     )
     sources_copy = "COPY sources-multiarch.sh /tmp/"
-    normalized = re.sub(r"\s+", " ", host_builder)
-    first_update = "apt-get update && apt-get install -y --no-install-recommends"
+    normalized = re.sub(r"\s+", " ", host_builder.replace("\\\n", " "))
+    # Each network phase carries its own bound (see the Dockerfile comment on
+    # the snapshot outage that held this layer for 57 minutes).
+    first_update = (
+        "timeout --signal=TERM --kill-after=5s 300s apt-get update "
+        "&& timeout --signal=TERM --kill-after=5s 600s apt-get install -y --no-install-recommends"
+    )
     ubuntu_stage = next(
         line
         for line in host_builder.splitlines()
