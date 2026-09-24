@@ -492,11 +492,13 @@ match = 'file.create.path == "openai-two.txt"'
         .await
         .unwrap()
         .expect("the matched event payload is archived");
-    let payload: serde_json::Value = serde_json::from_slice(&payload.bytes).unwrap();
-    let event_credential_ref = payload
-        .get("credential_ref")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string);
+    assert_eq!(
+        payload.content_type.as_deref(),
+        Some("application/vnd.capsem.security+msgpack")
+    );
+    let event_credential_ref = capsem_proto::forensic::SecurityForensicEvent::decode(&payload.bytes)
+        .unwrap()
+        .credential_ref;
     assert_eq!(trace_id, "trace-model");
     assert_eq!(rule_trace_id, "trace-model");
     assert_eq!(credential_ref, None);
