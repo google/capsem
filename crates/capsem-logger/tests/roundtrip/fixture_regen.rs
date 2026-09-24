@@ -172,7 +172,7 @@ fn pin_replay_clock(source: &Connection) {
     REPLAY_INSTANT_NANOS.store(nanos, Ordering::Relaxed);
 }
 
-fn fixture_path() -> PathBuf {
+pub(super) fn fixture_path() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.pop();
     path.pop();
@@ -713,7 +713,23 @@ fn count_if_table(conn: &Connection, table: &str, sql: &str) -> i64 {
 #[ignore = "rewrites the checked-in fixture; run deliberately, then commit the binary and its sha256"]
 fn regenerate_session_fixture() {
     let fixture = fixture_path();
-    let source = Connection::open_with_flags(&fixture, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+    // Read a private copy, not the checked-in files. Git stores the archive
+    // lock as 0644 and the archive reader rightly refuses any lock that is not
+    // 0600, so reading in place failed on every fresh checkout; it also left
+    // the reader's WAL and shm beside the committed fixture. The copy gets its
+    // own empty lock -- the committed one is empty too -- with the mode the
+    // reader requires.
+    let source_dir = tempfile::tempdir().unwrap();
+    let source_path = source_dir.path().join(fixture.file_name().unwrap());
+    std::fs::copy(&fixture, &source_path).expect("stage the existing fixture");
+    let fixture_bodies = fixture.with_extension("bodies");
+    if fixture_bodies.is_dir() {
+        replace_directory(&fixture_bodies, &source_path.with_extension("bodies"));
+        std::os::unix::fs::OpenOptionsExt::mode(std::fs::OpenOptions::new().write(true).create_new(true), 0o600)
+            .open(archive_lock_path(&source_path))
+            .expect("stage the archive lock");
+    }
+    let source = Connection::open_with_flags(&source_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
         .expect("the existing fixture must be readable");
 
     let staging = tempfile::tempdir().unwrap();
@@ -736,7 +752,7 @@ fn regenerate_session_fixture() {
     let snapshot_events = count_if_table(&source, "snapshot_events", "SELECT COUNT(*) FROM snapshot_events") as usize;
 
     // Bodies come from the archive, not from the display columns beside them.
-    let bodies = archived_bodies(&fixture, &source);
+    let bodies = archived_bodies(&source_path, &source);
     // A flush after each rail is a segment of the open block, as a live
     // session's timed flushes are, so the fixture's archive has the shape the
     // product writes -- several segments, the last one closing the block --
@@ -856,7 +872,6 @@ fn regenerate_session_fixture() {
     // archive nobody committed would be worse than no fixture at all.
     let indexed_bodies = count(&rebuilt_conn, "SELECT COUNT(*) FROM event_body_blobs");
     let rebuilt_bodies = rebuilt.with_extension("bodies");
-    let fixture_bodies = fixture.with_extension("bodies");
     let rebuilt_lock = archive_lock_path(&rebuilt);
     let fixture_lock = archive_lock_path(&fixture);
     println!("indexed bodies: {indexed_bodies}");

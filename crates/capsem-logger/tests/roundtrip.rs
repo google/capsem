@@ -143,6 +143,8 @@ mod event_roundtrips;
 mod file_events;
 #[path = "roundtrip/fixture_regen.rs"]
 mod fixture_regen;
+#[path = "roundtrip/fixture_schema.rs"]
+mod fixture_schema;
 #[path = "roundtrip/mcp_calls.rs"]
 mod mcp_calls;
 #[path = "roundtrip/reader_queries.rs"]
