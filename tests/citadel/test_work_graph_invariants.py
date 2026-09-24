@@ -109,7 +109,9 @@ def test_a_step_that_escapes_the_sandbox_declares_network(graph: WorkGraph) -> N
 #: build script is arbitrary code running with the developer's privileges at
 #: compile time, which is where the 2026-08-20 `arrayref` compromise put its
 #: payload: fetch a binary from a hardcoded address, chmod it, run it.
-_COMPILING = ("cargo build", "cargo clippy", "cargo test", "cargo nextest", "cargo run")
+#: `cargo check` is here because clippy runs as `cargo check` with a keyed
+#: clippy-driver wrapper (gate/clippyrun.py); check also runs build scripts.
+_COMPILING = ("cargo build", "cargo check", "cargo clippy", "cargo test", "cargo nextest", "cargo run")
 
 #: Reads a manifest or an advisory feed and compiles nothing, so escaping the
 #: sandbox costs no build-script execution. Named rather than pattern-matched,

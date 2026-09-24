@@ -1281,6 +1281,10 @@ compiler_cache_command = "sccache"
 compiler_cache_socket_name = "sccache.sock"
 compiler_cache_client_side = true
 compiler_cache_idle_timeout_seconds = 0
+# Clippy's workspace wrapper. Cargo keys workspace artifacts by the wrapper's
+# resolved path; `cargo clippy` forces one shared clippy-driver path, so clippy
+# output in the shared target was reused across checkouts. See clippyrun.py.
+clippy_workspace_wrapper = "build_system/scripts/build/clippy-workspace-wrapper.sh"
 # Run at the start of every command that holds the machine, before its own
 # server starts. The end-of-run orphan check forgives whatever predates the
 # run, so a server that outlived a killed run was forgiven by every run after:

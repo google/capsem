@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from . import toolchain
+from . import clippyrun, toolchain
 from .actions import Run
 from .config import GateConfig
 from .execution import SATURATES, Kind, Needs, Speed, Step, step
@@ -53,14 +53,19 @@ def blocking_surface(config: GateConfig, checks: list[Step]) -> Step:
     return next(candidate for candidate in checks if candidate.label.endswith(wanted))
 
 
+def _keyed_clippy(config: GateConfig, cargo_args: list[str]) -> Run:
+    """`cargo clippy <cargo_args> -- -D warnings`, keyed by this checkout."""
+    argv, environment = clippyrun.invocation(
+        config.toolchain.clippy_workspace_wrapper, cargo_args, ["-D", "warnings"]
+    )
+    return Run(argv, env={**toolchain.ort_environment(config, toolchain.OrtConsumer.FAST), **environment})
+
+
 def clippy(config: GateConfig) -> Step:
     """Run the project-standard all-target Rust lint with warnings denied."""
     return step(
         "clippy",
-        Run(
-            ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
-            env=toolchain.ort_environment(config, toolchain.OrtConsumer.FAST),
-        ),
+        _keyed_clippy(config, ["--workspace", "--all-targets"]),
         contends=(config.exclusive("workspace_binaries"),),
         kind=Kind.COMPILE,
         speed=Speed.FAST,
@@ -77,20 +82,15 @@ def clippy_guest(config: GateConfig) -> Step:
     packages = [part for package in config.initrd.lint_packages for part in ("-p", package)]
     return step(
         "clippy.guest",
-        Run(
+        _keyed_clippy(
+            config,
             [
-                "cargo",
-                "clippy",
                 *packages,
                 "--no-default-features",
                 "--features",
                 ",".join(config.initrd.lint_features),
                 "--all-targets",
-                "--",
-                "-D",
-                "warnings",
             ],
-            env=toolchain.ort_environment(config, toolchain.OrtConsumer.FAST),
         ),
         contends=(config.exclusive("workspace_binaries"),),
         kind=Kind.COMPILE,

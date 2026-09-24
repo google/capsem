@@ -381,7 +381,7 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
             "ty check --project build_system --error-on-warning --python-platform all "
             "build_system/builder"
         ),
-        "cargo clippy --workspace --all-targets -- -D warnings",
+        "clippy-workspace-wrapper.sh\"' --workspace --all-targets",
         "check-web-surface.sh frontend",
         "check-web-surface.sh release-site",
     ):
@@ -442,7 +442,7 @@ def test_modules_retain_complete_named_quality_gates() -> None:
     for required in (
         "build_system/scripts/audit/check-cargo-audit.py",
         "build_system/scripts/audit/audit-dependencies.py",
-        "cargo clippy --workspace --all-targets -- -D warnings",
+        "clippy-workspace-wrapper.sh\"' --workspace --all-targets",
         "bash build_system/scripts/web/check-web-surface.sh frontend",
         "cargo llvm-cov nextest --workspace --bins --lib --tests",
         "cargo test --workspace --doc",
@@ -634,7 +634,7 @@ def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     assert "fast.web.frontend-build" in _prerequisites(fast_plan, "fast.clippy")
 
     assert "build the network-denied install qualification image" in static
-    assert "cargo clippy" not in static, "the lint gate belongs to the fast module"
+    assert "clippy-workspace-wrapper.sh" not in static, "the lint gate belongs to the fast module"
 
 
 def test_static_module_audits_locked_python_and_node_graphs_fail_closed() -> None:

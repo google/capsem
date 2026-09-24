@@ -921,7 +921,7 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     assert "python.ty.strict" in labels
     for command in [
         "uv run --project build_system --frozen capsem-builder validate-skills skills",
-        "cargo clippy --workspace --all-targets -- -D warnings",
+        "clippy-workspace-wrapper.sh\"' --workspace --all-targets",
         "bash build_system/scripts/web/check-web-surface.sh frontend",
         "bash build_system/scripts/web/check-web-surface.sh docs",
         "bash build_system/scripts/web/check-web-surface.sh site",
@@ -950,7 +950,7 @@ def test_both_release_lanes_reuse_fail_closed_static_module() -> None:
     )
     assert "run: just test" not in binary_workflow
     assert "run: just test" not in profile_workflow
-    assert "cargo clippy --workspace --all-targets -- -D warnings" in _gate_issues()
+    assert "clippy-workspace-wrapper.sh\"' --workspace --all-targets" in _gate_issues()
 
 
 def test_frontend_release_gate_is_owned_by_the_canonical_test() -> None:
