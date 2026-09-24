@@ -13,38 +13,43 @@ ORDER BY id DESC
 LIMIT 200
 "#;
 
-const STATS_DETAIL_TOOL_EVENTS_SQL: &str = r#"
-SELECT event_id, timestamp, process_name, server_name, tool_name, method, call_id,
-       model_call_id, model_parent_missing,
-       decision, duration_ms, bytes, arguments, response_preview,
-       error_message, source, credential_ref
-FROM (
-    SELECT tc.event_id,
-           COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) AS timestamp,
-           tc.process_name,
-           COALESCE(tc.server_name, 'model') AS server_name,
-           tc.tool_name,
-           tc.method,
-           tc.call_id,
-           tc.model_call_id,
-           CASE
-               WHEN tc.model_call_id IS NOT NULL AND mc.id IS NULL THEN 1
-               ELSE 0
-           END AS model_parent_missing,
-           tc.decision,
-           COALESCE(tc.duration_ms, mc.duration_ms, 0) AS duration_ms,
-           COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) AS bytes,
-           tc.arguments,
-           COALESCE(tc.response_preview, tr.content_preview) AS response_preview,
-           tc.error_message,
-           tc.origin AS source,
-           COALESCE(tc.credential_ref, tr.credential_ref) AS credential_ref
-    FROM tool_calls tc
-    LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
-    LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
-    WHERE tc.origin IN ('model', 'native', 'mcp', 'builtin', 'local', 'mcp_proxy')
-)
-ORDER BY timestamp DESC
+/// The newest 200 listed tool calls, newest first, with their model call and
+/// response joined on.
+///
+/// `tool_calls` drives the joins in a reverse rowid walk that stops at 200
+/// rows, each probing its model call by rowid and its response by
+/// `idx_tool_responses_call_id`. `NOT INDEXED` keeps the planner off
+/// `idx_tool_calls_origin`, which it would otherwise pick for the `IN` list and
+/// then sort every tool row of the session back into id order to find the
+/// newest -- a cost that grows with the ledger on every stats poll.
+/// Insertion order is newest first; a timestamp is not, since a call recorded
+/// without one borrows its model call's.
+pub(crate) const STATS_DETAIL_TOOL_EVENTS_SQL: &str = r#"
+SELECT tc.event_id,
+       COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) AS timestamp,
+       tc.process_name,
+       COALESCE(tc.server_name, 'model') AS server_name,
+       tc.tool_name,
+       tc.method,
+       tc.call_id,
+       tc.model_call_id,
+       CASE
+           WHEN tc.model_call_id IS NOT NULL AND mc.id IS NULL THEN 1
+           ELSE 0
+       END AS model_parent_missing,
+       tc.decision,
+       COALESCE(tc.duration_ms, mc.duration_ms, 0) AS duration_ms,
+       COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) AS bytes,
+       tc.arguments,
+       COALESCE(tc.response_preview, tr.content_preview) AS response_preview,
+       tc.error_message,
+       tc.origin AS source,
+       COALESCE(tc.credential_ref, tr.credential_ref) AS credential_ref
+FROM tool_calls AS tc NOT INDEXED
+LEFT JOIN model_calls mc ON tc.model_call_id = mc.id
+LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id
+WHERE tc.origin IN ('model', 'native', 'mcp', 'builtin', 'local', 'mcp_proxy')
+ORDER BY tc.id DESC
 LIMIT 200
 "#;
 

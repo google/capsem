@@ -4,11 +4,12 @@ pub(crate) mod bodies;
 pub(super) use bodies::{handle_bodies_warc_export, handle_event_bodies};
 mod response_cache;
 pub(crate) use response_cache::{forget_session_responses, session_response_cache_lookup, SessionResponseCache};
-mod stats_detail;
+pub(crate) mod stats_detail;
 pub(super) use stats_detail::read_stats_detail_payload_from_session_db;
 mod global_stats;
 pub(super) use global_stats::read_stats_response_from_main_db_handle;
-mod timeline;
+pub(crate) mod history;
+pub(crate) mod timeline;
 pub(super) use timeline::handle_timeline;
 mod vm_info;
 pub(super) use vm_info::populate_vm_info;
@@ -194,7 +195,8 @@ pub(super) async fn open_ready_session_db(
                 .parent()
                 .ok_or_else(|| ledger_route_error(vm_id, ledger, "resolve session dir", db_path, "missing parent"))?;
             state
-                .register_session_db_handle(vm_id, session_dir)
+                .register_session_db_handle_async(vm_id, session_dir)
+                .await
                 .map_err(|error| ledger_route_error(vm_id, ledger, "open", db_path, error))?
         }
         None => {
@@ -202,7 +204,8 @@ pub(super) async fn open_ready_session_db(
                 .parent()
                 .ok_or_else(|| ledger_route_error(vm_id, ledger, "resolve session dir", db_path, "missing parent"))?;
             let handle = state
-                .register_session_db_handle(vm_id, session_dir)
+                .register_session_db_handle_async(vm_id, session_dir)
+                .await
                 .map_err(|error| ledger_route_error(vm_id, ledger, "open", db_path, error))?;
             info!(
                 vm_id,
@@ -360,112 +363,6 @@ pub(super) fn main_ledger_route_error(
         StatusCode::INTERNAL_SERVER_ERROR,
         format!("failed to {operation} {ledger} main ledger: {error}"),
     )
-}
-
-#[derive(Clone, Debug, Default)]
-pub(super) struct HistorySessionLedger {
-    pub(super) entries: Vec<api::HistoryEntry>,
-}
-
-const HISTORY_ENTRIES_SQL: &str = r#"
-SELECT timestamp, 'exec' AS layer, command, exit_code, duration_ms,
-       stdout_preview, stderr_preview,
-       json_object(
-           'source', source,
-           'trace_id', trace_id,
-           'process_name', process_name,
-           'exec_id', exec_id
-       ) AS details
-FROM exec_events
-UNION ALL
-SELECT timestamp, 'audit' AS layer, argv AS command, exit_code, NULL AS duration_ms,
-       NULL AS stdout_preview, NULL AS stderr_preview,
-       json_object(
-           'pid', pid,
-           'ppid', ppid,
-           'uid', uid,
-           'exe', exe,
-           'comm', comm,
-           'cwd', cwd,
-           'tty', tty,
-           'session_id', session_id,
-           'audit_id', audit_id,
-           'parent_exe', parent_exe
-       ) AS details
-FROM audit_events
-ORDER BY timestamp DESC
-"#;
-
-pub(super) async fn read_history_session_ledger(
-    state: &ServiceState,
-    vm_id: &str,
-    db_path: &StdPath,
-) -> Result<Option<HistorySessionLedger>, AppError> {
-    let db = open_ready_session_db(state, vm_id, "history", db_path).await?;
-    let rows = query_route_objects(vm_id, "history", "entries", db_path, &db, HISTORY_ENTRIES_SQL, &[]).await?;
-    let entries = rows
-        .into_iter()
-        .map(|mut row| {
-            let details = row
-                .get_mut("details")
-                .ok_or_else(|| ledger_route_error(vm_id, "history", "entry details", db_path, "missing details"))?;
-            if let serde_json::Value::String(text) = details {
-                *details = serde_json::from_str(text)
-                    .map_err(|error| ledger_route_error(vm_id, "history", "parse entry details", db_path, error))?;
-            }
-            serde_json::from_value::<api::HistoryEntry>(row)
-                .map_err(|error| ledger_route_error(vm_id, "history", "decode entry", db_path, error))
-        })
-        .collect::<Result<Vec<_>, AppError>>()?;
-    Ok(Some(HistorySessionLedger { entries }))
-}
-
-pub(super) async fn history_ledger_for_vm(state: &ServiceState, id: &str) -> Result<HistorySessionLedger, AppError> {
-    let session_dir = resolve_session_dir(state, id)?;
-    Ok(read_history_session_ledger(state, id, &session_dir.join("session.db"))
-        .await?
-        .unwrap_or_default())
-}
-
-pub(super) fn history_entry_matches_search(entry: &api::HistoryEntry, query: &str) -> bool {
-    entry.command.contains(query)
-        || entry
-            .stdout_preview
-            .as_deref()
-            .is_some_and(|value| value.contains(query))
-        || entry
-            .stderr_preview
-            .as_deref()
-            .is_some_and(|value| value.contains(query))
-        || serde_json::to_string(&entry.details).is_ok_and(|details| details.contains(query))
-}
-
-pub(super) fn query_history_ledger(session: &HistorySessionLedger, params: &api::HistoryQuery) -> api::HistoryResponse {
-    let mut entries = session
-        .entries
-        .iter()
-        .filter(|entry| params.layer.includes(entry.layer))
-        .filter(|entry| {
-            params
-                .search
-                .as_deref()
-                .is_none_or(|query| history_entry_matches_search(entry, query))
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    entries.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
-    let total = entries.len() as u64;
-    let commands = entries
-        .into_iter()
-        .skip(params.offset)
-        .take(params.limit.min(2000))
-        .collect::<Vec<_>>();
-    let has_more = params.offset.saturating_add(commands.len()) < total as usize;
-    api::HistoryResponse {
-        commands,
-        total,
-        has_more,
-    }
 }
 
 pub(super) fn hydrate_startup_route_caches(state: &ServiceState) -> Result<(), AppError> {

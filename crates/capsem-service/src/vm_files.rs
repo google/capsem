@@ -13,9 +13,9 @@ mod storage;
 pub(crate) use storage::storage_diagnostics;
 mod fork;
 mod ipc_command;
-#[cfg(test)]
-pub(crate) use diagnostics::session_db_triage;
 pub(crate) use diagnostics::{handle_host_logs, handle_logs, handle_panics, handle_service_logs, handle_triage};
+#[cfg(test)]
+pub(crate) use diagnostics::{session_db_triage, session_triage_statements};
 pub(crate) use fork::handle_fork;
 pub(super) use ipc_command::send_ipc_command;
 

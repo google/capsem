@@ -23,7 +23,7 @@ pub fn parse_since(s: &str) -> Option<SystemTime> {
         return None;
     }
     if let Some(d) = parse_duration_suffix(s) {
-        return Some(SystemTime::now() - d);
+        return SystemTime::now().checked_sub(d);
     }
     parse_rfc3339_seconds(s).map(|secs| SystemTime::UNIX_EPOCH + Duration::from_secs(secs))
 }
@@ -34,14 +34,14 @@ fn parse_duration_suffix(s: &str) -> Option<Duration> {
     }
     let (num, unit) = s.split_at(s.len() - 1);
     let n: u64 = num.parse().ok()?;
-    let secs = match unit {
-        "s" => n,
-        "m" => n * 60,
-        "h" => n * 3600,
-        "d" => n * 86400,
+    let unit_secs = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86400,
         _ => return None,
     };
-    Some(Duration::from_secs(secs))
+    n.checked_mul(unit_secs).map(Duration::from_secs)
 }
 
 /// Best-effort RFC3339-seconds parser: `2026-05-02T17:30:00Z` ->
@@ -57,7 +57,11 @@ fn parse_rfc3339_seconds(s: &str) -> Option<u64> {
     let h: u32 = s.get(11..13)?.parse().ok()?;
     let mi: u32 = s.get(14..16)?.parse().ok()?;
     let se: u32 = s.get(17..19)?.parse().ok()?;
-    Some(civil_to_secs(y, mo, d, h, mi, se))
+    // `civil_to_secs` counts forward from the epoch in unsigned arithmetic;
+    // a field out of range would underflow it.
+    let in_range =
+        (1970..=9999).contains(&y) && (1..=12).contains(&mo) && (1..=31).contains(&d) && h < 24 && mi < 60 && se <= 60;
+    in_range.then(|| civil_to_secs(y, mo, d, h, mi, se))
 }
 
 fn civil_to_secs(y: i64, m: u32, d: u32, h: u32, mi: u32, s: u32) -> u64 {

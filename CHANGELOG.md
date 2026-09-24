@@ -131,6 +131,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `GET /vms/{id}/timeline?since=...` returns recent events on long sessions.
+  It used to read only the oldest 10,000 events of the whole ledger and
+  filter them afterwards, so a recent `since` on a busy session came back
+  empty, and events in the cutoff's own second were dropped. Each layer now
+  reads its own indexed window from the cutoff (google/capsem#223).
+
+- `GET /vms/{id}/history` reports a correct `total` and pages past 10,000
+  rows. It used to load every exec and audit row and page them in memory,
+  silently stopping at the reader's 10,000-row cap. Paging, layer and search
+  now run in SQL, and the unfiltered total comes from the session's counters
+  (google/capsem#223).
+
+- The diagnostics triage lists the newest tool errors first even when one
+  has no recorded time, and `/stats` tool events no longer sort every tool
+  call in the session to show the latest 200 (google/capsem#223).
+
+- A `since` value too large or out of range (`99999999999999999d`,
+  `0000-01-01T00:00:00Z`, a month of `00`) is refused by `/timeline`,
+  `/triage` and `/panics` instead of overflowing into a garbage cutoff.
+
 - `GET /stats` top providers, tools and MCP tools are no longer always empty:
   a session's stop now records its per-provider, per-tool and per-MCP-tool
   usage in `main.db`, copied from its counter snapshot. Its `total_tool_calls`

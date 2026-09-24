@@ -113,8 +113,7 @@ pub(super) async fn handle_history(
     Path(id): Path<String>,
     Query(params): Query<api::HistoryQuery>,
 ) -> Result<Json<api::HistoryResponse>, AppError> {
-    let session = history_ledger_for_vm(&state, &id).await?;
-    Ok(Json(query_history_ledger(&session, &params)))
+    Ok(Json(ledger_routes::history::history_page(&state, &id, &params).await?))
 }
 
 /// GET /vms/{id}/history/processes -- process-centric view of audit events.

@@ -4,6 +4,8 @@ mod bodies;
 mod bodies_export;
 mod counts;
 mod freshness;
+mod history;
+mod timeline;
 
 #[tokio::test]
 async fn security_routes_read_security_ledger_from_session_db() {

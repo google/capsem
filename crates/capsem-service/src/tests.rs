@@ -764,6 +764,7 @@ mod persist_purge;
 mod profile_mutations;
 mod profile_routes;
 mod restart;
+mod route_query_plans;
 mod session_identity;
 mod settings_files;
 mod snapshots_api;
