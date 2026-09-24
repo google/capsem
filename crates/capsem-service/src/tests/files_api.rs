@@ -433,6 +433,25 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
     );
 }
 
+/// The guest can rewrite its share: replacing `workspace` with a link to a host
+/// directory must not point the files API at that directory.
+#[test]
+fn a_guest_linked_workspace_is_refused_not_followed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (state, _dir2) = make_test_state_with_tempdir();
+    setup_vm_with_workspace(&state, dir.path(), "linked-vm");
+    let host = dir.path().join("host-home");
+    std::fs::create_dir(&host).unwrap();
+    std::fs::write(host.join("id_ed25519"), b"host secret").unwrap();
+    let ws = dir.path().join("session/guest/workspace");
+    std::fs::remove_dir_all(&ws).unwrap();
+    std::os::unix::fs::symlink(&host, &ws).unwrap();
+
+    assert!(resolve_workspace_target(&state, "linked-vm", "id_ed25519", false).is_err());
+    assert!(resolve_workspace_target(&state, "linked-vm", "planted.txt", false).is_err());
+    assert_eq!(std::fs::read(host.join("id_ed25519")).unwrap(), b"host secret");
+}
+
 #[test]
 fn download_reads_correct_bytes() {
     let dir = tempfile::tempdir().unwrap();

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use super::*;
 use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSource};
 
@@ -53,8 +55,7 @@ fn monitor_over_new_workspace(dir: &std::path::Path) -> (PathBuf, PathBuf, Arc<D
     let db_path = dir.join("session.db");
     let db = Arc::new(DbWriter::open(&db_path, 64).unwrap());
     let monitor = FsMonitor::start(
-        workspace.clone(),
-        workspace.clone(),
+        ContainedDir::open_root(&workspace).unwrap(),
         Arc::clone(&db),
         empty_security_rules(),
         empty_trace_state(),
@@ -131,8 +132,7 @@ fn mkdir_and_rmdir_are_recorded_as_dir_events() {
     // removal resolves its kind from that snapshot rather than from a path
     // that no longer exists.
     let monitor = FsMonitor::start(
-        workspace.clone(),
-        workspace.clone(),
+        ContainedDir::open_root(&workspace).unwrap(),
         Arc::clone(&db),
         empty_security_rules(),
         empty_trace_state(),
@@ -240,9 +240,9 @@ fn the_overflow_marker_names_no_path_and_counts_what_it_stands_for() {
 #[test]
 fn reconciliation_between_scans_carries_kind_and_size_from_the_walk() {
     let root = tempfile::tempdir().unwrap();
-    let before = workspace_snapshot(root.path(), root.path());
+    let before = workspace_snapshot(&ContainedDir::open_root(root.path()).unwrap());
     std::fs::write(root.path().join("late.txt"), "late write").unwrap();
-    let after = workspace_snapshot(root.path(), root.path());
+    let after = workspace_snapshot(&ContainedDir::open_root(root.path()).unwrap());
 
     let events = reconciliation_events(&before, &after);
     assert_eq!(
@@ -263,9 +263,9 @@ fn a_symlink_is_recorded_as_a_symlink_with_no_size() {
     let root = tempfile::tempdir().unwrap();
     let target = root.path().join("big.bin");
     std::fs::write(&target, vec![0u8; 1024 * 1024]).unwrap();
-    let before = workspace_snapshot(root.path(), root.path());
+    let before = workspace_snapshot(&ContainedDir::open_root(root.path()).unwrap());
     std::os::unix::fs::symlink(&target, root.path().join("link")).unwrap();
-    let after = workspace_snapshot(root.path(), root.path());
+    let after = workspace_snapshot(&ContainedDir::open_root(root.path()).unwrap());
 
     let events = reconciliation_events(&before, &after);
     assert_eq!(
@@ -298,8 +298,7 @@ match = 'file.create.path == "late.txt"'
     .unwrap();
     let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
     let monitor = FsMonitor::start(
-        workspace.clone(),
-        workspace.clone(),
+        ContainedDir::open_root(&workspace).unwrap(),
         Arc::clone(&db),
         Arc::new(std::sync::RwLock::new(Arc::new(rules))),
         empty_trace_state(),
@@ -344,7 +343,7 @@ async fn emit_brokers_env_credentials_and_persists_reference() {
             db: &db,
             security_rules: &empty_security_rules(),
             trace_state: &empty_trace_state(),
-            strip_prefix: dir.path(),
+            workspace: &ContainedDir::open_root(dir.path()).unwrap(),
         },
         &env_event(".env", FileKind::File),
     )
@@ -396,7 +395,7 @@ match = 'file.create.name == "skill.md" && file.create.ext == "md"'
             db: &db,
             security_rules: &security_rules,
             trace_state: &empty_trace_state(),
-            strip_prefix: dir.path(),
+            workspace: &ContainedDir::open_root(dir.path()).unwrap(),
         },
         &QueuedEvent {
             path: "skill.md".to_string(),
@@ -451,7 +450,7 @@ match = 'file.create.path == "openai-two.txt"'
             db: &db,
             security_rules: &security_rules,
             trace_state: &trace_state,
-            strip_prefix: dir.path(),
+            workspace: &ContainedDir::open_root(dir.path()).unwrap(),
         },
         &QueuedEvent {
             path: "openai-two.txt".to_string(),
@@ -530,7 +529,7 @@ match = 'file.write.path == "blocked.txt"'
             db: &db,
             security_rules: &security_rules,
             trace_state: &empty_trace_state(),
-            strip_prefix: dir.path(),
+            workspace: &ContainedDir::open_root(dir.path()).unwrap(),
         },
         &QueuedEvent {
             path: "blocked.txt".to_string(),
@@ -598,7 +597,7 @@ async fn env_symlink_to_a_host_secret_is_never_read_or_brokered() {
             db: &db,
             security_rules: &empty_security_rules(),
             trace_state: &empty_trace_state(),
-            strip_prefix: dir.path(),
+            workspace: &ContainedDir::open_root(dir.path()).unwrap(),
         },
         // The scan's own lstat says symlink; the broker must refuse on that
         // alone, and the O_NOFOLLOW open must refuse it again.
@@ -643,7 +642,7 @@ async fn env_symlink_is_refused_by_the_open_even_if_it_claims_to_be_a_file() {
             db: &db,
             security_rules: &empty_security_rules(),
             trace_state: &empty_trace_state(),
-            strip_prefix: dir.path(),
+            workspace: &ContainedDir::open_root(dir.path()).unwrap(),
         },
         &env_event(".env", FileKind::File),
     )
@@ -723,11 +722,11 @@ fn an_in_place_rewrite_with_a_restored_mtime_is_still_a_modification() {
     let path = root.path().join("payload.bin");
     std::fs::write(&path, b"aaaaa").unwrap();
     pin_mtime(&path);
-    let before = workspace_snapshot(root.path(), root.path());
+    let before = workspace_snapshot(&ContainedDir::open_root(root.path()).unwrap());
 
     std::fs::write(&path, b"bbbbb").unwrap();
     pin_mtime(&path);
-    let after = workspace_snapshot(root.path(), root.path());
+    let after = workspace_snapshot(&ContainedDir::open_root(root.path()).unwrap());
 
     assert_eq!(
         before["payload.bin"].modified, after["payload.bin"].modified,
@@ -750,7 +749,7 @@ fn a_symlink_to_a_directory_is_not_descended() {
     std::fs::write(elsewhere.path().join("child.txt"), "not ours").unwrap();
     std::os::unix::fs::symlink(elsewhere.path(), root.path().join("link")).unwrap();
 
-    let snapshot = workspace_snapshot(root.path(), root.path());
+    let snapshot = workspace_snapshot(&ContainedDir::open_root(root.path()).unwrap());
 
     assert_eq!(snapshot["link"].kind, FileKind::Symlink);
     assert_eq!(
@@ -778,8 +777,7 @@ async fn overflow_defers_events_to_the_next_scan_and_records_a_marker() {
     let scan = tokio::spawn(FsMonitor::scan_loop(
         shutdown_rx,
         ScanConfig {
-            watch_dir: workspace.clone(),
-            strip_prefix: workspace.clone(),
+            workspace: ContainedDir::open_root(&workspace).unwrap(),
             interval: Duration::from_millis(20),
             max_batch: 2,
         },
@@ -842,4 +840,51 @@ async fn overflow_defers_events_to_the_next_scan_and_records_a_marker() {
         )
         .unwrap();
     assert_eq!(marker_paths, 0, "an overflow marker names no path");
+}
+
+/// The workspace is an entry of the guest's share. A guest that moves it aside
+/// and puts a link to a host directory in its place must not get that
+/// directory walked into the ledger, or its `.env` read by the broker: the
+/// monitor keeps the descriptor it opened, so it goes on watching the real
+/// workspace wherever the guest moved it.
+#[tokio::test]
+async fn a_workspace_swapped_for_a_host_link_is_never_walked_or_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let share = dir.path().join("guest");
+    let workspace = share.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(workspace.join("mine.txt"), b"guest").unwrap();
+    let host = dir.path().join("host-project");
+    std::fs::create_dir(&host).unwrap();
+    std::fs::write(host.join(".env"), "OPENAI_API_KEY=sk-host-secret\n").unwrap();
+    std::fs::write(host.join("host-only.txt"), b"host").unwrap();
+    let held = crate::session::open_workspace(dir.path()).unwrap();
+
+    std::fs::rename(&workspace, share.join("moved")).unwrap();
+    std::os::unix::fs::symlink(&host, &workspace).unwrap();
+
+    let snapshot = workspace_snapshot(&held);
+    assert_eq!(snapshot.keys().collect::<Vec<_>>(), vec!["mine.txt"]);
+    assert!(
+        crate::session::open_workspace(dir.path()).is_err(),
+        "a fresh open refuses the link"
+    );
+
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let db = DbWriter::open(&dir.path().join("session.db"), 64).unwrap();
+    let brokered = FsMonitor::broker_env_file_credentials(
+        &EmitContext {
+            db: &db,
+            security_rules: &empty_security_rules(),
+            trace_state: &empty_trace_state(),
+            workspace: &held,
+        },
+        &SecurityRuleSet::new(Vec::new()),
+        &env_event(".env", FileKind::File),
+    )
+    .await;
+    db.shutdown_blocking();
+    assert!(brokered.is_none(), "the host .env was read through the swapped link");
 }

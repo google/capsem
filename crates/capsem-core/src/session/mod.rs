@@ -3,6 +3,7 @@
 mod clone;
 mod maintenance;
 mod overlay;
+mod workspace;
 
 #[cfg(test)]
 mod tests;
@@ -17,6 +18,7 @@ pub use overlay::{
     adopt_system_overlay, open_system_overlay, system_overlay_image_path, system_overlay_metadata, SYSTEM_OVERLAY_DIR,
     SYSTEM_OVERLAY_IMAGE,
 };
+pub use workspace::{open_workspace, WORKSPACE_DIR};
 
 /// Distil a captured `process.log`/`serial.log` tail down to the one line
 /// worth putting in front of a human.

@@ -16,9 +16,8 @@ use capsem_foundation::unix::tree_clone::{self, CloneStats};
 use tracing::info;
 
 use super::overlay::{adopt_system_overlay, SYSTEM_OVERLAY_DIR, SYSTEM_OVERLAY_IMAGE};
+use super::workspace::WORKSPACE_DIR;
 use crate::GUEST_SHARE_DIR;
-
-const WORKSPACE_DIR: &str = "workspace";
 
 /// Clone a sandbox's `system/` overlay, `guest/workspace` and session ledger
 /// from `src_session_dir` into the existing, empty `dst_session_dir`, and

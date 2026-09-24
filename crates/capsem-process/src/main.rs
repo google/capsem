@@ -461,14 +461,17 @@ async fn run_async_main_loop(
     let model_trace_state = Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new()));
 
     // Start host file monitor to record fs_events.
-    let workspace_dir = capsem_core::guest_share_dir(&session_dir).join("workspace");
-    match capsem_core::fs_monitor::FsMonitor::start(
-        workspace_dir.clone(),
-        workspace_dir.clone(),
-        Arc::clone(&db),
-        Arc::clone(&security_rules),
-        Arc::clone(&model_trace_state),
-    ) {
+    // Opened once, by descriptor: the guest can swap its workspace for a host link.
+    match capsem_core::session::open_workspace(&session_dir)
+        .map_err(anyhow::Error::from)
+        .and_then(|workspace| {
+            capsem_core::fs_monitor::FsMonitor::start(
+                workspace,
+                Arc::clone(&db),
+                Arc::clone(&security_rules),
+                Arc::clone(&model_trace_state),
+            )
+        }) {
         Ok(monitor) => {
             info!("host file monitor started");
             shutdown.lock().await.fs_monitor = Some(monitor);

@@ -50,6 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seen in bodies, so a key sent in `x-api-key` could be stored verbatim in an
   echoed header or body (google/capsem#229, #218).
 
+- A guest can no longer point the host at a host directory by replacing its
+  workspace with a symlink. The files API opened the workspace by path, so a
+  root guest that swapped it for a link could list, download and upload files
+  in any directory the service user can reach; the file monitor walked the
+  linked tree into the session ledger and parsed its `.env` files into the
+  credential broker; and `capsem doctor --bundle` copied whatever a planted
+  `doctor-bundle.tar` link named. All three now reach the share through
+  descriptors opened from the host-owned session directory and refuse links.
+
 - A guest can no longer get a host file attached as its disk. The system
   overlay image (`rootfs.img`) lived inside the read-write VirtioFS share, and
   the host attaches it to the VM by path, so a root guest could mount the

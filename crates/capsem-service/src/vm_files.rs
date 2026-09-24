@@ -405,11 +405,11 @@ use capsem_service::fs_utils::{resolve_dir_path, FilePath};
 /// Open the workspace root of sandbox `id` as a containment handle.
 pub(super) fn workspace_root(state: &ServiceState, id: &str) -> Result<ContainedDir, AppError> {
     let session_dir = resolve_session_dir(state, id)?;
-    let root = capsem_core::guest_share_dir(&session_dir).join("workspace");
-    ContainedDir::open_root(&root).map_err(|e| {
+    // Never by path: the guest can replace its workspace with a host link.
+    capsem_core::session::open_workspace(&session_dir).map_err(|e| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("open workspace {}: {e}", root.display()),
+            format!("open workspace of {}: {e}", session_dir.display()),
         )
     })
 }
