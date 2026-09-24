@@ -11,9 +11,7 @@ from .phase import Phase
 from .plan import Plan
 
 
-def _build_step(
-    config: GateConfig, *, label: str = "build-binaries", env: dict[str, str] | None = None
-) -> Step:
+def _build_step(config: GateConfig, *, label: str = "build-binaries") -> Step:
     """Build exactly the binaries the signing step owns.
 
     They once had no producer: signing rewrote whatever an earlier build left
@@ -27,7 +25,6 @@ def _build_step(
         label,
         Run(
             ["cargo", "build", *selected],
-            env=env,
             timeout_seconds=settings.build_timeout_seconds,
         ),
         contends=(config.exclusive("workspace_binaries"),),
@@ -63,7 +60,6 @@ def add(
     *,
     after: tuple[Step, ...] = (),
     label: str = "build-binaries",
-    env: dict[str, str] | None = None,
     cache_already_enforced: bool = False,
 ) -> Step:
     """Add the one host build path, with visible cache enforcement first.
@@ -77,4 +73,4 @@ def add(
     if not cache_already_enforced:
         bounded = owner.add(_cargo_cache_step(config), after=after)
         dependencies = (bounded,)
-    return owner.add(_build_step(config, label=label, env=env), after=dependencies)
+    return owner.add(_build_step(config, label=label), after=dependencies)

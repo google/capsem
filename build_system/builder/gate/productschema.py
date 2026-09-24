@@ -247,7 +247,6 @@ class PackageBuilderConfig(Strict):
     pnpm_store: str
     apt_lists_cache_id: SafeToken
     apt_archives_cache_id: SafeToken
-    ort_lib_location: str
 
 
 class PackageConfig(Strict):

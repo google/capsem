@@ -5062,12 +5062,6 @@ def test_rust_http_stack_uses_webpki_roots_not_platform_keychain_verifier() -> N
     assert "rustls-tls-webpki-roots" in reqwest_line
     assert '"rustls"' not in reqwest_line
 
-    service_manifest = (PROJECT_ROOT / "crates" / "capsem-service" / "Cargo.toml").read_text()
-    ort_line = next(line for line in service_manifest.splitlines() if line.startswith("ort = "))
-    assert "default-features = false" in ort_line
-    assert '"tls-rustls"' in ort_line
-    assert '"tls-native"' not in ort_line
-
     for package in ["rustls-platform-verifier", "native-tls", "security-framework"]:
         result = subprocess.run(
             ["cargo", "tree", "-i", package, "--workspace", "--edges", "all"],
@@ -5376,8 +5370,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
 
     # And the property none of the originals asserted, because it was not true:
     # the lane runs with no outbound network, which is what proved the mid-run
-    # `pnpm install` and the `cdn.pyke.io` fetch inside `ort`'s build script
-    # were there at all.
+    # `pnpm install` and a build script's CDN fetch were there at all.
     assert "--network none" in linux_rust_gate
 
     # `nextest` moved out of the argv with the mount that bound its state; the

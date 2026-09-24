@@ -91,7 +91,6 @@ def test_build_script_boundaries_are_thin_image_owned_launchers() -> None:
         "clean_stale.py": "clean_stale",
         "create_hash_assets.py": "create_hash_assets",
         "gen_manifest.py": "gen_manifest",
-        "materialize-package-ort.py": "materialize_package_ort",
         "print-gate-digest.py": "print_gate_digest",
         "prune-benchmark-history.py": "prune_benchmark_history",
         "resolve-reusable-profile-assets.py": "resolve_reusable_profile_assets",

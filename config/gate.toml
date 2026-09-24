@@ -607,7 +607,6 @@ identity_inputs = [
     "build_system/docker/Dockerfile.package-builder",
     "build_system/scripts/build/rustc-workspace-wrapper.sh",
     "build_system/docker/swap-dev-libs.sh",
-    "build_system/builder/image/tools/build/materialize_package_ort.py",
 ]
 identity_globs = ["crates/*/Cargo.toml"]
 # BuildKit and containers have different network vocabularies. `default` is
@@ -620,7 +619,6 @@ cargo_store = "/opt/capsem/package-cargo"
 pnpm_store = "/opt/capsem/package-pnpm"
 apt_lists_cache_id = "capsem-package-apt-lists"
 apt_archives_cache_id = "capsem-package-apt-archives"
-ort_lib_location = "/opt/capsem/onnxruntime"
 
 # Installing the exact package into a clean systemd container and proving it
 # works: every binary present and reporting the package's own version, the
@@ -905,7 +903,7 @@ unused-type-ignore-comment = 3
 # policy change. This is historical debt, not capacity: every value may shrink
 # and no value may grow.
 [lint.suppression_budget]
-noqa = 227
+noqa = 225
 type_ignore = 22
 ty_ignore = 5
 ruff_global_ignore = 1
@@ -1304,35 +1302,6 @@ rust_targets = [
 # rust-lld comes from here.
 rust_components = ["llvm-tools"]
 
-# ort-sys has a networked build script even after Cargo has fetched every
-# locked crate. Resolve its static library once through the named egress edge,
-# then point Clippy, coverage and the package helper at the same verified
-# bytes. Host selection is data: Linux and Apple Silicon use different
-# archives, while both Linux package targets share this authority.
-[toolchain.ort]
-script = "build_system/scripts/build/materialize-package-ort.py"
-archive_cache_template = "~/.cache/capsem/ort/archive-{sha256}.tar.lzma2"
-output_template = "cache/target/toolchain/ort/{consumer}-{target}-{sha256}"
-strategy_variable = "ORT_STRATEGY"
-location_variable = "ORT_LIB_LOCATION"
-strategy = "system"
-
-[toolchain.ort.host_targets]
-Linux = { arm64 = "aarch64-unknown-linux-gnu", x86_64 = "x86_64-unknown-linux-gnu" }
-Darwin = { arm64 = "aarch64-apple-darwin" }
-
-[toolchain.ort.distributions.aarch64-unknown-linux-gnu]
-url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/aarch64-unknown-linux-gnu.tar.lzma2"
-sha256 = "c25248c32d84f228b9d584b84b31e1577e4810d46beb5e304e9fa340c000176c"
-
-[toolchain.ort.distributions.x86_64-unknown-linux-gnu]
-url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/x86_64-unknown-linux-gnu.tar.lzma2"
-sha256 = "8c57d059aaaee407812a5698d6706c79e090ad69e1a14204309e802dcbbaa35f"
-
-[toolchain.ort.distributions.aarch64-apple-darwin]
-url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/aarch64-apple-darwin.tar.lzma2"
-sha256 = "0897a0e1b840566a97e5a49497b02cbc204be2d006815174b639bc99731840f9"
-
 # One native Linux dependency authority. Bootstrap, both hosted Linux gates,
 # and the Docker host builder consume these exact values; none keeps a private
 # package list. The probes make a removed/transitively-missing dev package fail
@@ -1612,8 +1581,7 @@ base_tag_template = "capsem-linux-rust-base:{digest}"
 lane_tag = "capsem-linux-rust:latest"
 # The files that decide what the base image contains, and therefore its
 # identity. `base_dockerfile` is hashed alongside these without being listed
-# again -- it carries the ONNX Runtime version, the build arguments' defaults
-# and every `RUN` -- and so is the current image id of `tag`, because `:latest`
+# again -- it carries the build arguments' defaults and every `RUN` -- and so is the current image id of `tag`, because `:latest`
 # is a pointer and a rebuilt parent is a different image under the same name.
 #
 # Not the workspace manifests: `cargo fetch --locked` fetches everything the
