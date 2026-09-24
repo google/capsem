@@ -206,20 +206,7 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id
         ON model_calls(trace_id);
 
-    -- Covering indexes built for the SQL session summary, which aggregated
-    -- these tables on every `stats/summary` poll. That route now reads the
-    -- writer's counter snapshot (`counters.rs`) instead, so no test guards
-    -- that these are still used; the service's diagnostics and detail queries
-    -- that filter on `decision` and `origin` are their remaining readers.
-    CREATE INDEX IF NOT EXISTS idx_net_events_decision_bytes
-        ON net_events(decision, bytes_sent, bytes_received);
-    CREATE INDEX IF NOT EXISTS idx_model_calls_usage_totals
-        ON model_calls(input_tokens, output_tokens, duration_ms, estimated_cost_usd);
-    -- Partial, because the `json_each` walk that merges usage details selects
-    -- exactly the rows that have any: an index over the NULLs would be one
-    -- entry per call for nothing.
-    CREATE INDEX IF NOT EXISTS idx_model_calls_usage_details
-        ON model_calls(usage_details) WHERE usage_details IS NOT NULL;
+    -- The diagnostics triage filters tool errors by counted origin.
     CREATE INDEX IF NOT EXISTS idx_tool_calls_origin
         ON tool_calls(origin);
 
@@ -405,10 +392,6 @@ pub const CREATE_SCHEMA: &str = "
         CHECK (last_timestamp_unix_ms >= first_timestamp_unix_ms),
         UNIQUE (event_type, rule_id, rule_action, detection_level, rule_json)
     );
-    CREATE INDEX IF NOT EXISTS idx_security_rule_runs_action
-        ON security_rule_runs(rule_action, detection_level, rule_id, event_type, count, last_timestamp_unix_ms);
-    CREATE INDEX IF NOT EXISTS idx_security_rule_runs_event_type
-        ON security_rule_runs(event_type, count);
 
     CREATE TABLE IF NOT EXISTS security_rule_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -439,19 +422,6 @@ pub const CREATE_SCHEMA: &str = "
         ON security_rule_events(rule_id);
     CREATE INDEX IF NOT EXISTS idx_security_rule_events_event_type
         ON security_rule_events(event_type);
-    -- The index `security/status` groups on. That route is polled beside
-    -- `stats/summary`, and its worst statement is the per-rule breakdown: for
-    -- each (rule, action, level) group it asks for the newest match, which
-    -- without this index is a scan of the whole table per group plus a sort.
-    -- The column order is what makes one index serve three statements: the
-    -- action count groups on the leading column, the per-rule breakdown scans
-    -- it as a covering index, and its correlated lookup meets all three
-    -- equalities and then reads the ordering columns in the order it wants.
-    -- The level count scans it too, grouping three values in a temp B-tree;
-    -- an index of its own would be a write on every rule match to save that.
-    -- capsem-service's `security_status_aggregates_run_on_indexes` pins it.
-    CREATE INDEX IF NOT EXISTS idx_security_rule_events_rule_stats
-        ON security_rule_events(rule_action, detection_level, rule_id, timestamp_unix_ms, id, event_id);
 
     CREATE TABLE IF NOT EXISTS security_decision_runs (
         id INTEGER PRIMARY KEY,
