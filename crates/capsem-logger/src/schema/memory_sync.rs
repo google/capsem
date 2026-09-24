@@ -1,14 +1,21 @@
-//! Moving ledger rows between the disk file and the DB-owned memory tables:
-//! the writer flushes memory to disk, an external reader pulls disk into
-//! memory.
+//! The writer's memory schema: the rows it has accepted and not yet flushed.
+//!
+//! The writer inserts into `mem` and moves those rows to disk on its flush,
+//! deleting them from `mem` in the same transaction. Nothing is copied from
+//! disk into `mem`, and no reader reads it: a row is in exactly one of the two
+//! places, and what `mem` costs is bounded by one flush interval rather than by
+//! the length of the session (#213).
 
 use super::*;
 
 /// Tables that live on disk only and never mirror into the memory schema:
-/// body blobs are too large to keep hot, the schema markers are not data, and
+/// the body index and its block table are written straight to disk beside the
+/// archive file they point into, the schema markers are not data, and
 /// the network registry tables (`network_db`) are small state, not a ledger.
 const DISK_ONLY_TABLES: &[&str] = &[
+    "archive_state",
     "event_body_blobs",
+    "body_blocks",
     "transport_schema",
     "network",
     "network_members",
@@ -19,21 +26,12 @@ pub(crate) fn is_disk_only_table(name: &str) -> bool {
     DISK_ONLY_TABLES.contains(&name)
 }
 
-/// Reconcile the attached DB-owned memory schema with the current disk schema.
+/// Build the writer's memory tables from the disk schema's own declarations.
 ///
-/// An external reader can observe `session.db` after SQLite creates the file but
-/// before the writer process finishes its canonical DDL.  The reader must not
-/// freeze that partial snapshot for the rest of the service lifetime.  This
-/// function is intentionally DB-owned: route callers neither inspect nor repair
-/// ledger schema.
+/// A memory table whose columns no longer match its disk table is dropped and
+/// rebuilt. This function is intentionally DB-owned: route callers neither
+/// inspect nor repair ledger schema.
 pub fn reconcile_memory_tables_from_disk(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(&format!(
-        "CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.__capsem_memory_state (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );"
-    ))?;
-
     let mut stmt = conn.prepare(
         "SELECT name, sql
          FROM main.sqlite_master
@@ -53,14 +51,13 @@ pub fn reconcile_memory_tables_from_disk(conn: &Connection) -> rusqlite::Result<
         let disk_columns = table_column_names(conn, "main", &name)?;
         let memory_columns = table_column_names(conn, MEMORY_SCHEMA, &name)?;
         if !memory_columns.is_empty() && memory_columns != disk_columns {
-            conn.execute_batch(&format!(
-                "DROP VIEW IF EXISTS temp.{name};
-                 DROP TABLE {MEMORY_SCHEMA}.{name};"
-            ))?;
+            conn.execute_batch(&format!("DROP TABLE {MEMORY_SCHEMA}.{name};"))?;
         }
+        // The memory table is derived from the disk table's own declaration,
+        // and the disk table has already been refused if its CHECK predates
+        // this build -- so the memory table cannot be built from an older list.
         let mem_sql =
             memory_table_sql(&name, &sql).ok_or_else(|| rusqlite::Error::InvalidParameterName(name.clone()))?;
-        network_types::reconcile_memory(conn, &name, &mem_sql)?;
         conn.execute_batch(&mem_sql)?;
     }
 
@@ -73,6 +70,51 @@ pub(crate) fn table_column_names(conn: &Connection, schema: &str, table: &str) -
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(columns)
+}
+
+/// Start each memory table's AUTOINCREMENT where the disk table's left off.
+///
+/// A memory row's id is its ledger id: the flush copies it to disk unchanged
+/// and `model_calls.id` is already stored in `model_items` and `tool_calls` by
+/// then. With nothing copied into `mem` at open, `mem` would otherwise number
+/// from 1 and overwrite the session's first rows. The disk's own
+/// `sqlite_sequence` is honoured above its `MAX(id)`, because AUTOINCREMENT
+/// never hands out an id twice even after the rows that held it are deleted.
+pub(crate) fn seed_memory_sequences<'a>(
+    conn: &Connection,
+    tables: impl IntoIterator<Item = &'a str>,
+) -> rusqlite::Result<()> {
+    for table in tables {
+        if is_disk_only_table(table)
+            || !table_exists(conn, "main", table)?
+            || !table_exists(conn, MEMORY_SCHEMA, table)?
+        {
+            continue;
+        }
+        let next: i64 = conn.query_row(
+            &format!(
+                "SELECT MAX(
+                    COALESCE((SELECT seq FROM main.sqlite_sequence WHERE name = ?1), 0),
+                    (SELECT COALESCE(MAX(id), 0) FROM main.{table}),
+                    COALESCE((SELECT seq FROM {MEMORY_SCHEMA}.sqlite_sequence WHERE name = ?1), 0),
+                    (SELECT COALESCE(MAX(id), 0) FROM {MEMORY_SCHEMA}.{table})
+                 )"
+            ),
+            [table],
+            |row| row.get(0),
+        )?;
+        let updated = conn.execute(
+            &format!("UPDATE {MEMORY_SCHEMA}.sqlite_sequence SET seq = ?2 WHERE name = ?1"),
+            rusqlite::params![table, next],
+        )?;
+        if updated == 0 {
+            conn.execute(
+                &format!("INSERT INTO {MEMORY_SCHEMA}.sqlite_sequence (name, seq) VALUES (?1, ?2)"),
+                rusqlite::params![table, next],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) type MemoryFlushWatermarks = BTreeMap<&'static str, i64>;
@@ -98,43 +140,20 @@ pub(crate) fn initial_memory_flush_watermarks<'a>(
     Ok(watermarks)
 }
 
-/// Hot tables whose rows the writer changes after insert. Every other hot
-/// ledger is append-only with an AUTOINCREMENT id, so an external reader
-/// can pull only the rows above its own high-water mark; these it copies
-/// whole. `writer_updates_only_the_updatable_tables` in the tests holds the
+/// Hot tables whose rows the writer changes after insert. Such an update
+/// cannot assume its row is still in `mem`: the flush may already have moved
+/// it, so the writer looks in `mem` first and on disk second.
+/// `writer_updates_only_the_updatable_tables` in the reader tests holds the
 /// writer to this list.
+#[cfg(test)]
 pub(crate) const UPDATABLE_HOT_TABLES: &[&str] = &["exec_events"];
 
-pub fn sync_memory_tables_from_disk<'a>(
-    conn: &Connection,
-    tables: impl IntoIterator<Item = &'a str>,
-) -> rusqlite::Result<()> {
-    for table in tables {
-        if is_disk_only_table(table) {
-            continue;
-        }
-        if !table_exists(conn, "main", table)? || !table_exists(conn, MEMORY_SCHEMA, table)? {
-            continue;
-        }
-        if UPDATABLE_HOT_TABLES.contains(&table) {
-            conn.execute_batch(&format!(
-                "DELETE FROM {MEMORY_SCHEMA}.{table};
-                 INSERT OR REPLACE INTO {MEMORY_SCHEMA}.{table}
-                 SELECT * FROM main.{table};"
-            ))?;
-        } else {
-            // Append-only: the ledger id is AUTOINCREMENT, so rows above the
-            // memory table's maximum are exactly the rows it has not seen.
-            conn.execute_batch(&format!(
-                "INSERT OR REPLACE INTO {MEMORY_SCHEMA}.{table}
-                 SELECT * FROM main.{table}
-                 WHERE id > (SELECT COALESCE(MAX(id), 0) FROM {MEMORY_SCHEMA}.{table});"
-            ))?;
-        }
-    }
-    Ok(())
-}
-
+/// Copy every unflushed memory row to disk and delete it from memory.
+///
+/// Both happen on the caller's transaction, so a flush that rolls back leaves
+/// the rows in memory for the next one, and one that commits leaves memory
+/// empty. The delete is a range on the rowid: it costs the rows it removes,
+/// not the size of the ledger.
 pub fn flush_memory_tables_to_disk<'a>(
     conn: &Connection,
     tables: impl IntoIterator<Item = &'a str>,
@@ -153,9 +172,6 @@ pub fn flush_memory_tables_to_disk<'a>(
         };
         let last_flushed_id = *watermarks.get(table).unwrap_or(&0);
         let max_memory_id = max_table_id(conn, MEMORY_SCHEMA, table)?;
-        if table == "exec_events" {
-            flush_existing_exec_event_updates(conn)?;
-        }
         if max_memory_id > last_flushed_id {
             if table == "net_events" {
                 let columns = non_id_table_columns(conn, "main", table)?;
@@ -166,6 +182,47 @@ pub fn flush_memory_tables_to_disk<'a>(
                          SELECT {column_list} FROM {MEMORY_SCHEMA}.{table}
                          WHERE id > ?1;"
                     ),
+                    [last_flushed_id],
+                )?;
+            } else if table == "security_rule_events" {
+                compact_security_rule_snapshots(conn, last_flushed_id)?;
+                conn.execute(
+                    "INSERT OR REPLACE INTO main.security_rule_events
+                     SELECT event.id, event.timestamp_unix_ms, event.event_id, event.event_type,
+                            event.rule_id, event.rule_action, event.detection_level,
+                            NULL,
+                            COALESCE(event.run_id, (
+                                SELECT run.id FROM main.security_rule_runs AS run
+                                WHERE run.event_type = event.event_type
+                                  AND run.rule_id = event.rule_id
+                                  AND run.rule_action = event.rule_action
+                                  AND run.detection_level = event.detection_level
+                                  AND run.rule_json = event.rule_json
+                            )),
+                            event.trace_id, event.turn_id, event.credential_ref
+                     FROM mem.security_rule_events AS event WHERE event.id > ?1",
+                    [last_flushed_id],
+                )?;
+            } else if table == "security_decision_events" {
+                compact_security_decision_snapshots(conn, last_flushed_id)?;
+                conn.execute(
+                    "INSERT OR REPLACE INTO main.security_decision_events (
+                        id, timestamp_unix_ms, event_id, event_type, stage, actor,
+                        rule_id, plugin_id, previous_decision, requested_decision,
+                        effective_decision, reason, trace_id, turn_id, credential_ref, run_id
+                     )
+                     SELECT event.id, event.timestamp_unix_ms, event.event_id, event.event_type,
+                            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                            event.trace_id, event.turn_id, event.credential_ref,
+                            (SELECT run.id FROM main.security_decision_runs AS run
+                             WHERE run.event_type = event.event_type
+                               AND run.stage = event.stage AND run.actor = event.actor
+                               AND run.rule_id IS event.rule_id AND run.plugin_id IS event.plugin_id
+                               AND run.previous_decision = event.previous_decision
+                               AND run.requested_decision = event.requested_decision
+                               AND run.effective_decision = event.effective_decision
+                               AND run.reason IS event.reason)
+                     FROM mem.security_decision_events AS event WHERE event.id > ?1",
                     [last_flushed_id],
                 )?;
             } else {
@@ -180,8 +237,61 @@ pub fn flush_memory_tables_to_disk<'a>(
             }
             advanced.insert(table, max_memory_id);
         }
+        if max_memory_id > 0 {
+            conn.execute(
+                &format!("DELETE FROM {MEMORY_SCHEMA}.{table} WHERE id <= ?1"),
+                [max_memory_id],
+            )?;
+        }
     }
     Ok(advanced)
+}
+
+/// Normalize repeated rule snapshots at the same commit boundary as their
+/// occurrence rows and archive indexes. The hot memory rows are still ordinary
+/// complete events; an interrupted disk flush leaves them available to retry.
+fn compact_security_rule_snapshots(conn: &Connection, last_flushed_id: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO main.security_rule_runs (
+            event_type, rule_id, rule_action, detection_level, rule_json,
+            count, first_timestamp_unix_ms, last_timestamp_unix_ms
+         )
+         SELECT event_type, rule_id, rule_action, detection_level, rule_json,
+                COUNT(*), MIN(timestamp_unix_ms), MAX(timestamp_unix_ms)
+         FROM mem.security_rule_events
+         WHERE id > ?1 AND rule_json IS NOT NULL
+         GROUP BY event_type, rule_id, rule_action, detection_level, rule_json
+         ON CONFLICT (event_type, rule_id, rule_action, detection_level, rule_json)
+         DO UPDATE SET
+            count = count + excluded.count,
+            first_timestamp_unix_ms = MIN(first_timestamp_unix_ms, excluded.first_timestamp_unix_ms),
+            last_timestamp_unix_ms = MAX(last_timestamp_unix_ms, excluded.last_timestamp_unix_ms)",
+        [last_flushed_id],
+    )?;
+    Ok(())
+}
+
+fn compact_security_decision_snapshots(conn: &Connection, last_flushed_id: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO main.security_decision_runs (
+            event_type, stage, actor, rule_id, plugin_id,
+            previous_decision, requested_decision, effective_decision, reason,
+            count, first_timestamp_unix_ms, last_timestamp_unix_ms
+         )
+         SELECT event_type, stage, actor, rule_id, plugin_id,
+                previous_decision, requested_decision, effective_decision, reason,
+                COUNT(*), MIN(timestamp_unix_ms), MAX(timestamp_unix_ms)
+         FROM mem.security_decision_events
+         WHERE id > ?1 AND run_id IS NULL
+         GROUP BY event_type, stage, actor, rule_id, plugin_id,
+                  previous_decision, requested_decision, effective_decision, reason
+         ON CONFLICT DO UPDATE SET
+            count = count + excluded.count,
+            first_timestamp_unix_ms = MIN(first_timestamp_unix_ms, excluded.first_timestamp_unix_ms),
+            last_timestamp_unix_ms = MAX(last_timestamp_unix_ms, excluded.last_timestamp_unix_ms)",
+        [last_flushed_id],
+    )?;
+    Ok(())
 }
 
 pub(super) fn non_id_table_columns(conn: &Connection, schema: &str, table: &str) -> rusqlite::Result<Vec<String>> {
@@ -195,64 +305,4 @@ pub(super) fn non_id_table_columns(conn: &Connection, schema: &str, table: &str)
         })
         .collect();
     columns
-}
-
-pub(super) fn flush_existing_exec_event_updates(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(&format!(
-        "UPDATE main.exec_events AS disk
-         SET
-            exit_code = (
-                SELECT mem.exit_code FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
-            ),
-            duration_ms = (
-                SELECT mem.duration_ms FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
-            ),
-            stdout_preview = (
-                SELECT mem.stdout_preview FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
-            ),
-            stderr_preview = (
-                SELECT mem.stderr_preview FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
-            ),
-            stdout_bytes = (
-                SELECT mem.stdout_bytes FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
-            ),
-            stderr_bytes = (
-                SELECT mem.stderr_bytes FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
-            ),
-            pid = (
-                SELECT mem.pid FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
-            )
-         WHERE EXISTS (
-            SELECT 1 FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
-         );"
-    ))
-}
-
-pub fn rehydrate_memory_tables_from_disk_once<'a>(
-    conn: &Connection,
-    tables: impl IntoIterator<Item = &'a str>,
-) -> rusqlite::Result<()> {
-    let already_rehydrated = conn
-        .query_row(
-            &format!(
-                "SELECT value FROM {MEMORY_SCHEMA}.__capsem_memory_state
-                 WHERE key = 'rehydrated' LIMIT 1"
-            ),
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?
-        .is_some();
-    if already_rehydrated {
-        return Ok(());
-    }
-    sync_memory_tables_from_disk(conn, tables)?;
-    conn.execute(
-        &format!(
-            "INSERT OR REPLACE INTO {MEMORY_SCHEMA}.__capsem_memory_state (key, value)
-             VALUES ('rehydrated', '1')"
-        ),
-        [],
-    )?;
-    Ok(())
 }

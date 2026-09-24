@@ -49,29 +49,5 @@ pub(super) fn preview_payload(raw: String) -> CapturedPayload {
     }
 }
 
-pub(super) fn body_payload(body: &EventBody) -> CapturedPayload {
-    if body.truncated {
-        return raw_payload(body.body.clone(), CaptureStatus::Truncated, RawContentReason::Truncated);
-    }
-    let content_type = body
-        .content_type
-        .as_deref()
-        .unwrap_or("")
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    if content_type == "application/json" || content_type.ends_with("+json") {
-        json_payload(body.body.clone(), CaptureStatus::Complete)
-    } else if content_type.starts_with("text/") && content_type != "text/event-stream" {
-        let mut payload = text_payload(body.body.clone());
-        payload.status = CaptureStatus::Complete;
-        payload
-    } else {
-        raw_payload(body.body.clone(), CaptureStatus::Complete, RawContentReason::Unparsed)
-    }
-}
-
 #[cfg(test)]
 mod tests;

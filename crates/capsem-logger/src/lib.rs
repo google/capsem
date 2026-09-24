@@ -7,14 +7,17 @@ pub mod session_index;
 pub mod session_types;
 pub mod writer;
 
-pub use db::{checkpoint_and_vacuum_session_db, snapshot_session_db, DbHandle, ReadCacheDomain, SessionDb};
+pub use db::{
+    snapshot_session_ledger, ArchivedBodies, BodyDirection, DbHandle, ExportSummary, ReadCacheDomain, SessionDb,
+    SkipReason, SkippedBody, StoredBody,
+};
 pub use events::{
     credential_reference, is_credential_reference, AuditEvent, Decision, DnsEvent, ExecEvent, ExecEventComplete,
-    FileAction, FileEvent, McpCall, MembershipState, ModelCall, NetEvent, NetworkMembership, NetworkRecord,
-    NetworkState, ProfileMutationEvent, ProfileMutationStatus, SecurityAskEvent, SecurityAskPending, SecurityAskStatus,
-    SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage, SecurityDetectionLevel, SecurityRuleAction,
-    SecurityRuleEvent, SubstitutionEvent, ToolCallEntry, ToolResponseEntry, TransportEvent, TransportEventKind,
-    CREDENTIAL_REF_PREFIX,
+    FileAction, FileEvent, FileKind, McpCall, MembershipState, ModelCall, NetEvent, NetworkMembership, NetworkRecord,
+    NetworkState, ProfileMutationEvent, ProfileMutationStatus, SecurityAskEvent, SecurityAskPending, SecurityAskRecord,
+    SecurityAskStatus, SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage, SecurityDetectionLevel,
+    SecurityRuleAction, SecurityRuleEvent, SecurityRuleMatch, SubstitutionEvent, ToolCallEntry, ToolResponseEntry,
+    TransportEvent, TransportEventKind, CREDENTIAL_REF_PREFIX,
 };
 pub use reader::{
     validate_select_only, BrokeredCredentialStat, DbReader, DomainCount, FileEventStats, HistoryCounts, HistoryEntry,
@@ -28,4 +31,4 @@ pub use session_types::{
     epoch_to_iso, generate_session_id, is_valid_session_id, now_iso, GlobalStats, McpToolSummary, ProviderSummary,
     SessionRecord, ToolSummary,
 };
-pub use writer::{DbWriter, WriteOp};
+pub use writer::{format_ledger_timestamp, DbWriter, RetainOutcome, WriteOp};

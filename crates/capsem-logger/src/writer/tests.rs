@@ -2,7 +2,29 @@
 
 use super::*;
 
+mod bodies;
+mod headers;
 mod producer;
+mod security;
+mod unflushed;
+
+/// A well-formed file event for the writer tests that only need *a* row.
+fn file_event(
+    path: impl Into<String>,
+    action: crate::events::FileAction,
+    size: Option<u64>,
+) -> crate::events::FileEvent {
+    crate::events::FileEvent {
+        event_id: None,
+        timestamp: std::time::SystemTime::now(),
+        action,
+        path: path.into(),
+        size,
+        kind: crate::events::FileKind::File,
+        trace_id: None,
+        credential_ref: None,
+    }
+}
 
 #[test]
 fn cap_field_none_returns_none() {
@@ -88,131 +110,30 @@ fn cap_field_mixed_ascii_and_multibyte() {
 }
 
 #[test]
-fn net_event_stores_bounded_body_blobs_and_small_previews() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("body-blobs.db");
-    let event_id = "abc123def456".to_string();
-    let trace_id = "trace-body-blob".to_string();
-    let request_body = format!("{{\"prompt\":\"{}\"}}", "r".repeat(MAX_FIELD_BYTES + 1024));
-    let request_preview = "{\"prompt\":\"short\"}".to_string();
-    let response_body = format!("event: message\ndata: {}\n\n", "s".repeat(MAX_BODY_BLOB_BYTES + 128));
-    let response_preview = "event: message\ndata: short\n\n".to_string();
-    let response_hash = blake3_bytes_ref(response_body.as_bytes());
-
-    {
-        let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        rt.block_on(async {
-            writer
-                .write(WriteOp::NetEvent(crate::events::NetEvent {
-                    event_id: Some(event_id.clone()),
-                    timestamp: std::time::SystemTime::now(),
-                    domain: "daily-cloudcode-pa.googleapis.com".into(),
-                    port: 443,
-                    decision: crate::events::Decision::Allowed,
-                    process_name: Some("agy".into()),
-                    pid: Some(1234),
-                    method: Some("POST".into()),
-                    path: Some("/v1internal:streamGenerateContent".into()),
-                    query: None,
-                    status_code: Some(200),
-                    bytes_sent: request_body.len() as u64,
-                    bytes_received: response_body.len() as u64,
-                    duration_ms: 42,
-                    matched_rule: Some("profiles.rules.ai_google_http_googleapis".into()),
-                    request_headers: Some("content-type: application/json".into()),
-                    response_headers: Some("content-type: text/event-stream".into()),
-                    request_body_preview: Some(request_preview.clone()),
-                    response_body_preview: Some(response_preview.clone()),
-                    request_body_full: Some(request_body.clone()),
-                    response_body_full: Some(response_body.clone()),
-                    conn_type: Some("https-mitm".into()),
-                    policy_mode: None,
-                    policy_action: Some("allow".into()),
-                    policy_rule: Some("profiles.rules.ai_google_http_googleapis".into()),
-                    policy_reason: None,
-                    trace_id: Some(trace_id.clone()),
-                    credential_ref: None,
-                }))
-                .await;
-            writer.flush().await;
-        });
-    }
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let (stored_request_preview, stored_response_preview): (String, String) = conn
-        .query_row(
-            "SELECT request_body_preview, response_body_preview FROM net_events WHERE event_id = ?1",
-            [&event_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(stored_request_preview, request_preview);
-    assert_eq!(stored_response_preview, response_preview);
-
-    struct StoredBlob {
-        direction: String,
-        event_type: String,
-        content_type: String,
-        original_bytes: i64,
-        stored_bytes: i64,
-        truncated: i64,
-        body_hash: String,
-        body: Vec<u8>,
-        trace_id: String,
-    }
-
-    let blobs: Vec<StoredBlob> = conn
-        .prepare(
-            "SELECT direction, event_type, content_type, original_bytes, stored_bytes,
-                    truncated, body_hash, body, trace_id
-             FROM event_body_blobs
-             WHERE event_id = ?1
-             ORDER BY direction",
-        )
-        .unwrap()
-        .query_map([&event_id], |row| {
-            Ok(StoredBlob {
-                direction: row.get(0)?,
-                event_type: row.get(1)?,
-                content_type: row.get(2)?,
-                original_bytes: row.get(3)?,
-                stored_bytes: row.get(4)?,
-                truncated: row.get(5)?,
-                body_hash: row.get(6)?,
-                body: row.get(7)?,
-                trace_id: row.get(8)?,
-            })
-        })
-        .unwrap()
-        .collect::<Result<_, _>>()
-        .unwrap();
-    assert_eq!(blobs.len(), 2);
-
-    let request = blobs.iter().find(|blob| blob.direction == "request").unwrap();
-    assert_eq!(request.event_type, "http.request");
-    assert_eq!(request.content_type, "application/json");
-    assert_eq!(request.original_bytes, request_body.len() as i64);
-    assert_eq!(request.stored_bytes, request_body.len() as i64);
-    assert_eq!(request.truncated, 0);
-    assert_eq!(request.body_hash, blake3_bytes_ref(request_body.as_bytes()));
-    assert_eq!(request.body, request_body.as_bytes());
-    assert_eq!(request.trace_id, trace_id);
-
-    let response = blobs.iter().find(|blob| blob.direction == "response").unwrap();
-    assert_eq!(response.event_type, "http.request");
-    assert_eq!(response.content_type, "text/event-stream");
-    assert_eq!(response.original_bytes, response_body.len() as i64);
-    assert_eq!(response.stored_bytes, MAX_BODY_BLOB_BYTES as i64);
-    assert_eq!(response.truncated, 1);
-    assert_eq!(response.body_hash, response_hash);
-    assert_eq!(response.body.len(), MAX_BODY_BLOB_BYTES);
-    assert_eq!(&response.body, &response_body.as_bytes()[..MAX_BODY_BLOB_BYTES]);
-    assert_eq!(response.trace_id, trace_id);
+fn cap_bytes_max_zero_returns_empty_string() {
+    let s = Some("anything".to_string());
+    assert_eq!(cap_bytes(&s, 0).as_deref(), Some(""));
 }
 
 #[test]
-fn multi_writer_net_events_keep_rows_and_body_blobs_consistent() {
+fn cap_bytes_truncates_at_char_boundary_below_multibyte_char() {
+    // "héllo": h(1) + é(2) + l(1) + l(1) + o(1) = 6 bytes. A max of 2 lands
+    // mid-way through the 2-byte 'é', so the boundary search must back off
+    // to the end of 'h' (byte 1), not split the char.
+    let s = Some("héllo".to_string());
+    assert_eq!(cap_bytes(&s, 2).as_deref(), Some("h"));
+}
+
+#[test]
+fn cap_preview_caps_to_exactly_preview_bytes() {
+    let s = Some("x".repeat(4 * 1024));
+    let result = cap_preview(&s).unwrap();
+    assert_eq!(result.len(), PREVIEW_BYTES);
+    assert_eq!(PREVIEW_BYTES, 2048);
+}
+
+#[test]
+fn writers_in_turn_keep_rows_and_body_blobs_consistent() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("multi-writer-net.db");
     let process_event_id = "111111aaaaaa".to_string();
@@ -232,6 +153,10 @@ fn multi_writer_net_events_keep_rows_and_body_blobs_consistent() {
         ready_path: &process_ready,
         go_path: &process_go,
     });
+    wait_for_child_ready(&process_ready);
+    std::fs::write(&process_go, b"go").unwrap();
+    let process_status = process_child.wait().expect("wait process child");
+    assert!(process_status.success(), "process writer failed: {process_status}");
     let mut builtin_child = spawn_net_event_writer_child(ChildNetEvent {
         db_path: &db_path,
         event_id: &builtin_event_id,
@@ -242,11 +167,7 @@ fn multi_writer_net_events_keep_rows_and_body_blobs_consistent() {
         ready_path: &builtin_ready,
         go_path: &builtin_go,
     });
-    wait_for_child_ready(&process_ready);
     wait_for_child_ready(&builtin_ready);
-    std::fs::write(&process_go, b"go").unwrap();
-    let process_status = process_child.wait().expect("wait process child");
-    assert!(process_status.success(), "process writer failed: {process_status}");
     std::fs::write(&builtin_go, b"go").unwrap();
     let builtin_status = builtin_child.wait().expect("wait builtin child");
     assert!(builtin_status.success(), "builtin writer failed: {builtin_status}");
@@ -368,10 +289,8 @@ fn multi_writer_net_event_child_process() {
                 matched_rule: None,
                 request_headers: Some("host: 127.0.0.1".into()),
                 response_headers: Some("content-type: text/plain".into()),
-                request_body_preview: None,
-                response_body_preview: Some(response_body.clone()),
-                request_body_full: None,
-                response_body_full: Some(response_body),
+                request_body: None,
+                response_body: Some(response_body.into_bytes()),
                 conn_type: Some("http-mitm".into()),
                 policy_mode: None,
                 policy_action: None,
@@ -397,15 +316,11 @@ fn db_writer_checkpoints_wal_on_drop() {
         let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             writer
-                .write(WriteOp::FileEvent(crate::events::FileEvent {
-                    event_id: None,
-                    timestamp: std::time::SystemTime::now(),
-                    action: crate::events::FileAction::Created,
-                    path: "/tmp/test".to_string(),
-                    size: Some(42),
-                    trace_id: None,
-                    credential_ref: None,
-                }))
+                .write(WriteOp::FileEvent(file_event(
+                    "/tmp/test".to_string(),
+                    crate::events::FileAction::Created,
+                    Some(42),
+                )))
                 .await;
         });
         // DbWriter::drop runs here -- should checkpoint WAL.
@@ -436,15 +351,11 @@ fn writer_generates_twelve_hex_event_id_for_primary_events() {
         let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
             writer
-                .write(WriteOp::FileEvent(crate::events::FileEvent {
-                    event_id: None,
-                    timestamp: std::time::SystemTime::now(),
-                    action: crate::events::FileAction::Created,
-                    path: "/tmp/event-id".to_string(),
-                    size: Some(42),
-                    trace_id: None,
-                    credential_ref: None,
-                }))
+                .write(WriteOp::FileEvent(file_event(
+                    "/tmp/event-id".to_string(),
+                    crate::events::FileAction::Created,
+                    Some(42),
+                )))
                 .await;
         });
     }
@@ -471,12 +382,7 @@ fn writer_preserves_supplied_primary_event_id() {
             writer
                 .write(WriteOp::FileEvent(crate::events::FileEvent {
                     event_id: Some("abcdef123456".to_string()),
-                    timestamp: std::time::SystemTime::now(),
-                    action: crate::events::FileAction::Created,
-                    path: "/tmp/event-id".to_string(),
-                    size: Some(42),
-                    trace_id: None,
-                    credential_ref: None,
+                    ..file_event("/tmp/event-id", crate::events::FileAction::Created, Some(42))
                 }))
                 .await;
         });
@@ -501,40 +407,28 @@ fn snapshot_fs_events_cross_reference() {
             // Write some fs_events first.
             for i in 0..5 {
                 writer
-                    .write(WriteOp::FileEvent(crate::events::FileEvent {
-                        event_id: None,
-                        timestamp: std::time::SystemTime::now(),
-                        action: crate::events::FileAction::Created,
-                        path: format!("file_{i}.txt"),
-                        size: Some(100),
-                        trace_id: None,
-                        credential_ref: None,
-                    }))
+                    .write(WriteOp::FileEvent(file_event(
+                        format!("file_{i}.txt"),
+                        crate::events::FileAction::Created,
+                        Some(100),
+                    )))
                     .await;
             }
             for i in 5..8 {
                 writer
-                    .write(WriteOp::FileEvent(crate::events::FileEvent {
-                        event_id: None,
-                        timestamp: std::time::SystemTime::now(),
-                        action: crate::events::FileAction::Modified,
-                        path: format!("file_{i}.txt"),
-                        size: Some(200),
-                        trace_id: None,
-                        credential_ref: None,
-                    }))
+                    .write(WriteOp::FileEvent(file_event(
+                        format!("file_{i}.txt"),
+                        crate::events::FileAction::Modified,
+                        Some(200),
+                    )))
                     .await;
             }
             writer
-                .write(WriteOp::FileEvent(crate::events::FileEvent {
-                    event_id: None,
-                    timestamp: std::time::SystemTime::now(),
-                    action: crate::events::FileAction::Deleted,
-                    path: "old.txt".to_string(),
-                    size: None,
-                    trace_id: None,
-                    credential_ref: None,
-                }))
+                .write(WriteOp::FileEvent(file_event(
+                    "old.txt".to_string(),
+                    crate::events::FileAction::Deleted,
+                    None,
+                )))
                 .await;
         });
     }
@@ -589,15 +483,11 @@ fn shutdown_blocking_through_arc_flushes_wal() {
     let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
     rt.block_on(async {
         writer
-            .write(WriteOp::FileEvent(crate::events::FileEvent {
-                event_id: None,
-                timestamp: std::time::SystemTime::now(),
-                action: crate::events::FileAction::Created,
-                path: "/x".into(),
-                size: Some(1),
-                trace_id: None,
-                credential_ref: None,
-            }))
+            .write(WriteOp::FileEvent(file_event(
+                "/x",
+                crate::events::FileAction::Created,
+                Some(1),
+            )))
             .await;
     });
 
@@ -636,60 +526,11 @@ fn write_after_shutdown_is_noop() {
     let dir = tempfile::tempdir().unwrap();
     let writer = DbWriter::open(&dir.path().join("no.db"), 16).unwrap();
     writer.shutdown_blocking();
-    assert!(!writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: crate::events::FileAction::Created,
-        path: "/after".into(),
-        size: None,
-        trace_id: None,
-        credential_ref: None,
-    })));
-}
-
-#[tokio::test]
-async fn security_rule_event_roundtrip_preserves_forensic_snapshot() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("security-rule.db");
-    let writer = DbWriter::open(&db_path, 64).unwrap();
-
-    writer
-        .write(WriteOp::SecurityRuleEvent(crate::events::SecurityRuleEvent {
-            timestamp_unix_ms: 1_789_000_000_000,
-            event_id: "abcdef123456".into(),
-            event_type: "model.call".into(),
-            rule_id: "openai_api_block".into(),
-            rule_action: crate::events::SecurityRuleAction::Block,
-            detection_level: crate::events::SecurityDetectionLevel::Critical,
-            rule_json: r#"{"name":"openai_api_block","match":"model.provider == \"openai\""}"#.into(),
-            event_json: r#"{"common":{"event_type":"model.call"},"model":{"provider":"openai"}}"#.into(),
-            trace_id: Some("trace_abc".into()),
-            turn_id: Some("turn_abc".into()),
-            credential_ref: Some(crate::events::credential_reference("openai", "sk-test")),
-        }))
-        .await;
-    writer.flush().await;
-    drop(writer);
-
-    let reader = crate::reader::DbReader::open(&db_path).unwrap();
-    let events = reader.recent_security_rule_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].event_id, "abcdef123456");
-    assert_eq!(events[0].event_type, "model.call");
-    assert_eq!(events[0].rule_id, "openai_api_block");
-    assert_eq!(events[0].rule_action, crate::events::SecurityRuleAction::Block);
-    assert_eq!(
-        events[0].detection_level,
-        crate::events::SecurityDetectionLevel::Critical
-    );
-    assert!(events[0].rule_json.contains("openai_api_block"));
-    assert!(events[0].event_json.contains("model.call"));
-    assert_eq!(events[0].trace_id.as_deref(), Some("trace_abc"));
-    assert_eq!(events[0].turn_id.as_deref(), Some("turn_abc"));
-    assert!(events[0]
-        .credential_ref
-        .as_deref()
-        .is_some_and(crate::events::is_credential_reference));
+    assert!(!writer.try_write(WriteOp::FileEvent(file_event(
+        "/after",
+        crate::events::FileAction::Created,
+        None
+    ))));
 }
 
 #[tokio::test]
@@ -795,180 +636,6 @@ fn profile_mutation_schema_rejects_bad_status_and_hashes() {
     assert!(bad_hash.is_err(), "non-BLAKE3 profile pins must fail");
 }
 
-#[tokio::test]
-async fn security_ask_event_roundtrip_preserves_lifecycle_rows() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("security-ask.db");
-    let writer = DbWriter::open(&db_path, 64).unwrap();
-    let pending = crate::events::SecurityAskEvent::pending(crate::events::SecurityAskPending {
-        timestamp_unix_ms: 1_789_000_000_000,
-        ask_id: "abcdef123456".to_string(),
-        event_id: "111111abcdef".to_string(),
-        event_type: "http.request".to_string(),
-        rule_id: "profiles.rules.ask_openai".to_string(),
-        rule_name: "ask_openai".to_string(),
-        rule_json: r#"{"name":"ask_openai"}"#.to_string(),
-        event_json: r#"{"http":{"host":"api.openai.com"}}"#.to_string(),
-    })
-    .with_trace_id("trace_ask");
-    let approved = pending
-        .clone()
-        .with_status(crate::events::SecurityAskStatus::Approved)
-        .with_resolver("tester")
-        .with_reason("approved");
-
-    writer.write(WriteOp::SecurityAskEvent(pending.clone())).await;
-    writer.write(WriteOp::SecurityAskEvent(approved)).await;
-    drop(writer);
-
-    let reader = crate::reader::DbReader::open(&db_path).unwrap();
-    let rows = reader.recent_security_ask_events(10).unwrap();
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].status, crate::events::SecurityAskStatus::Approved);
-    assert_eq!(rows[0].resolver.as_deref(), Some("tester"));
-    assert_eq!(rows[1].status, crate::events::SecurityAskStatus::Pending);
-    assert_eq!(rows[1].event_id, "111111abcdef");
-    assert_eq!(rows[1].rule_id, "profiles.rules.ask_openai");
-    let latest = reader.latest_security_ask_event("abcdef123456").unwrap().unwrap();
-    assert_eq!(latest.status, crate::events::SecurityAskStatus::Approved);
-}
-
-#[tokio::test]
-async fn security_decision_event_roundtrip_preserves_explicit_transition() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("security-decision.db");
-    let writer = DbWriter::open(&db_path, 64).unwrap();
-
-    writer
-        .write(WriteOp::SecurityDecisionEvent(crate::events::SecurityDecisionEvent {
-            timestamp_unix_ms: 1_789_000_000_000,
-            event_id: "abcdef123456".into(),
-            event_type: "file.import".into(),
-            stage: crate::events::SecurityDecisionStage::Rewrite,
-            actor: "dummy_pre_eicar".into(),
-            rule_id: Some("profiles.rules.scan_eicar".into()),
-            plugin_id: Some("dummy_pre_eicar".into()),
-            previous_decision: crate::events::SecurityDecision::Allow,
-            requested_decision: crate::events::SecurityDecision::Block,
-            effective_decision: crate::events::SecurityDecision::Block,
-            reason: Some("EICAR test seed observed".into()),
-            event_json: r#"{"file":{"import":{"name":"eicar.txt"}}}"#.into(),
-            trace_id: Some("trace_eicar".into()),
-            turn_id: Some("turn_eicar".into()),
-            credential_ref: Some(crate::events::credential_reference("github", "ghp-test")),
-        }))
-        .await;
-    drop(writer);
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let row: (String, String, String, String, String, String, String, String, String) = conn
-        .query_row(
-            "SELECT stage, actor, previous_decision, requested_decision,
-                    effective_decision, reason, trace_id, turn_id, credential_ref
-             FROM security_decision_events WHERE event_id = 'abcdef123456'",
-            [],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                    row.get(8)?,
-                ))
-            },
-        )
-        .unwrap();
-    assert_eq!(
-        row,
-        (
-            "rewrite".into(),
-            "dummy_pre_eicar".into(),
-            "allow".into(),
-            "block".into(),
-            "block".into(),
-            "EICAR test seed observed".into(),
-            "trace_eicar".into(),
-            "turn_eicar".into(),
-            crate::events::credential_reference("github", "ghp-test"),
-        )
-    );
-}
-
-#[tokio::test]
-async fn security_rule_stats_are_regenerated_from_session_db() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("security-rule-stats.db");
-    let writer = DbWriter::open(&db_path, 64).unwrap();
-
-    for (idx, action, level) in [
-        (
-            1,
-            crate::events::SecurityRuleAction::Block,
-            crate::events::SecurityDetectionLevel::Critical,
-        ),
-        (
-            2,
-            crate::events::SecurityRuleAction::Block,
-            crate::events::SecurityDetectionLevel::Critical,
-        ),
-        (
-            3,
-            crate::events::SecurityRuleAction::Allow,
-            crate::events::SecurityDetectionLevel::None,
-        ),
-    ] {
-        writer
-            .write(WriteOp::SecurityRuleEvent(crate::events::SecurityRuleEvent {
-                timestamp_unix_ms: 1_789_000_000_000 + idx,
-                event_id: format!("{idx:012x}"),
-                event_type: if idx == 3 {
-                    "http.request".into()
-                } else {
-                    "model.call".into()
-                },
-                rule_id: if idx == 3 {
-                    "github_api_allow".into()
-                } else {
-                    "openai_api_block".into()
-                },
-                rule_action: action,
-                detection_level: level,
-                rule_json: "{}".into(),
-                event_json: "{}".into(),
-                trace_id: None,
-                turn_id: None,
-                credential_ref: None,
-            }))
-            .await;
-    }
-    drop(writer);
-
-    let reader = crate::reader::DbReader::open(&db_path).unwrap();
-    let stats = reader.security_rule_stats().unwrap();
-    assert_eq!(stats.total, 3);
-    assert!(stats
-        .by_action
-        .iter()
-        .any(|entry| entry.rule_action == "block" && entry.count == 2));
-    assert!(stats
-        .by_event_type
-        .iter()
-        .any(|entry| entry.event_type == "model.call" && entry.count == 2));
-    let block = stats
-        .by_rule
-        .iter()
-        .find(|entry| entry.rule_id == "openai_api_block")
-        .unwrap();
-    assert_eq!(block.rule_action, "block");
-    assert_eq!(block.detection_level, "critical");
-    assert_eq!(block.count, 2);
-    assert_eq!(block.latest_event_id, "000000000002");
-}
-
 #[test]
 fn slow_checkpoint_hook_delays_shutdown() {
     // Sets CAPSEM_TEST_SLOW_CHECKPOINT_MS on the spawned writer thread
@@ -999,15 +666,11 @@ fn slow_checkpoint_hook_delays_shutdown() {
 fn try_write_on_open_writer_succeeds() {
     let dir = tempfile::tempdir().unwrap();
     let writer = DbWriter::open(&dir.path().join("t.db"), 64).unwrap();
-    let accepted = writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: crate::events::FileAction::Created,
-        path: "/x".into(),
-        size: None,
-        trace_id: None,
-        credential_ref: None,
-    }));
+    let accepted = writer.try_write(WriteOp::FileEvent(file_event(
+        "/x",
+        crate::events::FileAction::Created,
+        None,
+    )));
     assert!(accepted);
 }
 
@@ -1030,27 +693,30 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     let recorder = DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
     let (tx, rx) = writer_channel(16);
-    tx.send(super::WriterMessage::write(WriteOp::FileEvent(
-        crate::events::FileEvent {
-            event_id: None,
-            timestamp: std::time::SystemTime::now(),
-            action: crate::events::FileAction::Created,
-            path: "/metrics".into(),
-            size: None,
-            trace_id: None,
-            credential_ref: None,
-        },
-    )))
+    tx.send(super::WriterMessage::write(WriteOp::FileEvent(file_event(
+        "/metrics",
+        crate::events::FileAction::Created,
+        None,
+    ))))
     .unwrap();
     drop(tx);
 
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     crate::schema::apply_pragmas(&conn).unwrap();
     crate::schema::create_tables(&conn).unwrap();
-    crate::schema::migrate(&conn).unwrap();
     crate::schema::create_memory_tables(&conn, &crate::schema::memory_uri_for_name("writer-metrics-test")).unwrap();
 
-    metrics::with_local_recorder(&recorder, || writer_loop(conn, rx, None, 16));
+    let pending_body_bytes = AtomicU64::new(0);
+    metrics::with_local_recorder(&recorder, || {
+        writer_loop(
+            conn,
+            rx,
+            None,
+            16,
+            &pending_body_bytes,
+            BodyArchive::disabled(SystemTime::now),
+        )
+    });
 
     let snapshot = snapshotter.snapshot().into_vec();
     assert!(snapshot
@@ -1086,15 +752,11 @@ fn db_writer_records_enqueue_metrics() {
 
     let dir = tempfile::tempdir().unwrap();
     let writer = DbWriter::open(&dir.path().join("enqueue.db"), 1).unwrap();
-    let accepted = writer.try_write(WriteOp::FileEvent(crate::events::FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: crate::events::FileAction::Created,
-        path: "/enqueue".into(),
-        size: None,
-        trace_id: None,
-        credential_ref: None,
-    }));
+    let accepted = writer.try_write(WriteOp::FileEvent(file_event(
+        "/enqueue",
+        crate::events::FileAction::Created,
+        None,
+    )));
     assert!(accepted);
     writer.shutdown_blocking();
 
@@ -1153,10 +815,8 @@ fn brokered_substitution_persists_reference_and_not_secret() {
                     matched_rule: None,
                     request_headers: Some(format!("authorization: {credential_ref}")),
                     response_headers: None,
-                    request_body_preview: None,
-                    response_body_preview: None,
-                    request_body_full: None,
-                    response_body_full: None,
+                    request_body: None,
+                    response_body: None,
                     conn_type: Some("https".into()),
                     policy_mode: None,
                     policy_action: None,
@@ -1299,71 +959,6 @@ fn exec_event_insert_then_update_roundtrip() {
 }
 
 #[test]
-fn exec_event_completion_updates_disk_after_start_was_flushed() {
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("exec-flushed-start.db");
-    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-
-    let writer = DbWriter::open(&db_path, 64).unwrap();
-    rt.block_on(async {
-        writer
-            .write(WriteOp::ExecEvent(crate::events::ExecEvent {
-                event_id: None,
-                timestamp: std::time::SystemTime::now(),
-                exec_id: 7,
-                command: "bash /root/package-probe.sh".into(),
-                source: "api".into(),
-                trace_id: Some("trace-package".into()),
-                process_name: None,
-                credential_ref: None,
-            }))
-            .await;
-        writer.flush().await;
-    });
-
-    {
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let exit_code: Option<i64> = conn
-            .query_row("SELECT exit_code FROM exec_events WHERE exec_id = 7", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert!(exit_code.is_none());
-    }
-
-    rt.block_on(async {
-        writer
-            .write(WriteOp::ExecEventComplete(crate::events::ExecEventComplete {
-                exec_id: 7,
-                exit_code: 0,
-                duration_ms: 7_650,
-                stdout_preview: Some("APT_OK\nNPM_OK\nUV_OK\n".into()),
-                stderr_preview: None,
-                stdout_bytes: 21,
-                stderr_bytes: 0,
-                pid: Some(4321),
-            }))
-            .await;
-        writer.flush().await;
-    });
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let (exit_code, duration_ms, stdout_preview, stdout_bytes, pid): (i64, i64, Option<String>, i64, Option<i64>) =
-        conn.query_row(
-            "SELECT exit_code, duration_ms, stdout_preview, stdout_bytes, pid
-             FROM exec_events WHERE exec_id = 7",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-        )
-        .unwrap();
-    assert_eq!(exit_code, 0);
-    assert_eq!(duration_ms, 7_650);
-    assert_eq!(stdout_preview.as_deref(), Some("APT_OK\nNPM_OK\nUV_OK\n"));
-    assert_eq!(stdout_bytes, 21);
-    assert_eq!(pid, Some(4321));
-}
-
-#[test]
 fn mcp_call_insert_populates_row() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("mcp.db");
@@ -1482,7 +1077,10 @@ fn mcp_protocol_only_event_does_not_claim_tool_storage() {
         credential_ref: None,
     });
 
-    let outcome = metrics::with_local_recorder(&recorder, || execute_memory_batch(&conn, &[event]).unwrap());
+    let mut bodies = BodyArchive::open_for_tests(None, SystemTime::now, &conn);
+    let outcome = metrics::with_local_recorder(&recorder, || {
+        execute_memory_batch(&conn, &[event], &mut bodies, 0).unwrap()
+    });
     let snapshot = snapshotter.snapshot().into_vec();
 
     assert!(
@@ -1752,6 +1350,7 @@ fn file_event_with_credential(path: &str, credential_ref: Option<&str>) -> Write
         action: crate::events::FileAction::Created,
         path: path.to_string(),
         size: Some(1),
+        kind: crate::events::FileKind::File,
         trace_id: None,
         credential_ref: credential_ref.map(str::to_string),
     })
@@ -1817,13 +1416,12 @@ fn minimal_model_call(trace_id: &str) -> WriteOp {
         messages_count: 1,
         tools_count: 0,
         request_bytes: 16,
-        request_body_preview: None,
-        request_body_full: None,
+        request_body: None,
         message_id: Some("msg_salvage".to_string()),
         status_code: Some(200),
         text_content: Some("hello".to_string()),
         thinking_content: None,
-        response_body_full: None,
+        response_body: None,
         stop_reason: Some("end_turn".to_string()),
         input_tokens: Some(1),
         output_tokens: Some(1),

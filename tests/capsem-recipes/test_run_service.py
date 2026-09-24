@@ -40,7 +40,7 @@ def test_ensure_service_detaches_from_recipe_shell():
     So the claim is unchanged and its evidence moved: the recipe still owns
     starting a detached service, and the detachment is asserted where it lives.
     """
-    assert "capsem-gate ensure-service" in _recipe_block("_ensure-service:")
+    assert "capsem-gate ensure-service" in _recipe_block("run-service:")
 
     launch = (PROJECT_ROOT / "build_system/builder/gate/proc.py").read_text(encoding="utf-8")
     assert "start_new_session=True" in launch

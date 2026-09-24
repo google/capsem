@@ -66,6 +66,7 @@ def _environment(tmp_path: Path, **extra: str) -> dict[str, str]:
     return {
         **inherited,
         "HOME": str(tmp_path),
+        "CAPSEM_CACHE_AUTHORITY": str(tmp_path),
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
         **extra,
     }
@@ -166,6 +167,39 @@ def test_a_wrapper_or_assignment_does_not_hide_cargo(tmp_path: Path) -> None:
         _bounded(tmp_path, "env", "RUST_LOG=debug", "cargo", "+nightly", "build") as hidden,
     ):
         assert not _finished_within(hidden, LOCK.report_after_seconds + 3)
+
+
+def test_direct_cargo_enforces_its_cache_contract_inside_the_machine_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capsem_builder.gate import boundedlease
+
+    enforced: list[tuple[Path, tuple[str, ...]]] = []
+    monkeypatch.setattr(
+        boundedlease,
+        "_enforce_cargo_cache",
+        lambda root, command: enforced.append((root, tuple(command))),
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    with boundedlease.leased(("cargo", "test", "-p", "capsem-core"), ROOT, {}):
+        assert enforced == [(ROOT, ("cargo", "test", "-p", "capsem-core"))]
+
+
+def test_zero_byte_expiry_does_not_claim_cargo_exceeded_its_limit() -> None:
+    from capsem_builder.cache.enforcement import EnforcementResult
+    from capsem_builder.gate.boundedlease import _maintenance_notice
+
+    result = EnforcementResult(
+        cache_id="cargo",
+        before_size_bytes=100,
+        after_size_bytes=100,
+        pruned=True,
+        reclaim_bytes=0,
+        action_count=17,
+        violations=(),
+    )
+    assert _maintenance_notice(result) == "Cargo cache maintenance applied 17 prune actions; owned usage 100 -> 100 bytes"
 
 
 def test_cargo_in_an_argument_is_not_cargo_in_command_position(tmp_path: Path) -> None:

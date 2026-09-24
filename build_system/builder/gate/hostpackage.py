@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 
-from . import host, sdkchecks, toolchain
+from . import host, hostbuild, sdkchecks, toolchain
 from .actions import Action, Run, Script
 from .command import GateCommand
 from .config import GateConfig
@@ -19,36 +19,6 @@ from .context import Context
 from .errors import GateError
 from .execution import Kind, Needs, Speed, step
 from .plan import Plan
-
-
-def build_step(
-    config: GateConfig, *, label: str = "build-binaries", env: dict[str, str] | None = None
-):
-    """Build the binaries `sign_step` is about to sign.
-
-    They had no producer. Signing has always been `codesign ... --force
-    cache/target/cargo/debug/capsem` against whatever an earlier `just build` left in the
-    tree, which works on a machine that has built before and fails with
-    `cache/target/cargo/debug/capsem: No such file or directory` on one that has not --
-    including, now, every run that gets a checkout of its own.
-
-    The bin names come off `[signing] binaries` rather than a second list, so
-    the set built and the set signed cannot drift apart. `--bins` for exactly
-    those, not `--workspace`: the guest crates target musl and have no business
-    being built for the host here.
-    """
-    settings = config.signing
-    selected = [flag for name in settings.built for flag in ("--bin", name)]
-    binary_dir = config.path(settings.binaries[0]).parent
-    return step(
-        label,
-        Run(["cargo", "build", *selected], env=env),
-        contends=(config.exclusive("workspace_binaries"),),
-        produces=tuple(binary_dir / name for name in settings.built),
-        kind=Kind.PACKAGE,
-        needs=frozenset({Needs.DISK, Needs.SIGNING}),
-        speed=Speed.SLOW,
-    )
 
 
 def sign_step(config: GateConfig, *, label: str = "sign"):
@@ -65,7 +35,8 @@ def sign_step(config: GateConfig, *, label: str = "sign"):
     if not host.on_macos():
         # Keep the shared graph shape and its ordering edge without pretending
         # a Linux no-op rewrote or produced the host binaries.
-        return step(label,
+        return step(
+            label,
             kind=Kind.PACKAGE,
             needs=frozenset({Needs.DISK}),
             speed=Speed.FAST,
@@ -84,7 +55,8 @@ def sign_step(config: GateConfig, *, label: str = "sign"):
                     settings.entitlements,
                     "--force",
                     binary,
-                ]
+                ],
+                timeout_seconds=settings.sign_timeout_seconds,
             )
             for binary in settings.binaries
         ],
@@ -101,14 +73,28 @@ def sign_step(config: GateConfig, *, label: str = "sign"):
 
 def sbom_step(config: GateConfig):
     """Generate the host package SBOM and check it describes something."""
-    return step("host-sbom", _GenerateSbom(), _ValidateSbom(),
+    return step(
+        "host-sbom",
+        _GenerateSbom(),
+        _ValidateSbom(),
         kind=Kind.PACKAGE,
         needs=frozenset({Needs.DISK}),
         speed=Speed.SLOW,
     )
 
 
-class SignCommand(GateCommand, name="sign", help="codesign the host binaries for VM tests"):
+class BuildHostCommand(GateCommand, name="build-host", help="build the host binary cohort"):
+    """Expose the shared producer as a journaled, bounded gate command."""
+
+    exclusive = True
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        hostbuild.add(plan, self._config)
+        return plan
+
+
+class SignCommand(GateCommand, name="sign", help="build and codesign host binaries for VM tests"):
     """Apple Virtualization.framework refuses an unsigned caller, so this is a
     precondition for every VM test rather than a packaging nicety."""
 
@@ -116,9 +102,8 @@ class SignCommand(GateCommand, name="sign", help="codesign the host binaries for
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        if not host.on_macos():
-            return plan
-        plan.add(sign_step(self._config))
+        built = hostbuild.add(plan, self._config)
+        plan.add(sign_step(self._config), after=(built,))
         return plan
 
 
@@ -145,9 +130,7 @@ def _artifacts(config: GateConfig) -> list[str]:
     settings = config.sbom
     version = workspace_version(config.root)
     package_root = config.path(config.outputs.packages)
-    debs = sorted(
-        package_root.glob(settings.linux_packages_glob.format(version=version))
-    )
+    debs = sorted(package_root.glob(settings.linux_packages_glob.format(version=version)))
     if len(debs) != settings.expected_debs:
         raise GateError(
             f"expected {settings.expected_debs} current-version Linux packages, "
@@ -224,7 +207,9 @@ class BuildUiCommand(
         installed = plan.add(toolchain.node(config, (settings.workspace,)))
         sdk = plan.add(sdkchecks.typescript_bundle(config), after=(installed,))
         bundle = plan.add(
-            step("frontend", Run(["bash", settings.build_script, settings.build_target]),
+            step(
+                "frontend",
+                Run(["bash", settings.build_script, settings.build_target]),
                 kind=Kind.COMPILE,
                 needs=frozenset({Needs.DISK}),
                 speed=Speed.SLOW,
@@ -234,9 +219,14 @@ class BuildUiCommand(
         argv = ["cargo", "build", "-p", settings.app_crate]
         if profile != settings.profiles[0]:
             argv.append(f"--{profile}")
-        plan.add(step(f"app.{profile}", Run(argv),
-            kind=Kind.COMPILE,
-            needs=frozenset({Needs.DISK}),
-            speed=Speed.SLOW,
-        ), after=(bundle,))
+        plan.add(
+            step(
+                f"app.{profile}",
+                Run(argv),
+                kind=Kind.COMPILE,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.SLOW,
+            ),
+            after=(bundle,),
+        )
         return plan

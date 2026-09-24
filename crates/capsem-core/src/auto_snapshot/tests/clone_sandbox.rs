@@ -49,6 +49,7 @@ fn clone_sandbox_state_with_session_db() {
     let src = src_tmp.path();
     std::fs::create_dir_all(src.join("system")).unwrap();
     let src_db = src.join("session.db");
+    capsem_logger::DbWriter::open(&src_db, 8).unwrap().shutdown_blocking();
     let conn = rusqlite::Connection::open(&src_db).unwrap();
     conn.execute_batch(
         "CREATE TABLE ledger (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
@@ -83,6 +84,7 @@ fn clone_sandbox_state_snapshots_wal_backed_session_db() {
     let src = src_tmp.path();
     std::fs::create_dir_all(src.join("system")).unwrap();
     let src_db = src.join("session.db");
+    capsem_logger::DbWriter::open(&src_db, 8).unwrap().shutdown_blocking();
     let conn = rusqlite::Connection::open(&src_db).unwrap();
     let journal_mode: String = conn
         .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))

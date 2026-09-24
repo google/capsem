@@ -54,6 +54,17 @@ fn stats_detail_schema_names_every_event_and_uses_booleans() {
         schemas["VmStatsDetailResponse"]["properties"]["body_blobs"]["additionalProperties"]["items"]["$ref"],
         "#/components/schemas/EventBody"
     );
+    assert!(schemas["EventBody"]["properties"].get("body").is_none());
+    assert_eq!(
+        doc["paths"]["/vms/{id}/bodies/{event_id}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+            ["$ref"],
+        "#/components/schemas/EventBodiesResponse"
+    );
+    assert_eq!(
+        doc["paths"]["/vms/{id}/bodies/export.warc.gz"]["get"]["responses"]["200"]["content"]["application/gzip"]
+            ["schema"]["format"],
+        "binary"
+    );
     for invalid in ["invented", ""] {
         let value = serde_json::json!(invalid);
         assert!(serde_json::from_value::<NetworkDecision>(value.clone()).is_err());
@@ -61,7 +72,6 @@ fn stats_detail_schema_names_every_event_and_uses_booleans() {
         assert!(serde_json::from_value::<ToolOrigin>(value.clone()).is_err());
         assert!(serde_json::from_value::<CredentialOutcome>(value.clone()).is_err());
         assert!(serde_json::from_value::<CredentialEventType>(value.clone()).is_err());
-        assert!(serde_json::from_value::<BodyDirection>(value).is_err());
     }
 }
 

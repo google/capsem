@@ -28,12 +28,9 @@ fn create_tables_includes_dns_events() {
 }
 
 #[test]
-fn migrate_dns_events_idempotent() {
+fn create_tables_publishes_the_dns_events_table() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    // Run migrate twice -- second call must not error.
-    migrate(&conn).unwrap();
-    migrate(&conn).unwrap();
     // Verify dns_events table exists and accepts a row.
     conn.execute(
         "INSERT INTO dns_events (timestamp, qname, qtype, qclass, rcode, decision, trace_id)

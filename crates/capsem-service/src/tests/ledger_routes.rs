@@ -1,6 +1,9 @@
 use super::*;
 
+mod bodies;
+mod bodies_export;
 mod freshness;
+mod query_plan;
 
 #[tokio::test]
 async fn security_routes_read_security_ledger_from_session_db() {
@@ -39,7 +42,7 @@ async fn security_routes_read_security_ledger_from_session_db() {
     .await
     .expect("security latest reads session ledger");
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let events: Vec<capsem_logger::SecurityRuleEvent> = serde_json::from_slice(&bytes).unwrap();
+    let events: Vec<capsem_logger::SecurityRuleMatch> = serde_json::from_slice(&bytes).unwrap();
 
     assert_eq!(events.len(), 1);
     let event = &events[0];
@@ -52,8 +55,28 @@ async fn security_routes_read_security_ledger_from_session_db() {
         capsem_logger::SecurityDetectionLevel::Informational
     );
     assert!(event.rule_json.contains("ollama_model_api_observed"));
-    assert!(event.event_json.contains(r#""provider":"ollama""#));
     assert_eq!(event.trace_id.as_deref(), Some("trace_ollama"));
+    // The route returns the row; the matched event's payload is archived and
+    // is read by event id, not carried by every row of a list view.
+    let payload = capsem_logger::DbHandle::open_external_reader(&db_path)
+        .unwrap()
+        .read_body(
+            "abcdef123456",
+            "security_rule_events",
+            capsem_logger::BodyDirection::Payload,
+        )
+        .await
+        .unwrap()
+        .expect("the matched event payload is archived");
+    assert_eq!(
+        payload.content_type.as_deref(),
+        Some("application/vnd.capsem.security+msgpack")
+    );
+    assert!(capsem_proto::forensic::SecurityForensicEvent::decode(&payload.bytes)
+        .unwrap()
+        .to_json()
+        .unwrap()
+        .contains(r#""provider":"ollama""#));
 
     let response = handle_security_info(State(state), Path("vm-ledger".to_string()))
         .await
@@ -339,10 +362,8 @@ async fn timeline_route_reads_timeline_ledger_from_session_db() {
             matched_rule: Some("profiles.rules.default_http".to_string()),
             request_headers: None,
             response_headers: None,
-            request_body_preview: Some("{}".to_string()),
-            response_body_preview: Some(r#"{"ok":true}"#.to_string()),
-            request_body_full: Some("{}".to_string()),
-            response_body_full: Some(r#"{"ok":true}"#.to_string()),
+            request_body: Some(b"{}".to_vec()),
+            response_body: Some(br#"{"ok":true}"#.to_vec()),
             conn_type: Some("http".to_string()),
             policy_mode: None,
             policy_action: Some("allow".to_string()),
@@ -409,10 +430,8 @@ async fn triage_route_reads_triage_ledger_from_session_db() {
             matched_rule: Some("corp.rules.block_evil".to_string()),
             request_headers: None,
             response_headers: None,
-            request_body_preview: None,
-            response_body_preview: None,
-            request_body_full: None,
-            response_body_full: None,
+            request_body: None,
+            response_body: None,
             conn_type: Some("http".to_string()),
             policy_mode: None,
             policy_action: Some("block".to_string()),
@@ -568,8 +587,6 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
         total_estimated_cost: 0.0,
         total_tool_calls: 0,
         total_file_events: 0,
-        compressed_size_bytes: None,
-        vacuumed_at: None,
         storage_mode: "virtiofs".to_string(),
         rootfs_hash: None,
         rootfs_version: None,
@@ -644,10 +661,8 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
         matched_rule: Some("profiles.rules.default_http".to_string()),
         request_headers: Some("content-type: application/json".to_string()),
         response_headers: Some("content-type: application/json".to_string()),
-        request_body_preview: Some(r#"{"input":"winterfell"}"#.to_string()),
-        response_body_preview: Some(r#"{"output_text":"the wall holds"}"#.to_string()),
-        request_body_full: Some(r#"{"input":"winterfell"}"#.to_string()),
-        response_body_full: Some(r#"{"output_text":"the wall holds"}"#.to_string()),
+        request_body: Some(br#"{"input":"winterfell"}"#.to_vec()),
+        response_body: Some(br#"{"output_text":"the wall holds"}"#.to_vec()),
         conn_type: Some("https".to_string()),
         policy_mode: None,
         policy_action: Some("allow".to_string()),
@@ -673,13 +688,12 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
         messages_count: 1,
         tools_count: 1,
         request_bytes: 64,
-        request_body_preview: Some(r#"{"input":"write winterfell"}"#.to_string()),
-        request_body_full: Some(r#"{"input":"write winterfell"}"#.to_string()),
+        request_body: Some(br#"{"input":"write winterfell"}"#.to_vec()),
         message_id: Some("msg-winterfell".to_string()),
         status_code: Some(200),
         text_content: Some("the wall holds".to_string()),
         thinking_content: Some("prepare ledger proof".to_string()),
-        response_body_full: Some(r#"{"output_text":"the wall holds"}"#.to_string()),
+        response_body: Some(br#"{"output_text":"the wall holds"}"#.to_vec()),
         stop_reason: Some("end_turn".to_string()),
         input_tokens: Some(9),
         output_tokens: Some(4),
@@ -692,6 +706,7 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
             "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
         ),
         tool_calls: vec![capsem_logger::ToolCallEntry {
+            event_id: None,
             call_index: 0,
             call_id: "tool-winterfell".to_string(),
             tool_name: "Write".to_string(),
@@ -700,6 +715,7 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
             trace_id: Some("trace-winterfell".to_string()),
         }],
         tool_responses: vec![capsem_logger::ToolResponseEntry {
+            event_id: None,
             call_id: "tool-winterfell".to_string(),
             content_preview: Some("Wrote winterfell.md".to_string()),
             is_error: false,
@@ -748,9 +764,11 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
     assert_eq!(detail["model_events"][0]["input_tokens"], 9, "{detail}");
     assert_eq!(detail["tool_events"][0]["call_id"], "tool-winterfell", "{detail}");
     assert_eq!(detail["tool_events"][0]["tool_name"], "Write", "{detail}");
+    // Body bytes are archive-backed now; the stats payload names them.
+    assert_eq!(detail["body_blobs"]["abcdef123453"][0]["direction"], "request");
     assert_eq!(
-        detail["body_blobs"]["abcdef123453"][0]["body"],
-        r#"{"input":"write winterfell"}"#
+        detail["body_blobs"]["abcdef123453"][0]["stored_bytes"],
+        r#"{"input":"write winterfell"}"#.len()
     );
 
     let (status, security) = route_request(
@@ -809,4 +827,155 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
                 .is_some_and(|summary| summary.contains("Write") && summary.contains("tool-winterfell"))),
         "{timeline}"
     );
+}
+
+#[tokio::test]
+async fn db_boundary_route_contract_db_handle_route_rewire() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("db-handle-route-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "db-handle-route-vm", std::process::id(), session_dir.clone());
+
+    assert!(
+        state.session_db_handle("db-handle-route-vm").is_none(),
+        "session handles are registered lazily after capsem-process creates session.db"
+    );
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    writer
+        .write(capsem_logger::WriteOp::SecurityRuleEvent(
+            capsem_logger::SecurityRuleEvent::new(
+                1_789_111_000_000,
+                "abcdef123456",
+                "http.request",
+                "profiles.rules.default_http",
+                r#"{"name":"default_http"}"#,
+                r#"{"event_type":"http.request"}"#,
+            )
+            .with_rule_action(capsem_logger::SecurityRuleAction::Allow),
+        ))
+        .await;
+    writer.shutdown_blocking();
+
+    let (status, stats_detail) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/db-handle-route-vm/stats/detail",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{stats_detail}");
+    assert_eq!(stats_detail["model_stats"], json!([]));
+    let forensic =
+        capsem_proto::forensic::SecurityForensicEvent::from_json(r#"{"event_type":"http.request"}"#, "http.request")
+            .unwrap()
+            .encode()
+            .unwrap();
+    let expected_bodies = json!({"abcdef123456": [{
+        "body_hash": format!("blake3:{}", blake3::hash(&forensic).to_hex()),
+        "content_type": "application/vnd.capsem.security+msgpack",
+        "direction": "payload",
+        "event_id": "abcdef123456",
+        "original_bytes": forensic.len(),
+        "source_table": "security_rule_events",
+        "stored_bytes": forensic.len(),
+        "truncated": false
+    }]});
+    assert_eq!(stats_detail["body_blobs"], expected_bodies);
+
+    let (status, security_status) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/db-handle-route-vm/security/status",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{security_status}");
+    assert_eq!(security_status["total"], 1);
+    assert_eq!(security_status["by_action"][0]["rule_action"], "allow");
+    assert!(
+        state.session_db_handle("db-handle-route-vm").is_some(),
+        "first ledger route registers the external DB reader once session.db exists"
+    );
+}
+
+#[tokio::test]
+async fn mounted_service_ledger_routes_read_real_session_db_rows() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("service-ledger-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "service-ledger-vm", std::process::id(), session_dir.clone());
+
+    let rule_set = SecurityRuleSet::new(
+        SecurityRuleProfile {
+            profiles: SecurityRuleGroup {
+                rules: BTreeMap::from([(
+                    "service_http_detect".to_string(),
+                    capsem_core::net::policy_config::SecurityRule {
+                        name: "service_http_detect".to_string(),
+                        action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
+                        condition: r#"http.host.contains("example.com")"#.to_string(),
+                        enabled: true,
+                        detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
+                        priority: Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(10)),
+                        corp_locked: false,
+                        reason: Some("service ledger route proof".to_string()),
+                        managed: None,
+                        plugin_config: BTreeMap::new(),
+                    },
+                )]),
+            },
+            ..SecurityRuleProfile::default()
+        }
+        .compile(SecurityRuleSource::User)
+        .unwrap(),
+    );
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    let event_id = capsem_core::security_engine::SecurityEventId::parse("123abc456def").unwrap();
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(
+        capsem_core::security_engine::HttpSecurityEvent {
+            host: Some("api.example.com".to_string()),
+            method: Some("GET".to_string()),
+            path: Some("/health".to_string()),
+            query: None,
+            status: Some("200".to_string()),
+            body: None,
+        },
+    );
+    let emitted = capsem_core::security_engine::emit_matching_security_rules(
+        &writer,
+        event_id,
+        RuntimeSecurityEventType::HttpRequest,
+        &rule_set,
+        &event,
+        1_789_000_223_456,
+    )
+    .await
+    .unwrap();
+    writer.shutdown_blocking();
+    assert_eq!(emitted, 1);
+    for uri in [
+        "/security/latest?limit=10",
+        "/enforcement/latest?limit=10",
+        "/detection/latest?limit=10",
+    ] {
+        let (status, rows) = route_request(app.clone(), axum::http::Method::GET, uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {rows}");
+        let rows = rows.as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{uri}: {rows:?}");
+        assert_eq!(rows[0]["vm_id"], "service-ledger-vm");
+        assert_eq!(rows[0]["event"]["event_id"], "123abc456def");
+        assert_eq!(rows[0]["event"]["rule_id"], "profiles.rules.service_http_detect");
+        assert_eq!(rows[0]["event"]["detection_level"], "informational");
+    }
+
+    for uri in ["/security/status", "/enforcement/status", "/detection/status"] {
+        let (status, body) = route_request(app.clone(), axum::http::Method::GET, uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+        assert_eq!(body["total"], 1, "{uri}: {body}");
+        assert_eq!(body["sessions"][0]["vm_id"], "service-ledger-vm");
+    }
 }

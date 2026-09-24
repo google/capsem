@@ -12,6 +12,7 @@ from contextlib import closing, suppress
 from pathlib import Path
 
 import pytest
+from helpers.body_archive import security_payload
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -68,7 +69,6 @@ EXPECTED_SECURITY_COLUMNS = {
     "rule_action",
     "detection_level",
     "rule_json",
-    "event_json",
     "trace_id",
     "turn_id",
     "credential_ref",
@@ -386,7 +386,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
             assert allowed_security["rule_action"] == "allow"
             assert allowed_security["detection_level"] == "informational"
             assert allowed_security["trace_id"] == allowed["trace_id"]
-            allowed_event_json = json.loads(allowed_security["event_json"])
+            allowed_event_json = security_payload(conn, allowed_security["event_id"])
             assert allowed_event_json["event_type"] == "dns.query"
             assert allowed_event_json["dns"]["qname"] == allowed_qname
             assert allowed_event_json["dns"]["qtype"] == "1"
@@ -394,7 +394,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
             assert blocked_security["rule_action"] == "block"
             assert blocked_security["detection_level"] == "high"
             assert blocked_security["trace_id"] == blocked["trace_id"]
-            blocked_event_json = json.loads(blocked_security["event_json"])
+            blocked_event_json = security_payload(conn, blocked_security["event_id"])
             assert blocked_event_json["event_type"] == "dns.query"
             assert blocked_event_json["dns"]["qname"] == blocked_qname
             assert blocked_event_json["dns"]["qtype"] == "1"

@@ -4,8 +4,13 @@
 //! SQLite, so a route never learns whether a query reads through the page
 //! cache, mmap or the DB-owned memory tables.
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rusqlite::Connection;
+
+/// How long a disk-only reader waits out an exclusive file lock, matching the
+/// writer's own `busy_timeout`.
+const READER_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// SQLite mmap window for file-backed ledger databases.
 ///
@@ -77,31 +82,29 @@ pub fn record_sqlite_mmap_telemetry(conn: &Connection, path: &Path, role: &'stat
     );
 }
 
-/// Apply write-mode pragmas: WAL journal + relaxed synchronous.
+/// Apply session write-mode pragmas: WAL with durable FULL commits.
 /// Only call on read-write connections (the writer).
 pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    conn.pragma_update(None, "synchronous", "FULL")?;
+    #[cfg(target_os = "macos")]
+    conn.pragma_update(None, "fullfsync", "ON")?;
     apply_mmap_pragma(conn)?;
     Ok(())
 }
 
 /// Apply read-safe pragmas for DB-owned query connections.
 ///
-/// These connections may be opened read-write briefly so the DB layer can
-/// attach and populate its private `mem` schema. After setup, `query_only`
-/// prevents writes through the read worker.
+/// Readers open the file read-write (see `DbReader::open`) and `query_only`
+/// is what keeps the read worker from writing through it.
 pub fn apply_reader_pragmas(conn: &Connection) -> rusqlite::Result<()> {
     apply_mmap_pragma(conn)?;
     conn.pragma_update(None, "query_only", "ON")?;
-    // The hot ledger tables live in a shared-cache memory schema, where a
-    // reader takes a table-level read lock and fails at once with
-    // SQLITE_LOCKED while the writer's batch holds the table -- and starves
-    // outright while batches are back to back. `read_uncommitted` is
-    // SQLite's answer for shared-cache readers: no table locks, so a read
-    // never waits on or fails against the single writer. What it may see is
-    // the tail of a batch before its commit, which for an append-only ledger
-    // written by one thread is the same rows a moment early.
-    conn.pragma_update(None, "read_uncommitted", "ON")?;
+    // WAL lets a reader read the file while the writer commits, but
+    // `wal_checkpoint(TRUNCATE)` and `VACUUM` take an exclusive file lock,
+    // and a read that lands during one gets SQLITE_BUSY. Wait it out the same
+    // way the writer does rather than failing a route because a ledger was
+    // being compacted.
+    conn.busy_timeout(READER_BUSY_TIMEOUT)?;
     Ok(())
 }

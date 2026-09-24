@@ -1233,6 +1233,112 @@
         }
       }
     },
+    "/vms/{id}/bodies/export.warc.gz": {
+      "get": {
+        "operationId": "exportVmBodies",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "WARC 1.1 gzip stream",
+            "content": {
+              "application/gzip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/bodies/{event_id}": {
+      "get": {
+        "operationId": "getVmEventBodies",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "max_bytes",
+            "in": "query",
+            "description": "Maximum decoded bytes returned per body. The service clamps this to its\nprotocol limit.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventBodiesResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/changes": {
       "get": {
         "operationId": "getVmChanges",
@@ -2633,6 +2739,63 @@
   },
   "components": {
     "schemas": {
+      "ArchivedEventBody": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "source_table",
+          "direction",
+          "original_bytes",
+          "stored_bytes",
+          "truncated",
+          "truncated_for_transport",
+          "body_hash",
+          "encoding",
+          "content"
+        ],
+        "properties": {
+          "body_hash": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "direction": {
+            "type": "string"
+          },
+          "encoding": {
+            "$ref": "#/components/schemas/BodyEncoding"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "original_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "source_table": {
+            "type": "string"
+          },
+          "stored_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "truncated_for_transport": {
+            "type": "boolean"
+          }
+        }
+      },
       "AssetManifestStatus": {
         "type": "object",
         "required": [
@@ -2887,11 +3050,11 @@
           }
         }
       },
-      "BodyDirection": {
+      "BodyEncoding": {
         "type": "string",
         "enum": [
-          "request",
-          "response"
+          "utf8",
+          "base64"
         ]
       },
       "CaptureStatus": {
@@ -3291,21 +3454,36 @@
           }
         }
       },
+      "EventBodiesResponse": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "bodies"
+        ],
+        "properties": {
+          "bodies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArchivedEventBody"
+            }
+          },
+          "event_id": {
+            "type": "string"
+          }
+        }
+      },
       "EventBody": {
         "type": "object",
         "required": [
           "event_id",
+          "source_table",
           "direction",
           "original_bytes",
           "stored_bytes",
           "truncated",
-          "body_hash",
-          "body"
+          "body_hash"
         ],
         "properties": {
-          "body": {
-            "type": "string"
-          },
           "body_hash": {
             "type": "string"
           },
@@ -3316,7 +3494,7 @@
             ]
           },
           "direction": {
-            "$ref": "#/components/schemas/BodyDirection"
+            "type": "string"
           },
           "event_id": {
             "type": "string"
@@ -3325,6 +3503,9 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          },
+          "source_table": {
+            "type": "string"
           },
           "stored_bytes": {
             "type": "integer",
@@ -4176,11 +4357,12 @@
         "type": "object",
         "required": [
           "event_id",
+          "source_table",
           "direction",
           "original_bytes",
           "stored_bytes",
-          "body_hash",
-          "payload"
+          "truncated",
+          "body_hash"
         ],
         "properties": {
           "body_hash": {
@@ -4193,7 +4375,7 @@
             ]
           },
           "direction": {
-            "$ref": "#/components/schemas/BodyDirection"
+            "type": "string"
           },
           "event_id": {
             "type": "string"
@@ -4203,13 +4385,16 @@
             "format": "int64",
             "minimum": 0
           },
-          "payload": {
-            "$ref": "#/components/schemas/CapturedPayload"
+          "source_table": {
+            "type": "string"
           },
           "stored_bytes": {
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
           }
         }
       },

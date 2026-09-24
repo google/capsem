@@ -191,7 +191,7 @@ pub struct AggregatorServerStatus {
     pub enabled: bool,
     pub source: String,
     /// True if this server uses stdio transport (subprocess).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "crate::sparse::is_default")]
     pub is_stdio: bool,
     pub connected: bool,
     pub tool_count: usize,

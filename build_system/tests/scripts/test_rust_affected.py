@@ -115,6 +115,7 @@ def test_real_workspace_inventory_matches_cargo_members() -> None:
         "capsem-agent",
         "capsem-api",
         "capsem-app",
+        "capsem-archive",
         "capsem-assets",
         "capsem-bench",
         "capsem-config",

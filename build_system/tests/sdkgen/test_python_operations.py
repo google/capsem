@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 import pytest
 from aiohttp import web
-from capsem_builder.sdkgen.operations import Route, read_operations
+from capsem_builder.sdkgen.operations import Route, is_binary_media_type, read_operations
 from capsem_builder.sdkgen.python import module_name, render_models, type_name
 from capsem_builder.sdkgen.python_operations import render_operations
 from capsem_builder.sdkgen.schema import Schema, read_schemas
@@ -75,7 +75,7 @@ def package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleT
 def test_operation_matches_the_wire_contract(route: Route, outcome: str, package: ModuleType) -> None:
     operation = route.operation
     response = operation.success
-    expected = b"\x00\xff" if response.media_type == "application/octet-stream" else sample(response.schema)
+    expected = b"\x00\xff" if is_binary_media_type(response.media_type) else sample(response.schema)
     arguments = {}
     expected_path = route.path
     expected_query = {}

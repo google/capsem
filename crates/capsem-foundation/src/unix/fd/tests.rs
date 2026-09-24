@@ -4,7 +4,7 @@ use std::os::unix::net::UnixStream;
 
 use nix::fcntl::{fcntl, FcntlArg, FdFlag, OFlag};
 
-use super::{duplicate, retry_eintr, set_nonblocking, shutdown, SocketShutdown};
+use super::{duplicate, retry_eintr, set_nonblocking, shutdown, wait_readable, SocketShutdown};
 use nix::errno::Errno;
 
 #[test]
@@ -163,6 +163,21 @@ fn nonblocking_change_reports_previous_state_and_preserves_other_flags() {
     let restored = OFlag::from_bits_truncate(fcntl(stream.as_raw_fd(), FcntlArg::F_GETFL).unwrap());
     assert!(!restored.contains(OFlag::O_NONBLOCK));
     assert_eq!(flags - OFlag::O_NONBLOCK, restored);
+}
+
+#[test]
+fn readable_wait_distinguishes_idle_data_and_eof() {
+    let (mut writer, mut reader) = UnixStream::pair().unwrap();
+    assert!(!wait_readable(reader.as_fd(), std::time::Duration::ZERO).unwrap());
+
+    writer.write_all(b"x").unwrap();
+    assert!(wait_readable(reader.as_fd(), std::time::Duration::ZERO).unwrap());
+    let mut byte = [0; 1];
+    reader.read_exact(&mut byte).unwrap();
+
+    drop(writer);
+    assert!(wait_readable(reader.as_fd(), std::time::Duration::ZERO).unwrap());
+    assert_eq!(reader.read(&mut byte).unwrap(), 0);
 }
 
 #[test]

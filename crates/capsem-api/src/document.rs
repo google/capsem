@@ -35,6 +35,26 @@ pub fn openapi() -> OpenApi {
     doc.logs();
     doc.get::<VmStatsSummaryResponse>("/vms/{id}/stats/summary", "getVmStatsSummary");
     doc.get::<VmStatsDetailResponse>("/vms/{id}/stats/detail", "getVmStatsDetail");
+    let bodies = doc
+        .operation::<bodies::EventBodiesResponse>("/vms/{id}/bodies/{event_id}", "getVmEventBodies")
+        .parameters(Some(EventBodiesQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/vms/{id}/bodies/{event_id}", HttpMethod::Get, bodies);
+    let archive = doc
+        .operation::<ErrorResponse>("/vms/{id}/bodies/export.warc.gz", "exportVmBodies")
+        .response(
+            "200",
+            ResponseBuilder::new().description("WARC 1.1 gzip stream").content(
+                "application/gzip",
+                ContentBuilder::new()
+                    .schema(Some(
+                        ObjectBuilder::new()
+                            .schema_type(Type::String)
+                            .format(Some(SchemaFormat::KnownFormat(KnownFormat::Binary))),
+                    ))
+                    .build(),
+            ),
+        );
+    doc.add("/vms/{id}/bodies/export.warc.gz", HttpMethod::Get, archive);
     doc.get::<SnapshotsStatus>("/vms/{id}/snapshots/status", "getVmSnapshotsStatus");
     doc.get::<SnapshotsList>("/vms/{id}/snapshots/list", "listVmSnapshots");
     let timeline = doc

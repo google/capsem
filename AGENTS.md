@@ -35,6 +35,7 @@ See `/dev-just` for the full recipe reference and dependency chains.
 
 ```
 crates/capsem-foundation/      Low-level paths, UDS, logging, polling, and IPC handshake
+crates/capsem-archive/  Block-compressed body archive for session ledgers (pure Rust)
 crates/capsem-assets/          Asset manifest compatibility, resolution, download, and verification
 crates/capsem-api/             Gateway wire types and OpenAPI contract shared by clients
 sdk/rust/                     capsem-sdk: async HTTP gateway clients sharing capsem-api DTOs
@@ -291,7 +292,7 @@ Telemetry and security ledgers are database-owned.
   that fingerprint. `tests/citadel/test_db_freshness_boundary.py` holds it.
 - They may own query intent, but the logger DB object owns query execution.
 - `capsem-logger` owns SQLite connection threads, `mem`/disk table layout,
-  batching, flushing, rehydration, WAL tuning, and future FTS5/search.
+  batching, flushing, WAL tuning, and future FTS5/search.
 - Do not hardcode route-specific query helpers in `DbWriter` as a substitute
   for this boundary. The DB object is an execution/storage owner, not a route
   semantics registry.
@@ -368,6 +369,30 @@ Read `/dev-gate` before changing any of it.
 - **winterfell** = service session-ledger lifecycle fixtures in `crates/capsem-service/src/tests.rs`; AGENTS.md's gate list refers to these.
 - `just test` writes benchmark recordings under `cache/target/tests/benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
 - Rust is pinned to 1.97.1 in `rust-toolchain.toml`, bootstrap, CI, and Docker. Bump every surface together in a deliberate monthly toolchain PR and handle new-lint fallout there.
+- Bare `python3` on macOS is 3.9 and gives wrong answers (phantom syntax errors, silently dead hooks). Run repository Python with `uv run --project build_system --frozen python`.
+- `magika` pulls `ort`, which downloads a native library from a CDN at build time. Build with `ORT_STRATEGY=system`.
+- A same-size mutation of a Python test file can be served from a stale `.pyc`. Clear `tests/__pycache__` before trusting a mutation-and-restore check.
+- Processes under any Seatbelt profile cannot exec setuid binaries: `/bin/ps` fails. Use syscalls, and prove sandbox fixes under `sandbox-exec`.
+- A failing `kingslanding` test reproduces in about two minutes by running its one pytest file in the latest `cache/worktrees/<run>`; re-sign rebuilt binaries ad hoc with the virtualization entitlement.
+- Red CI is usually per-job provisioning, not code. Check the environment before changing source.
+- `tokio-unix-ipc` closes a descriptor before deregistering it, which lost IPC replies under churn (#209). Write the churn stress test before believing an IPC hypothesis.
+
+## Working rules
+
+How to spend effort and the shared machine. Each one is a mistake that already happened.
+
+- **Scale verification to the change.** Per commit: `cargo fmt`, clippy and tests for the crates it touches, plus the shape guard (Rust 1000-line and script 300-line ceilings). Once, on the final head before the PR: the whole workspace, citadel, and the VM lanes. Iterate on a failing gate step with `capsem-gate <module>`, not a full `just test`. Start VM runs only after the code they measure has landed.
+- **A narrow suite is not verification.** `tests/test_gate_*.py` alone misses what the contract suites catch; the final run is the whole suite.
+- **A guard must not fake what it guards.** Stubbing the input under test makes the test green by construction.
+- **Measure before and after, twice.** Establish the noise floor by running the unchanged code twice before blaming a difference on a change. Performance work reports both runs side by side.
+- **Polled API reads stay in milliseconds.** Info, stats and status routes are what the TUI, tray and web poll. A memory or disk fix never buys itself a slower poll: record the reader benches before and after, keep an idle poll well under 1 ms, and index a slow query instead of caching it in RAM.
+- **Check real exit codes.** Use `pipefail` and `$?`; never judge a run through `grep`-filtered output.
+- **One machine, shared builds.** Every checkout builds into the main checkout's `cache/target/cargo`. Run cargo through `build_system/scripts/ci/run-bounded-command.py`, which takes the gate's machine lock and waits its turn. Do not set a private `CARGO_TARGET_DIR`: it defeats cross-checkout reuse and poisons sccache keys. A stalled rustc under sccache is lock contention, not a wedged sccache.
+- **Never kill by pattern.** `pkill -f` with options parsed as extra patterns once killed every user process. Process control is a tested Python module acting on exact pids.
+- **Work in your assigned worktree.** Editing the main checkout once killed a running release at `source.verify`. One agent commits in a worktree at a time.
+- **Never `git stash` to inspect.** Read old content with `git show <rev>:<path>`; a stash pulls uncommitted work out from under running builds.
+- **One crate per commit,** paths staged explicitly.
+- **Follow-ups are GitHub issues** with file references and a fix sketch, never notes left in an agent's scratch space.
 
 ## Commits
 

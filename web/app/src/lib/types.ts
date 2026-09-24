@@ -338,15 +338,6 @@ export interface NetworkEvent {
   matchedRule?: string | null;
 }
 
-/** A file event entry for the stats view. */
-export interface FileEvent {
-  id: string;
-  path: string;
-  operation: 'created' | 'modified' | 'deleted';
-  sizeBytes: number | null;
-  timestamp: string;
-}
-
 /** A VM log entry (from gateway /logs endpoint). */
 export interface VmLogEntry {
   id: string;

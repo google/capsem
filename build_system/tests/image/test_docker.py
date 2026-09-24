@@ -245,7 +245,6 @@ def _profile_guest_config(tmp_path: Path, profile_id: str):
                 "max_sessions = 100",
                 "min_content_sessions = 25",
                 "max_disk_gb = 100",
-                "terminated_retention_days = 365",
                 "",
             ]
         )
@@ -2302,6 +2301,19 @@ class TestKernelConfig:
         assert 'mount -t "$ROOTFS_TYPE" -o "$ROOTFS_MOUNT_OPTS" /dev/vda /mnt/a' in content
         assert 'boot_mark "$ROOTFS_LABEL"' in content
         assert "FATAL: cannot mount /dev/vda" in content
+
+    def test_init_watchdog_does_not_turn_health_checks_into_audit_traffic(self):
+        content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+        watchdog = content.split("# The guest's side of a link failure.", 1)[1]
+        watchdog = watchdog.split('init_log "starting PTY agent', 1)[0]
+
+        assert "while sleep 60; do" in watchdog
+        assert "while sleep 3; do" not in watchdog
+        for helper in ["cut -d.", "grep -c", "wc -l", "awk '"]:
+            assert helper not in watchdog, helper
+        assert "count_watch_events" in watchdog
+        assert "count_lines" in watchdog
+        assert "virtio_irq_count" in watchdog
 
     def test_init_uses_iptables_nft_only(self):
         content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()

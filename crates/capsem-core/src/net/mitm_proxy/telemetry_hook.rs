@@ -363,22 +363,23 @@ fn record_telemetry_response_end(started: Instant, has_model_call: bool) {
 /// Trace ID is sampled from the ambient OTel context.
 pub fn build_net_event(req_ctx: &TelemetryRequestContext, resp_stats: &TelemetryResponseStats) -> NetEvent {
     let duration_ms = req_ctx.start_time.elapsed().as_millis() as u64;
-    let (bytes_sent, req_preview) = {
+    // The captured body travels once: the event owns the bytes, and the
+    // writer derives the display preview from them at insert. Building a
+    // second `String` copy here is what the single-body field burned.
+    let (bytes_sent, request_body) = {
         let st = req_ctx.request_body_stats.lock().expect("req body stats lock");
-        let preview = if st.preview.is_empty() {
+        let body = if st.preview.is_empty() {
             None
         } else {
-            Some(String::from_utf8_lossy(&st.preview).into_owned())
+            Some(st.preview.clone())
         };
-        (st.bytes, preview)
+        (st.bytes, body)
     };
-    let req_full = req_preview.clone();
-    let resp_preview = if resp_stats.preview.is_empty() {
+    let response_body = if resp_stats.preview.is_empty() {
         None
     } else {
-        Some(String::from_utf8_lossy(&resp_stats.preview).into_owned())
+        Some(resp_stats.preview.clone())
     };
-    let resp_full = resp_preview.clone();
 
     NetEvent {
         event_id: None,
@@ -398,10 +399,8 @@ pub fn build_net_event(req_ctx: &TelemetryRequestContext, resp_stats: &Telemetry
         matched_rule: req_ctx.matched_rule.clone(),
         request_headers: req_ctx.request_headers.clone(),
         response_headers: req_ctx.response_headers.clone(),
-        request_body_preview: req_preview,
-        response_body_preview: resp_preview,
-        request_body_full: req_full,
-        response_body_full: resp_full,
+        request_body,
+        response_body,
         conn_type: Some(req_ctx.conn_type.to_string()),
         policy_mode: req_ctx.policy_mode.clone(),
         policy_action: req_ctx.policy_action.clone(),
@@ -412,6 +411,16 @@ pub fn build_net_event(req_ctx: &TelemetryRequestContext, resp_stats: &Telemetry
     }
 }
 
+/// A captured body as text for a security rule to match on.
+///
+/// Security rules are written against text, and the event carries bytes; this
+/// is the one conversion between them. It is not a second copy of the body:
+/// nothing stores the result.
+fn lossy_text(body: Option<&[u8]>) -> Option<String> {
+    body.filter(|body| !body.is_empty())
+        .map(|body| String::from_utf8_lossy(body).into_owned())
+}
+
 fn security_event_from_net_event(event: &NetEvent) -> SecurityEvent {
     let mut security_event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
         host: Some(event.domain.clone()),
@@ -419,7 +428,7 @@ fn security_event_from_net_event(event: &NetEvent) -> SecurityEvent {
         path: event.path.clone(),
         query: event.query.clone(),
         status: event.status_code.map(|status| status.to_string()),
-        body: event.request_body_preview.clone(),
+        body: lossy_text(event.request_body.as_deref()),
     });
     security_event = security_event.with_tcp(TcpSecurityEvent {
         port: Some(event.port.to_string()),
@@ -440,7 +449,7 @@ fn security_event_from_model_call(call: &ModelCall) -> SecurityEvent {
     let security_event = SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
         provider: Some(call.provider.clone()),
         name: call.model.clone(),
-        request_body: call.request_body_preview.clone(),
+        request_body: lossy_text(call.request_body.as_deref()),
         response_body: call.text_content.clone(),
         tool_calls: if call.tool_calls.is_empty() {
             None
@@ -522,6 +531,7 @@ pub fn maybe_build_model_call(
             s.tool_calls
                 .iter()
                 .map(|tc| ToolCallEntry {
+                    event_id: None,
                     call_index: tc.index,
                     call_id: tc.call_id.clone(),
                     tool_name: tc.name.clone(),
@@ -540,6 +550,7 @@ pub fn maybe_build_model_call(
         tool_calls = parse_non_streaming_tool_calls(protocol, &resp_stats.preview)
             .into_iter()
             .map(|tc| ToolCallEntry {
+                event_id: None,
                 call_index: tc.index,
                 call_id: tc.call_id,
                 tool_name: tc.name.clone(),
@@ -554,6 +565,7 @@ pub fn maybe_build_model_call(
         .tool_results
         .iter()
         .map(|tr| ToolResponseEntry {
+            event_id: None,
             call_id: tr.call_id.clone(),
             content_preview: Some(tr.content_preview.clone()),
             is_error: tr.is_error,
@@ -643,12 +655,6 @@ pub fn maybe_build_model_call(
         }
     }
 
-    let request_body_preview = if req_body_bytes.is_empty() {
-        None
-    } else {
-        Some(String::from_utf8_lossy(&req_body_bytes).into_owned())
-    };
-
     let model_call = ModelCall {
         event_id: None,
         timestamp: SystemTime::now(),
@@ -664,11 +670,10 @@ pub fn maybe_build_model_call(
         messages_count: req_meta.messages_count,
         tools_count: tool_calls.len(),
         request_bytes: bytes_sent,
-        request_body_preview,
-        request_body_full: if req_body_bytes.is_empty() {
+        request_body: if req_body_bytes.is_empty() {
             None
         } else {
-            Some(String::from_utf8_lossy(&req_body_bytes).into_owned())
+            Some(req_body_bytes)
         },
         message_id: summary.as_ref().and_then(|s| s.message_id.clone()),
         status_code: req_ctx.status_code,
@@ -682,10 +687,10 @@ pub fn maybe_build_model_call(
             .map(|s| s.thinking.clone())
             .or_else(|| response_summary.as_ref().map(|s| s.thinking.clone()))
             .filter(|s| !s.is_empty()),
-        response_body_full: if resp_stats.preview.is_empty() {
+        response_body: if resp_stats.preview.is_empty() {
             None
         } else {
-            Some(String::from_utf8_lossy(&resp_stats.preview).into_owned())
+            Some(resp_stats.preview.clone())
         },
         stop_reason: stop_reason_str,
         input_tokens,

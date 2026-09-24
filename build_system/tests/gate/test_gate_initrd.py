@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import gzip
 import importlib
 import os
@@ -26,6 +27,13 @@ from helpers.gate import RecordingJournal, RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
+
+
+def test_standalone_pack_materializes_runtime_config_after_manifest_publication() -> None:
+    command = initrd.PackInitrdCommand(RecordingRunner(PROJECT_ROOT), argparse.Namespace())
+    plan = command.plan()
+
+    assert plan.after_of("prepare.materialize-config") == {"initrd.hash-aliases"}
 
 
 def test_manifest_finalization_carries_only_requested_arches(tmp_path):

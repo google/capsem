@@ -1,9 +1,10 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {ArchivedEventBodySchema} from "./ArchivedEventBody.js";
 export {AssetManifestStatusSchema} from "./AssetManifestStatus.js";
 export {AuditEventSchema} from "./AuditEvent.js";
 export {AuditHistoryDetailsSchema} from "./AuditHistoryDetails.js";
-export {BodyDirectionSchema} from "./BodyDirection.js";
+export {BodyEncodingSchema} from "./BodyEncoding.js";
 export {CaptureStatusSchema} from "./CaptureStatus.js";
 export {CapturedContentSchema} from "./CapturedContent.js";
 export {CapturedPayloadSchema} from "./CapturedPayload.js";
@@ -18,6 +19,7 @@ export {CredentialOutcomeSchema} from "./CredentialOutcome.js";
 export {DnsEventSchema} from "./DnsEvent.js";
 export {ErrorEventSchema} from "./ErrorEvent.js";
 export {ErrorResponseSchema} from "./ErrorResponse.js";
+export {EventBodiesResponseSchema} from "./EventBodiesResponse.js";
 export {EventBodySchema} from "./EventBody.js";
 export {ExecHistoryDetailsSchema} from "./ExecHistoryDetails.js";
 export {ExecOutputSchema} from "./ExecOutput.js";

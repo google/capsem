@@ -80,6 +80,8 @@ operation!(upload_vm_file, "uploadVmFile", UploadVmFileParams);
 operation!(list_vm_files, "listVmFiles", ListVmFilesParams);
 operation!(fork_vm, "forkVm", ForkVmParams);
 operation!(get_vm_history, "getVmHistory", GetVmHistoryParams);
+operation!(get_vm_event_bodies, "getVmEventBodies", GetVmEventBodiesParams);
+operation!(export_vm_bodies, "exportVmBodies", ExportVmBodiesParams);
 operation!(get_vm_info, "getVmInfo", GetVmInfoParams);
 operation!(get_vm_logs, "getVmLogs", GetVmLogsParams);
 operation!(pause_vm, "pauseVm", PauseVmParams);

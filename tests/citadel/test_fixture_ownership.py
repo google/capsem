@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 import tomllib
@@ -25,6 +26,14 @@ partial inventories fail closed so a move cannot silently abandon test bytes.
 
 
 @dataclass(frozen=True)
+class Companion:
+    """A second file of the same fixture, moving with it."""
+
+    path: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class Fixture:
     source: str
     target: str
@@ -33,6 +42,9 @@ class Fixture:
     item: str
     consumers: tuple[str, ...]
     symbols: tuple[str, ...]
+    sha256: str
+    regenerator: str
+    companions: tuple[Companion, ...]
 
 
 @dataclass(frozen=True)
@@ -44,6 +56,9 @@ class Audit:
     root_reads: tuple[str, ...]
     consumers: dict[str, tuple[str, ...]]
     orphan_references: dict[str, tuple[str, ...]]
+    digests: dict[str, str]
+    binary: tuple[str, ...]
+    regenerators: dict[str, bool]
 
 
 def _git(*args: str, root: Path = ROOT) -> list[str]:
@@ -74,10 +89,32 @@ def _fixtures(policy: dict[str, Any]) -> list[Fixture]:
                 else (row.get("consumer", ""),)
             ),
             symbols=tuple(row.get("symbols", [])),
+            sha256=row.get("sha256", ""),
+            regenerator=row.get("regenerator", ""),
+            companions=tuple(
+                Companion(path=entry.get("path", ""), sha256=entry.get("sha256", ""))
+                for entry in row.get("companion", [])
+                if isinstance(entry, dict)
+            ),
         )
         for row in rows
         if isinstance(row, dict)
     ]
+
+
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _is_binary(path: Path) -> bool:
+    """Git's own heuristic: a NUL byte in the first 8 KiB means not text.
+
+    It is a heuristic, not a proof -- a binary whose first pages happen to be
+    NUL-free reads as text here. That only ever under-requires a digest, and
+    the digest field may be declared for any fixture regardless.
+    """
+    with path.open("rb") as handle:
+        return b"\0" in handle.read(8192)
 
 
 def _function_map(path: Path) -> dict[int, str]:
@@ -161,6 +198,21 @@ def _audit(fixtures: list[Fixture]) -> Audit:
             if "data/fixtures" in line
         )
     )
+    digests: dict[str, str] = {}
+    binary: list[str] = []
+    regenerators = {
+        fixture.regenerator: (ROOT / fixture.regenerator).is_file()
+        for fixture in fixtures
+        if fixture.regenerator
+    }
+    for fixture in fixtures:
+        for name in (fixture.source, *(c.path for c in fixture.companions)):
+            candidate = ROOT / name
+            if not candidate.is_file() or candidate.is_symlink():
+                continue
+            digests[name] = _digest(candidate)
+            if _is_binary(candidate):
+                binary.append(name)
     orphan_references: dict[str, tuple[str, ...]] = {}
     for fixture in fixtures:
         if fixture.disposition != "delete" or Path(fixture.source).name == ".gitkeep":
@@ -177,6 +229,9 @@ def _audit(fixtures: list[Fixture]) -> Audit:
         root_reads=root_reads,
         consumers=consumers,
         orphan_references=orphan_references,
+        digests=digests,
+        binary=tuple(sorted(binary)),
+        regenerators=regenerators,
     )
 
 
@@ -204,6 +259,32 @@ def _problems(policy: dict[str, Any], audit: Audit) -> list[str]:
             problems.append(
                 f"fixture targets product config: {fixture.source} -> {fixture.target}"
             )
+        for name, declared in (
+            (fixture.source, fixture.sha256),
+            *((c.path, c.sha256) for c in fixture.companions),
+        ):
+            # Bytes nobody can read in a diff are reviewed by their digest or
+            # not at all. An in-place edit of a binary fixture is how a schema
+            # change once shipped inside an opaque blob.
+            if name in audit.binary and not declared:
+                problems.append(f"binary fixture without a recorded sha256: {name}")
+            if not declared:
+                continue
+            actual_digest = audit.digests.get(name)
+            if actual_digest is None:
+                problems.append(f"missing fixture file: {name}")
+            elif actual_digest != declared:
+                problems.append(
+                    f"fixture bytes changed without review: {name}: "
+                    f"recorded {declared}, found {actual_digest}"
+                )
+        for companion in fixture.companions:
+            if companion.path not in audit.tracked_all:
+                problems.append(f"untracked fixture companion: {companion.path}")
+        # A digest freezes a binary fixture; something has to be able to
+        # produce the next one, or the freeze is just a dead end.
+        if fixture.regenerator and not audit.regenerators.get(fixture.regenerator):
+            problems.append(f"missing fixture regenerator: {fixture.regenerator}")
         if fixture.disposition == "retain":
             actual = audit.consumers.get(fixture.source, ())
             if not actual:
@@ -246,6 +327,9 @@ def _synthetic(**changes: object) -> Audit:
         "root_reads": (),
         "consumers": {"data/fixtures/live.html": ("test_live",)},
         "orphan_references": {},
+        "digests": {"data/fixtures/live.html": "a" * 64},
+        "binary": (),
+        "regenerators": {},
     }
     values.update(changes)
     return Audit(**values)  # type: ignore[arg-type]
@@ -306,6 +390,28 @@ def _synthetic_policy(**changes: object) -> dict[str, Any]:
             },
             _synthetic(),
             "root data reads",
+        ),
+        (
+            _synthetic_policy(sha256="a" * 64),
+            _synthetic(digests={"data/fixtures/live.html": "b" * 64}),
+            "fixture bytes changed without review",
+        ),
+        (
+            _synthetic_policy(),
+            _synthetic(binary=("data/fixtures/live.html",)),
+            "binary fixture without a recorded sha256",
+        ),
+        (
+            _synthetic_policy(
+                companion=[{"path": "data/fixtures/live.bin", "sha256": "c" * 64}]
+            ),
+            _synthetic(),
+            "untracked fixture companion",
+        ),
+        (
+            _synthetic_policy(regenerator="tests/regenerate_live.py"),
+            _synthetic(regenerators={"tests/regenerate_live.py": False}),
+            "missing fixture regenerator",
         ),
         (
             _synthetic_policy(),

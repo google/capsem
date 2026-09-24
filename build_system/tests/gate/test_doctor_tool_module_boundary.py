@@ -18,6 +18,7 @@ LAUNCHERS = {
 }
 
 HELPERS = {
+    "check_session_archive",
     "check_session_report",
     "doctor_session_host_verify",
     "doctor_session_verify",

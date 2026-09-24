@@ -1,8 +1,9 @@
+pub mod builtin_ledger;
 pub mod builtin_tools;
 pub mod file_tools;
 pub mod policy;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -30,17 +31,46 @@ pub fn resolve_inflight_cap() -> usize {
         .unwrap_or_else(default_inflight_cap)
 }
 
+/// The `source` of the one server definition that is Capsem's own builtin.
+///
+/// It is the only server whose tool results may carry ledger records (see
+/// `capsem_proto::mcp_contracts::builtin_ledger`), so it is identified by this
+/// field, which only `local_builtin_server_def` sets, and never by a name a
+/// profile could also choose.
+pub const BUILTIN_SERVER_SOURCE: &str = "builtin";
+
+/// The name the builtin server's tools are namespaced under (`local__echo`).
+pub const BUILTIN_SERVER_NAME: &str = "local";
+
+/// Server names no profile may take: the builtin's own, and the name it had
+/// before it was `local`. Reserved whether or not the builtin binary is
+/// installed -- a profile server named `local` on a host without it would
+/// otherwise own every `local__*` tool name, and nothing downstream could tell
+/// its tools from the builtin's by name.
+const RESERVED_SERVER_NAMES: &[&str] = &[BUILTIN_SERVER_NAME, "builtin"];
+
+/// The names of the servers in `servers` that are Capsem's own builtin.
+pub fn builtin_server_names(servers: &[McpServerDef]) -> BTreeSet<String> {
+    servers
+        .iter()
+        .filter(|server| server.source == BUILTIN_SERVER_SOURCE)
+        .map(|server| server.name.clone())
+        .collect()
+}
+
 fn local_builtin_server_def(bin: &Path, builtin_env: HashMap<String, String>, enabled: bool) -> McpServerDef {
     // Stateless builtin tools that are safe to round-robin across pool
-    // peers when the builtin is not writing a shared session ledger.
-    // Snapshot tools (`snapshots_*`) mutate per-process state and therefore
-    // pin to peers[0].
+    // peers. Snapshot tools (`snapshots_*`) mutate per-process state and
+    // therefore pin to peers[0].
     let pool_safe_tools: Vec<String> = ["echo", "fetch_http", "grep_http", "http_headers"]
         .iter()
         .map(|s| (*s).to_string())
         .collect();
 
-    let pool_size = if builtin_env.contains_key("CAPSEM_SESSION_DB") {
+    // A session's builtin runs one peer. It once wrote the session ledger
+    // itself, which is why this used to key on the ledger's path; it no
+    // longer does, and widening the pool is a separate decision.
+    let pool_size = if builtin_env.contains_key("CAPSEM_SESSION_DIR") {
         Some(1)
     } else {
         let default_pool = std::thread::available_parallelism()
@@ -54,7 +84,7 @@ fn local_builtin_server_def(bin: &Path, builtin_env: HashMap<String, String>, en
     };
 
     McpServerDef {
-        name: "local".to_string(),
+        name: BUILTIN_SERVER_NAME.to_string(),
         url: String::new(),
         command: Some(bin.to_string_lossy().to_string()),
         args: vec![],
@@ -62,7 +92,7 @@ fn local_builtin_server_def(bin: &Path, builtin_env: HashMap<String, String>, en
         headers: std::collections::HashMap::new(),
         auth: None,
         enabled,
-        source: "builtin".to_string(),
+        source: BUILTIN_SERVER_SOURCE.to_string(),
         pool_size,
         pool_safe_tools,
     }
@@ -83,9 +113,13 @@ pub fn build_profile_server_list(
 
     if let Some(bin) = builtin_binary {
         if bin.exists() {
-            let enabled = profile_config.server_enabled.get("local").copied().unwrap_or(true);
+            let enabled = profile_config
+                .server_enabled
+                .get(BUILTIN_SERVER_NAME)
+                .copied()
+                .unwrap_or(true);
             servers.push(local_builtin_server_def(bin, builtin_env, enabled));
-            seen.insert("local".to_string());
+            seen.insert(BUILTIN_SERVER_NAME.to_string());
             info!(bin = %bin.display(), "added profile local builtin MCP server");
         } else {
             warn!(bin = %bin.display(), "builtin MCP server binary not found, skipping");
@@ -97,8 +131,8 @@ pub fn build_profile_server_list(
             warn!("profile MCP server has empty name, skipping");
             continue;
         }
-        if manual.name == "builtin" {
-            warn!("profile MCP server uses reserved name 'builtin', skipping");
+        if RESERVED_SERVER_NAMES.contains(&manual.name.as_str()) {
+            warn!(name = %manual.name, "profile MCP server uses a name reserved for the builtin server, skipping");
             continue;
         }
         if manual.name.contains(capsem_proto::mcp_contracts::NS_SEP) {

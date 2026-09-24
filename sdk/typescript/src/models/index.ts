@@ -1,9 +1,10 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export type { ArchivedEventBody } from "./ArchivedEventBody.js";
 export type { AssetManifestStatus } from "./AssetManifestStatus.js";
 export type { AuditEvent } from "./AuditEvent.js";
 export type { AuditHistoryDetails } from "./AuditHistoryDetails.js";
-export { BodyDirection } from "./BodyDirection.js";
+export { BodyEncoding } from "./BodyEncoding.js";
 export { CaptureStatus } from "./CaptureStatus.js";
 export type { CapturedContent } from "./CapturedContent.js";
 export type { CapturedPayload } from "./CapturedPayload.js";
@@ -18,6 +19,7 @@ export { CredentialOutcome } from "./CredentialOutcome.js";
 export type { DnsEvent } from "./DnsEvent.js";
 export type { ErrorEvent } from "./ErrorEvent.js";
 export type { ErrorResponse } from "./ErrorResponse.js";
+export type { EventBodiesResponse } from "./EventBodiesResponse.js";
 export type { EventBody } from "./EventBody.js";
 export type { ExecHistoryDetails } from "./ExecHistoryDetails.js";
 export type { ExecOutput } from "./ExecOutput.js";

@@ -5,6 +5,6 @@ from __future__ import annotations
 from enum import StrEnum
 
 
-class BodyDirection(StrEnum):
-    REQUEST = 'request'
-    RESPONSE = 'response'
+class BodyEncoding(StrEnum):
+    UTF8 = 'utf8'
+    BASE64 = 'base64'

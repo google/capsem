@@ -3,6 +3,22 @@
 
 use super::*;
 
+const SECURITY_MSGPACK_CONTENT_TYPE: &str = "application/vnd.capsem.security+msgpack";
+
+fn security_payload(event_json: &str, event_type: &str) -> (Vec<u8>, &'static str) {
+    match capsem_proto::forensic::SecurityForensicEvent::from_json(event_json, event_type)
+        .and_then(|event| event.encode())
+    {
+        Ok(encoded) => (encoded, SECURITY_MSGPACK_CONTENT_TYPE),
+        // A malformed direct logger event is retained as evidence. Production
+        // security-engine projections are valid objects and take the typed path.
+        Err(error) => {
+            tracing::warn!(%error, "security forensic payload is not a structured projection");
+            (event_json.as_bytes().to_vec(), "application/json")
+        }
+    }
+}
+
 pub(super) fn insert_dns_event(conn: &Connection, event: &DnsEvent, target: WriteTarget) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(event.timestamp);
     execute_cached(
@@ -111,19 +127,24 @@ pub(super) fn insert_substitution_event(
     Ok(())
 }
 
+/// The row keeps its event identity for correlation while disk flush stores a
+/// shared counted rule snapshot. The matched event's payload goes to the
+/// archive as this event's body and is read by `BodyDirection::Payload`.
 pub(super) fn insert_security_rule_event(
     conn: &Connection,
     event: &SecurityRuleEvent,
     target: WriteTarget,
+    bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
+    let (payload, content_type) = security_payload(&event.event_json, &event.event_type);
     execute_cached(
         conn,
         &format!(
             "INSERT INTO {} (
             timestamp_unix_ms, event_id, event_type, rule_id,
-            rule_action, detection_level, rule_json, event_json, trace_id, turn_id, credential_ref
+            rule_action, detection_level, rule_json, trace_id, turn_id, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             target.table("security_rule_events")
         ),
         params![
@@ -134,28 +155,47 @@ pub(super) fn insert_security_rule_event(
             event.rule_action.as_str(),
             event.detection_level.as_str(),
             event.rule_json,
-            event.event_json,
             event.trace_id,
             event.turn_id,
             event.credential_ref,
         ],
     )?;
+    bodies.stage(
+        conn,
+        EventBodyBlob {
+            event_id: &event.event_id,
+            event_type: "security.rule",
+            source_table: "security_rule_events",
+            direction: "payload",
+            content_type: Some(content_type),
+            body: Some(&payload),
+            original_bytes: None,
+            trace_id: event.trace_id.as_deref(),
+            turn_id: event.turn_id.as_deref(),
+        },
+    );
     Ok(())
 }
 
+/// An ask's row, with the asked-about event archived beside it the way every
+/// security payload is. The pending row and its resolution carry the same
+/// event, and both are staged: the index holds one body per event, so the
+/// second names the same bytes the first did.
 pub(super) fn insert_security_ask_event(
     conn: &Connection,
     event: &SecurityAskEvent,
     target: WriteTarget,
+    bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
+    let (payload, content_type) = security_payload(&event.event_json, &event.event_type);
     execute_cached(
         conn,
         &format!(
             "INSERT INTO {} (
             timestamp_unix_ms, ask_id, event_id, event_type, rule_id, rule_name,
-            status, rule_json, event_json, resolver, reason, trace_id
+            status, rule_json, resolver, reason, trace_id
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             target.table("security_ask_events")
         ),
         params![
@@ -167,29 +207,48 @@ pub(super) fn insert_security_ask_event(
             event.rule_name,
             event.status.as_str(),
             event.rule_json,
-            event.event_json,
             event.resolver,
             event.reason,
             event.trace_id,
         ],
     )?;
+    bodies.stage(
+        conn,
+        EventBodyBlob {
+            event_id: &event.event_id,
+            event_type: "security.ask",
+            source_table: "security_ask_events",
+            direction: "payload",
+            content_type: Some(content_type),
+            body: Some(&payload),
+            original_bytes: None,
+            trace_id: event.trace_id.as_deref(),
+            turn_id: event.trace_id.as_deref(),
+        },
+    );
     Ok(())
 }
 
+/// A decision transition's row, and the event it was made about in the
+/// archive. The row is what a projection filters on -- stage, actor, the three
+/// decisions -- and it is small; the event was the other 5-6 KB of every row, in
+/// the table a session writes most often, and once mirrored in RAM.
 pub(super) fn insert_security_decision_event(
     conn: &Connection,
     event: &SecurityDecisionEvent,
     target: WriteTarget,
+    bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
+    let (payload, content_type) = security_payload(&event.event_json, &event.event_type);
     execute_cached(
         conn,
         &format!(
             "INSERT INTO {} (
             timestamp_unix_ms, event_id, event_type, stage, actor,
             rule_id, plugin_id, previous_decision, requested_decision,
-            effective_decision, reason, event_json, trace_id, turn_id, credential_ref
+            effective_decision, reason, trace_id, turn_id, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             target.table("security_decision_events")
         ),
         params![
@@ -204,12 +263,25 @@ pub(super) fn insert_security_decision_event(
             event.requested_decision.as_str(),
             event.effective_decision.as_str(),
             event.reason,
-            event.event_json,
             event.trace_id,
             event.turn_id,
             event.credential_ref,
         ],
     )?;
+    bodies.stage(
+        conn,
+        EventBodyBlob {
+            event_id: &event.event_id,
+            event_type: "security.decision",
+            source_table: "security_decision_events",
+            direction: "payload",
+            content_type: Some(content_type),
+            body: Some(&payload),
+            original_bytes: None,
+            trace_id: event.trace_id.as_deref(),
+            turn_id: event.turn_id.as_deref(),
+        },
+    );
     Ok(())
 }
 
@@ -312,6 +384,19 @@ pub(super) fn insert_transport_event(
     event: &TransportEvent,
     target: WriteTarget,
 ) -> rusqlite::Result<()> {
+    // `event_id` is UNIQUE, and memory only holds what is not flushed yet: an
+    // id already on disk must be refused here, as the memory table refuses one
+    // it still holds, or the flush's INSERT OR REPLACE would overwrite the
+    // recorded event with its replay.
+    let on_disk = conn
+        .prepare_cached("SELECT 1 FROM main.transport_events WHERE event_id = ?1")?
+        .exists([&event.event_id])?;
+    if on_disk {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE),
+            Some("UNIQUE constraint failed: transport_events.event_id".to_string()),
+        ));
+    }
     execute_cached(
         conn,
         &format!(

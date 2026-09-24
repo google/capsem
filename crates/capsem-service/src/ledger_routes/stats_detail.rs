@@ -1,4 +1,5 @@
 //! Stats detail query intent; DbHandle owns execution and read caching.
+use super::bodies::{STATS_DETAIL_BODY_BLOBS_SQL, STATS_DETAIL_PROCESS_EVENTS_LIMIT};
 use super::*;
 use std::collections::BTreeMap;
 mod interactions;
@@ -111,22 +112,6 @@ ORDER BY id DESC
 LIMIT 100
 "#;
 
-const STATS_DETAIL_BODY_BLOBS_SQL: &str = r#"
-SELECT event_id, direction, content_type, original_bytes,
-       stored_bytes, truncated, body_hash, CAST(body AS TEXT) AS body
-FROM event_body_blobs
-WHERE event_id IN (
-    SELECT event_id FROM net_events WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
-)
-OR event_id IN (
-    SELECT event_id FROM model_calls WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
-)
-OR event_id IN (
-    SELECT event_id FROM tool_calls WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
-)
-ORDER BY event_id, direction
-"#;
-
 pub(super) async fn query_rows<T: DeserializeOwned>(
     vm_id: &str,
     db_path: &StdPath,
@@ -162,14 +147,53 @@ pub(super) async fn query_rows<T: DeserializeOwned>(
         .collect()
 }
 
+async fn query_rows_with_params<T: DeserializeOwned>(
+    vm_id: &str,
+    db_path: &StdPath,
+    db: &capsem_logger::DbHandle,
+    query_name: &str,
+    sql: &str,
+    params: &[serde_json::Value],
+) -> Result<Vec<T>, AppError> {
+    let rows = query_route_objects(vm_id, "stats_detail", query_name, db_path, db, sql, params).await?;
+    rows.into_iter()
+        .map(|mut row| {
+            if let Some(flag) = row.get_mut("truncated") {
+                *flag = match flag.as_i64() {
+                    Some(0) => json!(false),
+                    Some(1) => json!(true),
+                    _ => {
+                        return Err(ledger_route_error(
+                            vm_id,
+                            "stats_detail",
+                            query_name,
+                            db_path,
+                            "invalid boolean flag truncated",
+                        ))
+                    }
+                };
+            }
+            serde_json::from_value(row)
+                .map_err(|error| ledger_route_error(vm_id, "stats_detail", query_name, db_path, error))
+        })
+        .collect()
+}
+
 pub(crate) async fn read_stats_detail_payload_from_session_db(
     state: &ServiceState,
     vm_id: &str,
     db_path: &StdPath,
 ) -> Result<api::VmStatsDetailResponse, AppError> {
     let db = open_ready_session_db(state, vm_id, "stats_detail", db_path).await?;
-    let bodies: Vec<api::EventBody> =
-        query_rows(vm_id, db_path, &db, "body_blobs", STATS_DETAIL_BODY_BLOBS_SQL).await?;
+    let bodies: Vec<api::EventBody> = query_rows_with_params(
+        vm_id,
+        db_path,
+        &db,
+        "body_blobs",
+        STATS_DETAIL_BODY_BLOBS_SQL,
+        &[json!(STATS_DETAIL_PROCESS_EVENTS_LIMIT)],
+    )
+    .await?;
     let mut body_blobs: BTreeMap<String, Vec<api::EventBody>> = BTreeMap::new();
     for body in bodies {
         body_blobs.entry(body.event_id.clone()).or_default().push(body);

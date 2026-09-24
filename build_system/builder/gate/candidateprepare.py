@@ -102,7 +102,13 @@ def prepare(
     built_harness = phase.add(harness, after=(checked,))
     fit = phase.add(fitness, after=(built_harness,))
     dependencies = packagepreflight.fragment(plan, config, after=(fit,))
-    return runtimeprepare.prepare(plan, config, after=(dependencies,), permission=permission)
+    return runtimeprepare.prepare(
+        plan,
+        config,
+        after=(dependencies,),
+        permission=permission,
+        cache_already_enforced=True,
+    )
 
 
 def _enforce_cache(config: GateConfig) -> Call:

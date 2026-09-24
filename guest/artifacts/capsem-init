@@ -62,11 +62,20 @@ boot_mark() {
     _LAST_MARK=$now
 }
 
+# Boot and agent diagnostics survive on the host-preserved VirtioFS share, in
+# its own logs/ directory beside workspace/ -- never inside workspace/. The
+# host file monitor watches the workspace and records every change in it, by
+# design with no exclusions, so a log written there reported its own writes:
+# the agent's log alone was 65 of 155 file events in a 30-minute session. The
+# guest's processes cannot reach logs/ either: only workspace/ is bound into
+# the new root.
+GUEST_LOG_DIR=/mnt/shared/logs
+
 init_log() {
     echo "[capsem-init] $*"
     printf '<1>[capsem-init] %s\n' "$*" > /dev/kmsg 2>/dev/null || true
-    if [ -d /mnt/shared/workspace ]; then
-        printf '[capsem-init] %s\n' "$*" >> /mnt/shared/workspace/.capsem-boot.log 2>/dev/null || true
+    if [ -d "$GUEST_LOG_DIR" ]; then
+        printf '[capsem-init] %s\n' "$*" >> "$GUEST_LOG_DIR/.capsem-boot.log" 2>/dev/null || true
     fi
 }
 
@@ -118,6 +127,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
         echo "[capsem-init] FATAL: cannot mount virtiofs 'capsem' -- aborting"
         exit 1
     }
+    mkdir -p "$GUEST_LOG_DIR" 2>/dev/null || true
     init_log "VirtioFS share mounted"
     boot_mark "virtiofs"
 
@@ -682,8 +692,8 @@ if [ -f /newroot/root/.capsem-image/ready ]; then
 fi
 
 AGENT_STDIO_LOG=/tmp/capsem-agent-stdio.log
-if [ -d /mnt/shared/workspace ]; then
-    AGENT_STDIO_LOG=/mnt/shared/workspace/.capsem-agent-stdio.log
+if [ -d "$GUEST_LOG_DIR" ]; then
+    AGENT_STDIO_LOG="$GUEST_LOG_DIR/.capsem-agent-stdio.log"
 fi
 export RUST_BACKTRACE=1
 
@@ -694,24 +704,73 @@ export RUST_BACKTRACE=1
 # what changed with the guest's socket table and virtio interrupt counts.
 # One heartbeat a minute proves the guest itself is still running.
 WATCH_EVENTS='bridge exited\|reconnect\|capsem-tun exited\|could not start\|control writer\|poll error\|link closed\|terminal bridge'
+WATCH_DMESG=/tmp/capsem-watch-dmesg
+
+count_watch_events() {
+    watch_event_count=0
+    [ -r "$AGENT_STDIO_LOG" ] || return
+    while IFS= read -r watch_line; do
+        case "$watch_line" in
+            *"bridge exited"*|*reconnect*|*"capsem-tun exited"*|*"could not start"*|*"control writer"*|*"poll error"*|*"link closed"*|*"terminal bridge"*)
+                watch_event_count=$((watch_event_count + 1))
+                ;;
+        esac
+    done < "$AGENT_STDIO_LOG"
+}
+
+count_lines() {
+    line_count=0
+    [ -r "$1" ] || return
+    while IFS= read -r _watch_line; do
+        line_count=$((line_count + 1))
+    done < "$1"
+}
+
+virtio_irq_count() {
+    virtio_irqs=0
+    while IFS= read -r irq_line; do
+        case "$irq_line" in
+            *virtio*)
+                set -- $irq_line
+                shift
+                for irq_field do
+                    case "$irq_field" in
+                        ''|*[!0-9]*) ;;
+                        *) virtio_irqs=$((virtio_irqs + irq_field)) ;;
+                    esac
+                done
+                ;;
+        esac
+    done < /proc/interrupts
+}
+
 (
     last_agent=0
-    last_dmesg=$(dmesg 2>/dev/null | wc -l)
+    dmesg > "$WATCH_DMESG" 2>/dev/null
+    count_lines "$WATCH_DMESG"
+    last_dmesg=$line_count
     last_beat=0
-    while sleep 3; do
-        now=$(cut -d. -f1 /proc/uptime)
-        agent=$(grep -c "$WATCH_EVENTS" "$AGENT_STDIO_LOG" 2>/dev/null || echo 0)
-        kernel=$(dmesg 2>/dev/null | wc -l)
+    # Helper execs are audited like user commands. Sample once per heartbeat
+    # and use shell builtins for counting so diagnostics cannot dominate the
+    # security ledger or the process retaining those events.
+    while sleep 60; do
+        IFS=' .' read -r now _watch_fraction < /proc/uptime
+        count_watch_events
+        agent=$watch_event_count
+        dmesg > "$WATCH_DMESG" 2>/dev/null
+        count_lines "$WATCH_DMESG"
+        kernel=$line_count
         if [ "$agent" != "$last_agent" ] || [ "$kernel" != "$last_dmesg" ]; then
             echo "[capsem-watch] t=$now agent-events=$agent kernel-lines=$kernel"
             grep "$WATCH_EVENTS" "$AGENT_STDIO_LOG" 2>/dev/null | tail -n 6 | sed 's/^/[capsem-watch] agent: /'
-            dmesg 2>/dev/null | tail -n "$((kernel - last_dmesg))" | sed 's/^/[capsem-watch] kernel: /'
+            tail -n "$((kernel - last_dmesg))" "$WATCH_DMESG" | sed 's/^/[capsem-watch] kernel: /'
             chroot /newroot ss -a --vsock 2>/dev/null | sed 's/^/[capsem-watch] vsock: /'
             grep -i virtio /proc/interrupts | sed 's/^/[capsem-watch] irq: /'
             last_agent=$agent
             last_dmesg=$kernel
         elif [ $((now - last_beat)) -ge 60 ]; then
-            echo "[capsem-watch] t=$now alive agent-events=$agent kernel-lines=$kernel $(grep -i virtio /proc/interrupts | awk '{s+=$2} END {print "virtio-irqs=" s}')"
+            virtio_irq_count
+            echo "[capsem-watch] t=$now alive agent-events=$agent kernel-lines=$kernel virtio-irqs=$virtio_irqs"
             last_beat=$now
         fi
     done

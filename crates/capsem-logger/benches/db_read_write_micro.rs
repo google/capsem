@@ -9,8 +9,92 @@ use rusqlite::{
     Connection, DatabaseName,
 };
 
+#[path = "support/net_bodies.rs"]
+mod net_bodies;
+
 const WRITE_ROWS: usize = 100_000;
 const READ_ROWS: usize = 1_000_000;
+/// Exchanges written before the cold read: about 900 KiB of raw bodies, just
+/// under the archive's 1 MiB target, so the newest body sits at the far end
+/// of the block that is still being written.
+const ARCHIVE_EXCHANGES: usize = 140;
+/// A disk flush every this many exchanges, standing in for the writer's
+/// five-second timer on a live session.
+const ARCHIVE_FLUSH_EVERY: usize = 10;
+
+/// Timings of the archive path a polled route sees.
+struct ArchiveTimings {
+    write_ms: f64,
+    cold_newest_ms: f64,
+    warm_previous_ms: f64,
+    cold_oldest_ms: f64,
+}
+
+/// Write a session's bodies with periodic flushes while the writer stays
+/// open, then read them from a separate external handle -- the service's
+/// view of a live `capsem-process` ledger.
+///
+/// `cold_newest` is the worst case for a route: a fresh reader asked for the
+/// last body of the block still being appended, which inflates everything
+/// before it in that block. `warm_previous` is the next row a UI asks for.
+async fn archive_reads() -> ArchiveTimings {
+    let dir = tempfile::tempdir().expect("temp db dir");
+    let path = dir.path().join("session.db");
+    let db = DbHandle::open(&path).expect("open db handle");
+    db.ready().await.expect("db ready");
+
+    let started = Instant::now();
+    for idx in 0..ARCHIVE_EXCHANGES {
+        db.write(net_bodies::net_event(idx)).await.expect("write net event");
+        if idx % ARCHIVE_FLUSH_EVERY == ARCHIVE_FLUSH_EVERY - 1 {
+            db.flush().await.expect("flush");
+        }
+    }
+    db.flush().await.expect("final flush");
+    let write_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    // Median of five, each on a fresh reader: one cold read is a handful of
+    // milliseconds and a single sample is mostly scheduler noise.
+    let mut cold_newest = Vec::new();
+    let mut warm_previous = Vec::new();
+    let mut cold_oldest = Vec::new();
+    for _ in 0..5 {
+        let reader = DbHandle::open_external_reader(&path).expect("open external reader");
+        reader.ready().await.expect("reader ready");
+        cold_newest.push(timed_read(&reader, ARCHIVE_EXCHANGES - 1).await);
+        warm_previous.push(timed_read(&reader, ARCHIVE_EXCHANGES - 2).await);
+        let reader = DbHandle::open_external_reader(&path).expect("open external reader");
+        reader.ready().await.expect("reader ready");
+        cold_oldest.push(timed_read(&reader, 0).await);
+    }
+    drop(db);
+    ArchiveTimings {
+        write_ms,
+        cold_newest_ms: median(cold_newest),
+        warm_previous_ms: median(warm_previous),
+        cold_oldest_ms: median(cold_oldest),
+    }
+}
+
+async fn timed_read(reader: &DbHandle, idx: usize) -> f64 {
+    let started = Instant::now();
+    let body = reader
+        .read_body(
+            &net_bodies::event_id(idx),
+            "net_events",
+            capsem_logger::db::BodyDirection::Response,
+        )
+        .await
+        .expect("read body")
+        .expect("body is archived");
+    assert!(!body.bytes.is_empty());
+    started.elapsed().as_secs_f64() * 1000.0
+}
+
+fn median(mut samples: Vec<f64>) -> f64 {
+    samples.sort_by(f64::total_cmp);
+    samples[samples.len() / 2]
+}
 
 fn dns_event(idx: usize) -> WriteOp {
     WriteOp::DnsEvent(DnsEvent {
@@ -39,7 +123,6 @@ fn seed_dns_rows(path: &std::path::Path, rows: usize) {
     let mut conn = Connection::open(path).expect("open seed db");
     schema::apply_pragmas(&conn).expect("apply pragmas");
     schema::create_tables(&conn).expect("create schema");
-    schema::migrate(&conn).expect("migrate schema");
 
     let tx = conn.transaction().expect("seed transaction");
     {
@@ -236,10 +319,11 @@ fn main() {
         .expect("build benchmark runtime");
 
     let (write_ms, post_write_count_ms, shutdown_flush_ms) = rt.block_on(write_100k_rows());
-    let (seed_ms, open_rehydrate_ms, scan_ms, scan_json) = rt.block_on(read_1m_rows());
+    let (seed_ms, open_ms, scan_ms, scan_json) = rt.block_on(read_1m_rows());
     let (deserialize_ms, deserialize_scan_ms, deserialize_scan_json) = deserialize_scan_1m_rows();
     let (serialize_deserialize_ms, serialize_deserialize_scan_ms, serialize_deserialize_scan_json) =
         serialize_deserialize_scan_1m_rows();
+    let archive = rt.block_on(archive_reads());
 
     println!("db read/write microbench");
     println!("| bench | rows | elapsed ms | rows/sec | notes |");
@@ -251,7 +335,7 @@ fn main() {
         WRITE_ROWS as f64 / (write_ms / 1000.0)
     );
     println!(
-        "| db_handle_reopen_count_after_flush | {} | {:.3} | {:.0} | validates durable rows after shutdown flush and rehydrate |",
+        "| db_handle_reopen_count_after_flush | {} | {:.3} | {:.0} | validates durable rows after shutdown flush and reopen |",
         WRITE_ROWS,
         post_write_count_ms,
         WRITE_ROWS as f64 / (post_write_count_ms / 1000.0)
@@ -269,10 +353,10 @@ fn main() {
         READ_ROWS as f64 / (seed_ms / 1000.0)
     );
     println!(
-        "| db_handle_open_rehydrate_1m | {} | {:.3} | {:.0} | disk to DB-owned memory tables |",
+        "| db_handle_open_1m | {} | {:.3} | {:.0} | open over 1M disk rows; nothing is copied into memory |",
         READ_ROWS,
-        open_rehydrate_ms,
-        READ_ROWS as f64 / (open_rehydrate_ms / 1000.0)
+        open_ms,
+        READ_ROWS as f64 / (open_ms / 1000.0)
     );
     println!(
         "| db_handle_query_scan_1m | {} | {:.3} | {:.0} | aggregate scan through db.query(); result={} |",
@@ -306,5 +390,24 @@ fn main() {
         serialize_deserialize_scan_ms,
         READ_ROWS as f64 / (serialize_deserialize_scan_ms / 1000.0),
         serialize_deserialize_scan_json.replace('|', "\\|")
+    );
+    println!(
+        "| archive_write_net_bodies | {} | {:.3} | {:.0} | two bodies per exchange, a flush every {} |",
+        ARCHIVE_EXCHANGES,
+        archive.write_ms,
+        ARCHIVE_EXCHANGES as f64 / (archive.write_ms / 1000.0),
+        ARCHIVE_FLUSH_EVERY
+    );
+    println!(
+        "| archive_cold_read_newest_body | 1 | {:.3} | - | fresh external reader, last body of the newest block |",
+        archive.cold_newest_ms
+    );
+    println!(
+        "| archive_warm_read_previous_body | 1 | {:.3} | - | same reader, the body before it |",
+        archive.warm_previous_ms
+    );
+    println!(
+        "| archive_cold_read_oldest_body | 1 | {:.3} | - | fresh external reader, first body of the archive |",
+        archive.cold_oldest_ms
     );
 }

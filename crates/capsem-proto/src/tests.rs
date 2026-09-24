@@ -2,6 +2,7 @@ use super::*;
 
 mod dns_frames;
 mod exec_output_protocol;
+mod sparse;
 mod validation;
 
 // -------------------------------------------------------------------
@@ -1442,5 +1443,4 @@ fn byte_payloads_use_msgpack_binary_without_content_dependent_expansion() {
     };
     assert!(host_msg_fits_frame(&one_mib_binary));
 }
-
 mod ports;

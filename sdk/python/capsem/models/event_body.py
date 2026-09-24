@@ -6,16 +6,15 @@ from typing import Annotated
 
 from pydantic import Field, StrictBool, StrictInt, StrictStr
 
-from .body_direction import BodyDirection
 from .model_base import Model
 
 
 class EventBody(Model):
-    body: StrictStr
     body_hash: StrictStr
     content_type: StrictStr | None = None
-    direction: BodyDirection
+    direction: StrictStr
     event_id: StrictStr
     original_bytes: Annotated[StrictInt, Field(ge=0)]
+    source_table: StrictStr
     stored_bytes: Annotated[StrictInt, Field(ge=0)]
     truncated: StrictBool

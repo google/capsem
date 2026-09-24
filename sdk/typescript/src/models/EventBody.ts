@@ -1,14 +1,14 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
-import type { BodyDirection } from "./BodyDirection.js";
+
 
 export interface EventBody {
-  "body": string;
   "body_hash": string;
   "content_type"?: string | null;
-  "direction": BodyDirection;
+  "direction": string;
   "event_id": string;
   "original_bytes": number;
+  "source_table": string;
   "stored_bytes": number;
   "truncated": boolean;
 }

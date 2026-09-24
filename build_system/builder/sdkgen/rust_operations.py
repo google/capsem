@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from .operations import Route
+from .operations import Route, is_binary_media_type
 from .python import module_name
 from .schema import Schema
 
@@ -106,13 +106,15 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         if query:
             lines.append("        query: &query,")
         if op.request_body:
-            binary = op.request_body.media_type == "application/octet-stream"
+            binary = is_binary_media_type(op.request_body.media_type)
             lines.append(f"        body: Some({'input.body.clone()' if binary else 'serde_json::to_vec(&input.body)?'}),")
             if binary:
-                lines.append("        content_type: crate::transport::MediaType::Binary,")
-        binary = op.success.media_type == "application/octet-stream"
+                member = "Gzip" if op.request_body.media_type == "application/gzip" else "Binary"
+                lines.append(f"        content_type: crate::transport::MediaType::{member},")
+        binary = is_binary_media_type(op.success.media_type)
         if binary:
-            lines.append("        accept: crate::transport::MediaType::Binary,")
+            member = "Gzip" if op.success.media_type == "application/gzip" else "Binary"
+            lines.append(f"        accept: crate::transport::MediaType::{member},")
         lines += ["        options,", "        ..Default::default()", "    };"]
         method = f".request(reqwest::Method::{route.method.name}, {json.dumps(route.path)}, request)"
         suffix = ".await" if binary else ".await?"

@@ -13,7 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .schema import Schema, read_schemas
 
-MediaType = Literal["application/json", "application/octet-stream", "text/plain"]
+MediaType = Literal["application/json", "application/octet-stream", "application/gzip", "text/plain"]
+BINARY_MEDIA_TYPES = frozenset({"application/octet-stream", "application/gzip"})
+
+
+def is_binary_media_type(media_type: MediaType) -> bool:
+    return media_type in BINARY_MEDIA_TYPES
 
 
 class Strict(BaseModel):
@@ -114,11 +119,13 @@ def _validate(route: Route, names: set[str]) -> None:
     if set(operation.responses) not in ({"200", "default"}, {"202", "default"}):
         raise ValueError("operation requires typed success and default error responses")
     success = operation.success
-    if success.media_type not in ("application/json", "application/octet-stream"):
+    if success.media_type != "application/json" and not is_binary_media_type(success.media_type):
         raise ValueError("success response must be JSON or binary")
     schemas.append(success.schema)
     if operation.request_body is not None:
-        if operation.request_body.media_type not in ("application/json", "application/octet-stream"):
+        if operation.request_body.media_type != "application/json" and not is_binary_media_type(
+            operation.request_body.media_type
+        ):
             raise ValueError("request body must be JSON or binary")
         schemas.append(operation.request_body.schema)
     schemas.extend(media.schema_ for media in operation.responses["default"].content.values())

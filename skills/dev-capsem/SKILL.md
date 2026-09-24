@@ -25,6 +25,7 @@ choice), and even then lead with a recommendation. The full contract is
 | Crate | What | Key modules |
 |-------|------|-------------|
 | `capsem-foundation` | Dependency-light host primitives shared across product crates. | `paths.rs`, `uds.rs`, `poll.rs`, `telemetry.rs`, `log_layer.rs`, `ipc_handshake.rs` |
+| `capsem-archive` | Append-only, block-compressed body archive for one session ledger. | `format.rs`, `writer.rs`, `reader.rs` |
 | `capsem-assets` | VM asset lifecycle and manifest compatibility. | `asset_manager.rs`, `manifest_compat.rs` |
 | `capsem-api` | Gateway wire types and OpenAPI contract. | `document.rs`, `hypervisor.rs`, `vm_info.rs` |
 | `capsem-sdk` (`sdk/rust`) | Async HTTP gateway clients, shared API DTOs, no local discovery. | `transport.rs` |

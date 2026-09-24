@@ -12,7 +12,7 @@ for it.
 Point it at whatever model `ollama list` shows on the host (default gemma4).
 
 Usage (build first, then bound the run so no VM leaks):
-    just _sign
+    uv run --project build_system --frozen capsem-gate sign
     python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 900 \
         -- uv run --project build_system --frozen python tests/manual/vm_ollama.py
 
@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from helpers.constants import BIN_DIR, CODE_PROFILE_ID
-from helpers.service import ServiceInstance
+from helpers.service import ServiceInstance, exec_output_text
 
 from tests.fixtures.oci.registry import registry
 
@@ -48,15 +48,21 @@ PROMPT = os.environ.get(
 )
 
 
-def boot(service, tmp_path, reference, certificate, name):
-    """Boot one container VM under `name`; return its /vms/list row."""
-    stdout = tmp_path / f"{name}.stdout"
-    stderr = tmp_path / f"{name}.stderr"
-    out, err = stdout.open("wb"), stderr.open("wb")
+def boot(service, tmp_path, reference, certificate, name, *options):
+    """Create one named Redis container VM; return its /vms/list row once Redis is up.
+
+    `capsem create --image` starts the workload detached, the way the
+    kingslanding suite does (`tests/ironbank/kingslanding/test_run.py`), so the
+    container's output lands on the guest console rather than on a pipe.
+    `capsem run` used to take `-n NAME REFERENCE` and stay attached; it now
+    destroys its VM on exit and takes the image as `--image`, which is why
+    every manual scenario booting through the old spelling stopped at argv
+    parsing. `options` go before `--image`, which consumes everything after it.
+    """
     command = [
         str(BIN_DIR / "capsem"), "--uds-path", str(service.uds_path),
-        "run", "--profile", CODE_PROFILE_ID, "--registry-ca", str(certificate),
-        "-n", name, reference,
+        "create", "--profile", CODE_PROFILE_ID, "--registry-ca", str(certificate),
+        "-n", name, *options, "--image", reference,
     ]
     env = {
         **os.environ,
@@ -64,20 +70,20 @@ def boot(service, tmp_path, reference, certificate, name):
         "CAPSEM_RUN_DIR": str(service.tmp_dir),
         "CAPSEM_PROFILES_DIR": str(service.profiles_dir),
     }
-    process = subprocess.Popen(command, env=env, stdout=out, stderr=err)
-    deadline = time.time() + 180
-    while time.time() < deadline:
-        if process.poll() is not None:
-            raise RuntimeError(f"{name} exited early:\n{stderr.read_text()}")
-        if b"Ready to accept connections tcp" in stdout.read_bytes():
-            break
-        time.sleep(0.5)
-    else:
-        raise RuntimeError(f"{name} never became ready:\n{stdout.read_text()}")
+    result = subprocess.run(command, env=env, capture_output=True, timeout=240, check=False)
+    (tmp_path / f"{name}.stderr").write_bytes(result.stderr)
+    if result.returncode != 0:
+        raise RuntimeError(f"{name} create failed:\n{result.stderr.decode(errors='replace')}")
     rows = [r for r in service.client().get("/vms/list")["sandboxes"] if r.get("name") == name]
     if len(rows) != 1:
         raise RuntimeError(f"expected one {name} VM, saw {rows}")
-    return rows[0]
+    deadline = time.time() + 180
+    while time.time() < deadline:
+        serial = service.client().get(f"/vms/{rows[0]['id']}/logs").get("serial_logs") or ""
+        if "Ready to accept connections tcp" in serial:
+            return rows[0]
+        time.sleep(0.5)
+    raise RuntimeError(f"{name} never became ready:\n{serial[-2000:]}")
 
 
 def guest(service, vm_id, shell, timeout=180):
@@ -116,11 +122,11 @@ def main() -> int:
             print(f"\n== the VM prompts {MODEL} through capsem's egress ==")
             print(f"  prompt: {PROMPT}")
             response = guest(service, box["id"], GENERATE.format(model=MODEL, prompt=PROMPT), timeout=200)
-            out = response.get("stdout", "")
+            out = exec_output_text(response)
             if response.get("exit_code") != 0:
                 print(f"  [FAIL] the call did not complete (exit {response.get('exit_code')})")
                 print("  stdout:", out.strip()[:500])
-                print("  stderr:", response.get("stderr", "").strip()[:500])
+                print("  stderr:", exec_output_text(response, "stderr").strip()[:500])
                 return 1
             answered_model = next((line[6:] for line in out.splitlines() if line.startswith("MODEL=")), "")
             answer = next((line[7:] for line in out.splitlines() if line.startswith("ANSWER=")), "")

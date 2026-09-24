@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.cache import leases
+from capsem_builder.cache.enforcement import enforce_repository
 from capsem_builder.cache.inventory import scan_inventory, scan_retention_inventory
 from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
 from capsem_builder.cache.paths import CachePaths
@@ -57,6 +58,26 @@ def test_missing_stage_directory_is_an_empty_inventory(tmp_path: Path) -> None:
 
     assert report.stages[0].entry_count == 0
     assert report.stages[0].logical_bytes == 0
+
+
+def test_single_owner_enforcement_never_scans_unrelated_stages(tmp_path: Path) -> None:
+    cargo = policy().stages["objects"].model_copy(update={"path": Path("target/cargo")})
+    other = cargo.model_copy(update={"path": Path("target/other")})
+    configured = policy().model_copy(update={"stages": {"cargo": cargo, "other": other}})
+    paths = CachePaths(repository_root=tmp_path, policy=configured)
+    own = paths.stage("cargo") / "one"
+    own.mkdir(parents=True)
+    (own / "payload").write_bytes(b"one")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    paths.stage("other").parent.mkdir(parents=True, exist_ok=True)
+    paths.stage("other").symlink_to(outside, target_is_directory=True)
+
+    result = enforce_repository(paths, configured, "cargo", reason="focused test")
+
+    assert result.before_size_bytes == 3
+    assert result.after_size_bytes == 3
+    assert not result.pruned
 
 
 def test_allocated_bytes_count_cross_stage_hardlinks_once(tmp_path: Path) -> None:

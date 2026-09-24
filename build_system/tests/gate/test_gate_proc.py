@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 import pytest
-from capsem_builder.gate import cancellation, processgroup
+from capsem_builder.gate import cancellation, processstop
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.invocation import Command
@@ -117,6 +117,23 @@ def test_the_real_runner_defaults_the_working_directory_to_the_checkout(
     runner = Runner(tmp_path, stop_policy=STOP_POLICY)
 
     assert runner.capture(["ls"]) == "marker"
+
+
+@pytest.mark.parametrize("logged", [False, True])
+def test_a_command_timeout_reaps_its_process_group(tmp_path: Path, logged: bool) -> None:
+    """Gate-owned bounds must stop both ordinary and journal-filed commands."""
+    runner = Runner(tmp_path, stop_policy=StopPolicy(grace_seconds=1, poll_seconds=0.01))
+    log = tmp_path / "step.log" if logged else None
+    started = time.monotonic()
+
+    with pytest.raises(GateError, match=r"timed out after 0\.05s"):
+        runner.run(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            log=log,
+            timeout_seconds=0.05,
+        )
+
+    assert time.monotonic() - started < 2
 
 
 def test_index_of_names_the_missing_command_rather_than_returning_nothing(
@@ -254,10 +271,10 @@ def test_cancellation_does_not_adopt_an_unsignalable_process_group(
     def denied(_group: int, _sent: int) -> None:
         raise PermissionError(1, "Operation not permitted")
 
-    monkeypatch.setattr(processgroup.os, "killpg", denied)
+    monkeypatch.setattr(processstop.os, "killpg", denied)
 
-    assert not processgroup._group_exists(42)
-    processgroup._signal_group(42, signal.SIGKILL)
+    assert not processstop._group_exists(42)
+    processstop._signal_group(42, signal.SIGKILL)
 
 
 # The guard samples the process table every poll, so a leader that detaches

@@ -3,7 +3,7 @@ use super::*;
 
 mod mcp;
 mod payload;
-use payload::{body_payload, preview_payload, text_payload};
+use payload::{preview_payload, text_payload};
 
 const MODEL_ITEMS_SQL: &str = r#"
 SELECT mi.event_id, mi.timestamp, mi.model_call_id, mc.event_id AS model_event_id,
@@ -161,12 +161,13 @@ pub(super) async fn read_interactions(
         .flatten()
         .map(|body| InteractionBody {
             event_id: body.event_id.clone(),
-            direction: body.direction,
+            source_table: body.source_table.clone(),
+            direction: body.direction.clone(),
             content_type: body.content_type.clone(),
             original_bytes: body.original_bytes,
             stored_bytes: body.stored_bytes,
+            truncated: body.truncated,
             body_hash: body.body_hash.clone(),
-            payload: body_payload(body),
         })
         .collect();
     Ok(InteractionReport { items, bodies })

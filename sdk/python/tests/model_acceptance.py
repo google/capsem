@@ -48,7 +48,14 @@ async def main() -> None:
             assert item.trace_id and call.call_id
         assert any(isinstance(item.content, models.InteractionMessage) for item in interactions)
         assert any(isinstance(item.content, models.InteractionToolResult) for item in interactions)
-        assert all(isinstance(body.payload.status, models.CaptureStatus) for body in detail.interactions.bodies)
+        assert all(
+            body.event_id
+            and body.source_table
+            and body.direction
+            and body.body_hash
+            and body.stored_bytes <= body.original_bytes
+            for body in detail.interactions.bodies
+        )
         usage = next(row for row in detail.model_stats if row.model == observation["model"])
         assert usage.call_count >= 2 and usage.input_tokens > 0 and usage.output_tokens > 0
         assert usage.estimated_cost_usd > 0

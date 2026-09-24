@@ -18,7 +18,10 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path, PurePath
 
+from ..cache.config import load_paths, load_policy
+from ..cache.enforcement import EnforcementResult, enforce_repository
 from . import config as gate_config
+from .errors import GateError
 from .lifecycle import held
 from .locks import ExclusiveLock
 from .lockschema import BoundedLeaseConfig
@@ -65,4 +68,33 @@ def leased(
         config, purpose=f"bounded: {shlex.join(command)}", announce=_to_stderr
     )
     with held(lock):
+        _enforce_cargo_cache(root, command)
         yield lock.environment()
+
+
+def _enforce_cargo_cache(root: Path, command: Sequence[str]) -> None:
+    """Apply the shared Cargo target contract before direct machine work.
+
+    Gate plans expose the same operation as a timed prerequisite. Direct Cargo
+    has no plan, so the mandatory bounded-command choke point owns this half of
+    the invariant while it holds the same machine lock as a gate.
+    """
+    policy = load_policy(root)
+    paths = load_paths(root)
+    result = enforce_repository(
+        paths,
+        policy,
+        "cargo",
+        reason=f"bounded direct command: {shlex.join(command)}",
+    )
+    if result.violations:
+        raise GateError("; ".join(result.violations))
+    if result.pruned:
+        _to_stderr(_maintenance_notice(result))
+
+
+def _maintenance_notice(result: EnforcementResult) -> str:
+    return (
+        f"Cargo cache maintenance applied {result.action_count} prune actions; "
+        f"owned usage {result.before_size_bytes} -> {result.after_size_bytes} bytes"
+    )

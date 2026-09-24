@@ -7,9 +7,82 @@ fn sample_file_event(path: &str, action: FileAction, size: Option<u64>) -> FileE
         action,
         path: path.to_string(),
         size,
+        kind: FileKind::File,
         trace_id: None,
         credential_ref: None,
     }
+}
+
+/// A directory event must stay a directory event all the way to the reader.
+/// Before `kind`, a `mkdir` landed as an anonymous path carrying the directory
+/// inode's size, indistinguishable from a small file write.
+#[tokio::test]
+async fn directory_file_event_round_trips_as_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-dir-kind.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer
+        .write(WriteOp::FileEvent(FileEvent {
+            kind: FileKind::Dir,
+            ..sample_file_event("project/.git/hooks", FileAction::Created, None)
+        }))
+        .await;
+    drop(writer);
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let stored: (String, Option<i64>) = conn
+        .query_row(
+            "SELECT kind, size FROM fs_events WHERE path = 'project/.git/hooks'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(stored, ("dir".to_string(), None));
+
+    let reader = DbReader::open(&path).unwrap();
+    let events = reader.recent_file_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].kind, FileKind::Dir);
+    assert!(events[0].size.is_none());
+}
+
+/// A ledger written before `kind` existed is broken shape, not a ledger to be
+/// read with a guessed default. There is no published release to migrate, so
+/// the column is required and `ready()` says which one is missing rather than
+/// letting routes serve a ledger where every directory event reads as a file.
+#[tokio::test]
+async fn a_ledger_without_the_kind_column_fails_ready_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-pre-kind.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    drop(writer);
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("ALTER TABLE fs_events DROP COLUMN kind")
+            .expect("simulate a ledger created before the column existed");
+    }
+
+    let error = DbReader::open(&path)
+        .unwrap()
+        .ready()
+        .expect_err("a ledger missing a required column must fail loudly");
+    assert!(
+        error.contains("fs_events") && error.contains("kind"),
+        "the failure must name the missing column: {error}"
+    );
+}
+
+/// Guest-side importers and exporters build FileEvents too, and they ship on
+/// their own cadence. A payload serialized before `kind` existed must still
+/// parse, as an ordinary file.
+#[test]
+fn legacy_file_event_json_without_kind_reads_as_file() {
+    let legacy = r#"{"timestamp":1700000000.0,"action":"created","path":"a.txt","size":12}"#;
+    let event: FileEvent = serde_json::from_str(legacy).expect("legacy payload must still parse");
+    assert_eq!(event.kind, FileKind::File);
+    assert_eq!(event.path, "a.txt");
 }
 
 #[tokio::test]
@@ -417,47 +490,53 @@ async fn test_file_event_concurrent_writes() {
     assert_eq!(stats.total, 500); // 10 threads x 50 events
 }
 
-/// Schema migration: a DB created without fs_events should gain the table on migrate.
+/// An `fs_events` an older build wrote is refused by name, not adopted.
+///
+/// This test used to assert that opening a database without `fs_events` made
+/// the table appear, which was true of `schema::migrate` and is the behaviour
+/// the ledger no longer has. The harder case is the one left here: a table
+/// that is *present* in an older shape, which `CREATE TABLE IF NOT EXISTS`
+/// cannot repair and nothing rewrites. Readiness has to name the column,
+/// because the alternative is a file-event history that silently reads as
+/// having no `kind` and nothing to correlate.
 #[tokio::test]
-async fn test_file_event_schema_migration() {
+async fn test_a_legacy_fs_events_shape_fails_readiness_by_name() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("fs-migrate.db");
+    let path = dir.path().join("fs-legacy.db");
 
-    // Create a minimal DB with only net_events (simulating an old schema).
     {
         let conn = rusqlite::Connection::open(&path).unwrap();
+        capsem_logger::schema::create_tables(&conn).unwrap();
+        // The current table minus exactly one column, so the failure has only
+        // one thing it can name. `kind` is the one an fs_events written before
+        // the file/dir/symlink distinction lacks.
         conn.execute_batch(
-            "
-            CREATE TABLE net_events (
+            "DROP TABLE fs_events;
+             CREATE TABLE fs_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))),
                 timestamp TEXT NOT NULL,
-                domain TEXT NOT NULL,
-                port INTEGER NOT NULL,
-                decision TEXT NOT NULL,
-                bytes_sent INTEGER NOT NULL DEFAULT 0,
-                bytes_received INTEGER NOT NULL DEFAULT 0,
-                duration_ms INTEGER NOT NULL DEFAULT 0
-            );
-        ",
+                action TEXT NOT NULL,
+                path TEXT NOT NULL,
+                directory TEXT,
+                name TEXT,
+                size INTEGER,
+                trace_id TEXT,
+                turn_id TEXT,
+                credential_ref TEXT
+             );",
         )
         .unwrap();
     }
 
-    // Opening with DbWriter triggers migration, which should add fs_events.
-    let writer = DbWriter::open(&path, 64).unwrap();
-    writer
-        .write(WriteOp::FileEvent(sample_file_event(
-            "migrated.rs",
-            FileAction::Created,
-            Some(42),
-        )))
-        .await;
-    drop(writer);
-
-    let reader = DbReader::open(&path).unwrap();
-    let events = reader.recent_file_events(10).unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].path, "migrated.rs");
+    let error = DbReader::open(&path)
+        .unwrap()
+        .ready()
+        .expect_err("a pre-kind fs_events must not read as a current ledger");
+    assert!(
+        error.contains("fs_events") && error.contains("kind"),
+        "readiness must name the table and the column an older build lacked: {error}"
+    );
 }
 
 /// Deleted events should have size=None and round-trip correctly.
@@ -623,4 +702,56 @@ async fn try_write_production_burst_preserves_events() {
     let events = reader.recent_file_events(1000).unwrap();
 
     assert_eq!(events.len(), accepted);
+}
+
+/// An overflow marker records that changes went unrecorded. It is not itself a
+/// change to a path, and every place that counts or groups paths has to agree
+/// about that, or the marker inflates the numbers a reader checks.
+#[tokio::test]
+async fn an_overflow_marker_is_not_counted_or_grouped_as_a_file_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fs-overflow.db");
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer
+        .write(WriteOp::FileEvent(sample_file_event(
+            "project/app.js",
+            FileAction::Created,
+            Some(12),
+        )))
+        .await;
+    writer
+        .write(WriteOp::FileEvent(FileEvent {
+            kind: FileKind::Other,
+            size: Some(4_096),
+            ..sample_file_event("", FileAction::Overflow, None)
+        }))
+        .await;
+    drop(writer);
+
+    // `directory` and `name` are what routes group and filter on. `(".", "")`
+    // put the marker inside "changes under .", so an empty path gets neither.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let marker: (Option<String>, Option<String>, Option<i64>) = conn
+        .query_row(
+            "SELECT directory, name, size FROM fs_events WHERE action = 'overflow'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(marker, (None, None, Some(4_096)));
+    let real: (Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT directory, name FROM fs_events WHERE action = 'created'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(real, (Some("project".to_string()), Some("app.js".to_string())));
+
+    let reader = DbReader::open(&path).unwrap();
+    let stats = reader.file_event_stats().unwrap();
+    assert_eq!(stats.total, 1, "the marker is not a file event");
+    assert_eq!(stats.created, 1);
+    assert_eq!(stats.overflow_windows, 1, "but it is counted as what it is");
 }

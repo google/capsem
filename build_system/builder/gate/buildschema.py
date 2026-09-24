@@ -150,6 +150,8 @@ class SigningConfig(Strict):
     built_elsewhere: tuple[str, ...]
     guest_crate: str
     release_binary: str
+    build_timeout_seconds: PositiveInt
+    sign_timeout_seconds: PositiveInt
 
     @model_validator(mode="after")
     def _every_signed_binary_is_built(self) -> SigningConfig:

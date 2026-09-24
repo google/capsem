@@ -6,10 +6,6 @@ mod ip_literals;
 mod markdown;
 mod upstream_binding;
 
-fn test_db() -> Arc<DbWriter> {
-    Arc::new(DbWriter::open_in_memory(64).unwrap())
-}
-
 /// Create a reqwest Client with proper User-Agent (matches production config).
 /// Sites like Wikipedia return 403 without one.
 fn test_client() -> BuiltinHttpClient {
@@ -288,7 +284,7 @@ async fn call_unknown_builtin_returns_error() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(resp.error.is_some());
@@ -306,7 +302,7 @@ async fn fetch_http_missing_url_returns_error() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(resp.error.is_none()); // tool errors use isError in result, not JSON-RPC error
@@ -329,7 +325,7 @@ async fn fetch_http_blocked_domain() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     let result = resp.result.unwrap();
@@ -348,7 +344,7 @@ async fn grep_http_missing_pattern_returns_error() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     let result = resp.result.unwrap();
@@ -370,7 +366,7 @@ async fn grep_http_invalid_regex() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     let result = resp.result.unwrap();
@@ -595,7 +591,7 @@ async fn fetch_http_rejects_ftp_scheme() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp));
@@ -614,7 +610,7 @@ async fn fetch_http_rejects_file_scheme() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp));
@@ -633,7 +629,7 @@ async fn fetch_http_rejects_data_uri() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp));
@@ -650,7 +646,7 @@ async fn fetch_http_url_is_number_not_string() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp));
@@ -669,7 +665,7 @@ async fn fetch_http_url_is_null() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp));
@@ -694,7 +690,7 @@ async fn fetch_http_start_index_negative_defaults_to_zero() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     // Should succeed (negative start_index is silently treated as 0)
@@ -718,7 +714,7 @@ async fn grep_http_empty_pattern_rejected() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp));
@@ -737,7 +733,7 @@ async fn grep_http_missing_url_returns_error() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp));
@@ -756,7 +752,7 @@ async fn grep_http_url_is_number() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp));
@@ -775,7 +771,7 @@ async fn grep_http_rejects_ftp_scheme() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp));
@@ -800,7 +796,7 @@ async fn grep_http_regex_catastrophic_backtracking_safe() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     // Should complete without hanging (pass or no matches, either is fine)
@@ -826,7 +822,7 @@ async fn http_headers_missing_url() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp));
@@ -845,7 +841,7 @@ async fn http_headers_rejects_ftp_scheme() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(is_tool_error(&resp));
@@ -866,7 +862,7 @@ async fn http_headers_invalid_method_falls_back_to_head() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     // Should succeed with HEAD fallback
@@ -889,7 +885,7 @@ async fn http_headers_method_case_sensitive() {
         &rules,
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await;
     assert!(!is_tool_error(&resp), "should succeed with HEAD fallback");

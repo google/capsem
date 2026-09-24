@@ -1,4 +1,6 @@
 use super::*;
+pub(crate) mod bodies;
+pub(super) use bodies::{handle_bodies_warc_export, handle_event_bodies};
 mod response_cache;
 pub(crate) use response_cache::{forget_session_responses, session_response_cache_lookup, SessionResponseCache};
 mod stats_detail;
@@ -131,36 +133,11 @@ fn session_dirs_for_profile(state: &ServiceState, profile_id: Option<&str>) -> V
     sessions.into_iter().collect()
 }
 
-pub(super) fn is_detection_rule_event(event: &capsem_logger::SecurityRuleEvent) -> bool {
-    event.detection_level != capsem_logger::SecurityDetectionLevel::None
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct SecuritySessionLedger {
-    latest: Vec<capsem_logger::SecurityRuleEvent>,
-    stats: capsem_logger::SecurityRuleStats,
-    brokered_credentials: Vec<capsem_logger::BrokeredCredentialStat>,
-}
-
-impl Default for SecuritySessionLedger {
-    fn default() -> Self {
-        Self {
-            latest: Vec::new(),
-            stats: empty_security_rule_stats(),
-            brokered_credentials: Vec::new(),
-        }
-    }
-}
-
-pub(super) fn empty_security_rule_stats() -> capsem_logger::SecurityRuleStats {
-    capsem_logger::SecurityRuleStats {
-        total: 0,
-        by_action: Vec::new(),
-        by_event_type: Vec::new(),
-        by_level: Vec::new(),
-        by_rule: Vec::new(),
-    }
-}
+pub(crate) mod security;
+pub(crate) use security::{
+    is_detection_rule_event, read_profile_security_ledgers, read_security_session_ledger, security_latest_for_vm,
+    security_stats_for_vm,
+};
 
 pub(super) fn ledger_route_error(
     vm_id: &str,
@@ -384,173 +361,6 @@ pub(super) fn main_ledger_route_error(
     )
 }
 
-const SECURITY_LATEST_SQL: &str = r#"
-SELECT timestamp_unix_ms, event_id, event_type, rule_id,
-       rule_action, detection_level, rule_json, event_json, trace_id,
-       turn_id, credential_ref
-FROM security_rule_events
-ORDER BY timestamp_unix_ms DESC, id DESC
-LIMIT ?
-"#;
-
-const SECURITY_STATS_TOTAL_SQL: &str = r#"SELECT COUNT(*) AS total FROM security_rule_events"#;
-
-const SECURITY_STATS_BY_ACTION_SQL: &str = r#"
-SELECT rule_action, COUNT(*) AS count
-FROM security_rule_events
-GROUP BY rule_action
-ORDER BY rule_action
-"#;
-
-const SECURITY_STATS_BY_EVENT_TYPE_SQL: &str = r#"
-SELECT event_type, COUNT(*) AS count
-FROM security_rule_events
-GROUP BY event_type
-ORDER BY event_type
-"#;
-
-const SECURITY_STATS_BY_LEVEL_SQL: &str = r#"
-SELECT detection_level, COUNT(*) AS count
-FROM security_rule_events
-GROUP BY detection_level
-ORDER BY detection_level
-"#;
-
-const SECURITY_STATS_BY_RULE_SQL: &str = r#"
-SELECT
-    sre.rule_id,
-    sre.rule_action,
-    sre.detection_level,
-    COUNT(*) AS count,
-    (
-        SELECT latest.event_id
-        FROM security_rule_events latest
-        WHERE latest.rule_id = sre.rule_id
-          AND latest.rule_action = sre.rule_action
-          AND latest.detection_level = sre.detection_level
-        ORDER BY latest.timestamp_unix_ms DESC, latest.id DESC
-        LIMIT 1
-    ) AS latest_event_id,
-    MAX(sre.timestamp_unix_ms) AS latest_timestamp_unix_ms
-FROM security_rule_events sre
-GROUP BY sre.rule_id, sre.rule_action, sre.detection_level
-ORDER BY latest_timestamp_unix_ms DESC
-"#;
-
-const BROKERED_CREDENTIAL_STATS_SQL: &str = r#"
-SELECT MAX(provider) AS provider, substitution_ref AS credential_ref, COUNT(*) AS observed_count,
-       SUM(CASE WHEN outcome = 'injected' THEN 1 ELSE 0 END) AS injected_count,
-       MAX(timestamp) AS last_seen
-FROM substitution_events
-WHERE material_class = 'credential'
-GROUP BY substitution_ref
-ORDER BY MAX(timestamp) DESC
-LIMIT 100
-"#;
-
-pub(super) async fn read_security_session_ledger(
-    state: &ServiceState,
-    vm_id: &str,
-    db_path: &StdPath,
-) -> Result<Option<SecuritySessionLedger>, AppError> {
-    let db = open_ready_session_db(state, vm_id, "security", db_path).await?;
-    let latest = query_route_typed_rows::<capsem_logger::SecurityRuleEvent>(
-        vm_id,
-        "security",
-        "latest",
-        db_path,
-        &db,
-        SECURITY_LATEST_SQL,
-        &[json!(2000)],
-    )
-    .await?;
-    let total_row = query_route_objects(
-        vm_id,
-        "security",
-        "stats_total",
-        db_path,
-        &db,
-        SECURITY_STATS_TOTAL_SQL,
-        &[],
-    )
-    .await?
-    .into_iter()
-    .next()
-    .unwrap_or_else(|| json!({ "total": 0 }));
-    let stats = capsem_logger::SecurityRuleStats {
-        total: total_row.get("total").and_then(serde_json::Value::as_u64).unwrap_or(0),
-        by_action: query_route_typed_rows(
-            vm_id,
-            "security",
-            "stats_by_action",
-            db_path,
-            &db,
-            SECURITY_STATS_BY_ACTION_SQL,
-            &[],
-        )
-        .await?,
-        by_event_type: query_route_typed_rows(
-            vm_id,
-            "security",
-            "stats_by_event_type",
-            db_path,
-            &db,
-            SECURITY_STATS_BY_EVENT_TYPE_SQL,
-            &[],
-        )
-        .await?,
-        by_level: query_route_typed_rows(
-            vm_id,
-            "security",
-            "stats_by_level",
-            db_path,
-            &db,
-            SECURITY_STATS_BY_LEVEL_SQL,
-            &[],
-        )
-        .await?,
-        by_rule: query_route_typed_rows(
-            vm_id,
-            "security",
-            "stats_by_rule",
-            db_path,
-            &db,
-            SECURITY_STATS_BY_RULE_SQL,
-            &[],
-        )
-        .await?,
-    };
-    let brokered_credentials = query_route_typed_rows(
-        vm_id,
-        "security",
-        "brokered_credentials",
-        db_path,
-        &db,
-        BROKERED_CREDENTIAL_STATS_SQL,
-        &[],
-    )
-    .await?;
-    Ok(Some(SecuritySessionLedger {
-        latest,
-        stats,
-        brokered_credentials,
-    }))
-}
-
-pub(super) async fn read_profile_security_ledgers(
-    state: &ServiceState,
-    profile_id: &str,
-) -> Result<Vec<(String, SecuritySessionLedger)>, AppError> {
-    let mut ledgers = Vec::new();
-    for (vm_id, session_dir) in profile_session_dirs(state, profile_id) {
-        let Some(session) = read_security_session_ledger(state, &vm_id, &session_dir.join("session.db")).await? else {
-            continue;
-        };
-        ledgers.push((vm_id, session));
-    }
-    Ok(ledgers)
-}
-
 #[derive(Clone, Debug)]
 pub(super) struct HistorySessionLedger {
     pub(super) entries: Vec<api::HistoryEntry>,
@@ -749,8 +559,6 @@ SELECT json_object(
             'total_estimated_cost', total_estimated_cost,
             'total_tool_calls', total_tool_calls,
             'total_file_events', total_file_events,
-            'compressed_size_bytes', compressed_size_bytes,
-            'vacuumed_at', vacuumed_at,
             'storage_mode', storage_mode,
             'rootfs_hash', rootfs_hash,
             'rootfs_version', rootfs_version,
@@ -764,7 +572,7 @@ SELECT json_object(
                    scratch_disk_size_gb, ram_bytes, total_requests, allowed_requests,
                    denied_requests, total_input_tokens, total_output_tokens,
                    total_estimated_cost, total_tool_calls, total_file_events,
-                   compressed_size_bytes, vacuumed_at, storage_mode, rootfs_hash,
+                   storage_mode, rootfs_hash,
                    rootfs_version, forked_from, persistent, exec_count, audit_event_count
             FROM sessions
             ORDER BY created_at DESC
@@ -900,38 +708,6 @@ pub(super) fn hydrate_startup_route_caches(state: &ServiceState) -> Result<(), A
         AppError(status, format!("failed to build profile status cache: {message}"))
     })?;
     Ok(())
-}
-
-pub(super) async fn security_latest_for_vm(
-    state: &ServiceState,
-    vm_id: &str,
-    limit: usize,
-    detection_only: bool,
-) -> Result<Vec<capsem_logger::SecurityRuleEvent>, AppError> {
-    let session_dir = resolve_session_dir(state, vm_id)?;
-    let Some(session) = read_security_session_ledger(state, vm_id, &session_dir.join("session.db")).await? else {
-        return Ok(Vec::new());
-    };
-    Ok(session
-        .latest
-        .iter()
-        .filter(|event| !detection_only || is_detection_rule_event(event))
-        .take(limit)
-        .cloned()
-        .collect())
-}
-
-pub(super) async fn security_stats_for_vm(
-    state: &ServiceState,
-    vm_id: &str,
-) -> Result<capsem_logger::SecurityRuleStats, AppError> {
-    let session_dir = resolve_session_dir(state, vm_id)?;
-    Ok(
-        read_security_session_ledger(state, vm_id, &session_dir.join("session.db"))
-            .await?
-            .map(|session| session.stats)
-            .unwrap_or_else(empty_security_rule_stats),
-    )
 }
 
 pub(super) fn security_detection_count(stats: &capsem_logger::SecurityRuleStats) -> u64 {
@@ -1300,8 +1076,13 @@ pub(super) async fn hydrate_plugin_execution_runtime(
     let mut seen_executions = HashSet::<(String, String)>::new();
     let mut seen_detections = HashSet::<(String, String)>::new();
     for (_vm_id, session) in sessions {
+        let payloads = session.payloads;
         for event in session.latest {
-            let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.event_json) else {
+            let Some(event_json) = payloads.get(&event.event_id) else {
+                status.last_error = Some(format!("missing plugin execution payload for {}", event.event_id));
+                continue;
+            };
+            let Ok(payload) = serde_json::from_str::<serde_json::Value>(event_json) else {
                 status.last_error = Some(format!(
                     "failed to parse plugin execution payload for {}",
                     event.event_id
@@ -1431,8 +1212,13 @@ pub(super) async fn hydrate_credential_broker_runtime(
                 .saturating_add(credential.observed_count.saturating_add(credential.injected_count));
             status.rewrite_count = status.rewrite_count.saturating_add(credential.injected_count);
         }
+        let payloads = session.payloads;
         for event in session.latest {
-            let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.event_json) else {
+            let Some(event_json) = payloads.get(&event.event_id) else {
+                status.last_error = Some(format!("missing credential broker payload for {}", event.event_id));
+                continue;
+            };
+            let Ok(payload) = serde_json::from_str::<serde_json::Value>(event_json) else {
                 status.last_error = Some(format!(
                     "failed to parse credential broker payload for {}",
                     event.event_id

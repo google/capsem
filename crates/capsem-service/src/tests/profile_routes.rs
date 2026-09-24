@@ -1,4 +1,7 @@
 use super::*;
+use capsem_logger::BodyDirection;
+
+mod plugin_runtime;
 
 #[test]
 fn profile_update_asset_summary_reflects_effective_contract() {
@@ -1806,350 +1809,6 @@ async fn service_status_reports_ready_empty_credential_store_without_inventory_c
 }
 
 #[tokio::test]
-async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contract() {
-    let _lock = SETTINGS_ENV_LOCK.lock().await;
-    let dir = tempfile::tempdir().unwrap();
-    let test_store = dir.path().join("credential-store.json");
-    let _store_guard = EnvVarGuard::set("CAPSEM_CREDENTIAL_STORE_PATH", test_store.clone());
-    let state = make_test_state();
-    let app = build_service_router(Arc::clone(&state));
-    let session_dir = dir.path().join("sessions").join("broker-reload-vm");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(&state, "broker-reload-vm", std::process::id(), session_dir.clone());
-
-    let credential_ref = capsem_logger::credential_reference("google", "ya29.reload-route");
-    let store_json = serde_json::json!({
-        capsem_core::credential_broker::credential_store_account(
-            capsem_core::credential_broker::CredentialProvider::Google,
-            &credential_ref,
-        ): "ya29.reload-route"
-    });
-    std::fs::write(&test_store, serde_json::to_string_pretty(&store_json).unwrap()).unwrap();
-
-    let event_json = format!(
-        r#"{{
-            "event_type": "http.request",
-            "credential_observations": [
-                {{
-                    "provider": "google",
-                    "source": "http.body.response.$.access_token",
-                    "event_type": "http.request",
-                    "trace_id": null,
-                    "context_json": {{"domain":"oauth2.googleapis.com"}},
-                    "credential_ref": "{credential_ref}"
-                }}
-            ],
-            "credential_injections": []
-        }}"#
-    );
-    let session_db = session_dir.join("session.db");
-    let writer = capsem_logger::DbWriter::open(&session_db, 16).unwrap();
-    let stale_reader = state
-        .register_session_db_handle("broker-reload-vm", &session_dir)
-        .expect("pre-register session DB reader");
-    writer
-        .write(capsem_logger::WriteOp::SecurityRuleEvent(
-            capsem_logger::SecurityRuleEvent::new(
-                1_789_000_123_456,
-                "abcd1234ef56",
-                "http.request",
-                "profiles.rules.default_http",
-                r#"{"name":"default_http"}"#,
-                event_json,
-            ),
-        ))
-        .await;
-    writer.shutdown_blocking();
-    let direct_rows = capsem_logger::DbReader::open(&session_db)
-        .unwrap()
-        .recent_security_rule_events(10)
-        .unwrap();
-    assert_eq!(direct_rows.len(), 1);
-    assert!(direct_rows[0].event_json.contains(&credential_ref));
-    let (status, before) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/code/plugins/credential_broker/credentials/info",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{before}");
-    assert_eq!(before["plugin_id"], "credential_broker");
-    assert_eq!(before["store"]["backend"], "disk_override");
-    assert_eq!(before["inventory"][0]["credential_ref"], credential_ref);
-    assert_eq!(before["inventory"][0]["replay_available"], false);
-
-    let (status, after) = route_request(
-        app,
-        axum::http::Method::POST,
-        "/profiles/code/plugins/credential_broker/credentials/reload",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{after}");
-    assert_eq!(after["plugin_id"], "credential_broker");
-    assert_eq!(after["store"]["ready"], true);
-    assert_eq!(after["store"]["status"], "ready");
-    assert_eq!(after["store"]["backend"], "disk_override");
-    assert_eq!(after["store"]["last_hydrated_count"], 1);
-    assert!(after["store"]["last_hydrated_unix_ms"].as_u64().is_some());
-    assert_eq!(after["inventory"][0]["credential_ref"], credential_ref);
-    assert_eq!(after["inventory"][0]["replay_available"], true);
-    let refreshed_reader = state
-        .session_db_handle("broker-reload-vm")
-        .expect("reload response re-registers session DB reader");
-    assert!(
-        !Arc::ptr_eq(&stale_reader, &refreshed_reader),
-        "credential broker reload must rebuild profile session DB readers before reporting inventory"
-    );
-}
-
-#[tokio::test]
-async fn credential_broker_plugin_runtime_reports_security_ledger_activity() {
-    let state = make_test_state();
-    let app = build_service_router(Arc::clone(&state));
-    let dir = tempfile::tempdir().unwrap();
-    let session_dir = dir.path().join("sessions").join("broker-vm");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(&state, "broker-vm", std::process::id(), session_dir.clone());
-
-    let event_json = r#"{
-        "event_type": "http.request",
-        "credential_observations": [
-            {
-                "provider": "google",
-                "source": "http.body.response.$.access_token",
-                "event_type": "http.request",
-                "trace_id": null,
-                "context_json": {"domain":"oauth2.googleapis.com"},
-                "credential_ref": "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-            }
-        ],
-        "credential_injections": [
-            {
-                "provider": "google",
-                "source": "http.request.header.authorization",
-                "event_type": "http.request",
-                "trace_id": null,
-                "context_json": {"domain":"generativelanguage.googleapis.com"},
-                "credential_ref": "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-            }
-        ]
-    }"#;
-    let session_db = session_dir.join("session.db");
-    let writer = capsem_logger::DbWriter::open(&session_db, 16).unwrap();
-    writer
-        .write(capsem_logger::WriteOp::SecurityRuleEvent(
-            capsem_logger::SecurityRuleEvent::new(
-                1_789_000_123_456,
-                "abc123def456",
-                "http.request",
-                "profiles.rules.default_http",
-                r#"{"name":"default_http"}"#,
-                event_json,
-            ),
-        ))
-        .await;
-    writer.shutdown_blocking();
-    let direct_rows = capsem_logger::DbReader::open(&session_db)
-        .unwrap()
-        .recent_security_rule_events(10)
-        .unwrap();
-    assert_eq!(direct_rows.len(), 1);
-    assert!(direct_rows[0].event_json.contains("credential_observations"));
-    let (status, list) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/code/plugins/list",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{list}");
-    let broker = list["plugins"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|plugin| plugin["id"] == "credential_broker")
-        .expect("credential broker plugin is listed");
-    assert_eq!(
-        broker["runtime"]["event_count"], 0,
-        "plugin list is a hot config route and must not hydrate runtime ledgers"
-    );
-
-    let (status, broker) = route_request(
-        app,
-        axum::http::Method::GET,
-        "/profiles/code/plugins/credential_broker/info",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{broker}");
-    assert_eq!(broker["runtime"]["event_count"], 2);
-    assert_eq!(broker["runtime"]["rewrite_count"], 1);
-    assert_eq!(
-        broker["runtime"]["brokered_credentials"][0]["credential_ref"],
-        "credential:blake3:1111111111111111111111111111111111111111111111111111111111111111"
-    );
-    assert_eq!(broker["runtime"]["brokered_credentials"][0]["provider"], "google");
-    assert_eq!(broker["runtime"]["brokered_credentials"][0]["observed_count"], 1);
-    assert_eq!(broker["runtime"]["brokered_credentials"][0]["injected_count"], 1);
-    assert_eq!(
-        broker["runtime"]["brokered_credentials"][0]["replay_available"], false,
-        "security event evidence alone must not imply the broker can replay the credential"
-    );
-}
-
-#[tokio::test]
-async fn plugin_runtime_reports_execution_latency_from_security_ledger_payloads() {
-    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-    let profile_dir = tempfile::tempdir().unwrap();
-    let (config_root, profile) = install_file_asset_profile_fixture(&profile_dir);
-    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
-    let state = make_asset_state(profile_dir.path().join("assets"));
-    let app = build_service_router(Arc::clone(&state));
-    let dir = tempfile::tempdir().unwrap();
-    let session_dir = dir.path().join("sessions").join("plugin-vm");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir_and_pins(
-        &state,
-        "plugin-vm",
-        std::process::id(),
-        session_dir.clone(),
-        profile.revision.clone(),
-        profile_payload_hash(&profile).unwrap(),
-        profile_asset_pins(&profile).unwrap(),
-    );
-
-    let event_json = r#"{
-        "event_type": "http.request",
-        "plugin_executions": [
-            {
-                "plugin_id": "credential_broker",
-                "stage": "preprocess",
-                "applied": false,
-                "duration_us": 13
-            },
-            {
-                "plugin_id": "log_sanitizer",
-                "stage": "logging",
-                "applied": true,
-                "duration_us": 77
-            },
-            {
-                "plugin_id": "dummy_post_allow",
-                "stage": "postprocess",
-                "applied": true,
-                "duration_us": 31
-            }
-        ],
-        "detections": [
-            {
-                "source": "plugin",
-                "detection_level": "informational",
-                "rule_id": null,
-                "plugin_id": "log_sanitizer",
-                "action": null,
-                "plugin_mode": "rewrite",
-                "reason": null
-            },
-            {
-                "source": "plugin",
-                "detection_level": "low",
-                "rule_id": null,
-                "plugin_id": "dummy_post_allow",
-                "action": null,
-                "plugin_mode": "allow",
-                "reason": null
-            }
-        ]
-    }"#;
-    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
-    for rule_id in ["profiles.rules.default_http", "profiles.rules.ai_google"] {
-        writer
-            .write(capsem_logger::WriteOp::SecurityRuleEvent(
-                capsem_logger::SecurityRuleEvent::new(
-                    1_789_000_123_456,
-                    "abc123def456",
-                    "http.request",
-                    rule_id,
-                    r#"{"name":"default_http"}"#,
-                    event_json,
-                ),
-            ))
-            .await;
-    }
-    writer.shutdown_blocking();
-    let (status, list) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/code/plugins/list",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{list}");
-
-    let sanitizer = list["plugins"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|plugin| plugin["id"] == "log_sanitizer")
-        .expect("log sanitizer plugin is listed");
-    assert_eq!(
-        sanitizer["runtime"]["execution_count"], 0,
-        "plugin list is a hot config route and must not hydrate runtime DB scans"
-    );
-
-    let (status, sanitizer_detail) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/code/plugins/log_sanitizer/info",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{sanitizer_detail}");
-    assert_eq!(
-        sanitizer_detail["runtime"]["execution_count"], 1,
-        "multiple rule rows for one security event must not double-count one plugin execution"
-    );
-    assert_eq!(sanitizer_detail["runtime"]["applied_count"], 1);
-    assert_eq!(sanitizer_detail["runtime"]["skipped_count"], 0);
-    assert_eq!(sanitizer_detail["runtime"]["detection_count"], 1);
-    assert_eq!(sanitizer_detail["runtime"]["total_duration_us"], 77);
-    assert_eq!(sanitizer_detail["runtime"]["max_duration_us"], 77);
-
-    let (status, dummy_post) = route_request(
-        app.clone(),
-        axum::http::Method::GET,
-        "/profiles/code/plugins/dummy_post_allow/info",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{dummy_post}");
-    assert_eq!(
-        dummy_post["runtime"]["execution_count"], 1,
-        "postprocess plugin executions must hydrate from the same security ledger payloads"
-    );
-    assert_eq!(dummy_post["runtime"]["applied_count"], 1);
-    assert_eq!(dummy_post["runtime"]["skipped_count"], 0);
-    assert_eq!(dummy_post["runtime"]["detection_count"], 1);
-    assert_eq!(dummy_post["runtime"]["total_duration_us"], 31);
-    assert_eq!(dummy_post["runtime"]["max_duration_us"], 31);
-
-    let (status, broker) = route_request(
-        app,
-        axum::http::Method::GET,
-        "/profiles/code/plugins/credential_broker/info",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{broker}");
-    assert_eq!(broker["runtime"]["execution_count"], 1);
-    assert_eq!(broker["runtime"]["applied_count"], 0);
-    assert_eq!(broker["runtime"]["skipped_count"], 1);
-    assert_eq!(broker["runtime"]["total_duration_us"], 13);
-}
-
-#[tokio::test]
 async fn enforcement_rule_endpoints_add_delete_reload_and_reject_invalid_rules_atomically() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
 
@@ -2386,7 +2045,7 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         .expect("security latest route should respond");
     assert_eq!(latest_response.status(), StatusCode::OK);
     let latest_body = to_bytes(latest_response.into_body(), usize::MAX).await.unwrap();
-    let events: Vec<capsem_logger::SecurityRuleEvent> = serde_json::from_slice(&latest_body).unwrap();
+    let events: Vec<capsem_logger::SecurityRuleMatch> = serde_json::from_slice(&latest_body).unwrap();
     let event = events
         .iter()
         .find(|event| event.rule_id == "profiles.rules.openai_http_observed")
@@ -2399,8 +2058,23 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         capsem_logger::SecurityDetectionLevel::Informational
     );
     assert!(event.rule_json.contains("openai_http_observed"));
-    assert!(event.event_json.contains(r#""api.openai.com""#));
     assert_eq!(event.trace_id.as_deref(), Some("trace_route_authored_detection"));
+    // The route hands back the row; the matched event's payload is archived.
+    let payload = capsem_logger::DbHandle::open_external_reader(&session_dir.join("session.db"))
+        .unwrap()
+        .read_body("abcdef123456", "security_rule_events", BodyDirection::Payload)
+        .await
+        .unwrap()
+        .expect("the matched event payload is archived");
+    assert_eq!(
+        payload.content_type.as_deref(),
+        Some("application/vnd.capsem.security+msgpack")
+    );
+    assert!(capsem_proto::forensic::SecurityForensicEvent::decode(&payload.bytes)
+        .unwrap()
+        .to_json()
+        .unwrap()
+        .contains(r#""api.openai.com""#));
 
     let detection_response = app
         .oneshot(
@@ -2414,7 +2088,7 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
         .expect("detection latest route should respond");
     assert_eq!(detection_response.status(), StatusCode::OK);
     let detection_body = to_bytes(detection_response.into_body(), usize::MAX).await.unwrap();
-    let detection_events: Vec<capsem_logger::SecurityRuleEvent> = serde_json::from_slice(&detection_body).unwrap();
+    let detection_events: Vec<capsem_logger::SecurityRuleMatch> = serde_json::from_slice(&detection_body).unwrap();
     assert!(detection_events
         .iter()
         .any(|detection| detection.rule_id == event.rule_id));
@@ -2479,7 +2153,7 @@ match = 'file.import.content.contains("EICAR")'
         .expect("latest route should respond");
     assert_eq!(latest_response.status(), StatusCode::OK);
     let latest_body = to_bytes(latest_response.into_body(), usize::MAX).await.unwrap();
-    let events: Vec<capsem_logger::SecurityRuleEvent> = serde_json::from_slice(&latest_body).unwrap();
+    let events: Vec<capsem_logger::SecurityRuleMatch> = serde_json::from_slice(&latest_body).unwrap();
     assert!(
         events.is_empty(),
         "evaluate routes are dry-run only; runtime boundaries must own ledger writes"
@@ -2517,84 +2191,4 @@ async fn handle_enforcement_evaluate_reuses_cached_raw_body_response() {
         .expect("second evaluate");
     let second: serde_json::Value = decode_response_json(second_response).await;
     assert_eq!(second["event"]["event_type"], "cached-sentinel");
-}
-
-#[tokio::test]
-async fn mounted_service_ledger_routes_read_real_session_db_rows() {
-    let state = make_test_state();
-    let app = build_service_router(Arc::clone(&state));
-    let dir = tempfile::tempdir().unwrap();
-    let session_dir = dir.path().join("sessions").join("service-ledger-vm");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    insert_fake_instance_with_session_dir(&state, "service-ledger-vm", std::process::id(), session_dir.clone());
-
-    let rule_set = SecurityRuleSet::new(
-        SecurityRuleProfile {
-            profiles: SecurityRuleGroup {
-                rules: BTreeMap::from([(
-                    "service_http_detect".to_string(),
-                    capsem_core::net::policy_config::SecurityRule {
-                        name: "service_http_detect".to_string(),
-                        action: capsem_core::net::policy_config::SecurityRuleAction::Allow,
-                        condition: r#"http.host.contains("example.com")"#.to_string(),
-                        enabled: true,
-                        detection_level: Some(capsem_core::net::policy_config::DetectionLevel::Informational),
-                        priority: Some(capsem_core::net::policy_config::SecurityRulePriority::Explicit(10)),
-                        corp_locked: false,
-                        reason: Some("service ledger route proof".to_string()),
-                        managed: None,
-                        plugin_config: BTreeMap::new(),
-                    },
-                )]),
-            },
-            ..SecurityRuleProfile::default()
-        }
-        .compile(SecurityRuleSource::User)
-        .unwrap(),
-    );
-    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
-    let event_id = capsem_core::security_engine::SecurityEventId::parse("123abc456def").unwrap();
-    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(
-        capsem_core::security_engine::HttpSecurityEvent {
-            host: Some("api.example.com".to_string()),
-            method: Some("GET".to_string()),
-            path: Some("/health".to_string()),
-            query: None,
-            status: Some("200".to_string()),
-            body: None,
-        },
-    );
-    let emitted = capsem_core::security_engine::emit_matching_security_rules(
-        &writer,
-        event_id,
-        RuntimeSecurityEventType::HttpRequest,
-        &rule_set,
-        &event,
-        1_789_000_223_456,
-    )
-    .await
-    .unwrap();
-    writer.shutdown_blocking();
-    assert_eq!(emitted, 1);
-    for uri in [
-        "/security/latest?limit=10",
-        "/enforcement/latest?limit=10",
-        "/detection/latest?limit=10",
-    ] {
-        let (status, rows) = route_request(app.clone(), axum::http::Method::GET, uri, None).await;
-        assert_eq!(status, StatusCode::OK, "{uri}: {rows}");
-        let rows = rows.as_array().unwrap();
-        assert_eq!(rows.len(), 1, "{uri}: {rows:?}");
-        assert_eq!(rows[0]["vm_id"], "service-ledger-vm");
-        assert_eq!(rows[0]["event"]["event_id"], "123abc456def");
-        assert_eq!(rows[0]["event"]["rule_id"], "profiles.rules.service_http_detect");
-        assert_eq!(rows[0]["event"]["detection_level"], "informational");
-    }
-
-    for uri in ["/security/status", "/enforcement/status", "/detection/status"] {
-        let (status, body) = route_request(app.clone(), axum::http::Method::GET, uri, None).await;
-        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
-        assert_eq!(body["total"], 1, "{uri}: {body}");
-        assert_eq!(body["sessions"][0]["vm_id"], "service-ledger-vm");
-    }
 }

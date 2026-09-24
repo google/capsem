@@ -1,9 +1,29 @@
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _recipes() -> dict[str, dict]:
+    just = shutil.which("just")
+    assert just is not None
+    dumped = subprocess.run(
+        [just, "--dump", "--dump-format", "json"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(dumped.stdout)["recipes"]
+
+
+def _body(recipe: dict) -> list[str]:
+    return ["".join(part for part in line if isinstance(part, str)) for line in recipe["body"]]
 
 
 def _gate_issues(name: str | None = None) -> str:
@@ -29,9 +49,91 @@ def test_justfile_does_not_expose_legacy_guest_dir_knob() -> None:
     assert "capsem-builder agent --arch" not in justfile
 
 
+def test_host_build_and_signing_have_no_hidden_just_shortcuts() -> None:
+    """The gate graph owns host production and signing from every entry point.
+
+    A callable ``just _sign`` once let scripts bypass the owning plan. Even
+    after its body became a gate dispatch, the duplicate entry point remained
+    available for the next caller to mistake for a primitive. Keep both host
+    mutation aliases absent; callers dispatch the gate command whose plan
+    carries the producer edge and the separate config-owned timeouts.
+    """
+    recipes = _recipes()
+
+    assert "_build-host" not in recipes
+    assert "_sign" not in recipes
+
+
+def test_host_build_and_signing_are_not_hidden_in_other_recipe_dependencies() -> None:
+    """A gate plan owns the producer edge to the binaries it executes.
+
+    Hiding `_sign` or `_build-host` in a Just dependency starts another gate
+    process and leaves the outer command unable to show, bound, or resume that
+    work. Raw Cargo predecessors are the same defect without a journal at all.
+    """
+    recipes = _recipes()
+    forbidden = {"_build-host", "_sign", "_compile", "_sign-release"}
+    offenders = {
+        name: sorted(dependency["recipe"] for dependency in recipe["dependencies"])
+        for name, recipe in recipes.items()
+        if forbidden & {dependency["recipe"] for dependency in recipe["dependencies"]}
+    }
+
+    assert not offenders, (
+        "host build/signing is hidden in Just dependencies; compose the "
+        f"hostpackage steps into the owning gate plan: {offenders}"
+    )
+    assert not ({"_compile", "_sign-release"} & recipes.keys())
+
+
+def test_public_build_aliases_cross_one_gate_boundary() -> None:
+    """Aliases must not split one operation into nested Just invocations."""
+    recipes = _recipes()
+    expected = {
+        "build": "capsem-gate build-ui",
+        "build-assets": "capsem-gate build-assets",
+        "test-linux-rust": "capsem-gate linux-rust",
+    }
+
+    for name, command in expected.items():
+        lines = _body(recipes[name])
+        assert len(lines) == 1
+        assert command in lines[0]
+        assert "just " not in lines[0]
+
+    build_all = _body(recipes["build-all"])
+    assert any("capsem-gate build-host" in line for line in build_all)
+    assert all("just " not in line for line in build_all)
+
+
+def test_public_runtime_entrypoints_cross_one_gate_boundary() -> None:
+    """Runtime preparation belongs to the plan that consumes it.
+
+    Just prerequisites run as separate gate processes, so their edges,
+    config-owned timeouts and journals are invisible to the final shell or
+    service command.  Each public entrypoint must enter one owning graph.
+    """
+    recipes = _recipes()
+    expected = {
+        "shell": "capsem-gate shell",
+        "run-service": "capsem-gate ensure-service",
+        "exec": "capsem-gate exec",
+    }
+
+    for name, command in expected.items():
+        recipe = recipes[name]
+        assert recipe["dependencies"] == []
+        lines = _body(recipe)
+        assert len(lines) == 1
+        assert command in lines[0]
+        assert "just " not in lines[0]
+
+
 def test_justfile_routes_assets_through_profile_admin_rail() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
-    materialize_config = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh").read_text()
+    materialize_config = (
+        PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh"
+    ).read_text()
 
     # An image build without a profile is unrepresentable now: the argv is
     # built from one, so there is nothing to guard against with an `echo`.

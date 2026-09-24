@@ -27,6 +27,7 @@ class Method(StrEnum):
 class MediaType(StrEnum):
     JSON = "application/json"
     BINARY = "application/octet-stream"
+    GZIP = "application/gzip"
 
 
 class HttpError(Exception):

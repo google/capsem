@@ -14,6 +14,7 @@ from .delete_vm_exposure import delete_vm_exposure as delete_vm_exposure
 from .detach_network_member import detach_network_member as detach_network_member
 from .download_vm_file import download_vm_file as download_vm_file
 from .exec_vm import exec_vm as exec_vm
+from .export_vm_bodies import export_vm_bodies as export_vm_bodies
 from .fork_vm import fork_vm as fork_vm
 from .get_hypervisor_info import get_hypervisor_info as get_hypervisor_info
 from .get_hypervisor_logs import get_hypervisor_logs as get_hypervisor_logs
@@ -26,6 +27,7 @@ from .get_triage import get_triage as get_triage
 from .get_update_status import get_update_status as get_update_status
 from .get_vm_changes import get_vm_changes as get_vm_changes
 from .get_vm_container import get_vm_container as get_vm_container
+from .get_vm_event_bodies import get_vm_event_bodies as get_vm_event_bodies
 from .get_vm_history import get_vm_history as get_vm_history
 from .get_vm_info import get_vm_info as get_vm_info
 from .get_vm_logs import get_vm_logs as get_vm_logs

@@ -70,14 +70,26 @@ def unaccounted_size(
     root: Path, accounted: frozenset[Path], allocated_seen: set[tuple[int, int]]
 ) -> tuple[int, int]:
     """Bytes under `root` outside every unit, each counted once."""
-    if root in accounted or root.is_symlink() or not root.exists():
-        return 0, 0
-    if root.is_dir() and any(root in path.parents for path in accounted):
-        logical = allocated = 0
-        for child in root.iterdir():
-            child_logical, child_allocated = unaccounted_size(child, accounted, allocated_seen)
-            logical += child_logical
-            allocated += child_allocated
-        return logical, allocated
-    measured = measure(root, allocated_seen)
-    return measured.logical_bytes, measured.allocated_bytes
+    ancestors: set[Path] = set()
+    for member in accounted:
+        parent = member.parent
+        while parent != root and parent != parent.parent:
+            ancestors.add(parent)
+            parent = parent.parent
+        if parent == root:
+            ancestors.add(root)
+
+    def visit(path: Path) -> tuple[int, int]:
+        if path in accounted or path.is_symlink() or not path.exists():
+            return 0, 0
+        if path.is_dir() and path in ancestors:
+            logical = allocated = 0
+            for child in path.iterdir():
+                child_logical, child_allocated = visit(child)
+                logical += child_logical
+                allocated += child_allocated
+            return logical, allocated
+        measured = measure(path, allocated_seen)
+        return measured.logical_bytes, measured.allocated_bytes
+
+    return visit(root)

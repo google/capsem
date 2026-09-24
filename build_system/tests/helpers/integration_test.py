@@ -861,9 +861,9 @@ def verify_session(session_id: str, session_dir: Path) -> bool:
         ).fetchone()
         if row:
             r.check(
-                row["status"] in ("stopped", "vacuumed"),
+                row["status"] == "stopped",
                 f"main.db status = {row['status']}",
-                f"main.db status = {row['status']} (expected stopped or vacuumed)",
+                f"main.db status = {row['status']} (expected stopped)",
             )
             r.check(
                 row["total_file_events"] > 0,

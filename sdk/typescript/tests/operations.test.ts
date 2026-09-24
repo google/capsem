@@ -17,7 +17,8 @@ for (const {path, method, operation} of routes) {
   const status = operation.responses['200'] ? '200' : '202';
   const content = operation.responses[status]?.content;
   if (!content) throw new Error('Operation has no successful response');
-  const binary = MediaType.BINARY in content;
+  const responseMediaType = MediaType.GZIP in content ? MediaType.GZIP : MediaType.BINARY in content ? MediaType.BINARY : MediaType.JSON;
+  const binary = responseMediaType !== MediaType.JSON;
   it.each(binary ? ['minimal', 'complete', 'error'] : ['minimal', 'complete', 'error', 'invalid-json', 'invalid-shape'])(
     `${operation.operationId} executes its HTTP contract: %s`, async outcome => {
       const complete = outcome !== 'minimal';
@@ -76,7 +77,7 @@ for (const {path, method, operation} of routes) {
           expect(Object.fromEntries(new URL(request?.url ?? '/', url).searchParams)).toEqual(expectedQuery);
           expect(request?.body).toEqual(Buffer.from(expectedBody));
           expect(request?.headers.authorization).toBe('Bearer secret');
-          expect(request?.headers.accept).toBe(binary ? MediaType.BINARY : MediaType.JSON);
+          expect(request?.headers.accept).toBe(responseMediaType);
           if (contentType) expect(request?.headers['content-type']).toBe(contentType);
         } finally {
           transport.close();

@@ -97,11 +97,13 @@ async fn stats_detail_has_typed_nullable_events_and_captured_bodies() {
         INSERT INTO substitution_events(timestamp,material_class,source,event_type,algorithm,substitution_ref,outcome)
         VALUES('2026-09-10T00:00:00Z','credential','http.body.response.custom','http.response','blake3',
             'credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','captured');
+        INSERT INTO body_blocks(block_offset,raw_len,disk_len,sealed_at)
+        VALUES(128,4,4,'2026-09-10T00:00:00Z');
         INSERT INTO event_body_blobs(event_id,event_type,source_table,direction,original_bytes,
-            stored_bytes,truncated,body_hash,body,created_at)
+            stored_bytes,truncated,body_hash,block_offset,body_offset,body_len,created_at)
         VALUES('abcdef000001','model.call','model_calls','response',100,4,1,
             'blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-            X'74657374','2026-09-10T00:00:00Z');
+            128,0,4,'2026-09-10T00:00:00Z');
     "#,
         )
         .unwrap();
@@ -137,15 +139,15 @@ async fn stats_detail_has_typed_nullable_events_and_captured_bodies() {
     );
     assert_eq!(detail.credential_events[0].source, "http.body.response.custom");
     let body = &detail.body_blobs["abcdef000001"][0];
-    assert_eq!(body.direction, api::BodyDirection::Response);
+    assert_eq!(body.direction, "response");
     assert!(body.truncated);
-    assert_eq!(body.body, "test");
+    assert_eq!(body.source_table, "model_calls");
     assert_eq!(body.stored_bytes, 4);
     assert_eq!(value["tool_events"][0]["model_parent_missing"], false);
     assert_eq!(value["body_blobs"]["abcdef000001"][0]["truncated"], true);
     assert_eq!(value["interactions"]["items"][0]["content"]["kind"], "tool_call");
-    assert_eq!(value["interactions"]["bodies"][0]["payload"]["status"], "truncated");
-    assert_eq!(value["interactions"]["bodies"][0]["payload"]["content"]["raw"], "test");
+    assert_eq!(value["interactions"]["bodies"][0]["truncated"], true);
+    assert!(value["interactions"]["bodies"][0].get("payload").is_none());
     assert!(
         state.stats_detail_response_cache.lock().unwrap().is_empty(),
         "stats detail must use DB-owned reads without a service projection cache"

@@ -297,7 +297,7 @@ at all -- `has(http.valid)`, not `has(http)`.
 | `network` | `network.valid`, `network.id`, `network.name`, `network.mode`, `network.action`, `network.target`, `network.side`, `network.protocol`, `network.publication.id`, `network.source.vm_id`, `network.source.vm_name`, `network.source.generation`, `network.source.ip`, `network.source.port`, `network.destination.vm_id`, `network.destination.vm_name`, `network.destination.generation`, `network.destination.ip`, `network.destination.port` |
 | `mcp` | `mcp.valid`, `mcp.method`, `mcp.server.valid`, `mcp.server.name`, `mcp.tool_call.valid`, `mcp.tool_call.name`, `mcp.tool_list.valid`, `mcp.tool_list`, `mcp.request.valid`, `mcp.request.id`, `mcp.request.method`, `mcp.request.arguments`, `mcp.response.valid`, `mcp.response.content`, `mcp.event.valid` |
 | `model` | `model.valid`, `model.provider`, `model.name`, `model.request.valid`, `model.request.body`, `model.request.tool_calls`, `model.response.valid`, `model.response.body`, `model.tool_call.valid` |
-| `file` | `file.valid`, `file.content` |
+| `file` | `file.valid`, `file.content`, `file.kind` |
 | `file.import` | `file.import.valid`, `file.import.path`, `file.import.name`, `file.import.ext`, `file.import.mime_type`, `file.import.content` |
 | `file.export` | `file.export.valid`, `file.export.path`, `file.export.name`, `file.export.ext`, `file.export.mime_type`, `file.export.content` |
 | `file.read` | `file.read.valid`, `file.read.path`, `file.read.name`, `file.read.ext`, `file.read.mime_type`, `file.read.content` |

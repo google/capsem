@@ -56,6 +56,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/cache/test_views.py",
         "build_system/tests/gate/test_doctor_tool_commands.py",
         "build_system/tests/gate/test_doctor_tool_module_boundary.py",
+        "build_system/tests/gate/test_doctor_session_archive.py",
         "build_system/tests/gate/test_gate_module_boundary.py",
         "build_system/tests/gate/test_gate_observation_startup.py",
         "build_system/tests/gate/test_gate_cache_layout.py",

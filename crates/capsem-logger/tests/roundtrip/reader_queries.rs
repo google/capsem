@@ -390,6 +390,7 @@ async fn model_call_tool_data_roundtrip() {
     call.trace_id = Some("trace-tools".to_string());
     call.tool_calls = vec![
         ToolCallEntry {
+            event_id: None,
             call_index: 0,
             call_id: "call_abc".to_string(),
             tool_name: "get_weather".to_string(),
@@ -398,6 +399,7 @@ async fn model_call_tool_data_roundtrip() {
             trace_id: None,
         },
         ToolCallEntry {
+            event_id: None,
             call_index: 1,
             call_id: "call_def".to_string(),
             tool_name: "search".to_string(),
@@ -407,6 +409,7 @@ async fn model_call_tool_data_roundtrip() {
         },
     ];
     call.tool_responses = vec![ToolResponseEntry {
+        event_id: None,
         call_id: "call_prev".to_string(),
         content_preview: Some("72F and sunny".to_string()),
         is_error: false,

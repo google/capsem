@@ -13,6 +13,7 @@ from contextlib import closing, suppress
 from pathlib import Path
 
 import pytest
+from helpers.body_archive import security_payload
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -61,6 +62,7 @@ EXPECTED_NET_COLUMNS = {
     "matched_rule",
     "request_headers",
     "response_headers",
+    "headers_truncated",
     "request_body_preview",
     "response_body_preview",
     "conn_type",
@@ -82,7 +84,6 @@ EXPECTED_SECURITY_COLUMNS = {
     "rule_action",
     "detection_level",
     "rule_json",
-    "event_json",
     "trace_id",
     "turn_id",
     "credential_ref",
@@ -98,7 +99,6 @@ EXPECTED_SECURITY_ASK_COLUMNS = {
     "rule_name",
     "status",
     "rule_json",
-    "event_json",
     "resolver",
     "reason",
     "trace_id",
@@ -373,7 +373,7 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
             assert default_rule["rule_action"] == "allow"
             assert default_rule["detection_level"] == "none"
             assert default_rule["trace_id"] == net["trace_id"]
-            event_json = json.loads(default_rule["event_json"])
+            event_json = security_payload(conn, default_rule["event_id"])
             assert event_json["event_type"] == "http.request"
             assert event_json["http"]["host"] == "127.0.0.1"
             assert event_json["http"]["method"] == "POST"
@@ -417,7 +417,7 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert any(row["summary"] == "POST 127.0.0.1/echo" for row in timeline_rows)
 
         security_latest = _eventually(
-            lambda: client.get(f"/vms/{session_id}/security/latest?limit=50", timeout=30),
+            lambda: client.get(f"/vms/{session_id}/security/latest?limit=2000", timeout=30),
             lambda rows: any(
                 row["event_id"] == event_id
                 and row["rule_id"] == "corp.rules.allow_ironbank_mock_http"
@@ -727,7 +727,7 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
                 assert body_rule["rule_action"] == "allow"
                 assert body_rule["detection_level"] == "informational"
                 assert body_rule["trace_id"] == net["trace_id"]
-                event_json = json.loads(body_rule["event_json"])
+                event_json = security_payload(conn, body_rule["event_id"])
                 assert event_json["event_type"] == "http.request"
                 assert event_json["http"]["host"] == expected_host
                 assert event_json["http"]["method"] == "GET"
@@ -794,7 +794,7 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
             assert {row["decision"] for row in uds_rows} == {"allowed"}
             assert any(row["conn_type"] == "https-mitm" for row in uds_rows)
 
-            security_latest = client.get(f"/vms/{session_id}/security/latest?limit=100", timeout=30)
+            security_latest = client.get(f"/vms/{session_id}/security/latest?limit=2000", timeout=30)
             latest_rows = [
                 row
                 for row in security_latest
@@ -1181,7 +1181,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
                 assert rewrite_rule["rule_action"] == "allow"
                 assert rewrite_rule["detection_level"] == "informational"
                 assert rewrite_rule["trace_id"] == net["trace_id"]
-                event_json = json.loads(rewrite_rule["event_json"])
+                event_json = security_payload(conn, rewrite_rule["event_id"])
                 assert event_json["event_type"] == "http.request"
                 assert event_json["http"]["host"] == "127.0.0.1"
                 assert event_json["http"]["path"] == "/echo"
@@ -1312,7 +1312,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             ), broker_info["inventory"]
 
             security_latest = client.get(
-                f"/vms/{session_id}/security/latest?limit=50",
+                f"/vms/{session_id}/security/latest?limit=2000",
                 timeout=30,
             )
             latest_echo = [
@@ -1544,7 +1544,7 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
             assert block_rule["rule_action"] == "block"
             assert block_rule["detection_level"] == "high"
             assert block_rule["trace_id"] == net["trace_id"]
-            event_json = json.loads(block_rule["event_json"])
+            event_json = security_payload(conn, block_rule["event_id"])
             assert event_json["event_type"] == "http.request"
             assert event_json["http"]["host"] == "127.0.0.1"
             assert event_json["http"]["method"] == "POST"
@@ -1573,7 +1573,7 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert uds_rows[0]["request_body_preview"] == result["request_body"]
         assert uds_rows[0]["response_body_preview"] == result["body"]
 
-        security_latest = client.get(f"/vms/{session_id}/security/latest?limit=50", timeout=30)
+        security_latest = client.get(f"/vms/{session_id}/security/latest?limit=2000", timeout=30)
         latest_row = next(
             row
             for row in security_latest
@@ -1803,7 +1803,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
             assert ask_rule["rule_action"] == "ask"
             assert ask_rule["detection_level"] == "medium"
             assert ask_rule["trace_id"] == net["trace_id"]
-            event_json = json.loads(ask_rule["event_json"])
+            event_json = security_payload(conn, ask_rule["event_id"])
             assert event_json["event_type"] == "http.request"
             assert event_json["http"]["host"] == "127.0.0.1"
             assert event_json["http"]["method"] == "POST"
@@ -1836,7 +1836,9 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
             ask_rule_json = json.loads(ask_row["rule_json"])
             assert ask_rule_json["rule_action"] == "ask"
             assert ask_rule_json["detection_level"] == "medium"
-            ask_event_json = json.loads(ask_row["event_json"])
+            # The asked-about event is archive-backed, like every security
+            # payload; the ask row keeps the lifecycle.
+            ask_event_json = security_payload(conn, ask_row["event_id"], "security_ask_events")
             assert ask_event_json["event_type"] == "http.request"
             assert ask_event_json["http"]["path"] == "/ask-target"
 
@@ -1877,7 +1879,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
             }
         ]
 
-        security_latest = client.get(f"/vms/{session_id}/security/latest?limit=50", timeout=30)
+        security_latest = client.get(f"/vms/{session_id}/security/latest?limit=2000", timeout=30)
         latest_row = next(
             row
             for row in security_latest
