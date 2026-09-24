@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ignored, so a file could land in the guest with no audit trail
   (google/capsem#229).
 
+- A credential observed in an HTTP request is now redacted from the stored
+  request and response headers, and from both bodies, wherever it reappears.
+  Headers were stored unredacted, and bodies were scrubbed only of credentials
+  seen in bodies, so a key sent in `x-api-key` could be stored verbatim in an
+  echoed header or body (google/capsem#229, #218).
+
 - A file export from the guest is refused when its security event cannot be
   recorded or evaluated. It used to log a warning and hand the file over
   anyway, so an export could leave the sandbox with no audit trail; exec and

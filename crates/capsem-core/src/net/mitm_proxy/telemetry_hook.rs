@@ -31,7 +31,8 @@ use super::metrics as m;
 use super::util::is_llm_api_path;
 use crate::credential_broker::{
     broker_and_log_observations, detect_http_body_credentials, log_brokered_injections,
-    redact_observed_credentials_in_bytes, CredentialInjection, CredentialObservation,
+    redact_observed_credentials_in_bytes, redact_observed_credentials_in_text, CredentialInjection,
+    CredentialObservation,
 };
 use crate::net::ai_traffic::events::{
     collect_summary, parse_non_streaming_response_summary, parse_non_streaming_tool_calls, parse_non_streaming_usage,
@@ -242,14 +243,12 @@ impl ChunkHook for TelemetryHook {
 
         let stage_started = Instant::now();
         let mut credential_observations = req_ctx.credential_observations.clone();
-        let header_observations_len = credential_observations.len();
         credential_observations.extend(detect_http_body_credentials(
             &req_ctx.domain,
             &req_ctx.path,
             "request",
             &request_body_preview,
         ));
-        let response_observation_start = credential_observations.len();
         credential_observations.extend(detect_http_body_credentials(
             &req_ctx.domain,
             &req_ctx.path,
@@ -261,16 +260,22 @@ impl ChunkHook for TelemetryHook {
                 .first()
                 .map(CredentialObservation::credential_ref);
         }
-        if credential_observations.len() > header_observations_len {
-            let request_observations = &credential_observations[header_observations_len..response_observation_start];
-            if !request_observations.is_empty() {
-                let mut stats = req_ctx.request_body_stats.lock().expect("req body stats lock");
-                stats.preview = redact_observed_credentials_in_bytes(&stats.preview, request_observations);
-            }
-            let response_observations = &credential_observations[response_observation_start..];
-            if !response_observations.is_empty() {
-                resp_stats.preview = redact_observed_credentials_in_bytes(&resp_stats.preview, response_observations);
-            }
+        // Every credential observed anywhere in the exchange is redacted from
+        // everything stored: a key seen in a header is echoed in bodies and
+        // response headers, and the ledger's header cap is not redaction.
+        // Enforcement and brokering already ran on the live values.
+        if !credential_observations.is_empty() {
+            let redact = |text: &mut Option<String>| {
+                if let Some(text) = text {
+                    *text = redact_observed_credentials_in_text(text, &credential_observations);
+                }
+            };
+            redact(&mut req_ctx.request_headers);
+            redact(&mut req_ctx.response_headers);
+            let mut stats = req_ctx.request_body_stats.lock().expect("req body stats lock");
+            stats.preview = redact_observed_credentials_in_bytes(&stats.preview, &credential_observations);
+            drop(stats);
+            resp_stats.preview = redact_observed_credentials_in_bytes(&resp_stats.preview, &credential_observations);
         }
         record_telemetry_stage(stage_started, "credential_detect_and_redact");
 
