@@ -1,14 +1,15 @@
-//! A rule row's `event_json.decision.effective` is the outcome that was
-//! enforced, not the event as it arrived.
+//! A rule row's `decision.effective` is the outcome that was enforced.
 //!
-//! The emitter applied the selected rule to a separate decision state and then
-//! serialized the incoming event, whose decision defaults to allow. A blocked
-//! HTTP request, DNS query, file operation or process was therefore stored with
-//! `decision.effective = "allow"` beside `rule_action = "block"`
-//! (google/capsem#203, owned by #229).
+//! The emitter stored the event as it arrived, whose decision defaults to
+//! allow, so a blocked request, query or export was stored as allowed beside
+//! `rule_action = "block"` (google/capsem#203, owned by #229). Applying the
+//! rule's decision everywhere would be the opposite lie for events recorded
+//! after they happened (a file the monitor saw change): nothing blocked them.
+//! So a boundary that enforces the rule records the rule's decision, and a
+//! record of something that already happened keeps what was enforced.
 use super::*;
 
-fn file_rules(action: &str) -> SecurityRuleSet {
+fn rules(action: &str, condition: &str) -> SecurityRuleSet {
     let profile = SecurityRuleProfile::parse_toml(&format!(
         r#"
 [profiles.rules.guard_secret]
@@ -16,11 +17,19 @@ name = "guard_secret"
 action = "{action}"
 priority = 10
 detection_level = "high"
-match = 'file.export.path == "/workspace/secret.txt"'
+match = '{condition}'
 "#
     ))
     .unwrap();
     crate::net::policy_config::SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap()
+}
+
+fn file_rules(action: &str) -> SecurityRuleSet {
+    rules(action, r#"file.export.path == "/workspace/secret.txt""#)
+}
+
+fn file_rules_on(condition: &str) -> SecurityRuleSet {
+    rules("block", condition)
 }
 
 fn export() -> ExplicitFileSecurityEvent {
@@ -66,45 +75,45 @@ async fn stored_decision(db_path: &std::path::Path) -> (String, String, String) 
 }
 
 #[tokio::test]
-async fn a_blocking_rule_row_stores_the_block_it_enforced() {
+async fn an_enforcing_boundary_records_the_decision_it_enforced() {
     for (action, expected) in [("block", "block"), ("allow", "allow")] {
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("session.db");
         let writer = capsem_logger::DbWriter::open(&db_path, 32).unwrap();
-        emit_explicit_file_security_write_and_rules(&writer, &file_rules(action), export())
-            .await
-            .expect("explicit file event must receive id");
+        let emission = emit_explicit_file_security_write_and_rules_with_plugins(
+            &writer,
+            &file_rules(action),
+            BTreeMap::new(),
+            export(),
+        )
+        .await
+        .unwrap()
+        .expect("recorded");
+        assert_eq!(
+            emission.enforcement.action.as_str(),
+            expected,
+            "the caller enforces this"
+        );
         writer.flush().await;
         writer.shutdown_blocking();
 
-        let (rule_action, stored, effective) = stored_decision(&db_path).await;
+        let (rule_action, stored, ledger) = stored_decision(&db_path).await;
         assert_eq!(rule_action, action);
-        assert_eq!(stored, expected, "rule row for an `{action}` rule");
-        assert_eq!(effective, expected, "the rule row and the decision ledger agree");
+        assert_eq!(stored, expected, "rule row for an enforced `{action}` rule");
+        assert_eq!(ledger, expected, "the rule row and the decision ledger agree");
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn the_blocking_emitter_stores_the_block_it_enforced() {
+#[tokio::test]
+async fn a_record_of_what_already_happened_keeps_its_outcome() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 32).unwrap();
-    let profile = SecurityRuleProfile::parse_toml(
-        r#"
-[profiles.rules.guard_write]
-name = "guard_write"
-action = "block"
-priority = 10
-detection_level = "high"
-match = 'file.write.path == "/workspace/secret.txt"'
-"#,
-    )
-    .unwrap();
-    let rules =
-        crate::net::policy_config::SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
-    emit_file_security_write_and_rules_blocking(
+    // The monitor saw this write after it happened; a block rule matching it
+    // is a detection, not an enforcement.
+    emit_file_security_write_and_rules(
         &writer,
-        &rules,
+        &file_rules_on("file.write.path == \"/workspace/secret.txt\""),
         FileEvent {
             event_id: None,
             timestamp: SystemTime::now(),
@@ -116,9 +125,15 @@ match = 'file.write.path == "/workspace/secret.txt"'
             credential_ref: None,
         },
     )
+    .await
     .expect("file event must receive id");
+    writer.flush().await;
     writer.shutdown_blocking();
 
     let (rule_action, stored, _) = stored_decision(&db_path).await;
-    assert_eq!((rule_action.as_str(), stored.as_str()), ("block", "block"));
+    assert_eq!(
+        (rule_action.as_str(), stored.as_str()),
+        ("block", "allow"),
+        "the rule is recorded; the write it matched was not blocked"
+    );
 }

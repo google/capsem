@@ -35,8 +35,10 @@ use forensics::{
 pub use network::NetworkSecurityEvent;
 mod plugins;
 mod rule_decision;
+mod rule_emission;
 use plugins::{CredentialBrokerPlugin, DummyPostAllowPlugin, DummyPreEicarPlugin, LogSanitizerPlugin};
 use rule_decision::*;
+pub use rule_emission::*;
 
 pub const SECURITY_EVENT_EMIT_SPAN: &str = "capsem.security_event.emit";
 pub const SECURITY_EVENT_EMIT_TOTAL: &str = "security_event.emit_total";
@@ -403,19 +405,6 @@ fn current_unix_ms() -> i64 {
         .as_millis() as i64
 }
 
-pub async fn emit_matching_security_rules(
-    db: &DbWriter,
-    event_id: SecurityEventId,
-    event_type: RuntimeSecurityEventType,
-    rules: &SecurityRuleSet,
-    event: &SecurityEvent,
-    timestamp_unix_ms: i64,
-) -> Result<usize, String> {
-    emit_matching_security_rules_with_decision(db, event_id, event_type, rules, event, timestamp_unix_ms)
-        .await
-        .map(|emission| emission.emitted)
-}
-
 /// Run the plugin stages over an event, evaluate the rule set, write the ledger
 /// rows, and return the decision the caller must honor.
 ///
@@ -627,142 +616,6 @@ pub enum SecurityEnforcementAction {
     Allow,
     Ask,
     Block,
-}
-
-pub async fn emit_matching_security_rules_with_decision(
-    db: &DbWriter,
-    event_id: SecurityEventId,
-    event_type: RuntimeSecurityEventType,
-    rules: &SecurityRuleSet,
-    event: &SecurityEvent,
-    timestamp_unix_ms: i64,
-) -> Result<SecurityRuleEmission, String> {
-    event.validate_network(event_type).map_err(|error| error.to_string())?;
-    let evaluation = rules.evaluate(event)?;
-    let selected_rule = selected_enforcement_rule(&evaluation);
-    let mut emitted = 0;
-    let mut enriched_event = event_with_rule_detections(event, evaluation.detections());
-    let mut enforcement = security_enforcement_decision(selected_rule, &mut enriched_event);
-    let mut decision_state = enriched_event.decision.clone();
-    let mut rule_events = Vec::new();
-    if let Some(rule) = selected_rule {
-        emit_security_decision_transition(
-            db,
-            event_id.clone(),
-            event_type,
-            rule,
-            &enriched_event,
-            &mut decision_state,
-            timestamp_unix_ms,
-        )
-        .await?;
-        // Rule rows record what was enforced. The transition above merged the
-        // rule's request into `decision_state`; the event as it arrived still
-        // carries the default allow (google/capsem#203).
-        enriched_event.decision = decision_state.clone();
-    }
-    for rule in evaluation.matched_rules() {
-        let rule_event = security_rule_event(event_id.clone(), event_type, rule, &enriched_event, timestamp_unix_ms)?;
-        trace_security_rule_match(&rule_event, rule);
-        emit_security_write(db, WriteOp::SecurityRuleEvent(rule_event.clone())).await;
-        rule_events.push(rule_event);
-        emitted += 1;
-    }
-    if matches!(enforcement.action, SecurityEnforcementAction::Ask) {
-        let Some(rule) = selected_rule else {
-            return Err("ask enforcement decision did not carry a rule".to_string());
-        };
-        let ask_id = emit_security_ask_pending(
-            db,
-            event_id.clone(),
-            event_type,
-            rule,
-            &enriched_event,
-            timestamp_unix_ms,
-        )
-        .await?;
-        enforcement.ask_id = Some(ask_id);
-    }
-    Ok(SecurityRuleEmission {
-        event_id,
-        emitted,
-        enforcement,
-        event: enriched_event,
-        rule_events,
-    })
-}
-
-pub fn emit_matching_security_rules_blocking(
-    db: &DbWriter,
-    event_id: SecurityEventId,
-    event_type: RuntimeSecurityEventType,
-    rules: &SecurityRuleSet,
-    event: &SecurityEvent,
-    timestamp_unix_ms: i64,
-) -> Result<usize, String> {
-    emit_matching_security_rules_with_decision_blocking(db, event_id, event_type, rules, event, timestamp_unix_ms)
-        .map(|emission| emission.emitted)
-}
-
-pub fn emit_matching_security_rules_with_decision_blocking(
-    db: &DbWriter,
-    event_id: SecurityEventId,
-    event_type: RuntimeSecurityEventType,
-    rules: &SecurityRuleSet,
-    event: &SecurityEvent,
-    timestamp_unix_ms: i64,
-) -> Result<SecurityRuleEmission, String> {
-    event.validate_network(event_type).map_err(|error| error.to_string())?;
-    let evaluation = rules.evaluate(event)?;
-    let selected_rule = selected_enforcement_rule(&evaluation);
-    let mut emitted = 0;
-    let mut enriched_event = event_with_rule_detections(event, evaluation.detections());
-    let mut enforcement = security_enforcement_decision(selected_rule, &mut enriched_event);
-    let mut decision_state = enriched_event.decision.clone();
-    let mut rule_events = Vec::new();
-    if let Some(rule) = selected_rule {
-        emit_security_decision_transition_blocking(
-            db,
-            event_id.clone(),
-            event_type,
-            rule,
-            &enriched_event,
-            &mut decision_state,
-            timestamp_unix_ms,
-        )?;
-        // Rule rows record what was enforced. The transition above merged the
-        // rule's request into `decision_state`; the event as it arrived still
-        // carries the default allow (google/capsem#203).
-        enriched_event.decision = decision_state.clone();
-    }
-    for rule in evaluation.matched_rules() {
-        let rule_event = security_rule_event(event_id.clone(), event_type, rule, &enriched_event, timestamp_unix_ms)?;
-        trace_security_rule_match(&rule_event, rule);
-        emit_security_write_blocking(db, WriteOp::SecurityRuleEvent(rule_event.clone()));
-        rule_events.push(rule_event);
-        emitted += 1;
-    }
-    if matches!(enforcement.action, SecurityEnforcementAction::Ask) {
-        let Some(rule) = selected_rule else {
-            return Err("ask enforcement decision did not carry a rule".to_string());
-        };
-        let ask_id = emit_security_ask_pending_blocking(
-            db,
-            event_id.clone(),
-            event_type,
-            rule,
-            &enriched_event,
-            timestamp_unix_ms,
-        )?;
-        enforcement.ask_id = Some(ask_id);
-    }
-    Ok(SecurityRuleEmission {
-        event_id,
-        emitted,
-        enforcement,
-        event: enriched_event,
-        rule_events,
-    })
 }
 
 fn security_decision_event(

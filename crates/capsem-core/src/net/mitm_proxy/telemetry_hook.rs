@@ -447,6 +447,10 @@ fn security_event_from_net_event(event: &NetEvent) -> SecurityEvent {
             }),
         });
     }
+    // The request was already enforced; its rule rows record that outcome.
+    if event.decision == Decision::Denied {
+        security_event.request_decision(crate::security_engine::SecurityDecisionKind::Block);
+    }
     apply_security_event_trace(security_event, event.trace_id.clone())
 }
 

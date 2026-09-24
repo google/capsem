@@ -26,11 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to load says why and keeps its previous policy. Policy files are replaced
   atomically, so a reader never sees half a file (google/capsem#229).
 
-- A security rule match now records the decision that was enforced. A request,
-  DNS query, file operation or process blocked by a rule was stored with
+- A security rule match now records the decision that was enforced. A
+  request, DNS query, export or command blocked by a rule was stored with
   `decision.effective = "allow"` in the match's payload beside
   `rule_action = "block"`, so the audit trail said the opposite of what
-  happened (google/capsem#229, #203).
+  happened. A match on something recorded after it happened, such as a file
+  change the monitor observed, still records the outcome that occurred, with
+  the rule's action beside it (google/capsem#229, #203).
 
 - A guest DNS query whose audit record the session ledger refuses is now
   answered SERVFAIL. The resolved answer used to be returned anyway, so a
