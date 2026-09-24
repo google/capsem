@@ -90,7 +90,11 @@ pub(crate) async fn apply_profile_mutation(
     let event = write_profile_mutation_event(state, &mutation, summary, &profile).await?;
     log_profile_mutation_applied(name, &event);
     if enforcement == Enforcement::Push {
-        push_profile_to_running_instances(state, &mutation, Some(profile_id.as_str())).await?;
+        // The edit is on disk and in the audit ledger whatever the VMs do; say
+        // so rather than let a failed push read as a failed edit.
+        push_profile_to_running_instances(state, &mutation, Some(profile_id.as_str()))
+            .await
+            .map_err(|AppError(status, error)| AppError(status, format!("edit saved and recorded; {error}")))?;
     }
     // Held through the VM acknowledgement: that is the end of the mutation.
     drop(mutation);

@@ -3,15 +3,16 @@ use super::*;
 
 /// Deliver the current profile to every running VM on it: re-materialize each
 /// session's active profile from the profile files, then ask capsem-process to
-/// reload it. Plugin and rule mutation routes call this so an edit is enforced
-/// before the route returns; a rule that only reached the profile file left
-/// running VMs on the old policy until someone called the reload route. An
-/// instance that does not acknowledge fails the request loudly, because a VM
-/// silently left on stale policy is the worse outcome.
+/// reload it. Mutation routes call this so an edit is enforced before the route
+/// returns; a rule that only reached the profile file left running VMs on the
+/// old policy until someone called the reload route.
 ///
 /// A VM counts as updated only when it reports applying the exact bytes this
-/// call wrote. An acknowledgement of some other active profile -- one written
-/// by a concurrent edit -- is a failure, not a success.
+/// call wrote; an acknowledgement of some other active profile -- one written
+/// by a concurrent edit -- is a failure. One VM that fails does not stop the
+/// others: the edit is applied everywhere it can be, and the error names the
+/// VMs left on their previous policy. A VM silently left on stale policy is
+/// the worse outcome, so any such VM fails the request.
 pub(crate) async fn push_profile_to_running_instances(
     state: &Arc<ServiceState>,
     _mutation: &PolicyMutation<'_>,
@@ -20,16 +21,21 @@ pub(crate) async fn push_profile_to_running_instances(
     let filter = profile_filter.map(str::to_owned);
     let published = state
         .off_worker(move |state| state.refresh_active_profiles(filter.as_deref()))
-        .await?
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
+        .await?;
+    let total = published.len();
 
+    let mut failures = Vec::new();
     let targets = {
         let instances = state.instances.lock().unwrap();
         published
             .into_iter()
-            .filter_map(|(id, digest)| {
-                let uds_path = instances.get(&id)?.uds_path.clone();
-                Some((id, uds_path, digest))
+            .filter_map(|(id, digest)| match digest {
+                Err(error) => {
+                    failures.push(format!("{id}: {error}"));
+                    None
+                }
+                // A VM that stopped since it was listed has nothing to reload.
+                Ok(digest) => Some((id.clone(), instances.get(&id)?.uds_path.clone(), digest)),
             })
             .collect::<Vec<_>>()
     };
@@ -57,14 +63,18 @@ pub(crate) async fn push_profile_to_running_instances(
         }
     }))
     .await;
-    let failures: Vec<String> = results.into_iter().flatten().collect();
+    failures.extend(results.into_iter().flatten());
 
     if failures.is_empty() {
-        Ok(targets.len())
+        Ok(total)
     } else {
         Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to reload config in some instances: {}", failures.join(", ")),
+            format!(
+                "policy applied to {} of {total} running VMs; not applied: {}",
+                total - failures.len(),
+                failures.join(", ")
+            ),
         ))
     }
 }

@@ -50,8 +50,13 @@ impl ServiceState {
     }
 
     /// Re-materialize the active profile of every running VM on `profile_filter`
-    /// (every VM when `None`) and return each VM's id with what it was given.
-    pub(crate) fn refresh_active_profiles(&self, profile_filter: Option<&str>) -> Result<Vec<(String, String)>> {
+    /// (every VM when `None`). Returns each VM's id with the digest it was given,
+    /// or why it could not be; one VM that cannot take the profile does not keep
+    /// the others on the old one.
+    pub(crate) fn refresh_active_profiles(
+        &self,
+        profile_filter: Option<&str>,
+    ) -> Vec<(String, std::result::Result<String, String>)> {
         let targets = {
             let instances = self.instances.lock().unwrap();
             instances
@@ -65,22 +70,17 @@ impl ServiceState {
                 .collect::<Vec<_>>()
         };
 
-        let mut published = Vec::with_capacity(targets.len());
-        for (id, profile_id, session_dir) in &targets {
-            let runtime_profile = self
-                .profile_for_runtime(profile_id)
-                .with_context(|| format!("load runtime profile {profile_id} for {id}"))?;
-            let active = self
-                .materialize_active_profile(&runtime_profile, session_dir)
-                .with_context(|| {
-                    format!(
-                        "refresh active profile config for {id} ({profile_id}) in {}",
-                        session_dir.display()
-                    )
-                })?;
-            published.push((id.clone(), active.digest));
-        }
-
-        Ok(published)
+        targets
+            .into_iter()
+            .map(|(id, profile_id, session_dir)| {
+                let published = self
+                    .profile_for_runtime(&profile_id)
+                    .with_context(|| format!("load runtime profile {profile_id}"))
+                    .and_then(|runtime_profile| self.materialize_active_profile(&runtime_profile, &session_dir))
+                    .map(|active| active.digest)
+                    .map_err(|error| format!("{error:#}"));
+                (id, published)
+            })
+            .collect()
     }
 }

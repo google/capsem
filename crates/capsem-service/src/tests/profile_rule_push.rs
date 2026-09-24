@@ -103,6 +103,8 @@ async fn reload_refreshes_session_runtime_profile_from_source_profile() {
 
     state
         .refresh_active_profiles(Some("code"))
+        .into_iter()
+        .try_for_each(|(_, published)| published.map(drop))
         .expect("initial runtime profile materialization");
     let active_profile = session_dir.join("vm/active_profile.toml");
     assert!(active_profile.exists(), "session must carry one active profile file");
@@ -130,6 +132,8 @@ match = 'mcp.tool_call.name == "local__echo"'
 
     state
         .refresh_active_profiles(Some("code"))
+        .into_iter()
+        .try_for_each(|(_, published)| published.map(drop))
         .expect("reload must refresh session-local runtime profile config");
     let refreshed = std::fs::read_to_string(&active_profile).unwrap();
     assert!(
@@ -166,6 +170,8 @@ match = 'mcp.tool_call.name == "local__echo"'
     );
     state
         .refresh_active_profiles(Some("code"))
+        .into_iter()
+        .try_for_each(|(_, published)| published.map(drop))
         .expect("plugin override must refresh runtime profile config");
     let overlay_path = session_dir.join("runtime-config/profiles/code/runtime-overlay.toml");
     assert!(
@@ -209,6 +215,8 @@ async fn mcp_permission_edits_push_reload_to_running_profile_instances() {
     insert_fake_instance_with_session_dir(&state, "mcp-push-vm", std::process::id(), session_dir.clone());
     state
         .refresh_active_profiles(Some("code"))
+        .into_iter()
+        .try_for_each(|(_, published)| published.map(drop))
         .expect("initial active profile");
     let active_profile = session_dir.join("vm/active_profile.toml");
     assert_eq!(
@@ -474,4 +482,49 @@ async fn a_plugin_edit_is_serialized_with_a_concurrent_rule_edit() {
         active.contains("race_edit_a") && active.contains("[plugins.dummy_pre_eicar]"),
         "{active}"
     );
+}
+
+/// One running VM whose session cannot take the new profile must not keep the
+/// others on the old one. The push used to stop at the first failure, so a VM
+/// listed after a broken one was never materialized or reloaded. The route now
+/// applies the edit everywhere it can and says exactly where it could not,
+/// without pretending the saved edit was rolled back.
+#[tokio::test]
+async fn partial_apply_reaches_every_healthy_vm_and_names_the_failed_one() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
+    let healthy_dir = dir.path().join("sessions").join("healthy-vm");
+    std::fs::create_dir_all(&healthy_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "healthy-vm", std::process::id(), healthy_dir.clone());
+    // A session whose `vm/` directory is a file: its active profile cannot be written.
+    let broken_dir = dir.path().join("sessions").join("broken-vm");
+    std::fs::create_dir_all(&broken_dir).unwrap();
+    std::fs::write(broken_dir.join("vm"), b"not a directory").unwrap();
+    insert_fake_instance_with_session_dir(&state, "broken-vm", std::process::id(), broken_dir);
+    let healthy_uds = state.instances.lock().unwrap()["healthy-vm"].uds_path.clone();
+    let healthy = spawn_fake_process_reload_ack(&healthy_uds, 1);
+
+    let error = handle_enforcement_rule_upsert(
+        State(Arc::clone(&state)),
+        Path(("code".to_string(), "partial_block".to_string())),
+        Json(rule("partial_block", r#"http.host.contains("example.invalid")"#)),
+    )
+    .await
+    .expect_err("an edit that did not reach every running VM is not a success");
+
+    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        error
+            .1
+            .starts_with("edit saved and recorded; policy applied to 1 of 2 running VMs; not applied: broken-vm: "),
+        "{}",
+        error.1
+    );
+    assert!(only_reloads(&healthy.await.unwrap(), 1), "the healthy VM is reloaded");
+    assert!(std::fs::read_to_string(healthy_dir.join("vm/active_profile.toml"))
+        .unwrap()
+        .contains("partial_block"));
 }
