@@ -181,18 +181,25 @@ class SessionArchive:
         with contextlib.closing(
             sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
         ) as conn:
+            # The committed end comes from the same snapshot as the row: on a
+            # live ledger the writer keeps appending after this reader opened,
+            # and a row naming bytes past the end read then is still committed.
             row = conn.execute(
                 """
                 SELECT b.block_offset, b.body_offset, b.body_len, b.body_hash,
-                       k.disk_len, k.raw_len
+                       k.disk_len, k.raw_len, s.committed_end, s.generation_id
                 FROM event_body_blobs b
                 JOIN body_blocks k ON k.block_offset = b.block_offset
+                JOIN archive_state s ON s.singleton = 1
                 WHERE b.event_id = ? AND b.source_table = ? AND b.direction = ?
                 """,
                 (event_id, source_table, direction),
             ).fetchone()
         if row is None:
             return None
+        if row[7] != self._expected_generation_id:
+            raise AssertionError(f"{self.db_path} selected another archive generation while it was being read")
+        self.committed_end = max(self.committed_end, int(row[6]))
         block_offset, body_offset, body_len, body_hash, disk_len, raw_len = (
             int(row[0]), int(row[1]), int(row[2]), row[3], int(row[4]), int(row[5])
         )
