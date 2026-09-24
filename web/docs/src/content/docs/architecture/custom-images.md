@@ -228,7 +228,7 @@ refresh_policy = "24h"
 enforcement = "corp/enforcement.toml"
 sigma = "corp/detection.yaml"
 sigma_output_endpoint = "https://siem.example.invalid/capsem/sigma"
-open_telemetry = "https://otel.example.invalid/v1/traces"
+open_telemetry = "https://otel.example.invalid"
 remote_enforcement = "https://security.example.invalid/capsem/enforcement"
 ```
 

@@ -11,13 +11,15 @@
 //! them, so renaming one is a breaking change, not a refactor.
 //!
 //! No recorder is installed by default, so every `counter!` / `gauge!` /
-//! `histogram!` resolves to the facade's no-op recorder until an exporter is
-//! wired in.
+//! `histogram!` resolves to the facade's no-op recorder. The `export` feature
+//! adds OTLP/HTTP export (`export.rs`) for the processes that own it.
 
 use metrics::{KeyName, SharedString, Unit};
 
 pub mod db;
 pub mod dns;
+#[cfg(feature = "export")]
+pub mod export;
 pub mod mitm;
 pub mod security;
 pub mod virtio_blk;

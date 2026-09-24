@@ -607,7 +607,9 @@ pub struct CorpRuleFileReferences {
     /// FIXME: Wire this once corp Sigma export/output delivery is implemented.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sigma_output_endpoint: Option<String>,
-    /// FIXME: Wire corporate OpenTelemetry export once remote reporting ships.
+    /// OTLP/HTTP base endpoint for metric export, e.g. `https://otel.example`;
+    /// metrics are posted to `<endpoint>/v1/metrics`. The service and each VM
+    /// process export only when this, or `OTEL_EXPORTER_OTLP_*`, is set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_telemetry: Option<String>,
     /// FIXME: Wire corporate remote enforcement polling once fleet control ships.
