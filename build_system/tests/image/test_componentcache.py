@@ -1,5 +1,6 @@
 """VM components reuse exact input-keyed object receipts."""
 
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.objects import ObjectRef, object_path
 from capsem_builder.cache.paths import CachePaths
 from capsem_builder.image.componentcache import (
     build_identity,
@@ -383,4 +385,54 @@ def test_guest_cache_rejects_non_executable_or_invalid_elf(tmp_path, payload, mo
         else:
             with pytest.raises(ValueError, match="ELF"):
                 materialize(build, "arm64", repo, output, names, compile_binaries)
-            assert not (repo / "cache/objects").exists()
+            # Nothing is published: no object and no receipt. The store's lock
+            # file may exist -- looking for a cached generation takes it.
+            for published in ("blake3", "components"):
+                assert not (repo / "cache/objects" / published).exists()
+
+
+def _stored_kernel(tmp_path: Path) -> tuple[Path, str, Path]:
+    repo = repository(tmp_path)
+    output = repo / "cache/target/first"
+    output.mkdir(parents=True)
+    (output / "vmlinuz").write_bytes(b"kernel")
+    (output / "initrd.img").write_bytes(b"initrd")
+    identity = input_digest({"arch": "x86_64", "source": "retained"})
+    store(repo, "kernel", identity, output, ("initrd.img", "vmlinuz"))
+    return repo, identity, output
+
+
+def test_a_pruned_object_makes_restore_a_clean_miss_not_a_failure(tmp_path: Path) -> None:
+    """Retention evicts objects; a receipt that outlived one names bytes that
+    are gone. That used to raise and fail the build. It is a miss: nothing is
+    left half-restored, and the rebuild's store makes the receipt whole again."""
+    repo, identity, output = _stored_kernel(tmp_path)
+    paths = CachePaths(repository_root=repo, policy=load_policy(repo))
+    receipt = paths.stage("objects") / "components" / "kernel" / f"{identity}.json"
+    kernel = ObjectRef.model_validate_json(
+        json.dumps(json.loads(receipt.read_text())["files"]["vmlinuz"])
+    )
+    object_path(paths, kernel).unlink()
+
+    target = repo / "cache/target/second"
+    assert restore(repo, "kernel", identity, target) is None
+    assert not target.exists() or not any(target.iterdir()), "no half-restored generation"
+
+    store(repo, "kernel", identity, output, ("initrd.img", "vmlinuz"))
+    assert restore(repo, "kernel", identity, target) is not None
+    assert (target / "vmlinuz").read_bytes() == b"kernel"
+
+
+def test_a_cache_hit_marks_its_receipt_used(tmp_path: Path) -> None:
+    """Least-recently-used retention reads the receipt's clock, so each hit
+    has to move it or a generation used every day would age out."""
+    repo, identity, output = _stored_kernel(tmp_path)
+    paths = CachePaths(repository_root=repo, policy=load_policy(repo))
+    receipt = paths.stage("objects") / "components" / "kernel" / f"{identity}.json"
+    for check in (
+        lambda: restore(repo, "kernel", identity, repo / "cache/target/second"),
+        lambda: component_current(repo, "kernel", identity, output),
+    ):
+        os.utime(receipt, ns=(10**9, 10**9))
+        assert check() is not None
+        assert receipt.stat().st_mtime_ns > 10**9

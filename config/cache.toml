@@ -118,7 +118,11 @@ scope = "disk"
 path = "objects"
 warm_size_bytes = 34359738368 # 32 GiB
 max_size_bytes = 51539607552 # 48 GiB
-prune_strategy = "none"
+# One receipt generation at a time, with the objects only it names; readers and
+# publishers hold the lock shared, so a prune never removes bytes in use.
+prune_strategy = "lru"
+object_store = true
+mutation_locks = [".object-store.lock"]
 maximum_age_hours = 2160
 
 [stages.oci-images]

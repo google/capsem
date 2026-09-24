@@ -110,6 +110,18 @@ run (issue #205). Paths Cargo does not name by unit, such as uplifted
 binaries, count toward capacity but are never selected. Native Cargo output locks protect the whole stage and are acquired again
 through deletion; even an explicit cold clean preserves their lock inodes.
 
+The `objects` store (`object_store = true`) is retained the same way, one
+generation at a time: a component receipt together with the objects no other
+receipt names, receipt first. An object two receipts share belongs to neither
+and is collected once no receipt names it; an unreferenced object (a
+canonicalized package or release view, whose bytes live on in the hardlinked
+view) is its own generation. `componentcache.restore` treats a missing or
+corrupt object as a miss, never an error, and a hit moves the receipt's clock;
+never touch an object's times, which are its hardlinked outputs' times. Every
+reader and publisher holds `leases.shared_use(paths, "objects")`, so a prune
+never removes bytes in use. Before this the stage was `none`, grew past its
+cap, and failed every prune on the machine.
+
 Retained cache lifetime ends only through these typed operations. Do not add
 consumer-boundary releases, post-test eviction hooks, or other subsystem
 lifecycle paths that bypass the owner's warm/max/age/count policy.

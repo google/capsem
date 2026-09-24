@@ -12,6 +12,7 @@ from .inventorymodels import RetentionInventory
 from .leases import active_path
 from .measure import measure
 from .models import CacheEntry, CacheInventory, CachePolicy, StageInventory
+from .objectunits import object_entries
 from .paths import CachePaths
 
 
@@ -40,6 +41,8 @@ def _stage_inventory(
     stage_root = paths.stage(stage_id)
     if retention and stage_policy.cargo_target_roots:
         return _cargo_inventory(stage_id, stage_root, stage_policy, allocated_seen)
+    if stage_policy.object_store:
+        return _object_inventory(stage_id, stage_root, stage_policy, allocated_seen)
     entry_root = (stage_policy.retention_root if retention and stage_policy.retention_root
                   else stage_policy.entry_root)
     stage_path = stage_root / entry_root
@@ -106,6 +109,21 @@ def _cargo_inventory(stage_id, stage_root: Path, stage_policy, allocated_seen) -
     entries, accounted = unit_entries(
         stage_root, stage_policy.cargo_target_roots, allocated_seen, protected=busy,
     )
+    other_logical, other_allocated = unaccounted_size(stage_root, accounted, allocated_seen)
+    return StageInventory(
+        stage_id=stage_id,
+        path=stage_root,
+        logical_bytes=sum(entry.logical_bytes for entry in entries) + other_logical,
+        allocated_bytes=sum(entry.allocated_bytes for entry in entries) + other_allocated,
+        protected_bytes=sum(entry.logical_bytes for entry in entries if entry.protected),
+        entries=entries,
+    )
+
+
+def _object_inventory(stage_id, stage_root: Path, stage_policy, allocated_seen) -> StageInventory:
+    """An object store as its receipt generations, shared objects accounted beside them."""
+    busy = any(active_path(stage_root / lock) for lock in stage_policy.mutation_locks)
+    entries, accounted = object_entries(stage_root, allocated_seen, protected=busy)
     other_logical, other_allocated = unaccounted_size(stage_root, accounted, allocated_seen)
     return StageInventory(
         stage_id=stage_id,

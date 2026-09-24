@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
+from .leases import shared_use
 from .objects import ObjectRef, import_file, materialize, verify
 from .paths import CachePaths
 
@@ -55,7 +56,8 @@ def _bind(
 
 def canonicalize(paths: CachePaths, view: Path) -> ViewReceipt:
     """Replace a named output with a hardlinked object and bind a receipt."""
-    return _bind(paths, import_file(paths, view), view, ReceiptLocation.SIDECAR)
+    with shared_use(paths, "objects"):
+        return _bind(paths, import_file(paths, view), view, ReceiptLocation.SIDECAR)
 
 
 def copy_view(
@@ -66,4 +68,5 @@ def copy_view(
     receipt_location: ReceiptLocation = ReceiptLocation.SIDECAR,
 ) -> ViewReceipt:
     """Materialize a named view directly from one imported immutable source."""
-    return _bind(paths, import_file(paths, source), destination, receipt_location)
+    with shared_use(paths, "objects"):
+        return _bind(paths, import_file(paths, source), destination, receipt_location)
