@@ -652,6 +652,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A v3 ledger is refused rather than upgraded; a named VM created before this
   change cannot be resumed and has to be recreated.
 
+- Forking a running sandbox, or creating one from a running persistent
+  sandbox, now freezes the guest's system filesystem for the copy. The fork
+  used to run `sync` and copy the live ext4 overlay, which a slow copy (no
+  reflinks) could tear into an image the fork cannot boot. The sandbox's own
+  process now freezes, clones and always thaws, so the guest pauses system
+  writes only for the copy, and a service that goes away mid-fork cannot leave
+  it frozen. A guest that does not freeze within 10 seconds gets no fork, and
+  a failed fork leaves no directory behind.
+
 - Session ledgers keep captured bodies in version 3 compressed generations
   beside the database. Request and response bodies, tool results, exec output and the
   forensic payload of each security rule match now live in generation files

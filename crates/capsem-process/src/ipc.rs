@@ -22,6 +22,12 @@ mod publication;
 
 type ProcessIpcChannel = (Sender<ProcessToService>, Receiver<ServiceToProcess>);
 
+/// How long the service is kept waiting for a fork's clone. Copying a
+/// multi-GiB overlay on a filesystem without reflinks takes minutes. The
+/// guest is thawed when the copy ends, not when this expires: a blocking copy
+/// cannot be cut short, and thawing under it would tear the image.
+const CLONE_STATE_TIMEOUT: Duration = Duration::from_secs(900);
+
 /// Timeout before the host watchdog re-sends a quick HostToGuest payload.
 ///
 /// With the control bridge's pending-ack map (see
@@ -716,6 +722,38 @@ pub(crate) async fn handle_ipc_connection(
                     }
                 });
             }
+            ServiceToProcess::CloneState { id, destination } => {
+                let job_store = job_store.clone();
+                let ctrl_tx = ctrl_tx.clone();
+                let ipc_tx_out = ipc_tx_out.clone();
+                tokio::spawn(async move {
+                    let (j_tx, j_rx) = oneshot::channel();
+                    job_store.jobs.lock().unwrap().insert(id, j_tx);
+                    capsem_core::try_send!(
+                        "ctrl_clone_state",
+                        ctrl_tx.send(ServiceToProcess::CloneState { id, destination }).await
+                    );
+                    let result = match tokio::time::timeout(CLONE_STATE_TIMEOUT, j_rx).await {
+                        Ok(Ok(JobResult::CloneState { result })) => result,
+                        Ok(Ok(other)) => Err(format!("unexpected clone result: {other:?}")),
+                        Ok(Err(_)) => Err("clone result channel closed".into()),
+                        Err(_) => Err("clone timed out".into()),
+                    };
+                    if result.is_err() {
+                        let _ = job_store.jobs.lock().unwrap().remove(&id);
+                    }
+                    let (size_bytes, error) = match result {
+                        Ok(size) => (Some(size), None),
+                        Err(error) => (None, Some(error)),
+                    };
+                    capsem_core::try_send!(
+                        "ipc_clone_state_result",
+                        ipc_tx_out
+                            .send(ProcessToService::CloneStateResult { id, size_bytes, error })
+                            .await
+                    );
+                });
+            }
             ServiceToProcess::ReloadConfig { id } => {
                 info!(
                     active_profile = %runtime_source.active_profile_path().display(),
@@ -939,11 +977,6 @@ pub(crate) async fn handle_ipc_connection(
                             .await
                     );
                 });
-            }
-            ServiceToProcess::PrepareSnapshot | ServiceToProcess::Unfreeze | ServiceToProcess::Resume => {
-                // These are sent directly by process internals (quiescence helper),
-                // not expected over IPC from service.
-                warn!("unexpected lifecycle IPC command received");
             }
         }
     }

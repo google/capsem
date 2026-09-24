@@ -316,6 +316,35 @@ pub(crate) fn only_reloads(received: &[ServiceToProcess], count: usize) -> bool 
             .all(|message| matches!(message, ServiceToProcess::ReloadConfig { .. }))
 }
 
+/// A VM owner that answers `CloneState` the way the real one does once the
+/// guest is frozen -- by cloning `source` -- or refuses with `refusal`.
+pub(crate) fn spawn_fake_fork_owner(
+    uds_path: &StdPath,
+    source: PathBuf,
+    refusal: Option<&'static str>,
+) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
+    spawn_fake_process(uds_path, 1, move |message| {
+        let reply = match message {
+            ServiceToProcess::CloneState { id, destination } => {
+                let (size_bytes, error) = match refusal {
+                    None => (
+                        Some(capsem_core::session::clone_sandbox_state(&source, StdPath::new(destination)).unwrap()),
+                        None,
+                    ),
+                    Some(reason) => (None, Some(reason.to_string())),
+                };
+                Some(ProcessToService::CloneStateResult {
+                    id: *id,
+                    size_bytes,
+                    error,
+                })
+            }
+            other => panic!("fork sent an unexpected owner message: {other:?}"),
+        };
+        Box::pin(async move { reply })
+    })
+}
+
 /// A fake process that answers ping, and reloads by reporting the digest of
 /// the active profile it finds in its session, as capsem-process does.
 pub(crate) fn spawn_fake_process_reload_ack(
@@ -757,6 +786,7 @@ mod inspection;
 mod interactions;
 mod ipc_command;
 mod ledger_routes;
+mod fork;
 mod lifecycle;
 mod logs_api;
 mod network_routes;

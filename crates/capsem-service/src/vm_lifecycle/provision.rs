@@ -114,7 +114,22 @@ impl ServiceState {
         // If cloning from a source sandbox, clone its state into the new session directory
         if let Some(ref entry) = source_entry {
             info!(from = entry.name, session_dir = %session_dir.display(), "cloning session from source sandbox");
-            capsem_core::session::clone_sandbox_state(&entry.session_dir, &session_dir)
+            // A running source is cloned by its own process, frozen for the
+            // copy; provision runs on the blocking pool, so wait for it here.
+            let running = self
+                .instances
+                .lock()
+                .unwrap()
+                .get(&super::persistent_entry_vm_id(entry))
+                .map(|instance| instance.uds_path.clone());
+            tokio::runtime::Handle::current()
+                .block_on(crate::vm_files::clone_session_state(
+                    self,
+                    running.as_deref(),
+                    entry.session_dir.clone(),
+                    session_dir.clone(),
+                ))
+                .map_err(anyhow::Error::msg)
                 .context("failed to clone sandbox state")?;
         }
 

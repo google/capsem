@@ -162,9 +162,7 @@ fn async_functions_do_not_block_the_runtime() {
                 continue;
             };
             // tokio::fs is the async door; only the std spellings block.
-            let visible = without_blocking_closures(body)
-                .replace("tokio::fs::File::open(", "tokio_fs_open(")
-                .replace("tokio::fs::File::create(", "tokio_fs_create(");
+            let visible = without_tokio_fs_calls(&without_blocking_closures(body));
             for token in DIRECT_BLOCKING.iter().chain(BLOCKING_HELPERS) {
                 if visible.contains(token) {
                     offences.push(format!(
@@ -180,4 +178,31 @@ fn async_functions_do_not_block_the_runtime() {
         "blocking calls belong in ServiceState::off_worker or spawn_blocking:\n{}",
         offences.join("\n")
     );
+}
+
+#[test]
+fn only_the_tokio_fs_spelling_is_exempt() {
+    let body = "tokio::fs::remove_dir_all(&a).await; std::fs::remove_dir_all(&b); tokio::fs::File::open(&c).await;";
+    let visible = without_tokio_fs_calls(body);
+    assert_eq!(visible.matches("remove_dir_all(").count(), 1, "{visible}");
+    assert!(visible.contains("std::fs::remove_dir_all("), "{visible}");
+    assert!(!visible.contains("File::open("), "{visible}");
+}
+
+/// Replace every `tokio::fs::...(` call with a neutral name, so its std-sounding
+/// tail (`remove_dir_all(`, `File::open(`) is not read as a blocking call.
+fn without_tokio_fs_calls(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(at) = rest.find("tokio::fs::") {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at + "tokio::fs::".len()..];
+        let path_len = tail
+            .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+            .unwrap_or(tail.len());
+        out.push_str("tokio_fs_call");
+        rest = &tail[path_len..];
+    }
+    out.push_str(rest);
+    out
 }

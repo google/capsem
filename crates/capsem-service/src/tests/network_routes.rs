@@ -178,7 +178,7 @@ async fn stopping_a_vm_keeps_its_membership_and_a_fork_has_none() {
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
     std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
-    insert_fake_instance_with_session_dir(&state, "fork-src", std::process::id(), session_dir);
+    insert_fake_instance_with_session_dir(&state, "fork-src", std::process::id(), session_dir.clone());
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
     let (status, _) = route_request(
@@ -190,6 +190,9 @@ async fn stopping_a_vm_keeps_its_membership_and_a_fork_has_none() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
+    // Only now: joining the network talks to the owner first.
+    let uds_path = state.instances.lock().unwrap()["fork-src"].uds_path.clone();
+    spawn_fake_fork_owner(&uds_path, session_dir, None);
     let fork = handle_fork(
         State(Arc::clone(&state)),
         Path("fork-src".into()),

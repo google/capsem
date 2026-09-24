@@ -6566,19 +6566,24 @@ def test_suspend_snapshot_freezes_ext4_upper_before_ack_and_thaws_first_on_resto
     )
 
 
-def test_fork_route_flushes_without_thaw_before_clone() -> None:
-    """Pre-fork quiescence must not pay fsfreeze cost and thaw before clone."""
-    vm_files = PROJECT_ROOT / "crates" / "capsem-service" / "src" / "vm_files.rs"
-    parent = vm_files.read_text()
-    source = vm_files.with_name("vm_files").joinpath("fork.rs").read_text()
-    assert "mod fork;" in parent
-    assert "pub(crate) use fork::handle_fork;" in parent
-    fork_block = source.split("async fn handle_fork", maxsplit=1)[1].split(
-        "Ok(Json(ForkResponse", maxsplit=1
-    )[0]
+def test_fork_clones_inside_the_owner_under_a_guest_freeze() -> None:
+    """A running fork is cloned by its own process with the guest frozen.
 
-    assert 'command: "sync; true".to_string()' in fork_block
-    assert 'command: "fsfreeze' not in fork_block
+    The fork used to run `sync; true` in the guest and copy the live ext4
+    overlay, which a slow sparse copy could tear. The freeze and the thaw must
+    live in one process, so no other process's failure can leave a guest
+    frozen, and the service must not fall back to an unfrozen copy.
+    """
+    service = PROJECT_ROOT / "crates" / "capsem-service" / "src"
+    parent = (service / "vm_files.rs").read_text()
+    fork = (service / "vm_files" / "fork.rs").read_text()
+    owner = (PROJECT_ROOT / "crates" / "capsem-process" / "src" / "vsock" / "clone_state.rs").read_text()
+
+    assert "pub(crate) use fork::{clone_session_state, handle_fork};" in parent
+    assert "ServiceToProcess::CloneState {" in fork
+    assert "sync; true" not in fork
+    assert "with_quiescence(" in owner
+    assert "clone_sandbox_state(" in owner.split("with_quiescence(", 1)[1]
 
 
 def test_linux_vm_launch_preformats_system_overlay_before_boot() -> None:

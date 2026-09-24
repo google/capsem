@@ -18,6 +18,10 @@ pub(crate) struct JobStore {
     pub(crate) active_file_ops: Mutex<HashMap<u64, ActiveFileOp>>,
     /// Channel for snapshot ready signal.
     pub(crate) snapshot_ready: Mutex<Option<oneshot::Sender<()>>>,
+    /// Held across one quiescence sequence. `snapshot_ready` has room for a
+    /// single waiter, so a fork and a suspend overlapping would each take
+    /// the other's freeze acknowledgement.
+    pub(crate) quiescence: tokio::sync::Mutex<()>,
     /// Pending-ack map for the control bridge's reliability layer:
     /// every ackable HostToGuest (Exec / FileWrite / FileRead /
     /// FileDelete) we write goes here keyed by `id`. The agent sends
@@ -99,6 +103,7 @@ impl JobStore {
             active_execs: Mutex::new(HashMap::new()),
             active_file_ops: Mutex::new(HashMap::new()),
             snapshot_ready: Mutex::new(None),
+            quiescence: tokio::sync::Mutex::new(()),
             pending_acks: Mutex::new(HashMap::new()),
             next_control_id: std::sync::atomic::AtomicU64::new(1_u64 << 63),
             shutdown_complete: Notify::new(),
@@ -170,6 +175,9 @@ pub(crate) enum JobResult {
         data: Option<Vec<u8>>,
         error: Option<String>,
     },
+    CloneState {
+        result: Result<u64, String>,
+    },
     Error {
         message: String,
     },
@@ -181,17 +189,19 @@ pub(crate) enum JobResult {
 /// 2. Waits up to `timeout` for `SnapshotReady`.
 /// 3. If successful, executes the provided operation.
 /// 4. Sends `Unfreeze` to the guest regardless of operation success or timeout.
-#[allow(dead_code)]
-pub(crate) async fn with_quiescence<F, Fut>(
+///
+/// One sequence at a time: the whole sequence holds `JobStore::quiescence`.
+pub(crate) async fn with_quiescence<T, F, Fut>(
     ctrl_cmd_tx: &tokio::sync::mpsc::Sender<HostToGuest>,
     job_store: &Arc<JobStore>,
     timeout: std::time::Duration,
     op: F,
-) -> Result<()>
+) -> Result<T>
 where
     F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<()>>,
+    Fut: std::future::Future<Output = Result<T>>,
 {
+    let _sequence = job_store.quiescence.lock().await;
     // Prepare oneshot channel
     let (tx, rx) = tokio::sync::oneshot::channel();
     *job_store.snapshot_ready.lock().unwrap() = Some(tx);

@@ -353,6 +353,40 @@ async fn quiescence_channel_closed_returns_error() {
     assert!(result.unwrap_err().to_string().contains("closed prematurely"));
 }
 
+#[tokio::test]
+async fn overlapping_quiescence_sequences_run_one_at_a_time() {
+    // `snapshot_ready` holds one waiter. Two overlapping sequences (a fork's
+    // clone and a suspend) used to overwrite each other's acknowledgement.
+    let job_store = Arc::new(JobStore::new());
+    let (tx, mut guest) = tokio::sync::mpsc::channel::<HostToGuest>(16);
+    let acks = Arc::clone(&job_store);
+    tokio::spawn(async move {
+        while let Some(message) = guest.recv().await {
+            if matches!(message, HostToGuest::PrepareSnapshot) {
+                let sender = acks.snapshot_ready.lock().unwrap().take();
+                if let Some(sender) = sender {
+                    let _ = sender.send(());
+                }
+            }
+        }
+    });
+    let inside = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let run = |label: u64| {
+        let (tx, job_store, inside) = (tx.clone(), Arc::clone(&job_store), Arc::clone(&inside));
+        async move {
+            with_quiescence(&tx, &job_store, std::time::Duration::from_secs(5), || async {
+                assert_eq!(inside.fetch_add(1, std::sync::atomic::Ordering::SeqCst), 0, "sequences overlapped");
+                tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                inside.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(label)
+            })
+            .await
+        }
+    };
+    let (first, second) = tokio::join!(run(1), run(2));
+    assert_eq!((first.unwrap(), second.unwrap()), (1, 2));
+}
+
 // -----------------------------------------------------------------------
 // ShutdownComplete wait
 // -----------------------------------------------------------------------

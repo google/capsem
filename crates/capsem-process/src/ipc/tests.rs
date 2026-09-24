@@ -733,7 +733,6 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         ctrl_rx.recv().await.unwrap(),
         ServiceToProcess::Suspend { .. }
     ));
-    service_tx.send(ServiceToProcess::PrepareSnapshot).await.unwrap();
     service_tx.send(ServiceToProcess::Shutdown).await.unwrap();
     assert!(matches!(ctrl_rx.recv().await.unwrap(), ServiceToProcess::Shutdown));
     handler.await.unwrap().unwrap();
@@ -953,20 +952,13 @@ fn classify_stop_terminal_stream() {
 }
 
 #[test]
-fn classify_prepare_snapshot_unexpected() {
+fn classify_clone_state_is_a_job() {
     assert_eq!(
-        classify_ipc_message(&ServiceToProcess::PrepareSnapshot),
-        IpcAction::Unexpected
+        classify_ipc_message(&ServiceToProcess::CloneState {
+            id: 1,
+            destination: "/tmp/fork".into(),
+        }),
+        IpcAction::Job
     );
-}
-
-#[test]
-fn classify_unfreeze_unexpected() {
-    assert_eq!(classify_ipc_message(&ServiceToProcess::Unfreeze), IpcAction::Unexpected);
-}
-
-#[test]
-fn classify_resume_unexpected() {
-    assert_eq!(classify_ipc_message(&ServiceToProcess::Resume), IpcAction::Unexpected);
 }
 
