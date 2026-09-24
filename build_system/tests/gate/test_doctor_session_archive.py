@@ -177,3 +177,25 @@ def test_the_command_exits_nonzero_on_a_broken_archive(
     _archive(ledger).write_bytes(b"")
     assert check_session.main() == 1
     assert "last recorded block ends at" in capsys.readouterr().out
+
+
+def test_the_command_exits_nonzero_on_a_damaged_ledger_page(
+    ledger: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The page scan route readiness no longer runs belongs to this diagnostic."""
+    conn = sqlite3.connect(ledger)
+    try:
+        (root_page,) = conn.execute(
+            "SELECT rootpage FROM sqlite_master WHERE name = 'net_events'"
+        ).fetchone()
+        (page_size,) = conn.execute("PRAGMA page_size").fetchone()
+    finally:
+        conn.close()
+    with ledger.open("r+b") as db:
+        # The b-tree page type byte: 0xFF is no page type SQLite knows.
+        db.seek((root_page - 1) * page_size)
+        db.write(b"\xff")
+
+    monkeypatch.setattr(sys, "argv", ["check_session.py", "--db", str(ledger)])
+    assert check_session.main() == 1
+    assert "quick_check" in capsys.readouterr().out

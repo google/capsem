@@ -243,6 +243,22 @@ def check_session(db_path: Path, preview_rows: int = 5, *, verify_bodies: bool =
     try:
         print(f"\n{BOLD}{CYAN}Session: {db_path.parent.name}{RESET}")
         print(f"  {DIM}{db_path}{RESET}\n")
+        # Route readiness checks the schema, never the pages: a full scan on
+        # every poll cost seconds on a large ledger. This diagnostic is where
+        # the pages are checked, and a damaged file ends the report -- every
+        # later query would read the damage.
+        # A page SQLite cannot even walk fails the check itself rather than
+        # being listed by it; both are the same finding.
+        try:
+            damage = [row[0] for row in conn.execute("PRAGMA quick_check").fetchall()]
+        except sqlite3.DatabaseError as error:
+            damage = [str(error)]
+        if damage != ["ok"]:
+            print(f"  {RED}Ledger pages damaged (quick_check):{RESET}")
+            for line in damage[:10]:
+                print(f"    {RED}{line}{RESET}")
+            return False
+        print(f"  {GREEN}Ledger pages intact (quick_check){RESET}")
         existing = {
             row[0]
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
