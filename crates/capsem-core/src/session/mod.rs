@@ -2,6 +2,7 @@
 
 mod clone;
 mod maintenance;
+mod overlay;
 
 #[cfg(test)]
 mod tests;
@@ -12,6 +13,10 @@ pub use capsem_logger::{
 };
 pub use clone::{clone_file, clone_sandbox_state};
 pub use maintenance::*;
+pub use overlay::{
+    adopt_system_overlay, open_system_overlay, system_overlay_image_path, system_overlay_metadata, SYSTEM_OVERLAY_DIR,
+    SYSTEM_OVERLAY_IMAGE,
+};
 
 /// Distil a captured `process.log`/`serial.log` tail down to the one line
 /// worth putting in front of a human.

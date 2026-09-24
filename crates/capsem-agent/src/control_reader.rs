@@ -286,9 +286,9 @@ pub(crate) fn control_loop(
                 // race between this acknowledgement and the host pausing all
                 // vCPUs. The host then captures a coherent file.
                 //
-                // /mnt/shared/system/rootfs.img is no longer the guest's
-                // data path -- the guest only writes through /dev/vdb
-                // -- so no FUSE_FSYNC over VirtioFS is needed here.
+                // The guest only writes the overlay through /dev/vdb; the
+                // image is not in the VirtioFS share, so no FUSE_FSYNC is
+                // needed here.
                 eprintln!("[capsem-agent] PrepareSnapshot: syncing and flushing /dev/vdb");
                 unsafe {
                     libc::sync();

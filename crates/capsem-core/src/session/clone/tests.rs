@@ -15,7 +15,7 @@ fn sessions() -> Sessions {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
-    std::fs::create_dir_all(src.join("guest/system")).unwrap();
+    std::fs::create_dir_all(src.join("system")).unwrap();
     std::fs::create_dir_all(src.join("guest/workspace")).unwrap();
     std::fs::create_dir(&dst).unwrap();
     let secret = tmp.path().join("host-secret");
@@ -31,15 +31,23 @@ fn sessions() -> Sessions {
 #[test]
 fn clones_system_workspace_and_compat_links() {
     let s = sessions();
-    std::fs::write(s.src.join("guest/system/rootfs.img"), b"rootfs-data").unwrap();
+    std::fs::write(s.src.join("system/rootfs.img"), b"rootfs-data").unwrap();
     std::fs::write(s.src.join("guest/workspace/hello.txt"), b"world").unwrap();
 
     let size = clone_sandbox_state(&s.src, &s.dst).unwrap();
 
     assert!(size > 0);
-    assert_eq!(std::fs::read(s.dst.join("guest/system/rootfs.img")).unwrap(), b"rootfs-data");
-    assert_eq!(std::fs::read(s.dst.join("guest/workspace/hello.txt")).unwrap(), b"world");
-    assert!(s.dst.join("system").is_symlink());
+    let system = s.dst.join("system");
+    assert!(
+        system.is_dir() && !system.is_symlink(),
+        "the overlay stays out of the share"
+    );
+    assert_eq!(std::fs::read(system.join("rootfs.img")).unwrap(), b"rootfs-data");
+    assert!(!s.dst.join("guest/system").exists());
+    assert_eq!(
+        std::fs::read(s.dst.join("guest/workspace/hello.txt")).unwrap(),
+        b"world"
+    );
     assert!(s.dst.join("workspace").is_symlink());
     assert_eq!(std::fs::read(s.dst.join("workspace/hello.txt")).unwrap(), b"world");
 }
@@ -57,8 +65,23 @@ fn a_session_from_before_the_single_share_layout_still_clones() {
 
     clone_sandbox_state(&src, &dst).unwrap();
 
-    assert_eq!(std::fs::read(dst.join("guest/system/rootfs.img")).unwrap(), b"legacy");
+    assert_eq!(std::fs::read(dst.join("system/rootfs.img")).unwrap(), b"legacy");
     assert_eq!(std::fs::read(dst.join("workspace/a")).unwrap(), b"a");
+}
+
+#[test]
+fn a_source_with_its_overlay_in_the_share_is_moved_out_before_cloning() {
+    let s = sessions();
+    std::fs::remove_dir(s.src.join("system")).unwrap();
+    std::fs::create_dir(s.src.join("guest/system")).unwrap();
+    std::fs::write(s.src.join("guest/system/rootfs.img"), b"in-share").unwrap();
+    symlink("guest/system", s.src.join("system")).unwrap();
+
+    clone_sandbox_state(&s.src, &s.dst).unwrap();
+
+    assert_eq!(std::fs::read(s.src.join("system/rootfs.img")).unwrap(), b"in-share");
+    assert!(!s.src.join("system").is_symlink());
+    assert_eq!(std::fs::read(s.dst.join("system/rootfs.img")).unwrap(), b"in-share");
 }
 
 #[test]
@@ -95,13 +118,19 @@ fn a_guest_replacing_workspace_with_a_symlink_fails_the_clone() {
 
 #[test]
 fn a_guest_replacing_the_overlay_image_with_a_symlink_fails_the_clone() {
-    // The fork would boot whatever the link names as its disk.
+    // In the old layout the image sat in the share; the fork would boot
+    // whatever a planted link names as its disk.
     let s = sessions();
+    std::fs::remove_dir(s.src.join("system")).unwrap();
+    std::fs::create_dir(s.src.join("guest/system")).unwrap();
     symlink(&s.secret, s.src.join("guest/system/rootfs.img")).unwrap();
+    symlink("guest/system", s.src.join("system")).unwrap();
 
     let error = clone_sandbox_state(&s.src, &s.dst).unwrap_err();
 
     assert!(format!("{error:#}").contains("overlay"), "{error:#}");
+    assert!(std::fs::symlink_metadata(s.dst.join("system/rootfs.img")).is_err());
+    assert_eq!(std::fs::read(&s.secret).unwrap(), b"host secret");
 }
 
 #[test]
@@ -145,7 +174,10 @@ fn session_db_is_copied_coherently_outside_the_share() {
          INSERT INTO ledger (payload) VALUES ('committed-in-wal');",
     )
     .unwrap();
-    assert!(s.src.join("session.db-wal").exists(), "the row must still live in the WAL");
+    assert!(
+        s.src.join("session.db-wal").exists(),
+        "the row must still live in the WAL"
+    );
 
     clone_sandbox_state(&s.src, &s.dst).unwrap();
 

@@ -5,9 +5,9 @@ use super::*;
 /// A running sandbox whose fake owner clones on `CloneState`, or refuses.
 fn running_fork_source(state: &Arc<ServiceState>, dir: &tempfile::TempDir, refusal: Option<&'static str>) {
     let session_dir = state.run_dir.join("sessions/fork-src");
-    std::fs::create_dir_all(session_dir.join("guest/system")).unwrap();
+    std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("guest/workspace")).unwrap();
-    std::fs::write(session_dir.join("guest/system/rootfs.img"), b"data").unwrap();
+    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
     std::fs::write(session_dir.join("guest/workspace/notes.txt"), b"hello").unwrap();
     let uds_path = dir.path().join("fork-src.sock");
     state.instances.lock().unwrap().insert(
@@ -81,7 +81,12 @@ async fn a_fork_whose_guest_will_not_freeze_fails_and_leaves_nothing() {
     assert!(state.persistent_registry.lock().unwrap().get("my-fork").is_none());
     let persistent = state.run_dir.join("persistent");
     let leftovers = std::fs::read_dir(&persistent).map(|dir| dir.count()).unwrap_or(0);
-    assert_eq!(leftovers, 0, "a failed fork left a directory under {}", persistent.display());
+    assert_eq!(
+        leftovers,
+        0,
+        "a failed fork left a directory under {}",
+        persistent.display()
+    );
 }
 
 #[tokio::test]

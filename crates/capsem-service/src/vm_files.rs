@@ -24,9 +24,8 @@ pub(super) fn gib(bytes: u64) -> u64 {
 }
 
 pub(super) fn session_rootfs_size_gb(entry: &PersistentVmEntry) -> Result<u32> {
-    let rootfs = capsem_core::guest_share_dir(&entry.session_dir).join("system/rootfs.img");
-    let metadata = std::fs::metadata(&rootfs)
-        .with_context(|| format!("VM '{}' rootfs.img unavailable at {}", entry.name, rootfs.display()))?;
+    let metadata = capsem_core::session::system_overlay_metadata(&entry.session_dir)
+        .with_context(|| format!("VM '{}' system overlay rootfs.img unavailable", entry.name))?;
     let gib_bytes = 1024_u64 * 1024 * 1024;
     if metadata.len() == 0 || metadata.len() % gib_bytes != 0 {
         return Err(anyhow!(
@@ -1052,15 +1051,14 @@ pub(super) async fn handle_info(
         // Disk usage is a recursive walk of the session dir: off the async
         // worker so it does not stall the axum runtime.
         let session_dir = entry.session_dir.clone();
-        info.size_bytes = match tokio::task::spawn_blocking(move || capsem_core::session::disk_usage_bytes(&session_dir))
-            .await
-        {
-            Ok(bytes) => Some(bytes),
-            Err(error) => {
-                tracing::debug!(error = %error, "sandbox disk usage task failed");
-                None
-            }
-        };
+        info.size_bytes =
+            match tokio::task::spawn_blocking(move || capsem_core::session::disk_usage_bytes(&session_dir)).await {
+                Ok(bytes) => Some(bytes),
+                Err(error) => {
+                    tracing::debug!(error = %error, "sandbox disk usage task failed");
+                    None
+                }
+            };
         populate_vm_info(&state, &mut info, &entry.session_dir).await?;
         let session_dir = entry.session_dir.clone();
         info.storage = state

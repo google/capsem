@@ -66,29 +66,27 @@ fn create_virtiofs_session_creates_layout() {
 
     create_virtiofs_session(&dir, 2).unwrap();
 
-    // Real dirs live inside guest/
-    assert!(dir.join("guest/system").is_dir());
+    // The workspace lives inside guest/; the overlay never does.
     assert!(dir.join("guest/workspace").is_dir());
+    assert!(
+        !dir.join("guest/system").exists(),
+        "the overlay image is not in the guest share"
+    );
     assert!(
         !dir.join("auto_snapshots").exists(),
         "sessions no longer carry a snapshot ring"
     );
 
-    // Compat symlinks at session root
-    assert!(dir.join("system").is_symlink());
     assert!(dir.join("workspace").is_symlink());
-    // Symlinks resolve to the guest/ dirs
-    assert!(dir.join("system").is_dir());
     assert!(dir.join("workspace").is_dir());
+    assert!(dir.join("system").is_dir() && !dir.join("system").is_symlink());
 
-    let img = dir.join("guest/system/rootfs.img");
-    assert!(img.exists());
+    let img = dir.join("system/rootfs.img");
     let meta = std::fs::metadata(&img).unwrap();
     assert_eq!(meta.len(), 2 * 1024 * 1024 * 1024);
     assert!(meta.blocks() < 1024, "rootfs.img should be sparse");
-
-    // Symlink path also works
-    assert!(dir.join("system/rootfs.img").exists());
+    assert_eq!(meta.mode() & 0o777, 0o600);
+    assert_eq!(session::system_overlay_image_path(&dir), img);
 
     // VirtioFS share dir is the guest/ subdir
     assert_eq!(guest_share_dir(&dir), dir.join("guest"));
@@ -110,6 +108,40 @@ fn create_virtiofs_session_idempotent() {
     assert!(dir.join("system/rootfs.img").exists());
     assert!(dir.join("workspace").is_dir());
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn create_virtiofs_session_moves_a_legacy_overlay_and_keeps_its_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("vm");
+    std::fs::create_dir_all(session_dir.join("guest/system")).unwrap();
+    std::fs::write(session_dir.join("guest/system/rootfs.img"), b"packages").unwrap();
+    std::os::unix::fs::symlink("guest/system", session_dir.join("system")).unwrap();
+
+    create_virtiofs_session(&session_dir, 1).unwrap();
+
+    assert_eq!(
+        std::fs::read(session_dir.join("system/rootfs.img")).unwrap(),
+        b"packages"
+    );
+    assert!(!session_dir.join("guest/system/rootfs.img").exists());
+}
+
+#[test]
+fn create_virtiofs_session_refuses_a_guest_planted_overlay_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let host_file = dir.path().join("host-file");
+    std::fs::write(&host_file, b"host").unwrap();
+    let session_dir = dir.path().join("vm");
+    std::fs::create_dir_all(session_dir.join("guest/system")).unwrap();
+    std::os::unix::fs::symlink(&host_file, session_dir.join("guest/system/rootfs.img")).unwrap();
+    std::os::unix::fs::symlink("guest/system", session_dir.join("system")).unwrap();
+
+    let error = create_virtiofs_session(&session_dir, 1).unwrap_err();
+
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied, "{error}");
+    assert!(!session_dir.join("system/rootfs.img").exists());
+    assert_eq!(std::fs::read(&host_file).unwrap(), b"host");
 }
 
 #[test]
@@ -148,8 +180,8 @@ fn preformat_system_overlay_image_writes_ext4_magic_once() {
 fn preformatted_system_overlay_template_clones_session_images() {
     let dir = tempfile::tempdir().unwrap();
     let template = dir.path().join("cache/rootfs-ext4-1g.img");
-    let first = dir.path().join("sessions/a/guest/system/rootfs.img");
-    let second = dir.path().join("sessions/b/guest/system/rootfs.img");
+    let first = dir.path().join("sessions/a/system/rootfs.img");
+    let second = dir.path().join("sessions/b/system/rootfs.img");
 
     let created = ensure_preformatted_system_overlay_template(&template, 1).unwrap();
     let reused = ensure_preformatted_system_overlay_template(&template, 1).unwrap();

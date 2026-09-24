@@ -23,7 +23,6 @@
 //! Manifest schema is v1; bump `SCHEMA_VERSION` for breaking changes.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -34,6 +33,9 @@ use serde::Serialize;
 use tar::Builder as TarBuilder;
 
 use crate::support::redact;
+
+mod archive;
+use archive::{add_bytes, add_reader};
 
 const SCHEMA_VERSION: u32 = 1;
 const MAX_LOG_TAIL_BYTES: u64 = 5 * 1024 * 1024;
@@ -329,11 +331,11 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
                 }
             }
             if include_rootfs {
-                let path = dir.path().join("guest").join("system").join("rootfs.img");
-                if let Ok(bytes) = fs::read(&path) {
-                    let len = bytes.len() as u64;
+                // No-follow: an unmigrated image may be a guest-planted link.
+                if let Ok(image) = capsem_core::session::open_system_overlay(&dir.path()) {
+                    let len = image.metadata()?.len();
                     let entry_path = format!("{bundle_root}/sessions/{id}/rootfs.img");
-                    add_bytes(&mut tar, &entry_path, &bytes)?;
+                    add_reader(&mut tar, &entry_path, len, image)?;
                     sections.push(Section {
                         path: entry_path,
                         kind: "binary",
@@ -701,21 +703,6 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
         missing,
     );
     Ok(output)
-}
-
-fn add_bytes<W: Write>(tar: &mut TarBuilder<W>, path: &str, bytes: &[u8]) -> Result<()> {
-    let mut header = tar::Header::new_gnu();
-    header.set_size(bytes.len() as u64);
-    header.set_mode(0o600);
-    header.set_mtime(
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
-    );
-    header.set_cksum();
-    tar.append_data(&mut header, path, bytes)?;
-    Ok(())
 }
 
 fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {

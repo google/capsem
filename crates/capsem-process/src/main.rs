@@ -186,7 +186,7 @@ fn prepare_session_layout(session_dir: &Path, scratch_disk_size_gb: u32) -> Resu
 
     #[cfg(not(test))]
     {
-        let rootfs_img = guest_dir.join("system/rootfs.img");
+        let rootfs_img = capsem_core::session::system_overlay_image_path(session_dir);
         let template_img = capsem_core::system_overlay_template_path_for_session(session_dir, scratch_disk_size_gb);
         match capsem_core::preformat_system_overlay_image_from_template_if_needed(
             &rootfs_img,
@@ -241,7 +241,7 @@ fn main() -> Result<()> {
     let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
     let virtiofs_shares = vec![VirtioFsShare {
         tag: "capsem".into(),
-        host_path: guest_dir.clone(),
+        host_path: guest_dir,
         read_only: false,
     }];
 
@@ -249,10 +249,10 @@ fn main() -> Result<()> {
     // the guest). capsem-init mounts it as the overlayfs upper directly --
     // native virtio-blk speaks block-device semantics and doesn't EIO under
     // writeback pressure across save_state/restore_state, unlike the prior
-    // loop-on-VirtioFS path. The file lives in the VirtioFS share so the
-    // host can introspect it while the VM is stopped, but the guest only
-    // opens it via virtio-blk, never through the share.
-    let system_img = guest_dir.join("system").join("rootfs.img");
+    // loop-on-VirtioFS path. The file lives in the host-only session
+    // `system/` directory, outside the share, so the guest cannot swap it
+    // for a link to a host file (`capsem_core::session::adopt_system_overlay`).
+    let system_img = capsem_core::session::system_overlay_image_path(&session_dir);
     let machine_identifier_path = session_dir.join("machine_identifier");
     let serial_log_path = session_dir.join("serial.log");
     let (vm, vsock_rx, sm) = boot_vm(BootOptions {

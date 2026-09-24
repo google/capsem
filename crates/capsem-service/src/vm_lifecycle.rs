@@ -39,7 +39,7 @@ pub(super) fn persistent_entry_vm_id(entry: &PersistentVmEntry) -> String {
 pub(super) fn persistent_resume_state_fingerprint(state: &ServiceState, entry: &PersistentVmEntry) -> String {
     let arch = capsem_core::net::policy_config::current_profile_arch();
     let active_profile = entry.session_dir.join(ACTIVE_PROFILE_DIR).join(ACTIVE_PROFILE_FILE);
-    let rootfs = capsem_core::guest_share_dir(&entry.session_dir).join("system/rootfs.img");
+    let rootfs = capsem_core::session::system_overlay_metadata(&entry.session_dir).ok();
     json!({
         "id": persistent_entry_vm_id(entry),
         "profile_id": entry.profile_id,
@@ -52,7 +52,7 @@ pub(super) fn persistent_resume_state_fingerprint(state: &ServiceState, entry: &
         "last_error": entry.last_error,
         "active_profile": small_file_fingerprint(&active_profile),
         "installed_manifest": small_file_fingerprint(&state.assets_dir.join("manifest.json")),
-        "rootfs": file_metadata_fingerprint(&rootfs),
+        "rootfs": rootfs.as_ref().and_then(metadata_fingerprint),
         "kernel": file_metadata_fingerprint(&boot_asset_pin_path(&state.assets_dir, arch, &entry.asset_pins.kernel)),
         "initrd": file_metadata_fingerprint(&boot_asset_pin_path(&state.assets_dir, arch, &entry.asset_pins.initrd)),
         "rootfs_asset": file_metadata_fingerprint(&boot_asset_pin_path(&state.assets_dir, arch, &entry.asset_pins.rootfs)),
@@ -67,7 +67,10 @@ pub(super) fn small_file_fingerprint(path: &StdPath) -> Option<String> {
 }
 
 pub(super) fn file_metadata_fingerprint(path: &StdPath) -> Option<(u64, u128)> {
-    let metadata = std::fs::metadata(path).ok()?;
+    metadata_fingerprint(&std::fs::metadata(path).ok()?)
+}
+
+fn metadata_fingerprint(metadata: &std::fs::Metadata) -> Option<(u64, u128)> {
     let modified = metadata
         .modified()
         .ok()?

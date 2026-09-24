@@ -1,12 +1,11 @@
 //! Cloning a sandbox's state into a new session directory (fork, create-from).
 //!
 //! The source's `guest/` subtree is the VirtioFS share: the guest can write
-//! every entry below it, including replacing `system/`, `workspace/` or
-//! `rootfs.img` with a symlink to a host path. Nothing here resolves a path
-//! below the share root: each step is a no-follow, descriptor-relative
-//! operation through `capsem_foundation::unix::tree_clone`. In the current
-//! layout the session root's `system`/`workspace` are compat links, so they
-//! are never taken as the source.
+//! every entry below it, including replacing `workspace/` with a symlink to a
+//! host path. Nothing here resolves a path below the session root: each step
+//! is a no-follow, descriptor-relative operation through
+//! `capsem_foundation::unix::tree_clone`. The system overlay lives in the
+//! host-only `system/` directory (see `super::overlay`).
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -16,56 +15,51 @@ use capsem_foundation::unix::contained::{ContainedDir, EntryKind};
 use capsem_foundation::unix::tree_clone::{self, CloneStats};
 use tracing::info;
 
-/// The share subdirectories a sandbox's state lives in.
-const SHARED_STATE_DIRS: [&str; 2] = ["system", "workspace"];
-const SYSTEM_OVERLAY_IMAGE: &str = "rootfs.img";
+use super::overlay::{adopt_system_overlay, SYSTEM_OVERLAY_DIR, SYSTEM_OVERLAY_IMAGE};
+use crate::GUEST_SHARE_DIR;
 
-/// Clone a sandbox's `guest/{system,workspace}` and its session ledger from
-/// `src_session_dir` into the existing, empty `dst_session_dir`, and create
-/// the `system`/`workspace` compat links. Returns the destination's disk usage.
+const WORKSPACE_DIR: &str = "workspace";
+
+/// Clone a sandbox's `system/` overlay, `guest/workspace` and session ledger
+/// from `src_session_dir` into the existing, empty `dst_session_dir`, and
+/// create the `workspace` compat link. Returns the destination's disk usage.
 pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> anyhow::Result<u64> {
-    // Sessions from before the single-share layout keep `system/` and
-    // `workspace/` directly in the session directory.
-    let guest_share = crate::guest_share_dir(src_session_dir);
-    let src_share_path = if guest_share.exists() {
-        guest_share
-    } else {
-        src_session_dir.to_path_buf()
-    };
+    adopt_system_overlay(src_session_dir).context("system overlay of the clone source")?;
+    let src_root = ContainedDir::open_root(src_session_dir)
+        .with_context(|| format!("open clone source {}", src_session_dir.display()))?;
     let dst_root = ContainedDir::open_root(dst_session_dir)
         .with_context(|| format!("open clone destination {}", dst_session_dir.display()))?;
     let mut stats = CloneStats::default();
 
-    if src_share_path.exists() {
-        let src_share = ContainedDir::open_root(&src_share_path)
-            .with_context(|| format!("open guest share {}", src_share_path.display()))?;
-        let dst_share = dst_root.descend_or_create(OsStr::new("guest"), src_share.mode()?)?;
-        for name in SHARED_STATE_DIRS {
-            let name = OsStr::new(name);
-            // Absent is fine (nothing to clone); a symlink or any other type in
-            // place of the directory is refused rather than followed.
-            let Some(kind) = src_share.entry_kind(name)? else { continue };
-            let from = src_share
-                .descend(name)
-                .with_context(|| format!("guest share entry {} ({kind:?})", name.to_string_lossy()))?;
-            if name == "system" {
-                flush_system_overlay(&from)?;
-            }
-            let to = dst_share.descend_or_create(name, from.mode()?)?;
-            stats += tree_clone::clone_tree(&from, &to)
-                .with_context(|| format!("clone guest {}", name.to_string_lossy()))?;
-            if name == "system" {
-                require_regular_overlay(&to)?;
-            }
-        }
-    }
+    let system = OsStr::new(SYSTEM_OVERLAY_DIR);
+    let from = src_root.descend(system).context("clone source system directory")?;
+    flush_system_overlay(&from)?;
+    let to = dst_root.descend_or_create(system, 0o700)?;
+    stats += tree_clone::clone_tree(&from, &to).context("clone system overlay")?;
+    require_regular_overlay(&to)?;
 
-    for name in SHARED_STATE_DIRS {
-        let link = dst_session_dir.join(name);
-        if std::fs::symlink_metadata(&link).is_err() {
-            std::os::unix::fs::symlink(Path::new("guest").join(name), &link)
-                .with_context(|| format!("create compat symlink for {name}"))?;
-        }
+    // Sessions from before the single-share layout keep `workspace/`
+    // directly in the session directory.
+    let share = OsStr::new(GUEST_SHARE_DIR);
+    let src_share = match src_root.entry_kind(share)? {
+        Some(_) => src_root.descend(share).context("clone source guest share")?,
+        None => src_root.try_clone()?,
+    };
+    let workspace = OsStr::new(WORKSPACE_DIR);
+    let dst_share = dst_root.descend_or_create(share, src_share.mode()?)?;
+    // Absent is fine (nothing to clone); a symlink or any other type in place
+    // of the directory is refused rather than followed.
+    if let Some(kind) = src_share.entry_kind(workspace)? {
+        let from = src_share
+            .descend(workspace)
+            .with_context(|| format!("guest share entry {WORKSPACE_DIR} ({kind:?})"))?;
+        let to = dst_share.descend_or_create(workspace, from.mode()?)?;
+        stats += tree_clone::clone_tree(&from, &to).context("clone guest workspace")?;
+    }
+    if dst_root.entry_kind(workspace)?.is_none() {
+        dst_root
+            .symlink(workspace, Path::new(GUEST_SHARE_DIR).join(WORKSPACE_DIR).as_os_str())
+            .context("create compat symlink for workspace")?;
     }
 
     // The ledger lives at the session root, outside the share. session.db may
@@ -116,9 +110,8 @@ fn flush_system_overlay(system: &ContainedDir) -> anyhow::Result<()> {
     tree_clone::sync_file(system, name).context("flush system overlay image before clone")
 }
 
-/// The fork boots its overlay image by path. The walker recreates links
-/// verbatim, so a guest that swapped `rootfs.img` for a link after the flush
-/// would hand the fork a host file as its disk: refuse anything but a file.
+/// The fork boots its overlay image by path, and the walker recreates links
+/// verbatim: whatever the source held, the copy must be a regular file.
 fn require_regular_overlay(system: &ContainedDir) -> anyhow::Result<()> {
     match system.entry_kind(OsStr::new(SYSTEM_OVERLAY_IMAGE))? {
         None | Some(EntryKind::File) => Ok(()),

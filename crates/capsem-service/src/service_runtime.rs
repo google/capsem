@@ -170,6 +170,14 @@ pub(super) async fn run_service() -> Result<()> {
 
     let registry_path = run_dir.join("persistent_registry.json");
     let persistent_registry = PersistentRegistry::load(registry_path)?;
+    // Stopped VMs laid out before the overlay left the guest share are moved
+    // now, so no route reads an image through a path the guest could redirect.
+    // A refused VM stays registered and fails loudly when it is resumed.
+    for entry in persistent_registry.data.vms.values() {
+        if let Err(error) = capsem_core::session::adopt_system_overlay(&entry.session_dir) {
+            error!(vm = %entry.name, error = %error, "system overlay refused");
+        }
+    }
     let mut networks =
         capsem_core::net::network_registry::NetworkRegistry::load(capsem_foundation::paths::capsem_networks_dir())
             .await

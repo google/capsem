@@ -663,7 +663,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     let complete_path = checkpoint_complete_path(&full_path);
                     let _ = std::fs::remove_file(&complete_path);
                     let checkpoint_path_for_save = full_path.clone();
-                    let rootfs_img = session_dir.join("guest").join("system").join("rootfs.img");
+                    let rootfs_img = capsem_core::session::system_overlay_image_path(&session_dir);
                     let h_tx = hub_tx.clone();
                     let j_s = Arc::clone(&js_for_cmd);
                     let v_m = Arc::clone(&vm_handle_for_cmd);

@@ -133,7 +133,7 @@ fn persistent_resume_uses_saved_profile_when_current_profile_revision_advances()
         toml::from_str(&std::fs::read_to_string(&active_profile_path).unwrap()).unwrap();
     active_profile.revision = "older-supported-revision".to_string();
     std::fs::write(&active_profile_path, toml::to_string_pretty(&active_profile).unwrap()).unwrap();
-    let rootfs = capsem_core::guest_share_dir(&session_dir).join("system/rootfs.img");
+    let rootfs = capsem_core::session::system_overlay_image_path(&session_dir);
     std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
     std::fs::File::create(rootfs)
         .unwrap()
@@ -178,7 +178,7 @@ fn persistent_resume_allows_deprecated_pins_but_blocks_explicit_revocation() {
     state
         .materialize_active_profile(&runtime_profile, &session_dir)
         .unwrap();
-    let rootfs = capsem_core::guest_share_dir(&session_dir).join("system/rootfs.img");
+    let rootfs = capsem_core::session::system_overlay_image_path(&session_dir);
     std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
     std::fs::File::create(rootfs)
         .unwrap()
@@ -426,8 +426,8 @@ async fn handle_info_reports_storage_diagnostics_for_persistent_vm() {
     let (state, _dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
     let session_dir = state.run_dir.join("persistent/storage-info");
-    std::fs::create_dir_all(session_dir.join("guest/system")).unwrap();
-    let rootfs = session_dir.join("guest/system/rootfs.img");
+    std::fs::create_dir_all(session_dir.join("system")).unwrap();
+    let rootfs = session_dir.join("system/rootfs.img");
     let file = std::fs::File::create(&rootfs).unwrap();
     file.set_len(8 * 1024 * 1024 * 1024).unwrap();
 
@@ -457,7 +457,7 @@ async fn handle_vm_status_reports_storage_diagnostics_for_persistent_vm() {
     install_test_profile_assets(&state);
     let session_dir = state.run_dir.join("persistent/storage-status");
     capsem_core::create_virtiofs_session(&session_dir, 4).unwrap();
-    let rootfs = session_dir.join("guest/system/rootfs.img");
+    let rootfs = session_dir.join("system/rootfs.img");
 
     let entry = test_persistent_entry("storage-status", session_dir);
     let vm_id = entry.id.clone();
@@ -1463,7 +1463,7 @@ async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
     let vm_id = new_persistent_vm_id();
     let session_dir = state.run_dir.join("persistent").join(&vm_id);
     std::fs::create_dir_all(&session_dir).unwrap();
-    let rootfs = capsem_core::guest_share_dir(&session_dir).join("system/rootfs.img");
+    let rootfs = capsem_core::session::system_overlay_image_path(&session_dir);
     std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
     std::fs::File::create(rootfs)
         .unwrap()

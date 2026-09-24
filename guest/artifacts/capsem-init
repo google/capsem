@@ -114,11 +114,12 @@ mkdir -p /newroot
 if [ "$STORAGE_MODE" = "virtiofs" ]; then
     # === Single-Share Hybrid Architecture ===
     # One VirtioFS share from the host contains:
-    #   system/rootfs.img  -- ext4 loopback image for overlayfs upper (packages, config)
     #   workspace/         -- direct files for /root (AI workspace, host-visible)
+    # The overlayfs upper (packages, config) is an ext4 image the host keeps
+    # outside the share and attaches as /dev/vdb.
     #
     # Apple VZ VirtioFS can't be overlayfs upper directly (no mknod for whiteouts).
-    # The ext4 loopback provides full POSIX compliance for overlayfs.
+    # The ext4 block device provides full POSIX compliance for overlayfs.
     # The workspace/ dir is bind-mounted at /root so the host can read/write files
     # natively for file transfer and monitoring.
 
@@ -135,9 +136,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
     # (/dev/vdb) by capsem-process. Native virtio-blk speaks block-device
     # semantics and survives save_state/restore_state without EIO under
     # writeback pressure -- the loop-on-VirtioFS path that used to back
-    # this overlay did not. The same file is also visible at
-    # /mnt/shared/system/rootfs.img for host-side introspection while the
-    # VM is stopped, but the guest never opens it through the share.
+    # this overlay did not. The image is host-only: it is not in the share.
     if [ ! -b /dev/vdb ]; then
         echo "[capsem-init] FATAL: /dev/vdb (system overlay) not attached"
         exit 1

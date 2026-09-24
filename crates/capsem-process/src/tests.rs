@@ -161,7 +161,7 @@ fn prepare_session_layout_uses_requested_scratch_disk_size() {
     let guest_dir = prepare_session_layout(&session_dir, 64).unwrap();
 
     assert_eq!(guest_dir, session_dir.join("guest"));
-    let rootfs_img = guest_dir.join("system/rootfs.img");
+    let rootfs_img = session_dir.join("system/rootfs.img");
     let metadata = std::fs::metadata(&rootfs_img).unwrap();
     assert_eq!(metadata.len(), 64 * 1024 * 1024 * 1024);
 }

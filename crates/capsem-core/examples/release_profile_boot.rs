@@ -129,7 +129,7 @@ fn run() -> Result<()> {
     create_virtiofs_session(&session_root, 1)
         .with_context(|| format!("create boot-proof session {}", session_root.display()))?;
     let guest_dir = guest_share_dir(&session_root);
-    let system_overlay = guest_dir.join("system/rootfs.img");
+    let system_overlay = capsem_core::session::system_overlay_image_path(&session_root);
     let serial_log = session_root.join("serial.log");
     let machine_identifier = session_root.join("machine_identifier");
     let shares = [VirtioFsShare {

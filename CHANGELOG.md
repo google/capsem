@@ -50,6 +50,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seen in bodies, so a key sent in `x-api-key` could be stored verbatim in an
   echoed header or body (google/capsem#229, #218).
 
+- A guest can no longer get a host file attached as its disk. The system
+  overlay image (`rootfs.img`) lived inside the read-write VirtioFS share, and
+  the host attaches it to the VM by path, so a root guest could mount the
+  share, replace the image with a symlink to any file the service user can
+  open, and receive that file as a writable disk on its next boot; the service
+  and `capsem support --include-rootfs` read through the same link. The image
+  now lives in the session's host-only `system/` directory. Existing sessions
+  are moved on service start and on boot; a session whose image was replaced
+  by a link is refused instead of booted.
+
 - Forking a sandbox or creating one from another no longer follows the guest's
   symlinks. The clone opened guest workspace entries by path, so a guest that
   swapped a file or directory for a link during the copy could get a host file

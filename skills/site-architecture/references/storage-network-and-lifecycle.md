@@ -11,15 +11,22 @@ Selected by kernel cmdline `capsem.storage=virtiofs` (default) or absence (block
 **VirtioFS mode** (default):
 ```
 ~/.capsem/sessions/{id}/
-  guest/                     # the only VirtioFS share
-    system/rootfs.img        # ext4 loopback (2GB sparse) -- overlayfs upper
+  guest/                     # the only VirtioFS share (guest can rewrite anything here)
     workspace/               # VirtioFS files for /root (host-visible)
-  system -> guest/system     # compat symlinks
-  workspace -> guest/workspace
+  workspace -> guest/workspace   # compat symlink
+  system/rootfs.img          # host-only: ext4 (2GB sparse) attached as /dev/vdb, overlayfs upper
   session.db                 # host-only, outside the share
 ```
 
-Boot sequence: profile-selected read-only rootfs asset -> VirtioFS mount -> loopback ext4 -> overlayfs -> bind-mount workspace.
+Boot sequence: profile-selected read-only rootfs asset -> VirtioFS mount -> ext4 on /dev/vdb -> overlayfs -> bind-mount workspace.
+
+The overlay image is attached by path, so it must never sit where the guest can
+write: in the share, a root guest could replace it with a symlink to a host
+file and get that file as its disk on the next boot. Sessions from before this
+layout are moved out by `capsem_core::session::adopt_system_overlay`, which
+refuses (never attaches) a planted link. Reach the image only through
+`capsem_core::session`; `tests/citadel/test_system_overlay_outside_share.py`
+enforces it.
 
 Why ext4 loopback: Apple VZ's VirtioFS doesn't support `mknod` (whiteout creation), so overlayfs can't use VirtioFS directly as upper.
 
@@ -30,7 +37,7 @@ Why ext4 loopback: Apple VZ's VirtioFS doesn't support `mknod` (whiteout creatio
 ~/.capsem/run/
   persistent_registry.json  # Persistent sandbox metadata
   persistent/{vm_id}/
-    guest/system/            # CoW clone of source VM's rootfs overlay
+    system/                  # CoW clone of source VM's rootfs overlay (host-only)
     guest/workspace/         # CoW clone of workspace files
     session.db               # SQLite-consistent copy of the source ledger
 ```

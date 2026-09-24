@@ -189,8 +189,10 @@ See [Virtualization Security](/security/virtualization/) for threat model, path 
 
 ## Fork Cloning
 
-`capsem fork` and create-from clone a sandbox's `guest/system` and
-`guest/workspace` trees into a new session directory. Cloning is a **host-side**
+`capsem fork` and create-from clone a sandbox's host-only `system/` overlay
+and its `guest/workspace` tree into a new session directory. The overlay image
+lives outside the VirtioFS share because it is attached as the guest's disk by
+path; a guest that could reach it could swap it for a link to a host file. Cloning is a **host-side**
 operation -- the guest has no knowledge of it. Because the guest can write every
 entry in the share, the clone never resolves a guest path: it walks the tree
 through descriptor-relative, no-follow operations
