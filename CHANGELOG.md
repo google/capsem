@@ -131,6 +131,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem list`, `/vms/list`, `/vms/{id}/info`, gateway `/status` and the TUI
+  now show each session's real tokens, cost, tool calls, requests and file
+  events, for running and stopped persistent VMs. These fields had been empty
+  since the service stopped aggregating them.
+
 - `/vms/{id}/info` no longer fails for a VM whose file watcher once fell
   behind. The overflow marker it records is not a file action, and listing it
   made the whole route error; it is now left out of the file activity totals.

@@ -22,6 +22,43 @@ pub(crate) async fn read_counters(
         .map_err(|error| ledger_route_error(vm_id, ledger, "counters", db_path, error))
 }
 
+/// The snapshot of a VM whose ledger is ready, or `None` for one that has no
+/// ledger yet or cannot read it -- a list row then carries no totals rather
+/// than zeros, and `/info` says why in `session_db`.
+pub(crate) async fn counters_if_ready(
+    state: &ServiceState,
+    vm_id: &str,
+    session_dir: &StdPath,
+) -> Option<LedgerCounters> {
+    let db_path = session_db_path_for_session_dir(session_dir);
+    if !db_path.exists() {
+        return None;
+    }
+    let db = open_ready_session_db(state, vm_id, "list", &db_path).await.ok()?;
+    db.ledger_counters().await.ok()
+}
+
+/// The flat totals a list row carries, which the gateway status, the TUI,
+/// the tray and the CLI read.
+pub(crate) fn apply_totals(info: &mut SandboxInfo, counters: &LedgerCounters) {
+    let overflow = counters
+        .files
+        .by_action
+        .get(capsem_logger::FileAction::Overflow.as_str())
+        .copied()
+        .unwrap_or_default();
+    info.total_input_tokens = Some(counters.model.total.input_tokens);
+    info.total_thinking_tokens = Some(thinking_tokens(counters));
+    info.total_output_tokens = Some(counters.model.total.output_tokens);
+    info.total_estimated_cost = Some(usd_from_micro(counters.model.total.cost_micro_usd));
+    info.total_tool_calls = Some(counters.tools.calls);
+    info.total_requests = Some(counters.net.total);
+    info.allowed_requests = Some(counters.net.allowed);
+    info.denied_requests = Some(counters.net.denied);
+    info.total_file_events = Some(counters.files.events.saturating_sub(overflow));
+    info.model_call_count = Some(counters.model.total.calls);
+}
+
 fn thinking_tokens(counters: &LedgerCounters) -> u64 {
     counters
         .model

@@ -1018,16 +1018,18 @@ pub(super) fn list_response_fingerprint(state: &ServiceState) -> String {
     fingerprint
 }
 
-pub(super) fn build_list_response(state: &ServiceState) -> ListResponse {
+/// The list's lifecycle rows, and each listed VM's session directory in the
+/// same order.
+pub(super) fn build_list_response(state: &ServiceState) -> (ListResponse, Vec<PathBuf>) {
     let mut sandboxes: Vec<SandboxInfo> = Vec::new();
+    let mut session_dirs = Vec::new();
 
-    // Running instances. Keep this list route in-memory only; callers that
-    // need ledger-backed counters use explicit stats routes instead of making
-    // every UI/TUI poll open session.db.
+    // Running instances, from their in-memory records.
     {
         let instances = state.instances.lock().unwrap();
         for i in instances.values() {
             sandboxes.push(sandbox_info::running_sandbox_info(i));
+            session_dirs.push(i.session_dir.clone());
         }
     }
 
@@ -1054,36 +1056,53 @@ pub(super) fn build_list_response(state: &ServiceState) -> ListResponse {
             can_resume,
             blocked_reason,
         ));
+        session_dirs.push(entry.session_dir.clone());
     }
 
-    ListResponse { sandboxes }
+    (ListResponse { sandboxes }, session_dirs)
 }
 
 pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum::response::Response {
     // The fingerprint stats and hashes files for every inactive entry; the
     // UI polls this route, so it runs off the worker as one unit.
-    match state.off_worker(|state| list_response_bytes(&state)).await {
-        Ok(bytes) => json_bytes_response(bytes),
-        Err(error) => error.into_response(),
+    let (mut response, session_dirs) = match state.off_worker(|state| list_lifecycle(&state)).await {
+        Ok(listed) => listed,
+        Err(error) => return error.into_response(),
+    };
+    // Every VM's totals, read together: each is one primary-key lookup,
+    // answered from its handle's cache while that ledger has not moved.
+    let counters = futures::future::join_all(
+        response
+            .sandboxes
+            .iter()
+            .zip(&session_dirs)
+            .map(|(info, session_dir)| ledger_routes::activity::counters_if_ready(&state, &info.id, session_dir)),
+    )
+    .await;
+    for (info, counters) in response.sandboxes.iter_mut().zip(counters) {
+        if let Some(counters) = counters {
+            ledger_routes::activity::apply_totals(info, &counters);
+        }
     }
+    json_bytes_response(Bytes::from(serde_json::to_vec(&response).unwrap_or_default()))
 }
 
-fn list_response_bytes(state: &ServiceState) -> Bytes {
+fn list_lifecycle(state: &ServiceState) -> (ListResponse, Vec<PathBuf>) {
     state.reconcile_persistent_defunct_from_logs();
     let fingerprint = list_response_fingerprint(state);
     if let Some(cached) = state.list_response_cache.lock().unwrap().clone() {
         if cached.fingerprint == fingerprint {
-            return cached.bytes;
+            return (cached.response, cached.session_dirs);
         }
     }
 
-    let response = build_list_response(state);
-    let bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_default());
+    let (response, session_dirs) = build_list_response(state);
     *state.list_response_cache.lock().unwrap() = Some(CachedListResponse {
         fingerprint,
-        bytes: bytes.clone(),
+        response: response.clone(),
+        session_dirs: session_dirs.clone(),
     });
-    bytes
+    (response, session_dirs)
 }
 
 pub(super) async fn handle_info(

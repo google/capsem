@@ -14,6 +14,7 @@ pub(crate) async fn populate_vm_info(
     }
     let db_path = session_db_path_for_session_dir(session_dir);
     let counters = activity::read_counters(state, &info.id, "info", &db_path).await?;
+    activity::apply_totals(info, &counters);
     info.ai = Some(activity::ai_info(&counters));
     info.network = Some(activity::network_info(&counters));
     info.files = Some(
