@@ -137,6 +137,7 @@ pub(crate) fn make_test_state_owned() -> ServiceState {
         lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
+        policy_mutation: policy_mutation::PolicyMutationLock::default(),
         update_restart: tokio::sync::Notify::new(),
         _test_tempdir: Some(test_tempdir),
     }
@@ -222,6 +223,7 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
+        policy_mutation: policy_mutation::PolicyMutationLock::default(),
         update_restart: tokio::sync::Notify::new(),
         _test_tempdir: None,
     })
@@ -739,6 +741,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
+        policy_mutation: policy_mutation::PolicyMutationLock::default(),
         update_restart: tokio::sync::Notify::new(),
         _test_tempdir: None,
     });

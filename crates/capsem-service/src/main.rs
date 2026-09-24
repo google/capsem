@@ -47,6 +47,8 @@ mod instance;
 mod instance_reaper;
 use instance::InstanceInfo;
 mod network_routes;
+mod policy_mutation;
+use policy_mutation::{apply_profile_mutation, bad_request, Enforcement, MutationRoute, PolicyMutation};
 mod private_routes;
 mod process_control;
 mod profile_mutation_cache;
@@ -349,6 +351,8 @@ struct ServiceState {
     /// together, so the service must never launch split or overlapping
     /// mutations.
     update_lock: tokio::sync::Mutex<()>,
+    /// Serializes every policy mutation and reload, load through VM acknowledgement.
+    policy_mutation: policy_mutation::PolicyMutationLock,
     /// Requests a managed service shutdown after a package update selects a
     /// different binary. LaunchAgent/systemd then starts the newly installed
     /// service instead of leaving the old process attached to the new graph.
@@ -1202,53 +1206,6 @@ impl ServiceState {
                     .map_err(|e| anyhow!("load profile {profile_id}: {e}"))
             }
         }
-    }
-
-    fn refresh_profile_rule_cache(&self, profile_filter: Option<&str>) -> Result<()> {
-        let updates = build_profile_rule_cache(profile_filter)
-            .map_err(|error| anyhow!("refresh profile rule cache: {}", error.1))?;
-        let mcp_default_updates = build_profile_mcp_default_cache(profile_filter)
-            .map_err(|error| anyhow!("refresh profile MCP default cache: {}", error.1))?;
-        {
-            let mut cache = self.profile_rule_cache.lock().unwrap();
-            if profile_filter.is_none() {
-                *cache = updates;
-            } else {
-                for (profile_id, rules) in updates {
-                    cache.insert(profile_id, rules);
-                }
-            }
-        }
-        {
-            let mut cache = self.profile_mcp_default_cache.lock().unwrap();
-            if profile_filter.is_none() {
-                *cache = mcp_default_updates;
-            } else {
-                for (profile_id, permission) in mcp_default_updates {
-                    cache.insert(profile_id, permission);
-                }
-            }
-        }
-        self.profile_rule_response_cache.lock().unwrap().clear();
-        Ok(())
-    }
-
-    fn refresh_profile_plugin_policy_cache(&self, profile_filter: Option<&str>) -> Result<()> {
-        let updates = build_profile_plugin_policy_cache(profile_filter)
-            .map_err(|error| anyhow!("refresh profile plugin cache: {}", error.1))?;
-        let mut cache = self.profile_plugin_policy_cache.lock().unwrap();
-        if profile_filter.is_none() {
-            *cache = updates;
-        } else {
-            for (profile_id, plugins) in updates {
-                cache.insert(profile_id, plugins);
-            }
-        }
-        drop(cache);
-        self.profile_plugin_response_cache.lock().unwrap().clear();
-        self.evaluate_response_cache.lock().unwrap().clear();
-        *self.evaluate_last_response_cache.lock().unwrap() = None;
-        Ok(())
     }
 
     fn resolve_profile_asset_paths(

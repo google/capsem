@@ -355,3 +355,123 @@ async fn a_reload_acknowledging_another_active_profile_fails_the_push() {
     );
     process.await.unwrap();
 }
+
+/// Start edit A, hold its VM acknowledgement, then start edit B. Release A
+/// once B is either waiting for A or has already rewritten A's session. The
+/// fake VM answers each reload with the digest of the active profile it finds
+/// when it answers, as capsem-process does. Returns the session's active
+/// profile after both edits.
+async fn race_edit_b_against_held_edit_a(
+    edit_b: impl FnOnce(Arc<ServiceState>) -> tokio::task::JoinHandle<Result<(), AppError>>,
+) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
+    let session_dir = dir.path().join("sessions").join("race-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "race-vm", std::process::id(), session_dir.clone());
+    let active_profile = session_dir.join("vm/active_profile.toml");
+    let uds_path = state.instances.lock().unwrap()["race-vm"].uds_path.clone();
+
+    let held = Arc::new(tokio::sync::Notify::new());
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    let released = Arc::new(std::sync::Mutex::new(Some(released)));
+    let process = spawn_fake_process(&uds_path, 2, {
+        let (held, active_profile) = (Arc::clone(&held), active_profile.clone());
+        move |message| {
+            let ServiceToProcess::ReloadConfig { id } = *message else {
+                return Box::pin(async { None });
+            };
+            let (held, released, active_profile) = (
+                Arc::clone(&held),
+                released.lock().unwrap().take(),
+                active_profile.clone(),
+            );
+            Box::pin(async move {
+                if let Some(released) = released {
+                    held.notify_one();
+                    released.await.unwrap();
+                }
+                Some(ProcessToService::ConfigReloadResult {
+                    id,
+                    active_profile_digest: Some(capsem_core::net::policy_config::active_profile_digest(
+                        &std::fs::read(&active_profile).unwrap(),
+                    )),
+                    error: None,
+                })
+            })
+        }
+    });
+
+    let edit_a = tokio::spawn(handle_enforcement_rule_upsert(
+        State(Arc::clone(&state)),
+        Path(("code".to_string(), "race_edit_a".to_string())),
+        Json(rule("race_edit_a", r#"http.host.contains("a.example.invalid")"#)),
+    ));
+    held.notified().await;
+    let published_by_a = std::fs::read(&active_profile).unwrap();
+    let edit_b = edit_b(Arc::clone(&state));
+    tokio::select! {
+        () = state.policy_mutation.contended.notified() => {}
+        () = async {
+            while std::fs::read(&active_profile).unwrap() == published_by_a {
+                tokio::task::yield_now().await;
+            }
+        } => {}
+    }
+    release.send(()).unwrap();
+
+    let _ = edit_a.await.unwrap().expect("edit A must be acknowledged as edit A");
+    edit_b.await.unwrap().expect("edit B");
+    assert!(only_reloads(&process.await.unwrap(), 2));
+    std::fs::read_to_string(&active_profile).unwrap()
+}
+
+/// Two rule edits on one profile: neither may be lost, and B's publication
+/// may not be acknowledged as A's.
+#[tokio::test]
+async fn concurrent_rule_edits_keep_both_updates_and_their_own_acknowledgements() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let active = race_edit_b_against_held_edit_a(|state| {
+        tokio::spawn(async move {
+            handle_detection_rule_upsert(
+                State(state),
+                Path(("code".to_string(), "race_edit_b".to_string())),
+                Json(rule("race_edit_b", r#"http.host.contains("b.example.invalid")"#)),
+            )
+            .await
+            .map(|_| ())
+        })
+    })
+    .await;
+    assert!(
+        active.contains("race_edit_a") && active.contains("race_edit_b"),
+        "{active}"
+    );
+}
+
+/// A plugin edit through another route is serialized with a rule edit.
+#[tokio::test]
+async fn a_plugin_edit_is_serialized_with_a_concurrent_rule_edit() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let active = race_edit_b_against_held_edit_a(|state| {
+        tokio::spawn(async move {
+            handle_profile_plugin_update(
+                State(state),
+                Path(("code".to_string(), "dummy_pre_eicar".to_string())),
+                Json(PluginUpdate {
+                    mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Block),
+                    detection_level: None,
+                }),
+            )
+            .await
+            .map(|_| ())
+        })
+    })
+    .await;
+    assert!(
+        active.contains("race_edit_a") && active.contains("[plugins.dummy_pre_eicar]"),
+        "{active}"
+    );
+}

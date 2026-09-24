@@ -14,6 +14,7 @@ use super::*;
 /// by a concurrent edit -- is a failure, not a success.
 pub(crate) async fn push_profile_to_running_instances(
     state: &Arc<ServiceState>,
+    _mutation: &PolicyMutation<'_>,
     profile_filter: Option<&str>,
 ) -> Result<usize, AppError> {
     let filter = profile_filter.map(str::to_owned);

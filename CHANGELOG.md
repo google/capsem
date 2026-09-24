@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refresh reports the number of VMs that actually refreshed
   (google/capsem#229).
 
+- Concurrent policy edits no longer overwrite each other or claim each
+  other's result. Rule, plugin, MCP, skill, settings and corp edits and every
+  reload are serialized from loading the profile to the running VMs'
+  acknowledgement. A VM now reports the exact active profile it applied, and
+  an edit succeeds only when that is the one it wrote. A VM whose profile fails
+  to load says why and keeps its previous policy. Policy files are replaced
+  atomically, so a reader never sees half a file (google/capsem#229).
+
 - A browser-preview session now bounds the connections it admitted, not only
   their admission. An open WebSocket or keep-alive connection closes when its
   session expires, instead of outliving it indefinitely, and

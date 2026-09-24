@@ -128,7 +128,8 @@ async fn handle_get_settings_returns_tree() {
 async fn handle_save_settings_rejects_unknown_key() {
     let mut changes = HashMap::new();
     changes.insert("nonexistent.setting.xyz".into(), serde_json::json!("value"));
-    let result = handle_save_settings(Json(changes)).await;
+    let (state, _dir) = make_test_state_with_tempdir();
+    let result = handle_save_settings(State(state), Json(changes)).await;
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.0, StatusCode::BAD_REQUEST);
@@ -153,7 +154,8 @@ async fn handle_save_settings_rejects_retired_policy_rule_keys_atomically() {
         }),
     );
 
-    let err = handle_save_settings(Json(changes))
+    let (state, _dir) = make_test_state_with_tempdir();
+    let err = handle_save_settings(State(state), Json(changes))
         .await
         .expect_err("retired policy rule key should be rejected by settings handler");
 
@@ -217,6 +219,7 @@ pub(super) fn make_test_state_with_tempdir_at(dir: tempfile::TempDir) -> (Arc<Se
         lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
+        policy_mutation: crate::policy_mutation::PolicyMutationLock::default(),
         update_restart: tokio::sync::Notify::new(),
         _test_tempdir: None,
     });

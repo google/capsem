@@ -125,3 +125,53 @@ pub(super) fn refresh_after_profile_mutation(
     }
     Ok(())
 }
+
+impl ServiceState {
+    /// Rebuild the rule and MCP-default caches of `profile_filter` (all when `None`).
+    pub(super) fn refresh_profile_rule_cache(&self, profile_filter: Option<&str>) -> Result<()> {
+        let updates = build_profile_rule_cache(profile_filter)
+            .map_err(|error| anyhow!("refresh profile rule cache: {}", error.1))?;
+        let mcp_default_updates = build_profile_mcp_default_cache(profile_filter)
+            .map_err(|error| anyhow!("refresh profile MCP default cache: {}", error.1))?;
+        {
+            let mut cache = self.profile_rule_cache.lock().unwrap();
+            if profile_filter.is_none() {
+                *cache = updates;
+            } else {
+                for (profile_id, rules) in updates {
+                    cache.insert(profile_id, rules);
+                }
+            }
+        }
+        {
+            let mut cache = self.profile_mcp_default_cache.lock().unwrap();
+            if profile_filter.is_none() {
+                *cache = mcp_default_updates;
+            } else {
+                for (profile_id, permission) in mcp_default_updates {
+                    cache.insert(profile_id, permission);
+                }
+            }
+        }
+        self.profile_rule_response_cache.lock().unwrap().clear();
+        Ok(())
+    }
+
+    pub(super) fn refresh_profile_plugin_policy_cache(&self, profile_filter: Option<&str>) -> Result<()> {
+        let updates = build_profile_plugin_policy_cache(profile_filter)
+            .map_err(|error| anyhow!("refresh profile plugin cache: {}", error.1))?;
+        let mut cache = self.profile_plugin_policy_cache.lock().unwrap();
+        if profile_filter.is_none() {
+            *cache = updates;
+        } else {
+            for (profile_id, plugins) in updates {
+                cache.insert(profile_id, plugins);
+            }
+        }
+        drop(cache);
+        self.profile_plugin_response_cache.lock().unwrap().clear();
+        self.evaluate_response_cache.lock().unwrap().clear();
+        *self.evaluate_last_response_cache.lock().unwrap() = None;
+        Ok(())
+    }
+}

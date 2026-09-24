@@ -15,6 +15,7 @@ pub(super) async fn handle_reload_config_for_profile(
     state: Arc<ServiceState>,
     profile_filter: Option<&str>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let mutation = state.policy_mutation.begin().await;
     // Every refresh re-reads profile files from disk; off the worker.
     let filter = profile_filter.map(str::to_owned);
     state
@@ -25,7 +26,8 @@ pub(super) async fn handle_reload_config_for_profile(
         })
         .await?
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let reloaded = push_profile_to_running_instances(&state, profile_filter).await?;
+    let reloaded = push_profile_to_running_instances(&state, &mutation, profile_filter).await?;
+    drop(mutation);
     Ok(Json(serde_json::json!({ "success": true, "reloaded": reloaded })))
 }
 
@@ -49,8 +51,10 @@ pub(super) async fn handle_get_settings() -> Json<serde_json::Value> {
 
 /// PATCH /settings/edit -- batch-update settings and return the refreshed tree.
 pub(super) async fn handle_save_settings(
+    State(state): State<Arc<ServiceState>>,
     Json(raw): Json<HashMap<String, serde_json::Value>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let _mutation = state.policy_mutation.begin().await;
     capsem_core::net::policy_config::batch_update_settings_json(&raw)
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
     let resp = capsem_core::net::policy_config::load_settings_response();
@@ -708,9 +712,11 @@ pub(super) async fn handle_profile_assets_info(
 
 /// PUT /corp/edit -- apply corporate config from URL or inline TOML.
 pub(super) async fn handle_corp_config(
+    State(state): State<Arc<ServiceState>>,
     Json(payload): Json<CorpConfigRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     use capsem_core::net::policy_config::corp_provision;
+    let _mutation = state.policy_mutation.begin().await;
 
     let capsem_dir = capsem_foundation::paths::capsem_home_opt()
         .ok_or(AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
@@ -1420,23 +1426,18 @@ pub(super) async fn handle_profile_skill_add(
     Path(profile_id): Path<String>,
     Json(request): Json<ProfileSkillAddRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    log_profile_mutation_route_request("profile_skill_add", &profile_id, "skill", &request.path, "add");
-    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
-        log_profile_mutation_route_rejected(
-            "profile_skill_add",
-            &profile_id,
-            "skill",
-            &request.path,
-            "add",
-            &error.1,
-        );
-    })?;
-    let summary = profile.add_skill_path(&request.path, "service-api").map_err(|error| {
-        log_profile_mutation_route_rejected("profile_skill_add", &profile_id, "skill", &request.path, "add", &error);
-        AppError(StatusCode::BAD_REQUEST, error)
-    })?;
-    let event = write_profile_mutation_event(&state, summary, &profile).await?;
-    log_profile_mutation_applied("profile_skill_add", &event);
+    let route = MutationRoute {
+        name: "profile_skill_add",
+        target_kind: "skill",
+        target_key: &request.path,
+        operation: "add",
+    };
+    let event = apply_profile_mutation(&state, route, profile_id, Enforcement::ProfileOnly, |profile| {
+        profile
+            .add_skill_path(&request.path, "service-api")
+            .map_err(bad_request)
+    })
+    .await?;
     Ok(Json(json!({
         "profile_id": event.profile_id,
         "skill_id": event.target_key,
@@ -1447,21 +1448,21 @@ pub(super) async fn handle_profile_skill_add(
 
 pub(super) async fn handle_profile_skill_edit(
     State(state): State<Arc<ServiceState>>,
-    Path((profile_id, _skill_id)): Path<(String, String)>,
+    Path((profile_id, skill_id)): Path<(String, String)>,
     Json(request): Json<ProfileSkillEditRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    log_profile_mutation_route_request("profile_skill_edit", &profile_id, "skill", &_skill_id, "edit");
-    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
-        log_profile_mutation_route_rejected("profile_skill_edit", &profile_id, "skill", &_skill_id, "edit", &error.1);
-    })?;
-    let summary = profile
-        .edit_skill_path(&_skill_id, &request.path, "service-api")
-        .map_err(|error| {
-            log_profile_mutation_route_rejected("profile_skill_edit", &profile_id, "skill", &_skill_id, "edit", &error);
-            AppError(StatusCode::BAD_REQUEST, error)
-        })?;
-    let event = write_profile_mutation_event(&state, summary, &profile).await?;
-    log_profile_mutation_applied("profile_skill_edit", &event);
+    let route = MutationRoute {
+        name: "profile_skill_edit",
+        target_kind: "skill",
+        target_key: &skill_id,
+        operation: "edit",
+    };
+    let event = apply_profile_mutation(&state, route, profile_id, Enforcement::ProfileOnly, |profile| {
+        profile
+            .edit_skill_path(&skill_id, &request.path, "service-api")
+            .map_err(bad_request)
+    })
+    .await?;
     Ok(Json(json!({
         "profile_id": event.profile_id,
         "skill_id": event.target_key,
@@ -1472,32 +1473,18 @@ pub(super) async fn handle_profile_skill_edit(
 
 pub(super) async fn handle_profile_skill_delete(
     State(state): State<Arc<ServiceState>>,
-    Path((profile_id, _skill_id)): Path<(String, String)>,
+    Path((profile_id, skill_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    log_profile_mutation_route_request("profile_skill_delete", &profile_id, "skill", &_skill_id, "delete");
-    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
-        log_profile_mutation_route_rejected(
-            "profile_skill_delete",
-            &profile_id,
-            "skill",
-            &_skill_id,
-            "delete",
-            &error.1,
-        );
-    })?;
-    let summary = profile.delete_skill(&_skill_id, "service-api").map_err(|error| {
-        log_profile_mutation_route_rejected(
-            "profile_skill_delete",
-            &profile_id,
-            "skill",
-            &_skill_id,
-            "delete",
-            &error,
-        );
-        AppError(StatusCode::BAD_REQUEST, error)
-    })?;
-    let event = write_profile_mutation_event(&state, summary, &profile).await?;
-    log_profile_mutation_applied("profile_skill_delete", &event);
+    let route = MutationRoute {
+        name: "profile_skill_delete",
+        target_kind: "skill",
+        target_key: &skill_id,
+        operation: "delete",
+    };
+    let event = apply_profile_mutation(&state, route, profile_id, Enforcement::ProfileOnly, |profile| {
+        profile.delete_skill(&skill_id, "service-api").map_err(bad_request)
+    })
+    .await?;
     Ok(Json(json!({
         "profile_id": event.profile_id,
         "skill_id": event.target_key,
@@ -1625,6 +1612,7 @@ pub(super) fn unix_timestamp_ms() -> i64 {
 
 pub(super) async fn write_profile_mutation_event(
     state: &ServiceState,
+    _mutation: &PolicyMutation<'_>,
     summary: capsem_core::net::policy_config::ProfileMutationSummary,
     profile: &Profile,
 ) -> Result<capsem_logger::ProfileMutationEvent, AppError> {
@@ -1758,53 +1746,25 @@ pub(super) async fn handle_profile_mcp_server_edit(
     Path((profile_id, server_id)): Path<(String, String)>,
     Json(update): Json<McpServerEditRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    log_profile_mutation_route_request(
-        "profile_mcp_server_edit",
-        &profile_id,
-        "mcp_server",
-        &server_id,
-        "upsert",
-    );
-    let server = validate_mcp_server_edit_request(&server_id, update).inspect_err(|error| {
-        log_profile_mutation_route_rejected(
-            "profile_mcp_server_edit",
-            &profile_id,
-            "mcp_server",
-            &server_id,
-            "upsert",
-            &error.1,
-        );
-    })?;
-    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
-        log_profile_mutation_route_rejected(
-            "profile_mcp_server_edit",
-            &profile_id,
-            "mcp_server",
-            &server_id,
-            "upsert",
-            &error.1,
-        );
-    })?;
-    let summary = profile
-        .upsert_mcp_server(server.clone(), "service-api")
-        .map_err(|error| {
-            log_profile_mutation_route_rejected(
-                "profile_mcp_server_edit",
-                &profile_id,
-                "mcp_server",
-                &server_id,
-                "upsert",
-                &error,
-            );
-            AppError(StatusCode::BAD_REQUEST, error)
-        })?;
-    let event = write_profile_mutation_event(&state, summary, &profile).await?;
-    log_profile_mutation_applied("profile_mcp_server_edit", &event);
+    let route = MutationRoute {
+        name: "profile_mcp_server_edit",
+        target_kind: "mcp_server",
+        target_key: &server_id,
+        operation: "upsert",
+    };
+    let mut declared = None;
+    let event = apply_profile_mutation(&state, route, profile_id, Enforcement::ProfileOnly, |profile| {
+        let server = validate_mcp_server_edit_request(&server_id, update)?;
+        declared = Some((server.url.clone(), server.enabled));
+        profile.upsert_mcp_server(server, "service-api").map_err(bad_request)
+    })
+    .await?;
+    let (url, enabled) = declared.expect("a recorded MCP server edit carries its server");
     Ok(Json(json!({
         "profile_id": event.profile_id,
         "server_id": server_id,
-        "url": server.url,
-        "enabled": server.enabled,
+        "url": url,
+        "enabled": enabled,
         "mutation": event,
     })))
 }
@@ -1814,46 +1774,19 @@ pub(super) async fn handle_profile_mcp_server_delete(
     State(state): State<Arc<ServiceState>>,
     Path((profile_id, server_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    log_profile_mutation_route_request(
-        "profile_mcp_server_delete",
-        &profile_id,
-        "mcp_server",
-        &server_id,
-        "delete",
-    );
-    validate_mcp_server_id(&server_id).inspect_err(|error| {
-        log_profile_mutation_route_rejected(
-            "profile_mcp_server_delete",
-            &profile_id,
-            "mcp_server",
-            &server_id,
-            "delete",
-            &error.1,
-        );
-    })?;
-    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
-        log_profile_mutation_route_rejected(
-            "profile_mcp_server_delete",
-            &profile_id,
-            "mcp_server",
-            &server_id,
-            "delete",
-            &error.1,
-        );
-    })?;
-    let summary = profile.delete_mcp_server(&server_id, "service-api").map_err(|error| {
-        log_profile_mutation_route_rejected(
-            "profile_mcp_server_delete",
-            &profile_id,
-            "mcp_server",
-            &server_id,
-            "delete",
-            &error,
-        );
-        AppError(StatusCode::BAD_REQUEST, error)
-    })?;
-    let event = write_profile_mutation_event(&state, summary, &profile).await?;
-    log_profile_mutation_applied("profile_mcp_server_delete", &event);
+    let route = MutationRoute {
+        name: "profile_mcp_server_delete",
+        target_kind: "mcp_server",
+        target_key: &server_id,
+        operation: "delete",
+    };
+    let event = apply_profile_mutation(&state, route, profile_id, Enforcement::ProfileOnly, |profile| {
+        validate_mcp_server_id(&server_id)?;
+        profile
+            .delete_mcp_server(&server_id, "service-api")
+            .map_err(bad_request)
+    })
+    .await?;
     Ok(Json(json!({
         "profile_id": event.profile_id,
         "server_id": server_id,
@@ -2025,39 +1958,23 @@ pub(super) async fn handle_profile_mcp_server_refresh(
     }))
 }
 
-/// One route-level profile mutation that changes enforcement: load the profile,
-/// apply `mutate`, record it in the audit ledger, then enforce it in the
-/// profile's running VMs before the route answers.
-async fn apply_enforced_profile_mutation(
-    state: &Arc<ServiceState>,
-    (route, target_kind, target_key, operation): (&'static str, &'static str, &str, &'static str),
-    profile_id: String,
-    mutate: impl FnOnce(&mut Profile) -> Result<capsem_core::net::policy_config::ProfileMutationSummary, String>,
-) -> Result<capsem_logger::ProfileMutationEvent, AppError> {
-    let rejected = |error: &str| {
-        log_profile_mutation_route_rejected(route, &profile_id, target_kind, target_key, operation, error)
-    };
-    log_profile_mutation_route_request(route, &profile_id, target_kind, target_key, operation);
-    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| rejected(&error.1))?;
-    let summary = mutate(&mut profile).map_err(|error| {
-        rejected(&error);
-        AppError(StatusCode::BAD_REQUEST, error)
-    })?;
-    let event = write_profile_mutation_event(state, summary, &profile).await?;
-    log_profile_mutation_applied(route, &event);
-    push_profile_to_running_instances(state, Some(profile_id.as_str())).await?;
-    Ok(event)
-}
-
 /// PATCH /profiles/:profile_id/mcp/default/edit -- edit the default MCP permission rule.
 pub(super) async fn handle_profile_mcp_default_edit(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
     Json(update): Json<McpToolEditRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let route = ("profile_mcp_default_edit", "mcp_default", "default.mcp", "permission");
-    let event = apply_enforced_profile_mutation(&state, route, profile_id, |profile| {
-        profile.set_mcp_default_permission(update.action, "service-api")
+    let route = MutationRoute {
+        name: "profile_mcp_default_edit",
+        target_kind: "mcp_default",
+        target_key: "default.mcp",
+        operation: "permission",
+    };
+    // MCP permissions compile to enforcement rules: enforce before returning.
+    let event = apply_profile_mutation(&state, route, profile_id, Enforcement::Push, |profile| {
+        profile
+            .set_mcp_default_permission(update.action, "service-api")
+            .map_err(bad_request)
     })
     .await?;
     Ok(Json(json!({
@@ -2074,9 +1991,16 @@ pub(super) async fn handle_profile_mcp_tool_edit(
     Json(update): Json<McpToolEditRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let target_key = format!("{server_id}/{tool_id}");
-    let route = ("profile_mcp_tool_edit", "mcp_tool", target_key.as_str(), "permission");
-    let event = apply_enforced_profile_mutation(&state, route, profile_id, |profile| {
-        profile.set_mcp_tool_permission(&server_id, &tool_id, update.action, "service-api")
+    let route = MutationRoute {
+        name: "profile_mcp_tool_edit",
+        target_kind: "mcp_tool",
+        target_key: &target_key,
+        operation: "permission",
+    };
+    let event = apply_profile_mutation(&state, route, profile_id, Enforcement::Push, |profile| {
+        profile
+            .set_mcp_tool_permission(&server_id, &tool_id, update.action, "service-api")
+            .map_err(bad_request)
     })
     .await?;
     Ok(Json(json!({
