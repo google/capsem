@@ -300,6 +300,24 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             trace_id TEXT,
             context_json TEXT
         );
+        CREATE TABLE security_rule_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            rule_id TEXT NOT NULL,
+            rule_action TEXT NOT NULL,
+            detection_level TEXT NOT NULL,
+            rule_json TEXT NOT NULL,
+            count INTEGER NOT NULL,
+            first_timestamp_unix_ms INTEGER NOT NULL,
+            last_timestamp_unix_ms INTEGER NOT NULL,
+            UNIQUE (event_type, rule_id, rule_action, detection_level, rule_json)
+        );
+        CREATE INDEX idx_security_rule_runs_action
+            ON security_rule_runs(rule_action, detection_level, rule_id, event_type, count, last_timestamp_unix_ms);
+        CREATE INDEX idx_security_rule_runs_event_type
+            ON security_rule_runs(event_type, count);
+        -- On disk a match stores its rule once, in its run; the matched
+        -- event's payload is archive-backed, not a column.
         CREATE TABLE security_rule_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp_unix_ms INTEGER NOT NULL,
@@ -308,8 +326,8 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             rule_id TEXT NOT NULL,
             rule_action TEXT NOT NULL,
             detection_level TEXT NOT NULL DEFAULT 'none',
-            rule_json TEXT NOT NULL,
-            event_json TEXT NOT NULL,
+            rule_json TEXT,
+            run_id INTEGER REFERENCES security_rule_runs(id),
             trace_id TEXT
         );
         CREATE TABLE security_decision_events (
@@ -364,14 +382,6 @@ def _seed_session_db(db_path: Path) -> None:
             "action": "allow",
             "detection_level": "informational",
             "match": 'http.host.contains("googleapis.com")',
-        },
-        sort_keys=True,
-    )
-    event_json = json.dumps(
-        {
-            "event_id": SEC_EVENT_ID,
-            "event_type": "http.request",
-            "http": {"host": "daily-cloudcode-pa.googleapis.com", "path": "/v1internal"},
         },
         sort_keys=True,
     )
@@ -703,38 +713,47 @@ def _seed_session_db(db_path: Path) -> None:
                 ),
             ],
         )
-        conn.executemany(
-            """
-            INSERT INTO security_rule_events (
-                timestamp_unix_ms, event_id, event_type, rule_id, rule_action,
-                detection_level, rule_json, event_json, trace_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    1_789_000_223_456,
-                    SEC_EVENT_ID,
-                    "http.request",
-                    "profiles.rules.ai_google_http_googleapis",
-                    "allow",
-                    "informational",
-                    rule_json,
-                    event_json,
-                    TRACE_ID,
-                ),
-                (
-                    1_789_000_223_457,
-                    "223abc456def",
-                    "mcp.tool_call",
-                    "profiles.rules.default_mcp",
-                    "ask",
-                    "none",
-                    json.dumps({"name": "default_mcp", "action": "ask"}, sort_keys=True),
-                    json.dumps({"event_type": "mcp.tool_call", "mcp": {"name": "create_file"}}),
-                    TRACE_ID,
-                ),
-            ],
-        )
+        matches = [
+            (
+                1_789_000_223_456,
+                SEC_EVENT_ID,
+                "http.request",
+                "profiles.rules.ai_google_http_googleapis",
+                "allow",
+                "informational",
+                rule_json,
+            ),
+            (
+                1_789_000_223_457,
+                "223abc456def",
+                "mcp.tool_call",
+                "profiles.rules.default_mcp",
+                "ask",
+                "none",
+                json.dumps({"name": "default_mcp", "action": "ask"}, sort_keys=True),
+            ),
+        ]
+        for run_id, (timestamp, event_id, event_type, rule_id, action, level, rule) in enumerate(
+            matches, start=1
+        ):
+            conn.execute(
+                """
+                INSERT INTO security_rule_runs (
+                    id, event_type, rule_id, rule_action, detection_level, rule_json,
+                    count, first_timestamp_unix_ms, last_timestamp_unix_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (run_id, event_type, rule_id, action, level, rule, timestamp, timestamp),
+            )
+            conn.execute(
+                """
+                INSERT INTO security_rule_events (
+                    timestamp_unix_ms, event_id, event_type, rule_id, rule_action,
+                    detection_level, run_id, trace_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (timestamp, event_id, event_type, rule_id, action, level, run_id, TRACE_ID),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -958,9 +977,10 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         assert latest[1]["rule_id"] == "profiles.rules.ai_google_http_googleapis"
         assert latest[1]["rule_action"] == "allow"
         assert latest[1]["detection_level"] == "informational"
-        assert json.loads(latest[1]["event_json"])["http"]["host"] == (
-            "daily-cloudcode-pa.googleapis.com"
-        )
+        # The rule comes back resolved through its run; the matched event's
+        # payload is archive-backed and is not part of a ledger row.
+        assert json.loads(latest[1]["rule_json"])["name"] == "stats_detail_google_detect"
+        assert "event_json" not in latest[1]
 
         security = client.get(f"/vms/{SESSION_ID}/security/status", timeout=30)
         assert security["total"] == 2

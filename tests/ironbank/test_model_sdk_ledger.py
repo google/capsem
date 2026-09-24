@@ -103,6 +103,18 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
+def _archived_request(conn: sqlite3.Connection, row: sqlite3.Row, table: str) -> str:
+    """The full request a row recorded.
+
+    `request_body_preview` is a 2 KB excerpt, and an agent client's system
+    prompt fills it before the tools or the conversation start.
+    """
+    with session_archive(conn) as archive:
+        body = archive.read(row["event_id"], table, "request")
+    assert body is not None, f"{table} {row['event_id']} has no archived request"
+    return body.decode("utf-8", "replace")
+
+
 def _assert_event_id(value: object) -> None:
     assert isinstance(value, str)
     assert re.fullmatch(r"[0-9a-f]{12}", value), value
@@ -2175,15 +2187,9 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert tool_model["response_bytes"] > 0
             _assert_credential_ref(tool_model["credential_ref"])
             codex_credential_ref = tool_model["credential_ref"]
-            # The preview is a 2 KB excerpt and Codex's system prompt fills it;
-            # the tool list is only in the archived request.
-            with session_archive(conn) as archive:
-                tool_model_request = archive.read(tool_model["event_id"], "model_calls", "request")
-            assert tool_model_request is not None
-            assert b'"name":"exec_command"' in tool_model_request
-            assert "capsem_test_codex_cli_key" not in (
-                tool_model["request_body_preview"] or ""
-            )
+            tool_model_request = _archived_request(conn, tool_model, "model_calls")
+            assert '"name":"exec_command"' in tool_model_request
+            assert "capsem_test_codex_cli_key" not in tool_model_request
             _assert_event_id(codex_model["event_id"])
             assert codex_model["provider"] == "unknown"
             assert codex_model["protocol"] == "openai"
@@ -2202,10 +2208,9 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert codex_model["credential_ref"] == codex_credential_ref
             usage_details = json.loads(codex_model["usage_details"])
             assert usage_details["thinking"] == 2
-            assert expected_call_id in (codex_model["request_body_preview"] or "")
-            assert "capsem_test_codex_cli_key" not in (
-                codex_model["request_body_preview"] or ""
-            )
+            codex_model_request = _archived_request(conn, codex_model, "model_calls")
+            assert expected_call_id in codex_model_request
+            assert "capsem_test_codex_cli_key" not in codex_model_request
 
             tool_rows = _eventually(
                 lambda: conn.execute(
@@ -2289,10 +2294,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert "content-type: text/event-stream" in (
                 tool_net["response_headers"] or ""
             )
-            with session_archive(conn) as archive:
-                tool_net_request = archive.read(tool_net["event_id"], "net_events", "request")
-            assert tool_net_request is not None
-            assert b'"name":"exec_command"' in tool_net_request
+            assert '"name":"exec_command"' in _archived_request(conn, tool_net, "net_events")
             assert expected_call_id in (tool_net["response_body_preview"] or "")
             assert "response.function_call_arguments.delta" in (
                 tool_net["response_body_preview"] or ""
@@ -2311,10 +2313,9 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert "content-type: application/json" in (codex_net["request_headers"] or "")
             assert "user-agent:" in (codex_net["request_headers"] or "")
             assert "capsem_test_codex_cli_key" not in (codex_net["request_headers"] or "")
-            assert "capsem_test_codex_cli_key" not in (
-                codex_net["request_body_preview"] or ""
-            )
-            assert expected_call_id in (codex_net["request_body_preview"] or "")
+            codex_net_request = _archived_request(conn, codex_net, "net_events")
+            assert "capsem_test_codex_cli_key" not in codex_net_request
+            assert expected_call_id in codex_net_request
             assert "response.reasoning_summary_text.delta" in (
                 codex_net["response_body_preview"] or ""
             )

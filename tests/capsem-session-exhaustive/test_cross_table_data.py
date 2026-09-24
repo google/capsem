@@ -48,8 +48,12 @@ class TestCrossTableForeignKeys:
         ).fetchall()
         assert rows == []
 
-    def test_all_tables_have_id_column(self, exhaust_db):
-        """All session.db tables have an 'id' primary key column."""
+    def test_all_tables_have_one_integer_primary_key(self, exhaust_db):
+        """Every session.db row is addressed by one INTEGER PRIMARY KEY.
+
+        Event tables call it `id`; a table keyed by what it stores names it
+        for that (`body_blocks.block_offset`, `archive_state.singleton`).
+        """
         tables = [
             r[0] for r in exhaust_db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
@@ -59,9 +63,7 @@ class TestCrossTableForeignKeys:
             if table == "sqlite_sequence":
                 continue
             info = exhaust_db.execute(f"PRAGMA table_info({table})").fetchall()
-            cols = [r[1] for r in info]
-            # A one-row state table is keyed by a constrained `singleton`
-            # primary key instead: it has no rows to identify.
-            if [r[1] for r in info if r[5]] == ["singleton"]:
-                continue
-            assert "id" in cols, f"Table {table} missing 'id' column"
+            key = [(r[1], r[2].upper()) for r in info if r[5]]
+            assert len(key) == 1 and key[0][1] == "INTEGER", (
+                f"Table {table} is not keyed by one INTEGER PRIMARY KEY: {key}"
+            )

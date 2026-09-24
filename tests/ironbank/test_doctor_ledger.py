@@ -208,6 +208,8 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
     session_id = vm_name("ironbank-doctor")
     vm_id: str | None = None
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
+    # Closes the ledger connection on the failure path too.
+    ledgers = contextlib.ExitStack()
     try:
         mock_proc, ready = start_mock_server()
         corp_path = service.tmp_dir / "corp.toml"
@@ -334,7 +336,7 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             assert tool["permission_action"] in {"allow", "ask", "block", "disable"}
             assert tool["permission_source"]
 
-        conn = _connect_session_db(service, client, vm_id)
+        conn = ledgers.enter_context(contextlib.closing(_connect_session_db(service, client, vm_id)))
         assert "mcp_calls" not in {
             row["name"]
             for row in conn.execute(
@@ -632,8 +634,8 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert exec_row["source"] in {"api", "cli", "mcp"}
         assert exec_row["stdout_bytes"] >= 0
         _assert_no_raw_secret_markers_in_session_db(conn)
-        conn.close()
     finally:
+        ledgers.close()
         stop_process(mock_proc)
         if sys.exc_info()[0] is not None:
             # Preserve while the failed VM still exists. The normal cleanup
@@ -659,6 +661,7 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
     client = None
     session_id = vm_name("ironbank-plugin")
     vm_id: str | None = None
+    ledgers = contextlib.ExitStack()
     try:
         service.start()
         client = service.client()
@@ -770,7 +773,7 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         assert read_status == 200
         assert read_body.decode() == EICAR_TEXT
 
-        conn = _connect_session_db(service, client, vm_id)
+        conn = ledgers.enter_context(contextlib.closing(_connect_session_db(service, client, vm_id)))
         security_rows = conn.execute(
             """
             SELECT *
@@ -900,8 +903,8 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         )
         assert dummy_post_detail["runtime"]["enabled"] is True
         assert dummy_post_detail["runtime"]["execution_count"] >= 1
-        conn.close()
     finally:
+        ledgers.close()
         if client is not None:
             with contextlib.suppress(Exception):
                 client.delete(f"/vms/{vm_id or session_id}/delete", timeout=60)

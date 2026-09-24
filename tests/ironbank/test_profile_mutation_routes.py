@@ -202,7 +202,7 @@ def test_profile_mutation_routes_persist_profile_files_hashes_and_ledger() -> No
             ("enforcement", "security_rule", "ironbank_http_block", "upsert"),
             ("enforcement", "security_rule", "ironbank_dns_detect", "upsert"),
             ("mcp", "mcp_default", "default.mcp", "permission"),
-            ("mcp", "mcp_tool", "capsem/snapshot", "permission"),
+            ("mcp", "mcp_tool", "capsem/probe", "permission"),
             ("mcp", "mcp_server", "ironbank", "upsert"),
             ("plugin", "plugin", "dummy_pre_eicar", "edit"),
             ("enforcement", "security_rule", "ironbank_http_block", "delete"),
