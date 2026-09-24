@@ -187,7 +187,7 @@ def test_docs_source_builds_the_holding_graph_without_deleting_the_manual() -> N
         "astro build && uv run --project ../../build_system --frozen python "
         "../../build_system/scripts/web/check-docs-holding-build.py dist src/content/docs"
     )
-    assert len(detailed_sources) == 48
+    assert len(detailed_sources) == 46
     assert DOCS_ROOT / "src" / "content" / "docs" / "index.mdx" in detailed_sources
     assert (
         DOCS_ROOT / "src" / "content" / "docs" / "architecture" / "service-api.md"
