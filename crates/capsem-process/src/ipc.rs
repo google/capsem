@@ -418,7 +418,7 @@ pub(crate) async fn handle_ipc_connection(
                 let net_state = net_state.clone();
                 let mcp_runtime = mcp_runtime.clone();
                 tokio::spawn(async move {
-                    info!(id, path, len = data.len(), "Received WriteFile command via IPC");
+                    debug!(id, path, len = data.len(), "Received WriteFile command via IPC");
                     // Recorded before dispatch, as an export is recorded
                     // before release: a write the session cannot account for
                     // does not happen.
@@ -488,7 +488,7 @@ pub(crate) async fn handle_ipc_connection(
                     };
                     match result {
                         Ok(Ok(JobResult::WriteFile { success, error })) => {
-                            info!(id, success, "Sending WriteFileResult back via IPC");
+                            debug!(id, success, "Sending WriteFileResult back via IPC");
                             capsem_core::try_send!(
                                 "ipc_write_file_result",
                                 ipc_tx_out
@@ -541,7 +541,7 @@ pub(crate) async fn handle_ipc_connection(
                 let ctrl_tx = ctrl_tx.clone();
                 let ipc_tx_out = ipc_tx_out.clone();
                 tokio::spawn(async move {
-                    info!(id, path, "Received ReadFile command via IPC");
+                    debug!(id, path, "Received ReadFile command via IPC");
                     let (j_tx, mut j_rx) = oneshot::channel();
                     job_store.jobs.lock().unwrap().insert(id, j_tx);
                     capsem_core::try_send!(
@@ -575,7 +575,7 @@ pub(crate) async fn handle_ipc_connection(
                     };
                     match result {
                         Ok(Ok(JobResult::ReadFile { data, error })) => {
-                            info!(id, success = data.is_some(), "Sending ReadFileResult back via IPC");
+                            debug!(id, success = data.is_some(), "Sending ReadFileResult back via IPC");
                             capsem_core::try_send!(
                                 "ipc_read_file_result",
                                 ipc_tx_out
@@ -633,7 +633,7 @@ pub(crate) async fn handle_ipc_connection(
                 let ipc_tx_out = ipc_tx_out.clone();
                 let db = Arc::clone(&net_state.db);
                 tokio::spawn(async move {
-                    info!(id, ?action, path, size, "Received LogFileBoundary command via IPC");
+                    debug!(id, ?action, path, size, "Received LogFileBoundary command via IPC");
                     let (j_tx, j_rx) = oneshot::channel();
                     job_store.jobs.lock().unwrap().insert(id, j_tx);
                     capsem_core::try_send!(

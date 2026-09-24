@@ -39,7 +39,7 @@ pub(super) async fn handle_security_latest(
         SessionResponseCache::Miss(slot) => slot,
     };
     let rows = security_latest_for_vm(&state, &id, limit, false).await?;
-    info!(
+    tracing::debug!(
         route = "/vms/{id}/security/latest",
         vm_id = id.as_str(),
         limit,

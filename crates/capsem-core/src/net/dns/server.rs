@@ -371,7 +371,7 @@ impl DnsHandler {
         let query = match parse_query(query_bytes) {
             Ok(q) => q,
             Err(e) => {
-                warn!(error = %e, "dns handler: failed to parse query");
+                debug!(error = %e, "dns handler: failed to parse query");
                 return DnsHandlerResult::parse_failed();
             }
         };
