@@ -100,6 +100,9 @@ pub enum EntryKind {
 pub struct ContainedEntry {
     pub name: OsString,
     pub kind: EntryKind,
+    /// Whether this `Other` entry is a symlink rather than a FIFO, socket or
+    /// device. Reported, never followed.
+    pub is_symlink: bool,
     pub size: u64,
     pub mtime_secs: u64,
     pub identity: EntryIdentity,
@@ -442,6 +445,7 @@ impl ContainedDir {
             if !visit(ContainedEntry {
                 name: name.to_owned(),
                 kind: kind_of(stat.st_mode),
+                is_symlink: SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT == SFlag::S_IFLNK,
                 size: u64::try_from(stat.st_size).unwrap_or(0),
                 mtime_secs: u64::try_from(stat.st_mtime).unwrap_or(0),
                 identity: identity_of(&stat),

@@ -417,3 +417,18 @@ fn remove_symlink_refuses_every_other_entry_type() {
     assert_eq!(std::fs::read(tree.outside.join("target")).unwrap(), b"keep");
     assert!(tree.root_path.join("file").is_file() && tree.root_path.join("dir").is_dir());
 }
+
+#[test]
+fn listings_tell_a_symlink_from_other_special_entries() {
+    let tree = tree();
+    symlink(tree.outside.join("secret"), tree.root_path.join("link")).unwrap();
+    nix::unistd::mkfifo(&tree.root_path.join("fifo"), Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+    std::fs::write(tree.root_path.join("file"), b"x").unwrap();
+
+    let entries = tree.root.entries().unwrap();
+    let find = |name: &str| entries.iter().find(|entry| entry.name == name).unwrap();
+
+    assert!(find("link").is_symlink && find("link").kind == EntryKind::Other);
+    assert!(!find("fifo").is_symlink && find("fifo").kind == EntryKind::Other);
+    assert!(!find("file").is_symlink);
+}
