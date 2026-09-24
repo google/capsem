@@ -17,9 +17,14 @@ ahead of the full plugin contract work and be reused by:
 - `ui_tools`: Capsem-authored tool program API (`ui.alert`, `ui.notice`,
   `ui.card`, `ui.facts`, `ui.table`, `ui.ask`), recipe metadata,
   renderer-drift checks, and Preline template binding checks.
+- `contract_matrix`: machine-readable A2UI, Capsem block, rich artifact, and
+  local-tool coverage tables used to freeze pack boundaries.
+- `editable_state`: Loro-backed editable UI/artifact audit fixture for cards,
+  slide decks, sheets, and website forms.
 
 ## Pack 01 Blocks
 
+- `ui.alert`: message, tone, variant.
 - `ui.notice`: title, message, tone, optional actions.
 - `ui.card`: title, description, optional image, optional link, optional
   actions.

@@ -10,10 +10,16 @@
     "dev": "tsx src/server.ts",
     "test": "vitest run",
     "bench": "tsx scripts/bench.ts",
+    "bench:workspace": "npm run ui:build && tsx scripts/bench-workspace.ts",
+    "generate:artifact-types": "tsx scripts/generate-native-artifact-types.ts",
+    "check:artifact-types": "tsx scripts/generate-native-artifact-types.ts --check",
+    "inspect:workspace": "tsx scripts/inspect-workspace-session.ts",
+    "inspect:export": "tsx scripts/e2e-export.ts",
     "typecheck": "tsc --noEmit",
     "ui:dev": "vite --host 127.0.0.1 --config ui-preview/vite.config.ts",
     "ui:build": "vite build --config ui-preview/vite.config.ts",
-    "ui:preview": "vite preview --host 127.0.0.1 --config ui-preview/vite.config.ts"
+    "ui:preview": "vite preview --host 127.0.0.1 --config ui-preview/vite.config.ts",
+    "e2e:chat": "npm run ui:build && tsx scripts/e2e-chat.ts"
   },
   "keywords": [],
   "author": "",
@@ -27,6 +33,7 @@
     "@tailwindcss/vite": "^4.3.0",
     "@types/node": "^25.9.1",
     "assemblyscript": "^0.28.17",
+    "playwright": "^1.60.0",
     "svelte": "^5.55.10",
     "tailwindcss": "^4.3.0",
     "tsx": "^4.22.3",
@@ -36,6 +43,7 @@
   },
   "dependencies": {
     "@napi-rs/blake-hash": "^1.3.6",
+    "loro-crdt": "1.12.4",
     "mermaid": "^11.15.0",
     "plotly.js-dist-min": "^3.5.1",
     "preline": "^4.2.0"

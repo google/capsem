@@ -1,5 +1,6 @@
 use std::{fs, path::Path};
 
+use capsem_ui_catalog::contract_matrix::CAPSEM_BLOCK_COVERAGE;
 use capsem_ui_catalog::ui_tools::{
     acceptance_program, check_template, run_tool_program, typed_ui_recipe_components, TemplateSpec,
 };
@@ -272,6 +273,23 @@ fn typed_ui_recipe_components_have_explicit_svelte_renderers() {
         assert!(
             renderer.contains(&recipe_check),
             "typed UI recipe component `{component}` has no explicit Svelte renderer branch"
+        );
+    }
+
+    for entry in CAPSEM_BLOCK_COVERAGE {
+        let Some((file, component)) = entry.renderer_adapter.split_once('.') else {
+            panic!(
+                "{} renderer adapter must be file.component shaped",
+                entry.block
+            );
+        };
+        assert_eq!(file, "A2Node");
+        let recipe_check = format!("recipe?.component === \"{component}\"");
+        assert!(
+            renderer.contains(&recipe_check),
+            "{} declares renderer adapter `{}` but the Svelte renderer has no matching recipe branch",
+            entry.block,
+            entry.renderer_adapter
         );
     }
 }

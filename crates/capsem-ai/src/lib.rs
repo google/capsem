@@ -16,6 +16,12 @@ pub enum GenerationError {
         provider: String,
         checked: Vec<String>,
     },
+    #[error("missing model configuration for {provider} {capability}; checked {checked:?}")]
+    MissingModel {
+        provider: String,
+        capability: &'static str,
+        checked: Vec<String>,
+    },
     #[error("unsupported generation capability: {capability}")]
     UnsupportedCapability { capability: &'static str },
     #[error("provider error: {0}")]
@@ -31,6 +37,14 @@ pub type Result<T> = std::result::Result<T, GenerationError>;
 #[derive(Clone, Debug, Default)]
 pub struct GenerationSettings {
     credentials: BTreeMap<String, String>,
+    models: BTreeMap<String, GenerationModelDefaults>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct GenerationModelDefaults {
+    text: Option<String>,
+    image: Option<String>,
+    embedding: Option<String>,
 }
 
 impl GenerationSettings {
@@ -87,6 +101,16 @@ impl GenerationSettings {
         self
     }
 
+    pub fn with_model(
+        mut self,
+        provider: impl AsRef<str>,
+        capability: &'static str,
+        model: impl Into<String>,
+    ) -> Self {
+        self.set_model(provider.as_ref(), capability, model.into());
+        self
+    }
+
     pub fn resolve_api_key(&self, provider: &str) -> Result<ResolvedCredential> {
         let candidates = credential_candidates(provider);
         for id in &candidates {
@@ -129,7 +153,62 @@ impl GenerationSettings {
             .into_iter()
             .map(|(id, credential)| (id, credential.value))
             .collect();
-        Self { credentials }
+        let mut output = Self {
+            credentials,
+            models: BTreeMap::new(),
+        };
+        for (provider, models) in settings.ai.models {
+            output.set_models(&provider, models);
+        }
+        output
+    }
+
+    fn set_models(&mut self, provider: &str, models: ModelDefaultsToml) {
+        if let Some(model) = models.text.and_then(non_empty) {
+            self.set_model(provider, "text", model);
+        }
+        if let Some(model) = models.image.and_then(non_empty) {
+            self.set_model(provider, "image", model);
+        }
+        if let Some(model) = models.embedding.and_then(non_empty) {
+            self.set_model(provider, "embedding", model);
+        }
+    }
+
+    fn set_model(&mut self, provider: &str, capability: &'static str, model: String) {
+        let entry = self.models.entry(canonical_provider(provider)).or_default();
+        match capability {
+            "text" => entry.text = Some(model),
+            "image" => entry.image = Some(model),
+            "embedding" => entry.embedding = Some(model),
+            _ => {}
+        }
+    }
+
+    fn resolve_model(
+        &self,
+        provider: &str,
+        capability: &'static str,
+        requested: Option<String>,
+    ) -> Result<String> {
+        if let Some(model) = requested.and_then(non_empty) {
+            return Ok(model);
+        }
+        let model = self
+            .models
+            .get(provider)
+            .and_then(|models| match capability {
+                "text" => models.text.clone(),
+                "image" => models.image.clone(),
+                "embedding" => models.embedding.clone(),
+                _ => None,
+            })
+            .and_then(non_empty);
+        model.ok_or_else(|| GenerationError::MissingModel {
+            provider: provider.to_owned(),
+            capability,
+            checked: vec![format!("[ai.models.{provider}].{capability}")],
+        })
     }
 }
 
@@ -148,7 +227,6 @@ impl ResolvedCredential {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateTextRequest {
-    #[serde(default = "default_provider")]
     pub provider: String,
     #[serde(default)]
     pub model: Option<String>,
@@ -160,7 +238,6 @@ pub struct GenerateTextRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateImageRequest {
-    #[serde(default = "default_provider")]
     pub provider: String,
     #[serde(default)]
     pub model: Option<String>,
@@ -170,7 +247,6 @@ pub struct GenerateImageRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateEmbeddingRequest {
-    #[serde(default = "default_provider")]
     pub provider: String,
     #[serde(default)]
     pub model: Option<String>,
@@ -304,9 +380,9 @@ where
         let credential = self.settings.resolve_api_key(&provider)?;
         self.provider
             .generate_text(ResolvedTextRequest {
-                model: request
-                    .model
-                    .unwrap_or_else(|| default_text_model(&provider).to_owned()),
+                model: self
+                    .settings
+                    .resolve_model(&provider, "text", request.model)?,
                 provider,
                 system: request.system,
                 prompt: request.prompt,
@@ -321,9 +397,9 @@ where
         let credential = self.settings.resolve_api_key(&provider)?;
         self.provider
             .generate_image(ResolvedImageRequest {
-                model: request
-                    .model
-                    .unwrap_or_else(|| default_image_model(&provider).to_owned()),
+                model: self
+                    .settings
+                    .resolve_model(&provider, "image", request.model)?,
                 provider,
                 prompt: request.prompt,
                 credential,
@@ -347,9 +423,9 @@ where
         let credential = self.settings.resolve_api_key(&provider)?;
         self.provider
             .generate_embedding(ResolvedEmbeddingRequest {
-                model: request
-                    .model
-                    .unwrap_or_else(|| default_embedding_model(&provider).to_owned()),
+                model: self
+                    .settings
+                    .resolve_model(&provider, "embedding", request.model)?,
                 provider,
                 input: request.input,
                 credential,
@@ -651,38 +727,32 @@ impl CapsemHttpModelProvider {
         request: ResolvedEmbeddingRequest,
     ) -> Result<EmbeddingGeneration> {
         let model_path = google_model_path(&request.model);
-        let body = json!({
-            "requests": request.input.iter().map(|input| {
-                json!({
-                    "model": model_path,
-                    "content": {"parts": [{"text": input}]}
-                })
-            }).collect::<Vec<_>>()
-        });
-        let value = self
-            .post_json(
-                self.client
-                    .post(format!(
-                        "https://generativelanguage.googleapis.com/v1beta/{}:batchEmbedContents",
-                        model_path
-                    ))
-                    .header(
-                        "x-goog-api-key",
-                        request.credential.expose_for_provider_client(),
-                    ),
-                &body,
-            )
-            .await?;
-        let response: GeminiBatchEmbeddingResponse = parse_provider_value(value)?;
-        let vectors: Vec<EmbeddingVector> = response
-            .embeddings
-            .into_iter()
-            .enumerate()
-            .map(|(index, embedding)| EmbeddingVector {
+        let mut vectors = Vec::with_capacity(request.input.len());
+        for (index, input) in request.input.iter().enumerate() {
+            let body = json!({
+                "model": model_path,
+                "content": {"parts": [{"text": input}]}
+            });
+            let value = self
+                .post_json(
+                    self.client
+                        .post(format!(
+                            "https://generativelanguage.googleapis.com/v1beta/{}:embedContent",
+                            model_path
+                        ))
+                        .header(
+                            "x-goog-api-key",
+                            request.credential.expose_for_provider_client(),
+                        ),
+                    &body,
+                )
+                .await?;
+            let response: GeminiEmbeddingResponse = parse_provider_value(value)?;
+            vectors.push(EmbeddingVector {
                 index: index as u32,
-                values: embedding.values,
-            })
-            .collect();
+                values: response.embedding.values,
+            });
+        }
         let dimensions = vectors
             .first()
             .map(|vector| vector.values.len())
@@ -891,8 +961,8 @@ struct GeminiUsageMetadata {
 }
 
 #[derive(Debug, Deserialize)]
-struct GeminiBatchEmbeddingResponse {
-    embeddings: Vec<GeminiEmbedding>,
+struct GeminiEmbeddingResponse {
+    embedding: GeminiEmbedding,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1075,12 +1145,27 @@ fn fake_cost() -> GenerationCost {
 struct ServiceSettingsToml {
     #[serde(default)]
     credentials: CredentialSettingsToml,
+    #[serde(default)]
+    ai: AiSettingsToml,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct CredentialSettingsToml {
     #[serde(default)]
     items: BTreeMap<String, TomlCredential>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AiSettingsToml {
+    #[serde(default)]
+    models: BTreeMap<String, ModelDefaultsToml>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ModelDefaultsToml {
+    text: Option<String>,
+    image: Option<String>,
+    embedding: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1163,35 +1248,6 @@ fn canonical_provider(provider: &str) -> String {
     }
 }
 
-fn default_provider() -> String {
-    "google".to_owned()
-}
-
-fn default_text_model(provider: &str) -> &'static str {
-    match provider {
-        "openai" => "gpt-4o-mini",
-        "anthropic" => "claude-3-5-haiku-20241022",
-        "google" => "gemini-2.0-flash-exp",
-        _ => "default",
-    }
-}
-
-fn default_image_model(provider: &str) -> &'static str {
-    match provider {
-        "openai" => "gpt-image-1",
-        "google" => "gemini-2.5-flash-image",
-        _ => "default",
-    }
-}
-
-fn default_embedding_model(provider: &str) -> &'static str {
-    match provider {
-        "openai" => "text-embedding-3-small",
-        "google" => "gemini-embedding-001",
-        _ => "default",
-    }
-}
-
 fn require_non_empty(field: &'static str, value: &str) -> Result<()> {
     if value.trim().is_empty() {
         Err(GenerationError::Provider(format!(
@@ -1199,6 +1255,16 @@ fn require_non_empty(field: &'static str, value: &str) -> Result<()> {
         )))
     } else {
         Ok(())
+    }
+}
+
+fn non_empty(value: impl Into<String>) -> Option<String> {
+    let value = value.into();
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
     }
 }
 
@@ -1259,10 +1325,36 @@ mod tests {
         assert_eq!(credential.expose_for_provider_client(), "sk-test");
     }
 
+    #[test]
+    fn service_settings_resolves_model_policy() {
+        let settings = GenerationSettings::from_service_toml_str(
+            r#"
+            [ai.models.google]
+            text = "gemini-3.5-flash"
+            image = "gemini-3.5-flash-image"
+            embedding = "gemini-embedding-2"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            settings.resolve_model("google", "text", None).unwrap(),
+            "gemini-3.5-flash"
+        );
+        assert_eq!(
+            settings
+                .resolve_model("google", "image", Some("override-image".to_owned()))
+                .unwrap(),
+            "override-image"
+        );
+    }
+
     #[tokio::test]
     async fn fake_provider_generates_text_without_network() {
         let engine = GenerationEngine::new(
-            GenerationSettings::empty().with_credential("google-api-key", "AIza-test"),
+            GenerationSettings::empty()
+                .with_credential("google-api-key", "AIza-test")
+                .with_model("google", "text", "gemini-3.5-flash"),
             FakeModelProvider,
         );
         let response = engine
@@ -1283,7 +1375,9 @@ mod tests {
     #[tokio::test]
     async fn fake_provider_generates_embedding_without_network() {
         let engine = GenerationEngine::new(
-            GenerationSettings::empty().with_credential("google-api-key", "AIza-test"),
+            GenerationSettings::empty()
+                .with_credential("google-api-key", "AIza-test")
+                .with_model("google", "embedding", "gemini-embedding-2"),
             FakeModelProvider,
         );
         let response = engine
@@ -1305,19 +1399,19 @@ mod tests {
     #[test]
     fn google_model_path_is_native_and_stable() {
         assert_eq!(
-            google_model_path("gemini-2.5-flash-image"),
-            "models/gemini-2.5-flash-image"
+            google_model_path("gemini-3.5-flash-image"),
+            "models/gemini-3.5-flash-image"
         );
         assert_eq!(
-            google_model_path("models/gemini-embedding-001"),
-            "models/gemini-embedding-001"
+            google_model_path("models/gemini-embedding-2"),
+            "models/gemini-embedding-2"
         );
     }
 
     #[test]
     fn parses_gemini_image_part_without_provider_crate() {
         let response: GeminiGenerateContentResponse = serde_json::from_value(json!({
-            "modelVersion": "gemini-2.5-flash-image",
+            "modelVersion": "gemini-3.5-flash-image",
             "candidates": [{
                 "content": {
                     "parts": [
@@ -1361,6 +1455,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_model_is_typed() {
+        let engine = GenerationEngine::new(
+            GenerationSettings::empty().with_credential("google-api-key", "AIza-test"),
+            FakeModelProvider,
+        );
+        let error = engine
+            .generate_text(GenerateTextRequest {
+                provider: "gemini".to_owned(),
+                model: None,
+                system: None,
+                prompt: "hello".to_owned(),
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            GenerationError::MissingModel {
+                provider,
+                capability: "text",
+                ..
+            } if provider == "google"
+        ));
+    }
+
+    #[tokio::test]
     #[ignore = "live OpenAI image generation smoke; skips if OPENAI_API_KEY is absent"]
     async fn live_openai_image_generation_smoke() {
         let Some(settings) = live_settings_with_provider("openai") else {
@@ -1391,7 +1510,7 @@ mod tests {
         let output = engine
             .generate_image(GenerateImageRequest {
                 provider: "gemini".to_owned(),
-                model: Some("gemini-2.5-flash-image".to_owned()),
+                model: Some("gemini-3.5-flash-image".to_owned()),
                 prompt: "small clean icon of a golden security gate, no text".to_owned(),
             })
             .await
@@ -1433,7 +1552,7 @@ mod tests {
         let output = engine
             .generate_embedding(GenerateEmbeddingRequest {
                 provider: "gemini".to_owned(),
-                model: Some("gemini-embedding-001".to_owned()),
+                model: Some("gemini-embedding-2".to_owned()),
                 input: vec!["capsem accounting smoke".to_owned()],
             })
             .await

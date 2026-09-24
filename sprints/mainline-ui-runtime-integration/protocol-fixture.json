@@ -1,0 +1,291 @@
+{
+  "fixture": "mainline-ui-runtime-protocol-bakeoff.v1",
+  "records": [
+    {
+      "seq": 1,
+      "principal": "user:elie",
+      "role": "user",
+      "verb": "create",
+      "contentType": "ui.surface",
+      "title": "Chat surface",
+      "content": {
+        "surfaceId": "chat-main",
+        "format": "a2ui+capsem"
+      }
+    },
+    {
+      "seq": 2,
+      "principal": "agent:codex",
+      "role": "assistant",
+      "verb": "append",
+      "contentType": "artifact.card",
+      "title": "Model card",
+      "content": {
+        "id": "card-model",
+        "state": {
+          "engine": "loro",
+          "logicalShape": {
+            "component": "card",
+            "title": "Model card",
+            "body": "Configurable model summary",
+            "actions": [
+              {
+                "id": "visit-homepage",
+                "label": "Visit homepage",
+                "href": "https://example.test/model"
+              }
+            ],
+            "media": {
+              "id": "model-image",
+              "kind": "image"
+            }
+          }
+        },
+        "a2ui": [
+          {
+            "version": "v0.9",
+            "createSurface": {
+              "surfaceId": "card-model",
+              "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+            }
+          }
+        ],
+        "topology": [
+          "card-model/title",
+          "card-model/image",
+          "card-model/body",
+          "card-model/link"
+        ]
+      }
+    },
+    {
+      "seq": 3,
+      "principal": "agent:codex",
+      "role": "assistant",
+      "verb": "append",
+      "contentType": "artifact.chart.barChart",
+      "title": "House metrics",
+      "content": {
+        "id": "chart-house-metrics",
+        "renderer": "plotly",
+        "series": [
+          { "name": "honor", "values": [7, 3] },
+          { "name": "treasury", "values": [4, 9] }
+        ],
+        "x": ["Stark", "Lannister"],
+        "stack": "grouped",
+        "direction": "vertical",
+        "topology": [
+          "chart-house-metrics/title",
+          "chart-house-metrics/legend",
+          "chart-house-metrics/series/honor",
+          "chart-house-metrics/series/treasury"
+        ]
+      }
+    },
+    {
+      "seq": 4,
+      "principal": "agent:codex",
+      "role": "assistant",
+      "verb": "append",
+      "contentType": "artifact.diagram.mermaid",
+      "title": "Workflow",
+      "content": {
+        "id": "diagram-workflow",
+        "renderer": "mermaid",
+        "source": "flowchart LR\n  Data --> Chart\n  Chart --> Slide",
+        "topology": ["diagram-workflow/title", "diagram-workflow/source"]
+      }
+    },
+    {
+      "seq": 5,
+      "principal": "agent:codex",
+      "role": "assistant",
+      "verb": "append",
+      "contentType": "artifact.spreadsheet",
+      "title": "Finance workbook",
+      "content": {
+        "id": "spreadsheet-finance",
+        "state": {
+          "engine": "loro",
+          "logicalShape": {
+            "sheets": [
+              {
+                "id": "sheet-q1",
+                "name": "Q1",
+                "cells": {
+                  "A1": "House",
+                  "B1": "Gold",
+                  "A2": "Lannister",
+                  "B2": 9000
+                }
+              }
+            ]
+          }
+        },
+        "topology": [
+          "spreadsheet-finance/sheet-q1",
+          "spreadsheet-finance/sheet-q1/cell/A1",
+          "spreadsheet-finance/sheet-q1/cell/B2"
+        ]
+      }
+    },
+    {
+      "seq": 6,
+      "principal": "agent:codex",
+      "role": "assistant",
+      "verb": "append",
+      "contentType": "artifact.slideDeck",
+      "title": "Realm of Code",
+      "content": {
+        "id": "deck-realm-code",
+        "state": {
+          "engine": "loro",
+          "logicalShape": {
+            "slides": [
+              {
+                "id": "slide-title",
+                "regions": [
+                  { "id": "title", "kind": "text", "text": "Realm of Code" }
+                ]
+              },
+              {
+                "id": "slide-chart",
+                "regions": [
+                  { "id": "chart", "kind": "artifactRef", "artifactId": "chart-house-metrics" }
+                ]
+              }
+            ]
+          }
+        },
+        "topology": [
+          "deck-realm-code/slide-title/region/title",
+          "deck-realm-code/slide-chart/region/chart"
+        ]
+      }
+    },
+    {
+      "seq": 7,
+      "principal": "agent:codex",
+      "role": "assistant",
+      "verb": "append",
+      "contentType": "artifact.website",
+      "title": "Model signup page",
+      "content": {
+        "id": "website-model-signup",
+        "state": {
+          "engine": "loro",
+          "logicalShape": {
+            "pages": [
+              {
+                "id": "page-home",
+                "sections": [
+                  {
+                    "id": "signup-form",
+                    "kind": "form",
+                    "fields": [
+                      { "id": "email", "kind": "textField", "label": "Email" },
+                      { "id": "terms", "kind": "checkBox", "label": "Accept terms" }
+                    ],
+                    "action": "signup.submit"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "topology": [
+          "website-model-signup/page-home/signup-form",
+          "website-model-signup/page-home/signup-form/field/email",
+          "website-model-signup/page-home/signup-form/field/terms"
+        ]
+      }
+    },
+    {
+      "seq": 8,
+      "principal": "agent:codex",
+      "role": "assistant",
+      "verb": "append",
+      "contentType": "artifact.image",
+      "title": "Generated house landscape",
+      "content": {
+        "id": "image-house-landscape",
+        "provider": "gemini",
+        "model": "gemini-3.5-flash",
+        "prompt": "cinematic fantasy software kingdom landscape",
+        "cost": { "currency": "USD", "estimated": true },
+        "topology": ["image-house-landscape/title", "image-house-landscape/media", "image-house-landscape/caption"]
+      }
+    },
+    {
+      "seq": 9,
+      "principal": "user:elie",
+      "role": "user",
+      "verb": "comment",
+      "contentType": "ui.comment",
+      "title": "Rename card title",
+      "content": {
+        "target": "card-model/title",
+        "text": "make this title sharper",
+        "status": "pending"
+      }
+    },
+    {
+      "seq": 10,
+      "principal": "agent:codex",
+      "role": "assistant",
+      "verb": "mutate",
+      "contentType": "artifact.slideDeck.mutation",
+      "title": "Move slide region",
+      "content": {
+        "artifactId": "deck-realm-code",
+        "engine": "loro",
+        "target": "deck-realm-code/slide-title/region/title",
+        "operation": "patchRegion",
+        "patch": { "x": 80, "y": 120 }
+      }
+    },
+    {
+      "seq": 11,
+      "principal": "agent:codex",
+      "role": "assistant",
+      "verb": "mutate",
+      "contentType": "artifact.spreadsheet.mutation",
+      "title": "Edit sheet cell",
+      "content": {
+        "artifactId": "spreadsheet-finance",
+        "engine": "loro",
+        "target": "spreadsheet-finance/sheet-q1/cell/B2",
+        "operation": "setCell",
+        "value": 9500
+      }
+    },
+    {
+      "seq": 12,
+      "principal": "agent:codex",
+      "role": "assistant",
+      "verb": "mutate",
+      "contentType": "artifact.website.mutation",
+      "title": "Edit form label",
+      "content": {
+        "artifactId": "website-model-signup",
+        "engine": "loro",
+        "target": "website-model-signup/page-home/signup-form/field/email",
+        "operation": "setLabel",
+        "value": "Work email"
+      }
+    },
+    {
+      "seq": 13,
+      "principal": "system:capsem",
+      "role": "system",
+      "verb": "checkpoint",
+      "contentType": "workspace.checkpoint",
+      "title": "Checkpoint after fixture",
+      "content": {
+        "upToSeq": 12,
+        "contains": ["projection", "artifactSnapshots", "taskLedger"]
+      }
+    }
+  ]
+}

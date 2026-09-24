@@ -11,6 +11,16 @@ Compiler numbers are a separate experiment because they measure install-time
 source compilation, not callback throughput. They live in
 [`compiler-benchmark.md`](compiler-benchmark.md).
 
+The UI/workspace runtime benchmark is a separate lock-gate experiment because
+it measures projection, replay, checkpoint, stream fanout, mutation latency, and
+browser renderer hydration instead of WASM callback throughput. It lives in
+[`workspace-runtime-benchmark.md`](workspace-runtime-benchmark.md).
+
+The UI/workspace session inspection is the matching audit experiment: it proves
+live telemetry plus durable SQLite records/checkpoints for the first UI edit
+loop. It lives in
+[`workspace-session-inspection.md`](workspace-session-inspection.md).
+
 ## Benchmark
 
 Same benchmark shape for every row:

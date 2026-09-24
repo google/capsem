@@ -1,0 +1,64 @@
+# Sprint: workspace-stream-projection
+
+## Tasks
+
+- [x] Codify append-only record/checkpoint/projection plan.
+- [x] Add Rust workspace record and projection engine.
+- [x] Publish artifact records from native API calls.
+- [x] Expose snapshot and WebSocket stream.
+- [x] Switch `/chat` to keyed Svelte maps.
+- [x] Prove generated image appears through stream/projection.
+- [x] Run tests.
+- [x] Add delete/select records and native tool routes.
+- [x] Prove checkpoint/local-storage pointer updates after projection mutation.
+- [x] Add title-only patch records for live card editing.
+- [x] Replace flat ordered lanes with durable render topology.
+- [x] Add `local.ui.info` read model for topology, provenance, and edit targets.
+- [x] Add UI-to-Rust reverse lane for selected-element change requests.
+- [x] Add generic DOM annotation targets for any clicked Capsem element.
+- [x] Gate annotation behind a floating Comment tool and keep pending feedback visible.
+- [x] Add selector-scoped workspace style patches for agent-applied UI changes.
+- [x] Add chat stream reconnect/resume so mutations survive a dropped WebSocket.
+- [x] Reopen comment markers with editable text and add resolve-to-checkmark lifecycle.
+- [x] Add visible comment task list with pending/resolved state.
+
+## Notes
+
+- This is split from the WASM plugin lane. It is a general Capsem UI/runtime primitive that can land ahead of full plugin compilation.
+- Corrected visible target from `/deck` to `/chat`; deck proof remains compatibility/demo data, while chat now consumes `/native/workspace/snapshot` plus `/native/workspace/stream`.
+- Manual proof generated `generated-image-chat-landscape`; snapshot reported topology root `["generated-image-chat-landscape"]`, and Chrome verified one `capsem-media` shadow image with a `data:image` source.
+- Added `POST /native/workspace/select` and `POST /native/workspace/delete`. Select emits only a `select` delta; delete emits `deleteElement`, `deleteTopologyNode`, and fallback `select`.
+- Manual proof used sheet/table artifacts: selected `table-delete-select-proof`, deleted it, and verified the snapshot plus browser had only `sheet-delete-select-proof`. Browser local storage held `{"workspaceId":"native-artifacts","checkpointSeq":4,"seq":4}`.
+- Added `POST /native/workspace/title`. Manual proof patched `sheet-live-title-proof` from `Original Sheet Title` to `Live Edited Card Title`; projection title changed, artifact title stayed original, topology root stayed `["sheet-live-title-proof"]`, and `/chat` rendered the edited title at seq 2.
+- Replaced region arrays with `RenderTopology { roots, nodes }`. Each node carries `id`, optional `parent`, `slot`, and `index`; current chat rendering uses the root order.
+- Added durable element provenance and `GET /native/workspace/info` (`local__ui_info`) so the agent can inspect topology, selected element, artifact handles, and created/updated principals before issuing edits.
+- Manual proof seeded `topology-info-proof` through `POST /native/ui/table`, confirmed `local.ui.info` returned root topology plus `createdBy=local.ui.table`, patched the title through `POST /native/workspace/title`, and confirmed the projection title changed while the artifact title stayed `Original Topology Title`.
+- Added `POST /native/workspace/change-request` (`local__workspace_change_request`). `/chat` now posts durable select records when an element is clicked and posts `ui.change` action records from the footer against the selected topology element.
+- Fixed the feedback hit target so clicking the rendered component body, not only the card header, selects the topology element and focuses the feedback textarea.
+- Moved feedback into a floating Preline-style comment panel opened from the selected element; the footer is now only a hint and feedback records still target the selected topology element.
+- Added `WorkspaceAnnotationTarget { kind, label, path, selector, hostSelector, shadowSelector, selectorVerified, metadata }` to `ui.change` requests. Artifact components now install a generic DOM annotator: hosts carry `data-capsem-artifact-id`, shadow elements are numbered with `data-capsem-node`, and annotations record traversal facts instead of component-specific row/title branches.
+- Changed the comment panel from generic bottom docking to element-anchored placement when a DOM rect is available. The inspector overlay draws the selected element box with width/height chips, and the panel displays layout facts plus the generated selector so the agent can see the exact concrete element it is about to modify.
+- Added a floating Comment button. Annotation capture is disabled until the tool is armed; once armed, selecting an element opens a feedback panel for that concrete DOM target.
+- Send now closes the panel and leaves a pinned marker on the selected element. Markers group by selector, show the pending count, and reopen the same selector-scoped feedback thread when clicked.
+- Replaced the annotation Christmas-tree styling with one theme lane: selected boxes, dimension chips, pending badges, and markers now use primary/layer semantic tokens. Comment mode also sets a comment-shaped cursor on annotatable chat surfaces, including Shadow DOM artifact internals.
+- Simplified the comment popover from an inspector into a user annotation control: exact target outline, comment pointer icon, textarea with `What should change?`, and Send/Cancel only. Parent card selected chrome is suppressed while Comment mode is active.
+- Removed annotation hover/focus mutation from artifact internals. Comment selection is now injected overlay only: visible primary border plus light primary background on the exact DOM target, with a filled primary comment handle/cursor instead of a black outline icon.
+- Added pre-click hover preview for Comment mode. Artifact Shadow DOM now emits `capsem:annotate-preview` on pointer movement and clears on pointer leave; `/chat` renders the same overlay layer for preview before click, while click remains the commit action that opens the comment panel.
+- Corrected Capsem AI model configuration discipline: provider credentials and model policy now both come from TOML. `capsem-ai` no longer has code model defaults; omitted request models resolve through `[ai.models.<provider>]` or fail with typed `MissingModel`.
+- Added `POST /native/workspace/style` as the first concrete answer path for `ui.change` requests. It emits an `elementPatch` record with camelCase `stylePatches`, Rust projects those patches into the target artifact spec, and the Capsem web component applies whitelisted CSS properties to the exact Shadow DOM selector.
+- Fixed the live-update failure that made the mutation look fake. The browser had a closed workspace stream after a server restart and therefore never reconciled the emitted style record. `/chat` now reconnects with epoch guarding and receives a fresh snapshot before new deltas.
+- Manual proof for the user comment `bold`: seeded `cat-playing-garden-card`, posted `POST /native/workspace/style` targeting `capsem-media[data-capsem-artifact-id="cat-playing-garden-card"] >>> [data-capsem-node="6"]`, and Chrome verified the already-open `/chat` page advanced to `live · seq 2` with the exact Shadow DOM target text `generated` carrying inline `font-weight: 700;`.
+- Fixed comment marker reopen/edit behavior. Markers now retain the latest instruction, reopening a marker restores that text into the feedback textarea, and resolving a marker closes the panel, renders a success checkmark briefly, then removes the marker.
+- Renamed the panel submit action from Send to Comment and added a visible task list. Comments now stay listed after the spatial marker disappears, and each task records the instruction, target label, seq, and pending/resolved status.
+
+## Coverage Ledger
+
+- Unit/contract: `cargo test -p capsem-ui-catalog --test workspace`, `cargo test -p capsem-ui-catalog`, `npm test -- --run test/native-workspace.test.ts test/capsem-element.test.ts`. Style patch reducer coverage verifies artifact `spec.stylePatches`; frontend component coverage verifies selector-scoped patches apply without hardcoded media-meta CSS.
+- Functional: `cargo test -p capsem-plugin-server`, generated image through `POST /native/generate/image`, delete/select/title/change-request/style through native workspace routes, `local.ui.info` through `GET /native/workspace/info`.
+- Adversarial: workspace parser rejects malformed snapshot/record shapes; Rust rejects content type mismatch.
+- E2E/browser: Chrome opened `http://127.0.0.1:8787/chat`; `capsem-media` rendered a shadow DOM `img[src^="data:image"]`; deleted table was absent after projection mutation and local checkpoint pointer was seq 4; title-only patch rendered as `Live Edited Card Title` without changing artifact title; topology proof rendered `Topology Title Edited Through Patch` and shadow table rows; clicking the rendered `capsem-sheet` body selected `floating-comment-proof`, opened a fixed Preline-style comment panel, accepted keyboard input, submitted feedback, and `local.ui.info` showed a pending `ui.change` request for that element. Generic annotator proof clicked the `capsem-sheet` host for `generic-annotator-proof`; the concrete clicked `th` recorded `annotation.kind=domElement`, `selector=capsem-sheet[data-capsem-artifact-id="generic-annotator-proof"] >>> [data-capsem-node="8"]`, `selectorVerified=true`, and metadata including tag/text/traversal. Inspector overlay proof clicked `td: Lannister` in `inspector-submit-proof`; panel displayed `W 210`, `H 41`, padding/gap/display/font facts, Send stayed reachable after panel flip, and `local.ui.info` recorded computed style plus traversal metadata at `seq=3`. Marker proof submitted two comments on `td: Lannister`; marker count advanced `1 -> 2`, sending closed the panel, clicking the marker reopened the selector-scoped panel with `2 pending`, and `local.ui.info` showed two pending requests. Theme/cursor proof on `/chat` submitted `make this row calmer`, verified `panelAfterSend=0`, `markerCount=1`, marker reopen showed `1 pending`, marker and overlay classes used primary/layer tokens, and both host plus Shadow DOM `td` computed a comment-shaped cursor. Simplified comment proof on `/chat` clicked `capsem-media img` and verified panel text was only `Cancel`/`Send`, placeholder was `What should change?`, selected parent footer count was `0`, parent card had no selected primary border, one comment pointer SVG rendered, and no inspector words were present. Overlay-only proof on `http://127.0.0.1:8788/chat` verified normal media had transparent background/no box shadow/cursor auto before Comment mode; armed Comment mode used a primary-blue filled cursor; selected target rendered `border-2 border-primary bg-primary/10`, and the floating handle used `bg-primary text-primary-foreground`. Hover-preview browser pass on `http://127.0.0.1:8788/chat` armed Comment mode with no panel/overlay, then targeted `capsem-media img`; the browser wrapper committed the click despite a trial request, but the resulting overlay geometry exactly matched the Shadow DOM image rect (`left=111`, `top=396`, `width=499`, `height=272`), proving the same target rect is used for the overlay. Style-mutation proof on `http://127.0.0.1:8788/chat?v=style-reconnect-1` posted a Rust workspace style record and verified the open page reached `live · seq 2`; the exact target `[data-capsem-node="6"]` inside `capsem-media` had text `generated`, inline style `font-weight: 700;`, and computed `fontWeight=700`.
+- Comment lifecycle proof on `http://127.0.0.1:8788/chat?v=comment-resolve-1` armed Comment mode, selected the shell title, submitted `make the title sparkle but keep it readable`, saw marker `1`, clicked it, verified the textarea reopened with the same text and a Resolve button, clicked Resolve, verified a checkmark marker appeared, and verified the marker disappeared after the timeout.
+- Comment task-list proof on `http://127.0.0.1:8788/chat?v=comment-task-list-1` submitted `rename this card to Garden Cat`, verified there was no Send button and the panel submit button was Comment, verified the task list showed `pending`, reopened the marker with the same text, resolved it, verified the task list changed to `resolved`, verified the marker became a checkmark and then disappeared, and verified the resolved task remained visible.
+- Telemetry: generation route still records existing `NativeTelemetryEvent`; dedicated stream telemetry deferred.
+- Performance: deferred until projection path is stable.
+- Missing/deferred: Rust-to-WASM browser reducer is not in this slice; server emits canonical render deltas first. Workspace persistence is still in-memory for the prototype, so a server restart resets artifacts and comment requests even though the client now reconnects correctly to the fresh snapshot.

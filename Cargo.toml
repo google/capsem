@@ -5,6 +5,7 @@ members = [
     "crates/capsem-plugin-engine",
     "crates/capsem-plugin-server",
     "crates/capsem-ui-catalog",
+    "crates/capsem-ui-runtime",
 ]
 resolver = "2"
 
@@ -17,21 +18,23 @@ publish = false
 anyhow = "1"
 a2ui-types = "0.1.0"
 async-trait = "0.1"
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 blake3 = "1"
 bytes = "1"
 capsem-ai = { path = "crates/capsem-ai" }
 capsem-ui-catalog = { path = "crates/capsem-ui-catalog" }
+capsem-ui-runtime = { path = "crates/capsem-ui-runtime" }
 http-body-util = "0.1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "http1"] }
+loro = "1.13.0"
 reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync"] }
 toml = "0.8"
 tower-http = { version = "0.6", features = ["trace", "fs"] }
 wasmtime = "45.0.0"

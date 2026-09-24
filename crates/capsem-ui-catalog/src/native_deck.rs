@@ -2,7 +2,13 @@ use std::collections::BTreeMap;
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
+
+use crate::contract_matrix::{
+    GENERATED_MEDIA_API_COVERAGE, PLOTLY_CHART_API_COVERAGE, RICH_ARTIFACT_SCHEMA_COVERAGE,
+};
+
+pub const NATIVE_ARTIFACT_SCHEMA_ID: &str = "https://capsem.org/schemas/ui/native-artifact.v1.json";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +49,7 @@ pub enum NativeArtifactKind {
     Table,
     Chart,
     Diagram,
+    Timeline,
     Slide,
     SlideDeck,
 }
@@ -82,6 +89,8 @@ pub struct GenerateImageRequest {
     pub id: String,
     pub title: String,
     pub prompt: String,
+    #[serde(default)]
+    pub caption: Option<String>,
     #[serde(default = "default_gemini_provider")]
     pub provider: String,
     #[serde(default)]
@@ -152,16 +161,20 @@ pub struct ChartRequest {
     pub x: String,
     pub series: Vec<ChartSeries>,
     pub x_label: String,
+    #[serde(default)]
+    pub x_unit: Option<String>,
     pub y_label: String,
     pub y_unit: String,
-    #[serde(default)]
-    pub stack: bool,
+    #[serde(default = "default_chart_stack")]
+    pub stack: ChartStackMode,
     #[serde(default = "default_chart_direction")]
     pub direction: ChartDirection,
     #[serde(default)]
     pub legend: Option<LegendPosition>,
     #[serde(default)]
     pub second_axis: Option<ChartAxis>,
+    #[serde(default)]
+    pub fit: Option<ChartFit>,
     #[serde(default = "default_chart_exports")]
     pub export: Vec<String>,
 }
@@ -173,6 +186,15 @@ pub enum ChartKind {
     LineChart,
     HeatmapChart,
     BoxPlot,
+    ScatterPlot,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartStackMode {
+    None,
+    Stacked,
+    Grouped,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -217,6 +239,22 @@ pub struct ChartAxis {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ChartFit {
+    pub method: ChartFitMethod,
+    #[serde(default = "default_true")]
+    pub display: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartFitMethod {
+    Linear,
+    Logarithmic,
+    MovingAverage,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DiagramRequest {
     pub id: String,
     pub title: String,
@@ -231,6 +269,37 @@ pub struct DiagramRequest {
 #[serde(rename_all = "camelCase")]
 pub enum DiagramKind {
     Mermaid,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineRequest {
+    pub id: String,
+    pub title: String,
+    pub lanes: Vec<TimelineLane>,
+    pub events: Vec<TimelineEvent>,
+    #[serde(default = "default_timeline_exports")]
+    pub export: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineLane {
+    pub id: String,
+    pub title: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineEvent {
+    pub id: String,
+    pub title: String,
+    pub lane: String,
+    pub start: String,
+    #[serde(default)]
+    pub end: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -285,7 +354,7 @@ pub fn generate_image(request: GenerateImageRequest) -> Result<NativeArtifact, S
     require_non_empty("title", &request.title)?;
     require_non_empty("prompt", &request.prompt)?;
     require_non_empty("provider", &request.provider)?;
-    Ok(artifact(
+    checked_artifact(
         request.id,
         NativeArtifactKind::GeneratedImage,
         request.title,
@@ -295,9 +364,14 @@ pub fn generate_image(request: GenerateImageRequest) -> Result<NativeArtifact, S
             "provider": request.provider,
             "model": request.model,
             "prompt": request.prompt,
+            "caption": request.caption,
+            "revisedPrompt": null,
+            "usage": null,
+            "cost": null,
+            "durationMs": null,
             "status": "planned"
         }),
-    ))
+    )
 }
 
 pub fn generate_text(request: GenerateTextRequest) -> Result<NativeArtifact, String> {
@@ -305,7 +379,7 @@ pub fn generate_text(request: GenerateTextRequest) -> Result<NativeArtifact, Str
     require_non_empty("title", &request.title)?;
     require_non_empty("prompt", &request.prompt)?;
     require_non_empty("provider", &request.provider)?;
-    Ok(artifact(
+    checked_artifact(
         request.id,
         NativeArtifactKind::GeneratedText,
         request.title,
@@ -316,9 +390,12 @@ pub fn generate_text(request: GenerateTextRequest) -> Result<NativeArtifact, Str
             "model": request.model,
             "system": request.system,
             "prompt": request.prompt,
+            "usage": null,
+            "cost": null,
+            "durationMs": null,
             "status": "planned"
         }),
-    ))
+    )
 }
 
 pub fn generate_embedding(request: GenerateEmbeddingRequest) -> Result<NativeArtifact, String> {
@@ -331,7 +408,7 @@ pub fn generate_embedding(request: GenerateEmbeddingRequest) -> Result<NativeArt
     for value in &request.input {
         require_non_empty("input", value)?;
     }
-    Ok(artifact(
+    checked_artifact(
         request.id,
         NativeArtifactKind::GeneratedEmbedding,
         request.title,
@@ -341,16 +418,19 @@ pub fn generate_embedding(request: GenerateEmbeddingRequest) -> Result<NativeArt
             "provider": request.provider,
             "model": request.model,
             "input": request.input,
+            "usage": null,
+            "cost": null,
+            "durationMs": null,
             "status": "planned"
         }),
-    ))
+    )
 }
 
 pub fn create_sheet(request: SheetRequest) -> Result<NativeArtifact, String> {
     require_non_empty("id", &request.id)?;
     require_non_empty("title", &request.title)?;
     require_columns(&request.columns)?;
-    Ok(artifact(
+    checked_artifact(
         request.id,
         NativeArtifactKind::Sheet,
         request.title,
@@ -360,7 +440,7 @@ pub fn create_sheet(request: SheetRequest) -> Result<NativeArtifact, String> {
             "rows": request.rows,
             "source": request.source
         }),
-    ))
+    )
 }
 
 pub fn create_table(request: TableRequest) -> Result<NativeArtifact, String> {
@@ -371,7 +451,7 @@ pub fn create_table(request: TableRequest) -> Result<NativeArtifact, String> {
     if request.page_size == 0 {
         return Err("pageSize must be greater than zero".to_owned());
     }
-    Ok(artifact(
+    checked_artifact(
         request.id,
         NativeArtifactKind::Table,
         request.title,
@@ -384,7 +464,7 @@ pub fn create_table(request: TableRequest) -> Result<NativeArtifact, String> {
             "filterable": request.filterable,
             "pageSize": request.page_size
         }),
-    ))
+    )
 }
 
 pub fn create_chart(request: ChartRequest) -> Result<NativeArtifact, String> {
@@ -402,7 +482,7 @@ pub fn create_chart(request: ChartRequest) -> Result<NativeArtifact, String> {
         require_non_empty("series.name", &series.name)?;
         require_non_empty("series.field", &series.field)?;
     }
-    Ok(artifact(
+    checked_artifact(
         request.id,
         NativeArtifactKind::Chart,
         request.title,
@@ -414,22 +494,24 @@ pub fn create_chart(request: ChartRequest) -> Result<NativeArtifact, String> {
             "x": request.x,
             "series": request.series,
             "xLabel": request.x_label,
+            "xUnit": request.x_unit,
             "yLabel": request.y_label,
             "yUnit": request.y_unit,
             "stack": request.stack,
             "direction": request.direction,
             "legend": request.legend,
             "secondAxis": request.second_axis,
+            "fit": request.fit,
             "export": request.export
         }),
-    ))
+    )
 }
 
 pub fn create_diagram(request: DiagramRequest) -> Result<NativeArtifact, String> {
     require_non_empty("id", &request.id)?;
     require_non_empty("title", &request.title)?;
     require_non_empty("source", &request.source)?;
-    Ok(artifact(
+    checked_artifact(
         request.id,
         NativeArtifactKind::Diagram,
         request.title,
@@ -439,7 +521,39 @@ pub fn create_diagram(request: DiagramRequest) -> Result<NativeArtifact, String>
             "source": request.source,
             "export": request.export
         }),
-    ))
+    )
+}
+
+pub fn create_timeline(request: TimelineRequest) -> Result<NativeArtifact, String> {
+    require_non_empty("id", &request.id)?;
+    require_non_empty("title", &request.title)?;
+    if request.lanes.is_empty() {
+        return Err("timeline lanes must not be empty".to_owned());
+    }
+    if request.events.is_empty() {
+        return Err("timeline events must not be empty".to_owned());
+    }
+    for lane in &request.lanes {
+        require_non_empty("lanes.id", &lane.id)?;
+        require_non_empty("lanes.title", &lane.title)?;
+    }
+    for event in &request.events {
+        require_non_empty("events.id", &event.id)?;
+        require_non_empty("events.title", &event.title)?;
+        require_non_empty("events.lane", &event.lane)?;
+        require_non_empty("events.start", &event.start)?;
+    }
+    checked_artifact(
+        request.id,
+        NativeArtifactKind::Timeline,
+        request.title,
+        json!({
+            "component": "capsem-timeline",
+            "lanes": request.lanes,
+            "events": request.events,
+            "export": request.export
+        }),
+    )
 }
 
 pub fn create_slide(request: SlideRequest) -> Result<NativeArtifact, String> {
@@ -448,7 +562,7 @@ pub fn create_slide(request: SlideRequest) -> Result<NativeArtifact, String> {
     if request.blocks.is_empty() {
         return Err("slide blocks must not be empty".to_owned());
     }
-    Ok(artifact(
+    checked_artifact(
         request.id,
         NativeArtifactKind::Slide,
         request.title,
@@ -456,7 +570,7 @@ pub fn create_slide(request: SlideRequest) -> Result<NativeArtifact, String> {
             "component": "capsem-slide",
             "blocks": request.blocks
         }),
-    ))
+    )
 }
 
 pub fn create_slide_deck(
@@ -476,7 +590,7 @@ pub fn create_slide_deck(
         title: request.title,
         slides: request.slides,
     };
-    let artifact = artifact(
+    let artifact = checked_artifact(
         &deck.id,
         NativeArtifactKind::SlideDeck,
         &deck.title,
@@ -485,8 +599,115 @@ pub fn create_slide_deck(
             "slides": deck.slides,
             "export": request.export
         }),
-    );
+    )?;
     Ok((deck, artifact))
+}
+
+pub fn validate_native_artifact(artifact: &NativeArtifact) -> Result<(), String> {
+    require_non_empty("artifact.id", &artifact.id)?;
+    require_non_empty("artifact.title", &artifact.title)?;
+    if !artifact.handle.starts_with("capsem://artifact/") {
+        return Err("artifact handle must use capsem://artifact/".to_owned());
+    }
+    match artifact.kind {
+        NativeArtifactKind::GeneratedText
+        | NativeArtifactKind::GeneratedImage
+        | NativeArtifactKind::GeneratedEmbedding => validate_generated_artifact(artifact),
+        NativeArtifactKind::Sheet
+        | NativeArtifactKind::Chart
+        | NativeArtifactKind::Diagram
+        | NativeArtifactKind::Timeline
+        | NativeArtifactKind::Slide
+        | NativeArtifactKind::SlideDeck => validate_rich_artifact(artifact),
+        NativeArtifactKind::Table => validate_table_artifact(artifact),
+    }
+}
+
+pub fn native_artifact_schema() -> Value {
+    let chart_values: Vec<&str> = PLOTLY_CHART_API_COVERAGE
+        .iter()
+        .map(|entry| entry.chart)
+        .collect();
+    json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": NATIVE_ARTIFACT_SCHEMA_ID,
+        "title": "Capsem Native Artifact",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "title", "handle", "spec"],
+        "properties": {
+            "id": string_schema(),
+            "kind": {
+                "enum": [
+                    "generatedText",
+                    "generatedImage",
+                    "generatedEmbedding",
+                    "sheet",
+                    "table",
+                    "chart",
+                    "diagram",
+                    "timeline",
+                    "slide",
+                    "slideDeck"
+                ]
+            },
+            "title": string_schema(),
+            "handle": {"type": "string", "pattern": "^capsem://artifact/[0-9a-f]+$"},
+            "spec": {"type": "object"}
+        },
+        "allOf": [
+            kind_spec_schema("generatedText", generated_spec_schema("capsem-text", "text", &["prompt"])),
+            kind_spec_schema("generatedImage", generated_spec_schema("capsem-media", "image", &["prompt", "revisedPrompt"])),
+            kind_spec_schema("generatedEmbedding", generated_spec_schema("capsem-embedding", "embedding", &["input"])),
+            kind_spec_schema("sheet", spec_schema("capsem-sheet", &["columns", "rows"], json!({
+                "columns": non_empty_string_array_schema(),
+                "rows": array_schema(),
+                "source": {}
+            }))),
+            kind_spec_schema("table", spec_schema("capsem-table", &["sourceArtifact", "columns", "rows", "pageSize"], json!({
+                "sourceArtifact": string_schema(),
+                "columns": non_empty_string_array_schema(),
+                "rows": array_schema(),
+                "searchable": {"type": "boolean"},
+                "filterable": {"type": "boolean"},
+                "pageSize": {"type": "integer", "minimum": 1}
+            }))),
+            kind_spec_schema("chart", spec_schema("capsem-chart", &["chart", "sourceArtifact", "data", "x", "series", "xLabel", "yLabel", "yUnit"], json!({
+                "chart": {"enum": chart_values},
+                "sourceArtifact": string_schema(),
+                "data": array_schema(),
+                "x": string_schema(),
+                "series": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+                "xLabel": string_schema(),
+                "xUnit": {"type": ["string", "null"]},
+                "yLabel": string_schema(),
+                "yUnit": string_schema(),
+                "stack": {"enum": ["none", "stacked", "grouped"]},
+                "direction": {"enum": ["vertical", "horizontal"]},
+                "legend": {"enum": ["top", "right", "bottom", "left", "none", null]},
+                "secondAxis": {"type": ["object", "null"]},
+                "fit": {"type": ["object", "null"]},
+                "export": export_schema(&["png", "svg"])
+            }))),
+            kind_spec_schema("diagram", spec_schema("capsem-diagram", &["kind", "source"], json!({
+                "kind": {"const": "mermaid"},
+                "source": string_schema(),
+                "export": export_schema(&["svg", "png"])
+            }))),
+            kind_spec_schema("timeline", spec_schema("capsem-timeline", &["lanes", "events"], json!({
+                "lanes": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+                "events": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+                "export": export_schema(&["html", "png", "svg"])
+            }))),
+            kind_spec_schema("slide", spec_schema("capsem-slide", &["blocks"], json!({
+                "blocks": {"type": "array", "minItems": 1, "items": {"type": "object"}}
+            }))),
+            kind_spec_schema("slideDeck", spec_schema("capsem-slide-deck", &["slides"], json!({
+                "slides": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+                "export": export_schema(&["html", "pdf"])
+            })))
+        ]
+    })
 }
 
 pub fn demo_deck_proof() -> Result<NativeDeckProof, String> {
@@ -538,12 +759,14 @@ pub fn demo_deck_proof() -> Result<NativeDeckProof, String> {
             axis: None,
         }],
         x_label: "House".to_owned(),
+        x_unit: None,
         y_label: "Velocity".to_owned(),
         y_unit: "score".to_owned(),
-        stack: false,
+        stack: ChartStackMode::None,
         direction: ChartDirection::Vertical,
         legend: None,
         second_axis: None,
+        fit: None,
         export: default_chart_exports(),
     })?;
     let balance_chart = create_chart(ChartRequest {
@@ -566,15 +789,17 @@ pub fn demo_deck_proof() -> Result<NativeDeckProof, String> {
             },
         ],
         x_label: "House".to_owned(),
+        x_unit: None,
         y_label: "Reliability".to_owned(),
         y_unit: "score".to_owned(),
-        stack: false,
+        stack: ChartStackMode::None,
         direction: ChartDirection::Vertical,
         legend: Some(LegendPosition::Bottom),
         second_axis: Some(ChartAxis {
             label: "Risk".to_owned(),
             unit: "score".to_owned(),
         }),
+        fit: None,
         export: default_chart_exports(),
     })?;
     let house_map = create_diagram(DiagramRequest {
@@ -597,6 +822,7 @@ pub fn demo_deck_proof() -> Result<NativeDeckProof, String> {
         provider: default_gemini_provider(),
         model: None,
         prompt: "editorial fantasy cartography of five software houses in a luminous secure code kingdom, premium slide deck style, no text".to_owned(),
+        caption: Some("Generated hero image for the deck proof.".to_owned()),
     })?;
     let house_images = house_image_artifacts()?;
 
@@ -855,6 +1081,7 @@ fn house_image_artifacts() -> Result<Vec<NativeArtifact>, String> {
             provider: default_gemini_provider(),
             model: None,
             prompt: prompt.to_owned(),
+            caption: Some(format!("{title} generated house portrait.")),
         })
     })
     .collect()
@@ -963,6 +1190,425 @@ fn artifact(
     }
 }
 
+fn checked_artifact(
+    id: impl Into<String>,
+    kind: NativeArtifactKind,
+    title: impl Into<String>,
+    spec: Value,
+) -> Result<NativeArtifact, String> {
+    let artifact = artifact(id, kind, title, spec);
+    validate_native_artifact(&artifact)?;
+    Ok(artifact)
+}
+
+fn string_schema() -> Value {
+    json!({"type": "string", "minLength": 1})
+}
+
+fn array_schema() -> Value {
+    json!({"type": "array"})
+}
+
+fn non_empty_string_array_schema() -> Value {
+    json!({
+        "type": "array",
+        "minItems": 1,
+        "items": string_schema()
+    })
+}
+
+fn export_schema(formats: &[&str]) -> Value {
+    json!({
+        "type": "array",
+        "items": {"enum": formats}
+    })
+}
+
+fn kind_spec_schema(kind: &str, spec_schema: Value) -> Value {
+    json!({
+        "if": {
+            "properties": {"kind": {"const": kind}},
+            "required": ["kind"]
+        },
+        "then": {
+            "properties": {"spec": spec_schema}
+        }
+    })
+}
+
+fn generated_spec_schema(component: &str, media: &str, fields: &[&str]) -> Value {
+    let mut required = vec![
+        "component".to_owned(),
+        "media".to_owned(),
+        "provider".to_owned(),
+        "status".to_owned(),
+        "usage".to_owned(),
+        "cost".to_owned(),
+        "durationMs".to_owned(),
+    ];
+    required.extend(fields.iter().map(|field| (*field).to_owned()));
+
+    json!({
+        "type": "object",
+        "required": required,
+        "properties": {
+            "component": {"const": component},
+            "media": {"const": media},
+            "provider": string_schema(),
+            "model": {"type": ["string", "null"]},
+            "system": {"type": ["string", "null"]},
+            "prompt": string_schema(),
+            "caption": {"type": ["string", "null"]},
+            "revisedPrompt": {"type": ["string", "null"]},
+            "input": non_empty_string_array_schema(),
+            "usage": {},
+            "cost": {},
+            "durationMs": {"type": ["integer", "number", "null"], "minimum": 0},
+            "status": string_schema()
+        }
+    })
+}
+
+fn spec_schema(component: &str, fields: &[&str], properties: Value) -> Value {
+    let mut required = vec!["component".to_owned()];
+    required.extend(fields.iter().map(|field| (*field).to_owned()));
+
+    let mut property_map = match properties {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+    property_map.insert("component".to_owned(), json!({"const": component}));
+
+    json!({
+        "type": "object",
+        "required": required,
+        "properties": property_map
+    })
+}
+
+fn validate_generated_artifact(artifact: &NativeArtifact) -> Result<(), String> {
+    let media = match artifact.kind {
+        NativeArtifactKind::GeneratedText => "text",
+        NativeArtifactKind::GeneratedImage => "image",
+        NativeArtifactKind::GeneratedEmbedding => "embedding",
+        _ => return Err("artifact is not generated media".to_owned()),
+    };
+    let Some(row) = GENERATED_MEDIA_API_COVERAGE
+        .iter()
+        .find(|entry| entry.media == media)
+    else {
+        return Err(format!("missing generated media matrix row for {media}"));
+    };
+    require_component(artifact, row.renderer)?;
+    require_matrix_fields(artifact, row.required_fields)?;
+    require_spec_keys(artifact, row.provenance_fields)?;
+    require_spec_keys(artifact, row.telemetry_fields)?;
+    require_non_empty_spec_string(artifact, "status")?;
+    match artifact.kind {
+        NativeArtifactKind::GeneratedEmbedding => {
+            require_non_empty_array(artifact, "input")?;
+        }
+        NativeArtifactKind::GeneratedText | NativeArtifactKind::GeneratedImage => {
+            require_non_empty_spec_string(artifact, "prompt")?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_rich_artifact(artifact: &NativeArtifact) -> Result<(), String> {
+    let Some(name) = rich_artifact_name(artifact.kind) else {
+        return Err(format!(
+            "{} has no rich artifact schema",
+            artifact.kind.kind_name()
+        ));
+    };
+    let Some(row) = RICH_ARTIFACT_SCHEMA_COVERAGE
+        .iter()
+        .find(|entry| entry.artifact == name)
+    else {
+        return Err(format!("missing rich artifact matrix row for {name}"));
+    };
+    require_component(artifact, expected_component_for(name)?)?;
+    require_matrix_fields(artifact, row.required_fields)?;
+    match artifact.kind {
+        NativeArtifactKind::Sheet => {
+            require_non_empty_array(artifact, "columns")?;
+            require_array(artifact, "rows")?;
+        }
+        NativeArtifactKind::Chart => validate_chart_artifact(artifact)?,
+        NativeArtifactKind::Diagram => validate_diagram_artifact(artifact)?,
+        NativeArtifactKind::Timeline => validate_timeline_artifact(artifact)?,
+        NativeArtifactKind::Slide => validate_slide_artifact(artifact)?,
+        NativeArtifactKind::SlideDeck => validate_slide_deck_artifact(artifact)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_table_artifact(artifact: &NativeArtifact) -> Result<(), String> {
+    require_component(artifact, "capsem-table")?;
+    for field in ["sourceArtifact", "columns", "rows", "pageSize"] {
+        require_spec_field(artifact, field)?;
+    }
+    require_non_empty_spec_string(artifact, "sourceArtifact")?;
+    require_non_empty_array(artifact, "columns")?;
+    require_array(artifact, "rows")?;
+    let page_size = artifact.spec["pageSize"]
+        .as_u64()
+        .ok_or_else(|| "table pageSize must be an integer".to_owned())?;
+    if page_size == 0 {
+        return Err("table pageSize must be greater than zero".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_chart_artifact(artifact: &NativeArtifact) -> Result<(), String> {
+    require_array(artifact, "data")?;
+    require_non_empty_array(artifact, "series")?;
+    let chart = require_non_empty_spec_string(artifact, "chart")?;
+    let Some(row) = PLOTLY_CHART_API_COVERAGE
+        .iter()
+        .find(|entry| entry.chart == chart)
+    else {
+        return Err(format!("unsupported chart kind `{chart}`"));
+    };
+    require_matrix_fields(artifact, row.required_fields)?;
+    if !row.supports_direction && artifact.spec["direction"] == "horizontal" {
+        return Err(format!("{chart} does not support horizontal direction"));
+    }
+    let stack = artifact.spec["stack"].as_str().unwrap_or("none");
+    if stack != "none" && !row.supports_stack {
+        return Err(format!("{chart} does not support stack mode `{stack}`"));
+    }
+    if artifact
+        .spec
+        .get("fit")
+        .is_some_and(|value| !value.is_null())
+        && !row.supports_fit
+    {
+        return Err(format!("{chart} does not support fit metadata"));
+    }
+    if artifact
+        .spec
+        .get("secondAxis")
+        .is_some_and(|value| !value.is_null())
+        && !row.supports_second_axis
+    {
+        return Err(format!("{chart} does not support secondAxis"));
+    }
+    require_exports(artifact, row.export_formats)
+}
+
+fn validate_diagram_artifact(artifact: &NativeArtifact) -> Result<(), String> {
+    let kind = require_non_empty_spec_string(artifact, "kind")?;
+    if kind != "mermaid" {
+        return Err(format!("unsupported diagram kind `{kind}`"));
+    }
+    require_non_empty_spec_string(artifact, "source")?;
+    require_exports(artifact, &["svg", "png"])
+}
+
+fn validate_timeline_artifact(artifact: &NativeArtifact) -> Result<(), String> {
+    let lanes = require_non_empty_array(artifact, "lanes")?;
+    for (index, lane) in lanes.iter().enumerate() {
+        require_json_string(lane, "id", &format!("timeline lane {index}"))?;
+        require_json_string(lane, "title", &format!("timeline lane {index}"))?;
+    }
+    let events = require_non_empty_array(artifact, "events")?;
+    for (index, event) in events.iter().enumerate() {
+        require_json_string(event, "id", &format!("timeline event {index}"))?;
+        require_json_string(event, "title", &format!("timeline event {index}"))?;
+        require_json_string(event, "lane", &format!("timeline event {index}"))?;
+        require_json_string(event, "start", &format!("timeline event {index}"))?;
+    }
+    require_exports(artifact, &["html", "png", "svg"])
+}
+
+fn validate_slide_artifact(artifact: &NativeArtifact) -> Result<(), String> {
+    let blocks = require_non_empty_array(artifact, "blocks")?;
+    for (index, block) in blocks.iter().enumerate() {
+        let kind = block["kind"]
+            .as_str()
+            .ok_or_else(|| format!("slide block {index} kind must be a string"))?;
+        match kind {
+            "text" => {
+                require_json_string(block, "title", &format!("slide block {index}"))?;
+                require_json_string(block, "body", &format!("slide block {index}"))?;
+            }
+            "image" | "diagram" | "table" | "sheet" | "chart" => {
+                require_json_string(block, "artifactId", &format!("slide block {index}"))?;
+            }
+            _ => return Err(format!("unsupported slide block kind `{kind}`")),
+        }
+    }
+    Ok(())
+}
+
+fn validate_slide_deck_artifact(artifact: &NativeArtifact) -> Result<(), String> {
+    let slides = require_non_empty_array(artifact, "slides")?;
+    for (index, slide) in slides.iter().enumerate() {
+        require_json_string(slide, "artifactId", &format!("slideDeck slide {index}"))?;
+        require_json_string(slide, "title", &format!("slideDeck slide {index}"))?;
+    }
+    require_exports(artifact, &["html", "pdf"])
+}
+
+fn rich_artifact_name(kind: NativeArtifactKind) -> Option<&'static str> {
+    match kind {
+        NativeArtifactKind::Sheet => Some("sheet"),
+        NativeArtifactKind::Chart => Some("chart"),
+        NativeArtifactKind::Diagram => Some("diagram"),
+        NativeArtifactKind::Timeline => Some("timeline"),
+        NativeArtifactKind::Slide => Some("slide"),
+        NativeArtifactKind::SlideDeck => Some("slideDeck"),
+        _ => None,
+    }
+}
+
+fn expected_component_for(artifact_name: &str) -> Result<&'static str, String> {
+    match artifact_name {
+        "sheet" => Ok("capsem-sheet"),
+        "chart" => Ok("capsem-chart"),
+        "diagram" => Ok("capsem-diagram"),
+        "timeline" => Ok("capsem-timeline"),
+        "slide" => Ok("capsem-slide"),
+        "slideDeck" => Ok("capsem-slide-deck"),
+        _ => Err(format!("no expected component for {artifact_name}")),
+    }
+}
+
+fn require_component(artifact: &NativeArtifact, expected: &str) -> Result<(), String> {
+    let actual = artifact.spec["component"]
+        .as_str()
+        .ok_or_else(|| format!("{} component must be a string", artifact.id))?;
+    if actual != expected {
+        return Err(format!(
+            "{} component must be `{expected}`, got `{actual}`",
+            artifact.id
+        ));
+    }
+    Ok(())
+}
+
+fn require_matrix_fields(artifact: &NativeArtifact, fields: &[&str]) -> Result<(), String> {
+    for field in fields {
+        match *field {
+            "id" => require_non_empty("id", &artifact.id)?,
+            "title" => require_non_empty("title", &artifact.title)?,
+            field => {
+                require_spec_field(artifact, field)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn require_spec_keys(artifact: &NativeArtifact, fields: &[&str]) -> Result<(), String> {
+    for field in fields {
+        if artifact.spec.get(*field).is_none() {
+            return Err(format!("{} spec missing `{field}`", artifact.id));
+        }
+    }
+    Ok(())
+}
+
+fn require_spec_field<'a>(artifact: &'a NativeArtifact, field: &str) -> Result<&'a Value, String> {
+    let value = artifact
+        .spec
+        .get(field)
+        .ok_or_else(|| format!("{} spec missing `{field}`", artifact.id))?;
+    if value.is_null() {
+        return Err(format!(
+            "{} spec field `{field}` must not be null",
+            artifact.id
+        ));
+    }
+    Ok(value)
+}
+
+fn require_non_empty_spec_string<'a>(
+    artifact: &'a NativeArtifact,
+    field: &str,
+) -> Result<&'a str, String> {
+    let value = require_spec_field(artifact, field)?;
+    let string = value
+        .as_str()
+        .ok_or_else(|| format!("{} spec field `{field}` must be a string", artifact.id))?;
+    require_non_empty(field, string)?;
+    Ok(string)
+}
+
+fn require_array<'a>(artifact: &'a NativeArtifact, field: &str) -> Result<&'a Vec<Value>, String> {
+    let value = require_spec_field(artifact, field)?;
+    value
+        .as_array()
+        .ok_or_else(|| format!("{} spec field `{field}` must be an array", artifact.id))
+}
+
+fn require_non_empty_array<'a>(
+    artifact: &'a NativeArtifact,
+    field: &str,
+) -> Result<&'a Vec<Value>, String> {
+    let values = require_array(artifact, field)?;
+    if values.is_empty() {
+        return Err(format!(
+            "{} spec field `{field}` must not be empty",
+            artifact.id
+        ));
+    }
+    Ok(values)
+}
+
+fn require_json_string<'a>(value: &'a Value, field: &str, scope: &str) -> Result<&'a str, String> {
+    let string = value[field]
+        .as_str()
+        .ok_or_else(|| format!("{scope} `{field}` must be a string"))?;
+    require_non_empty(field, string)?;
+    Ok(string)
+}
+
+fn require_exports(artifact: &NativeArtifact, allowed: &[&str]) -> Result<(), String> {
+    let Some(export) = artifact.spec.get("export") else {
+        return Ok(());
+    };
+    if export.is_null() {
+        return Ok(());
+    }
+    let formats = export
+        .as_array()
+        .ok_or_else(|| format!("{} export must be an array", artifact.id))?;
+    for format in formats {
+        let Some(format) = format.as_str() else {
+            return Err(format!("{} export entries must be strings", artifact.id));
+        };
+        if !allowed.contains(&format) {
+            return Err(format!(
+                "{} export format `{format}` is not allowed",
+                artifact.id
+            ));
+        }
+    }
+    Ok(())
+}
+
+impl NativeArtifactKind {
+    fn kind_name(self) -> &'static str {
+        match self {
+            NativeArtifactKind::GeneratedText => "generatedText",
+            NativeArtifactKind::GeneratedImage => "generatedImage",
+            NativeArtifactKind::GeneratedEmbedding => "generatedEmbedding",
+            NativeArtifactKind::Sheet => "sheet",
+            NativeArtifactKind::Table => "table",
+            NativeArtifactKind::Chart => "chart",
+            NativeArtifactKind::Diagram => "diagram",
+            NativeArtifactKind::Timeline => "timeline",
+            NativeArtifactKind::Slide => "slide",
+            NativeArtifactKind::SlideDeck => "slideDeck",
+        }
+    }
+}
+
 fn slide_ref(artifact: &NativeArtifact) -> SlideRef {
     SlideRef {
         artifact_id: artifact.id.clone(),
@@ -1003,6 +1649,10 @@ fn default_chart_direction() -> ChartDirection {
     ChartDirection::Vertical
 }
 
+fn default_chart_stack() -> ChartStackMode {
+    ChartStackMode::None
+}
+
 fn default_mermaid_diagram() -> DiagramKind {
     DiagramKind::Mermaid
 }
@@ -1013,6 +1663,10 @@ fn default_chart_exports() -> Vec<String> {
 
 fn default_diagram_exports() -> Vec<String> {
     vec!["svg".to_owned(), "png".to_owned()]
+}
+
+fn default_timeline_exports() -> Vec<String> {
+    vec!["html".to_owned()]
 }
 
 fn default_deck_exports() -> Vec<String> {
