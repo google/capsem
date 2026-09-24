@@ -3,6 +3,7 @@
 use super::*;
 
 mod bodies;
+mod counters;
 mod headers;
 mod producer;
 mod security;
@@ -715,6 +716,7 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
             16,
             &pending_body_bytes,
             BodyArchive::disabled(SystemTime::now),
+            LedgerTally::default(),
         )
     });
 
@@ -1044,56 +1046,6 @@ fn mcp_call_insert_populates_row() {
     assert_eq!(row.action.as_deref(), Some("allow"));
     assert_eq!(row.rule.as_deref(), Some("mcp.tool.github__list_issues"));
     assert_eq!(row.reason.as_deref(), Some("local policy allow"));
-}
-
-#[test]
-fn mcp_protocol_only_event_does_not_claim_tool_storage() {
-    use metrics_util::debugging::DebuggingRecorder;
-
-    let recorder = DebuggingRecorder::new();
-    let snapshotter = recorder.snapshotter();
-    let conn = rusqlite::Connection::open_in_memory().unwrap();
-    let event = WriteOp::McpCall(crate::events::McpCall {
-        event_id: Some("abcdef123456".into()),
-        timestamp: std::time::SystemTime::now(),
-        server_name: "github".into(),
-        method: "tools/list".into(),
-        tool_name: None,
-        request_id: Some("r1".into()),
-        request_preview: Some("{}".into()),
-        response_preview: Some(r#"{"tools":[]}"#.into()),
-        decision: "allowed".into(),
-        duration_ms: 1,
-        error_message: None,
-        process_name: Some("agent".into()),
-        bytes_sent: 2,
-        bytes_received: 12,
-        transport: "vsock_frame".into(),
-        policy_mode: Some("security_event".into()),
-        policy_action: Some("allow".into()),
-        policy_rule: Some("profiles.rules.default_mcp".into()),
-        policy_reason: None,
-        trace_id: Some("trace-list".into()),
-        credential_ref: None,
-    });
-
-    let mut bodies = BodyArchive::open_for_tests(None, SystemTime::now, &conn);
-    let outcome = metrics::with_local_recorder(&recorder, || {
-        execute_memory_batch(&conn, &[event], &mut bodies, 0).unwrap()
-    });
-    let snapshot = snapshotter.snapshot().into_vec();
-
-    assert!(
-        outcome.tables.is_empty(),
-        "protocol-only MCP evidence must not dirty the user tool ledger"
-    );
-    assert_eq!(outcome.written, 0);
-    assert!(
-        snapshot
-            .iter()
-            .all(|(key, _, _, _)| key.key().name() != DB_WRITE_OPS_TOTAL),
-        "a no-op protocol event must not count as a persisted logger write"
-    );
 }
 
 #[test]

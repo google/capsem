@@ -2,19 +2,36 @@
 //! ledgers.
 
 use super::*;
+use capsem_proto::forensic::SecurityForensicEvent;
 
 const SECURITY_MSGPACK_CONTENT_TYPE: &str = "application/vnd.capsem.security+msgpack";
 
-fn security_payload(event_json: &str, event_type: &str) -> (Vec<u8>, &'static str) {
-    match capsem_proto::forensic::SecurityForensicEvent::from_json(event_json, event_type)
-        .and_then(|event| event.encode())
+/// A security event's archived payload, and its structured projection when it
+/// has one.
+struct SecurityPayload {
+    bytes: Vec<u8>,
+    content_type: &'static str,
+    projection: Option<SecurityForensicEvent>,
+}
+
+fn security_payload(event_json: &str, event_type: &str) -> SecurityPayload {
+    match SecurityForensicEvent::from_json(event_json, event_type)
+        .and_then(|event| event.encode().map(|encoded| (encoded, event)))
     {
-        Ok(encoded) => (encoded, SECURITY_MSGPACK_CONTENT_TYPE),
+        Ok((bytes, projection)) => SecurityPayload {
+            bytes,
+            content_type: SECURITY_MSGPACK_CONTENT_TYPE,
+            projection: Some(projection),
+        },
         // A malformed direct logger event is retained as evidence. Production
         // security-engine projections are valid objects and take the typed path.
         Err(error) => {
             tracing::warn!(%error, "security forensic payload is not a structured projection");
-            (event_json.as_bytes().to_vec(), "application/json")
+            SecurityPayload {
+                bytes: event_json.as_bytes().to_vec(),
+                content_type: "application/json",
+                projection: None,
+            }
         }
     }
 }
@@ -130,13 +147,15 @@ pub(super) fn insert_substitution_event(
 /// The row keeps its event identity for correlation while disk flush stores a
 /// shared counted rule snapshot. The matched event's payload goes to the
 /// archive as this event's body and is read by `BodyDirection::Payload`.
+/// Returns the payload's structured projection, parsed once here for the
+/// archive, so the counters can read its plugin and credential activity.
 pub(super) fn insert_security_rule_event(
     conn: &Connection,
     event: &SecurityRuleEvent,
     target: WriteTarget,
     bodies: &mut BodyArchive,
-) -> rusqlite::Result<()> {
-    let (payload, content_type) = security_payload(&event.event_json, &event.event_type);
+) -> rusqlite::Result<Option<SecurityForensicEvent>> {
+    let payload = security_payload(&event.event_json, &event.event_type);
     execute_cached(
         conn,
         &format!(
@@ -167,14 +186,14 @@ pub(super) fn insert_security_rule_event(
             event_type: "security.rule",
             source_table: "security_rule_events",
             direction: "payload",
-            content_type: Some(content_type),
-            body: Some(&payload),
+            content_type: Some(payload.content_type),
+            body: Some(&payload.bytes),
             original_bytes: None,
             trace_id: event.trace_id.as_deref(),
             turn_id: event.turn_id.as_deref(),
         },
     );
-    Ok(())
+    Ok(payload.projection)
 }
 
 /// An ask's row, with the asked-about event archived beside it the way every
@@ -187,7 +206,7 @@ pub(super) fn insert_security_ask_event(
     target: WriteTarget,
     bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
-    let (payload, content_type) = security_payload(&event.event_json, &event.event_type);
+    let payload = security_payload(&event.event_json, &event.event_type);
     execute_cached(
         conn,
         &format!(
@@ -219,8 +238,8 @@ pub(super) fn insert_security_ask_event(
             event_type: "security.ask",
             source_table: "security_ask_events",
             direction: "payload",
-            content_type: Some(content_type),
-            body: Some(&payload),
+            content_type: Some(payload.content_type),
+            body: Some(&payload.bytes),
             original_bytes: None,
             trace_id: event.trace_id.as_deref(),
             turn_id: event.trace_id.as_deref(),
@@ -239,7 +258,7 @@ pub(super) fn insert_security_decision_event(
     target: WriteTarget,
     bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
-    let (payload, content_type) = security_payload(&event.event_json, &event.event_type);
+    let payload = security_payload(&event.event_json, &event.event_type);
     execute_cached(
         conn,
         &format!(
@@ -275,8 +294,8 @@ pub(super) fn insert_security_decision_event(
             event_type: "security.decision",
             source_table: "security_decision_events",
             direction: "payload",
-            content_type: Some(content_type),
-            body: Some(&payload),
+            content_type: Some(payload.content_type),
+            body: Some(&payload.bytes),
             original_bytes: None,
             trace_id: event.trace_id.as_deref(),
             turn_id: event.turn_id.as_deref(),

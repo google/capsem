@@ -584,6 +584,20 @@ impl DbHandle {
         SessionStats::from_query_batch(&raw)
     }
 
+    /// The session's counter snapshot, as its writer last committed it.
+    ///
+    /// One primary-key lookup, down the same cached batch rail as every other
+    /// polled read: an idle poll is answered without touching the file.
+    pub async fn ledger_counters(&self) -> DbResult<crate::counters::LedgerCounters> {
+        let raw = self
+            .query_many(vec![(crate::counters::SNAPSHOT_SQL.to_string(), Vec::new())])
+            .await?;
+        let [snapshot] = raw.as_slice() else {
+            return Err(format!("ledger counters returned {} results, expected 1", raw.len()));
+        };
+        crate::counters::from_snapshot_result(snapshot)
+    }
+
     /// Unwrap a worker reply, expiring this handle's read caches first when the
     /// worker saw the other process commit.
     ///

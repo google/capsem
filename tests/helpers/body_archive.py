@@ -48,6 +48,9 @@ from typing import Any, BinaryIO, Self
 
 FILE_MAGIC = b"CAPSEMBL"
 FILE_VERSION = 3
+# The ledger's own format (`archive_state.format_version`). It moved to 4 when
+# the ledger began carrying its counter snapshot; the body file did not change.
+LEDGER_FORMAT_VERSION = 4
 FILE_HEADER_BYTES = 80
 BLOCK_MAGIC = b"BLK2"
 BLOCK_HEADER_BYTES = 8
@@ -99,7 +102,7 @@ def _archive_state(db_path: Path) -> tuple[bytes, bytes, int]:
         or len(archive_id) != 16
         or not isinstance(generation_id, bytes)
         or len(generation_id) != 16
-        or version != FILE_VERSION
+        or version != LEDGER_FORMAT_VERSION
         or not isinstance(committed_end, int)
         or committed_end < FILE_HEADER_BYTES
         or not isinstance(revision, int)

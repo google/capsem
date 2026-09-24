@@ -1,3 +1,4 @@
+pub mod counters;
 pub mod db;
 pub mod events;
 pub mod network_db;

@@ -87,9 +87,18 @@ pub const CREATE_SCHEMA: &str = "
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         archive_id BLOB NOT NULL CHECK (typeof(archive_id) = 'blob' AND length(archive_id) = 16),
         generation_id BLOB NOT NULL CHECK (typeof(generation_id) = 'blob' AND length(generation_id) = 16),
-        format_version INTEGER NOT NULL CHECK (typeof(format_version) = 'integer' AND format_version = 3),
+        format_version INTEGER NOT NULL CHECK (typeof(format_version) = 'integer' AND format_version = 4),
         committed_end INTEGER NOT NULL CHECK (typeof(committed_end) = 'integer' AND committed_end >= 80),
         revision INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision >= 1)
+    );
+
+    -- The session's counters: one named-field MessagePack snapshot, rewritten
+    -- in the same transaction as the rows it counts, so a reader takes every
+    -- total with one primary-key lookup instead of aggregating the tables.
+    -- Created with the ledger; absence is a broken ledger, not zero activity.
+    CREATE TABLE IF NOT EXISTS ledger_counters (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        counters BLOB NOT NULL CHECK (typeof(counters) = 'blob')
     );
 
     -- One block of an archive generation. The bytes live in the archive file;

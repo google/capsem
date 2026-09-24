@@ -8,6 +8,7 @@ use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension};
 use tracing::{error, warn};
 use uuid::Uuid;
 
+use crate::counters::{self, LedgerCounters, LedgerTally};
 use crate::events::{
     AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, McpCall, ModelCall, NetEvent, NetworkMembership,
     NetworkRecord, ProfileMutationEvent, SecurityAskEvent, SecurityDecisionEvent, SecurityRuleEvent, SubstitutionEvent,
@@ -272,6 +273,7 @@ fn writer_channel(capacity: usize) -> (WriterSender, mpsc::Receiver<WriterMessag
 }
 
 mod barriers;
+mod batch;
 mod operation;
 mod recording;
 mod retention;
@@ -281,6 +283,7 @@ mod writer_lock;
 pub(crate) use retention_faults::{fail_retention_for_path_for_tests, RetentionFault};
 
 use barriers::Barriers;
+use batch::{execute_memory_batch, retry_batch_ops_individually};
 use operation::{affected_memory_tables, write_op_affects_storage};
 use recording::{batch_size_bucket, record_batch, record_enqueue};
 pub use retention::RetainOutcome;
@@ -372,6 +375,9 @@ impl DbWriter {
             schema::create_memory_tables(&conn, &memory_uri)?;
             schema::seed_memory_sequences(&conn, schema::hot_ledger_tables())
         })?;
+        // Counting resumes from what the ledger last committed, never from a
+        // scan of its rows.
+        let tally = LedgerTally::restored(counters::load(&conn)?);
 
         let batch_capacity = if capacity == 0 {
             DEFAULT_BATCH_CAPACITY
@@ -395,6 +401,7 @@ impl DbWriter {
                     batch_capacity,
                     &loop_pending_body_bytes,
                     bodies,
+                    tally,
                 )
             })
             .expect("failed to spawn db writer thread");
@@ -424,6 +431,7 @@ impl DbWriter {
             schema::create_memory_tables(&conn, &memory_uri)?;
             schema::seed_memory_sequences(&conn, schema::hot_ledger_tables())
         })?;
+        let tally = LedgerTally::restored(counters::load(&conn)?);
 
         let batch_capacity = if capacity == 0 {
             DEFAULT_BATCH_CAPACITY
@@ -435,7 +443,7 @@ impl DbWriter {
         let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx, None, batch_capacity, &loop_pending_body_bytes, bodies))
+            .spawn(move || writer_loop(conn, rx, None, batch_capacity, &loop_pending_body_bytes, bodies, tally))
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
@@ -601,6 +609,7 @@ fn writer_loop(
     batch_capacity: usize,
     pending_body_bytes: &AtomicU64,
     mut bodies: BodyArchive,
+    mut tally: LedgerTally,
 ) {
     let mut flush_watermarks =
         schema::with_memory_schema_lock(|| schema::initial_memory_flush_watermarks(&conn, schema::hot_ledger_tables()))
@@ -630,6 +639,7 @@ fn writer_loop(
                         &mut flush_watermarks,
                         db_path.as_deref(),
                         &mut bodies,
+                        tally.counters(),
                     ) {
                         warn!(error = %error, "db interval flush failed");
                     } else {
@@ -672,7 +682,7 @@ fn writer_loop(
         if batch.is_empty() {
             record_batch(started, batch_size, batch_capacity, batch_bucket, "ok", &span);
         } else {
-            match span.in_scope(|| execute_memory_batch(&conn, &batch, &mut bodies, exec_floor)) {
+            match span.in_scope(|| execute_memory_batch(&conn, &batch, &mut bodies, exec_floor, &mut tally)) {
                 Ok(outcome) => {
                     dirty_tables.extend(outcome.tables);
                     dirty_ops += outcome.written;
@@ -685,8 +695,8 @@ fn writer_loop(
                         count = batch.len(),
                         "db memory write batch failed; retrying its ops individually"
                     );
-                    let salvaged =
-                        span.in_scope(|| retry_batch_ops_individually(&conn, &batch, &mut bodies, exec_floor));
+                    let salvaged = span
+                        .in_scope(|| retry_batch_ops_individually(&conn, &batch, &mut bodies, exec_floor, &mut tally));
                     dirty_tables.extend(salvaged.tables);
                     dirty_ops += salvaged.written;
                 }
@@ -708,6 +718,7 @@ fn writer_loop(
                 &mut flush_watermarks,
                 db_path.as_deref(),
                 &mut bodies,
+                tally.counters(),
             ) {
                 Ok(()) => {
                     dirty_ops = 0;
@@ -742,6 +753,7 @@ fn writer_loop(
         &mut flush_watermarks,
         db_path.as_deref(),
         &mut bodies,
+        tally.counters(),
     ) {
         warn!(error = %error, "db shutdown dirty table flush failed");
         // There is no next flush to retry into, so the bodies still waiting
@@ -781,146 +793,13 @@ impl WriteTarget {
     }
 }
 
-/// Storage work completed by a batch or by its per-operation salvage pass.
-struct BatchWriteOutcome {
-    tables: BTreeSet<&'static str>,
-    written: usize,
-}
-
-/// Re-run a failed batch one op at a time so a single rejected row cannot
-/// discard the valid telemetry batched alongside it.
-///
-/// The batch is one transaction for throughput, which means a schema CHECK
-/// violation on one op rolls back every op beside it. On a security ledger that
-/// turns one malformed row from one producer into a silent hole covering an
-/// arbitrary window of unrelated events, so the batch failure path pays for a
-/// second pass. Nothing here runs when the batch commits.
-///
-fn retry_batch_ops_individually(
-    conn: &Connection,
-    batch: &[WriteOp],
-    bodies: &mut BodyArchive,
-    exec_floor: i64,
-) -> BatchWriteOutcome {
-    let expected_writes = batch.iter().filter(|op| write_op_affects_storage(op)).count();
-    let mut salvaged = BatchWriteOutcome {
-        tables: BTreeSet::new(),
-        written: 0,
-    };
-    for op in batch {
-        if !write_op_affects_storage(op) {
-            continue;
-        }
-        let op_kind = op.kind();
-        match execute_memory_batch(conn, std::slice::from_ref(op), bodies, exec_floor) {
-            Ok(outcome) => {
-                salvaged.tables.extend(outcome.tables);
-                salvaged.written += outcome.written;
-            }
-            Err(error) => {
-                // Loud on purpose: a rejected op is a producer bug, and a
-                // ledger that quietly loses rows is worse than one that
-                // complains about them.
-                error!(
-                    error = %error,
-                    op_kind,
-                    event_id = op.event_id(),
-                    "db rejected a write op; dropping it alone"
-                );
-                ::metrics::counter!(DB_WRITE_OP_REJECTED_TOTAL, "op_kind" => op_kind).increment(1);
-            }
-        }
-    }
-    if salvaged.written < expected_writes {
-        warn!(
-            rejected = expected_writes - salvaged.written,
-            salvaged = salvaged.written,
-            "db batch retry completed with rejected ops"
-        );
-    }
-    salvaged
-}
-
-fn execute_memory_batch(
-    conn: &Connection,
-    batch: &[WriteOp],
-    bodies: &mut BodyArchive,
-    exec_floor: i64,
-) -> rusqlite::Result<BatchWriteOutcome> {
-    let stored_ops = batch.iter().filter(|op| write_op_affects_storage(op)).count();
-    if stored_ops == 0 {
-        return Ok(BatchWriteOutcome {
-            tables: BTreeSet::new(),
-            written: 0,
-        });
-    }
-
-    let tx = conn.unchecked_transaction()?;
-    // Bodies staged by a transaction that rolls back must not leave index
-    // rows behind: their event's row is gone, and the retry pass stages them
-    // again. Their bytes stay in the open block, unreferenced.
-    let staged_mark = bodies.staged_mark();
-    let mut affected_tables = BTreeSet::new();
-    let mut op_counts = std::collections::BTreeMap::<&'static str, usize>::new();
-    let outcome = insert_batch_ops(&tx, batch, bodies, exec_floor, &mut affected_tables, &mut op_counts)
-        .and_then(|()| tx.commit())
-        .map(|()| BatchWriteOutcome {
-            tables: affected_tables,
-            written: stored_ops,
-        });
-    let Ok(outcome) = outcome else {
-        bodies.rollback_staged(staged_mark);
-        return outcome;
-    };
-    for (kind, count) in op_counts {
-        ::metrics::counter!(DB_WRITE_OPS_TOTAL, "insert_type" => kind).increment(count as u64);
-    }
-    Ok(outcome)
-}
-
-fn insert_batch_ops(
-    tx: &rusqlite::Transaction<'_>,
-    batch: &[WriteOp],
-    bodies: &mut BodyArchive,
-    exec_floor: i64,
-    affected_tables: &mut BTreeSet<&'static str>,
-    op_counts: &mut std::collections::BTreeMap<&'static str, usize>,
-) -> rusqlite::Result<()> {
-    for op in batch {
-        if !write_op_affects_storage(op) {
-            continue;
-        }
-        *op_counts.entry(op.kind()).or_default() += 1;
-        affected_memory_tables(op, affected_tables);
-        bodies.close_if_due();
-        match op {
-            WriteOp::TransportEvent(e) => event_rows::insert_transport_event(tx, e, WriteTarget::Memory)?,
-            WriteOp::NetEvent(e) => insert_net_event(tx, e, WriteTarget::Memory, bodies)?,
-            WriteOp::ModelCall(m) => insert_model_call(tx, m, WriteTarget::Memory, bodies)?,
-            WriteOp::McpCall(c) => insert_mcp_call(tx, c, WriteTarget::Memory, bodies)?,
-            WriteOp::FileEvent(f) => insert_file_event(tx, f, WriteTarget::Memory)?,
-            WriteOp::ExecEvent(e) => insert_exec_event(tx, e, WriteTarget::Memory)?,
-            WriteOp::ExecEventComplete(c) => update_exec_event(tx, c, exec_floor, bodies)?,
-            WriteOp::AuditEvent(a) => insert_audit_event(tx, a, WriteTarget::Memory)?,
-            WriteOp::DnsEvent(d) => insert_dns_event(tx, d, WriteTarget::Memory)?,
-            WriteOp::SubstitutionEvent(s) => insert_substitution_event(tx, s, WriteTarget::Memory)?,
-            WriteOp::SecurityRuleEvent(e) => insert_security_rule_event(tx, e, WriteTarget::Memory, bodies)?,
-            WriteOp::SecurityAskEvent(e) => insert_security_ask_event(tx, e, WriteTarget::Memory, bodies)?,
-            WriteOp::SecurityDecisionEvent(e) => insert_security_decision_event(tx, e, WriteTarget::Memory, bodies)?,
-            WriteOp::ProfileMutationEvent(e) => insert_profile_mutation_event(tx, e, WriteTarget::Memory)?,
-            WriteOp::Network(n) => event_rows::upsert_network(tx, n, WriteTarget::Memory)?,
-            WriteOp::NetworkMembership(m) => event_rows::upsert_network_membership(tx, m, WriteTarget::Memory)?,
-        }
-    }
-    Ok(())
-}
-
 fn flush_dirty_tables_to_disk(
     conn: &Connection,
     dirty_tables: &mut BTreeSet<&'static str>,
     flush_watermarks: &mut schema::MemoryFlushWatermarks,
     db_path: Option<&Path>,
     bodies: &mut BodyArchive,
+    counters: &LedgerCounters,
 ) -> rusqlite::Result<()> {
     if dirty_tables.is_empty() && !bodies.has_work() {
         return Ok(());
@@ -943,6 +822,8 @@ fn flush_dirty_tables_to_disk(
     let advanced_watermarks = schema::with_memory_schema_lock(|| {
         schema::flush_memory_tables_to_disk(&tx, tables.iter().copied(), flush_watermarks)
     })?;
+    // The snapshot lands with the rows it counts, or neither does.
+    counters::store(&tx, counters)?;
     tx.commit()?;
     // Only now are the written segments indexed: anything above this line rolls
     // the transaction back, and the next flush retries both halves together.

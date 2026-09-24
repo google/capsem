@@ -570,6 +570,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Session ledgers are now format v4: each one carries its own running totals
+  (requests, tokens, cost, tool calls, rule matches, plugin and credential
+  activity), written in the same transaction as the rows they count, so stats
+  no longer have to be recomputed from the whole ledger (google/capsem#223).
+  A v3 ledger is refused rather than upgraded; a named VM created before this
+  change cannot be resumed and has to be recreated.
+
 - Session ledgers keep captured bodies in version 3 compressed generations
   beside the database. Request and response bodies, tool results, exec output and the
   forensic payload of each security rule match now live in generation files
