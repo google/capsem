@@ -239,6 +239,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `system`, at any depth. It was filtered out as if it were the overlay image's
   directory, which has never been inside the workspace.
 
+- Guest exec output is now archived in the session ledger in full, up to
+  10 MiB per stream, instead of its first 1 KiB. stdout and stderr are kept
+  separately and byte for byte, including non-UTF-8 output, for buffered and
+  streamed execs alike -- a streamed exec used to keep only 1 KiB of each
+  stream, and one whose transport broke mid-stream lost everything it had
+  captured. A body is marked truncated only when the 10 MiB cap cut it. The
+  exec-list previews and security-rule input stay a bounded 2 KiB excerpt,
+  and a buffered exec result is unchanged (google/capsem#230).
+
 - Session ledger readiness no longer scans the whole database. Every route's
   first readiness check ran `PRAGMA integrity_check`, and a failed check was
   retried with another full scan on every poll: 1.5 s for a first check and

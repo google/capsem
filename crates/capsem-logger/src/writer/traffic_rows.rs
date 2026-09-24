@@ -268,18 +268,18 @@ pub(super) fn update_exec_event(
     exec_floor: i64,
     bodies: &mut BodyArchive,
 ) -> rusqlite::Result<ExecCompletion> {
-    let stdout_preview = cap_preview(&complete.stdout_preview);
-    let stderr_preview = cap_preview(&complete.stderr_preview);
+    let stdout_preview = output_preview(&complete.stdout);
+    let stderr_preview = output_preview(&complete.stderr);
     // The exec row was inserted when the command started; its event_id is
     // what the archive rows are keyed on, so the output is reachable from
     // the same id the timeline shows.
     //
-    // The archive holds at most the 1 KiB of output the vsock payload
-    // carries: capsem-process truncates there (`vsock/exec_completion.rs`)
-    // and the rest never reaches this process. `stdout_bytes`/`stderr_bytes`
-    // are the true totals, so the index row reports them as `original_bytes`
-    // and marks itself truncated rather than claiming the excerpt is all
-    // there was.
+    // Each lane arrives as the bytes capsem-process captured, up to
+    // `MAX_BODY_BLOB_BYTES` (`vsock/exec_output.rs`), and is archived as
+    // it came. `stdout_bytes`/`stderr_bytes` are the true totals, so the
+    // index row reports them as `original_bytes` and marks itself truncated
+    // exactly when capture or storage cut the lane. The preview is derived
+    // here and nowhere else.
     let Some(start) = find_exec_start(conn, complete.exec_id, exec_floor)? else {
         // The completion arrived without its start row, so there is no
         // event_id to key the output on and it is not archived. Loud, because
@@ -292,16 +292,8 @@ pub(super) fn update_exec_event(
         return Ok(ExecCompletion::default());
     };
     for (direction, body, produced) in [
-        (
-            "stdout",
-            complete.stdout_preview.as_deref().map(str::as_bytes),
-            complete.stdout_bytes,
-        ),
-        (
-            "stderr",
-            complete.stderr_preview.as_deref().map(str::as_bytes),
-            complete.stderr_bytes,
-        ),
+        ("stdout", Some(complete.stdout.as_slice()), complete.stdout_bytes),
+        ("stderr", Some(complete.stderr.as_slice()), complete.stderr_bytes),
     ] {
         bodies.stage(
             conn,

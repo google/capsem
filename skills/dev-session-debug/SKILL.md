@@ -403,9 +403,11 @@ persistent VM stops, blocks sealed before the cutoff are dropped, the archive
 is compacted and the index rows are rewritten. Ephemeral sessions are deleted
 whole and never trimmed.
 
-Guest exec output reaches the ledger already cut to 1 KiB of stdout per
-command, so an `exec_events` body holds at most that much while `stdout_bytes`
-records the true size (google/capsem#220).
+Guest exec output is archived exactly, per lane, up to 10 MiB each, for
+buffered and streamed execs; `stdout_bytes`/`stderr_bytes` are the true totals
+and a body shorter than them is marked `truncated` (google/capsem#230). Before
+#230 the ledger archived the 1 KiB preview, so an older ledger's exec bodies
+are 1 KiB excerpts.
 
 ### fs_events -- filesystem changes in guest workspace
 
@@ -495,8 +497,9 @@ Rollup happens when a session ends.
 - `check_session.py --verify-bodies` names every row that does not read back.
 - A persistent VM trims bodies older than `vm.resources.retention_days` when it
   stops; a body older than that is gone by design, and its index row with it.
-- Exec output is cut to 1 KiB before the ledger sees it; a short stdout body
-  with a large `stdout_bytes` is that, not archive damage.
+- Exec output past 10 MiB per lane is cut before the ledger sees it; a body
+  with `truncated = 1` and a larger `stdout_bytes` is that, not archive damage.
+  Ledgers written before google/capsem#230 hold 1 KiB exec excerpts.
 
 ### Empty tool_calls
 - No AI agent invoked tools during the session, or model/MCP tool evidence failed to parse.

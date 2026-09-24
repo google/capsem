@@ -3,23 +3,69 @@ use std::sync::Arc;
 
 use crate::job_store::JobStore;
 
-/// Maximum combined guest exec output retained in memory.
+/// Guest exec output a buffered result returns, both lanes together in the
+/// order they arrived. The whole result travels in one `ExecResult` IPC frame,
+/// so this must leave the envelope room under that frame's cap.
 pub(super) const MAX_EXEC_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
 
-/// Output kept per lane for the exec ledger preview. A streamed exec delivers
-/// its output to the client, so this is all it retains.
-pub(super) const EXEC_LEDGER_PREVIEW_BYTES: usize = 1024;
+/// Guest exec output retained per lane for the session ledger, whether the
+/// exec was buffered or streamed: the logger's own body cap, so what is kept
+/// is exactly what the archive can store. A streamed exec's bytes reaching its
+/// client says nothing about the ledger; this copy is what the ledger gets.
+/// Per exec the capture holds at most two of these.
+pub(super) const EXEC_LEDGER_BODY_BYTES: usize = capsem_logger::MAX_BODY_BLOB_BYTES;
+
+const _: () = assert!(
+    MAX_EXEC_OUTPUT_BYTES <= EXEC_LEDGER_BODY_BYTES,
+    "the buffered result is a prefix of the retained lanes"
+);
+const _: () = assert!(
+    MAX_EXEC_OUTPUT_BYTES + 64 * 1024 <= capsem_foundation::ipc_channel::MAX_IPC_FRAME_SIZE as usize,
+    "a full buffered result must fit one IPC frame"
+);
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct ExecCapture {
+    /// Each lane's leading bytes, exactly as the guest wrote them, up to
+    /// `EXEC_LEDGER_BODY_BYTES`.
     pub(super) stdout: Vec<u8>,
     pub(super) stderr: Vec<u8>,
+    /// What the guest wrote per lane, retained or not.
     pub(super) stdout_bytes: u64,
     pub(super) stderr_bytes: u64,
+    /// Lane lengths at the moment the buffered result's combined
+    /// `MAX_EXEC_OUTPUT_BYTES` ran out; `None` while it has not. Until then the
+    /// result and the retained lanes are the same bytes, so the result is
+    /// always these leading slices of them and never a second buffer.
+    pub(super) response_cut: Option<(usize, usize)>,
     /// Why the output stopped early, when it did. A malformed or truncated
     /// frame used to read as a clean EOF: a non-streaming exec then returned
     /// partial output with the guest's exit code and nothing said so.
     pub(super) error: Option<String>,
+}
+
+impl ExecCapture {
+    /// Count, retain and budget one chunk of guest output.
+    fn admit(&mut self, channel: ExecOutputChannel, data: &[u8]) {
+        if self.response_cut.is_none() {
+            // No lane can reach its ledger cap first: before the cut both
+            // lanes together hold less than the result budget.
+            let room = MAX_EXEC_OUTPUT_BYTES - (self.stdout.len() + self.stderr.len());
+            if data.len() >= room {
+                self.response_cut = Some(match channel {
+                    ExecOutputChannel::Stdout => (self.stdout.len() + room, self.stderr.len()),
+                    ExecOutputChannel::Stderr => (self.stdout.len(), self.stderr.len() + room),
+                });
+            }
+        }
+        let (retained, total) = match channel {
+            ExecOutputChannel::Stdout => (&mut self.stdout, &mut self.stdout_bytes),
+            ExecOutputChannel::Stderr => (&mut self.stderr, &mut self.stderr_bytes),
+        };
+        *total = total.saturating_add(data.len() as u64);
+        let keep = data.len().min(EXEC_LEDGER_BODY_BYTES - retained.len());
+        retained.extend_from_slice(&data[..keep]);
+    }
 }
 
 pub(super) fn deposit(job_store: &JobStore, id: u64, capture: ExecCapture) -> Option<Arc<tokio::sync::Notify>> {
@@ -48,6 +94,7 @@ pub(super) fn deposit(job_store: &JobStore, id: u64, capture: ExecCapture) -> Op
     exec.captured_stderr = capture.stderr;
     exec.total_bytes = capture.stdout_bytes;
     exec.stderr_bytes = capture.stderr_bytes;
+    exec.response_cut = capture.response_cut;
     if let Some(error) = capture.error {
         exec.output_error.get_or_insert(error);
     }
@@ -61,12 +108,11 @@ pub(super) fn deposit(job_store: &JobStore, id: u64, capture: ExecCapture) -> Op
 /// actual byte volume.
 #[cfg(test)]
 pub(super) fn read_exec_output(reader: &mut impl std::io::Read) -> ExecCapture {
-    read_output(reader, |_, _| Ok(()), false, MAX_EXEC_OUTPUT_BYTES).expect("capture has no fallible forwarding")
+    read_output(reader, |_, _| {})
 }
 
 pub(super) fn read_exec_output_protocol(reader: &mut impl std::io::Read, protocol: ExecOutputProtocol) -> ExecCapture {
-    read_output_protocol(reader, protocol, |_, _| Ok(()), false, MAX_EXEC_OUTPUT_BYTES)
-        .expect("capture has no fallible forwarding")
+    read_output_protocol(reader, protocol, |_, _| {})
 }
 
 pub(super) fn read_protocol(
@@ -74,10 +120,10 @@ pub(super) fn read_protocol(
     id: u64,
     sender: Option<&tokio::sync::mpsc::Sender<capsem_proto::ipc::ProcessToService>>,
     protocol: ExecOutputProtocol,
-) -> std::io::Result<ExecCapture> {
+) -> ExecCapture {
     match sender {
         Some(sender) => stream_exec_output_protocol(reader, id, sender, protocol),
-        None => Ok(read_exec_output_protocol(reader, protocol)),
+        None => read_exec_output_protocol(reader, protocol),
     }
 }
 
@@ -85,12 +131,11 @@ pub(super) fn read_protocol(
 /// one syscall for a length and another for each payload.
 const EXEC_OUTPUT_READ_BUFFER: usize = 64 * 1024;
 
-fn read_output(
-    reader: &mut impl std::io::Read,
-    mut forward: impl FnMut(ExecOutputChannel, Vec<u8>) -> std::io::Result<()>,
-    strict: bool,
-    retain_per_lane: usize,
-) -> std::io::Result<ExecCapture> {
+/// A read error ends the capture with its reason and keeps every byte that
+/// arrived before it, streamed or not. A streamed read used to return the
+/// error alone, and its caller deposited an empty capture: the ledger lost
+/// exactly the output of the execs whose streams broke.
+fn read_output(reader: &mut impl std::io::Read, mut forward: impl FnMut(ExecOutputChannel, Vec<u8>)) -> ExecCapture {
     let mut reader = std::io::BufReader::with_capacity(EXEC_OUTPUT_READ_BUFFER, reader);
     let mut capture = ExecCapture::default();
     loop {
@@ -98,47 +143,33 @@ fn read_output(
             Ok(Some(frame)) => frame,
             Ok(None) => break,
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(error) if strict => return Err(error),
             Err(error) => {
                 capture.error = Some(format!("exec output transport failed: {error}"));
                 break;
             }
         };
-        let combined = capture.stdout.len().saturating_add(capture.stderr.len());
-        let combined_room = MAX_EXEC_OUTPUT_BYTES.saturating_sub(combined);
-        let (retained, total) = match frame.channel {
-            ExecOutputChannel::Stdout => (&mut capture.stdout, &mut capture.stdout_bytes),
-            ExecOutputChannel::Stderr => (&mut capture.stderr, &mut capture.stderr_bytes),
-        };
-        *total = total.saturating_add(frame.data.len() as u64);
-        let lane_room = retain_per_lane.saturating_sub(retained.len());
-        let keep = frame.data.len().min(combined_room).min(lane_room);
-        retained.extend_from_slice(&frame.data[..keep]);
+        capture.admit(frame.channel, &frame.data);
         // Retain first, then hand the bytes on: a streamed chunk moves, never clones.
-        forward(frame.channel, frame.data)?;
+        forward(frame.channel, frame.data);
     }
-    Ok(capture)
+    capture
 }
 
 fn read_output_protocol(
     reader: &mut impl std::io::Read,
     protocol: ExecOutputProtocol,
-    forward: impl FnMut(ExecOutputChannel, Vec<u8>) -> std::io::Result<()>,
-    strict: bool,
-    retain_per_lane: usize,
-) -> std::io::Result<ExecCapture> {
+    forward: impl FnMut(ExecOutputChannel, Vec<u8>),
+) -> ExecCapture {
     match protocol {
-        ExecOutputProtocol::RawMerged => read_raw_output(reader, forward, strict, retain_per_lane),
-        ExecOutputProtocol::FramedLanes => read_output(reader, forward, strict, retain_per_lane),
+        ExecOutputProtocol::RawMerged => read_raw_output(reader, forward),
+        ExecOutputProtocol::FramedLanes => read_output(reader, forward),
     }
 }
 
 fn read_raw_output(
     reader: &mut impl std::io::Read,
-    mut forward: impl FnMut(ExecOutputChannel, Vec<u8>) -> std::io::Result<()>,
-    strict: bool,
-    retain: usize,
-) -> std::io::Result<ExecCapture> {
+    mut forward: impl FnMut(ExecOutputChannel, Vec<u8>),
+) -> ExecCapture {
     let mut capture = ExecCapture::default();
     let mut buffer = vec![0_u8; EXEC_OUTPUT_READ_BUFFER];
     loop {
@@ -146,20 +177,15 @@ fn read_raw_output(
             Ok(0) => break,
             Ok(read) => read,
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(error) if strict => return Err(error),
             Err(error) => {
                 capture.error = Some(format!("exec output transport failed: {error}"));
                 break;
             }
         };
-        capture.stdout_bytes = capture.stdout_bytes.saturating_add(read as u64);
-        let keep = read
-            .min(MAX_EXEC_OUTPUT_BYTES.saturating_sub(capture.stdout.len()))
-            .min(retain.saturating_sub(capture.stdout.len()));
-        capture.stdout.extend_from_slice(&buffer[..keep]);
-        forward(ExecOutputChannel::Stdout, buffer[..read].to_vec())?;
+        capture.admit(ExecOutputChannel::Stdout, &buffer[..read]);
+        forward(ExecOutputChannel::Stdout, buffer[..read].to_vec());
     }
-    Ok(capture)
+    capture
 }
 
 /// Distinguish clean socket EOF between frames from a truncated frame: an
@@ -180,21 +206,15 @@ pub(super) fn stream_exec_output(
     reader: &mut impl std::io::Read,
     id: u64,
     sender: &tokio::sync::mpsc::Sender<capsem_proto::ipc::ProcessToService>,
-) -> std::io::Result<ExecCapture> {
+) -> ExecCapture {
     let mut attached = true;
-    read_output(
-        reader,
-        |channel, data| {
-            if attached {
-                attached = sender
-                    .blocking_send(capsem_proto::ipc::ProcessToService::ExecOutput { id, channel, data })
-                    .is_ok();
-            }
-            Ok(())
-        },
-        true,
-        EXEC_LEDGER_PREVIEW_BYTES,
-    )
+    read_output(reader, |channel, data| {
+        if attached {
+            attached = sender
+                .blocking_send(capsem_proto::ipc::ProcessToService::ExecOutput { id, channel, data })
+                .is_ok();
+        }
+    })
 }
 
 pub(super) fn stream_exec_output_protocol(
@@ -202,22 +222,15 @@ pub(super) fn stream_exec_output_protocol(
     id: u64,
     sender: &tokio::sync::mpsc::Sender<capsem_proto::ipc::ProcessToService>,
     protocol: ExecOutputProtocol,
-) -> std::io::Result<ExecCapture> {
+) -> ExecCapture {
     let mut attached = true;
-    read_output_protocol(
-        reader,
-        protocol,
-        |channel, data| {
-            if attached {
-                attached = sender
-                    .blocking_send(capsem_proto::ipc::ProcessToService::ExecOutput { id, channel, data })
-                    .is_ok();
-            }
-            Ok(())
-        },
-        true,
-        EXEC_LEDGER_PREVIEW_BYTES,
-    )
+    read_output_protocol(reader, protocol, |channel, data| {
+        if attached {
+            attached = sender
+                .blocking_send(capsem_proto::ipc::ProcessToService::ExecOutput { id, channel, data })
+                .is_ok();
+        }
+    })
 }
 
 #[cfg(test)]

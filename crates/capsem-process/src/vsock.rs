@@ -27,7 +27,6 @@ mod exec_completion;
 mod exec_input;
 mod exec_output;
 mod shutdown;
-use exec_output::MAX_EXEC_OUTPUT_BYTES;
 
 type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
 type PluginPolicyHandle = capsem_core::net::policy_config::SharedPluginPolicy;
@@ -959,16 +958,7 @@ fn dispatch_aux_connection(
                         .map(|active| (active.stream.clone(), active.input_rx.take()))
                         .unwrap_or((None, None));
                     let _input_handle = exec_input::spawn_for(&conn, id, input, stream.clone(), output_protocol);
-                    let result = exec_output::read_protocol(&mut file, id, stream.as_ref(), output_protocol);
-                    let capture = match result {
-                        Ok(output) => output,
-                        Err(error) => {
-                            if let Some(active) = js.active_execs.lock().unwrap().get_mut(&id) {
-                                active.output_error = Some(format!("exec output transport failed: {error}"));
-                            }
-                            exec_output::ExecCapture::default()
-                        }
-                    };
+                    let capture = exec_output::read_protocol(&mut file, id, stream.as_ref(), output_protocol);
                     let total_seen = capture.stdout_bytes.saturating_add(capture.stderr_bytes);
                     let retained = capture.stdout.len().saturating_add(capture.stderr.len());
                     if total_seen > retained as u64 {
@@ -976,8 +966,8 @@ fn dispatch_aux_connection(
                             id,
                             retained,
                             total_bytes = total_seen,
-                            cap = MAX_EXEC_OUTPUT_BYTES,
-                            "exec output exceeded the cap; retaining the prefix"
+                            cap_per_lane = exec_output::EXEC_LEDGER_BODY_BYTES,
+                            "exec output exceeded the ledger cap; retaining each lane's prefix"
                         );
                     }
                     // Deposit captured bytes and signal ExecDone it can

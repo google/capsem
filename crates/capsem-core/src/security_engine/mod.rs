@@ -350,8 +350,8 @@ pub fn security_event_from_exec_complete_event(event: &ExecEventComplete) -> Sec
         name: None,
         command: None,
         exit_code: Some(event.exit_code.to_string()),
-        stdout: event.stdout_preview.clone(),
-        stderr: event.stderr_preview.clone(),
+        stdout: Some(capsem_logger::output_preview(&event.stdout)),
+        stderr: Some(capsem_logger::output_preview(&event.stderr)),
     })
 }
 

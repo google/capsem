@@ -64,6 +64,10 @@ pub(crate) struct ActiveExec {
     /// real volume rather than the retained slice.
     pub(crate) total_bytes: u64,
     pub(crate) stderr_bytes: u64,
+    /// Lane lengths the buffered result stops at, when the guest wrote more
+    /// than one result carries; `None` returns every retained byte. See
+    /// `vsock::exec_output::ExecCapture::response_cut`.
+    pub(crate) response_cut: Option<(usize, usize)>,
     /// Bounded stdin queue exists before the guest opens its exec VSOCK, so a
     /// client may send immediately after the stream-start acknowledgement.
     /// Its capacity is the service's stdin credit window.
@@ -85,6 +89,7 @@ impl ActiveExec {
             captured_stderr: Vec::new(),
             total_bytes: 0,
             stderr_bytes: 0,
+            response_cut: None,
             input_tx,
             input_rx: Some(input_rx),
             deposited: Arc::new(Notify::new()),
@@ -158,8 +163,9 @@ pub(crate) enum JobResult {
         stdout: Vec<u8>,
         stderr: Vec<u8>,
         exit_code: i32,
-        /// The guest wrote more than `MAX_EXEC_OUTPUT_BYTES`; `stdout` holds
-        /// the retained prefix only.
+        /// The guest wrote more than one result carries
+        /// (`MAX_EXEC_OUTPUT_BYTES`, both lanes together); `stdout` and
+        /// `stderr` hold their leading bytes only. The ledger keeps more.
         truncated: bool,
     },
     WriteFile {

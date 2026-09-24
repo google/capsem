@@ -345,8 +345,8 @@ async fn tool_response_and_exec_output_are_archived_and_previewed() {
         exec_id: 4242,
         exit_code: 0,
         duration_ms: 12,
-        stdout_preview: Some(big.clone()),
-        stderr_preview: Some(big.clone()),
+        stdout: big.clone().into(),
+        stderr: big.clone().into(),
         stdout_bytes: big.len() as u64,
         stderr_bytes: big.len() as u64,
         pid: Some(99),
@@ -724,10 +724,10 @@ async fn a_rejected_op_does_not_leave_the_archive_holding_a_block() {
     );
 }
 
-/// Exec output arrives already cut down: capsem-process caps it at the vsock
-/// boundary and sends the true size beside it. The index row has to report
-/// the size the output was cut from, or a reader is told a 5 MB build log was
-/// 1 KB long and nothing anywhere says otherwise.
+/// Exec output can arrive already cut down: capsem-process caps each lane at
+/// the body cap and sends the true size beside it. The index row has to
+/// report the size the output was cut from, or a reader is told a long build
+/// log was only as long as its excerpt and nothing anywhere says otherwise.
 #[tokio::test]
 async fn exec_output_rows_report_the_size_the_output_was_cut_from() {
     let p = temp_db_path("bodies-exec-true-size");
@@ -750,8 +750,8 @@ async fn exec_output_rows_report_the_size_the_output_was_cut_from() {
         exec_id: 90_210,
         exit_code: 0,
         duration_ms: 1,
-        stdout_preview: Some(excerpt.clone()),
-        stderr_preview: None,
+        stdout: excerpt.clone().into(),
+        stderr: Vec::new(),
         stdout_bytes: 5_000_000,
         stderr_bytes: 0,
         pid: Some(11),

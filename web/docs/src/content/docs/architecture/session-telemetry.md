@@ -559,9 +559,15 @@ Commands executed through Capsem service APIs and MCP tools.
 | `pid` | INTEGER | Guest process ID, when known |
 | `credential_ref` | TEXT | Brokered credential reference, when present |
 
-Guest exec output currently reaches the ledger cut to 1 KiB of stdout per
-command, so the archived body holds at most that much while `stdout_bytes`
-records the true size ([#220](https://github.com/google/capsem/issues/220)).
+Guest exec output is archived byte for byte, stdout and stderr separately and
+not necessarily UTF-8, up to 10 MiB per lane -- for buffered and streamed
+execs alike, and for a stream its client cancelled. `stdout_bytes` and
+`stderr_bytes` record what the guest wrote; a body shorter than that is marked
+`truncated` in `event_body_blobs`, and only when the 10 MiB cap cut it. Output
+that stops on a broken transport is archived as far as it got and is not
+truncated. The `*_preview` columns and the security-rule input are the first
+2 KiB, derived from the body. A buffered exec result still returns at most
+10 MiB of both lanes together ([#230](https://github.com/google/capsem/issues/230)).
 
 ### audit_events
 
