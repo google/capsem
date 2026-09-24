@@ -43,6 +43,7 @@ EXPECTED_FS_COLUMNS = {
     "directory",
     "name",
     "size",
+    "kind",
     "trace_id",
     "turn_id",
     "credential_ref",

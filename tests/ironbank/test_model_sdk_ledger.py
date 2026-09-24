@@ -2175,7 +2175,12 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert tool_model["response_bytes"] > 0
             _assert_credential_ref(tool_model["credential_ref"])
             codex_credential_ref = tool_model["credential_ref"]
-            assert '"name":"exec_command"' in (tool_model["request_body_preview"] or "")
+            # The preview is a 2 KB excerpt and Codex's system prompt fills it;
+            # the tool list is only in the archived request.
+            with session_archive(conn) as archive:
+                tool_model_request = archive.read(tool_model["event_id"], "model_calls", "request")
+            assert tool_model_request is not None
+            assert b'"name":"exec_command"' in tool_model_request
             assert "capsem_test_codex_cli_key" not in (
                 tool_model["request_body_preview"] or ""
             )
@@ -2284,7 +2289,10 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert "content-type: text/event-stream" in (
                 tool_net["response_headers"] or ""
             )
-            assert '"name":"exec_command"' in (tool_net["request_body_preview"] or "")
+            with session_archive(conn) as archive:
+                tool_net_request = archive.read(tool_net["event_id"], "net_events", "request")
+            assert tool_net_request is not None
+            assert b'"name":"exec_command"' in tool_net_request
             assert expected_call_id in (tool_net["response_body_preview"] or "")
             assert "response.function_call_arguments.delta" in (
                 tool_net["response_body_preview"] or ""
