@@ -66,8 +66,6 @@ async fn pull_admission_waits_for_the_vm_owner_readiness_barrier() {
         access: Arc::clone(&access),
         ..images()
     });
-    let ready_path = fx.uds_path.with_extension("ready");
-    std::fs::remove_file(&ready_path).unwrap();
     let owner = spawn_fake_process(&fx.uds_path, 1, |message| {
         let reply = match message {
             ServiceToProcess::AdmitContainerPull { id, .. } => Some(ProcessToService::ContainerPullAdmission {
@@ -79,6 +77,10 @@ async fn pull_admission_waits_for_the_vm_owner_readiness_barrier() {
         };
         Box::pin(async move { reply })
     });
+    // The fake owner announces readiness when it binds; withdraw it after, or
+    // admission is free to reach the owner and this proves nothing.
+    let ready_path = fx.uds_path.with_extension("ready");
+    std::fs::remove_file(&ready_path).unwrap();
 
     start(&fx.state, "box".into(), spec(None));
     tokio::time::sleep(std::time::Duration::from_millis(75)).await;
