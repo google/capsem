@@ -26,7 +26,7 @@ writer queue. The one exception is the guest audit stream's own OS thread.
 
 BLOCKING = re.compile(r"\bemit_[a-z_]*_blocking\s*\(|\bwrite_blocking(?:_checked)?\s*\(")
 #: (file, the function allowed to call a blocking emitter, and why).
-ALLOWED = {(PROCESS_SRC / "vsock.rs", "handle_audit_frame")}
+ALLOWED = {(PROCESS_SRC / "vsock" / "audit.rs", "handle_audit_frame")}
 FUNCTION = re.compile(r"^\s*(?:pub(?:\([a-z]+\))?\s+)?(?:async\s+)?fn\s+(\w+)")
 
 
@@ -52,8 +52,8 @@ def test_process_audit_rows_are_admitted_without_blocking_a_runtime_worker() -> 
 
 
 def test_guard_detects_a_blocking_emit_in_async_code(tmp_path: Path) -> None:
-    (tmp_path / PROCESS_SRC).mkdir(parents=True)
-    (tmp_path / PROCESS_SRC / "vsock.rs").write_text(
+    (tmp_path / PROCESS_SRC / "vsock").mkdir(parents=True)
+    (tmp_path / PROCESS_SRC / "vsock" / "audit.rs").write_text(
         "fn handle_audit_frame() {\n    emit_process_audit_security_write_and_rules_blocking(db);\n}\n",
         encoding="utf-8",
     )
