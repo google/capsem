@@ -205,6 +205,11 @@ pub const CREATE_SCHEMA: &str = "
         ON tool_responses(event_id, id);
     CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id
         ON model_calls(trace_id);
+    -- The timeline reads each layer's window from a cutoff in time order.
+    CREATE INDEX IF NOT EXISTS idx_model_calls_timestamp
+        ON model_calls(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp
+        ON tool_calls(timestamp);
 
     -- The diagnostics triage filters tool errors by counted origin.
     CREATE INDEX IF NOT EXISTS idx_tool_calls_origin
