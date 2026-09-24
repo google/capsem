@@ -141,6 +141,8 @@ mod ask_ledger;
 mod boundary_events;
 #[path = "tests/decision_ledger.rs"]
 mod decision_ledger;
+#[path = "tests/effective_decision.rs"]
+mod effective_decision;
 #[path = "tests/event_contract.rs"]
 mod event_contract;
 #[path = "tests/materialization.rs"]

@@ -34,7 +34,12 @@ use forensics::{
 };
 pub use network::NetworkSecurityEvent;
 mod plugins;
+mod rule_decision;
 use plugins::{CredentialBrokerPlugin, DummyPostAllowPlugin, DummyPreEicarPlugin, LogSanitizerPlugin};
+use rule_decision::{
+    apply_event_decision_to_enforcement, decision_stage_for_rule, requested_boundary_decision,
+    requested_decision_for_rule, security_enforcement_decision, selected_enforcement_rule,
+};
 
 pub const SECURITY_EVENT_EMIT_SPAN: &str = "capsem.security_event.emit";
 pub const SECURITY_EVENT_EMIT_TOTAL: &str = "security_event.emit_total";
@@ -652,6 +657,10 @@ pub async fn emit_matching_security_rules_with_decision(
             timestamp_unix_ms,
         )
         .await?;
+        // Rule rows record what was enforced. The transition above merged the
+        // rule's request into `decision_state`; the event as it arrived still
+        // carries the default allow (google/capsem#203).
+        enriched_event.decision = decision_state.clone();
     }
     for rule in evaluation.matched_rules() {
         let rule_event = security_rule_event(event_id.clone(), event_type, rule, &enriched_event, timestamp_unix_ms)?;
@@ -722,6 +731,10 @@ pub fn emit_matching_security_rules_with_decision_blocking(
             &mut decision_state,
             timestamp_unix_ms,
         )?;
+        // Rule rows record what was enforced. The transition above merged the
+        // rule's request into `decision_state`; the event as it arrived still
+        // carries the default allow (google/capsem#203).
+        enriched_event.decision = decision_state.clone();
     }
     for rule in evaluation.matched_rules() {
         let rule_event = security_rule_event(event_id.clone(), event_type, rule, &enriched_event, timestamp_unix_ms)?;
@@ -751,28 +764,6 @@ pub fn emit_matching_security_rules_with_decision_blocking(
         event: enriched_event,
         rule_events,
     })
-}
-
-fn requested_decision_for_rule(action: SecurityRuleAction) -> SecurityDecisionKind {
-    match action {
-        SecurityRuleAction::Allow
-        | SecurityRuleAction::Preprocess
-        | SecurityRuleAction::Rewrite
-        | SecurityRuleAction::Postprocess => SecurityDecisionKind::Allow,
-        SecurityRuleAction::Ask => SecurityDecisionKind::Ask,
-        SecurityRuleAction::Block => SecurityDecisionKind::Block,
-    }
-}
-
-fn decision_stage_for_rule(action: SecurityRuleAction) -> LoggedSecurityDecisionStage {
-    match action {
-        SecurityRuleAction::Preprocess => LoggedSecurityDecisionStage::Preprocess,
-        SecurityRuleAction::Rewrite => LoggedSecurityDecisionStage::Rewrite,
-        SecurityRuleAction::Postprocess => LoggedSecurityDecisionStage::Postprocess,
-        SecurityRuleAction::Allow | SecurityRuleAction::Ask | SecurityRuleAction::Block => {
-            LoggedSecurityDecisionStage::Rule
-        }
-    }
 }
 
 fn security_decision_event(
@@ -857,76 +848,6 @@ pub fn emit_security_decision_transition_blocking(
     let decision_event = security_decision_event(event_id, event_type, rule, event, decision_state, timestamp_unix_ms)?;
     emit_security_write_blocking(db, WriteOp::SecurityDecisionEvent(decision_event));
     Ok(())
-}
-
-fn selected_enforcement_rule<'a>(
-    evaluation: &'a crate::net::policy_config::SecurityRuleEvaluation<'a>,
-) -> Option<&'a CompiledSecurityRule> {
-    evaluation.enforcement_rules().into_iter().next()
-}
-
-/// Escalate an enforcement decision to match the event's merged decision state.
-///
-/// Plugins request decisions on the same rail as rules, so a plugin running in
-/// `ask` or `block` mode has to be able to raise an allowing rule verdict. The
-/// merge behind `decision.effective` is escalate-only, so this can only ever
-/// tighten the decision -- a plugin cannot talk a blocking rule down to allow.
-fn apply_event_decision_to_enforcement(event: &SecurityEvent, enforcement: &mut SecurityEnforcementDecision) {
-    match event.decision.effective {
-        SecurityDecisionKind::Block => enforcement.action = SecurityEnforcementAction::Block,
-        SecurityDecisionKind::Ask => {
-            if matches!(enforcement.action, SecurityEnforcementAction::Allow) {
-                enforcement.action = SecurityEnforcementAction::Ask;
-            }
-        }
-        SecurityDecisionKind::Allow => {}
-    }
-}
-
-fn requested_boundary_decision(
-    rule: Option<&CompiledSecurityRule>,
-    kind: RuntimeSecurityEventType,
-) -> SecurityDecisionKind {
-    match rule {
-        Some(rule) => requested_decision_for_rule(rule.action),
-        None if matches!(
-            kind,
-            RuntimeSecurityEventType::NetworkConnect | RuntimeSecurityEventType::NetworkProbe
-        ) =>
-        {
-            SecurityDecisionKind::Block
-        }
-        None => SecurityDecisionKind::Allow,
-    }
-}
-
-fn security_enforcement_decision(
-    rule: Option<&CompiledSecurityRule>,
-    event: &mut SecurityEvent,
-) -> SecurityEnforcementDecision {
-    let Some(rule) = rule else {
-        let mut decision = SecurityEnforcementDecision::allow();
-        if requested_boundary_decision(None, event.event_type) == SecurityDecisionKind::Block {
-            event.request_decision(SecurityDecisionKind::Block);
-            decision.action = SecurityEnforcementAction::Block;
-            decision.reason = Some("network operation requires an explicit allow rule".into());
-        }
-        return decision;
-    };
-    SecurityEnforcementDecision {
-        action: match rule.action {
-            SecurityRuleAction::Allow => SecurityEnforcementAction::Allow,
-            SecurityRuleAction::Ask => SecurityEnforcementAction::Ask,
-            SecurityRuleAction::Block => SecurityEnforcementAction::Block,
-            SecurityRuleAction::Preprocess | SecurityRuleAction::Rewrite | SecurityRuleAction::Postprocess => {
-                SecurityEnforcementAction::Allow
-            }
-        },
-        rule_id: Some(rule.rule_id.clone()),
-        rule_name: Some(rule.name.clone()),
-        reason: rule.reason.clone(),
-        ask_id: None,
-    }
 }
 
 pub fn evaluate_security_boundary(

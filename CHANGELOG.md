@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to load says why and keeps its previous policy. Policy files are replaced
   atomically, so a reader never sees half a file (google/capsem#229).
 
+- A security rule match now records the decision that was enforced. A request,
+  DNS query, file operation or process blocked by a rule was stored with
+  `decision.effective = "allow"` in the match's payload beside
+  `rule_action = "block"`, so the audit trail said the opposite of what
+  happened (google/capsem#229, #203).
+
 - A file export from the guest is refused when its security event cannot be
   recorded or evaluated. It used to log a warning and hand the file over
   anyway, so an export could leave the sandbox with no audit trail; exec and

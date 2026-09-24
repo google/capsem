@@ -91,7 +91,9 @@ def egress(tmp_path):
 
 
 def _results(stdout):
-    return dict(line.split("=", 1) for line in stdout.splitlines() if "=" in line and " " not in line)
+    return dict(
+        line.split("=", 1) for line in stdout.splitlines() if "=" in line and " " not in line
+    )
 
 
 def test_container_egress_is_intercepted_policed_and_audited(egress, tmp_path):
@@ -148,8 +150,8 @@ def test_container_egress_is_intercepted_policed_and_audited(egress, tmp_path):
     assert results.get("dns") != "0", "DNS policy must apply inside the container"
     for probe in ("escape_gateway", "escape_vm", "escape_dns"):
         assert results.get(probe) == "1", f"{probe}: container reached a VM service directly"
-    # One row per matched rule; the row's rule_id/rule_action are the decision
-    # of record (the payload's decision is not applied on HTTP/DNS rows, #203).
+    # One row per matched rule. The row's rule_action is the rule; the payload's
+    # decision.effective is the outcome enforced, which must agree (#203).
     # The payload itself is archive-backed, read here beside the row it belongs
     # to rather than carried by every row of the latest route.
     latest = client.get(f"/vms/{vm_id}/security/latest?limit=2000")
@@ -160,23 +162,49 @@ def test_container_egress_is_intercepted_policed_and_audited(egress, tmp_path):
         for row in latest:
             event = archive.security_payload(row["event_id"])
             if row["event_type"] == "http.request":
-                http.append((event["http"]["host"], event["http"]["path"], row["rule_id"], row["rule_action"]))
+                http.append(
+                    (
+                        event["http"]["host"],
+                        event["http"]["path"],
+                        row["rule_id"],
+                        row["rule_action"],
+                        event["decision"]["effective"],
+                    )
+                )
             elif row["event_type"] == "dns.query":
-                dns.append((event["dns"]["qname"], row["rule_id"], row["rule_action"]))
+                dns.append(
+                    (
+                        event["dns"]["qname"],
+                        row["rule_id"],
+                        row["rule_action"],
+                        event["decision"]["effective"],
+                    )
+                )
     # The transcript also records DNS exchanges, which have no path.
     transcript = [
         record["path"]
-        for record in map(json.loads, (tmp_path / "upstream-transcript.jsonl").read_text().splitlines())
+        for record in map(
+            json.loads, (tmp_path / "upstream-transcript.jsonl").read_text().splitlines()
+        )
         if "path" in record
     ]
     evidence = f"probes={results} http={http} dns={dns} upstream={transcript}"
     assert any(
-        host == ALLOWED_HOST and path == "/html/about" and action == "allow" for host, path, _, action in http
+        host == ALLOWED_HOST and path == "/html/about" and action == effective == "allow"
+        for host, path, _, action, effective in http
     ), evidence
-    assert (ALLOWED_HOST, "/secret", "corp.rules.block_container_secret_path", "block") in http, evidence
+    assert (
+        ALLOWED_HOST,
+        "/secret",
+        "corp.rules.block_container_secret_path",
+        "block",
+        "block",
+    ) in http, evidence
     assert any(
-        qname.endswith(blocked_zone) and rule == "corp.rules.block_container_dns_exfil" and action == "block"
-        for qname, rule, action in dns
+        qname.endswith(blocked_zone)
+        and rule == "corp.rules.block_container_dns_exfil"
+        and action == effective == "block"
+        for qname, rule, action, effective in dns
     ), evidence
     assert transcript.count("/html/about") == 2, evidence
     assert "/secret" not in transcript, f"a blocked request reached the upstream: {evidence}"
