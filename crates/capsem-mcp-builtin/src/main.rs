@@ -24,8 +24,8 @@ use rmcp::{tool, tool_router, ServiceExt};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use capsem_core::mcp::builtin_tools::BuiltinHttpClient;
 use capsem_core::mcp::builtin_tools;
+use capsem_core::mcp::builtin_tools::BuiltinHttpClient;
 use capsem_core::net::policy_config::{ActiveProfileFile, SecurityPluginConfig, SecurityRuleSet};
 use capsem_proto::mcp_contracts::builtin_ledger::{self, BuiltinLedgerRecord, BUILTIN_LEDGER_META_KEY};
 use capsem_proto::mcp_contracts::JsonRpcResponse;

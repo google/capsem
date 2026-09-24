@@ -50,7 +50,10 @@ fn clones_nested_content_and_permissions() {
     let stats = clone(&fixture);
 
     assert_eq!(std::fs::read(fixture.dst.join("top.txt")).unwrap(), b"top");
-    assert_eq!(std::fs::read(fixture.dst.join("a/b/deep.bin")).unwrap(), [0_u8, 1, 2, 255]);
+    assert_eq!(
+        std::fs::read(fixture.dst.join("a/b/deep.bin")).unwrap(),
+        [0_u8, 1, 2, 255]
+    );
     assert_eq!(std::fs::read(fixture.dst.join("empty")).unwrap(), b"");
     assert_eq!(mode(&fixture.dst.join("top.txt")), 0o640);
     assert_eq!(stats.cloned_files + stats.copied_files, 3);
@@ -76,8 +79,14 @@ fn symlinks_are_recreated_verbatim_and_never_followed() {
 
     let stats = clone(&fixture);
 
-    assert_eq!(std::fs::read_link(fixture.dst.join("to-secret")).unwrap(), fixture.secret);
-    assert_eq!(std::fs::read_link(fixture.dst.join("dangling")).unwrap(), Path::new("dangling-target"));
+    assert_eq!(
+        std::fs::read_link(fixture.dst.join("to-secret")).unwrap(),
+        fixture.secret
+    );
+    assert_eq!(
+        std::fs::read_link(fixture.dst.join("dangling")).unwrap(),
+        Path::new("dangling-target")
+    );
     assert!(std::fs::symlink_metadata(fixture.dst.join("to-host-dir"))
         .unwrap()
         .file_type()
@@ -181,7 +190,11 @@ fn a_live_guest_swapping_entries_never_leaks_a_host_file() {
 #[test]
 fn special_files_are_skipped_without_blocking() {
     let fixture = fixture();
-    nix::unistd::mkfifo(&fixture.src.join("fifo"), nix::sys::stat::Mode::from_bits_truncate(0o600)).unwrap();
+    nix::unistd::mkfifo(
+        &fixture.src.join("fifo"),
+        nix::sys::stat::Mode::from_bits_truncate(0o600),
+    )
+    .unwrap();
     let stats = clone(&fixture);
     assert_eq!(stats.skipped, 1);
     assert!(std::fs::symlink_metadata(fixture.dst.join("fifo")).is_err());

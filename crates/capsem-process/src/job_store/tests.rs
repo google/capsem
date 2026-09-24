@@ -375,7 +375,11 @@ async fn overlapping_quiescence_sequences_run_one_at_a_time() {
         let (tx, job_store, inside) = (tx.clone(), Arc::clone(&job_store), Arc::clone(&inside));
         async move {
             with_quiescence(&tx, &job_store, std::time::Duration::from_secs(5), || async {
-                assert_eq!(inside.fetch_add(1, std::sync::atomic::Ordering::SeqCst), 0, "sequences overlapped");
+                assert_eq!(
+                    inside.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                    0,
+                    "sequences overlapped"
+                );
                 tokio::time::sleep(std::time::Duration::from_millis(30)).await;
                 inside.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                 Ok(label)

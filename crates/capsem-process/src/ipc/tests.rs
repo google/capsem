@@ -961,4 +961,3 @@ fn classify_clone_state_is_a_job() {
         IpcAction::Job
     );
 }
-

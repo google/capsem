@@ -131,11 +131,7 @@ fn main() {
                 }
                 let id = next_stream_id;
                 next_stream_id += 1;
-                (
-                    id,
-                    0,
-                    json_id.map(|json_id| PendingRequest { json_id, method }),
-                )
+                (id, 0, json_id.map(|json_id| PendingRequest { json_id, method }))
             }
         };
 

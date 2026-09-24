@@ -73,8 +73,7 @@ fn clone_file_into_never_replaces_or_writes_through_an_existing_entry() {
         // EEXIST, or ELOOP where O_NOFOLLOW is checked before O_EXCL (macOS,
         // dangling link): both refuse without touching the link's target.
         assert!(
-            error.kind() == io::ErrorKind::AlreadyExists
-                || super::super::super::contained::is_symlink_refusal(&error),
+            error.kind() == io::ErrorKind::AlreadyExists || super::super::super::contained::is_symlink_refusal(&error),
             "{name}: {error}"
         );
     }
@@ -122,7 +121,11 @@ fn copy_sparse_skips_allocated_zero_blocks() {
 
     let meta = std::fs::metadata(&dest_path).unwrap();
     assert_eq!(meta.len(), 8 * 1024 * 1024 + 4);
-    assert!(meta.blocks() * 512 < 1024 * 1024, "{} bytes allocated", meta.blocks() * 512);
+    assert!(
+        meta.blocks() * 512 < 1024 * 1024,
+        "{} bytes allocated",
+        meta.blocks() * 512
+    );
     assert!(std::fs::read(&dest_path).unwrap().ends_with(b"tail"));
 }
 
