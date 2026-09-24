@@ -46,7 +46,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture
 def short(tmp_path: Path) -> Iterator[Path]:
     """A root short enough for a unix socket path, which the kernel caps at 104 bytes."""
-    root = Path(tempfile.mkdtemp(prefix="reap-", dir="/tmp")).resolve()
+    root = Path(tempfile.mkdtemp(prefix="capsem-reap-", dir="/tmp")).resolve()
     try:
         yield root
     finally:
