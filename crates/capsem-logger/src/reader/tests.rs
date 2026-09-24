@@ -1,6 +1,8 @@
 use super::*;
 use serde_json::{json, Value};
 
+mod readiness;
+
 fn setup_reader_with_data() -> DbReader {
     let reader = DbReader::open_in_memory().unwrap();
     reader

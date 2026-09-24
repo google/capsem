@@ -71,10 +71,18 @@ python3 build_system/scripts/doctor/check_session.py --verify-bodies   # Also re
 python3 build_system/scripts/doctor/check_session.py -n 10             # Show 10 preview rows per table
 ```
 
-Checks: table existence, row counts, body archive integrity (below), file-monitor
-overflow windows, tool lifecycle integrity (orphaned tool_calls/tool_responses),
-AI provider correlation (net_events vs model_calls), and NULL detection in
-critical fields. It exits 1 when the ledger is damaged.
+Checks: SQLite page integrity (`PRAGMA quick_check`, first -- a damaged file
+ends the report), table existence, row counts, body archive integrity (below),
+file-monitor overflow windows, tool lifecycle integrity (orphaned
+tool_calls/tool_responses), AI provider correlation (net_events vs
+model_calls), and NULL detection in critical fields. It exits 1 when the
+ledger is damaged.
+
+Route readiness (`DbHandle::ready`) checks the schema's shape only, once per
+`schema_version`, and never scans pages: that scan cost 1.8 s per failed poll
+on a million-row ledger (google/capsem#230). Page damage surfaces as a
+`malformed` error on the query that reads it, at the ledger copy's
+`quick_check`, and here.
 
 The body archive check compares the index with the file without trusting
 either: every `event_body_blobs.block_offset` exists in `body_blocks`; every

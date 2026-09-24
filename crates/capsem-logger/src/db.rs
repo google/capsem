@@ -158,12 +158,6 @@ enum ReadRequest {
         /// the handle can expire read caches keyed on its epochs.
         reply: tokio::sync::oneshot::Sender<DbResult<bool>>,
     },
-    Observe {
-        /// Carries whether the ledger changed since the worker last looked.
-        /// Cached readiness still needs this probe before a caller can trust
-        /// response bytes keyed on the read epoch.
-        reply: tokio::sync::oneshot::Sender<DbResult<bool>>,
-    },
     Query {
         sql: String,
         params: Vec<serde_json::Value>,
@@ -219,7 +213,6 @@ struct DbHandleInner {
     reader_tx: mpsc::Sender<ReadRequest>,
     reader_join: Mutex<Option<JoinHandle<()>>>,
     writer: Option<Arc<DbWriter>>,
-    ready_cache: Mutex<Option<DbResult<()>>>,
     archive_blocks_inflated: AtomicU64,
     query_many_cache: Mutex<DbQueryManyCache>,
     read_cache_epoch: AtomicU64,
@@ -304,7 +297,6 @@ impl DbHandle {
                 reader_tx,
                 reader_join: Mutex::new(Some(reader_join)),
                 writer: None,
-                ready_cache: Mutex::new(None),
                 archive_blocks_inflated: AtomicU64::new(0),
                 query_many_cache: Mutex::new(DbQueryManyCache::new()),
                 read_cache_epoch: AtomicU64::new(0),
@@ -343,24 +335,12 @@ impl DbHandle {
     /// intentionally stable: as the DB layer grows schema/migration/mem-table
     /// checks, callers keep invoking `ready().await` and do not learn about the
     /// internal storage strategy.
+    ///
+    /// Every call asks the reader worker, which re-validates the shape only
+    /// when the ledger's `schema_version` moved. There is no handle-level
+    /// verdict: one cached here outlived the DDL that broke the schema.
     pub async fn ready(&self) -> DbResult<()> {
         let started = Instant::now();
-        let cached = { self.inner.ready_cache.lock().unwrap().clone() };
-        if let Some(cached) = cached {
-            let changed = self.observe_reader_change().await?;
-            if changed {
-                self.invalidate_read_cache();
-            }
-            tracing::debug!(
-                db_path = %self.inner.path.display(),
-                operation = "ready",
-                cached = true,
-                changed,
-                duration_ms = elapsed_ms(started),
-                "session db handle operation completed"
-            );
-            return cached;
-        }
         let (reply, rx) = tokio::sync::oneshot::channel();
         self.inner
             .reader_tx
@@ -399,24 +379,7 @@ impl DbHandle {
                 "session db handle operation failed"
             ),
         }
-        // A writer in another process can still be completing canonical DDL
-        // when an external reader first checks readiness.  Cache only success:
-        // a transient partial-schema error must be retryable on the same
-        // DB-owned handle, while a real broken schema still fails loudly.
-        if result.is_ok() {
-            *self.inner.ready_cache.lock().unwrap() = Some(Ok(()));
-        }
         result
-    }
-
-    async fn observe_reader_change(&self) -> DbResult<bool> {
-        let (reply, rx) = tokio::sync::oneshot::channel();
-        self.inner
-            .reader_tx
-            .send(ReadRequest::Observe { reply })
-            .map_err(|error| format!("db reader worker closed: {error}"))?;
-        rx.await
-            .map_err(|error| format!("db reader worker dropped observe reply: {error}"))?
     }
 
     /// Execute one read-only query through the DB-owned worker.

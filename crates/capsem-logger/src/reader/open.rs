@@ -43,6 +43,8 @@ impl DbReader {
             synced_data_version: Cell::new(None),
             disk_syncs: Cell::new(0),
             queries_executed: Cell::new(0),
+            ready_schema_version: Cell::new(None),
+            shape_validations: Cell::new(0),
         }
     }
 }

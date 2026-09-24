@@ -189,6 +189,11 @@ pub struct DbReader {
     synced_data_version: Cell<Option<i64>>,
     disk_syncs: Cell<u64>,
     queries_executed: Cell<u64>,
+    /// `PRAGMA schema_version` of the last schema this reader found ready.
+    /// Readiness is a property of the schema, so it holds until DDL moves the
+    /// version; a row commit leaves it where it is.
+    ready_schema_version: Cell<Option<i64>>,
+    shape_validations: Cell<u64>,
 }
 
 impl DbReader {

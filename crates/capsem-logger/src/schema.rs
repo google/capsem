@@ -319,14 +319,15 @@ pub use pragmas::{apply_pragmas, apply_reader_pragmas, record_sqlite_mmap_teleme
 /// This intentionally fails on missing tables or columns. A valid empty DB is
 /// ready; a partially migrated or corrupted DB is not. Routes must surface this
 /// as a DB contract error rather than returning invented empty ledgers.
+///
+/// It reads the schema, never the rows, so its cost does not grow with the
+/// ledger. It used to open with `PRAGMA integrity_check`: every readiness of
+/// a fresh handle walked every page and index, and a failed readiness --
+/// which callers retry -- walked them again on each poll, 1.8 s a time at a
+/// million rows. Page damage still fails loudly, where it is found: SQLite
+/// reports a corrupt page to the query that reads it, and the ledger copy
+/// runs `quick_check` over the whole file before it is trusted.
 pub fn validate_ready_schema(conn: &Connection) -> Result<(), String> {
-    let integrity = conn
-        .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
-        .map_err(|error| format!("session db integrity check failed: {error}"))?;
-    if integrity != "ok" {
-        return Err(format!("session db integrity check failed: {integrity}"));
-    }
-
     for (table, required_columns) in READY_SCHEMA_COLUMNS {
         validate_table_columns(conn, "main", table, required_columns)?;
     }

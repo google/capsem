@@ -6,8 +6,35 @@ impl DbReader {
     ///
     /// Empty ledgers are valid. Missing tables or route-critical columns are
     /// DB contract failures and must not be converted into empty route payloads.
+    ///
+    /// The shape is validated once per `schema_version`: only DDL can change
+    /// it, and DDL moves the version, including DDL from another connection.
+    /// Only success is remembered. A failure is re-validated on the next call,
+    /// which is cheap because validation reads the schema, never the rows --
+    /// and must stay so, since every poller retries a failure.
+    ///
+    /// This says nothing about page integrity, and an unchanged version is no
+    /// evidence against corruption. A damaged page fails the query that reads
+    /// it; a full scan belongs to the ledger copy, never to readiness.
     pub fn ready(&self) -> Result<(), String> {
-        schema::validate_ready_schema(&self.conn)
+        let schema_version: i64 = self
+            .conn
+            .prepare_cached("PRAGMA main.schema_version")
+            .and_then(|mut statement| statement.query_row([], |row| row.get(0)))
+            .map_err(|error| format!("session db schema version unreadable: {error}"))?;
+        if self.ready_schema_version.get() == Some(schema_version) {
+            return Ok(());
+        }
+        self.shape_validations.set(self.shape_validations.get() + 1);
+        schema::validate_ready_schema(&self.conn)?;
+        self.ready_schema_version.set(Some(schema_version));
+        Ok(())
+    }
+
+    /// How many times this reader validated the schema's shape.
+    #[cfg(test)]
+    pub(crate) fn shape_validations(&self) -> u64 {
+        self.shape_validations.get()
     }
 
     /// The ledger's `data_version` when it differs from the last one committed
@@ -23,7 +50,10 @@ impl DbReader {
     /// committed once that work has actually succeeded. See
     /// `commit_observed_version`.
     pub(crate) fn observe_data_version(&self) -> rusqlite::Result<Option<i64>> {
-        let data_version: i64 = self.conn.query_row("PRAGMA main.data_version", [], |row| row.get(0))?;
+        let data_version: i64 = self
+            .conn
+            .prepare_cached("PRAGMA main.data_version")?
+            .query_row([], |row| row.get(0))?;
         Ok((self.synced_data_version.get() != Some(data_version)).then_some(data_version))
     }
 
