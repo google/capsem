@@ -135,8 +135,7 @@ fn session_dirs_for_profile(state: &ServiceState, profile_id: Option<&str>) -> V
 
 pub(crate) mod security;
 pub(crate) use security::{
-    is_detection_rule_event, read_profile_security_ledgers, read_security_session_ledger, security_latest_for_vm,
-    security_stats_for_vm,
+    is_detection_rule_event, read_security_session_ledger, security_latest_for_vm, security_stats_for_vm,
 };
 
 pub(super) fn ledger_route_error(
@@ -361,24 +360,9 @@ pub(super) fn main_ledger_route_error(
     )
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct HistorySessionLedger {
     pub(super) entries: Vec<api::HistoryEntry>,
-    pub(super) processes: Vec<capsem_logger::ProcessEntry>,
-    pub(super) counts: capsem_logger::HistoryCounts,
-}
-
-impl Default for HistorySessionLedger {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            processes: Vec::new(),
-            counts: capsem_logger::HistoryCounts {
-                exec_count: 0,
-                audit_count: 0,
-            },
-        }
-    }
 }
 
 const HISTORY_ENTRIES_SQL: &str = r#"
@@ -410,22 +394,6 @@ FROM audit_events
 ORDER BY timestamp DESC
 "#;
 
-const HISTORY_PROCESSES_SQL: &str = r#"
-SELECT exe, COUNT(*) AS command_count,
-       MIN(timestamp) AS first_seen,
-       MAX(timestamp) AS last_seen
-FROM audit_events
-GROUP BY exe
-ORDER BY command_count DESC
-LIMIT ?
-"#;
-
-const HISTORY_COUNTS_SQL: &str = r#"
-SELECT
-    (SELECT COUNT(*) FROM exec_events) AS exec_count,
-    (SELECT COUNT(*) FROM audit_events) AS audit_count
-"#;
-
 pub(super) async fn read_history_session_ledger(
     state: &ServiceState,
     vm_id: &str,
@@ -447,37 +415,7 @@ pub(super) async fn read_history_session_ledger(
                 .map_err(|error| ledger_route_error(vm_id, "history", "decode entry", db_path, error))
         })
         .collect::<Result<Vec<_>, AppError>>()?;
-    let processes = query_route_typed_rows(
-        vm_id,
-        "history",
-        "processes",
-        db_path,
-        &db,
-        HISTORY_PROCESSES_SQL,
-        &[json!(i64::MAX)],
-    )
-    .await?;
-    let counts = query_route_typed_rows::<capsem_logger::HistoryCounts>(
-        vm_id,
-        "history",
-        "counts",
-        db_path,
-        &db,
-        HISTORY_COUNTS_SQL,
-        &[],
-    )
-    .await?
-    .into_iter()
-    .next()
-    .unwrap_or(capsem_logger::HistoryCounts {
-        exec_count: 0,
-        audit_count: 0,
-    });
-    Ok(Some(HistorySessionLedger {
-        entries,
-        processes,
-        counts,
-    }))
+    Ok(Some(HistorySessionLedger { entries }))
 }
 
 pub(super) async fn history_ledger_for_vm(state: &ServiceState, id: &str) -> Result<HistorySessionLedger, AppError> {
@@ -1060,96 +998,33 @@ pub(super) fn plugin_runtime_config_status(config: SecurityPluginConfig) -> Plug
     }
 }
 
+/// A plugin's runtime across every session of its profile, from the
+/// sessions' counter snapshots.
+///
+/// This used to re-parse the archived payloads of each session's latest 2000
+/// rule matches, so every count stopped growing -- and started drifting --
+/// once a session passed 2000 matches.
 pub(super) async fn hydrate_plugin_execution_runtime(
     state: &ServiceState,
     profile_id: &str,
     plugin_id: &str,
     status: &mut PluginRuntimeStatus,
 ) {
-    let sessions = match read_profile_security_ledgers(state, profile_id).await {
-        Ok(sessions) => sessions,
+    let snapshots = match activity::profile_counters(state, profile_id).await {
+        Ok(snapshots) => snapshots,
         Err(error) => {
             status.last_error = Some(format!("failed to read security ledger: {}", error.1));
             return;
         }
     };
-    let mut seen_executions = HashSet::<(String, String)>::new();
-    let mut seen_detections = HashSet::<(String, String)>::new();
-    for (_vm_id, session) in sessions {
-        let payloads = session.payloads;
-        for event in session.latest {
-            let Some(event_json) = payloads.get(&event.event_id) else {
-                status.last_error = Some(format!("missing plugin execution payload for {}", event.event_id));
-                continue;
-            };
-            let Ok(payload) = serde_json::from_str::<serde_json::Value>(event_json) else {
-                status.last_error = Some(format!(
-                    "failed to parse plugin execution payload for {}",
-                    event.event_id
-                ));
-                continue;
-            };
-            if let Some(executions) = payload.get("plugin_executions").and_then(serde_json::Value::as_array) {
-                for execution in executions {
-                    if execution.get("plugin_id").and_then(serde_json::Value::as_str) != Some(plugin_id) {
-                        continue;
-                    }
-                    let stage = execution
-                        .get("stage")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("unknown");
-                    if !seen_executions.insert((event.event_id.clone(), format!("{plugin_id}:{stage}"))) {
-                        continue;
-                    }
-                    status.execution_count += 1;
-                    if execution
-                        .get("applied")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(false)
-                    {
-                        status.applied_count += 1;
-                    } else {
-                        status.skipped_count += 1;
-                    }
-                    let duration_us = execution
-                        .get("duration_us")
-                        .and_then(serde_json::Value::as_u64)
-                        .unwrap_or(0);
-                    status.total_duration_us = status.total_duration_us.saturating_add(duration_us);
-                    status.max_duration_us = status.max_duration_us.max(duration_us);
-                }
-            }
-            if let Some(detections) = payload.get("detections").and_then(serde_json::Value::as_array) {
-                for detection in detections {
-                    if detection.get("source").and_then(serde_json::Value::as_str) != Some("plugin")
-                        || detection.get("plugin_id").and_then(serde_json::Value::as_str) != Some(plugin_id)
-                    {
-                        continue;
-                    }
-                    if seen_detections.insert((event.event_id.clone(), plugin_id.to_string())) {
-                        status.detection_count += 1;
-                    }
-                }
-            }
-        }
+    for plugin in snapshots.iter().filter_map(|counters| counters.plugins.get(plugin_id)) {
+        status.execution_count += plugin.executions;
+        status.applied_count += plugin.applied;
+        status.skipped_count += plugin.skipped;
+        status.total_duration_us = status.total_duration_us.saturating_add(plugin.total_duration_us);
+        status.max_duration_us = status.max_duration_us.max(plugin.max_duration_us);
+        status.detection_count += plugin.detections;
     }
-}
-
-pub(super) fn credential_ref_from_security_payload(value: &serde_json::Value) -> Option<String> {
-    value
-        .get("credential_ref")
-        .or_else(|| value.get("substitution_ref"))
-        .or_else(|| value.get("reference"))
-        .or_else(|| value.get("ref"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-}
-
-pub(super) fn credential_provider_from_security_payload(value: &serde_json::Value) -> Option<String> {
-    value
-        .get("provider")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
 }
 
 pub(super) fn merge_brokered_credential_status(
@@ -1183,81 +1058,44 @@ pub(super) fn merge_brokered_credential_status(
         });
 }
 
+/// Brokered credential activity across every session of the profile: the
+/// substitutions the broker recorded and the observations and injections the
+/// security payloads carried, from the sessions' counter snapshots.
+///
+/// `last_seen` is one RFC 3339 spelling for both sources. It used to be a
+/// ledger timestamp for one and bare epoch milliseconds for the other,
+/// compared as strings.
 pub(super) async fn hydrate_credential_broker_runtime(
     state: &ServiceState,
     profile_id: &str,
     status: &mut PluginRuntimeStatus,
 ) {
-    let sessions = match read_profile_security_ledgers(state, profile_id).await {
-        Ok(sessions) => sessions,
+    let snapshots = match activity::profile_counters(state, profile_id).await {
+        Ok(snapshots) => snapshots,
         Err(error) => {
             status.last_error = Some(format!("failed to read security ledger: {}", error.1));
             return;
         }
     };
     let mut credentials: BTreeMap<(Option<String>, String), BrokeredCredentialStatus> = BTreeMap::new();
-    let mut seen = HashSet::<(String, String, String, String)>::new();
-    for (_vm_id, session) in sessions {
-        for credential in &session.brokered_credentials {
-            merge_brokered_credential_status(
-                &mut credentials,
-                credential.provider.clone(),
-                credential.credential_ref.clone(),
-                credential.observed_count,
-                credential.injected_count,
-                credential.last_seen.clone(),
-            );
-            status.event_count = status
-                .event_count
-                .saturating_add(credential.observed_count.saturating_add(credential.injected_count));
-            status.rewrite_count = status.rewrite_count.saturating_add(credential.injected_count);
-        }
-        let payloads = session.payloads;
-        for event in session.latest {
-            let Some(event_json) = payloads.get(&event.event_id) else {
-                status.last_error = Some(format!("missing credential broker payload for {}", event.event_id));
-                continue;
-            };
-            let Ok(payload) = serde_json::from_str::<serde_json::Value>(event_json) else {
-                status.last_error = Some(format!(
-                    "failed to parse credential broker payload for {}",
-                    event.event_id
-                ));
-                continue;
-            };
-            for (field, observed_delta, injected_delta) in [
-                ("credential_observations", 1_u64, 0_u64),
-                ("credential_injections", 0_u64, 1_u64),
-            ] {
-                let Some(items) = payload.get(field).and_then(serde_json::Value::as_array) else {
-                    continue;
-                };
-                for item in items {
-                    let Some(credential_ref) = credential_ref_from_security_payload(item) else {
-                        continue;
-                    };
-                    let source = item.get("source").and_then(serde_json::Value::as_str).unwrap_or("");
-                    if !seen.insert((
-                        event.event_id.clone(),
-                        field.to_string(),
-                        credential_ref.clone(),
-                        source.to_string(),
-                    )) {
-                        continue;
-                    }
-                    status.event_count = status.event_count.saturating_add(1);
-                    status.rewrite_count = status.rewrite_count.saturating_add(injected_delta);
-                    merge_brokered_credential_status(
-                        &mut credentials,
-                        credential_provider_from_security_payload(item),
-                        credential_ref,
-                        observed_delta,
-                        injected_delta,
-                        Some(event.timestamp_unix_ms.to_string()),
-                    );
-                }
-            }
-        }
+    for (credential_ref, counts) in snapshots.iter().flat_map(|counters| &counters.credentials) {
+        let observed = counts.substitutions.saturating_add(counts.observations);
+        let injected = counts.injected_substitutions.saturating_add(counts.injections);
+        status.event_count = status.event_count.saturating_add(observed.saturating_add(injected));
+        status.rewrite_count = status.rewrite_count.saturating_add(injected);
+        let last_seen = (counts.last_seen_unix_ms > 0).then(|| {
+            capsem_logger::format_ledger_timestamp(
+                std::time::UNIX_EPOCH + std::time::Duration::from_millis(counts.last_seen_unix_ms as u64),
+            )
+        });
+        merge_brokered_credential_status(
+            &mut credentials,
+            counts.provider.clone(),
+            credential_ref.clone(),
+            observed,
+            injected,
+            last_seen,
+        );
     }
     let mut values: Vec<_> = credentials.into_values().collect();
     values.sort_by(|left, right| right.last_seen.cmp(&left.last_seen));

@@ -131,6 +131,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Plugin runtime (executions, applied, skipped, durations, detections) and
+  brokered credential counts no longer stop growing after a session's first
+  2000 rule matches: they came from re-parsing the payloads of the latest 2000
+  matches and now come from the session's counter snapshot. Security status
+  and history counts read the same snapshot instead of scanning the ledger.
+
 - `capsem list`, `/vms/list`, `/vms/{id}/info`, gateway `/status` and the TUI
   now show each session's real tokens, cost, tool calls, requests and file
   events, for running and stopped persistent VMs. These fields had been empty

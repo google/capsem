@@ -185,3 +185,91 @@ pub(crate) fn files_info(counters: &LedgerCounters) -> Result<capsem_api::VmFile
         actions,
     })
 }
+
+/// Rule-match statistics: every match the session made, by label, with each
+/// rule's most recent match first.
+pub(crate) fn security_stats(counters: &LedgerCounters) -> capsem_logger::SecurityRuleStats {
+    let security = &counters.security;
+    let mut by_rule: Vec<capsem_logger::SecurityRuleStatsByRule> = security
+        .by_rule
+        .iter()
+        .flat_map(|(rule_id, by_action)| {
+            by_action.iter().flat_map(move |(rule_action, by_level)| {
+                by_level
+                    .iter()
+                    .map(move |(detection_level, usage)| capsem_logger::SecurityRuleStatsByRule {
+                        rule_id: rule_id.clone(),
+                        rule_action: rule_action.clone(),
+                        detection_level: detection_level.clone(),
+                        count: usage.count,
+                        latest_event_id: usage.latest_event_id.clone(),
+                        latest_timestamp_unix_ms: usage.latest_timestamp_unix_ms,
+                    })
+            })
+        })
+        .collect();
+    by_rule.sort_by(|left, right| right.latest_timestamp_unix_ms.cmp(&left.latest_timestamp_unix_ms));
+    capsem_logger::SecurityRuleStats {
+        total: security.matches,
+        by_action: security
+            .by_action
+            .iter()
+            .map(|(rule_action, count)| capsem_logger::SecurityRuleActionCount {
+                rule_action: rule_action.clone(),
+                count: *count,
+            })
+            .collect(),
+        by_event_type: security
+            .by_event_type
+            .iter()
+            .map(|(event_type, count)| capsem_logger::SecurityRuleEventTypeCount {
+                event_type: event_type.clone(),
+                count: *count,
+            })
+            .collect(),
+        by_level: security
+            .by_level
+            .iter()
+            .map(
+                |(detection_level, count)| capsem_logger::SecurityRuleDetectionLevelCount {
+                    detection_level: detection_level.clone(),
+                    count: *count,
+                },
+            )
+            .collect(),
+        by_rule,
+    }
+}
+
+/// The executables the session ran, most frequent first.
+pub(crate) fn history_processes(counters: &LedgerCounters, limit: usize) -> Vec<capsem_logger::ProcessEntry> {
+    let mut processes: Vec<capsem_logger::ProcessEntry> = counters
+        .audit
+        .by_exe
+        .iter()
+        .map(|(exe, usage)| capsem_logger::ProcessEntry {
+            exe: exe.clone(),
+            command_count: usage.count,
+            first_seen: usage.first_seen.clone(),
+            last_seen: usage.last_seen.clone(),
+        })
+        .collect();
+    processes.sort_by(|left, right| {
+        right
+            .command_count
+            .cmp(&left.command_count)
+            .then_with(|| left.exe.cmp(&right.exe))
+    });
+    processes.truncate(limit);
+    processes
+}
+
+/// The counter snapshot of every session of a profile.
+pub(crate) async fn profile_counters(state: &ServiceState, profile_id: &str) -> Result<Vec<LedgerCounters>, AppError> {
+    let mut snapshots = Vec::new();
+    for (vm_id, session_dir) in profile_session_dirs(state, profile_id) {
+        let db_path = session_db_path_for_session_dir(&session_dir);
+        snapshots.push(read_counters(state, &vm_id, "plugins", &db_path).await?);
+    }
+    Ok(snapshots)
+}
