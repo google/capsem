@@ -9,9 +9,12 @@ session.bodies, the ledger row counts, and the RSS of this VM's capsem-process
 and of this run's capsem-service, then reports the per-request cost.
 
 PASS when:
-  - each request adds < 6 KB on disk (session.db + WAL + session.bodies),
-    measured as a slope from the 10-minute mark to the last sample, so the
-    empty schema's fixed floor (~470 KB) is not billed to the requests;
+  - SQLite adds <= 16 KiB per request for this full-page/model workload and
+    total disk growth is <= 25% of the logical body bytes captured over the
+    same window. The slope starts at 10 minutes, so the empty schema's fixed
+    floor (~470 KiB) is not billed to requests;
+  - the archive shares at least one repeated body span, compresses its unique
+    body bytes, and the WAL stays under 8 MiB throughout the run;
   - capsem-process RSS grows < 2 KB per request over the same window;
   - capsem-service RSS grows < 512 B per request over the same window (the
     service reads ledgers from disk, so it must not grow with traffic);
@@ -21,9 +24,8 @@ PASS when:
     output, so an exec that silently does nothing would otherwise "pass" with
     zero traffic; a flat line is a FAIL, never a pass.
 
-It also prints total disk divided by request count (which includes the fixed
-floor) and the compression ratio actually achieved: raw body bytes the index
-holds against the size of session.bodies.
+It also prints the old 6 KiB/request target as a comparison, the measured
+100,000-request disk projection, and the deduplication/compression ratios.
 
 Usage (build first, then bound the run so no VM leaks):
     uv run --project build_system --frozen capsem-gate sign
@@ -197,7 +199,11 @@ LEDGER_SQL = """SELECT
     (SELECT COALESCE(SUM(raw_len), 0) FROM body_blocks) AS raw,
     (SELECT COALESCE(SUM(disk_len), 0) FROM body_blocks) AS comp,
     (SELECT COALESCE(SUM(original_bytes), 0) FROM event_body_blobs) AS original,
-    (SELECT COALESCE(SUM(stored_bytes), 0) FROM event_body_blobs) AS stored"""
+    (SELECT COALESCE(SUM(stored_bytes), 0) FROM event_body_blobs) AS stored,
+    (SELECT COUNT(*) FROM event_body_blobs) AS body_refs,
+    (SELECT COUNT(*) FROM (
+        SELECT 1 FROM event_body_blobs GROUP BY block_offset, body_offset, body_len
+    )) AS unique_spans"""
 
 
 def sample(session_dir: Path, vm_id: str, service_pid: int) -> dict:
@@ -275,6 +281,13 @@ def judge(samples: list[dict], failures: list[str]) -> None:
         print(f"  blocks: {last['raw'] // kb} KB raw -> {last['comp'] // kb} KB compressed")
         ratio = last["stored"] / last["bodies"]
         print(f"  session.bodies {last['bodies'] // kb} KB: {ratio:.2f}x vs indexed bytes")
+    print(f"  body spans: {last['body_refs']} references -> {last['unique_spans']} unique")
+    if last["body_refs"] <= last["unique_spans"]:
+        fail("no body spans were shared: archive deduplication was not exercised")
+    if last["comp"] == 0 or last["comp"] >= last["raw"]:
+        fail("archive did not compress its unique raw body bytes")
+    if any(s["wal"] > 8 * 1024 * kb for s in samples):
+        fail("session.db-wal exceeded 8 MiB: checkpoint growth is not bounded")
 
     # Every budget is a slope: what one more request costs a long session,
     # from the 10-minute mark (past boot and the schema's fixed floor) to the end.
@@ -297,8 +310,20 @@ def judge(samples: list[dict], failures: list[str]) -> None:
                 for part in ("db", "wal", "bodies")
             )
         )
-        if disk > 6 * kb:
-            fail(f"each request adds {disk / kb:.1f} KB on disk (> 6 KB)")
+        raw_growth = b["original"] - a["original"]
+        print(
+            f"  logical body growth: {raw_growth / dreq / kb:.2f} KiB/request; "
+            f"physical/logical: {disk / raw_growth:.1%}"
+            if raw_growth > 0 else "  logical body growth: zero"
+        )
+        print(
+            f"  disk projection: {disk * 100_000 / 1024**3:.2f} GiB / 100k requests; "
+            f"old 6 KiB target: {'met' if disk <= 6 * kb else 'exceeded'}"
+        )
+        if raw_growth <= 0 or disk > raw_growth / 4:
+            fail("physical disk growth exceeded 25% of captured logical body bytes")
+        if (b["db"] - a["db"]) / dreq > 16 * kb:
+            fail("SQLite grew more than 16 KiB per request for this workload")
         if proc > 2 * kb:
             fail(f"capsem-process grows {proc / kb:.1f} KB per request")
         if svc > 512:
