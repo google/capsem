@@ -131,6 +131,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `GET /stats` top providers, tools and MCP tools are no longer always empty:
+  a session's stop now records its per-provider, per-tool and per-MCP-tool
+  usage in `main.db`, copied from its counter snapshot. Its `total_tool_calls`
+  counts the same tool calls every other surface does, rather than every
+  `tool_calls` row including a model merely naming an MCP tool. Two MCP
+  servers exposing a tool of the same name are now two rows, not a collision
+  (`main.db` schema v9).
+
 - Plugin runtime (executions, applied, skipped, durations, detections) and
   brokered credential counts no longer stop growing after a session's first
   2000 rule matches: they came from re-parsing the payloads of the latest 2000
