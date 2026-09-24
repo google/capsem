@@ -209,6 +209,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   VM process had finished creating it, took the half-created file for a stale
   one, and killed the VM it had just started.
 
+- The files API and the web Files view now show a workspace folder named
+  `system`, at any depth. It was filtered out as if it were the overlay image's
+  directory, which has never been inside the workspace.
+
 - Security latest and detection routes now return rule matches from counted
   ledger runs instead of failing to map the reconstructed rule snapshot.
 

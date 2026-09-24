@@ -480,8 +480,7 @@ pub(super) fn list_dir_recursive(
         Ok(items) => items,
         Err(_) => return Vec::new(),
     };
-    // Skip the system directory (rootfs overlay, not user content)
-    items.retain(|item| item.kind != EntryKind::Other && item.name != "system");
+    items.retain(|item| item.kind != EntryKind::Other);
     items.sort_by(|a, b| {
         let a_is_dir = a.kind == EntryKind::Directory;
         let b_is_dir = b.kind == EntryKind::Directory;

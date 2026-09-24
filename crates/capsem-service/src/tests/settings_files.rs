@@ -367,7 +367,10 @@ fn list_dir_respects_depth_limit() {
 }
 
 #[test]
-fn list_dir_skips_system_but_shows_hidden() {
+/// The listing is rooted at the workspace, never at the share, so a folder
+/// named `system` is the user's own. It used to be hidden at every depth: a
+/// leftover from when the overlay image sat in a share-level `system/`.
+fn list_dir_shows_hidden_entries_and_a_user_system_folder() {
     let dir = tempfile::tempdir().unwrap();
     let ws = dir.path();
     std::fs::create_dir_all(ws.join(".hidden")).unwrap();
@@ -380,11 +383,10 @@ fn list_dir_skips_system_but_shows_hidden() {
         1,
         1,
     );
-    // .hidden + visible.txt shown; system/ filtered out
-    assert_eq!(entries.len(), 2);
+    assert_eq!(entries.len(), 3);
     assert!(entries.iter().any(|e| e.name == ".hidden"));
     assert!(entries.iter().any(|e| e.name == "visible.txt"));
-    assert!(!entries.iter().any(|e| e.name == "system"));
+    assert!(entries.iter().any(|e| e.name == "system"));
 }
 
 #[test]
