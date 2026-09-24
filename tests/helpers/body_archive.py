@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
-import json
+import importlib.util
 import sqlite3
 import zlib
 from pathlib import Path
@@ -225,7 +225,7 @@ class SessionArchive:
         body = self.read(event_id, source_table, "payload")
         if body is None:
             raise AssertionError(f"{source_table} has no archived payload for {event_id}")
-        return json.loads(body.decode())
+        return forensic_payload(body)
 
     def _verify_file_header(self) -> None:
         with self.generation_path.open("rb") as file:
@@ -441,3 +441,60 @@ def security_payload(
 ) -> dict[str, Any]:
     """`security_payload_at`, for a test that already holds the connection."""
     return security_payload_at(_main_db_path(conn), event_id, source_table)
+
+
+#: `capsem_proto::forensic::SecurityForensicEvent` fields that are skipped when
+#: empty and restored to their default on decode. Held equal to the Rust struct
+#: by tests/test_messagepack_helper.py.
+FORENSIC_LIST_FIELDS = (
+    "credential_observations",
+    "credential_injections",
+    "action_trace",
+    "detections",
+    "plugin_executions",
+)
+FORENSIC_OPTION_FIELDS = (
+    "credential_ref",
+    "decision",
+    "container",
+    "http_request",
+    "http",
+    "dns",
+    "mcp",
+    "model",
+    "file",
+    "process",
+    "ip",
+    "tcp",
+    "udp",
+    "network",
+)
+
+
+def _messagepack() -> Any:
+    """The sibling decoder, loaded by path: this module is itself loaded by
+    path from the doctor's archive check, where no `helpers` package exists."""
+    spec = importlib.util.spec_from_file_location(
+        "capsem_test_messagepack", Path(__file__).with_name("messagepack.py")
+    )
+    if spec is None or spec.loader is None:
+        raise AssertionError("tests/helpers/messagepack.py is missing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def forensic_payload(body: bytes) -> dict[str, Any]:
+    """A security payload as the ledger archives it: sparse, named MessagePack.
+
+    Decoded the way the Rust type decodes it, so an absent list is empty and an
+    absent option is None rather than a missing key.
+    """
+    payload = _messagepack().decode(body)
+    if not isinstance(payload, dict):
+        raise AssertionError(f"security payload is not a map: {type(payload).__name__}")
+    for name in FORENSIC_LIST_FIELDS:
+        payload.setdefault(name, [])
+    for name in FORENSIC_OPTION_FIELDS:
+        payload.setdefault(name, None)
+    return payload
