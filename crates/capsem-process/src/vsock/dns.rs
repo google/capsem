@@ -146,9 +146,12 @@ async fn answer_one(
     // Both the event and its derived rule rows belong to this request. The
     // answer is released only with its primary row: a query the ledger
     // refused is answered SERVFAIL, so no lookup succeeds unrecorded.
-    let audited = emit_dns_security_write_and_rules(db, security_rules, event)
-        .await
-        .is_some();
+    let audited = capsem_core::security_engine::admit_within(
+        capsem_core::security_engine::SECURITY_ADMISSION_DEADLINE,
+        emit_dns_security_write_and_rules(db, security_rules, event),
+    )
+    .await
+    .is_some();
     let (raw, decision, rcode) = if audited {
         (result.answer_bytes, result.decision, result.rcode)
     } else {

@@ -36,10 +36,7 @@ pub use network::NetworkSecurityEvent;
 mod plugins;
 mod rule_decision;
 use plugins::{CredentialBrokerPlugin, DummyPostAllowPlugin, DummyPreEicarPlugin, LogSanitizerPlugin};
-use rule_decision::{
-    apply_event_decision_to_enforcement, decision_stage_for_rule, requested_boundary_decision,
-    requested_decision_for_rule, security_enforcement_decision, selected_enforcement_rule,
-};
+use rule_decision::*;
 
 pub const SECURITY_EVENT_EMIT_SPAN: &str = "capsem.security_event.emit";
 pub const SECURITY_EVENT_EMIT_TOTAL: &str = "security_event.emit_total";
@@ -49,7 +46,9 @@ pub const SECURITY_PLUGIN_EXECUTION_DURATION_MS: &str = "security_plugin.executi
 pub const DUMMY_EICAR_TEST_STRING: &str = r#"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"#;
 
 mod emission;
-pub use emission::{emit_security_write, emit_security_write_blocking, RuntimeSecurityEvent};
+pub use emission::{
+    admit_within, emit_security_write, emit_security_write_blocking, RuntimeSecurityEvent, SECURITY_ADMISSION_DEADLINE,
+};
 mod file_facts;
 use file_facts::explicit_primary_file_event;
 pub use file_facts::{security_event_from_explicit_file_event, security_event_from_file_event};

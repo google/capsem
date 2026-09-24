@@ -420,9 +420,12 @@ pub(crate) async fn handle_ipc_connection(
                     // Recorded before dispatch, as an export is recorded
                     // before release: a write the session cannot account for
                     // does not happen.
-                    if record_guest_write(&net_state, &mcp_runtime, &path, data.len())
-                        .await
-                        .is_none()
+                    if capsem_core::security_engine::admit_within(
+                        capsem_core::security_engine::SECURITY_ADMISSION_DEADLINE,
+                        record_guest_write(&net_state, &mcp_runtime, &path, data.len()),
+                    )
+                    .await
+                    .is_none()
                     {
                         warn!(id, path, "WriteFile refused: its security event could not be recorded");
                         capsem_core::try_send!(
