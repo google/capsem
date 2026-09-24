@@ -2332,7 +2332,7 @@ async fn route_authored_detection_rule_triggers_runtime_ledger_and_latest_routes
     let saved: serde_json::Value = serde_json::from_slice(&save_body).unwrap();
     assert_eq!(saved["compiled_rule_id"], "profiles.rules.openai_http_observed");
     assert!(
-        matches!(process.await.unwrap().as_slice(), [ServiceToProcess::ReloadConfig]),
+        only_reloads(&process.await.unwrap(), 1),
         "the rule edit must reach the running VM before the route returns"
     );
 

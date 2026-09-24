@@ -306,14 +306,38 @@ pub(crate) fn spawn_fake_process(
     })
 }
 
-/// A fake process that acknowledges reload and ping immediately.
+/// True when a fake process received exactly `count` reload requests.
+pub(crate) fn only_reloads(received: &[ServiceToProcess], count: usize) -> bool {
+    received.len() == count
+        && received
+            .iter()
+            .all(|message| matches!(message, ServiceToProcess::ReloadConfig { .. }))
+}
+
+/// A fake process that answers ping, and reloads by reporting the digest of
+/// the active profile it finds in its session, as capsem-process does.
 pub(crate) fn spawn_fake_process_reload_ack(
     uds_path: &StdPath,
     expected: usize,
 ) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
-    spawn_fake_process(uds_path, expected, |message| {
-        let ack = matches!(message, ServiceToProcess::ReloadConfig | ServiceToProcess::Ping);
-        Box::pin(async move { ack.then_some(ProcessToService::Pong) })
+    let active_profile = uds_path
+        .parent()
+        .unwrap()
+        .join(ACTIVE_PROFILE_DIR)
+        .join(ACTIVE_PROFILE_FILE);
+    spawn_fake_process(uds_path, expected, move |message| {
+        let reply = match message {
+            ServiceToProcess::Ping => Some(ProcessToService::Pong),
+            ServiceToProcess::ReloadConfig { id } => Some(ProcessToService::ConfigReloadResult {
+                id: *id,
+                active_profile_digest: Some(capsem_core::net::policy_config::active_profile_digest(
+                    &std::fs::read(&active_profile).unwrap(),
+                )),
+                error: None,
+            }),
+            _ => None,
+        };
+        Box::pin(async move { reply })
     })
 }
 

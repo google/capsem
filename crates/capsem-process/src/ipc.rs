@@ -707,34 +707,36 @@ pub(crate) async fn handle_ipc_connection(
                     }
                 });
             }
-            ServiceToProcess::ReloadConfig => {
+            ServiceToProcess::ReloadConfig { id } => {
                 info!(
                     active_profile = %runtime_source.active_profile_path().display(),
                     "Reloading profile runtime config"
                 );
-                let runtime_config = runtime_source.load()?;
-
-                let new_network = Arc::new(runtime_config.network);
-                let new_security_rules = Arc::new(runtime_config.security_rules);
-                let new_plugin_policy = Arc::new(runtime_config.plugins);
-                let new_model_endpoints = Arc::new(runtime_config.model_endpoints);
-                let security_rule_ids = new_security_rules
-                    .rules()
-                    .iter()
-                    .map(|rule| rule.rule_id.clone())
-                    .collect::<Vec<_>>();
-
-                *net_state.policy.write().unwrap() = new_network;
-                *mcp_runtime.security_rules.write().unwrap() = new_security_rules;
-                *mcp_runtime.plugin_policy.write().unwrap() = new_plugin_policy;
-                *mcp_runtime.model_endpoints.write().unwrap() = new_model_endpoints;
-                info!(
-                    security_rule_count = security_rule_ids.len(),
-                    security_rule_ids = ?security_rule_ids,
-                    "Reloaded profile runtime config"
-                );
-
-                capsem_core::try_send!("ipc_pong_reload", ipc_tx_out.send(ProcessToService::Pong).await);
+                // A profile that does not load leaves the previous policy in
+                // force; the service is told why instead of losing the socket.
+                let reply = match runtime_source.load() {
+                    Ok(runtime_config) => {
+                        let digest = runtime_config.active_profile_digest.clone();
+                        runtime_config.apply(&net_state, &mcp_runtime);
+                        ProcessToService::ConfigReloadResult {
+                            id,
+                            active_profile_digest: Some(digest),
+                            error: None,
+                        }
+                    }
+                    Err(error) => {
+                        warn!(
+                            error = format!("{error:#}"),
+                            "Profile reload refused; previous policy kept"
+                        );
+                        ProcessToService::ConfigReloadResult {
+                            id,
+                            active_profile_digest: None,
+                            error: Some(format!("{error:#}")),
+                        }
+                    }
+                };
+                capsem_core::try_send!("ipc_reload_result", ipc_tx_out.send(reply).await);
             }
             ServiceToProcess::Shutdown => {
                 capsem_core::try_send!("ctrl_shutdown", ctrl_tx.send(ServiceToProcess::Shutdown).await);

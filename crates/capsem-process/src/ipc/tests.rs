@@ -5,6 +5,7 @@ use super::*;
 
 mod classification;
 mod publications;
+mod reload;
 mod streams;
 use capsem_proto::mcp_aggregator::{AggregatorClient, AggregatorResponse, AggregatorResult, AggregatorServerStatus};
 use capsem_proto::mcp_contracts::McpToolDef;
@@ -659,8 +660,18 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         } if error == "log file boundary result channel closed"
     ));
 
-    service_tx.send(ServiceToProcess::ReloadConfig).await.unwrap();
-    assert!(matches!(service_rx.recv().await.unwrap(), ProcessToService::Pong));
+    service_tx
+        .send(ServiceToProcess::ReloadConfig { id: 30 })
+        .await
+        .unwrap();
+    let applied = capsem_core::net::policy_config::active_profile_digest(
+        &std::fs::read(temp.path().join("active_profile.toml")).unwrap(),
+    );
+    assert!(matches!(
+        service_rx.recv().await.unwrap(),
+        ProcessToService::ConfigReloadResult { id: 30, active_profile_digest: Some(digest), error: None }
+            if digest == applied
+    ));
 
     service_tx
         .send(ServiceToProcess::SnapshotStatus { id: 14 })
@@ -909,7 +920,10 @@ fn classify_container_pull_admission() {
 
 #[test]
 fn classify_reload_config() {
-    assert_eq!(classify_ipc_message(&ServiceToProcess::ReloadConfig), IpcAction::Reload);
+    assert_eq!(
+        classify_ipc_message(&ServiceToProcess::ReloadConfig { id: 1 }),
+        IpcAction::Reload
+    );
 }
 
 #[test]

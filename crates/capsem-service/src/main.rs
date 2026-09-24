@@ -39,6 +39,7 @@ use tokio::net::UnixListener;
 use tokio::process::Command;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
+mod active_profile;
 mod asset_background;
 mod blocking;
 mod container_setup;
@@ -1203,67 +1204,6 @@ impl ServiceState {
         }
     }
 
-    fn materialize_active_profile(&self, profile: &Profile, session_dir: &StdPath) -> Result<PathBuf> {
-        let config = profile.config();
-        let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
-        let plugins = self
-            .plugin_policy_by_profile
-            .lock()
-            .unwrap()
-            .get(&config.id)
-            .cloned()
-            .unwrap_or_default();
-        let active_profile = ActiveProfileFile::from_profile_and_corp(profile, &corp, plugins)
-            .map_err(anyhow::Error::msg)
-            .with_context(|| format!("build active profile for {}", config.id))?;
-        let active_profile_dir = session_dir.join(ACTIVE_PROFILE_DIR);
-        std::fs::create_dir_all(&active_profile_dir)
-            .with_context(|| format!("create {}", active_profile_dir.display()))?;
-        let active_profile_path = active_profile_dir.join(ACTIVE_PROFILE_FILE);
-        let serialized = toml::to_string_pretty(&active_profile).context("serialize active profile")?;
-        // capsem-process reads this on every reload: publish it whole.
-        capsem_foundation::unix::fs::atomic_write_private(&active_profile_path, serialized.as_bytes())
-            .with_context(|| format!("write {}", active_profile_path.display()))?;
-
-        let stale_runtime_config = session_dir.join("runtime-config");
-        if stale_runtime_config.exists() {
-            std::fs::remove_dir_all(&stale_runtime_config)
-                .with_context(|| format!("remove stale {}", stale_runtime_config.display()))?;
-        }
-
-        Ok(active_profile_path)
-    }
-
-    fn refresh_active_profiles(&self, profile_filter: Option<&str>) -> Result<usize> {
-        let targets = {
-            let instances = self.instances.lock().unwrap();
-            instances
-                .iter()
-                .filter(|(_, info)| {
-                    profile_filter
-                        .map(|profile_id| info.profile_id == profile_id)
-                        .unwrap_or(true)
-                })
-                .map(|(id, info)| (id.clone(), info.profile_id.clone(), info.session_dir.clone()))
-                .collect::<Vec<_>>()
-        };
-
-        for (id, profile_id, session_dir) in &targets {
-            let runtime_profile = self
-                .profile_for_runtime(profile_id)
-                .with_context(|| format!("load runtime profile {profile_id} for {id}"))?;
-            self.materialize_active_profile(&runtime_profile, session_dir)
-                .with_context(|| {
-                    format!(
-                        "refresh active profile config for {id} ({profile_id}) in {}",
-                        session_dir.display()
-                    )
-                })?;
-        }
-
-        Ok(targets.len())
-    }
-
     fn refresh_profile_rule_cache(&self, profile_filter: Option<&str>) -> Result<()> {
         let updates = build_profile_rule_cache(profile_filter)
             .map_err(|error| anyhow!("refresh profile rule cache: {}", error.1))?;
@@ -1398,7 +1338,7 @@ impl ServiceState {
             &entry.profile_payload_hash,
             &entry.asset_pins,
         )?;
-        self.materialize_active_profile(&current, &entry.session_dir)
+        Ok(self.materialize_active_profile(&current, &entry.session_dir)?.path)
     }
 
     fn validate_persistent_profile_authority(&self, entry: &PersistentVmEntry) -> Result<()> {

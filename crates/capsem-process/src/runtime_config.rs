@@ -17,6 +17,8 @@ pub(crate) struct RuntimeProfileSource {
 pub(crate) struct RuntimeProfileConfig {
     pub(crate) profile_id: String,
     pub(crate) active_profile_path: PathBuf,
+    /// Digest of the exact bytes this config was loaded from.
+    pub(crate) active_profile_digest: String,
     pub(crate) network: NetworkMechanics,
     pub(crate) dns_upstreams: Vec<SocketAddr>,
     pub(crate) security_rules: SecurityRuleSet,
@@ -41,12 +43,17 @@ impl RuntimeProfileSource {
             .with_context(|| format!("read {}", self.active_profile_path.display()))?;
         let active: ActiveProfileFile =
             toml::from_str(&content).with_context(|| format!("parse {}", self.active_profile_path.display()))?;
-        RuntimeProfileConfig::from_active(active, self.active_profile_path.clone())
+        let digest = capsem_core::net::policy_config::active_profile_digest(content.as_bytes());
+        RuntimeProfileConfig::from_active(active, self.active_profile_path.clone(), digest)
     }
 }
 
 impl RuntimeProfileConfig {
-    fn from_active(active: ActiveProfileFile, active_profile_path: PathBuf) -> Result<Self> {
+    fn from_active(
+        active: ActiveProfileFile,
+        active_profile_path: PathBuf,
+        active_profile_digest: String,
+    ) -> Result<Self> {
         active
             .validate()
             .map_err(anyhow::Error::msg)
@@ -80,6 +87,7 @@ impl RuntimeProfileConfig {
         Ok(Self {
             profile_id: active.id.clone(),
             active_profile_path,
+            active_profile_digest,
             network,
             dns_upstreams,
             security_rules,
@@ -87,6 +95,30 @@ impl RuntimeProfileConfig {
             model_endpoints,
             mcp: active.mcp.clone().unwrap_or_default(),
         })
+    }
+
+    /// Put this profile's policy in force for traffic, MCP and model routing.
+    pub(crate) fn apply(
+        self,
+        net_state: &capsem_core::SandboxNetworkState,
+        mcp_runtime: &crate::mcp_runtime::McpRuntime,
+    ) {
+        let security_rule_ids = self
+            .security_rules
+            .rules()
+            .iter()
+            .map(|rule| rule.rule_id.clone())
+            .collect::<Vec<_>>();
+        *net_state.policy.write().unwrap() = std::sync::Arc::new(self.network);
+        *mcp_runtime.security_rules.write().unwrap() = std::sync::Arc::new(self.security_rules);
+        *mcp_runtime.plugin_policy.write().unwrap() = std::sync::Arc::new(self.plugins);
+        *mcp_runtime.model_endpoints.write().unwrap() = std::sync::Arc::new(self.model_endpoints);
+        tracing::info!(
+            active_profile_digest = %self.active_profile_digest,
+            security_rule_count = security_rule_ids.len(),
+            security_rule_ids = ?security_rule_ids,
+            "Reloaded profile runtime config"
+        );
     }
 
     pub(crate) fn mcp_servers(

@@ -119,7 +119,7 @@ impl ServiceState {
         }
 
         let runtime_profile = self.cached_profile_for_runtime(&profile_id)?;
-        let active_profile_path = self.materialize_active_profile(&runtime_profile, &session_dir)?;
+        let active_profile_path = self.materialize_active_profile(&runtime_profile, &session_dir)?.path;
         let profile = runtime_profile.config();
         let profile_revision = profile.revision.clone();
         let profile_payload_hash = profile_payload_hash(profile)?;

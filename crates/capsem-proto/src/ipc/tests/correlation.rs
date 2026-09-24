@@ -40,7 +40,7 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
             Some(12),
         ),
         (ServiceToProcess::Ping, None),
-        (ServiceToProcess::ReloadConfig, None),
+        (ServiceToProcess::ReloadConfig { id: 13 }, Some(13)),
     ];
     for (request, id) in requests {
         assert_eq!(request.request_id(), id, "{request:?}");
@@ -89,6 +89,14 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
                 policy_refused: false,
             },
             Some(12),
+        ),
+        (
+            ProcessToService::ConfigReloadResult {
+                id: 13,
+                active_profile_digest: Some("blake3:00".into()),
+                error: None,
+            },
+            Some(13),
         ),
         (ProcessToService::Pong, None),
     ];

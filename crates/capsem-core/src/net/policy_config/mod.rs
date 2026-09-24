@@ -6,6 +6,7 @@
 //!
 //! Merge semantics: corp settings override local settings per-key.
 
+mod active_profile_digest;
 mod builder;
 pub mod corp_provision;
 mod lint;
@@ -21,6 +22,7 @@ mod tree;
 mod types;
 mod validation;
 
+pub use active_profile_digest::active_profile_digest;
 pub use builder::*;
 pub use capsem_config::*;
 pub use lint::load_merged_lint;

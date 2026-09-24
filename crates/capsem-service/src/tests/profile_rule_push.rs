@@ -86,7 +86,7 @@ async fn rule_mutation_routes_push_reload_to_running_profile_instances() {
     assert!(
         received
             .iter()
-            .all(|message| matches!(message, ServiceToProcess::ReloadConfig)),
+            .all(|message| matches!(message, ServiceToProcess::ReloadConfig { .. })),
         "each rule mutation sends exactly one ReloadConfig"
     );
 }
@@ -150,7 +150,10 @@ match = 'mcp.tool_call.name == "local__echo"'
     .await
     .expect("plugin edit should update profile override");
     assert!(
-        matches!(process.await.unwrap().as_slice(), [ServiceToProcess::ReloadConfig]),
+        matches!(
+            process.await.unwrap().as_slice(),
+            [ServiceToProcess::ReloadConfig { .. }]
+        ),
         "the plugin edit must reach the running VM before the route returns"
     );
     assert_eq!(
@@ -234,7 +237,7 @@ async fn mcp_permission_edits_push_reload_to_running_profile_instances() {
         .await
         .expect("an MCP permission edit must contact the running instance")
         .unwrap();
-    assert!(matches!(received.as_slice(), [ServiceToProcess::ReloadConfig]));
+    assert!(matches!(received.as_slice(), [ServiceToProcess::ReloadConfig { .. }]));
 }
 
 /// A reload named for one profile reaches only that profile's VMs. The route
@@ -277,7 +280,9 @@ async fn reload_is_scoped_to_the_named_profile() {
         .await
         .expect("the named profile's VM must be reloaded")
         .unwrap();
-    assert!(received.iter().all(|m| matches!(m, ServiceToProcess::ReloadConfig)));
+    assert!(received
+        .iter()
+        .all(|m| matches!(m, ServiceToProcess::ReloadConfig { .. })));
     assert!(code_dir.join("vm/active_profile.toml").exists());
     assert_eq!(
         other_listener.accept().map(|_| ()).map_err(|e| e.kind()),
@@ -304,4 +309,49 @@ async fn reload_is_scoped_to_the_named_profile() {
         Err(std::io::ErrorKind::WouldBlock),
         "an MCP refresh for profile `code` must not contact a VM on another profile"
     );
+}
+
+/// An acknowledgement only counts when it names the active profile this push
+/// wrote. A VM reporting some other profile -- a concurrent edit's, or a stale
+/// one -- has not applied this edit, and the route must say so rather than
+/// return success on a bare acknowledgement.
+#[tokio::test]
+async fn a_reload_acknowledging_another_active_profile_fails_the_push() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
+    let session_dir = dir.path().join("sessions").join("stale-ack-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "stale-ack-vm", std::process::id(), session_dir);
+    let uds_path = state.instances.lock().unwrap()["stale-ack-vm"].uds_path.clone();
+    let process = spawn_fake_process(&uds_path, 1, |message| {
+        let reply = match message {
+            ServiceToProcess::ReloadConfig { id } => Some(ProcessToService::ConfigReloadResult {
+                id: *id,
+                active_profile_digest: Some("blake3:some-other-profile".to_string()),
+                error: None,
+            }),
+            _ => None,
+        };
+        Box::pin(async move { reply })
+    });
+
+    let error = handle_enforcement_rule_upsert(
+        State(Arc::clone(&state)),
+        Path(("code".to_string(), "stale_ack_block".to_string())),
+        Json(rule("stale_ack_block", r#"http.host.contains("example.invalid")"#)),
+    )
+    .await
+    .expect_err("an acknowledgement of another profile is not this edit applied");
+    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        error
+            .1
+            .contains("stale-ack-vm: applied active profile blake3:some-other-profile, expected blake3:"),
+        "{}",
+        error.1
+    );
+    process.await.unwrap();
 }
