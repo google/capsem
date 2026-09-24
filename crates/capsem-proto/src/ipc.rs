@@ -54,8 +54,11 @@ pub enum ServiceToProcess {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
     },
-    /// Request the process to reload its configuration from disk.
-    ReloadConfig,
+    /// Request the process to reload its active profile from disk. Answered by
+    /// `ConfigReloadResult` naming the digest of the bytes it applied.
+    ReloadConfig {
+        id: u64,
+    },
     /// Start streaming terminal output to this IPC connection.
     StartTerminalStream,
     /// Stop streaming terminal output. Sent by `capsem shell` on exit so
@@ -385,6 +388,16 @@ pub enum ProcessToService {
     /// The terminal stream on this connection stopped; no more TerminalOutput
     /// follows. Sent instead of going silent when the client fell behind.
     TerminalStreamEnded { reason: String },
+    /// Result of `ReloadConfig`. On success `active_profile_digest` is the
+    /// digest of the exact active-profile bytes now enforced; on failure the
+    /// previous policy stays in force and `error` says why.
+    ConfigReloadResult {
+        id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        active_profile_digest: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     /// Result of owner-side policy and primary-audit admission for an OCI pull.
     ContainerPullAdmission {
         id: u64,
@@ -397,8 +410,8 @@ pub enum ProcessToService {
 impl ServiceToProcess {
     /// The id a reply to this request carries, when the request has one.
     ///
-    /// Requests without an id are either answered with `Pong` (`Ping`,
-    /// `ReloadConfig`) or not answered on the connection at all.
+    /// Requests without an id are either answered with `Pong` (`Ping`) or not
+    /// answered on the connection at all.
     pub fn request_id(&self) -> Option<u64> {
         match self {
             Self::Exec { id, .. }
@@ -421,7 +434,8 @@ impl ServiceToProcess {
             | Self::AdmitPreviewConnection { id, .. }
             | Self::LinkAttach { id, .. }
             | Self::LinkDetach { id, .. }
-            | Self::AdmitContainerPull { id, .. } => Some(*id),
+            | Self::AdmitContainerPull { id, .. }
+            | Self::ReloadConfig { id } => Some(*id),
             _ => None,
         }
     }
@@ -453,7 +467,8 @@ impl ProcessToService {
             | Self::PreviewConnectionAdmitted { id, .. }
             | Self::LinkAttachResult { id, .. }
             | Self::LinkDetachResult { id, .. }
-            | Self::ContainerPullAdmission { id, .. } => Some(*id),
+            | Self::ContainerPullAdmission { id, .. }
+            | Self::ConfigReloadResult { id, .. } => Some(*id),
             _ => None,
         }
     }

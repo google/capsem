@@ -253,12 +253,15 @@ pub fn substitute_credential_value(provider: CredentialProvider, raw_value: &str
 }
 
 pub fn redact_observed_credentials_in_bytes(bytes: &[u8], observations: &[CredentialObservation]) -> Vec<u8> {
-    if observations.is_empty() {
-        return bytes.to_vec();
+    match std::str::from_utf8(bytes) {
+        Ok(text) if !observations.is_empty() => redact_observed_credentials_in_text(text, observations).into_bytes(),
+        _ => bytes.to_vec(),
     }
-    let Ok(text) = std::str::from_utf8(bytes) else {
-        return bytes.to_vec();
-    };
+}
+
+/// Replace each observed credential in `text`, raw or percent-encoded, with its
+/// `credential:blake3:` reference.
+pub fn redact_observed_credentials_in_text(text: &str, observations: &[CredentialObservation]) -> String {
     let mut redacted = text.to_string();
     for observation in observations {
         redacted = redacted.replace(&observation.raw_value, &observation.credential_ref());
@@ -267,7 +270,7 @@ pub fn redact_observed_credentials_in_bytes(bytes: &[u8], observations: &[Creden
             redacted = redacted.replace(&encoded, &observation.credential_ref());
         }
     }
-    redacted.into_bytes()
+    redacted
 }
 
 pub async fn broker_and_log_observations(

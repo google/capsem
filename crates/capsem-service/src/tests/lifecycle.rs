@@ -277,9 +277,8 @@ fn persistent_resume_uses_saved_profile_when_current_profile_revision_advances()
     install_test_profile_assets(&state);
     let session_dir = state.run_dir.join("persistent/older-profile");
     let runtime_profile = state.profile_for_runtime("code").unwrap();
-    let active_profile_path = state
-        .materialize_active_profile(&runtime_profile, &session_dir)
-        .unwrap();
+    let active = state.materialize_active_profile(&runtime_profile, &session_dir);
+    let active_profile_path = active.unwrap().path;
     let mut active_profile: ActiveProfileFile =
         toml::from_str(&std::fs::read_to_string(&active_profile_path).unwrap()).unwrap();
     active_profile.revision = "older-supported-revision".to_string();

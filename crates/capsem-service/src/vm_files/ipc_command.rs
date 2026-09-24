@@ -55,10 +55,7 @@ pub(crate) async fn send_ipc_command(
         // reply. Id-less requests are answered by `Pong`.
         let answers = match cmd.request_id() {
             Some(id) => msg.reply_id() == Some(id),
-            None => {
-                matches!(msg, ProcessToService::Pong)
-                    && matches!(cmd, ServiceToProcess::Ping | ServiceToProcess::ReloadConfig)
-            }
+            None => matches!(msg, ProcessToService::Pong) && matches!(cmd, ServiceToProcess::Ping),
         };
         if answers {
             return Ok(msg);

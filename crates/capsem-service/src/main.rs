@@ -39,6 +39,7 @@ use tokio::net::UnixListener;
 use tokio::process::Command;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
+mod active_profile;
 mod asset_background;
 mod blocking;
 mod container_setup;
@@ -46,6 +47,8 @@ mod instance;
 mod instance_reaper;
 use instance::InstanceInfo;
 mod network_routes;
+mod policy_mutation;
+use policy_mutation::{apply_profile_mutation, bad_request, Enforcement, MutationRoute, PolicyMutation};
 mod private_routes;
 mod process_control;
 mod profile_mutation_cache;
@@ -348,6 +351,8 @@ struct ServiceState {
     /// together, so the service must never launch split or overlapping
     /// mutations.
     update_lock: tokio::sync::Mutex<()>,
+    /// Serializes every policy mutation and reload, load through VM acknowledgement.
+    policy_mutation: policy_mutation::PolicyMutationLock,
     /// Requests a managed service shutdown after a package update selects a
     /// different binary. LaunchAgent/systemd then starts the newly installed
     /// service instead of leaving the old process attached to the new graph.
@@ -1201,115 +1206,6 @@ impl ServiceState {
         }
     }
 
-    fn materialize_active_profile(&self, profile: &Profile, session_dir: &StdPath) -> Result<PathBuf> {
-        let config = profile.config();
-        let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
-        let plugins = self
-            .plugin_policy_by_profile
-            .lock()
-            .unwrap()
-            .get(&config.id)
-            .cloned()
-            .unwrap_or_default();
-        let active_profile = ActiveProfileFile::from_profile_and_corp(profile, &corp, plugins)
-            .map_err(anyhow::Error::msg)
-            .with_context(|| format!("build active profile for {}", config.id))?;
-        let active_profile_dir = session_dir.join(ACTIVE_PROFILE_DIR);
-        std::fs::create_dir_all(&active_profile_dir)
-            .with_context(|| format!("create {}", active_profile_dir.display()))?;
-        let active_profile_path = active_profile_dir.join(ACTIVE_PROFILE_FILE);
-        std::fs::write(
-            &active_profile_path,
-            toml::to_string_pretty(&active_profile).context("serialize active profile")?,
-        )
-        .with_context(|| format!("write {}", active_profile_path.display()))?;
-
-        let stale_runtime_config = session_dir.join("runtime-config");
-        if stale_runtime_config.exists() {
-            std::fs::remove_dir_all(&stale_runtime_config)
-                .with_context(|| format!("remove stale {}", stale_runtime_config.display()))?;
-        }
-
-        Ok(active_profile_path)
-    }
-
-    fn refresh_active_profiles(&self, profile_filter: Option<&str>) -> Result<usize> {
-        let targets = {
-            let instances = self.instances.lock().unwrap();
-            instances
-                .iter()
-                .filter(|(_, info)| {
-                    profile_filter
-                        .map(|profile_id| info.profile_id == profile_id)
-                        .unwrap_or(true)
-                })
-                .map(|(id, info)| (id.clone(), info.profile_id.clone(), info.session_dir.clone()))
-                .collect::<Vec<_>>()
-        };
-
-        for (id, profile_id, session_dir) in &targets {
-            let runtime_profile = self
-                .profile_for_runtime(profile_id)
-                .with_context(|| format!("load runtime profile {profile_id} for {id}"))?;
-            self.materialize_active_profile(&runtime_profile, session_dir)
-                .with_context(|| {
-                    format!(
-                        "refresh active profile config for {id} ({profile_id}) in {}",
-                        session_dir.display()
-                    )
-                })?;
-        }
-
-        Ok(targets.len())
-    }
-
-    fn refresh_profile_rule_cache(&self, profile_filter: Option<&str>) -> Result<()> {
-        let updates = build_profile_rule_cache(profile_filter)
-            .map_err(|error| anyhow!("refresh profile rule cache: {}", error.1))?;
-        let mcp_default_updates = build_profile_mcp_default_cache(profile_filter)
-            .map_err(|error| anyhow!("refresh profile MCP default cache: {}", error.1))?;
-        {
-            let mut cache = self.profile_rule_cache.lock().unwrap();
-            if profile_filter.is_none() {
-                *cache = updates;
-            } else {
-                for (profile_id, rules) in updates {
-                    cache.insert(profile_id, rules);
-                }
-            }
-        }
-        {
-            let mut cache = self.profile_mcp_default_cache.lock().unwrap();
-            if profile_filter.is_none() {
-                *cache = mcp_default_updates;
-            } else {
-                for (profile_id, permission) in mcp_default_updates {
-                    cache.insert(profile_id, permission);
-                }
-            }
-        }
-        self.profile_rule_response_cache.lock().unwrap().clear();
-        Ok(())
-    }
-
-    fn refresh_profile_plugin_policy_cache(&self, profile_filter: Option<&str>) -> Result<()> {
-        let updates = build_profile_plugin_policy_cache(profile_filter)
-            .map_err(|error| anyhow!("refresh profile plugin cache: {}", error.1))?;
-        let mut cache = self.profile_plugin_policy_cache.lock().unwrap();
-        if profile_filter.is_none() {
-            *cache = updates;
-        } else {
-            for (profile_id, plugins) in updates {
-                cache.insert(profile_id, plugins);
-            }
-        }
-        drop(cache);
-        self.profile_plugin_response_cache.lock().unwrap().clear();
-        self.evaluate_response_cache.lock().unwrap().clear();
-        *self.evaluate_last_response_cache.lock().unwrap() = None;
-        Ok(())
-    }
-
     fn resolve_profile_asset_paths(
         &self,
         profile: &ProfileConfigFile,
@@ -1397,7 +1293,7 @@ impl ServiceState {
             &entry.profile_payload_hash,
             &entry.asset_pins,
         )?;
-        self.materialize_active_profile(&current, &entry.session_dir)
+        Ok(self.materialize_active_profile(&current, &entry.session_dir)?.path)
     }
 
     fn validate_persistent_profile_authority(&self, entry: &PersistentVmEntry) -> Result<()> {

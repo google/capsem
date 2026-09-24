@@ -14,7 +14,8 @@
 //!
 //! What stays on the reply path: the security decision (inside
 //! `DnsHandler::handle`) and the `dns_events` ledger row, which is accepted
-//! by the writer before the answer is sent. The rule-ledger rows derived from
+//! by the writer before the answer is sent; a query whose row is refused is
+//! answered SERVFAIL instead. The rule-ledger rows derived from
 //! that event are accepted before completion as well, so shutdown can drain
 //! the DB queue without racing detached producers.
 
@@ -142,14 +143,28 @@ async fn answer_one(
         request.process_name.clone(),
         capsem_foundation::telemetry::ambient_capsem_trace_id(),
     );
-    // Both the event and its derived rule rows belong to this request.
-    let _ = emit_dns_security_write_and_rules(db, security_rules, event).await;
+    // Both the event and its derived rule rows belong to this request. The
+    // answer is released only with its primary row: a query the ledger
+    // refused is answered SERVFAIL, so no lookup succeeds unrecorded.
+    let audited = capsem_core::security_engine::admit_within(
+        capsem_core::security_engine::SECURITY_ADMISSION_DEADLINE,
+        Box::pin(emit_dns_security_write_and_rules(db, security_rules, event)),
+    )
+    .await
+    .is_some();
+    let (raw, decision, rcode) = if audited {
+        (result.answer_bytes, result.decision, result.rcode)
+    } else {
+        warn!(id = request.id, "DNS port: audit row refused; answering SERVFAIL");
+        let servfail = capsem_core::net::parsers::dns_parser::build_servfail(&request.raw).unwrap_or_default();
+        (servfail, capsem_logger::events::Decision::Error, 2)
+    };
 
     let response = capsem_proto::DnsResponse {
         id: request.id,
-        raw: result.answer_bytes,
-        decision: result.decision.as_str().to_string(),
-        rcode: result.rcode,
+        raw,
+        decision: decision.as_str().to_string(),
+        rcode,
     };
     match capsem_proto::encode_dns_response(&response) {
         Ok(frame) => Some(frame),

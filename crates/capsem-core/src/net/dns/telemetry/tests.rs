@@ -173,3 +173,19 @@ fn dns_event_becomes_canonical_security_event() {
     );
     assert_eq!(security_event.dns.as_ref().unwrap().qtype.as_deref(), Some("1"));
 }
+
+/// A denied query enters the rule ledger as blocked: its rows are written
+/// after it was answered and record what was enforced (google/capsem#203).
+#[test]
+fn a_denied_query_enters_the_rule_ledger_as_blocked() {
+    let denied = security_event_from_dns_event(&build_dns_event(&denied_result(), Some("udp"), None, None));
+    let allowed = security_event_from_dns_event(&build_dns_event(&allowed_result(), Some("udp"), None, None));
+    assert_eq!(
+        denied.decision.effective,
+        crate::security_engine::SecurityDecisionKind::Block
+    );
+    assert_eq!(
+        allowed.decision.effective,
+        crate::security_engine::SecurityDecisionKind::Allow
+    );
+}

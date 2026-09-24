@@ -34,7 +34,11 @@ use forensics::{
 };
 pub use network::NetworkSecurityEvent;
 mod plugins;
+mod rule_decision;
+mod rule_emission;
 use plugins::{CredentialBrokerPlugin, DummyPostAllowPlugin, DummyPreEicarPlugin, LogSanitizerPlugin};
+use rule_decision::*;
+pub use rule_emission::*;
 
 pub const SECURITY_EVENT_EMIT_SPAN: &str = "capsem.security_event.emit";
 pub const SECURITY_EVENT_EMIT_TOTAL: &str = "security_event.emit_total";
@@ -44,7 +48,9 @@ pub const SECURITY_PLUGIN_EXECUTION_DURATION_MS: &str = "security_plugin.executi
 pub const DUMMY_EICAR_TEST_STRING: &str = r#"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"#;
 
 mod emission;
-pub use emission::{emit_security_write, emit_security_write_blocking, RuntimeSecurityEvent};
+pub use emission::{
+    admit_within, emit_security_write, emit_security_write_blocking, RuntimeSecurityEvent, SECURITY_ADMISSION_DEADLINE,
+};
 mod file_facts;
 use file_facts::explicit_primary_file_event;
 pub use file_facts::{security_event_from_explicit_file_event, security_event_from_file_event};
@@ -399,19 +405,6 @@ fn current_unix_ms() -> i64 {
         .as_millis() as i64
 }
 
-pub async fn emit_matching_security_rules(
-    db: &DbWriter,
-    event_id: SecurityEventId,
-    event_type: RuntimeSecurityEventType,
-    rules: &SecurityRuleSet,
-    event: &SecurityEvent,
-    timestamp_unix_ms: i64,
-) -> Result<usize, String> {
-    emit_matching_security_rules_with_decision(db, event_id, event_type, rules, event, timestamp_unix_ms)
-        .await
-        .map(|emission| emission.emitted)
-}
-
 /// Run the plugin stages over an event, evaluate the rule set, write the ledger
 /// rows, and return the decision the caller must honor.
 ///
@@ -625,156 +618,6 @@ pub enum SecurityEnforcementAction {
     Block,
 }
 
-pub async fn emit_matching_security_rules_with_decision(
-    db: &DbWriter,
-    event_id: SecurityEventId,
-    event_type: RuntimeSecurityEventType,
-    rules: &SecurityRuleSet,
-    event: &SecurityEvent,
-    timestamp_unix_ms: i64,
-) -> Result<SecurityRuleEmission, String> {
-    event.validate_network(event_type).map_err(|error| error.to_string())?;
-    let evaluation = rules.evaluate(event)?;
-    let selected_rule = selected_enforcement_rule(&evaluation);
-    let mut emitted = 0;
-    let mut enriched_event = event_with_rule_detections(event, evaluation.detections());
-    let mut enforcement = security_enforcement_decision(selected_rule, &mut enriched_event);
-    let mut decision_state = enriched_event.decision.clone();
-    let mut rule_events = Vec::new();
-    if let Some(rule) = selected_rule {
-        emit_security_decision_transition(
-            db,
-            event_id.clone(),
-            event_type,
-            rule,
-            &enriched_event,
-            &mut decision_state,
-            timestamp_unix_ms,
-        )
-        .await?;
-    }
-    for rule in evaluation.matched_rules() {
-        let rule_event = security_rule_event(event_id.clone(), event_type, rule, &enriched_event, timestamp_unix_ms)?;
-        trace_security_rule_match(&rule_event, rule);
-        emit_security_write(db, WriteOp::SecurityRuleEvent(rule_event.clone())).await;
-        rule_events.push(rule_event);
-        emitted += 1;
-    }
-    if matches!(enforcement.action, SecurityEnforcementAction::Ask) {
-        let Some(rule) = selected_rule else {
-            return Err("ask enforcement decision did not carry a rule".to_string());
-        };
-        let ask_id = emit_security_ask_pending(
-            db,
-            event_id.clone(),
-            event_type,
-            rule,
-            &enriched_event,
-            timestamp_unix_ms,
-        )
-        .await?;
-        enforcement.ask_id = Some(ask_id);
-    }
-    Ok(SecurityRuleEmission {
-        event_id,
-        emitted,
-        enforcement,
-        event: enriched_event,
-        rule_events,
-    })
-}
-
-pub fn emit_matching_security_rules_blocking(
-    db: &DbWriter,
-    event_id: SecurityEventId,
-    event_type: RuntimeSecurityEventType,
-    rules: &SecurityRuleSet,
-    event: &SecurityEvent,
-    timestamp_unix_ms: i64,
-) -> Result<usize, String> {
-    emit_matching_security_rules_with_decision_blocking(db, event_id, event_type, rules, event, timestamp_unix_ms)
-        .map(|emission| emission.emitted)
-}
-
-pub fn emit_matching_security_rules_with_decision_blocking(
-    db: &DbWriter,
-    event_id: SecurityEventId,
-    event_type: RuntimeSecurityEventType,
-    rules: &SecurityRuleSet,
-    event: &SecurityEvent,
-    timestamp_unix_ms: i64,
-) -> Result<SecurityRuleEmission, String> {
-    event.validate_network(event_type).map_err(|error| error.to_string())?;
-    let evaluation = rules.evaluate(event)?;
-    let selected_rule = selected_enforcement_rule(&evaluation);
-    let mut emitted = 0;
-    let mut enriched_event = event_with_rule_detections(event, evaluation.detections());
-    let mut enforcement = security_enforcement_decision(selected_rule, &mut enriched_event);
-    let mut decision_state = enriched_event.decision.clone();
-    let mut rule_events = Vec::new();
-    if let Some(rule) = selected_rule {
-        emit_security_decision_transition_blocking(
-            db,
-            event_id.clone(),
-            event_type,
-            rule,
-            &enriched_event,
-            &mut decision_state,
-            timestamp_unix_ms,
-        )?;
-    }
-    for rule in evaluation.matched_rules() {
-        let rule_event = security_rule_event(event_id.clone(), event_type, rule, &enriched_event, timestamp_unix_ms)?;
-        trace_security_rule_match(&rule_event, rule);
-        emit_security_write_blocking(db, WriteOp::SecurityRuleEvent(rule_event.clone()));
-        rule_events.push(rule_event);
-        emitted += 1;
-    }
-    if matches!(enforcement.action, SecurityEnforcementAction::Ask) {
-        let Some(rule) = selected_rule else {
-            return Err("ask enforcement decision did not carry a rule".to_string());
-        };
-        let ask_id = emit_security_ask_pending_blocking(
-            db,
-            event_id.clone(),
-            event_type,
-            rule,
-            &enriched_event,
-            timestamp_unix_ms,
-        )?;
-        enforcement.ask_id = Some(ask_id);
-    }
-    Ok(SecurityRuleEmission {
-        event_id,
-        emitted,
-        enforcement,
-        event: enriched_event,
-        rule_events,
-    })
-}
-
-fn requested_decision_for_rule(action: SecurityRuleAction) -> SecurityDecisionKind {
-    match action {
-        SecurityRuleAction::Allow
-        | SecurityRuleAction::Preprocess
-        | SecurityRuleAction::Rewrite
-        | SecurityRuleAction::Postprocess => SecurityDecisionKind::Allow,
-        SecurityRuleAction::Ask => SecurityDecisionKind::Ask,
-        SecurityRuleAction::Block => SecurityDecisionKind::Block,
-    }
-}
-
-fn decision_stage_for_rule(action: SecurityRuleAction) -> LoggedSecurityDecisionStage {
-    match action {
-        SecurityRuleAction::Preprocess => LoggedSecurityDecisionStage::Preprocess,
-        SecurityRuleAction::Rewrite => LoggedSecurityDecisionStage::Rewrite,
-        SecurityRuleAction::Postprocess => LoggedSecurityDecisionStage::Postprocess,
-        SecurityRuleAction::Allow | SecurityRuleAction::Ask | SecurityRuleAction::Block => {
-            LoggedSecurityDecisionStage::Rule
-        }
-    }
-}
-
 fn security_decision_event(
     event_id: SecurityEventId,
     event_type: RuntimeSecurityEventType,
@@ -857,76 +700,6 @@ pub fn emit_security_decision_transition_blocking(
     let decision_event = security_decision_event(event_id, event_type, rule, event, decision_state, timestamp_unix_ms)?;
     emit_security_write_blocking(db, WriteOp::SecurityDecisionEvent(decision_event));
     Ok(())
-}
-
-fn selected_enforcement_rule<'a>(
-    evaluation: &'a crate::net::policy_config::SecurityRuleEvaluation<'a>,
-) -> Option<&'a CompiledSecurityRule> {
-    evaluation.enforcement_rules().into_iter().next()
-}
-
-/// Escalate an enforcement decision to match the event's merged decision state.
-///
-/// Plugins request decisions on the same rail as rules, so a plugin running in
-/// `ask` or `block` mode has to be able to raise an allowing rule verdict. The
-/// merge behind `decision.effective` is escalate-only, so this can only ever
-/// tighten the decision -- a plugin cannot talk a blocking rule down to allow.
-fn apply_event_decision_to_enforcement(event: &SecurityEvent, enforcement: &mut SecurityEnforcementDecision) {
-    match event.decision.effective {
-        SecurityDecisionKind::Block => enforcement.action = SecurityEnforcementAction::Block,
-        SecurityDecisionKind::Ask => {
-            if matches!(enforcement.action, SecurityEnforcementAction::Allow) {
-                enforcement.action = SecurityEnforcementAction::Ask;
-            }
-        }
-        SecurityDecisionKind::Allow => {}
-    }
-}
-
-fn requested_boundary_decision(
-    rule: Option<&CompiledSecurityRule>,
-    kind: RuntimeSecurityEventType,
-) -> SecurityDecisionKind {
-    match rule {
-        Some(rule) => requested_decision_for_rule(rule.action),
-        None if matches!(
-            kind,
-            RuntimeSecurityEventType::NetworkConnect | RuntimeSecurityEventType::NetworkProbe
-        ) =>
-        {
-            SecurityDecisionKind::Block
-        }
-        None => SecurityDecisionKind::Allow,
-    }
-}
-
-fn security_enforcement_decision(
-    rule: Option<&CompiledSecurityRule>,
-    event: &mut SecurityEvent,
-) -> SecurityEnforcementDecision {
-    let Some(rule) = rule else {
-        let mut decision = SecurityEnforcementDecision::allow();
-        if requested_boundary_decision(None, event.event_type) == SecurityDecisionKind::Block {
-            event.request_decision(SecurityDecisionKind::Block);
-            decision.action = SecurityEnforcementAction::Block;
-            decision.reason = Some("network operation requires an explicit allow rule".into());
-        }
-        return decision;
-    };
-    SecurityEnforcementDecision {
-        action: match rule.action {
-            SecurityRuleAction::Allow => SecurityEnforcementAction::Allow,
-            SecurityRuleAction::Ask => SecurityEnforcementAction::Ask,
-            SecurityRuleAction::Block => SecurityEnforcementAction::Block,
-            SecurityRuleAction::Preprocess | SecurityRuleAction::Rewrite | SecurityRuleAction::Postprocess => {
-                SecurityEnforcementAction::Allow
-            }
-        },
-        rule_id: Some(rule.rule_id.clone()),
-        rule_name: Some(rule.name.clone()),
-        reason: rule.reason.clone(),
-        ask_id: None,
-    }
 }
 
 pub fn evaluate_security_boundary(

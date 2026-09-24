@@ -38,7 +38,7 @@ pub(super) fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         | ServiceToProcess::PrepareSnapshot
         | ServiceToProcess::Unfreeze
         | ServiceToProcess::Resume => IpcAction::Unexpected,
-        ServiceToProcess::ReloadConfig => IpcAction::Reload,
+        ServiceToProcess::ReloadConfig { .. } => IpcAction::Reload,
         ServiceToProcess::Shutdown | ServiceToProcess::Suspend { .. } => IpcAction::Lifecycle,
     }
 }

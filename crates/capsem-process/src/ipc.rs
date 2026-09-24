@@ -89,34 +89,29 @@ fn guest_write_ledger_path(path: &str) -> String {
         .to_string()
 }
 
-fn emit_guest_write_file_event(
+/// Record a host-to-guest file write before it is dispatched, evaluated
+/// against the rules in force. `None` means the ledger refused the record, and
+/// the write must not happen.
+async fn record_guest_write(
     net_state: &capsem_core::SandboxNetworkState,
-    runtime_source: &RuntimeProfileSource,
+    mcp_runtime: &McpRuntime,
     path: &str,
     size: usize,
-) {
-    let Ok(runtime) = runtime_source.load() else {
-        warn!(path, "failed to load runtime profile for guest write file ledger");
-        return;
-    };
-    let trace_id = capsem_foundation::telemetry::ambient_capsem_trace_id();
+) -> Option<capsem_core::security_engine::SecurityEventId> {
+    let rules = mcp_runtime.security_rules.read().unwrap().clone();
     let event = capsem_logger::FileEvent {
         event_id: None,
         timestamp: std::time::SystemTime::now(),
         action: capsem_logger::FileAction::Created,
         path: guest_write_ledger_path(path),
         size: Some(size as u64),
-        // The guest reports a write of `size` bytes, which is a file by
-        // construction; the guest agent has no directory-write path.
+        // A write of `size` bytes is a file by construction; the guest agent
+        // has no directory-write path.
         kind: capsem_logger::FileKind::File,
-        trace_id,
+        trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
         credential_ref: None,
     };
-    capsem_core::security_engine::emit_file_security_write_and_rules_blocking(
-        &net_state.db,
-        &runtime.security_rules,
-        event,
-    );
+    capsem_core::security_engine::emit_file_security_write_and_rules(&net_state.db, &rules, event).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -419,9 +414,32 @@ pub(crate) async fn handle_ipc_connection(
                 let ctrl_tx = ctrl_tx.clone();
                 let ipc_tx_out = ipc_tx_out.clone();
                 let net_state = net_state.clone();
-                let runtime_source = runtime_source.clone();
+                let mcp_runtime = mcp_runtime.clone();
                 tokio::spawn(async move {
                     info!(id, path, len = data.len(), "Received WriteFile command via IPC");
+                    // Recorded before dispatch, as an export is recorded
+                    // before release: a write the session cannot account for
+                    // does not happen.
+                    if capsem_core::security_engine::admit_within(
+                        capsem_core::security_engine::SECURITY_ADMISSION_DEADLINE,
+                        Box::pin(record_guest_write(&net_state, &mcp_runtime, &path, data.len())),
+                    )
+                    .await
+                    .is_none()
+                    {
+                        warn!(id, path, "WriteFile refused: its security event could not be recorded");
+                        capsem_core::try_send!(
+                            "ipc_write_file_result",
+                            ipc_tx_out
+                                .send(ProcessToService::WriteFileResult {
+                                    id,
+                                    success: false,
+                                    error: Some("file write refused: its security event could not be recorded".into()),
+                                })
+                                .await
+                        );
+                        return;
+                    }
                     let (j_tx, mut j_rx) = oneshot::channel();
                     job_store.jobs.lock().unwrap().insert(id, j_tx);
                     capsem_core::try_send!(
@@ -468,14 +486,6 @@ pub(crate) async fn handle_ipc_connection(
                     };
                     match result {
                         Ok(Ok(JobResult::WriteFile { success, error })) => {
-                            if success {
-                                emit_guest_write_file_event(&net_state, &runtime_source, &path, data.len());
-                                // Acceptance into the DB-owned producer buffer
-                                // is the route boundary. Waiting for the whole
-                                // session ledger to flush here withholds the
-                                // guest reply behind unrelated telemetry and
-                                // can exhaust the service's IPC deadline.
-                            }
                             info!(id, success, "Sending WriteFileResult back via IPC");
                             capsem_core::try_send!(
                                 "ipc_write_file_result",
@@ -710,34 +720,36 @@ pub(crate) async fn handle_ipc_connection(
                     }
                 });
             }
-            ServiceToProcess::ReloadConfig => {
+            ServiceToProcess::ReloadConfig { id } => {
                 info!(
                     active_profile = %runtime_source.active_profile_path().display(),
                     "Reloading profile runtime config"
                 );
-                let runtime_config = runtime_source.load()?;
-
-                let new_network = Arc::new(runtime_config.network);
-                let new_security_rules = Arc::new(runtime_config.security_rules);
-                let new_plugin_policy = Arc::new(runtime_config.plugins);
-                let new_model_endpoints = Arc::new(runtime_config.model_endpoints);
-                let security_rule_ids = new_security_rules
-                    .rules()
-                    .iter()
-                    .map(|rule| rule.rule_id.clone())
-                    .collect::<Vec<_>>();
-
-                *net_state.policy.write().unwrap() = new_network;
-                *mcp_runtime.security_rules.write().unwrap() = new_security_rules;
-                *mcp_runtime.plugin_policy.write().unwrap() = new_plugin_policy;
-                *mcp_runtime.model_endpoints.write().unwrap() = new_model_endpoints;
-                info!(
-                    security_rule_count = security_rule_ids.len(),
-                    security_rule_ids = ?security_rule_ids,
-                    "Reloaded profile runtime config"
-                );
-
-                capsem_core::try_send!("ipc_pong_reload", ipc_tx_out.send(ProcessToService::Pong).await);
+                // A profile that does not load leaves the previous policy in
+                // force; the service is told why instead of losing the socket.
+                let reply = match runtime_source.load() {
+                    Ok(runtime_config) => {
+                        let digest = runtime_config.active_profile_digest.clone();
+                        runtime_config.apply(&net_state, &mcp_runtime);
+                        ProcessToService::ConfigReloadResult {
+                            id,
+                            active_profile_digest: Some(digest),
+                            error: None,
+                        }
+                    }
+                    Err(error) => {
+                        warn!(
+                            error = format!("{error:#}"),
+                            "Profile reload refused; previous policy kept"
+                        );
+                        ProcessToService::ConfigReloadResult {
+                            id,
+                            active_profile_digest: None,
+                            error: Some(format!("{error:#}")),
+                        }
+                    }
+                };
+                capsem_core::try_send!("ipc_reload_result", ipc_tx_out.send(reply).await);
             }
             ServiceToProcess::Shutdown => {
                 capsem_core::try_send!("ctrl_shutdown", ctrl_tx.send(ServiceToProcess::Shutdown).await);

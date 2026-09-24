@@ -785,4 +785,6 @@ async fn chunk_counting_with_seeded_context() {
 /// these stand up a broker, a rule set and a real `DbWriter` and then read the
 /// ledger back. Splitting them is also what keeps this file inside the Rust
 /// shape ceiling -- see `config/gate.toml [boundary]`.
+mod decision;
+mod headers;
 mod ledger;

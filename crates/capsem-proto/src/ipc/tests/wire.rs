@@ -53,7 +53,7 @@ fn service_to_process_variant_names_and_roundtrips_are_stable() {
             size: 1,
             mime_type: None,
         },
-        ServiceToProcess::ReloadConfig,
+        ServiceToProcess::ReloadConfig { id: 11 },
         ServiceToProcess::StartTerminalStream,
         ServiceToProcess::StopTerminalStream,
         ServiceToProcess::PrepareSnapshot,

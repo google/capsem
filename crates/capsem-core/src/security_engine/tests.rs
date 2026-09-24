@@ -135,12 +135,16 @@ impl SecurityEventEmitter for RecordingEmitter {
     }
 }
 
+#[path = "tests/admission.rs"]
+mod admission;
 #[path = "tests/ask_ledger.rs"]
 mod ask_ledger;
 #[path = "tests/boundary_events.rs"]
 mod boundary_events;
 #[path = "tests/decision_ledger.rs"]
 mod decision_ledger;
+#[path = "tests/effective_decision.rs"]
+mod effective_decision;
 #[path = "tests/event_contract.rs"]
 mod event_contract;
 #[path = "tests/materialization.rs"]

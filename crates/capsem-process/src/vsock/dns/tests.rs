@@ -190,3 +190,40 @@ async fn every_answered_query_leaves_a_dns_event_row_before_its_answer() {
         serde_json::from_str(&reader.query_raw("SELECT COUNT(*) FROM dns_events").unwrap()).unwrap();
     assert_eq!(rows["rows"][0][0].as_i64(), Some(8));
 }
+
+/// An answer is released only with its audit row. When the ledger refuses the
+/// query's primary `dns_events` row, the guest gets SERVFAIL rather than the
+/// resolved answer: a lookup the session cannot account for does not succeed.
+/// The answer used to go out anyway, with nothing recorded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_query_whose_audit_row_is_refused_is_answered_servfail() {
+    let db = Arc::new(capsem_logger::DbWriter::open_in_memory(8).unwrap());
+    let closed = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || closed.shutdown_blocking())
+        .await
+        .unwrap();
+    let (mut guest, task) = session(db);
+    let raw = query(7, "unaudited");
+    let mut writer = guest.try_clone().unwrap();
+    let frame = request_frame(7, raw.clone());
+    tokio::task::spawn_blocking(move || writer.write_all(&frame).unwrap())
+        .await
+        .unwrap();
+    let (response, guest) = tokio::task::spawn_blocking(move || (read_response(&mut guest), guest))
+        .await
+        .unwrap();
+    drop(guest);
+    task.await.unwrap();
+
+    let response = response.expect("the query is still answered");
+    assert_eq!(response.id, 7);
+    assert_eq!(
+        response.rcode, 2,
+        "refused audit must answer SERVFAIL, not the resolved answer"
+    );
+    assert_eq!(
+        response.raw,
+        capsem_core::net::parsers::dns_parser::build_servfail(&raw).unwrap(),
+        "no byte of the resolved answer may reach the guest"
+    );
+}

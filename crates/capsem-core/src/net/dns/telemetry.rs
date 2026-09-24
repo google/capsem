@@ -129,10 +129,14 @@ fn skip_dns_name(packet: &[u8], mut offset: usize) -> Option<usize> {
 }
 
 pub fn security_event_from_dns_event(event: &DnsEvent) -> SecurityEvent {
-    let security_event = SecurityEvent::new(RuntimeSecurityEventType::DnsQuery).with_dns(DnsSecurityEvent {
+    let mut security_event = SecurityEvent::new(RuntimeSecurityEventType::DnsQuery).with_dns(DnsSecurityEvent {
         qname: Some(event.qname.clone()),
         qtype: Some(event.qtype.to_string()),
     });
+    // The query was already answered; its rule rows record what was enforced.
+    if event.decision == capsem_logger::events::Decision::Denied.as_str() {
+        security_event.request_decision(crate::security_engine::SecurityDecisionKind::Block);
+    }
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
         None => security_event,

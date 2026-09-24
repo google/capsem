@@ -42,6 +42,24 @@ impl RuntimeSecurityEvent {
     }
 }
 
+/// How long an action that waits on its own audit record (a DNS answer, a
+/// file written into the guest) waits for the ledger to accept it. The async
+/// admission path otherwise waits as long as the writer queue stays full; for
+/// a fail-closed action that is a hang, not backpressure. One second leaves a
+/// refused DNS query's SERVFAIL well inside the guest's five-second resolver.
+pub const SECURITY_ADMISSION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Admit a fail-closed action's audit record within `deadline`. Running out of
+/// time is refusal, reported as `None` like any other: the record was never
+/// accepted, so the caller must not act. Only for actions that wait on their
+/// record -- elsewhere a full queue is backpressure and must not drop rows.
+pub async fn admit_within<T>(
+    deadline: std::time::Duration,
+    admission: impl std::future::Future<Output = Option<T>>,
+) -> Option<T> {
+    tokio::time::timeout(deadline, admission).await.ok().flatten()
+}
+
 pub async fn emit_security_write(db: &DbWriter, op: WriteOp) -> Option<SecurityEventId> {
     let event = RuntimeSecurityEvent::from_logger_write(op);
     let event_type = event.event_type.as_str();

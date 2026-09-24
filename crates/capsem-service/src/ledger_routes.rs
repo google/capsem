@@ -1391,35 +1391,38 @@ pub(super) async fn handle_profile_plugin_update(
     let Some(catalog_entry) = catalog.get(&plugin_id).copied() else {
         return Err(AppError(StatusCode::NOT_FOUND, format!("unknown plugin: {plugin_id}")));
     };
-    let mut config = effective_plugin_policy(&state, &scope.profile_id)
-        .get(&plugin_id)
-        .copied()
-        .unwrap_or(catalog_entry.default_config);
-    if let Some(mode) = update.mode {
-        config.mode = mode;
-    }
-    if let Some(detection_level) = update.detection_level {
-        config.detection_level = detection_level;
-    }
-
-    let mut profile = profile_for_route(scope.profile_id.clone())?;
-    let event = write_profile_mutation_event(
-        &state,
-        profile
+    let route = MutationRoute {
+        name: "profile_plugin_edit",
+        target_kind: "plugin",
+        target_key: &plugin_id,
+        operation: "edit",
+    };
+    // The current config is read under the boundary: it is the "read" of a
+    // read-modify-write, and a concurrent edit must not be overwritten.
+    apply_profile_mutation(&state, route, scope.profile_id.clone(), Enforcement::Push, |profile| {
+        let mut config = effective_plugin_policy(&state, &scope.profile_id)
+            .get(&plugin_id)
+            .copied()
+            .unwrap_or(catalog_entry.default_config);
+        if let Some(mode) = update.mode {
+            config.mode = mode;
+        }
+        if let Some(detection_level) = update.detection_level {
+            config.detection_level = detection_level;
+        }
+        let summary = profile
             .set_plugin_config(&plugin_id, config, "service-api")
-            .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?,
-        &profile,
-    )
+            .map_err(bad_request)?;
+        state
+            .plugin_policy_by_profile
+            .lock()
+            .unwrap()
+            .entry(scope.profile_id.clone())
+            .or_default()
+            .insert(plugin_id.clone(), config);
+        Ok(summary)
+    })
     .await?;
-    log_profile_mutation_applied("profile_plugin_edit", &event);
-    state
-        .plugin_policy_by_profile
-        .lock()
-        .unwrap()
-        .entry(scope.profile_id.clone())
-        .or_default()
-        .insert(plugin_id.clone(), config);
-    let _reload = handle_reload_config_for_profile(Arc::clone(&state), Some(&scope.profile_id)).await?;
     let info = plugin_info_for(&state, &plugin_id, scope, true).await?;
     Ok(Json(info))
 }
@@ -1776,63 +1779,15 @@ pub(super) async fn handle_enforcement_rule_upsert(
     Path((profile_id, rule_id)): Path<(String, String)>,
     Json(rule): Json<SecurityRule>,
 ) -> Result<Json<EnforcementRuleResponse>, AppError> {
-    log_profile_mutation_route_request("enforcement_rule_upsert", &profile_id, "rule", &rule_id, "upsert");
-    if rule.corp_locked {
-        log_profile_mutation_route_rejected(
-            "enforcement_rule_upsert",
-            &profile_id,
-            "rule",
-            &rule_id,
-            "upsert",
-            "enforcement rule endpoint writes user profile rules only; corp_locked rules must come from corp config",
-        );
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "enforcement rule endpoint writes user profile rules only; corp_locked rules must come from corp config"
-                .to_string(),
-        ));
-    }
-    let compiled = validate_single_user_profile_rule(&rule_id, &rule).inspect_err(|error| {
-        log_profile_mutation_route_rejected(
-            "enforcement_rule_upsert",
-            &profile_id,
-            "rule",
-            &rule_id,
-            "upsert",
-            &error.1,
-        );
-    })?;
-    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
-        log_profile_mutation_route_rejected(
-            "enforcement_rule_upsert",
-            &profile_id,
-            "rule",
-            &rule_id,
-            "upsert",
-            &error.1,
-        );
-    })?;
-    let summary = profile
-        .upsert_profile_rule(&rule_id, rule.clone(), "service-api")
-        .map_err(|error| {
-            log_profile_mutation_route_rejected(
-                "enforcement_rule_upsert",
-                &profile_id,
-                "rule",
-                &rule_id,
-                "upsert",
-                &error,
-            );
-            AppError(StatusCode::BAD_REQUEST, error)
-        })?;
-    let event = write_profile_mutation_event(&state, summary, &profile).await?;
-    log_profile_mutation_applied("enforcement_rule_upsert", &event);
-    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
-    Ok(Json(EnforcementRuleResponse {
+    upsert_user_profile_rule(
+        &state,
+        "enforcement_rule_upsert",
+        "enforcement",
+        profile_id,
         rule_id,
-        compiled_rule_id: compiled.rule_id,
         rule,
-    }))
+    )
+    .await
 }
 
 pub(super) async fn handle_detection_rule_upsert(
@@ -1840,75 +1795,46 @@ pub(super) async fn handle_detection_rule_upsert(
     Path((profile_id, rule_id)): Path<(String, String)>,
     Json(rule): Json<SecurityRule>,
 ) -> Result<Json<EnforcementRuleResponse>, AppError> {
-    log_profile_mutation_route_request("detection_rule_upsert", &profile_id, "rule", &rule_id, "upsert");
-    if rule.detection_level.is_none() {
-        log_profile_mutation_route_rejected(
-            "detection_rule_upsert",
-            &profile_id,
-            "rule",
-            &rule_id,
-            "upsert",
-            "detection rule endpoint requires detection_level",
-        );
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "detection rule endpoint requires detection_level".to_string(),
-        ));
-    }
-    if rule.corp_locked {
-        log_profile_mutation_route_rejected(
-            "detection_rule_upsert",
-            &profile_id,
-            "rule",
-            &rule_id,
-            "upsert",
-            "detection rule endpoint writes user profile rules only; corp_locked rules must come from corp config",
-        );
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            "detection rule endpoint writes user profile rules only; corp_locked rules must come from corp config"
-                .to_string(),
-        ));
-    }
-    let compiled = validate_single_user_profile_rule(&rule_id, &rule).inspect_err(|error| {
-        log_profile_mutation_route_rejected(
-            "detection_rule_upsert",
-            &profile_id,
-            "rule",
-            &rule_id,
-            "upsert",
-            &error.1,
-        );
-    })?;
-    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
-        log_profile_mutation_route_rejected(
-            "detection_rule_upsert",
-            &profile_id,
-            "rule",
-            &rule_id,
-            "upsert",
-            &error.1,
-        );
-    })?;
-    let summary = profile
-        .upsert_profile_rule(&rule_id, rule.clone(), "service-api")
-        .map_err(|error| {
-            log_profile_mutation_route_rejected(
-                "detection_rule_upsert",
-                &profile_id,
-                "rule",
-                &rule_id,
-                "upsert",
-                &error,
-            );
-            AppError(StatusCode::BAD_REQUEST, error)
-        })?;
-    let event = write_profile_mutation_event(&state, summary, &profile).await?;
-    log_profile_mutation_applied("detection_rule_upsert", &event);
-    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
+    upsert_user_profile_rule(&state, "detection_rule_upsert", "detection", profile_id, rule_id, rule).await
+}
+
+/// One user profile rule through the enforcement or detection endpoint,
+/// enforced in the profile's running VMs before the route answers.
+async fn upsert_user_profile_rule(
+    state: &Arc<ServiceState>,
+    name: &'static str,
+    endpoint: &'static str,
+    profile_id: String,
+    rule_id: String,
+    rule: SecurityRule,
+) -> Result<Json<EnforcementRuleResponse>, AppError> {
+    let route = MutationRoute {
+        name,
+        target_kind: "rule",
+        target_key: &rule_id,
+        operation: "upsert",
+    };
+    let mut compiled_rule_id = String::new();
+    apply_profile_mutation(state, route, profile_id, Enforcement::Push, |profile| {
+        if endpoint == "detection" && rule.detection_level.is_none() {
+            return Err(bad_request(
+                "detection rule endpoint requires detection_level".to_string(),
+            ));
+        }
+        if rule.corp_locked {
+            return Err(bad_request(format!(
+                "{endpoint} rule endpoint writes user profile rules only; corp_locked rules must come from corp config"
+            )));
+        }
+        compiled_rule_id = validate_single_user_profile_rule(&rule_id, &rule)?.rule_id;
+        profile
+            .upsert_profile_rule(&rule_id, rule.clone(), "service-api")
+            .map_err(bad_request)
+    })
+    .await?;
     Ok(Json(EnforcementRuleResponse {
         rule_id,
-        compiled_rule_id: compiled.rule_id,
+        compiled_rule_id,
         rule,
     }))
 }
@@ -1917,66 +1843,39 @@ pub(super) async fn handle_enforcement_rule_delete(
     State(state): State<Arc<ServiceState>>,
     Path((profile_id, rule_id)): Path<(String, String)>,
 ) -> Result<Json<EnforcementRuleDeleteResponse>, AppError> {
-    log_profile_mutation_route_request("enforcement_rule_delete", &profile_id, "rule", &rule_id, "delete");
-    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
-        log_profile_mutation_route_rejected(
-            "enforcement_rule_delete",
-            &profile_id,
-            "rule",
-            &rule_id,
-            "delete",
-            &error.1,
-        );
-    })?;
-    let summary = profile.delete_profile_rule(&rule_id, "service-api").map_err(|error| {
-        let status = if error.contains("not found") {
-            StatusCode::NOT_FOUND
-        } else {
-            StatusCode::BAD_REQUEST
-        };
-        log_profile_mutation_route_rejected(
-            "enforcement_rule_delete",
-            &profile_id,
-            "rule",
-            &rule_id,
-            "delete",
-            &error,
-        );
-        AppError(status, error)
-    })?;
-    let event = write_profile_mutation_event(&state, summary, &profile).await?;
-    log_profile_mutation_applied("enforcement_rule_delete", &event);
-    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
-    Ok(Json(EnforcementRuleDeleteResponse { rule_id, deleted: true }))
+    delete_user_profile_rule(&state, "enforcement_rule_delete", profile_id, rule_id).await
 }
 
 pub(super) async fn handle_detection_rule_delete(
     State(state): State<Arc<ServiceState>>,
     Path((profile_id, rule_id)): Path<(String, String)>,
 ) -> Result<Json<EnforcementRuleDeleteResponse>, AppError> {
-    log_profile_mutation_route_request("detection_rule_delete", &profile_id, "rule", &rule_id, "delete");
-    let mut profile = profile_for_route(profile_id.clone()).inspect_err(|error| {
-        log_profile_mutation_route_rejected(
-            "detection_rule_delete",
-            &profile_id,
-            "rule",
-            &rule_id,
-            "delete",
-            &error.1,
-        );
-    })?;
-    let summary = profile.delete_profile_rule(&rule_id, "service-api").map_err(|error| {
-        let status = if error.contains("not found") {
-            StatusCode::NOT_FOUND
-        } else {
-            StatusCode::BAD_REQUEST
-        };
-        log_profile_mutation_route_rejected("detection_rule_delete", &profile_id, "rule", &rule_id, "delete", &error);
-        AppError(status, error)
-    })?;
-    let event = write_profile_mutation_event(&state, summary, &profile).await?;
-    log_profile_mutation_applied("detection_rule_delete", &event);
-    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
+    delete_user_profile_rule(&state, "detection_rule_delete", profile_id, rule_id).await
+}
+
+async fn delete_user_profile_rule(
+    state: &Arc<ServiceState>,
+    name: &'static str,
+    profile_id: String,
+    rule_id: String,
+) -> Result<Json<EnforcementRuleDeleteResponse>, AppError> {
+    let route = MutationRoute {
+        name,
+        target_kind: "rule",
+        target_key: &rule_id,
+        operation: "delete",
+    };
+    apply_profile_mutation(state, route, profile_id, Enforcement::Push, |profile| {
+        profile.delete_profile_rule(&rule_id, "service-api").map_err(|error| {
+            let status = if error.contains("not found") {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            AppError(status, error)
+        })
+    })
+    .await?;
     Ok(Json(EnforcementRuleDeleteResponse { rule_id, deleted: true }))
 }
 
@@ -1984,8 +1883,8 @@ pub(super) async fn handle_enforcement_reload(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    handle_reload_config(State(state)).await
+    let profile_id = validate_profile_route_id(profile_id)?;
+    handle_reload_config_for_profile(state, Some(&profile_id)).await
 }
 
 pub(super) async fn handle_detection_reload(

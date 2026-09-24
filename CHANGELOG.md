@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Changing an MCP permission (the profile default or a single tool) now takes
+  effect in running VMs before the route returns. It used to update the
+  profile file only, so running VMs kept enforcing the old permission until an
+  unrelated reload. Profile-scoped reloads
+  (`/profiles/{id}/enforcement/reload`, `/profiles/{id}/detection/reload`) and
+  MCP tool refresh now touch only VMs on that profile instead of every VM, and
+  refresh reports the number of VMs that actually refreshed
+  (google/capsem#229).
+
+- Concurrent policy edits no longer overwrite each other or claim each
+  other's result. Rule, plugin, MCP, skill, settings and corp edits and every
+  reload are serialized from loading the profile to the running VMs'
+  acknowledgement. A VM now reports the exact active profile it applied, and
+  an edit succeeds only when that is the one it wrote. A VM whose profile fails
+  to load says why and keeps its previous policy. Policy files are replaced
+  atomically, so a reader never sees half a file (google/capsem#229).
+
+- A security rule match now records the decision that was enforced. A
+  request, DNS query, export or command blocked by a rule was stored with
+  `decision.effective = "allow"` in the match's payload beside
+  `rule_action = "block"`, so the audit trail said the opposite of what
+  happened. A match on something recorded after it happened, such as a file
+  change the monitor observed, still records the outcome that occurred, with
+  the rule's action beside it (google/capsem#229, #203).
+
+- A guest DNS query whose audit record the session ledger refuses is now
+  answered SERVFAIL. The resolved answer used to be returned anyway, so a
+  lookup could succeed with no record of it (google/capsem#229).
+
+- A file written into the guest through the API is now recorded in the
+  session ledger before it is written, and refused if the ledger cannot record
+  it. It used to be written first and recorded after, and a failed record was
+  ignored, so a file could land in the guest with no audit trail
+  (google/capsem#229).
+
+- A credential observed in an HTTP request is now redacted from the stored
+  request and response headers, and from both bodies, wherever it reappears.
+  Headers were stored unredacted, and bodies were scrubbed only of credentials
+  seen in bodies, so a key sent in `x-api-key` could be stored verbatim in an
+  echoed header or body (google/capsem#229, #218).
+
 - A file export from the guest is refused when its security event cannot be
   recorded or evaluated. It used to log a warning and hand the file over
   anyway, so an export could leave the sandbox with no audit trail; exec and

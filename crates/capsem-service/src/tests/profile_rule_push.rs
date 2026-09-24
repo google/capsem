@@ -86,7 +86,7 @@ async fn rule_mutation_routes_push_reload_to_running_profile_instances() {
     assert!(
         received
             .iter()
-            .all(|message| matches!(message, ServiceToProcess::ReloadConfig)),
+            .all(|message| matches!(message, ServiceToProcess::ReloadConfig { .. })),
         "each rule mutation sends exactly one ReloadConfig"
     );
 }
@@ -103,6 +103,8 @@ async fn reload_refreshes_session_runtime_profile_from_source_profile() {
 
     state
         .refresh_active_profiles(Some("code"))
+        .into_iter()
+        .try_for_each(|(_, published)| published.map(drop))
         .expect("initial runtime profile materialization");
     let active_profile = session_dir.join("vm/active_profile.toml");
     assert!(active_profile.exists(), "session must carry one active profile file");
@@ -130,6 +132,8 @@ match = 'mcp.tool_call.name == "local__echo"'
 
     state
         .refresh_active_profiles(Some("code"))
+        .into_iter()
+        .try_for_each(|(_, published)| published.map(drop))
         .expect("reload must refresh session-local runtime profile config");
     let refreshed = std::fs::read_to_string(&active_profile).unwrap();
     assert!(
@@ -150,7 +154,10 @@ match = 'mcp.tool_call.name == "local__echo"'
     .await
     .expect("plugin edit should update profile override");
     assert!(
-        matches!(process.await.unwrap().as_slice(), [ServiceToProcess::ReloadConfig]),
+        matches!(
+            process.await.unwrap().as_slice(),
+            [ServiceToProcess::ReloadConfig { .. }]
+        ),
         "the plugin edit must reach the running VM before the route returns"
     );
     assert_eq!(
@@ -163,6 +170,8 @@ match = 'mcp.tool_call.name == "local__echo"'
     );
     state
         .refresh_active_profiles(Some("code"))
+        .into_iter()
+        .try_for_each(|(_, published)| published.map(drop))
         .expect("plugin override must refresh runtime profile config");
     let overlay_path = session_dir.join("runtime-config/profiles/code/runtime-overlay.toml");
     assert!(
@@ -182,4 +191,340 @@ match = 'mcp.tool_call.name == "local__echo"'
         active_text.contains("detection_level = \"critical\""),
         "active profile must carry edited plugin detection level"
     );
+}
+
+fn active_mcp_default_action(active_profile: &std::path::Path) -> capsem_core::net::policy_config::SecurityRuleAction {
+    let active: capsem_core::net::policy_config::ActiveProfileFile =
+        toml::from_str(&std::fs::read_to_string(active_profile).unwrap()).unwrap();
+    active.profile_rules.default["mcp"].action
+}
+
+/// MCP permissions compile to enforcement rules, so tightening one must reach
+/// running VMs before the route returns, exactly like a rule edit. These routes
+/// used to rewrite enforcement.toml and stop, leaving every running VM on the
+/// old permission until an unrelated reload.
+#[tokio::test]
+async fn mcp_permission_edits_push_reload_to_running_profile_instances() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
+    let session_dir = dir.path().join("sessions").join("mcp-push-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "mcp-push-vm", std::process::id(), session_dir.clone());
+    state
+        .refresh_active_profiles(Some("code"))
+        .into_iter()
+        .try_for_each(|(_, published)| published.map(drop))
+        .expect("initial active profile");
+    let active_profile = session_dir.join("vm/active_profile.toml");
+    assert_eq!(
+        active_mcp_default_action(&active_profile),
+        capsem_core::net::policy_config::SecurityRuleAction::Allow
+    );
+    let uds_path = state.instances.lock().unwrap()["mcp-push-vm"].uds_path.clone();
+    let process = spawn_fake_process_reload_ack(&uds_path, 1);
+
+    let _ = handle_profile_mcp_default_edit(
+        State(Arc::clone(&state)),
+        Path("code".to_string()),
+        Json(McpToolEditRequest {
+            action: capsem_core::net::policy_config::SecurityRuleAction::Block,
+        }),
+    )
+    .await
+    .expect("mcp default edit");
+
+    assert_eq!(
+        active_mcp_default_action(&active_profile),
+        capsem_core::net::policy_config::SecurityRuleAction::Block,
+        "the tightened MCP default must be materialized into the running session"
+    );
+    let received = tokio::time::timeout(std::time::Duration::from_secs(10), process)
+        .await
+        .expect("an MCP permission edit must contact the running instance")
+        .unwrap();
+    assert!(matches!(received.as_slice(), [ServiceToProcess::ReloadConfig { .. }]));
+}
+
+/// A reload named for one profile reaches only that profile's VMs. The route
+/// used to validate the profile id and then reload every profile, rewriting
+/// other sessions' active profiles and contacting VMs it had no business with.
+#[tokio::test]
+async fn reload_is_scoped_to_the_named_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
+
+    let code_dir = dir.path().join("sessions").join("code-vm");
+    let other_dir = dir.path().join("sessions").join("other-vm");
+    std::fs::create_dir_all(&code_dir).unwrap();
+    std::fs::create_dir_all(&other_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "code-vm", std::process::id(), code_dir.clone());
+    insert_fake_instance_with_session_dir(&state, "other-vm", std::process::id(), other_dir.clone());
+    state.instances.lock().unwrap().get_mut("other-vm").unwrap().profile_id = "co-work".into();
+
+    let code_uds = state.instances.lock().unwrap()["code-vm"].uds_path.clone();
+    let code_process = spawn_fake_process_reload_ack(&code_uds, 2);
+    // The other VM's socket exists, so contacting it would succeed; the proof
+    // is that nothing ever connects.
+    let other_uds = state.instances.lock().unwrap()["other-vm"].uds_path.clone();
+    let other_listener = std::os::unix::net::UnixListener::bind(&other_uds).unwrap();
+    other_listener.set_nonblocking(true).unwrap();
+
+    let Json(reloaded) = handle_enforcement_reload(State(Arc::clone(&state)), Path("code".to_string()))
+        .await
+        .expect("enforcement reload");
+    assert_eq!(reloaded["reloaded"], 1, "only the `code` VM is reloaded");
+    let Json(reloaded) = handle_detection_reload(State(Arc::clone(&state)), Path("code".to_string()))
+        .await
+        .expect("detection reload");
+    assert_eq!(reloaded["reloaded"], 1, "only the `code` VM is reloaded");
+
+    let received = tokio::time::timeout(std::time::Duration::from_secs(10), code_process)
+        .await
+        .expect("the named profile's VM must be reloaded")
+        .unwrap();
+    assert!(received
+        .iter()
+        .all(|m| matches!(m, ServiceToProcess::ReloadConfig { .. })));
+    assert!(code_dir.join("vm/active_profile.toml").exists());
+    assert_eq!(
+        other_listener.accept().map(|_| ()).map_err(|e| e.kind()),
+        Err(std::io::ErrorKind::WouldBlock),
+        "a reload of profile `code` must not contact a VM on another profile"
+    );
+    assert!(
+        !other_dir.join("vm/active_profile.toml").exists(),
+        "a reload of profile `code` must not rewrite another profile's active profile"
+    );
+
+    // MCP tool refresh for a `code` server is scoped the same way. With the
+    // `code` VM gone, nothing may be contacted and nothing counted.
+    state.instances.lock().unwrap().remove("code-vm");
+    let Json(refresh) = handle_profile_mcp_server_refresh(
+        State(Arc::clone(&state)),
+        Path(("code".to_string(), "local".to_string())),
+    )
+    .await
+    .expect("mcp refresh");
+    assert_eq!(refresh.instances, 0);
+    assert_eq!(
+        other_listener.accept().map(|_| ()).map_err(|e| e.kind()),
+        Err(std::io::ErrorKind::WouldBlock),
+        "an MCP refresh for profile `code` must not contact a VM on another profile"
+    );
+}
+
+/// An acknowledgement only counts when it names the active profile this push
+/// wrote. A VM reporting some other profile -- a concurrent edit's, or a stale
+/// one -- has not applied this edit, and the route must say so rather than
+/// return success on a bare acknowledgement.
+#[tokio::test]
+async fn a_reload_acknowledging_another_active_profile_fails_the_push() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
+    let session_dir = dir.path().join("sessions").join("stale-ack-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "stale-ack-vm", std::process::id(), session_dir);
+    let uds_path = state.instances.lock().unwrap()["stale-ack-vm"].uds_path.clone();
+    let process = spawn_fake_process(&uds_path, 1, |message| {
+        let reply = match message {
+            ServiceToProcess::ReloadConfig { id } => Some(ProcessToService::ConfigReloadResult {
+                id: *id,
+                active_profile_digest: Some("blake3:some-other-profile".to_string()),
+                error: None,
+            }),
+            _ => None,
+        };
+        Box::pin(async move { reply })
+    });
+
+    let error = handle_enforcement_rule_upsert(
+        State(Arc::clone(&state)),
+        Path(("code".to_string(), "stale_ack_block".to_string())),
+        Json(rule("stale_ack_block", r#"http.host.contains("example.invalid")"#)),
+    )
+    .await
+    .expect_err("an acknowledgement of another profile is not this edit applied");
+    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        error
+            .1
+            .contains("stale-ack-vm: applied active profile blake3:some-other-profile, expected blake3:"),
+        "{}",
+        error.1
+    );
+    process.await.unwrap();
+}
+
+/// Start edit A, hold its VM acknowledgement, then start edit B. Release A
+/// once B is either waiting for A or has already rewritten A's session. The
+/// fake VM answers each reload with the digest of the active profile it finds
+/// when it answers, as capsem-process does. Returns the session's active
+/// profile after both edits.
+async fn race_edit_b_against_held_edit_a(
+    edit_b: impl FnOnce(Arc<ServiceState>) -> tokio::task::JoinHandle<Result<(), AppError>>,
+) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
+    let session_dir = dir.path().join("sessions").join("race-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "race-vm", std::process::id(), session_dir.clone());
+    let active_profile = session_dir.join("vm/active_profile.toml");
+    let uds_path = state.instances.lock().unwrap()["race-vm"].uds_path.clone();
+
+    let held = Arc::new(tokio::sync::Notify::new());
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    let released = Arc::new(std::sync::Mutex::new(Some(released)));
+    let process = spawn_fake_process(&uds_path, 2, {
+        let (held, active_profile) = (Arc::clone(&held), active_profile.clone());
+        move |message| {
+            let ServiceToProcess::ReloadConfig { id } = *message else {
+                return Box::pin(async { None });
+            };
+            let (held, released, active_profile) = (
+                Arc::clone(&held),
+                released.lock().unwrap().take(),
+                active_profile.clone(),
+            );
+            Box::pin(async move {
+                if let Some(released) = released {
+                    held.notify_one();
+                    released.await.unwrap();
+                }
+                Some(ProcessToService::ConfigReloadResult {
+                    id,
+                    active_profile_digest: Some(capsem_core::net::policy_config::active_profile_digest(
+                        &std::fs::read(&active_profile).unwrap(),
+                    )),
+                    error: None,
+                })
+            })
+        }
+    });
+
+    let edit_a = tokio::spawn(handle_enforcement_rule_upsert(
+        State(Arc::clone(&state)),
+        Path(("code".to_string(), "race_edit_a".to_string())),
+        Json(rule("race_edit_a", r#"http.host.contains("a.example.invalid")"#)),
+    ));
+    held.notified().await;
+    let published_by_a = std::fs::read(&active_profile).unwrap();
+    let edit_b = edit_b(Arc::clone(&state));
+    tokio::select! {
+        () = state.policy_mutation.contended.notified() => {}
+        () = async {
+            while std::fs::read(&active_profile).unwrap() == published_by_a {
+                tokio::task::yield_now().await;
+            }
+        } => {}
+    }
+    release.send(()).unwrap();
+
+    let _ = edit_a.await.unwrap().expect("edit A must be acknowledged as edit A");
+    edit_b.await.unwrap().expect("edit B");
+    assert!(only_reloads(&process.await.unwrap(), 2));
+    std::fs::read_to_string(&active_profile).unwrap()
+}
+
+/// Two rule edits on one profile: neither may be lost, and B's publication
+/// may not be acknowledged as A's.
+#[tokio::test]
+async fn concurrent_rule_edits_keep_both_updates_and_their_own_acknowledgements() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let active = race_edit_b_against_held_edit_a(|state| {
+        tokio::spawn(async move {
+            handle_detection_rule_upsert(
+                State(state),
+                Path(("code".to_string(), "race_edit_b".to_string())),
+                Json(rule("race_edit_b", r#"http.host.contains("b.example.invalid")"#)),
+            )
+            .await
+            .map(|_| ())
+        })
+    })
+    .await;
+    assert!(
+        active.contains("race_edit_a") && active.contains("race_edit_b"),
+        "{active}"
+    );
+}
+
+/// A plugin edit through another route is serialized with a rule edit.
+#[tokio::test]
+async fn a_plugin_edit_is_serialized_with_a_concurrent_rule_edit() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let active = race_edit_b_against_held_edit_a(|state| {
+        tokio::spawn(async move {
+            handle_profile_plugin_update(
+                State(state),
+                Path(("code".to_string(), "dummy_pre_eicar".to_string())),
+                Json(PluginUpdate {
+                    mode: Some(capsem_core::net::policy_config::SecurityPluginMode::Block),
+                    detection_level: None,
+                }),
+            )
+            .await
+            .map(|_| ())
+        })
+    })
+    .await;
+    assert!(
+        active.contains("race_edit_a") && active.contains("[plugins.dummy_pre_eicar]"),
+        "{active}"
+    );
+}
+
+/// One running VM whose session cannot take the new profile must not keep the
+/// others on the old one. The push used to stop at the first failure, so a VM
+/// listed after a broken one was never materialized or reloaded. The route now
+/// applies the edit everywhere it can and says exactly where it could not,
+/// without pretending the saved edit was rolled back.
+#[tokio::test]
+async fn partial_apply_reaches_every_healthy_vm_and_names_the_failed_one() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
+    let healthy_dir = dir.path().join("sessions").join("healthy-vm");
+    std::fs::create_dir_all(&healthy_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "healthy-vm", std::process::id(), healthy_dir.clone());
+    // A session whose `vm/` directory is a file: its active profile cannot be written.
+    let broken_dir = dir.path().join("sessions").join("broken-vm");
+    std::fs::create_dir_all(&broken_dir).unwrap();
+    std::fs::write(broken_dir.join("vm"), b"not a directory").unwrap();
+    insert_fake_instance_with_session_dir(&state, "broken-vm", std::process::id(), broken_dir);
+    let healthy_uds = state.instances.lock().unwrap()["healthy-vm"].uds_path.clone();
+    let healthy = spawn_fake_process_reload_ack(&healthy_uds, 1);
+
+    let error = handle_enforcement_rule_upsert(
+        State(Arc::clone(&state)),
+        Path(("code".to_string(), "partial_block".to_string())),
+        Json(rule("partial_block", r#"http.host.contains("example.invalid")"#)),
+    )
+    .await
+    .expect_err("an edit that did not reach every running VM is not a success");
+
+    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        error
+            .1
+            .starts_with("edit saved and recorded; policy applied to 1 of 2 running VMs; not applied: broken-vm: "),
+        "{}",
+        error.1
+    );
+    assert!(only_reloads(&healthy.await.unwrap(), 1), "the healthy VM is reloaded");
+    assert!(std::fs::read_to_string(healthy_dir.join("vm/active_profile.toml"))
+        .unwrap()
+        .contains("partial_block"));
 }
