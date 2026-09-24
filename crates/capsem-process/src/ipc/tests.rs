@@ -7,6 +7,7 @@ mod classification;
 mod publications;
 mod reload;
 mod streams;
+mod write_file;
 use capsem_proto::mcp_aggregator::{AggregatorClient, AggregatorResponse, AggregatorResult, AggregatorServerStatus};
 use capsem_proto::mcp_contracts::McpToolDef;
 use classification::{classify_ipc_message, IpcAction};

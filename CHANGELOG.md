@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answered SERVFAIL. The resolved answer used to be returned anyway, so a
   lookup could succeed with no record of it (google/capsem#229).
 
+- A file written into the guest through the API is now recorded in the
+  session ledger before it is written, and refused if the ledger cannot record
+  it. It used to be written first and recorded after, and a failed record was
+  ignored, so a file could land in the guest with no audit trail
+  (google/capsem#229).
+
 - A file export from the guest is refused when its security event cannot be
   recorded or evaluated. It used to log a warning and hand the file over
   anyway, so an export could leave the sandbox with no audit trail; exec and
