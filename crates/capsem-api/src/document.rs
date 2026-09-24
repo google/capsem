@@ -55,8 +55,6 @@ pub fn openapi() -> OpenApi {
             ),
         );
     doc.add("/vms/{id}/bodies/export.warc.gz", HttpMethod::Get, archive);
-    doc.get::<SnapshotsStatus>("/vms/{id}/snapshots/status", "getVmSnapshotsStatus");
-    doc.get::<SnapshotsList>("/vms/{id}/snapshots/list", "listVmSnapshots");
     let timeline = doc
         .operation::<TimelineResponse>("/vms/{id}/timeline", "getVmTimeline")
         .parameters(Some(TimelineQuery::into_params(|| Some(ParameterIn::Query))));
@@ -66,10 +64,6 @@ pub fn openapi() -> OpenApi {
         .operation::<HistoryResponse>("/vms/{id}/history", "getVmHistory")
         .parameters(Some(HistoryQuery::into_params(|| Some(ParameterIn::Query))));
     doc.add("/vms/{id}/history", HttpMethod::Get, history);
-    let changes = doc
-        .operation::<ChangesResponse>("/vms/{id}/changes", "getVmChanges")
-        .parameters(Some(ChangesQuery::into_params(|| Some(ParameterIn::Query))));
-    doc.add("/vms/{id}/changes", HttpMethod::Get, changes);
     doc.get::<ProfilesListResponse>("/profiles/list", "listProfiles");
     doc.diagnostics();
     doc.profile_mcp();
@@ -91,7 +85,7 @@ struct Document {
 /// force every generated SDK to be regenerated, and an SDK built against the
 /// contract keeps working across binary releases. Raise it when the contract
 /// changes in a way clients must notice.
-pub const CONTRACT_VERSION: &str = "1.0.0";
+pub const CONTRACT_VERSION: &str = "2.0.0";
 
 impl Document {
     fn schema<T: ToSchema>(&mut self) -> Ref {

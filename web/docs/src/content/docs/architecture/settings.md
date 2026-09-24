@@ -294,7 +294,7 @@ Resolution is profile-first with corp constraints. Example profile entry:
 ```toml
 [mcp.capsem]
 name = "Capsem"
-description = "Built-in Capsem MCP server for file and snapshot tools"
+description = "Built-in Capsem MCP server for HTTP tools"
 transport = "stdio"
 command = "/run/capsem-mcp-server"
 builtin = true

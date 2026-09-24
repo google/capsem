@@ -2,11 +2,10 @@
 
 import * as gateway from '@capsem/sdk/operations';
 import { HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
-import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, SnapshotsStatus, SnapshotsList, EventBodiesResponse } from '@capsem/sdk';
+import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
 import type { ProfileSummary, ProfilesListResponse, UpdateApplyRequest } from '@capsem/sdk';
 export type { ProfileSummary, ProfilesListResponse } from '@capsem/sdk';
-export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse,
-  SnapshotInfo as SnapshotSlotStatus, SnapshotsStatus as SnapshotStatusResponse } from '@capsem/sdk';
+export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse } from '@capsem/sdk';
 import { ApiError, GatewaySdk, isAuthRefreshStatus } from './gateway-sdk';
 import type {
   StatusResponse,
@@ -1063,16 +1062,6 @@ export async function callMcpTool(
     args,
   );
   return await resp.json();
-}
-
-/** Get VM recovery snapshot state through the service route, never session.db. */
-export async function getVmSnapshotStatus(vmId: string): Promise<SnapshotsStatus> {
-  return _sdk.call(transport => gateway.getVmSnapshotsStatus(transport, { id: vmId }));
-}
-
-/** Get the VM recovery snapshot list through the service route. */
-export async function listVmSnapshots(vmId: string): Promise<SnapshotsList> {
-  return _sdk.call(transport => gateway.listVmSnapshots(transport, { id: vmId }));
 }
 
 // -- Assets --

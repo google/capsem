@@ -25,13 +25,11 @@ from .get_profile_mcp_default import get_profile_mcp_default as get_profile_mcp_
 from .get_profile_mcp_info import get_profile_mcp_info as get_profile_mcp_info
 from .get_triage import get_triage as get_triage
 from .get_update_status import get_update_status as get_update_status
-from .get_vm_changes import get_vm_changes as get_vm_changes
 from .get_vm_container import get_vm_container as get_vm_container
 from .get_vm_event_bodies import get_vm_event_bodies as get_vm_event_bodies
 from .get_vm_history import get_vm_history as get_vm_history
 from .get_vm_info import get_vm_info as get_vm_info
 from .get_vm_logs import get_vm_logs as get_vm_logs
-from .get_vm_snapshots_status import get_vm_snapshots_status as get_vm_snapshots_status
 from .get_vm_stats_detail import get_vm_stats_detail as get_vm_stats_detail
 from .get_vm_stats_summary import get_vm_stats_summary as get_vm_stats_summary
 from .get_vm_status import get_vm_status as get_vm_status
@@ -44,7 +42,6 @@ from .list_profile_mcp_tools import list_profile_mcp_tools as list_profile_mcp_t
 from .list_profiles import list_profiles as list_profiles
 from .list_vm_exposures import list_vm_exposures as list_vm_exposures
 from .list_vm_files import list_vm_files as list_vm_files
-from .list_vm_snapshots import list_vm_snapshots as list_vm_snapshots
 from .list_vms import list_vms as list_vms
 from .pause_vm import pause_vm as pause_vm
 from .persist_vm import persist_vm as persist_vm

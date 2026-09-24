@@ -312,8 +312,6 @@ at all -- `has(http.valid)`, not `has(http)`.
 Credential broker state is plugin/runtime evidence, exposed through plugin
 status and BLAKE3 references on real events. It is not a CEL root. Neither is
 `security`: decision state is the engine's output, not an input a rule reads.
-Workspace snapshots are MCP/tool/runtime activity unless and until we
-deliberately add a first-party snapshot parser and rules contract.
 
 The `network` contract describes owner-supplied routing facts. Modes are
 `expose`, `http_preview`, and `private`; preview actions are `preview_request`

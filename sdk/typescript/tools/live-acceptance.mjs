@@ -45,8 +45,6 @@ try {
   await vm.history({limit: 10});
   await vm.stats.summary();
   await vm.stats.details();
-  await vm.snapshots.list();
-  await vm.snapshots.status();
   const stopped = await vm.stop();
   assert(stopped.success && stopped.persistent);
   assert.equal((await vm.info()).status, VmLifecycleState.STOPPED);

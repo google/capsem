@@ -50,6 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seen in bodies, so a key sent in `x-api-key` could be stored verbatim in an
   echoed header or body (google/capsem#229, #218).
 
+- Forking a sandbox or creating one from another no longer follows the guest's
+  symlinks. The clone opened guest workspace entries by path, so a guest that
+  swapped a file or directory for a link during the copy could get a host file
+  readable by the service copied into the new sandbox. Every step is now a
+  descriptor-relative, no-follow operation; links are recreated as links,
+  setuid/setgid/sticky bits are dropped, a fork whose system image is not a
+  regular file is refused, and the macOS fallback no longer shells out to
+  `cp -R`.
+
 - A file export from the guest is refused when its security event cannot be
   recorded or evaluated. It used to log a warning and hand the file over
   anyway, so an export could leave the sandbox with no audit trail; exec and
@@ -621,6 +630,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The duplicate Rust host MCP crate has been retired in favor of `@capsem/mcp`;
   the Rust guest relay, aggregator, and built-in MCP components remain.
+
+- Workspace snapshots are gone (google/capsem#228). Sessions no longer start an
+  automatic snapshot scheduler or keep an `auto_snapshots/` ring, which copied
+  the system image into every slot. Removed with it: the guest MCP tools
+  `snapshots_changes/list/revert/create/delete/history/compact`, the in-VM
+  `snapshots` command, `GET /vms/{id}/snapshots/status`, `/snapshots/list` and
+  `/vms/{id}/changes`, the SDK `vm.snapshots` resource and `files.history`
+  (Python, TypeScript, Rust), the `@capsem/mcp` tools `capsem_snapshots`,
+  `capsem_snapshot_status` and `capsem_file_history`, the `vm.snapshots.*`
+  settings, and the `capsem-bench snapshot` dimension. The gateway contract is
+  now version 2.0.0. Snapshot directories already on disk are left untouched,
+  and an old settings file that still names `vm.snapshots.*` keeps loading.
 
 ### Changed
 

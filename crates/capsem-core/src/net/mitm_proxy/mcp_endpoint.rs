@@ -161,8 +161,7 @@ impl McpEndpointState {
                 return;
             }
         };
-        let rules = Arc::clone(&*self.security_rules.read().expect("security rules poisoned"));
-        crate::mcp::builtin_ledger::record_builtin_ledger(ledger, &rules, records).await;
+        crate::mcp::builtin_ledger::record_builtin_ledger(ledger, records).await;
     }
 
     pub async fn record_tool_catalog_timeouts(&self, tools: &[McpToolDef]) {

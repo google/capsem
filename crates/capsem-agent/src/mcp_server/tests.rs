@@ -16,7 +16,6 @@ fn classify_valid_request_tracks_id_and_method() {
         JsonRpcLineKind::Request {
             json_id: Some(Value::String("abc".to_string())),
             method: Some("tools/call".to_string()),
-            snapshot_revert_path: None,
         }
     );
 }
@@ -34,7 +33,6 @@ fn classify_invalid_json_as_request_so_host_can_return_parse_error() {
         JsonRpcLineKind::Request {
             json_id: None,
             method: None,
-            snapshot_revert_path: None,
         }
     );
 }
@@ -47,7 +45,6 @@ fn pending_disconnect_errors_are_emitted_once_with_original_ids() {
         PendingRequest {
             json_id: Value::from(7),
             method: Some("tools/call".to_string()),
-            snapshot_revert_path: None,
         },
     );
     pending.insert(
@@ -55,7 +52,6 @@ fn pending_disconnect_errors_are_emitted_once_with_original_ids() {
         PendingRequest {
             json_id: Value::String("abc".to_string()),
             method: Some("resources/list".to_string()),
-            snapshot_revert_path: None,
         },
     );
 
@@ -112,63 +108,6 @@ fn large_json_line_preserved() {
     assert!(lines[0].len() > 100_000);
 }
 
-/// The classification carries the revert path; one parse per line.
-fn snapshot_revert_path_of(line: &str) -> Option<String> {
-    match classify_jsonrpc_line(line) {
-        JsonRpcLineKind::Request {
-            snapshot_revert_path, ..
-        } => snapshot_revert_path,
-        JsonRpcLineKind::Notification => None,
-    }
-}
-
-#[test]
-fn extracts_snapshot_revert_path_from_tool_call() {
-    let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"snapshots_revert","arguments":{"path":"/root/poem.md","checkpoint":"cp-0"}}}"#;
-
-    assert_eq!(snapshot_revert_path_of(line).as_deref(), Some("/root/poem.md"));
-}
-
-#[test]
-fn extracts_namespaced_snapshot_revert_path_from_tool_call() {
-    let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"local__snapshots_revert","arguments":{"path":"poem.md","checkpoint":"cp-0"}}}"#;
-
-    assert_eq!(snapshot_revert_path_of(line).as_deref(), Some("poem.md"));
-}
-
-#[test]
-fn ignores_non_snapshot_tool_calls_for_guest_side_effects() {
-    let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"fetch_http","arguments":{"url":"https://example.com"}}}"#;
-
-    assert!(snapshot_revert_path_of(line).is_none());
-}
-
-#[test]
-fn snapshot_delete_response_must_be_successful_deleted_action() {
-    let ok = br#"{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"reverted\":true,\"action\":\"deleted\"}"}]}}"#;
-    let restored = br#"{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"reverted\":true,\"action\":\"restored\"}"}]}}"#;
-    let error = br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"nope"}}"#;
-
-    assert!(response_reports_snapshot_delete(ok));
-    assert!(!response_reports_snapshot_delete(restored));
-    assert!(!response_reports_snapshot_delete(error));
-}
-
-#[test]
-fn normalizes_guest_snapshot_paths_under_root_only() {
-    assert_eq!(
-        normalize_guest_snapshot_path("nested/file.txt").unwrap(),
-        std::path::PathBuf::from("/root/nested/file.txt")
-    );
-    assert_eq!(
-        normalize_guest_snapshot_path("/root/poem.md").unwrap(),
-        std::path::PathBuf::from("/root/poem.md")
-    );
-    assert!(normalize_guest_snapshot_path("../escape").is_none());
-    assert!(normalize_guest_snapshot_path("/etc/passwd").is_none());
-    assert!(normalize_guest_snapshot_path("bad\0path").is_none());
-}
-
 fn run_framed_reader(input: &[u8], pending: PendingRequests) -> bool {
     let (mut host, guest) = UnixStream::pair().unwrap();
     host.write_all(input).unwrap();
@@ -215,7 +154,6 @@ fn framed_reader_consumes_empty_responses_and_pending_ids() {
         PendingRequest {
             json_id: Value::from(9),
             method: Some("tools/list".to_string()),
-            snapshot_revert_path: None,
         },
     );
     let frame = capsem_proto::encode_mcp_frame(9, 0, "host", &[]).unwrap();
@@ -225,13 +163,12 @@ fn framed_reader_consumes_empty_responses_and_pending_ids() {
 }
 
 #[test]
-fn jsonrpc_and_snapshot_helpers_fail_closed_on_malformed_shapes() {
+fn jsonrpc_classification_fails_closed_on_malformed_shapes() {
     assert_eq!(
         classify_jsonrpc_line("[]"),
         JsonRpcLineKind::Request {
             json_id: None,
             method: None,
-            snapshot_revert_path: None,
         }
     );
     assert_eq!(
@@ -239,30 +176,8 @@ fn jsonrpc_and_snapshot_helpers_fail_closed_on_malformed_shapes() {
         JsonRpcLineKind::Request {
             json_id: Some(Value::from(1)),
             method: None,
-            snapshot_revert_path: None,
         }
     );
-
-    for line in [
-        "not json",
-        "[]",
-        r#"{"method":"tools/list"}"#,
-        r#"{"method":"tools/call","params":[]}"#,
-        r#"{"method":"tools/call","params":{"name":7}}"#,
-        r#"{"method":"tools/call","params":{"name":"snapshots_revert"}}"#,
-        r#"{"method":"tools/call","params":{"name":"snapshots_revert","arguments":[]}}"#,
-    ] {
-        assert!(snapshot_revert_path_of(line).is_none(), "accepted {line}");
-    }
-
-    for payload in [
-        &b"not json"[..],
-        &br#"{"result":{}}"#[..],
-        &br#"{"result":{"content":{}}}"#[..],
-        &br#"{"result":{"content":[{"text":"not json"}]}}"#[..],
-    ] {
-        assert!(!response_reports_snapshot_delete(payload));
-    }
 }
 
 /// The relay says it is done with a zero-length frame and keeps the socket

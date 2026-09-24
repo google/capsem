@@ -27,7 +27,6 @@ export interface HistoryOptions extends CallOptions {
 export interface TimelineOptions extends CallOptions {
   trace_id?: string; since?: string; limit?: number; layers?: TimelineLayer[];
 }
-export interface PageOptions extends CallOptions {limit?: number; offset?: number}
 export interface NetworkLogOptions extends CallOptions {
   cursor?: string; limit?: number; vm?: string; connection?: string; type?: string;
   decision?: string; since?: number; until?: number;

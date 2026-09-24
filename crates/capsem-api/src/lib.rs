@@ -21,8 +21,6 @@ mod execution;
 pub use execution::*;
 mod files;
 pub use files::*;
-mod snapshots;
-pub use snapshots::*;
 mod timeline;
 pub use timeline::*;
 mod history;

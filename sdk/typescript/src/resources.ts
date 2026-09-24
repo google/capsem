@@ -1,6 +1,6 @@
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
-import type {NetworkLogOptions, PageOptions} from './options.js';
+import type {NetworkLogOptions} from './options.js';
 import type {CallOptions, Transport} from './transport.js';
 
 export interface VmContext {transport: Transport; id: string}
@@ -27,20 +27,6 @@ export class Files extends Resource {
     const {transport, id} = await this.context(options);
     const {depth} = options;
     return api.listVmFiles(transport, {id, ...(path ? {path} : {}), ...(depth === undefined ? {} : {depth}), ...exactParam(options)}, options);
-  }
-  async history(checkpoint: string, options: PageOptions = {}): Promise<models.ChangesResponse> {
-    const {transport, id} = await this.context(options);
-    return api.getVmChanges(transport, {...options, id, checkpoint}, options);
-  }
-}
-export class Snapshots extends Resource {
-  async list(options: CallOptions = {}): Promise<models.SnapshotsList> {
-    const {transport, id} = await this.context(options);
-    return api.listVmSnapshots(transport, {id}, options);
-  }
-  async status(options: CallOptions = {}): Promise<models.SnapshotsStatus> {
-    const {transport, id} = await this.context(options);
-    return api.getVmSnapshotsStatus(transport, {id}, options);
   }
 }
 export class Stats extends Resource {

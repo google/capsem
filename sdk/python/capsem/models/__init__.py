@@ -8,7 +8,6 @@ from .body_encoding import BodyEncoding as BodyEncoding
 from .capture_status import CaptureStatus as CaptureStatus
 from .captured_content import CapturedContent as CapturedContent
 from .captured_payload import CapturedPayload as CapturedPayload
-from .changes_response import ChangesResponse as ChangesResponse
 from .container_spec import ContainerSpec as ContainerSpec
 from .container_state import ContainerState as ContainerState
 from .container_status_response import (
@@ -35,8 +34,6 @@ from .exposure_list_response import ExposureListResponse as ExposureListResponse
 from .exposure_request import ExposureRequest as ExposureRequest
 from .exposure_target import ExposureTarget as ExposureTarget
 from .file_action_count import FileActionCount as FileActionCount
-from .file_change import FileChange as FileChange
-from .file_change_kind import FileChangeKind as FileChangeKind
 from .file_entry_type import FileEntryType as FileEntryType
 from .file_event import FileEvent as FileEvent
 from .file_event_action import FileEventAction as FileEventAction
@@ -144,10 +141,6 @@ from .service_availability import ServiceAvailability as ServiceAvailability
 from .service_manager import ServiceManager as ServiceManager
 from .session_db_status import SessionDbStatus as SessionDbStatus
 from .slow_op_event import SlowOpEvent as SlowOpEvent
-from .snapshot_info import SnapshotInfo as SnapshotInfo
-from .snapshot_origin import SnapshotOrigin as SnapshotOrigin
-from .snapshots_list import SnapshotsList as SnapshotsList
-from .snapshots_status import SnapshotsStatus as SnapshotsStatus
 from .stop_response import StopResponse as StopResponse
 from .storage_diagnostics import StorageDiagnostics as StorageDiagnostics
 from .supply_chain_channel_evidence import (

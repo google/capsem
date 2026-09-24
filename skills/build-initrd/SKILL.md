@@ -26,7 +26,6 @@ Do not add a second list to a recipe, test, or gate module.
 | `capsem-bench-rs` | Rust guest benchmark helper |
 | `capsem-doctor` | VM self-diagnostic suite (bash script) |
 | `capsem-bench` | Guest benchmark driver (bash script) |
-| `snapshots` | Snapshot management CLI (Python, FastMCP client) |
 | `capsem_bench/` | Python benchmark support tree |
 | `diagnostics/` | pytest test files for capsem-doctor |
 

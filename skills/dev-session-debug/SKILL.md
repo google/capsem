@@ -510,7 +510,6 @@ Rollup happens when a session ends.
 - MITM proxy (SSE parsing, body preview, Content-Encoding)
 - File monitor (VirtioFS poll loop, kinds, overflow windows)
 - Body archive or its index (`session.bodies`, `event_body_blobs`, `body_blocks`, retention) -- add `--verify-bodies`
-- Snapshot system (create, revert, compact, list)
 - Telemetry pipeline (model_calls extraction, tool_calls, cost)
 
 The inspect output now includes a tool usage breakdown from `tool_calls` plus MCP transport evidence when present. Check it after MCP changes to verify user tools return `allowed` with reasonable latency and that MCP-origin rows link back to protocol evidence when available.
@@ -529,7 +528,7 @@ sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT provider, SUM(input
 # Find orphaned tool calls
 sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT tc.call_id, tc.tool_name FROM tool_calls tc LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id WHERE tr.id IS NULL"
 
-# MCP-origin user tool usage breakdown (snapshot, http, etc.)
+# MCP-origin user tool usage breakdown (http, external servers, etc.)
 sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT tool_name, decision, COUNT(*) as cnt, ROUND(AVG(duration_ms),1) as avg_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name IS NOT NULL GROUP BY tool_name, decision ORDER BY cnt DESC"
 
 # MCP-origin tool usage breakdown

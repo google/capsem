@@ -45,15 +45,7 @@ from helpers.gateway import GatewayInstance
 from helpers.http_transport import Transport
 from helpers.process_cpu import process_cpu_seconds
 from helpers.service import ServiceInstance, materialize_test_profiles
-from helpers.workspace_changes import (
-    BODY_ROUTE,
-    BODY_URL,
-    CHANGES_ROUTE,
-    CHANGES_URL,
-    assert_event_bodies,
-    assert_workspace_changes,
-    seed_workspace_changes,
-)
+from helpers.stopped_workspace import BODY_ROUTE, BODY_URL, assert_event_bodies, seed_stopped_workspace
 
 ROOT = Path(__file__).resolve().parents[2]
 WARMUP = 2
@@ -81,9 +73,7 @@ def request(transport: Transport, target: Target, path: str) -> None:
         payload = json.loads(body)
     except json.JSONDecodeError as error:
         raise RuntimeError(f"{target.label} {path} returned non-JSON: {body[:500]!r}") from error
-    if path == CHANGES_URL:
-        assert_workspace_changes(payload)
-    elif path == BODY_URL:
+    if path == BODY_URL:
         assert_event_bodies(payload)
 
 
@@ -144,7 +134,7 @@ def main() -> int:
     metrics: dict[str, dict] = {}
     try:
         service.profiles_dir = materialize_test_profiles(service.tmp_dir)
-        seed_workspace_changes(service.tmp_dir, service.profiles_dir)
+        seed_stopped_workspace(service.tmp_dir, service.profiles_dir)
         service.start()
         gateway.start()
         service_proc = psutil.Process(service.proc.pid)
@@ -164,7 +154,7 @@ def main() -> int:
             ),
         )
         for path in routes:
-            request_path = {CHANGES_ROUTE: CHANGES_URL, BODY_ROUTE: BODY_URL}.get(path, path)
+            request_path = {BODY_ROUTE: BODY_URL}.get(path, path)
             for target in targets:
                 print(f"{target.label} {path}", file=sys.stderr)
                 latencies, cpu = sample_warm_route(target, request_path, samples)

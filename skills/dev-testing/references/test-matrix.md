@@ -73,7 +73,6 @@ directories move. Do not copy the config-owned Rust floors into prose.
 | capsem-session-exhaustive | `session_exhaustive` | Yes | Collect | No | Yes |
 | capsem-security | `security` | Yes | Collect | No | Yes |
 | capsem-isolation | `isolation` | Yes | Collect | No | Yes |
-| capsem-snapshots | `snapshot` | Yes | Collect | No | Yes |
 | capsem-config | `config` | Yes | Collect | No | Yes |
 | capsem-config-runtime | `config_runtime` | Yes | Collect | No | Yes |
 | capsem-guest | `guest` | Yes | Collect | No | Yes |

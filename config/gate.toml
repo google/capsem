@@ -780,11 +780,10 @@ materialized_profiles_dir = "profiles"
 current_link = "current"
 
 # Copied out of a failed run before its scratch is removed. Host-side
-# diagnostics only: `guest/` and `auto_snapshots/` duplicate the guest's own
-# workspace once per generation, and the same filter keeps the VM disk image
-# and session.db out of cache/target/.
+# diagnostics only: `guest/` duplicates the guest's own workspace, and the
+# same filter keeps the VM disk image and session.db out of cache/target/.
 evidence_suffixes = [".log", ".json", ".toml"]
-evidence_prune_dirs = ["guest", "auto_snapshots"]
+evidence_prune_dirs = ["guest"]
 # AF_UNIX paths must stay under macOS SUN_LEN once the gateway appends its
 # session path, and cache/target/tests/ironbank is already too long.
 run_dir_template = "/tmp/capsem-a.XXXXXX"
@@ -1108,7 +1107,6 @@ must_stay_below_lines = 3000
 "crates/capsem-admin/src/release_graph/tests.rs" = 1323
 "crates/capsem-agent/src/tests.rs" = 1280
 "crates/capsem-assets/src/asset_manager.rs" = 1355
-"crates/capsem-core/src/auto_snapshot/tests.rs" = 1034
 "crates/capsem-core/src/hypervisor/kvm/mod.rs" = 1031
 "crates/capsem-core/src/hypervisor/kvm/sys.rs" = 1895
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1768
@@ -1130,7 +1128,7 @@ must_stay_below_lines = 3000
 "crates/capsem-service/src/tests/assets_registry.rs" = 1352
 "crates/capsem-service/src/tests/lifecycle.rs" = 1990
 "crates/capsem-service/src/tests/profile_routes.rs" = 2194
-"crates/capsem-service/src/vm_files.rs" = 1355
+"crates/capsem-service/src/vm_files.rs" = 1345
 "crates/capsem-tui/src/tests.rs" = 1563
 "crates/capsem-tui/src/ui.rs" = 1081
 "crates/capsem/src/main.rs" = 2216
@@ -1529,7 +1527,7 @@ lint_features = ["capsem-bench/guest"]
 
 # Checked-in guest payloads copied in beside the binaries.
 init = "guest/artifacts/capsem-init"
-files = ["guest/artifacts/capsem-doctor", "guest/artifacts/capsem-bench", "guest/artifacts/snapshots"]
+files = ["guest/artifacts/capsem-doctor", "guest/artifacts/capsem-bench"]
 trees = ["guest/artifacts/capsem_bench", "guest/artifacts/diagnostics"]
 prune = "__pycache__"
 
@@ -2970,11 +2968,9 @@ slowest_steps = 10
 internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route", "/internal/vms/{id}/exposures/{exposure_id}/preview-session" = "The authenticated gateway asks the service for owner-scoped bootstrap material over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap" = "The authenticated gateway exchanges a single-use browser bootstrap token over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-admission" = "The authenticated gateway asks the service and VM owner to admit one browser descriptor over the local service UDS" }
 measured = [
     "/vms/{id}/bodies/{event_id}",
-    "/vms/{id}/changes",
     "/vms/{id}/status",
     "/vms/{id}/exposures",
     "/vms/{id}/security/status",
-    "/vms/{id}/snapshots/status",
     "/status",
     "/version",
     "/vms/list",
@@ -3079,7 +3075,6 @@ unmeasured = [
     "/vms/{id}/save",
     "/vms/{id}/save/status",
     "/vms/{id}/security/latest",
-    "/vms/{id}/snapshots/list",
     "/vms/{id}/start",
     "/vms/{id}/stats/detail",
     "/vms/{id}/stats/summary",
@@ -3268,7 +3263,6 @@ http_min_rps = 5
 http_p99_ms = 5000
 throughput_min_bytes = 1000000
 throughput_min_mbps = 1
-snapshot_op_ms = 5000
 # The storage split's floors are liveness, not speed: a read reporting 0 MB/s
 # or 0 IOPS means the measurement did not happen, which is the failure worth
 # catching there.

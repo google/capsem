@@ -65,7 +65,6 @@ fn service_to_process_variant_names_and_roundtrips_are_stable() {
         ServiceToProcess::McpListServers { id: 5 },
         ServiceToProcess::McpListTools { id: 6 },
         ServiceToProcess::McpRefreshTools { id: 7 },
-        ServiceToProcess::SnapshotStatus { id: 8 },
         ServiceToProcess::McpCallTool {
             id: 9,
             namespaced_name: "server__tool".into(),
@@ -99,7 +98,6 @@ fn service_to_process_variant_names_and_roundtrips_are_stable() {
         "McpListServers",
         "McpListTools",
         "McpRefreshTools",
-        "SnapshotStatus",
         "McpCallTool",
         "ExecStream",
         "ExecStreamInput",
@@ -155,16 +153,6 @@ fn process_to_service_variant_names_and_roundtrips_are_stable() {
             success: true,
             error: None,
         },
-        ProcessToService::SnapshotStatusResult {
-            id: 8,
-            status: SnapshotStatus {
-                total: 0,
-                auto_count: 0,
-                manual_count: 0,
-                manual_available: 0,
-                snapshots: vec![],
-            },
-        },
         ProcessToService::McpCallToolResult {
             id: 9,
             result_json: Some("{}".into()),
@@ -196,7 +184,6 @@ fn process_to_service_variant_names_and_roundtrips_are_stable() {
         "McpServersResult",
         "McpToolsResult",
         "McpRefreshResult",
-        "SnapshotStatusResult",
         "McpCallToolResult",
         "SuspendFailed",
         "ExecOutput",

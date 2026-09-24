@@ -12,15 +12,14 @@ from pathlib import Path
 import pytest
 from helpers.managed_service import launchd_service
 from helpers.service import ServiceInstance, materialize_test_profiles
-from helpers.workspace_changes import VM_ID, seed_workspace_changes
+from helpers.stopped_workspace import VM_ID, seed_stopped_workspace
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def workspace_digest(root: Path) -> dict[str, str]:
     return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
-            for parent in (root / "guest/workspace", root / "auto_snapshots")
-            for path in parent.rglob("*") if path.is_file()}
+            for path in (root / "guest/workspace").rglob("*") if path.is_file()}
 
 
 @pytest.mark.integration
@@ -29,7 +28,7 @@ def workspace_digest(root: Path) -> dict[str, str]:
 def test_sdk_receives_managed_restart_and_reconnects_explicitly(language: str) -> None:
     service = ServiceInstance()
     service.profiles_dir = materialize_test_profiles(service.tmp_dir)
-    seed_workspace_changes(service.tmp_dir, service.profiles_dir)
+    seed_stopped_workspace(service.tmp_dir, service.profiles_dir)
     with launchd_service(service) as managed:
         before = managed.ready()
         status, inventory = before.get("/vms/list")

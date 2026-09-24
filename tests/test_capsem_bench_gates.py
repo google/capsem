@@ -45,44 +45,6 @@ def _valid_result():
             "size_bytes": 9_000_000,
             "throughput_mbps": 10,
         },
-        "snapshot": {
-            "10_files": {
-                "create_ok": True,
-                "list_ok": True,
-                "changes_ok": True,
-                "revert_ok": True,
-                "delete_ok": True,
-                "create_ms": 500,
-                "list_ms": 300,
-                "changes_ms": 300,
-                "revert_ms": 300,
-                "delete_ms": 300,
-            },
-            "100_files": {
-                "create_ok": True,
-                "list_ok": True,
-                "changes_ok": True,
-                "revert_ok": True,
-                "delete_ok": True,
-                "create_ms": 600,
-                "list_ms": 300,
-                "changes_ms": 300,
-                "revert_ms": 300,
-                "delete_ms": 300,
-            },
-            "500_files": {
-                "create_ok": True,
-                "list_ok": True,
-                "changes_ok": True,
-                "revert_ok": True,
-                "delete_ok": True,
-                "create_ms": 700,
-                "list_ms": 300,
-                "changes_ms": 300,
-                "revert_ms": 300,
-                "delete_ms": 300,
-            },
-        },
         "storage": {
             "kernel": {
                 "cmdline": {
@@ -217,13 +179,13 @@ def test_failed_capsem_bench_measurement_is_archived(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     data = _valid_result()
-    data["snapshot"]["100_files"]["changes_ms"] = 10_000
+    data["throughput"]["http_code"] = 500
     archived = []
     monkeypatch.setattr(
         module, "_save", lambda result: archived.append(copy.deepcopy(result))
     )
 
-    with pytest.raises(AssertionError, match="snapshot 100_files changes"):
+    with pytest.raises(AssertionError, match="throughput HTTP"):
         module._archive_and_validate(data, "http://127.0.0.1:1234")
 
     assert archived == [data]
@@ -239,8 +201,6 @@ def test_failed_capsem_bench_measurement_is_archived(monkeypatch):
         (("startup", "commands", "gemini", "mean_ms"), 10_000, "startup gemini"),
         (("http", "failed"), 1, "HTTP failed"),
         (("throughput", "http_code"), 500, "throughput HTTP"),
-        (("snapshot", "500_files", "changes_ok"), False, "snapshot 500_files changes"),
-        (("snapshot", "100_files", "create_ms"), 10_000, "snapshot 100_files create"),
     ],
 )
 def test_validate_capsem_bench_result_rejects_bad_result(path, value, message):

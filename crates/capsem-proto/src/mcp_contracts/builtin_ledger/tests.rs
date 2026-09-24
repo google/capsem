@@ -19,19 +19,9 @@ fn http_record() -> BuiltinLedgerRecord {
     })
 }
 
-fn revert_record() -> BuiltinLedgerRecord {
-    BuiltinLedgerRecord::FileReverted(FileRevertedRecord {
-        timestamp_unix_ms: 1_700_000_000_001,
-        path: "notes.txt".to_string(),
-        checkpoint: "cp-2".to_string(),
-        action: RevertAction::Restored,
-        size: Some(12),
-    })
-}
-
 #[test]
 fn records_round_trip_through_the_meta_value() {
-    let records = vec![http_record(), revert_record()];
+    let records = vec![http_record(), http_record()];
     assert_eq!(decode(encode(&records)).unwrap(), records);
 }
 
@@ -39,10 +29,9 @@ fn records_round_trip_through_the_meta_value() {
 /// are built from different crates; pin it so a rename is a visible change.
 #[test]
 fn the_wire_shape_is_tagged_by_kind() {
-    let value = encode(&[revert_record()]);
-    assert_eq!(value[0]["kind"], "file_reverted");
-    assert_eq!(value[0]["action"], "restored");
-    assert_eq!(encode(&[http_record()])[0]["decision"], "allowed");
+    let value = encode(&[http_record()]);
+    assert_eq!(value[0]["kind"], "http_request");
+    assert_eq!(value[0]["decision"], "allowed");
 }
 
 #[test]

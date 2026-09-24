@@ -109,7 +109,6 @@ graph TD
     PARSE --> CHECK{"Tool category?"}
     CHECK -->|"capsem__expose_port"| OWNER["Current VM owner Publisher<br/>exposure policy and audit"]
     CHECK -->|"local__fetch_http,<br/>local__grep_http,<br/>local__http_headers"| BUILTIN["capsem-mcp-builtin<br/>(HTTP tools)"]
-    CHECK -->|"snapshots_*, file_*,<br/>dir_*"| FILE["capsem-mcp-builtin<br/>(VirtioFS file tools)"]
     CHECK -->|"server__tool<br/>(contains '__')"| EXT["capsem-mcp-aggregator<br/>(isolated subprocess)"]
     CHECK -->|"Unknown"| ERR["Error: tool not found"]
 ```
@@ -120,7 +119,6 @@ graph TD
 |----------|----------|---------|----------|
 | Owner scoped | Reserved `capsem__` tool registered by this VM owner | In-process owner capability; no gateway credential or aggregator handoff | `capsem__expose_port` |
 | Builtin HTTP | `local__fetch_http`, `local__grep_http`, `local__http_headers` | `capsem-mcp-builtin` | `local__fetch_http`, `local__grep_http`, `local__http_headers` |
-| File tools | Name starts with `snapshots_`, `file_`, `dir_` | `capsem-mcp-builtin` (VirtioFS only) | `file_read`, `dir_list`, `snapshots_create` |
 | External | Contains `__` separator (server namespace) | `AggregatorClient` routes to isolated subprocess | `github__list_repos`, `slack__send_message` |
 
 External tool calls are routed through the [MCP Aggregator](/architecture/mcp-aggregator/) -- an isolated subprocess that manages all external MCP server connections with privilege separation.
@@ -183,7 +181,7 @@ rules instead of exposing raw rule text to the UI.
     {
       "id": "capsem",
       "name": "Capsem",
-      "description": "Built-in Capsem MCP server for file and snapshot tools",
+      "description": "Built-in Capsem MCP server for HTTP tools",
       "transport": "stdio",
       "command": "/run/capsem-mcp-server",
       "builtin": true,
@@ -205,10 +203,9 @@ time. Credentials are broker-owned references, not raw tokens in MCP config.
 | `capsem-agent/src/mcp_server.rs` | Guest relay: stdin/stdout <-> framed MCP over vsock:5002 |
 | `capsem-core/src/net/mitm_proxy/mcp_frame.rs` | Framed transport parser, stream lifecycle, and disconnect metrics |
 | `capsem-core/src/net/mitm_proxy/mcp_endpoint.rs` | Host endpoint: JSON-RPC dispatch, policy, telemetry |
-| `capsem-core/src/mcp/aggregator.rs` | Aggregator protocol types and `AggregatorClient` |
+| `capsem-proto/src/mcp_aggregator.rs` | Aggregator protocol types and `AggregatorClient` |
 | `capsem-core/src/mcp/builtin_tools.rs` | Builtin HTTP tools (fetch_http, grep_http, http_headers) |
-| `capsem-core/src/mcp/file_tools.rs` | File and snapshot tools (VirtioFS workspace) |
-| `capsem-core/src/mcp/server_manager.rs` | External MCP server lifecycle and tool catalog |
+| `capsem-mcp-aggregator/src/server_manager.rs` | External MCP server lifecycle and tool catalog |
 | `capsem-core/src/net/policy_config/security_rule_profile.rs` | Security-event rule schema, validation, Sigma import, and compiled rule set |
 | `capsem-core/src/security_engine/` | SecurityEvent construction, rule evaluation, plugin actions, and rule-ledger emission |
 | `capsem-mcp-aggregator/src/main.rs` | Isolated subprocess: MessagePack frame loop, server connections |

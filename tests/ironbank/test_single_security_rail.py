@@ -99,7 +99,6 @@ def test_session_event_writes_stay_behind_dbwriter() -> None:
         "crates/capsem-logger/src/schema.rs",
         "crates/capsem-logger/src/session_index.rs",
         "crates/capsem-logger/src/writer.rs",
-        "crates/capsem-core/src/auto_snapshot.rs",
         "crates/capsem-core/src/session/index.rs",
         "crates/capsem-core/src/session/maintenance.rs",
         # The benchmark time series is its own database with its own schema,

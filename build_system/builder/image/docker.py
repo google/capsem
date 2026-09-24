@@ -67,7 +67,7 @@ GUEST_BINARY_SOURCES = {}
 # constants so there is exactly ONE list to maintain.
 
 # Individual files -> /usr/local/bin/ (chmod 755)
-ROOTFS_SCRIPTS = ["capsem-doctor", "capsem-bench", "snapshots"]
+ROOTFS_SCRIPTS = ["capsem-doctor", "capsem-bench"]
 
 # Directories copied into context (special destinations in Dockerfile)
 ROOTFS_SCRIPT_DIRS = ["capsem_bench", "diagnostics"]
@@ -1829,7 +1829,7 @@ def prepare_build_context(
         diag_dst = context_dir / "diagnostics"
         if diag_src.is_dir():
             shutil.copytree(str(diag_src), str(diag_dst), dirs_exist_ok=True)
-        # Rootfs artifact scripts (doctor, bench, snapshots, etc.)
+        # Rootfs artifact scripts (doctor, bench)
         for name in ROOTFS_SCRIPTS:
             src = artifacts / name
             if src.is_file():

@@ -311,7 +311,7 @@ def _validate_artifacts(
         ))
 
     # E302: Required artifacts
-    required = ["capsem-init", "capsem-bashrc", "capsem-doctor", "capsem-bench", "snapshots"]
+    required = ["capsem-init", "capsem-bashrc", "capsem-doctor", "capsem-bench"]
     for name in required:
         path = artifacts_dir / name
         if not path.exists():

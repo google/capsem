@@ -17,7 +17,6 @@ just exec "capsem-bench storage"     # Rootfs/workspace/tmpfs/overlay split
 just exec "capsem-bench startup"     # CLI cold-start only
 just exec "capsem-bench http"        # HTTP through proxy
 just exec "capsem-bench throughput"  # 100MB download
-just exec "capsem-bench snapshot"    # Snapshot operations only
 just exec "capsem-bench mitm-load 64 5"  # MITM proxy concurrency/load test
 just exec "capsem-bench mcp-load 64 5"   # Guest MCP endpoint concurrency/load test
 just exec "capsem-bench dns-load 64 5"   # DNS proxy concurrency/load test
@@ -155,8 +154,8 @@ All load tests use the same concurrency and duration contract:
 HTTP, 1 MiB body, gzip, SSE model stream, JSON model response, denied-target,
 credential-shaped response, and WebSocket control frames. When
 `CAPSEM_MOCK_SERVER_BASE_URL` is set, `capsem-bench all` includes the same
-protocol group after the broad disk/rootfs/storage/startup/http/throughput/
-snapshot suite.
+protocol group after the broad disk/rootfs/storage/startup/http/throughput
+suite.
 
 - `CAPSEM_BENCH_TOTAL_REQUESTS`: requests per selected local MITM scenario.
 - `CAPSEM_BENCH_SCENARIOS`: comma-separated local MITM scenario names, for example `model_json_response,credential_response`.
@@ -176,20 +175,6 @@ uv run --project build_system --frozen build_system/scripts/build/benchmark_repo
 uv run --project build_system --frozen --with matplotlib build_system/scripts/build/benchmark_report.py benchmarks/baselines/mcp-load/baseline.json benchmarks/baselines/dns-load/baseline.json benchmarks/baselines/mock-server-protocol/control_host_direct_c64_model_credential_1.0.1780954707_arm64.json --plot benchmarks/baselines/load_baseline_report.png
 ```
 
-### Snapshot operations (`snapshot`)
-
-End-to-end latency for snapshot operations via the guest MCP endpoint. Tests at 3 workspace sizes (10, 100, 500 files of 4KB each):
-
-| Operation | What it does |
-|-----------|-------------|
-| `create` | Populate workspace, create a named snapshot via `snapshots create` |
-| `list` | List all snapshots with change diffs |
-| `changes` | List files changed since the last checkpoint |
-| `revert` | Revert a single modified file from the snapshot |
-| `delete` | Delete the snapshot |
-
-Each operation is measured as the full round-trip: guest CLI -> MCP server (binary MCP frames over vsock) -> host gateway -> APFS filesystem operation -> response back to guest.
-
 ## JSON output
 
 All benchmarks save structured JSON to `/tmp/capsem-benchmark.json` inside the VM:
@@ -204,7 +189,6 @@ All benchmarks save structured JSON to `/tmp/capsem-benchmark.json` inside the V
   "startup": { "commands": { "python3": { "mean_ms": 9.0 }, ... } },
   "http": { "requests_per_sec": 58, "latency_ms": { "p50": 67, ... } },
   "throughput": { "throughput_mbps": 34.3, ... },
-  "snapshot": { "10_files": { "create_ms": 879, ... }, ... },
   "storage": { "kernel": { ... }, "rootfs": { ... }, "writable": { ... } },
   "dns_load": { "qname": "api.openai.com", "levels": [...] }
 }

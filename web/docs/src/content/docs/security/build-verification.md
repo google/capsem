@@ -293,4 +293,3 @@ The release pipeline verifies these binaries exist in the rootfs before packagin
 | `capsem-mcp-server` | Guest MCP relay |
 | `capsem-doctor` | In-VM diagnostics |
 | `capsem-bench` | Performance benchmarks |
-| `snapshots` | Snapshot management |

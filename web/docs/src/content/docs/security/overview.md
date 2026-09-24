@@ -45,7 +45,6 @@ Capsem sandboxes AI agents inside Linux VMs. The security model treats the guest
 |  AI agent        |  vsock   |  Terminal bridge      |
 |  Guest kernel    |  virtio  |  MITM proxy           |
 |  Guest userland  |  fs      |  VirtioFS server      |
-|                  |          |  Snapshot scheduler    |
 +------------------+          +-----------------------+
                                         |
                                    Host kernel

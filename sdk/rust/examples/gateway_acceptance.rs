@@ -1,8 +1,6 @@
 //! Run against the disposable stopped-workspace Ironbank fixture.
 
-use capsem_sdk::{
-    models::FileChangeKind, DiagnosticOptions, Error, Hypervisor, PageOptions, TriageOptions, VmSelector,
-};
+use capsem_sdk::{DiagnosticOptions, Error, Hypervisor, TriageOptions, VmSelector};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -39,21 +37,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .any(|entry| entry.name == "created.txt"));
     assert_eq!(vm.id(), Some(id.as_str()));
-    let snapshots = vm.snapshots().list().await?;
-    assert_eq!(snapshots.total, 1);
-    assert_eq!(snapshots.snapshots[0].checkpoint, "cp-10");
-    let changes = vm.files().history("cp-10", PageOptions::default()).await?;
-    assert_eq!(changes.changes.len(), 3);
-    for (path, kind) in [
-        ("created.txt", FileChangeKind::Created),
-        ("modified.txt", FileChangeKind::Modified),
-        ("deleted.txt", FileChangeKind::Deleted),
-    ] {
-        assert!(changes
-            .changes
-            .iter()
-            .any(|entry| entry.path == path && entry.kind == kind));
-    }
     assert!(
         matches!(vm.files().read("/root/created.txt").await, Err(Error::Http { status: 409, body })
         if String::from_utf8_lossy(&body).contains("running sandbox security ledger"))
@@ -69,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .entries
         .iter()
         .any(|entry| entry.name == "refused.txt"));
-    assert_eq!(hv.vm(VmSelector::Id(id))?.snapshots().status().await?.total, 1);
+    assert_eq!(hv.vm(VmSelector::Id(id.clone()))?.id(), Some(id.as_str()));
     println!("BRAAVOS_SDK_ACCEPTANCE_OK");
     Ok(())
 }

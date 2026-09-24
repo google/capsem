@@ -2,19 +2,14 @@
 //!
 //! The builtin server describes its effects as records on its tool results
 //! (see `capsem_proto::mcp_contracts::builtin_ledger`); this is where they
-//! become ledger rows, written by the session's one writer and judged against
-//! the rule set capsem-process holds now rather than the one the builtin read
-//! from disk when it started.
+//! become ledger rows, written by the session's one writer.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use capsem_logger::{DbWriter, Decision, FileAction, FileEvent, FileKind, NetEvent, WriteOp};
-use capsem_proto::mcp_contracts::builtin_ledger::{
-    BuiltinLedgerRecord, FileRevertedRecord, HttpDecision, HttpRequestRecord, RevertAction,
-};
+use capsem_logger::{DbWriter, Decision, NetEvent, WriteOp};
+use capsem_proto::mcp_contracts::builtin_ledger::{BuiltinLedgerRecord, HttpDecision, HttpRequestRecord};
 
-use crate::net::policy_config::SecurityRuleSet;
-use crate::security_engine::{emit_file_security_write_and_rules, emit_security_write};
+use crate::security_engine::emit_security_write;
 
 /// The process and connection name builtin HTTP rows carry.
 pub(crate) const BUILTIN_PROCESS_NAME: &str = "mcp_builtin";
@@ -65,34 +60,12 @@ pub fn net_event(record: &HttpRequestRecord) -> NetEvent {
     }
 }
 
-/// The `fs_events` row for one revert. The path names the checkpoint, which
-/// is what tells this row apart from the plain change the file monitor
-/// records for the same write.
-pub fn file_event(record: &FileRevertedRecord) -> FileEvent {
-    FileEvent {
-        event_id: None,
-        timestamp: timestamp(record.timestamp_unix_ms),
-        action: match record.action {
-            RevertAction::Restored => FileAction::Restored,
-            RevertAction::Deleted => FileAction::Deleted,
-        },
-        path: format!("{} (from {})", record.path, record.checkpoint),
-        size: record.size,
-        kind: FileKind::File,
-        trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
-        credential_ref: None,
-    }
-}
-
-/// Write every record, in order, with the rule rows a file record owes.
-pub async fn record_builtin_ledger(db: &DbWriter, rules: &SecurityRuleSet, records: Vec<BuiltinLedgerRecord>) {
+/// Write every record, in order.
+pub async fn record_builtin_ledger(db: &DbWriter, records: Vec<BuiltinLedgerRecord>) {
     for record in records {
         match record {
             BuiltinLedgerRecord::HttpRequest(request) => {
                 emit_security_write(db, WriteOp::NetEvent(net_event(&request))).await;
-            }
-            BuiltinLedgerRecord::FileReverted(revert) => {
-                emit_file_security_write_and_rules(db, rules, file_event(&revert)).await;
             }
         }
     }

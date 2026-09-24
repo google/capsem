@@ -120,7 +120,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
     # Apple VZ VirtioFS can't be overlayfs upper directly (no mknod for whiteouts).
     # The ext4 loopback provides full POSIX compliance for overlayfs.
     # The workspace/ dir is bind-mounted at /root so the host can read/write files
-    # natively for MCP tools, snapshots, and monitoring.
+    # natively for file transfer and monitoring.
 
     mkdir -p /mnt/shared
     mount -t virtiofs capsem /mnt/shared || {
@@ -249,7 +249,7 @@ fi
 # Block mode: prefer scratch disk (virtio block device), fall back to tmpfs.
 if [ "$STORAGE_MODE" = "virtiofs" ]; then
     # Bind-mount the host-visible workspace directory as /root.
-    # The host can read/write these files directly for MCP tools and snapshots.
+    # The host can read/write these files directly for file transfer and monitoring.
     mkdir -p /newroot/root
     mount --bind /mnt/shared/workspace /newroot/root || {
         echo "[capsem-init] FATAL: cannot bind-mount workspace to /root"
@@ -561,11 +561,6 @@ if [ -d /capsem_bench ]; then
     rm -rf /newroot/usr/local/lib/capsem_bench
     cp -a /capsem_bench /newroot/usr/local/lib/capsem_bench
     echo "[capsem-init] capsem_bench package deployed"
-fi
-if [ -x /snapshots ]; then
-    cp /snapshots /newroot/usr/local/bin/snapshots
-    chmod 555 /newroot/usr/local/bin/snapshots
-    echo "[capsem-init] snapshots deployed"
 fi
 if [ -d /diagnostics ]; then
     rm -rf /newroot/usr/local/lib/capsem-tests /newroot/usr/local/lib/capsem_tests

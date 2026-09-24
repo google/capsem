@@ -69,7 +69,10 @@ fn create_virtiofs_session_creates_layout() {
     // Real dirs live inside guest/
     assert!(dir.join("guest/system").is_dir());
     assert!(dir.join("guest/workspace").is_dir());
-    assert!(dir.join("auto_snapshots").is_dir());
+    assert!(
+        !dir.join("auto_snapshots").exists(),
+        "sessions no longer carry a snapshot ring"
+    );
 
     // Compat symlinks at session root
     assert!(dir.join("system").is_symlink());

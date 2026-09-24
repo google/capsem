@@ -53,7 +53,7 @@ mcp/typescript/                SDK-backed npm host MCP server for AI agents (std
 crates/capsem-router/     Confined TCP publication companion (data descriptors only)
 crates/capsem-network/    Host end of a guest tun0: smoltcp over a framed VSOCK packet stream
 crates/capsem-mcp-aggregator/  Low-privilege subprocess: connects to external MCP servers
-crates/capsem-mcp-builtin/     Stdio MCP server for built-in tools (HTTP, file/snapshot)
+crates/capsem-mcp-builtin/     Stdio MCP server for built-in tools (HTTP)
 crates/capsem-agent/           Guest PTY agent + net-proxy + dns-proxy + mcp-server + sysutil + tun pump (musl)
 crates/capsem-app/             Thin Tauri desktop shell (points at gateway)
 crates/capsem-tray/            System tray (polls gateway, quick actions)
@@ -306,6 +306,27 @@ Telemetry and security ledgers are database-owned.
   ledger shape as empty data.
 
 Every change touching logged data needs tests that guard this boundary.
+
+## Host Unix Boundary
+
+Every host syscall, file-descriptor operation and guest-writable filesystem
+access goes through `capsem_foundation::unix`. It is the one testable surface
+between Capsem and the kernel, so it is where no-follow, CLOEXEC, EINTR and
+errno handling are proven once instead of re-derived at each call site.
+
+- Application crates never call `nix` or `libc`. If foundation lacks a
+  primitive, add it there, with tests, and call it.
+- Anything a guest can write -- the VirtioFS share, a workspace, a system
+  image -- is reached through `unix::contained::ContainedDir` descriptors,
+  never by path. A path is followed at open time, and a guest can swap any
+  entry for a symlink between a check and a use.
+- Inside foundation, `nix` makes the syscall. A raw `libc::` call is kept only
+  where `nix` cannot express it, with the reason recorded.
+
+`tests/citadel/test_unix_boundary.py` holds all three: an exact inventory of
+raw references outside foundation, an exact inventory of raw calls inside it,
+and adversarial cases for the spellings that used to slip through. Load
+`/dev-rust-patterns` before touching either.
 
 ## The gate contract
 

@@ -19,10 +19,7 @@ mod container_pull;
 mod exec;
 mod private;
 mod publication;
-mod snapshot;
-use snapshot::snapshot_status_from_scheduler;
 
-type SharedSnapshotScheduler = Arc<tokio::sync::Mutex<capsem_core::auto_snapshot::AutoSnapshotScheduler>>;
 type ProcessIpcChannel = (Sender<ProcessToService>, Receiver<ServiceToProcess>);
 
 /// Timeout before the host watchdog re-sends a quick HostToGuest payload.
@@ -126,7 +123,6 @@ pub(crate) async fn handle_ipc_connection(
     runtime_source: RuntimeProfileSource,
     mcp_builtin_binary: Option<PathBuf>,
     mcp_builtin_env: HashMap<String, String>,
-    snapshot_scheduler: SharedSnapshotScheduler,
     vm_ready: Arc<AtomicBool>,
 ) -> Result<()> {
     // First frame on every IPC connection is a Hello -- detect cross-version
@@ -885,22 +881,6 @@ pub(crate) async fn handle_ipc_connection(
                             );
                         }
                     }
-                });
-            }
-            ServiceToProcess::SnapshotStatus { id } => {
-                let scheduler = Arc::clone(&snapshot_scheduler);
-                let ipc_tx_out = ipc_tx_out.clone();
-                tokio::spawn(async move {
-                    let status = {
-                        let scheduler = scheduler.lock().await;
-                        snapshot_status_from_scheduler(&scheduler)
-                    };
-                    capsem_core::try_send!(
-                        "ipc_snapshot_status",
-                        ipc_tx_out
-                            .send(ProcessToService::SnapshotStatusResult { id, status })
-                            .await
-                    );
                 });
             }
             ServiceToProcess::McpCallTool {

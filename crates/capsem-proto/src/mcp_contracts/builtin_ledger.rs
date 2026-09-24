@@ -2,8 +2,7 @@
 //!
 //! One process writes a session's ledger, and it is capsem-process. The
 //! builtin server runs tools whose effects only it can see -- the HTTP
-//! requests it makes from the host, the files a revert puts back -- so it
-//! describes each one as a record under a reserved `_meta` key of its tool
+//! requests it makes from the host -- so it describes each one as a record under a reserved `_meta` key of its tool
 //! result. The aggregator passes a tool result through whole, and
 //! capsem-process writes the records it finds there.
 //!
@@ -30,8 +29,6 @@ pub const BUILTIN_LEDGER_META_KEY: &str = "dev.capsem/ledger";
 pub enum BuiltinLedgerRecord {
     /// An HTTP request a builtin tool made from the host, or refused to.
     HttpRequest(HttpRequestRecord),
-    /// A workspace file a revert restored from a checkpoint, or deleted.
-    FileReverted(FileRevertedRecord),
 }
 
 /// Whether the security engine let a builtin HTTP request through.
@@ -63,29 +60,6 @@ pub struct HttpRequestRecord {
     pub policy_rule: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_reason: Option<String>,
-}
-
-/// What a revert did to the workspace file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RevertAction {
-    /// The file was put back from the checkpoint.
-    Restored,
-    /// The file did not exist at the checkpoint, so it was removed.
-    Deleted,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileRevertedRecord {
-    pub timestamp_unix_ms: u64,
-    /// Workspace-relative path of the reverted file.
-    pub path: String,
-    /// The checkpoint it was reverted to, e.g. `cp-3`.
-    pub checkpoint: String,
-    pub action: RevertAction,
-    /// Size after a restore; absent after a delete.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size: Option<u64>,
 }
 
 /// The value to store under [`BUILTIN_LEDGER_META_KEY`].

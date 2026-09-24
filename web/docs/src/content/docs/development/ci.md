@@ -244,7 +244,7 @@ Component-level targets in `codecov.yml`:
 |-----------|------------|
 | Network | MITM, TLS, DNS/HTTP/model network parsing and routing |
 | Security | policy config, host config, profile/corp security contracts |
-| Tooling | MCP, builtin tools, snapshots, FS monitor |
+| Tooling | MCP, builtin tools, FS monitor |
 | Monitoring | logger DB, session index, log layer |
 | Virtualization | VM lifecycle and hypervisor backends |
 | Runtime | in-VM agent and shared protocol crates |

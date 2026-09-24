@@ -51,10 +51,9 @@ fn registry_entry_dir(state: &ServiceState, name: &str) -> Option<PathBuf> {
 }
 
 /// A running capsem-process holds its session directory by path: the
-/// VirtioFS workspace, the auto-snapshot scheduler, the MCP file tools and
-/// every lazily opened session.db reader all name `sessions/<id>/...`.
-/// Renaming that directory under a live process left snapshots, file tools
-/// and history failing until the next restart. Persist now claims the name
+/// VirtioFS workspace and every lazily opened session.db reader name
+/// `sessions/<id>/...`. Renaming that directory under a live process left
+/// them failing until the next restart. Persist now claims the name
 /// and registers the directory where it is; the move to `persistent/<id>`
 /// happens when the process has exited.
 #[tokio::test]

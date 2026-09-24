@@ -88,10 +88,6 @@ pub enum ServiceToProcess {
     McpRefreshTools {
         id: u64,
     },
-    /// Query process-owned, in-memory VM snapshot state.
-    SnapshotStatus {
-        id: u64,
-    },
     /// Call an MCP tool via the aggregator subprocess.
     ///
     /// `arguments_json` is the JSON-serialized argument object. Keeping the
@@ -291,8 +287,6 @@ pub enum ProcessToService {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
-    /// Response to SnapshotStatus.
-    SnapshotStatusResult { id: u64, status: SnapshotStatus },
     /// Response to McpCallTool. `result_json` preserves the MCP JSON value.
     McpCallToolResult {
         id: u64,
@@ -422,7 +416,6 @@ impl ServiceToProcess {
             | Self::McpListServers { id }
             | Self::McpListTools { id }
             | Self::McpRefreshTools { id }
-            | Self::SnapshotStatus { id }
             | Self::McpCallTool { id, .. }
             | Self::PublishPort { id, .. }
             | Self::DeclarePreview { id, .. }
@@ -456,7 +449,6 @@ impl ProcessToService {
             | Self::McpServersResult { id, .. }
             | Self::McpToolsResult { id, .. }
             | Self::McpRefreshResult { id, .. }
-            | Self::SnapshotStatusResult { id, .. }
             | Self::McpCallToolResult { id, .. }
             | Self::PortPublished { id, .. }
             | Self::ExposureRevoked { id, .. }
@@ -509,30 +501,6 @@ pub struct McpToolStatus {
     /// Typed so SDK and UI consumers get one stable annotation contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotations: Option<crate::mcp_contracts::ToolAnnotations>,
-}
-
-/// Host-side VM recovery snapshot status. This is not session.db/security
-/// activity; running VMs report it from capsem-process memory and stopped VMs
-/// may reconstruct it from the session snapshot metadata.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct SnapshotStatus {
-    pub total: usize,
-    pub auto_count: usize,
-    pub manual_count: usize,
-    pub manual_available: usize,
-    pub snapshots: Vec<SnapshotSlotStatus>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct SnapshotSlotStatus {
-    pub checkpoint: String,
-    pub slot: usize,
-    pub origin: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    pub timestamp: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hash: Option<String>,
 }
 
 #[cfg(test)]

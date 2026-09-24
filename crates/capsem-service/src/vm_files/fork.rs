@@ -105,13 +105,13 @@ pub(crate) async fn handle_fork(
     let vm_id = new_persistent_vm_id();
     let new_session_dir = state.run_dir.join("persistent").join(&vm_id);
 
-    // clone_sandbox_state does fsync + APFS clonefile + walkdir -- all blocking.
+    // clone_sandbox_state flushes, clones and syncs the tree -- all blocking.
     // Offload to the blocking pool so axum worker threads aren't starved under
     // concurrent fork load.
     let clone_dst = new_session_dir.clone();
     let size_bytes = tokio::task::spawn_blocking(move || {
         let _ = std::fs::create_dir_all(&clone_dst);
-        capsem_core::auto_snapshot::clone_sandbox_state(&session_dir, &clone_dst)
+        capsem_core::session::clone_sandbox_state(&session_dir, &clone_dst)
     })
     .await
     .map_err(|e| {

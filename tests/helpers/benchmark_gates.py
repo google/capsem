@@ -95,15 +95,6 @@ def validate_capsem_bench_result(data: dict[str, Any]) -> None:
         "throughput MB/s",
     )
 
-    for bucket, results in data["snapshot"].items():
-        for op in ("create", "list", "changes", "revert", "delete"):
-            assert results[f"{op}_ok"], f"snapshot {bucket} {op} failed"
-            _assert_lte(
-                results[f"{op}_ms"],
-                CAPSEM_BENCH_GATES["snapshot_op_ms"],
-                f"snapshot {bucket} {op} latency",
-            )
-
     if "storage" in data:
         validate_storage_split_result(data["storage"])
 

@@ -1,5 +1,6 @@
 //! Session management: unique session IDs, session index DB, and lifecycle.
 
+mod clone;
 mod maintenance;
 
 #[cfg(test)]
@@ -9,6 +10,7 @@ pub use capsem_logger::{
     epoch_to_iso, generate_session_id, is_valid_session_id, now_iso, GlobalStats, McpToolSummary, ProviderSummary,
     SessionIndex, SessionRecord, ToolSummary,
 };
+pub use clone::{clone_file, clone_sandbox_state};
 pub use maintenance::*;
 
 /// Distil a captured `process.log`/`serial.log` tail down to the one line

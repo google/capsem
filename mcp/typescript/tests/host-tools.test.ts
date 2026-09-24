@@ -275,9 +275,6 @@ describe('host-tools', () => {
       {name: 'capsem_history', arguments: {vm_id: 'vm-1', limit: 5, offset: 0, search: 'cargo'}},
       {name: 'capsem_stats', arguments: {vm_id: 'vm-1'}},
       {name: 'capsem_stats_detail', arguments: {vm_id: 'vm-1'}},
-      {name: 'capsem_snapshots', arguments: {vm_id: 'vm-1'}},
-      {name: 'capsem_snapshot_status', arguments: {vm_id: 'vm-1'}},
-      {name: 'capsem_file_history', arguments: {vm_id: 'vm-1', checkpoint: 'cp-1', limit: 10}},
       {name: 'capsem_panics', arguments: {since: '1h', limit: 4}},
       {name: 'capsem_triage', arguments: {vm_id: 'vm-1', since: '5m', limit: 2}},
     ];

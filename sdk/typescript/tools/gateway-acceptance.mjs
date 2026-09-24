@@ -6,7 +6,7 @@ const packageName = '@capsem/sdk';
 /** @type {unknown} */
 const built = await import(packageName);
 const sdk = /** @type {typeof import('../src/index.js')} */ (built);
-const {Hypervisor, VM, HttpError, FileChangeKind} = sdk;
+const {Hypervisor, VM, HttpError} = sdk;
 const url = process.env.SDK_GATEWAY_URL, token = process.env.SDK_GATEWAY_TOKEN, id = process.env.SDK_VM_ID;
 assert(url && token && id, 'SDK acceptance fixture must provide gateway credentials and VM ID');
 
@@ -28,14 +28,6 @@ try {
   const files = await vm.files.list();
   assert.equal(vm.id, id);
   assert(files.entries.some(entry => entry.name === 'created.txt'));
-  const snapshots = await vm.snapshots.list();
-  assert.equal(snapshots.total, 1);
-  assert.equal(snapshots.snapshots[0]?.checkpoint, 'cp-10');
-  const changes = await vm.files.history('cp-10');
-  assert.deepEqual(new Map(changes.changes.map(entry => [entry.path, entry.kind])), new Map([
-    ['created.txt', FileChangeKind.CREATED], ['modified.txt', FileChangeKind.MODIFIED],
-    ['deleted.txt', FileChangeKind.DELETED],
-  ]));
   for (const call of [() => vm.files.read('/root/created.txt'), () => vm.files.write('/root/refused.txt', new Uint8Array([1]))]) {
     await assert.rejects(call, error => error instanceof HttpError && error.status === 409
       && error.body.includes('running sandbox security ledger'));
@@ -44,6 +36,6 @@ try {
 } finally {vm.close(); hv.close();}
 
 const direct = new VM(url, token, {id});
-try {assert.equal((await direct.snapshots.status()).total, 1);}
+try {assert.equal((await direct.info()).id, id);}
 finally {direct.close();}
 process.stdout.write('BRAAVOS_SDK_ACCEPTANCE_OK\n');

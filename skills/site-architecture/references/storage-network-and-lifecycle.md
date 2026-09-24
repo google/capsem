@@ -11,25 +11,28 @@ Selected by kernel cmdline `capsem.storage=virtiofs` (default) or absence (block
 **VirtioFS mode** (default):
 ```
 ~/.capsem/sessions/{id}/
-  system/rootfs.img    # ext4 loopback (2GB sparse) -- overlayfs upper
-  workspace/           # VirtioFS files for /root (host-visible)
-  auto_snapshots/      # Rolling ring buffer (12 APFS clones, 5min interval)
+  guest/                     # the only VirtioFS share
+    system/rootfs.img        # ext4 loopback (2GB sparse) -- overlayfs upper
+    workspace/               # VirtioFS files for /root (host-visible)
+  system -> guest/system     # compat symlinks
+  workspace -> guest/workspace
+  session.db                 # host-only, outside the share
 ```
 
 Boot sequence: profile-selected read-only rootfs asset -> VirtioFS mount -> loopback ext4 -> overlayfs -> bind-mount workspace.
 
 Why ext4 loopback: Apple VZ's VirtioFS doesn't support `mknod` (whiteout creation), so overlayfs can't use VirtioFS directly as upper.
 
-**Block mode** (legacy): tmpfs overlay + scratch disk. No host file visibility, no snapshots.
+**Block mode** (legacy): tmpfs overlay + scratch disk. No host file visibility.
 
-**Fork images** (user-created templates):
+**Forks** (`capsem fork`) become new persistent sandboxes:
 ```
-~/.capsem/images/
-  image_registry.json       # Image metadata index (JSON)
-  {name}/
-    system/                  # APFS clone of source VM's rootfs overlay
-    workspace/               # APFS clone of workspace files
-    session.db               # Telemetry from source VM (checkpointed)
+~/.capsem/run/
+  persistent_registry.json  # Persistent sandbox metadata
+  persistent/{vm_id}/
+    guest/system/            # CoW clone of source VM's rootfs overlay
+    guest/workspace/         # CoW clone of workspace files
+    session.db               # SQLite-consistent copy of the source ledger
 ```
 
 ## Network architecture
@@ -218,7 +221,13 @@ profile-owned package files under `config/profiles/<id>/` and rebuild through
 the profile-derived asset rail.
 
 **Fork images** extend the session model with reusable templates. `capsem fork
-<session> <image-name>` snapshots a session via APFS clonefile. Forks stay tied
+<session> <image-name>` clones a session through
+`capsem_core::session::clone_sandbox_state`, which walks the guest-writable
+tree with descriptor-relative no-follow operations
+(`capsem_foundation::unix::tree_clone`): symlinks are recreated, never followed;
+setuid/setgid/sticky bits are dropped; a non-regular `rootfs.img` is refused.
+File contents share extents via APFS `clonefile` or Linux `FICLONE`, falling
+back to a sparse copy. Forks stay tied
 to their profile asset contract. Deleting any image is always safe; asset
 cleanup protects referenced profile assets.
 

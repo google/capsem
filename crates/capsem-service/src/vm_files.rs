@@ -1,11 +1,7 @@
 mod provision;
 pub(super) use crate::sandbox_info::handle_list;
 pub(crate) use provision::handle_provision;
-mod snapshots;
 use super::*;
-#[cfg(test)]
-pub(super) use snapshots::snapshot_status_from_session_dir;
-pub(super) use snapshots::{handle_vm_changes, handle_vm_snapshots_list, handle_vm_snapshots_status};
 
 mod diagnostics;
 mod launch;
@@ -1053,24 +1049,18 @@ pub(super) async fn handle_info(
             .off_worker(move |state| state.persistent_entry_resume_state_cached(&resume_entry))
             .await?;
         let mut info = sandbox_info::inactive_sandbox_info(vm_id, &entry, status, can_resume, blocked_reason);
-        // Disk usage is a recursive walk of the session dir (including every
-        // snapshot clone). Run it off the async worker so it does not stall the
-        // axum runtime, and log rather than silently swallow a failure.
+        // Disk usage is a recursive walk of the session dir: off the async
+        // worker so it does not stall the axum runtime.
         let session_dir = entry.session_dir.clone();
-        info.size_bytes =
-            match tokio::task::spawn_blocking(move || capsem_core::auto_snapshot::sandbox_disk_usage(&session_dir))
-                .await
-            {
-                Ok(Ok(bytes)) => Some(bytes),
-                Ok(Err(error)) => {
-                    tracing::debug!(error = %error, "sandbox disk usage computation failed");
-                    None
-                }
-                Err(error) => {
-                    tracing::debug!(error = %error, "sandbox disk usage task failed");
-                    None
-                }
-            };
+        info.size_bytes = match tokio::task::spawn_blocking(move || capsem_core::session::disk_usage_bytes(&session_dir))
+            .await
+        {
+            Ok(bytes) => Some(bytes),
+            Err(error) => {
+                tracing::debug!(error = %error, "sandbox disk usage task failed");
+                None
+            }
+        };
         populate_vm_info(&state, &mut info, &entry.session_dir).await?;
         let session_dir = entry.session_dir.clone();
         info.storage = state

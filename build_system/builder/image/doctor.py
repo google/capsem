@@ -317,7 +317,6 @@ def check_source_files(repo_root: Path) -> CheckResult:
         "guest/artifacts/tips.txt": repo_root / "guest" / "artifacts" / "tips.txt",
         "guest/artifacts/capsem-doctor": repo_root / "guest" / "artifacts" / "capsem-doctor",
         "guest/artifacts/capsem-bench": repo_root / "guest" / "artifacts" / "capsem-bench",
-        "guest/artifacts/snapshots": repo_root / "guest" / "artifacts" / "snapshots",
         "guest/artifacts/capsem_bench/": repo_root / "guest" / "artifacts" / "capsem_bench",
         "guest/artifacts/diagnostics/": repo_root / "guest" / "artifacts" / "diagnostics",
         "crates/capsem-core/resources/ca/capsem-ca.crt": (

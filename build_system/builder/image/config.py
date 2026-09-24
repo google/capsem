@@ -329,7 +329,7 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
         },
     }
 
-    # -- vm (actions + snapshots host-only + environment + resources from TOML) --
+    # -- vm (actions + environment + resources from TOML) --
     env = config.vm_environment
     shell_section: dict[str, Any] = {
         "name": "Shell",
@@ -385,31 +385,6 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
         "name": "VM",
         "description": "Virtual machine configuration",
         "collapsed": False,
-        "snapshots": {
-            "name": "Snapshots",
-            "description": "Automatic and manual workspace snapshot settings",
-            "auto_max": {
-                "name": "Auto snapshot limit",
-                "description": "Maximum number of automatic rolling snapshots.",
-                "type": "number",
-                "default": 10,
-                "meta": {"min": 1, "max": 50},
-            },
-            "manual_max": {
-                "name": "Manual snapshot limit",
-                "description": "Maximum number of named manual snapshots.",
-                "type": "number",
-                "default": 12,
-                "meta": {"min": 1, "max": 50},
-            },
-            "auto_interval": {
-                "name": "Auto snapshot interval",
-                "description": "Seconds between automatic snapshots.",
-                "type": "number",
-                "default": 300,
-                "meta": {"min": 30, "max": 3600},
-            },
-        },
         "environment": {
             "name": "Environment",
             "description": "Shell and environment variables",

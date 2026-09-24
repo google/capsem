@@ -102,12 +102,6 @@ pub struct TimelineOptions {
     pub layers: Option<Vec<TimelineLayer>>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PageOptions {
-    pub limit: Option<u64>,
-    pub offset: Option<u64>,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct NetworkLogOptions {
     pub cursor: Option<String>,

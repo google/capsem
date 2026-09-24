@@ -12,7 +12,7 @@ from ._client import Client
 from ._container import Container
 from ._networks import VmNetworks
 from ._ports import Ports
-from ._resources import Files, Snapshots, Stats
+from ._resources import Files, Stats
 from ._transport import HttpError, Transport
 from .execution import ExecResult, command_deadline
 
@@ -30,7 +30,6 @@ class VM(Client):
         self._id = TypeAdapter(StrictStr).validate_python(id) if id else None
         self.files = Files(self)
         self.networks = VmNetworks(self)
-        self.snapshots = Snapshots(self)
         self.stats = Stats(self)
         self.container = Container(self)
         self._has_container: bool | None = None

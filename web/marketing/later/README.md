@@ -43,7 +43,6 @@ Full documentation at **[capsem.org](https://capsem.org)**.
 | Architecture | [capsem.org/architecture/hypervisor](https://capsem.org/architecture/hypervisor/) |
 | Security | [capsem.org/security/overview](https://capsem.org/security/overview/) |
 | Custom Images | [capsem.org/architecture/custom-images](https://capsem.org/architecture/custom-images/) |
-| Snapshots | [capsem.org/usage/snapshots](https://capsem.org/usage/snapshots/) |
 | Benchmarks | [capsem.org/benchmarks/results](https://capsem.org/benchmarks/results/) |
 | Troubleshooting | [capsem.org/debugging/troubleshooting](https://capsem.org/debugging/troubleshooting/) |
 | Development | [capsem.org/development/getting-started](https://capsem.org/development/getting-started/) |

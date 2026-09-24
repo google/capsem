@@ -57,7 +57,6 @@ Click through every section (AI Providers, Repositories, Security, VM, Appearanc
   (currently 68 leaf settings)
 - Provider toggle enables/disables child settings visually
 - API key reveal button works (password <-> text)
-- Snapshots section shows auto_max, manual_max, auto_interval
 - VM Resources section shows all resource settings including min_content_sessions
 - Theme toggle switches live
 - Lint warnings display inline

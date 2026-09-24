@@ -196,15 +196,4 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
     description: 'Read typed security, network, file, process, tool, and model events for a VM.',
     inputSchema: {vm_id: vmId},
   }, ({vm_id}, extra) => toolCall(() => vm(hypervisor, vm_id).stats.details({signal: extra.signal})));
-  server.registerTool('capsem_snapshots', {
-    description: 'List VM filesystem snapshots.', inputSchema: {vm_id: vmId},
-  }, ({vm_id}, extra) => toolCall(() => vm(hypervisor, vm_id).snapshots.list({signal: extra.signal})));
-  server.registerTool('capsem_snapshot_status', {
-    description: 'Read VM filesystem snapshot readiness.', inputSchema: {vm_id: vmId},
-  }, ({vm_id}, extra) => toolCall(() => vm(hypervisor, vm_id).snapshots.status({signal: extra.signal})));
-  server.registerTool('capsem_file_history', {
-    description: 'Read paginated filesystem changes since a snapshot checkpoint.',
-    inputSchema: {vm_id: vmId, checkpoint: z.string().min(1), ...page},
-  }, ({vm_id, checkpoint, ...options}, extra) => toolCall(() =>
-    vm(hypervisor, vm_id).files.history(checkpoint, {...defined(options), signal: extra.signal})));
 }

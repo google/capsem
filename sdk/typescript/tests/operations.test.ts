@@ -92,7 +92,7 @@ it('rejects invalid operation parameters before network IO', async () => {
   try {
     await expect(generated.getVmInfo(transport, {id: 12} as never)).rejects.toBeInstanceOf(ZodError);
     await expect(generated.getHypervisorLogs(transport, {name: 'unknown'} as never)).rejects.toBeInstanceOf(ZodError);
-    await expect(generated.getVmChanges(transport, {id: 'vm', checkpoint: 'cp-10', limit: -1})).rejects.toBeInstanceOf(ZodError);
+    await expect(generated.getVmHistory(transport, {id: 'vm', limit: -1})).rejects.toBeInstanceOf(ZodError);
     await expect(generated.execVm(transport, {id: 'vm', body: {command: true}} as never)).rejects.toBeInstanceOf(ZodError);
   } finally {
     transport.close();

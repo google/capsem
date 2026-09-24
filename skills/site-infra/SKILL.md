@@ -82,7 +82,7 @@ web/docs/src/content/docs/
     build-verification.md Build reproducibility, checksums
     kernel-hardening.md   Custom kernel, allnoconfig, minimal attack surface
   benchmarks/
-    results.md            Current performance results (boot, disk, CLI, HTTP, snapshots)
+    results.md            Current performance results (boot, disk, CLI, HTTP)
   debugging/
     capsem-doctor.md      In-VM diagnostic suite
     troubleshooting.md    Common issues and solutions

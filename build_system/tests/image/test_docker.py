@@ -407,7 +407,8 @@ class TestRenderRootfs:
         assert "capsem-doctor" in rendered_arm64
         assert "capsem-bench" in rendered_arm64
         assert "capsem_bench/" in rendered_arm64
-        assert "snapshots" in rendered_arm64
+        # The in-VM snapshot CLI was retired with workspace snapshots (#228).
+        assert "/usr/local/bin/snapshots" not in rendered_arm64
 
     def test_rootfs_includes_all_artifacts(self, rendered_arm64):
         """Every ROOTFS_SCRIPTS entry must appear as a COPY line."""
@@ -2393,11 +2394,10 @@ class TestPrepareBuildContext:
         assert (context_dir / "diagnostics").is_dir()
         assert (context_dir / "capsem-doctor").is_file()
         assert (context_dir / "capsem-bench").is_file()
-        assert (context_dir / "snapshots").is_file()
         assert (context_dir / "capsem_bench").is_dir()
         assert (context_dir / "capsem_bench" / "__main__.py").is_file()
-        # Snapshot CLI must be in rootfs context
-        assert (context_dir / "snapshots").is_file()
+        # The in-VM snapshot CLI was retired (#228).
+        assert not (context_dir / "snapshots").exists()
 
     def test_kernel_context_has_defconfig_and_init(self, real_config, tmp_path):
         context_dir = tmp_path / "ctx"
@@ -3077,15 +3077,14 @@ class TestPrepareBuildContextArtifacts:
 
     def test_missing_rootfs_artifact_silently_skipped(self, real_config, fake_repo, tmp_path):
         # Remove one ROOTFS_SCRIPT from fake repo
-        (fake_repo / "guest" / "artifacts" / "snapshots").unlink()
+        (fake_repo / "guest" / "artifacts" / "capsem-bench").unlink()
         ctx = tmp_path / "ctx"
         ctx.mkdir()
         config = self.fake_guest_config(real_config, fake_repo)
         prepare_build_context(config, "arm64", "Dockerfile.rootfs.j2", ctx, fake_repo)
-        assert not (ctx / "snapshots").exists()
+        assert not (ctx / "capsem-bench").exists()
         # Other artifacts still copied
         assert (ctx / "capsem-doctor").is_file()
-        assert (ctx / "capsem-bench").is_file()
 
     def test_all_rootfs_artifacts_copied_when_present(self, real_config, fake_repo, tmp_path):
         ctx = tmp_path / "ctx"

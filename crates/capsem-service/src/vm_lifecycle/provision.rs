@@ -114,7 +114,7 @@ impl ServiceState {
         // If cloning from a source sandbox, clone its state into the new session directory
         if let Some(ref entry) = source_entry {
             info!(from = entry.name, session_dir = %session_dir.display(), "cloning session from source sandbox");
-            capsem_core::auto_snapshot::clone_sandbox_state(&entry.session_dir, &session_dir)
+            capsem_core::session::clone_sandbox_state(&entry.session_dir, &session_dir)
                 .context("failed to clone sandbox state")?;
         }
 

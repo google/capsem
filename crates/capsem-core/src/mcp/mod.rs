@@ -1,6 +1,5 @@
 pub mod builtin_ledger;
 pub mod builtin_tools;
-pub mod file_tools;
 pub mod policy;
 
 use std::collections::{BTreeSet, HashMap};
@@ -60,8 +59,7 @@ pub fn builtin_server_names(servers: &[McpServerDef]) -> BTreeSet<String> {
 
 fn local_builtin_server_def(bin: &Path, builtin_env: HashMap<String, String>, enabled: bool) -> McpServerDef {
     // Stateless builtin tools that are safe to round-robin across pool
-    // peers. Snapshot tools (`snapshots_*`) mutate per-process state and
-    // therefore pin to peers[0].
+    // peers. A tool missing from this list pins to peers[0].
     let pool_safe_tools: Vec<String> = ["echo", "fetch_http", "grep_http", "http_headers"]
         .iter()
         .map(|s| (*s).to_string())

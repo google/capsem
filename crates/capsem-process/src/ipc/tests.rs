@@ -91,7 +91,6 @@ struct Dispatcher {
     net_state: Arc<capsem_core::SandboxNetworkState>,
     mcp_runtime: Arc<McpRuntime>,
     runtime_source: RuntimeProfileSource,
-    scheduler: SharedSnapshotScheduler,
     ready: Arc<AtomicBool>,
 }
 
@@ -183,9 +182,6 @@ revision = "test.1"
             plugin_policy,
             model_endpoints,
         });
-        let scheduler = Arc::new(tokio::sync::Mutex::new(
-            capsem_core::auto_snapshot::AutoSnapshotScheduler::new(temp.to_path_buf(), 2, 2, Duration::from_secs(300)),
-        ));
         let term_relay = TerminalRelay::new(8);
         let job_store = Arc::new(JobStore::new());
         let (ctrl_tx, ctrl_rx) = mpsc::channel(16);
@@ -199,7 +195,6 @@ revision = "test.1"
                 net_state,
                 mcp_runtime,
                 runtime_source: RuntimeProfileSource::new(active_profile),
-                scheduler,
                 ready: Arc::new(AtomicBool::new(true)),
             },
             ctrl_rx,
@@ -219,7 +214,6 @@ revision = "test.1"
             self.runtime_source.clone(),
             None,
             HashMap::new(),
-            Arc::clone(&self.scheduler),
             Arc::clone(&self.ready),
         ))
     }
@@ -678,14 +672,6 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
     ));
 
     service_tx
-        .send(ServiceToProcess::SnapshotStatus { id: 14 })
-        .await
-        .unwrap();
-    assert!(matches!(
-        service_rx.recv().await.unwrap(),
-        ProcessToService::SnapshotStatusResult { id: 14, .. }
-    ));
-    service_tx
         .send(ServiceToProcess::McpListServers { id: 15 })
         .await
         .unwrap();
@@ -984,10 +970,3 @@ fn classify_resume_unexpected() {
     assert_eq!(classify_ipc_message(&ServiceToProcess::Resume), IpcAction::Unexpected);
 }
 
-#[test]
-fn classify_snapshot_status_is_job_query() {
-    assert_eq!(
-        classify_ipc_message(&ServiceToProcess::SnapshotStatus { id: 1 }),
-        IpcAction::Job
-    );
-}

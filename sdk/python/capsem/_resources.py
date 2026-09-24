@@ -1,4 +1,4 @@
-"""VM subinterfaces for file transfer, snapshot inventory and statistics."""
+"""VM subinterfaces for file transfer and statistics."""
 
 from __future__ import annotations
 
@@ -37,21 +37,6 @@ class Files(Resource):
             self._vm._transport, id=await self._vm._resolve(),
             path=path or None, depth=depth, exact=exact or None,
         )
-
-    async def history(self, checkpoint: str, *, limit: int | None = None,
-                      offset: int | None = None) -> models.ChangesResponse:
-        return await api.get_vm_changes(
-            self._vm._transport, id=await self._vm._resolve(), checkpoint=checkpoint,
-            limit=limit, offset=offset,
-        )
-
-
-class Snapshots(Resource):
-    async def list(self) -> models.SnapshotsList:
-        return await api.list_vm_snapshots(self._vm._transport, id=await self._vm._resolve())
-
-    async def status(self) -> models.SnapshotsStatus:
-        return await api.get_vm_snapshots_status(self._vm._transport, id=await self._vm._resolve())
 
 
 class Stats(Resource):

@@ -39,7 +39,6 @@ struct PendingRequests {
 struct PendingRequest {
     json_id: Value,
     method: Option<String>,
-    snapshot_revert_path: Option<String>,
 }
 
 impl PendingRequests {
@@ -84,9 +83,6 @@ enum JsonRpcLineKind {
     Request {
         json_id: Option<Value>,
         method: Option<String>,
-        /// The `path` argument of a `snapshots_revert` tool call, which the
-        /// relay needs for its guest-side effect once the host answers.
-        snapshot_revert_path: Option<String>,
     },
     Notification,
 }
@@ -125,11 +121,7 @@ fn main() {
         let kind = classify_jsonrpc_line(&line);
         let (stream_id, flags, pending_request) = match kind {
             JsonRpcLineKind::Notification => (0, MCP_FRAME_FLAG_NOTIFICATION, None),
-            JsonRpcLineKind::Request {
-                json_id,
-                method,
-                snapshot_revert_path,
-            } => {
+            JsonRpcLineKind::Request { json_id, method } => {
                 let id = next_stream_id;
                 if id == u32::MAX {
                     eprintln!("[capsem-mcp-server] framed stream id exhausted; reconnecting before next request");
@@ -142,11 +134,7 @@ fn main() {
                 (
                     id,
                     0,
-                    json_id.map(|json_id| PendingRequest {
-                        json_id,
-                        method,
-                        snapshot_revert_path,
-                    }),
+                    json_id.map(|json_id| PendingRequest { json_id, method }),
                 )
             }
         };
@@ -269,10 +257,7 @@ fn framed_vsock_to_stdout(fd: RawFd, pending: PendingRequests, stdout: Arc<Mutex
             continue;
         }
 
-        let pending_request = pending.remove(frame.stream_id);
-        if let Some(request) = pending_request.as_ref() {
-            apply_guest_snapshot_revert_side_effect(request, &frame.payload);
-        }
+        let _ = pending.remove(frame.stream_id);
         let mut out = stdout.lock().expect("stdout mutex poisoned");
         if out.write_all(&frame.payload).is_err() {
             break;
@@ -298,98 +283,6 @@ fn framed_vsock_to_stdout(fd: RawFd, pending: PendingRequests, stdout: Arc<Mutex
     }
 }
 
-/// The `path` of a `snapshots_revert` tool call, read from the already
-/// parsed request object. Every line used to be parsed twice: once to
-/// classify it and once here.
-fn snapshot_revert_path(object: &serde_json::Map<String, Value>) -> Option<String> {
-    if object.get("method")?.as_str()? != "tools/call" {
-        return None;
-    }
-    let params = object.get("params")?.as_object()?;
-    let name = params.get("name")?.as_str()?;
-    if name != "snapshots_revert" && name != "local__snapshots_revert" {
-        return None;
-    }
-    params
-        .get("arguments")?
-        .as_object()?
-        .get("path")?
-        .as_str()
-        .map(str::to_string)
-}
-
-fn response_reports_snapshot_delete(payload: &[u8]) -> bool {
-    let value: Value = match serde_json::from_slice(payload) {
-        Ok(value) => value,
-        Err(_) => return false,
-    };
-    if value.get("error").is_some() {
-        return false;
-    }
-    let Some(content) = value
-        .get("result")
-        .and_then(|result| result.get("content"))
-        .and_then(|content| content.as_array())
-    else {
-        return false;
-    };
-    content.iter().any(|item| {
-        item.get("text")
-            .and_then(|text| text.as_str())
-            .and_then(|text| serde_json::from_str::<Value>(text).ok())
-            .and_then(|inner| {
-                inner
-                    .get("action")
-                    .and_then(|action| action.as_str())
-                    .map(str::to_string)
-            })
-            .as_deref()
-            == Some("deleted")
-    })
-}
-
-fn normalize_guest_snapshot_path(raw: &str) -> Option<std::path::PathBuf> {
-    if raw.contains('\0') {
-        return None;
-    }
-    let stripped = raw.strip_prefix("/root/").unwrap_or(raw);
-    let path = std::path::Path::new(stripped);
-    if path.is_absolute() || path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-        return None;
-    }
-    Some(std::path::Path::new("/root").join(path))
-}
-
-fn apply_guest_snapshot_revert_side_effect(request: &PendingRequest, payload: &[u8]) {
-    let Some(path) = request.snapshot_revert_path.as_deref() else {
-        return;
-    };
-    if !response_reports_snapshot_delete(payload) {
-        return;
-    }
-    let Some(guest_path) = normalize_guest_snapshot_path(path) else {
-        eprintln!("[capsem-mcp-server] refusing unsafe snapshot delete path: {path}");
-        return;
-    };
-    match std::fs::symlink_metadata(&guest_path) {
-        Ok(meta) if meta.is_file() || meta.file_type().is_symlink() => {
-            if let Err(e) = std::fs::remove_file(&guest_path) {
-                eprintln!(
-                    "[capsem-mcp-server] failed to apply guest-visible snapshot delete for {}: {e}",
-                    guest_path.display()
-                );
-            }
-        }
-        Ok(_) => {
-            eprintln!(
-                "[capsem-mcp-server] refusing snapshot delete for non-file path: {}",
-                guest_path.display()
-            );
-        }
-        Err(_) => {}
-    }
-}
-
 /// Classify one stdin line with a single parse. Anything that is not a
 /// JSON object is forwarded as a request so the host answers with the
 /// parse error the client expects.
@@ -399,7 +292,6 @@ fn classify_jsonrpc_line(line: &str) -> JsonRpcLineKind {
         return JsonRpcLineKind::Request {
             json_id: None,
             method: None,
-            snapshot_revert_path: None,
         };
     };
     let method = object
@@ -410,7 +302,6 @@ fn classify_jsonrpc_line(line: &str) -> JsonRpcLineKind {
         Some(json_id) => JsonRpcLineKind::Request {
             json_id: Some(json_id.clone()),
             method,
-            snapshot_revert_path: snapshot_revert_path(object),
         },
         None => JsonRpcLineKind::Notification,
     }

@@ -31,7 +31,6 @@ async fn example(url: &str, token: &str) -> Result<()> {
     let contents = vm.files().read("/workspace/hello.txt").await?;
     assert_eq!(contents, b"hello\n");
     vm.files().list("", None).await?;
-    vm.snapshots().list().await?;
     vm.stats().details().await?;
     vm.persist("saved-workspace").await?;
     hv.debug().triage(TriageOptions { vm_id: vm.id().map(str::to_owned), since: Some("1h".into()), ..Default::default() }).await?;
@@ -64,9 +63,7 @@ measured in GiB.
 VM controls are `start`, `stop`, `pause`, `resume`, `delete`, and
 `fork(name, description)`. Queries include `log(LogOptions)`,
 `history(HistoryOptions)`, `timeline(TimelineOptions)`,
-and `files().list/read/write/history`.
-Snapshots support `list()` and `status()`; stats support `summary()` and
-`details()`. File reads and writes preserve bytes and require a running VM's
+and `files().list/read/write`. Stats support `summary()` and `details()`. File reads and writes preserve bytes and require a running VM's
 security ledger. `hv.update()` applies the configured update.
 
 Responses and enums reuse `capsem_sdk::models` (the gateway's `capsem-api`

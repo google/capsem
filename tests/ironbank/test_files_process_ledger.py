@@ -1,4 +1,4 @@
-"""Ironbank black-box file, process, and snapshot ledger tests."""
+"""Ironbank black-box file and process ledger tests."""
 
 from __future__ import annotations
 
@@ -189,7 +189,7 @@ def _extract_json_line(output: str, prefix: str) -> dict:
 
 
 
-def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
+def test_file_process_routes_pay_full_ledger_debt_blackbox():
     assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
@@ -208,8 +208,8 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
     # of the complete gate got `text/css`; the reproduction lives in
     # `capsem-service`'s `fs_utils` tests.
     upload_body = (
-        "This is the ironbank upload fixture for the file, process and "
-        f"snapshot ledger.\nCorrelation nonce {nonce} identifies this run so "
+        "This is the ironbank upload fixture for the file and process "
+        f"ledger.\nCorrelation nonce {nonce} identifies this run so "
         "the ledger rows can be matched back to it.\n"
     ).encode()
 
@@ -282,21 +282,12 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
         assert escape_status == 403, escape_body.decode(errors="replace")
         assert b"root:" not in escape_body
 
-        snapshot_status = client.get(f"/vms/{session_id}/snapshots/status", timeout=30)
-        assert set(snapshot_status) == {
-            "total",
-            "auto_count",
-            "manual_count",
-            "manual_available",
-            "snapshots",
-        }
-        assert isinstance(snapshot_status["snapshots"], list)
-        assert snapshot_status["total"] == snapshot_status["auto_count"] + snapshot_status["manual_count"]
-
-        snapshot_list = client.get(f"/vms/{session_id}/snapshots/list", timeout=30)
-        assert set(snapshot_list) == {"total", "snapshots"}
-        assert snapshot_list["total"] == snapshot_status["total"]
-        assert snapshot_list["snapshots"] == snapshot_status["snapshots"]
+        # Workspace snapshots were retired (#228): their routes are gone, and
+        # a live session creates no snapshot ring.
+        for retired in ("snapshots/status", "snapshots/list", "changes?checkpoint=cp-0"):
+            retired_status, _ = client.get_bytes(f"/vms/{session_id}/{retired}", timeout=30)
+            assert retired_status == 404, retired
+        assert not (vm_session_dir(service.tmp_dir, client, session_id) / "auto_snapshots").exists()
 
         conn = _connect_session_db(service, session_id)
         try:
@@ -305,7 +296,7 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
             assert _table_columns(conn, "audit_events") == EXPECTED_AUDIT_COLUMNS
             assert not conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'snapshot_events'"
-            ).fetchone(), "snapshot route state must stay route-owned"
+            ).fetchone(), "the retired snapshot ledger table must not return"
 
             paths = {upload_path, script_path, create_path, modify_path, delete_path}
             file_rows = _eventually(

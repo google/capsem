@@ -1,5 +1,4 @@
 pub mod auditfs;
-pub mod auto_snapshot;
 pub mod container;
 pub mod credential_broker;
 pub mod fs_monitor;
@@ -49,7 +48,6 @@ pub use hypervisor::kvm::KvmHypervisor;
 ///     share so the host can introspect it while the VM is stopped.
 ///   - `workspace/`        -- direct host-visible files for /root (AI workspace)
 /// - Host-only (NOT shared with guest):
-///   - `auto_snapshots/`   -- rolling ring buffer for host-side APFS clone snapshots
 ///   - `session.db`        -- telemetry database
 ///   - `serial.log`        -- terminal output log
 ///   - `checkpoint.vzsave` -- suspend checkpoint
@@ -58,7 +56,7 @@ pub use hypervisor::kvm::KvmHypervisor;
 /// preformatted ext4 template before boot when `mke2fs` is available; the
 /// guest keeps a first-boot formatting fallback for restored or
 /// externally-created unformatted images. Forked sessions already have a
-/// formatted image (cloned from snapshot).
+/// formatted image (cloned from their source).
 pub fn create_virtiofs_session(session_dir: &Path, system_img_size_gb: u32) -> std::io::Result<()> {
     use std::fs::OpenOptions;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -66,7 +64,6 @@ pub fn create_virtiofs_session(session_dir: &Path, system_img_size_gb: u32) -> s
     let guest_dir = session_dir.join("guest");
     std::fs::create_dir_all(guest_dir.join("system"))?;
     std::fs::create_dir_all(guest_dir.join("workspace"))?;
-    std::fs::create_dir_all(session_dir.join("auto_snapshots"))?;
 
     // Create compat symlinks so existing code using session_dir/workspace and
     // session_dir/system still works. The real dirs live inside guest/ which
@@ -254,7 +251,7 @@ pub fn preformat_system_overlay_image_from_template_if_needed(
             .unwrap_or(0)
     ));
     let _ = std::fs::remove_file(&tmp_path);
-    auto_snapshot::clone_file(template_path, &tmp_path).map_err(|error| std::io::Error::other(error.to_string()))?;
+    session::clone_file(template_path, &tmp_path)?;
     std::fs::rename(&tmp_path, path)?;
 
     if !system_overlay_matches(path, size_gb)? {

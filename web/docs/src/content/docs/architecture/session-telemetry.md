@@ -5,7 +5,7 @@ sidebar:
   order: 20
 ---
 
-Every Capsem VM gets its own session ledger: a SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, security rule matches, credential substitutions, and snapshots, and beside it a body archive (`session.bodies`) that holds the full request, response, tool, exec and security payloads those rows describe. The two files live in the session directory and follow the VM lifecycle; retained and forked VMs keep both for forensic review, and one without the other is not a ledger.
+Every Capsem VM gets its own session ledger: a SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, security rule matches, and credential substitutions, and beside it a body archive (`session.bodies`) that holds the full request, response, tool, exec and security payloads those rows describe. The two files live in the session directory and follow the VM lifecycle; retained and forked VMs keep both for forensic review, and one without the other is not a ledger.
 
 The session ledger has no migrations. A ledger written by an older build fails to open, by name, instead of being upgraded in place.
 
@@ -464,8 +464,8 @@ DNS queries handled by the host DNS proxy.
 ### security_rule_events
 
 Every matched security rule, across HTTP, DNS, MCP, model, file, and process
-events. Credential substitution and snapshot lifecycle rows may appear in the
-ledger, but 1.3 does not expose fake `credential.*` or `snapshot.*` rule roots.
+events. Credential substitution rows may appear in the ledger, but 1.3 does not
+expose a fake `credential.*` rule root.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -616,15 +616,6 @@ each scan times itself and the next one runs ten scan-durations later, between
 held for the next scan and the window is marked by an `overflow` row whose
 `size` is how many were held back.
 
-### Snapshot State
-
-Automatic and manual workspace snapshot state is not a session DB table.
-Snapshots are host recovery state, exposed through VM-scoped snapshot routes.
-Running VMs answer from the `capsem-process` in-memory scheduler over IPC;
-stopped VMs reconstruct status from that VM's snapshot metadata only when a
-snapshot route is requested. Explicit snapshot MCP calls remain visible as MCP
-activity, and file restores remain visible as `fs_events`.
-
 ## Data flow
 
 ```mermaid
@@ -636,8 +627,6 @@ graph LR
         EXEC["Service exec path"]
         AUDIT["Guest audit stream<br/>(vsock:5006)"]
         FS["VirtioFS<br/>(file watcher)"]
-        SNAP["Snapshot scheduler"]
-        SNAPAPI["VM snapshot routes<br/>/vms/{id}/snapshots/*"]
     end
 
     subgraph "Writer Pipeline"
@@ -653,7 +642,6 @@ graph LR
     EXEC -->|"WriteOp::ExecEvent<br/>WriteOp::ExecEventComplete"| CH
     AUDIT -->|"WriteOp::AuditEvent"| CH
     FS -->|"WriteOp::FileEvent"| CH
-    SNAP -->|"in-memory IPC status"| SNAPAPI
     CH --> WT
     WT --> DB
     WT -->|"bodies, one segment per flush"| BODIES
@@ -944,7 +932,6 @@ that are backed by the logger DB API and VM-scoped rule routes:
 | Process | `exec_events`, `audit_events` |
 | Credentials | `substitution_events` |
 | Security | `/vms/{id}/security/latest`, `/vms/{id}/security/status`, `/vms/{id}/detection/latest`, `/vms/{id}/enforcement/latest` |
-| Snapshots | `/vms/{id}/snapshots/status`, `/vms/{id}/snapshots/list` |
 
 The old raw SQL Inspector tab and `/vms/{id}/inspect` route were removed. Add
 new typed logger DB APIs when the UI, TUI, MCP, or CLI needs more ledger

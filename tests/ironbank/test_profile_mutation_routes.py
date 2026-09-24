@@ -139,15 +139,15 @@ def test_profile_mutation_routes_persist_profile_files_hashes_and_ledger() -> No
         assert client.get(f"/profiles/{CODE_PROFILE_ID}/mcp/default/info")["action"] == "ask"
 
         mcp_tool = client.patch(
-            f"/profiles/{CODE_PROFILE_ID}/mcp/servers/capsem/tools/snapshot/edit",
+            f"/profiles/{CODE_PROFILE_ID}/mcp/servers/capsem/tools/probe/edit",
             {"action": "block"},
             timeout=30,
         )
         assert mcp_tool["profile_id"] == CODE_PROFILE_ID
         assert mcp_tool["server_id"] == "capsem"
-        assert mcp_tool["tool_id"] == "snapshot"
+        assert mcp_tool["tool_id"] == "probe"
         assert mcp_tool["action"] == "block"
-        assert "mcp_capsem_snapshot_permission" in _profile_enforcement_text(service)
+        assert "mcp_capsem_probe_permission" in _profile_enforcement_text(service)
 
         mcp_server = client.put(
             f"/profiles/{CODE_PROFILE_ID}/mcp/servers/ironbank/edit",

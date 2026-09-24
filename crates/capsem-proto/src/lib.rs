@@ -72,7 +72,8 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// host cancellation. Version 9 adds owner-scoped HTTP preview declarations,
 /// credentials and descriptor handoff admission. Version 10 omits default
 /// fields from named MessagePack maps while decoding their absence as defaults.
-pub const PROTOCOL_VERSION: u16 = 10;
+/// Version 11 removes the workspace snapshot status query.
+pub const PROTOCOL_VERSION: u16 = 11;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
 pub const GUEST_DNS_PROXY_PORT: u16 = 1053;

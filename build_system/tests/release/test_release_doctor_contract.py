@@ -6593,7 +6593,7 @@ def test_linux_vm_launch_preformats_system_overlay_before_boot() -> None:
     assert "pub fn preformat_system_overlay_image_if_needed" in core
     assert "pub fn ensure_preformatted_system_overlay_template" in core
     assert "pub fn preformat_system_overlay_image_from_template_if_needed" in core
-    assert "auto_snapshot::clone_file(template_path, &tmp_path)" in core
+    assert "session::clone_file(template_path, &tmp_path)" in core
     assert "system_overlay_has_ext4_magic(path)?" in core
     assert "lazy_itable_init=1,lazy_journal_init=1" in core
     assert '.arg("size=4")' in core

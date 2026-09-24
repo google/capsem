@@ -18,17 +18,12 @@ def _json_route(client: TcpHttpClient, path: str) -> dict:
     return json.loads(body)
 
 
-def test_gateway_forwards_snapshot_routes_used_by_stats_ui(gw_client: TcpHttpClient) -> None:
-    status = _json_route(gw_client, "/vms/11111111-1111-4111-8111-111111111111/snapshots/status")
-    assert status["total"] == 1
-    assert status["auto_count"] == 1
-    assert status["manual_count"] == 0
-    assert status["snapshots"][0]["checkpoint"] == "checkpoint-0"
-    assert status["snapshots"][0]["origin"] == "auto"
-
-    listing = _json_route(gw_client, "/vms/11111111-1111-4111-8111-111111111111/snapshots/list")
-    assert listing["total"] == 1
-    assert listing["snapshots"] == status["snapshots"]
+def test_gateway_does_not_forward_retired_snapshot_routes(gw_client: TcpHttpClient) -> None:
+    # The mock service still answers these paths; only the gateway can 404.
+    vm = "/vms/11111111-1111-4111-8111-111111111111"
+    for path in (f"{vm}/snapshots/status", f"{vm}/changes?checkpoint=cp-0"):
+        status, body = gw_client.get_status_and_body(path)
+        assert status == 404, (path, status, body)
 
 
 def test_gateway_forwards_update_status_for_update_surfaces(

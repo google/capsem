@@ -496,34 +496,6 @@ async fn run_async_main_loop(
         runtime_config.active_profile_path.to_string_lossy().to_string(),
     );
     let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env.clone());
-    let snap_auto_max = 10usize;
-    let snap_manual_max = 12usize;
-    let snap_interval = 300u64;
-
-    let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
-        session_dir.clone(),
-        snap_auto_max,
-        snap_manual_max,
-        std::time::Duration::from_secs(snap_interval),
-    );
-    let scheduler = Arc::new(tokio::sync::Mutex::new(scheduler));
-
-    // Defer initial snapshot to background -- workspace is empty at boot, no need to block.
-    {
-        let sched = Arc::clone(&scheduler);
-        tokio::spawn(async move {
-            let mut s = sched.lock().await;
-            if let Ok(slot) = s.take_snapshot() {
-                info!(
-                    slot = slot.slot,
-                    files_count = slot.files_count,
-                    origin = "auto",
-                    "auto snapshot captured"
-                );
-            }
-        });
-    }
-
     // Spawn the isolated MCP aggregator subprocess.
     let aggregator_client = spawn_mcp_aggregator(&mcp_servers, &session_dir, &args.id, &trace_id).await?;
 
@@ -634,36 +606,6 @@ async fn run_async_main_loop(
         )
         .with_private_names(private_names),
     );
-
-    let sched_clone = Arc::clone(&scheduler);
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(snap_interval));
-        tick.tick().await;
-        loop {
-            tick.tick().await;
-            let sched = Arc::clone(&sched_clone);
-            let result = tokio::task::spawn_blocking(move || {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(async {
-                    let mut s = sched.lock().await;
-                    s.take_snapshot()
-                })
-            })
-            .await;
-            match result {
-                Ok(Ok(slot)) => {
-                    info!(
-                        slot = slot.slot,
-                        files_count = slot.files_count,
-                        origin = "auto",
-                        "auto snapshot captured"
-                    );
-                }
-                Ok(Err(e)) => tracing::warn!(error = %e, "auto-snapshot failed"),
-                Err(e) => tracing::warn!(error = %e, "auto-snapshot task panicked"),
-            }
-        }
-    });
 
     let ipc_tx_clone = ipc_tx.clone();
     let job_store_clone = Arc::clone(&job_store);
@@ -787,7 +729,6 @@ async fn run_async_main_loop(
         let runtime_source_c = runtime_source.clone();
         let builtin_bin_c = builtin_bin.clone();
         let builtin_env_c = builtin_env.clone();
-        let sched_c = Arc::clone(&scheduler);
         let ready_c = Arc::clone(&vm_ready);
 
         tokio::spawn(async move {
@@ -802,7 +743,6 @@ async fn run_async_main_loop(
                 runtime_source_c,
                 builtin_bin_c,
                 builtin_env_c,
-                sched_c,
                 ready_c,
             )
             .await

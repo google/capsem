@@ -167,8 +167,6 @@ describes virtualization state.
 | `GET` | `/vms/{id}/files/list` | List files through the service file browser route. |
 | `GET` | `/vms/{id}/files/content` | Download exact file bytes through the audited service route. |
 | `POST` | `/vms/{id}/files/content` | Upload exact file bytes through the audited service route. |
-| `GET` | `/vms/{id}/snapshots/status` | Snapshot subsystem readiness for the session. |
-| `GET` | `/vms/{id}/snapshots/list` | Snapshot entries exposed by the snapshot subsystem, not security activity. |
 | `GET` | `/vms/{id}/timeline` | Session timeline. |
 | `GET` | `/vms/{id}/history` | Session history. |
 | `GET` | `/vms/{id}/history/processes` | Process history. |
