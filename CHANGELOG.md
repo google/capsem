@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Changing an MCP permission (the profile default or a single tool) now takes
+  effect in running VMs before the route returns. It used to update the
+  profile file only, so running VMs kept enforcing the old permission until an
+  unrelated reload. Profile-scoped reloads
+  (`/profiles/{id}/enforcement/reload`, `/profiles/{id}/detection/reload`) and
+  MCP tool refresh now touch only VMs on that profile instead of every VM, and
+  refresh reports the number of VMs that actually refreshed
+  (google/capsem#229).
+
 - A browser-preview session now bounds the connections it admitted, not only
   their admission. An open WebSocket or keep-alive connection closes when its
   session expires, instead of outliving it indefinitely, and

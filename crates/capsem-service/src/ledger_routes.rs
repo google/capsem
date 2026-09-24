@@ -2198,8 +2198,8 @@ pub(super) async fn handle_enforcement_reload(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let _profile_id = validate_profile_route_id(profile_id)?;
-    handle_reload_config(State(state)).await
+    let profile_id = validate_profile_route_id(profile_id)?;
+    handle_reload_config_for_profile(state, Some(&profile_id)).await
 }
 
 pub(super) async fn handle_detection_reload(

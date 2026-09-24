@@ -2000,23 +2000,31 @@ pub(super) async fn handle_profile_mcp_server_refresh(
             "MCP server id must not be empty".to_string(),
         ));
     }
-    ensure_profile_mcp_server(profile_id, &server_id)?;
-    // Send McpRefreshTools to all running instances.
-    let uds_paths = {
+    ensure_profile_mcp_server(profile_id.clone(), &server_id)?;
+    // Only VMs running this profile carry this server.
+    let targets = {
         let instances = state.instances.lock().unwrap();
-        instances.values().map(|info| info.uds_path.clone()).collect::<Vec<_>>()
+        instances
+            .values()
+            .filter(|info| info.profile_id == profile_id)
+            .map(|info| (info.id.clone(), info.uds_path.clone()))
+            .collect::<Vec<_>>()
     };
-    for uds_path in &uds_paths {
+    let mut refreshed = 0;
+    for (vm_id, uds_path) in &targets {
         let id = state.next_job_id();
-        let _ = send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30)).await;
+        match send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30)).await {
+            Ok(_) => refreshed += 1,
+            Err(error) => warn!(vm_id = %vm_id, server_id = %server_id, %error, "MCP tool refresh failed"),
+        }
     }
     if let Ok(mut cache) = state.mcp_tool_cache.lock() {
         *cache = capsem_core::mcp::load_tool_cache();
     }
     Ok(Json(api::McpRefreshResponse {
-        success: true,
+        success: refreshed == targets.len(),
         server_id,
-        instances: uds_paths.len(),
+        instances: refreshed,
     }))
 }
 
@@ -2058,6 +2066,8 @@ pub(super) async fn handle_profile_mcp_default_edit(
         })?;
     let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("profile_mcp_default_edit", &event);
+    // MCP permissions compile to enforcement rules: enforce before returning.
+    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
     Ok(Json(json!({
         "profile_id": event.profile_id,
         "action": update.action,
@@ -2104,6 +2114,8 @@ pub(super) async fn handle_profile_mcp_tool_edit(
         })?;
     let event = write_profile_mutation_event(&state, summary, &profile).await?;
     log_profile_mutation_applied("profile_mcp_tool_edit", &event);
+    // MCP permissions compile to enforcement rules: enforce before returning.
+    push_profile_to_running_instances(&state, Some(profile_id.as_str())).await?;
     Ok(Json(json!({
         "profile_id": event.profile_id,
         "server_id": server_id,

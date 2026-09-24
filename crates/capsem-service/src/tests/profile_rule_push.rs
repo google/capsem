@@ -183,3 +183,125 @@ match = 'mcp.tool_call.name == "local__echo"'
         "active profile must carry edited plugin detection level"
     );
 }
+
+fn active_mcp_default_action(active_profile: &std::path::Path) -> capsem_core::net::policy_config::SecurityRuleAction {
+    let active: capsem_core::net::policy_config::ActiveProfileFile =
+        toml::from_str(&std::fs::read_to_string(active_profile).unwrap()).unwrap();
+    active.profile_rules.default["mcp"].action
+}
+
+/// MCP permissions compile to enforcement rules, so tightening one must reach
+/// running VMs before the route returns, exactly like a rule edit. These routes
+/// used to rewrite enforcement.toml and stop, leaving every running VM on the
+/// old permission until an unrelated reload.
+#[tokio::test]
+async fn mcp_permission_edits_push_reload_to_running_profile_instances() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
+    let session_dir = dir.path().join("sessions").join("mcp-push-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "mcp-push-vm", std::process::id(), session_dir.clone());
+    state
+        .refresh_active_profiles(Some("code"))
+        .expect("initial active profile");
+    let active_profile = session_dir.join("vm/active_profile.toml");
+    assert_eq!(
+        active_mcp_default_action(&active_profile),
+        capsem_core::net::policy_config::SecurityRuleAction::Allow
+    );
+    let uds_path = state.instances.lock().unwrap()["mcp-push-vm"].uds_path.clone();
+    let process = spawn_fake_process_reload_ack(&uds_path, 1);
+
+    let _ = handle_profile_mcp_default_edit(
+        State(Arc::clone(&state)),
+        Path("code".to_string()),
+        Json(McpToolEditRequest {
+            action: capsem_core::net::policy_config::SecurityRuleAction::Block,
+        }),
+    )
+    .await
+    .expect("mcp default edit");
+
+    assert_eq!(
+        active_mcp_default_action(&active_profile),
+        capsem_core::net::policy_config::SecurityRuleAction::Block,
+        "the tightened MCP default must be materialized into the running session"
+    );
+    let received = tokio::time::timeout(std::time::Duration::from_secs(10), process)
+        .await
+        .expect("an MCP permission edit must contact the running instance")
+        .unwrap();
+    assert!(matches!(received.as_slice(), [ServiceToProcess::ReloadConfig]));
+}
+
+/// A reload named for one profile reaches only that profile's VMs. The route
+/// used to validate the profile id and then reload every profile, rewriting
+/// other sessions' active profiles and contacting VMs it had no business with.
+#[tokio::test]
+async fn reload_is_scoped_to_the_named_profile() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (config_root, _) = install_file_asset_profile_fixture(&dir);
+    let _profiles_guard = EnvVarGuard::set("CAPSEM_PROFILES_DIR", config_root.join("profiles"));
+    let state = make_asset_state(dir.path().join("assets"));
+
+    let code_dir = dir.path().join("sessions").join("code-vm");
+    let other_dir = dir.path().join("sessions").join("other-vm");
+    std::fs::create_dir_all(&code_dir).unwrap();
+    std::fs::create_dir_all(&other_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "code-vm", std::process::id(), code_dir.clone());
+    insert_fake_instance_with_session_dir(&state, "other-vm", std::process::id(), other_dir.clone());
+    state.instances.lock().unwrap().get_mut("other-vm").unwrap().profile_id = "co-work".into();
+
+    let code_uds = state.instances.lock().unwrap()["code-vm"].uds_path.clone();
+    let code_process = spawn_fake_process_reload_ack(&code_uds, 2);
+    // The other VM's socket exists, so contacting it would succeed; the proof
+    // is that nothing ever connects.
+    let other_uds = state.instances.lock().unwrap()["other-vm"].uds_path.clone();
+    let other_listener = std::os::unix::net::UnixListener::bind(&other_uds).unwrap();
+    other_listener.set_nonblocking(true).unwrap();
+
+    let Json(reloaded) = handle_enforcement_reload(State(Arc::clone(&state)), Path("code".to_string()))
+        .await
+        .expect("enforcement reload");
+    assert_eq!(reloaded["reloaded"], 1, "only the `code` VM is reloaded");
+    let Json(reloaded) = handle_detection_reload(State(Arc::clone(&state)), Path("code".to_string()))
+        .await
+        .expect("detection reload");
+    assert_eq!(reloaded["reloaded"], 1, "only the `code` VM is reloaded");
+
+    let received = tokio::time::timeout(std::time::Duration::from_secs(10), code_process)
+        .await
+        .expect("the named profile's VM must be reloaded")
+        .unwrap();
+    assert!(received.iter().all(|m| matches!(m, ServiceToProcess::ReloadConfig)));
+    assert!(code_dir.join("vm/active_profile.toml").exists());
+    assert_eq!(
+        other_listener.accept().map(|_| ()).map_err(|e| e.kind()),
+        Err(std::io::ErrorKind::WouldBlock),
+        "a reload of profile `code` must not contact a VM on another profile"
+    );
+    assert!(
+        !other_dir.join("vm/active_profile.toml").exists(),
+        "a reload of profile `code` must not rewrite another profile's active profile"
+    );
+
+    // MCP tool refresh for a `code` server is scoped the same way. With the
+    // `code` VM gone, nothing may be contacted and nothing counted.
+    state.instances.lock().unwrap().remove("code-vm");
+    let Json(refresh) = handle_profile_mcp_server_refresh(
+        State(Arc::clone(&state)),
+        Path(("code".to_string(), "local".to_string())),
+    )
+    .await
+    .expect("mcp refresh");
+    assert_eq!(refresh.instances, 0);
+    assert_eq!(
+        other_listener.accept().map(|_| ()).map_err(|e| e.kind()),
+        Err(std::io::ErrorKind::WouldBlock),
+        "an MCP refresh for profile `code` must not contact a VM on another profile"
+    );
+}
