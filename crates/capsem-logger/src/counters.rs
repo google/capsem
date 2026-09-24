@@ -29,6 +29,16 @@ use crate::writer::{format_timestamp, WriteOp};
 /// gateway carries it. Counting both would count one invocation twice.
 pub const COUNTED_TOOL_ORIGINS: [&str; 4] = ["native", "mcp", "builtin", "local"];
 
+/// The counted origins as a SQL list, for a row query that has to agree with
+/// the counters about what a tool call is: `'native', 'mcp', ...`.
+pub fn counted_tool_origins_sql() -> String {
+    COUNTED_TOOL_ORIGINS
+        .iter()
+        .map(|origin| format!("'{origin}'"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Whether a `tool_calls.origin` counts as a tool call.
 pub fn is_counted_tool_origin(origin: &str) -> bool {
     COUNTED_TOOL_ORIGINS.contains(&origin)

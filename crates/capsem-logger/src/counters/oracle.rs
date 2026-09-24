@@ -11,7 +11,6 @@ use capsem_proto::forensic::SecurityForensicEvent;
 use capsem_proto::ledger_counters::{CredentialCounters, LedgerCounters, ProcessUsage, RuleUsage, ToolUsage};
 use serde_json::Value;
 
-use super::COUNTED_TOOL_ORIGINS;
 use crate::db::{BodyDirection, DbHandle};
 
 async fn rows(db: &DbHandle, sql: &str) -> Vec<Vec<Value>> {
@@ -37,14 +36,6 @@ fn s(value: &Value) -> String {
         .as_str()
         .unwrap_or_else(|| panic!("not text: {value}"))
         .to_string()
-}
-
-fn origins() -> String {
-    COUNTED_TOOL_ORIGINS
-        .iter()
-        .map(|origin| format!("'{origin}'"))
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 pub(crate) async fn counters_from_rows(db: &DbHandle) -> LedgerCounters {
@@ -108,7 +99,7 @@ pub(crate) async fn counters_from_rows(db: &DbHandle) -> LedgerCounters {
         counters.model.usage_details.insert(s(&row[0]), u(&row[1]));
     }
 
-    let origins = origins();
+    let origins = super::counted_tool_origins_sql();
     for row in rows(
         db,
         &format!(

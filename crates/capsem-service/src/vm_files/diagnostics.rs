@@ -208,11 +208,12 @@ pub(crate) async fn session_db_triage(
          FROM net_events WHERE decision = 'denied' OR status_code >= 500 \
          ORDER BY timestamp DESC LIMIT {limit}"
     );
+    let origins = capsem_logger::counters::counted_tool_origins_sql();
     let tool_errors_sql = format!(
         "SELECT timestamp, server_name, method, decision, policy_mode, policy_action, \
                 policy_rule, policy_reason, error_message, duration_ms \
          FROM tool_calls \
-         WHERE origin IN ('native', 'mcp', 'builtin', 'local') \
+         WHERE origin IN ({origins}) \
            AND (decision IN ('denied','error') OR error_message IS NOT NULL) \
          ORDER BY timestamp DESC LIMIT {limit}"
     );
