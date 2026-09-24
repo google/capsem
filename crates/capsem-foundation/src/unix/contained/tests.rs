@@ -342,7 +342,10 @@ fn create_new_refuses_every_existing_entry_including_links() {
             .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{name}: {error}");
     }
-    assert!(!tree.outside.join("target").exists(), "a dangling link was not written through");
+    assert!(
+        !tree.outside.join("target").exists(),
+        "a dangling link was not written through"
+    );
     let mut fresh = tree
         .root
         .open_file(OsStr::new("fresh"), ContainedOpenOptions::write_create_new(0o640))
@@ -373,4 +376,44 @@ fn mode_reads_permission_bits_from_the_descriptor() {
     std::fs::create_dir(tree.root_path.join("dir")).unwrap();
     std::fs::set_permissions(tree.root_path.join("dir"), std::fs::Permissions::from_mode(0o750)).unwrap();
     assert_eq!(tree.root.descend(OsStr::new("dir")).unwrap().mode().unwrap(), 0o750);
+}
+
+#[test]
+fn rename_moves_a_link_as_a_link_and_never_its_target() {
+    let tree = tree();
+    std::fs::write(tree.outside.join("secret"), b"host").unwrap();
+    symlink(tree.outside.join("secret"), tree.root_path.join("image")).unwrap();
+    std::fs::create_dir(tree.root_path.join("host")).unwrap();
+    let host = tree.root.descend(OsStr::new("host")).unwrap();
+
+    tree.root
+        .rename_to(OsStr::new("image"), &host, OsStr::new("image"))
+        .unwrap();
+
+    assert_eq!(host.entry_kind(OsStr::new("image")).unwrap(), Some(EntryKind::Other));
+    assert_eq!(std::fs::read(tree.outside.join("secret")).unwrap(), b"host");
+    assert!(tree.root.entry_kind(OsStr::new("image")).unwrap().is_none());
+    assert!(tree.root.rename_to(OsStr::new("../x"), &host, OsStr::new("y")).is_err());
+    assert!(host
+        .rename_to(OsStr::new("image"), &tree.root, OsStr::new("a/b"))
+        .is_err());
+}
+
+#[test]
+fn remove_symlink_refuses_every_other_entry_type() {
+    let tree = tree();
+    std::fs::write(tree.root_path.join("file"), b"keep").unwrap();
+    std::fs::create_dir(tree.root_path.join("dir")).unwrap();
+    std::fs::write(tree.outside.join("target"), b"keep").unwrap();
+    symlink(tree.outside.join("target"), tree.root_path.join("link")).unwrap();
+
+    for name in ["file", "dir"] {
+        let error = tree.root.remove_symlink(OsStr::new(name)).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput, "{name}: {error}");
+    }
+    tree.root.remove_symlink(OsStr::new("link")).unwrap();
+
+    assert!(tree.root.entry_kind(OsStr::new("link")).unwrap().is_none());
+    assert_eq!(std::fs::read(tree.outside.join("target")).unwrap(), b"keep");
+    assert!(tree.root_path.join("file").is_file() && tree.root_path.join("dir").is_dir());
 }

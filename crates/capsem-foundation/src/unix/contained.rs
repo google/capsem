@@ -12,9 +12,9 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
 use nix::errno::Errno;
-use nix::fcntl::{openat, readlinkat, AtFlags, OFlag};
-use nix::unistd::symlinkat;
+use nix::fcntl::{openat, readlinkat, renameat, AtFlags, OFlag};
 use nix::sys::stat::{fstatat, mkdirat, Mode, SFlag};
+use nix::unistd::symlinkat;
 use nix::unistd::{unlinkat, UnlinkatFlags};
 
 /// A handle on one directory below the containment root.
@@ -271,6 +271,30 @@ impl ContainedDir {
         check_component(name)?;
         symlinkat(target, Some(self.fd.as_raw_fd()), name)?;
         Ok(())
+    }
+
+    /// Move the child `name` to `to_name` below `to`, replacing an existing
+    /// entry there as rename(2) does. Neither name is resolved: a symlink
+    /// moves as the link itself and its target is never touched.
+    pub fn rename_to(&self, name: &OsStr, to: &ContainedDir, to_name: &OsStr) -> io::Result<()> {
+        check_component(name)?;
+        check_component(to_name)?;
+        renameat(Some(self.fd.as_raw_fd()), name, Some(to.fd.as_raw_fd()), to_name)?;
+        Ok(())
+    }
+
+    /// Remove the symlink child `name` without following it. Any other entry
+    /// type is refused, so a caller retiring a link it made cannot delete
+    /// whatever a writer put in its place.
+    pub fn remove_symlink(&self, name: &OsStr) -> io::Result<()> {
+        check_component(name)?;
+        if !self.is_symlink(name)? {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is not a symlink", Path::new(name).display()),
+            ));
+        }
+        unlinkat(Some(self.fd.as_raw_fd()), name, UnlinkatFlags::NoRemoveDir).map_err(Into::into)
     }
 
     fn is_symlink(&self, name: &OsStr) -> io::Result<bool> {
