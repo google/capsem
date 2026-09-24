@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rule_action = "block"`, so the audit trail said the opposite of what
   happened (google/capsem#229, #203).
 
+- A guest DNS query whose audit record the session ledger refuses is now
+  answered SERVFAIL. The resolved answer used to be returned anyway, so a
+  lookup could succeed with no record of it (google/capsem#229).
+
 - A file export from the guest is refused when its security event cannot be
   recorded or evaluated. It used to log a warning and hand the file over
   anyway, so an export could leave the sandbox with no audit trail; exec and
