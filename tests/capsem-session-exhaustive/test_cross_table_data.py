@@ -58,5 +58,10 @@ class TestCrossTableForeignKeys:
         for table in tables:
             if table == "sqlite_sequence":
                 continue
-            cols = [r[1] for r in exhaust_db.execute(f"PRAGMA table_info({table})").fetchall()]
+            info = exhaust_db.execute(f"PRAGMA table_info({table})").fetchall()
+            cols = [r[1] for r in info]
+            # A one-row state table is keyed by a constrained `singleton`
+            # primary key instead: it has no rows to identify.
+            if [r[1] for r in info if r[5]] == ["singleton"]:
+                continue
             assert "id" in cols, f"Table {table} missing 'id' column"
