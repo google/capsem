@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, materialize_test_profiles
+from helpers.session_ledger import open_session_ledger
 
 pytestmark = pytest.mark.integration
 
@@ -747,7 +748,7 @@ def _query(client, sql: str) -> list[dict[str, object]]:
     ]
     db_path = next((path for path in candidates if path.exists()), candidates[0])
     assert db_path.exists(), f"session DB missing at {db_path}"
-    with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
+    with closing(open_session_ledger(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         return [dict(row) for row in conn.execute(sql).fetchall()]
 

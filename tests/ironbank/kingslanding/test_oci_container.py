@@ -9,7 +9,6 @@ import contextlib
 import hashlib
 import json
 import re
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -20,6 +19,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.session_ledger import open_session_ledger
 
 from tests.ironbank.kingslanding.test_run import exec_output_text
 
@@ -112,7 +112,7 @@ def test_offline_oci_adversarial_suite(oci_vm, tmp_path):
     (tmp_path / "oci-rootfs-manifest.json").write_bytes(manifest)
     db_path = vm_session_db_path(service.tmp_dir, client, name)
     service.stop(cleanup=False)  # The DB-owned shutdown barrier makes reads exact.
-    with contextlib.closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as db:
+    with contextlib.closing(open_session_ledger(db_path)) as db:
         rows = db.execute(
             "SELECT exit_code, source, stdout_bytes, stderr_bytes, credential_ref "
             "FROM exec_events WHERE command = ?",

@@ -31,6 +31,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.session_ledger import open_session_ledger
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 CLI_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem"
@@ -263,7 +264,7 @@ def _ledger_decision(value: str | None) -> str | None:
 def _query_mcp_event_rows(db_path: Path):
     if not db_path.exists():
         return []
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = open_session_ledger(db_path)
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
@@ -342,7 +343,7 @@ def _wait_for_mcp_event_row(db_path: Path, predicate, timeout: float = 20.0):
 def _query_tool_rows(db_path: Path):
     if not db_path.exists():
         return []
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = open_session_ledger(db_path)
     conn.row_factory = sqlite3.Row
     try:
         return conn.execute(
@@ -373,7 +374,7 @@ def _wait_for_tool_row(db_path: Path, predicate, timeout: float = 20.0):
 def _query_net_rows(db_path: Path):
     if not db_path.exists():
         return []
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = open_session_ledger(db_path)
     conn.row_factory = sqlite3.Row
     try:
         return conn.execute(

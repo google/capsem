@@ -26,6 +26,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.session_ledger import open_session_ledger
 
 pytestmark = pytest.mark.integration
 
@@ -57,7 +58,7 @@ EXPECTED_MCP_TOOL_FIELDS = {
 @contextmanager
 def _connect_session_db(service: ServiceInstance, client, session_id: str):
     db_path = vm_session_db_path(service.tmp_dir, client, session_id)
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = open_session_ledger(db_path)
     conn.row_factory = sqlite3.Row
     try:
         yield conn

@@ -36,6 +36,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.session_ledger import open_session_ledger
 from helpers.uds_client import UdsHttpClient
 from log_streams import log_stream_files
 
@@ -115,7 +116,7 @@ EICAR_TEXT = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H
 
 def _connect_session_db(service: ServiceInstance, client, session_id: str) -> sqlite3.Connection:
     db_path = vm_session_db_path(service.tmp_dir, client, session_id)
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = open_session_ledger(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 

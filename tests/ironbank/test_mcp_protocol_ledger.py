@@ -30,6 +30,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.session_ledger import open_session_ledger
 from log_streams import assert_service_log_evidence
 
 pytestmark = pytest.mark.integration
@@ -54,7 +55,7 @@ EXPECTED_SECURITY_COLUMNS = {
 
 def _connect_session_db(service: ServiceInstance, session_id: str) -> sqlite3.Connection:
     db_path = vm_session_db_path(service.tmp_dir, service.client(), session_id)
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = open_session_ledger(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -65,7 +66,7 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 def _query_rows(client, session_id: str, sql: str) -> list[dict]:
     db_path = vm_session_db_path(Path(client.socket_path).parent, client, session_id)
-    with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
+    with closing(open_session_ledger(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         return [dict(row) for row in conn.execute(sql).fetchall()]
 

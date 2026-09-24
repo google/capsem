@@ -4,10 +4,10 @@ import contextlib
 import json
 import re
 import socket
-import sqlite3
 
 import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.session_ledger import open_session_ledger
 
 from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_publish import redis
@@ -74,7 +74,7 @@ def test_container_pull_policy_stops_before_registry_egress_and_redacts_credenti
 
         kept = sorted((service.tmp_dir / "sessions").glob(f"{vm_id}-failed-*"))
         assert len(kept) == 1, f"the refused create's ledger is kept: {kept}"
-        with contextlib.closing(sqlite3.connect(f"file:{kept[0] / 'session.db'}?mode=ro", uri=True)) as db:
+        with contextlib.closing(open_session_ledger(kept[0] / 'session.db')) as db:
             rows = [
                 {"event_type": event_type, "event_json": event_json}
                 for event_type, event_json in db.execute("SELECT event_type, event_json FROM security_rule_events")

@@ -37,6 +37,7 @@ from helpers.service import (
     vm_session_dir,
     wait_exec_ready,
 )
+from helpers.session_ledger import open_session_ledger
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_config import HERMETIC_OPENAI_PRICED_MODEL
 from ironbank.model_client_scripts import (
@@ -443,7 +444,7 @@ def _assert_openai_embeddings_and_image_ledger(model_client_env: ModelClientEnv)
     assert result["image_model"] == "gpt-5-image-mini"
     assert result["image_b64"] == "Y2Fwc2VtLW1vY2staW1hZ2U="
 
-    with closing(sqlite3.connect(f"file:{model_client_env.db_path}?mode=ro", uri=True)) as conn:
+    with closing(open_session_ledger(model_client_env.db_path)) as conn:
         conn.row_factory = sqlite3.Row
         upstream_records = [
             json.loads(line)
@@ -618,7 +619,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
 
     import sqlite3
 
-    with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
+    with closing(open_session_ledger(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         tables = {
             row[0]
