@@ -27,8 +27,15 @@ def measure(path: Path, allocated_seen: set[tuple[int, int]]) -> Measure:
         if stat.S_ISLNK(mode):
             continue
         if stat.S_ISDIR(mode):
-            with os.scandir(current) as children:
-                stack.extend(Path(child.path) for child in children)
+            try:
+                with os.scandir(current) as children:
+                    stack.extend(Path(child.path) for child in children)
+            except PermissionError:
+                # A dead test can leave a directory unreadable. Measuring only
+                # reads, so it cannot take the directory back; it dates the
+                # entry by the directory itself and lets removal, which owns
+                # the tree, deal with the contents.
+                last_used = max(last_used, metadata.st_mtime_ns)
             continue
         if stat.S_ISREG(mode):
             logical += metadata.st_size

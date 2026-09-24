@@ -109,6 +109,29 @@ def mutation_locks(paths: CachePaths, stage_ids: Iterable[str]) -> Iterator[tupl
                 _tag_cargo_target(lock.parent.parent)
 
 
+@contextmanager
+def shared_use(paths: CachePaths, stage_id: str) -> Iterator[None]:
+    """Hold a stage's mutation locks shared while reading from or publishing into it.
+
+    A prune takes the same locks exclusively before removing anything, and an
+    inventory taken while one is held protects the whole stage. A reader
+    therefore never loses the bytes a receipt promised it between reading the
+    receipt and linking them out, and a publisher never has a fresh object
+    collected before the receipt naming it is written. The lock is shared, so
+    readers never wait for each other; one waits only on a removal in flight.
+    """
+    with ExitStack() as stack:
+        root = paths.stage(stage_id)
+        for relative in sorted(paths.policy.stages[stage_id].mutation_locks):
+            lock = root / relative
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = stack.enter_context(os.fdopen(
+                os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), "a+b",
+            ))
+            fcntl.flock(descriptor, fcntl.LOCK_SH)
+        yield
+
+
 def _tag_cargo_target(root: Path) -> None:
     """Tag `<root>`, which holding `<root>/<profile>/.cargo-lock` created before
     Cargo could: untagged, cargo-llvm-cov's clean aborted and instrumented

@@ -222,3 +222,45 @@ def test_apply_refuses_a_target_through_a_symlinked_parent(tmp_path: Path) -> No
     with pytest.raises(ValueError, match="outside cache stage"):
         apply_prune(cache_paths, plan(link / "keep"), reason="bad nested plan")
     assert victim.read_text() == "preserve"
+
+
+def test_apply_removes_an_entry_holding_a_read_only_directory(tmp_path: Path) -> None:
+    """A test that makes a directory unwritable and dies before restoring it
+    leaves this behind; the cache owns the tree, so it must still go.
+
+    Seen on a live machine: one such directory under the shared test temp
+    root failed every later prune, and with it every release lane."""
+    cache_paths = paths(tmp_path)
+    target = cache_paths.stage("objects") / "old"
+    locked = target / "ledger"
+    locked.mkdir(parents=True)
+    (locked / "session.db").write_bytes(b"db")
+    unreadable = target / "sealed"
+    unreadable.mkdir()
+    (unreadable / "body").write_bytes(b"x")
+    locked.chmod(0o500)
+    unreadable.chmod(0o000)
+
+    result = apply_prune(cache_paths, plan(target), reason="stale test run")
+
+    assert not target.exists()
+    assert result.removed == (target,)
+
+
+def test_making_a_tree_removable_never_touches_a_symlink_target(tmp_path: Path) -> None:
+    cache_paths = paths(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside.chmod(0o500)
+    target = cache_paths.stage("objects") / "old"
+    locked = target / "ledger"
+    locked.mkdir(parents=True)
+    (locked / "escape").symlink_to(outside)
+    locked.chmod(0o500)
+
+    apply_prune(cache_paths, plan(target), reason="stale test run")
+
+    assert not target.exists()
+    assert outside.exists()
+    assert oct(outside.stat().st_mode & 0o777) == oct(0o500), "the symlink's target kept its mode"
+    outside.chmod(0o700)

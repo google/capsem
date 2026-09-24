@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -15,6 +16,7 @@ import blake3
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
 from ..cache.config import load_paths
+from ..cache.leases import shared_use
 from ..cache.objects import ObjectRef, digest_file, import_file, materialize
 from ..cache.paths import CachePaths
 
@@ -126,6 +128,17 @@ def _receipt(paths: CachePaths, component: str, identity: str) -> Path:
     return paths.stage("objects") / "components" / component / f"{identity}.json"
 
 
+def _mark_used(paths: CachePaths, component: str, identity: str) -> None:
+    """Move the receipt's clock: least-recently-used retention reads it.
+
+    Only the receipt is touched. Its objects are hardlinked into build outputs,
+    so moving their times would move the times of those outputs too.
+    """
+    # Pruned since it was read: the outputs found are still exact.
+    with contextlib.suppress(FileNotFoundError):
+        os.utime(_receipt(paths, component, identity))
+
+
 def _load_receipt(paths: CachePaths, component: str, identity: str) -> ComponentReceipt | None:
     receipt_path = _receipt(paths, component, identity)
     if not receipt_path.is_file():
@@ -169,6 +182,7 @@ def current(
         ):
             return None
         found.append(candidate)
+    _mark_used(paths, component, identity)
     return tuple(found)
 
 
@@ -182,15 +196,26 @@ def restore(
     paths = _paths(repository)
     if not _checkout_output(repository, paths, output):
         return None
-    receipt = _load_receipt(paths, component, identity)
-    if receipt is None:
-        return None
-    restored: list[Path] = []
-    for relative, reference in sorted(receipt.files.items()):
-        destination = output / relative
-        materialize(paths, reference, destination)
-        restored.append(destination)
-    return tuple(restored)
+    with shared_use(paths, "objects"):
+        receipt = _load_receipt(paths, component, identity)
+        if receipt is None:
+            return None
+        restored: list[Path] = []
+        try:
+            for relative, reference in sorted(receipt.files.items()):
+                destination = output / relative
+                materialize(paths, reference, destination)
+                restored.append(destination)
+        except ValueError:
+            # Retention collects objects, and a receipt that outlived one names
+            # bytes that are gone. That is a miss: the caller rebuilds and its
+            # store republishes the receipt whole. What was already linked out
+            # goes, so a generation is never left half-restored.
+            for destination in restored:
+                destination.unlink(missing_ok=True)
+            return None
+        _mark_used(paths, component, identity)
+        return tuple(restored)
 
 
 def store(
@@ -204,16 +229,19 @@ def store(
     paths = _paths(repository)
     if not _checkout_output(repository, paths, output):
         return None
-    files = {relative: import_file(paths, output / relative) for relative in relatives}
-    receipt = ComponentReceipt(
-        schema_id=SCHEMA, component=component, input_digest=identity, files=files
-    )
-    destination = _receipt(paths, component, identity)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(f".{destination.name}.{secrets.token_hex(6)}")
-    try:
-        temporary.write_text(receipt.model_dump_json(indent=2) + "\n", encoding="utf-8")
-        temporary.replace(destination)
-    finally:
-        temporary.unlink(missing_ok=True)
+    # Held until the receipt names them, so no prune collects fresh objects
+    # as unreferenced in between.
+    with shared_use(paths, "objects"):
+        files = {relative: import_file(paths, output / relative) for relative in relatives}
+        receipt = ComponentReceipt(
+            schema_id=SCHEMA, component=component, input_digest=identity, files=files
+        )
+        destination = _receipt(paths, component, identity)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(f".{destination.name}.{secrets.token_hex(6)}")
+        try:
+            temporary.write_text(receipt.model_dump_json(indent=2) + "\n", encoding="utf-8")
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
     return receipt

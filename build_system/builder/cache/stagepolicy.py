@@ -25,6 +25,9 @@ class StagePolicy(CacheContract):
     retention_root: Path | None = None
     #: Cargo target directories retained one compilation unit at a time.
     cargo_target_roots: tuple[Path, ...] = ()
+    #: A content-addressed object store, retained one receipt generation at a
+    #: time with the objects no other receipt names (see `objectunits`).
+    object_store: StrictBool = False
     selector_globs: tuple[str, ...] = ()
     maximum_age_hours: PositiveInt
     maximum_count: PositiveInt | None = None
@@ -56,6 +59,10 @@ class StagePolicy(CacheContract):
         object.__setattr__(self, "cargo_target_roots", tuple(
             _relative_descendant(path, field="cargo target root") for path in self.cargo_target_roots
         ))
+        if self.object_store and (
+            self.cargo_target_roots or self.retention_root is not None or self.entry_root != Path(".")
+        ):
+            raise ValueError("object_store stages are retained by receipt; drop other entry layouts")
         if self.cargo_target_roots and self.retention_root is not None:
             raise ValueError("cargo_target_roots already retain incremental sessions; drop retention_root")
         object.__setattr__(self, "mutation_locks", tuple(
