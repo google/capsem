@@ -171,18 +171,6 @@ fn update_status_nonexistent_is_noop() {
 }
 
 #[test]
-fn update_request_counts_works() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
-        .unwrap();
-    idx.update_request_counts("20260225-143052-a7f3", 10, 7, 3).unwrap();
-    let records = idx.recent(1).unwrap();
-    assert_eq!(records[0].total_requests, 10);
-    assert_eq!(records[0].allowed_requests, 7);
-    assert_eq!(records[0].denied_requests, 3);
-}
-
-#[test]
 fn count_correct() {
     let idx = SessionIndex::open_in_memory().unwrap();
     assert_eq!(idx.count().unwrap(), 0);
@@ -348,76 +336,21 @@ fn new_columns_default_to_zero() {
     assert_eq!(records[0].total_file_events, 0);
 }
 
-// -- update_session_summary --
+// -- replace_*_usage: per-session usage rows in main.db --
 
-#[test]
-fn update_session_summary_works() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
+/// `(key, call_count)` rows of one usage table, in key order.
+fn usage_rows(idx: &SessionIndex, sql: &str) -> Vec<(String, i64)> {
+    let mut stmt = idx.conn.prepare(sql).unwrap();
+    let rows = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
         .unwrap();
-    idx.update_session_summary("20260225-143052-a7f3", 1000, 500, 0.15, 42, 100)
-        .unwrap();
-    let records = idx.recent(1).unwrap();
-    assert_eq!(records[0].total_input_tokens, 1000);
-    assert_eq!(records[0].total_output_tokens, 500);
-    assert!((records[0].total_estimated_cost - 0.15).abs() < 1e-6);
-    assert_eq!(records[0].total_tool_calls, 42);
-    assert_eq!(records[0].total_file_events, 100);
-}
-
-// -- global_stats --
-
-#[test]
-fn global_stats_empty() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-    let gs = idx.global_stats().unwrap();
-    assert_eq!(gs.total_sessions, 0);
-    assert_eq!(gs.total_input_tokens, 0);
-    assert_eq!(gs.total_estimated_cost, 0.0);
+    rows
 }
 
 #[test]
-fn global_stats_multi_session() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-    let mut r1 = sample_record("20260225-143052-a7f3", "stopped");
-    r1.total_input_tokens = 1000;
-    r1.total_output_tokens = 500;
-    r1.total_estimated_cost = 0.10;
-    r1.total_tool_calls = 20;
-    r1.total_file_events = 50;
-    r1.total_requests = 10;
-    r1.allowed_requests = 8;
-    r1.denied_requests = 2;
-    idx.create_session(&r1).unwrap();
-
-    let mut r2 = sample_record("20260225-143053-b8e4", "stopped");
-    r2.created_at = "2026-02-25T14:30:53Z".to_string();
-    r2.total_input_tokens = 2000;
-    r2.total_output_tokens = 1000;
-    r2.total_estimated_cost = 0.20;
-    r2.total_tool_calls = 30;
-    r2.total_file_events = 25;
-    r2.total_requests = 5;
-    r2.allowed_requests = 4;
-    r2.denied_requests = 1;
-    idx.create_session(&r2).unwrap();
-
-    let gs = idx.global_stats().unwrap();
-    assert_eq!(gs.total_sessions, 2);
-    assert_eq!(gs.total_input_tokens, 3000);
-    assert_eq!(gs.total_output_tokens, 1500);
-    assert!((gs.total_estimated_cost - 0.30).abs() < 1e-6);
-    assert_eq!(gs.total_tool_calls, 50);
-    assert_eq!(gs.total_file_events, 75);
-    assert_eq!(gs.total_requests, 15);
-    assert_eq!(gs.total_allowed, 12);
-    assert_eq!(gs.total_denied, 3);
-}
-
-// -- replace_ai_usage + top_providers --
-
-#[test]
-fn replace_ai_usage_and_top_providers() {
+fn replace_ai_usage_writes_one_row_per_provider() {
     let idx = SessionIndex::open_in_memory().unwrap();
     idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
         .unwrap();
@@ -442,11 +375,21 @@ fn replace_ai_usage_and_top_providers() {
     ];
     idx.replace_ai_usage("20260225-143052-a7f3", &usage).unwrap();
 
-    let providers = idx.top_providers(10).unwrap();
-    assert_eq!(providers.len(), 2);
-    assert_eq!(providers[0].provider, "anthropic"); // highest call_count first
-    assert_eq!(providers[0].call_count, 10);
-    assert_eq!(providers[1].provider, "google");
+    let (tokens, cost): (i64, f64) = idx
+        .conn
+        .query_row(
+            "SELECT input_tokens, estimated_cost FROM ai_usage
+             WHERE session_id = '20260225-143052-a7f3' AND provider = 'anthropic'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(tokens, 5000);
+    assert!((cost - 0.10).abs() < 1e-9);
+    assert_eq!(
+        usage_rows(&idx, "SELECT provider, call_count FROM ai_usage ORDER BY provider"),
+        vec![("anthropic".to_string(), 10), ("google".to_string(), 5)]
+    );
 }
 
 #[test]
@@ -475,16 +418,14 @@ fn replace_ai_usage_replaces_old_data() {
     }];
     idx.replace_ai_usage("20260225-143052-a7f3", &new).unwrap();
 
-    let providers = idx.top_providers(10).unwrap();
-    assert_eq!(providers.len(), 1);
-    assert_eq!(providers[0].provider, "openai");
-    assert_eq!(providers[0].call_count, 20);
+    assert_eq!(
+        usage_rows(&idx, "SELECT provider, call_count FROM ai_usage ORDER BY provider"),
+        vec![("openai".to_string(), 20)]
+    );
 }
 
-// -- replace_tool_usage + top_tools --
-
 #[test]
-fn replace_tool_usage_and_top_tools() {
+fn replace_tool_usage_writes_one_row_per_tool() {
     let idx = SessionIndex::open_in_memory().unwrap();
     idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
         .unwrap();
@@ -505,16 +446,14 @@ fn replace_tool_usage_and_top_tools() {
     ];
     idx.replace_tool_usage("20260225-143052-a7f3", &usage).unwrap();
 
-    let tools = idx.top_tools(10).unwrap();
-    assert_eq!(tools.len(), 2);
-    assert_eq!(tools[0].tool_name, "read_file"); // highest count first
-    assert_eq!(tools[0].call_count, 50);
+    assert_eq!(
+        usage_rows(&idx, "SELECT tool_name, call_count FROM tool_usage ORDER BY tool_name"),
+        vec![("read_file".to_string(), 50), ("write_file".to_string(), 30)]
+    );
 }
 
-// -- replace_mcp_usage + top_mcp_tools --
-
 #[test]
-fn replace_mcp_usage_and_top_mcp_tools() {
+fn replace_mcp_usage_writes_one_row_per_server_tool() {
     let idx = SessionIndex::open_in_memory().unwrap();
     idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
         .unwrap();
@@ -537,53 +476,16 @@ fn replace_mcp_usage_and_top_mcp_tools() {
     ];
     idx.replace_mcp_usage("20260225-143052-a7f3", &usage).unwrap();
 
-    let tools = idx.top_mcp_tools(10).unwrap();
-    assert_eq!(tools.len(), 2);
-    assert_eq!(tools[0].tool_name, "github__search");
-    assert_eq!(tools[0].server_name, "github");
-    assert_eq!(tools[0].call_count, 15);
-}
-
-// -- Cross-session aggregation --
-
-#[test]
-fn top_providers_aggregates_across_sessions() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
-        .unwrap();
-    let mut r2 = sample_record("20260225-143053-b8e4", "stopped");
-    r2.created_at = "2026-02-25T14:30:53Z".to_string();
-    idx.create_session(&r2).unwrap();
-
-    idx.replace_ai_usage(
-        "20260225-143052-a7f3",
-        &[ProviderSummary {
-            provider: "anthropic".into(),
-            call_count: 10,
-            input_tokens: 5000,
-            output_tokens: 2000,
-            estimated_cost: 0.10,
-            total_duration_ms: 3000,
-        }],
-    )
-    .unwrap();
-    idx.replace_ai_usage(
-        "20260225-143053-b8e4",
-        &[ProviderSummary {
-            provider: "anthropic".into(),
-            call_count: 5,
-            input_tokens: 2000,
-            output_tokens: 1000,
-            estimated_cost: 0.05,
-            total_duration_ms: 1000,
-        }],
-    )
-    .unwrap();
-
-    let providers = idx.top_providers(10).unwrap();
-    assert_eq!(providers.len(), 1); // grouped by provider
-    assert_eq!(providers[0].call_count, 15);
-    assert_eq!(providers[0].input_tokens, 7000);
+    assert_eq!(
+        usage_rows(
+            &idx,
+            "SELECT server_name || '/' || tool_name, call_count FROM mcp_usage ORDER BY server_name"
+        ),
+        vec![
+            ("filesystem/fs__read".to_string(), 8),
+            ("github/github__search".to_string(), 15)
+        ]
+    );
 }
 
 // -- Schema migration v2->v3 --
@@ -1053,45 +955,29 @@ fn v6_schema_has_forked_from_and_persistent() {
 }
 
 #[test]
-fn top_mcp_tools_groups_by_server_name() {
+fn mcp_usage_keys_the_same_tool_name_by_server() {
     let idx = SessionIndex::open_in_memory().unwrap();
     let s1 = content_session("s1", "2026-03-01T10:00:00Z", "stopped", 10, 5, 1);
-    let s2 = content_session("s2", "2026-03-02T10:00:00Z", "stopped", 10, 5, 1);
     idx.create_session(&s1).unwrap();
-    idx.create_session(&s2).unwrap();
 
-    // Same tool_name "search" from different servers in different sessions
-    idx.replace_mcp_usage(
-        "s1",
-        &[McpToolSummary {
-            tool_name: "search".into(),
-            server_name: "github".into(),
-            call_count: 3,
-            total_bytes: 100,
-            total_duration_ms: 50,
-        }],
-    )
-    .unwrap();
-    idx.replace_mcp_usage(
-        "s2",
-        &[McpToolSummary {
-            tool_name: "search".into(),
-            server_name: "jira".into(),
-            call_count: 2,
-            total_bytes: 80,
-            total_duration_ms: 40,
-        }],
-    )
-    .unwrap();
+    // Same tool_name "search" from two servers in one session: the usage key
+    // includes the server, so neither row overwrites the other.
+    let search = |server_name: &str, call_count| McpToolSummary {
+        tool_name: "search".into(),
+        server_name: server_name.into(),
+        call_count,
+        total_bytes: 100,
+        total_duration_ms: 50,
+    };
+    idx.replace_mcp_usage("s1", &[search("github", 3), search("jira", 2)])
+        .unwrap();
 
-    let results = idx.top_mcp_tools(10).unwrap();
-    // Should return 2 entries (one per server), not merge them into 1
     assert_eq!(
-        results.len(),
-        2,
+        usage_rows(
+            &idx,
+            "SELECT server_name, call_count FROM mcp_usage WHERE tool_name = 'search' ORDER BY server_name"
+        ),
+        vec![("github".to_string(), 3), ("jira".to_string(), 2)],
         "same tool_name from different servers should be separate rows"
     );
-    let servers: Vec<&str> = results.iter().map(|r| r.server_name.as_str()).collect();
-    assert!(servers.contains(&"github"), "github server missing");
-    assert!(servers.contains(&"jira"), "jira server missing");
 }

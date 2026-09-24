@@ -172,7 +172,7 @@ async fn test_file_event_search() {
 }
 
 #[tokio::test]
-async fn test_file_event_stats() {
+async fn test_file_event_counters() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("fs-stats.db");
 
@@ -203,12 +203,11 @@ async fn test_file_event_stats() {
         .await;
     drop(writer);
 
-    let reader = DbReader::open(&path).unwrap();
-    let stats = reader.file_event_stats().unwrap();
-    assert_eq!(stats.total, 4);
-    assert_eq!(stats.created, 2);
-    assert_eq!(stats.modified, 1);
-    assert_eq!(stats.deleted, 1);
+    let files = ledger_counters(&path).await.files;
+    assert_eq!(files.events, 4);
+    assert_eq!(files.by_action["created"], 2);
+    assert_eq!(files.by_action["modified"], 1);
+    assert_eq!(files.by_action["deleted"], 1);
 }
 
 #[tokio::test]
@@ -222,11 +221,9 @@ async fn test_file_event_empty_table() {
     let reader = DbReader::open(&path).unwrap();
     let events = reader.recent_file_events(10).unwrap();
     assert!(events.is_empty());
-    let stats = reader.file_event_stats().unwrap();
-    assert_eq!(stats.total, 0);
-    assert_eq!(stats.created, 0);
-    assert_eq!(stats.modified, 0);
-    assert_eq!(stats.deleted, 0);
+    let files = ledger_counters(&path).await.files;
+    assert_eq!(files.events, 0);
+    assert!(files.by_action.is_empty(), "{:?}", files.by_action);
 }
 
 /// Fixture DB should contain fs_events rows inserted during fixture setup.
@@ -235,11 +232,12 @@ fn test_file_events_in_fixture() {
     let reader = fixture_reader();
     let events = reader.recent_file_events(100).unwrap();
     assert!(!events.is_empty(), "fixture should contain fs_events");
-    let stats = reader.file_event_stats().unwrap();
-    assert!(stats.total > 0);
-    assert!(stats.created > 0);
-    assert!(stats.modified > 0);
-    assert!(stats.deleted > 0);
+    for action in ["created", "modified", "deleted"] {
+        assert!(
+            events.iter().any(|e| e.action.as_str() == action),
+            "fixture should contain a {action} fs_event"
+        );
+    }
     // Verify all actions parse correctly
     for e in &events {
         assert!(
@@ -448,13 +446,15 @@ async fn test_file_event_batch_write() {
     }
     drop(writer);
 
+    let files = ledger_counters(&path).await.files;
+    assert_eq!(files.events, 500);
+    assert_eq!(files.by_action["created"], 167); // 0,3,6,...,498 -> ceil(500/3) = 167
+    assert_eq!(files.by_action["modified"], 167); // 1,4,7,...,499
+    assert_eq!(files.by_action["deleted"], 166); // 2,5,8,...,497
+
+    // Every row landed, and a limit query returns at most the requested count.
     let reader = DbReader::open(&path).unwrap();
-    let stats = reader.file_event_stats().unwrap();
-    assert_eq!(stats.total, 500);
-    assert_eq!(stats.created, 167); // 0,3,6,...,498 -> ceil(500/3) = 167
-    assert_eq!(stats.modified, 167); // 1,4,7,...,499
-    assert_eq!(stats.deleted, 166); // 2,5,8,...,497
-                                    // Limit query returns at most the requested count
+    assert_eq!(count_rows(&reader, "SELECT COUNT(*) FROM fs_events"), 500);
     let events = reader.recent_file_events(50).unwrap();
     assert_eq!(events.len(), 50);
 }
@@ -486,8 +486,9 @@ async fn test_file_event_concurrent_writes() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let stats = reader.file_event_stats().unwrap();
-    assert_eq!(stats.total, 500); // 10 threads x 50 events
+    // 10 threads x 50 events, every row landed and every row counted.
+    assert_eq!(count_rows(&reader, "SELECT COUNT(*) FROM fs_events"), 500);
+    assert_eq!(ledger_counters(&path).await.files.events, 500);
 }
 
 /// An `fs_events` an older build wrote is refused by name, not adopted.
@@ -749,9 +750,11 @@ async fn an_overflow_marker_is_not_counted_or_grouped_as_a_file_event() {
         .unwrap();
     assert_eq!(real, (Some("project".to_string()), Some("app.js".to_string())));
 
-    let reader = DbReader::open(&path).unwrap();
-    let stats = reader.file_event_stats().unwrap();
-    assert_eq!(stats.total, 1, "the marker is not a file event");
-    assert_eq!(stats.created, 1);
-    assert_eq!(stats.overflow_windows, 1, "but it is counted as what it is");
+    // The snapshot counts the marker under its own action, so every surface
+    // can subtract it from the file-event total: it is not a change to a
+    // path, but it is counted as what it is.
+    let files = ledger_counters(&path).await.files;
+    assert_eq!(files.events, 2);
+    assert_eq!(files.by_action["created"], 1);
+    assert_eq!(files.by_action["overflow"], 1);
 }

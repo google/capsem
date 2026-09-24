@@ -206,14 +206,11 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id
         ON model_calls(trace_id);
 
-    -- The indexes the polled session summary runs on. `stats/summary` is asked
-    -- for on a timer, per VM, by the TUI and the desktop UI, and the service
-    -- answers it from the file rather than a RAM mirror -- so these three
-    -- aggregates are the most repeated reads in the product. Each is covering:
-    -- SQLite sums the counters out of the index and never touches a table row,
-    -- which matters because `net_events` and `model_calls` carry headers, body
-    -- previews and assistant text that the summary has no use for.
-    -- `reader/tests/query_plan.rs` fails if any of them stops being used.
+    -- Covering indexes built for the SQL session summary, which aggregated
+    -- these tables on every `stats/summary` poll. That route now reads the
+    -- writer's counter snapshot (`counters.rs`) instead, so no test guards
+    -- that these are still used; the service's diagnostics and detail queries
+    -- that filter on `decision` and `origin` are their remaining readers.
     CREATE INDEX IF NOT EXISTS idx_net_events_decision_bytes
         ON net_events(decision, bytes_sent, bytes_received);
     CREATE INDEX IF NOT EXISTS idx_model_calls_usage_totals

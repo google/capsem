@@ -304,58 +304,6 @@ fn reader_rejects_semicolon_injection() {
     assert!(check.is_ok(), "net_events must survive semicolon injection attempt");
 }
 
-// ── reader: domain counts ──────────────────────────────────────────
-
-#[test]
-fn fixture_top_domains_non_empty() {
-    let reader = fixture_reader();
-    let domains = reader.top_domains(5).unwrap();
-    assert!(!domains.is_empty(), "fixture should have domain data");
-    for d in &domains {
-        assert!(!d.domain.is_empty());
-        assert!(d.count > 0);
-        // count >= allowed + denied because errors are counted in total but not in either bucket
-        assert!(d.count >= d.allowed + d.denied);
-    }
-}
-
-// ── reader: token usage by provider ────────────────────────────────
-
-#[test]
-fn fixture_token_usage_non_empty() {
-    let reader = fixture_reader();
-    let usage = reader.token_usage_by_provider().unwrap();
-    assert!(!usage.is_empty(), "fixture should have model call data");
-    for u in &usage {
-        assert!(!u.provider.is_empty());
-        assert!(u.call_count > 0);
-    }
-}
-
-// ── reader: trace queries ──────────────────────────────────────────
-
-#[test]
-fn fixture_recent_traces_non_empty() {
-    let reader = fixture_reader();
-    let traces = reader.recent_traces(10).unwrap();
-    assert!(!traces.is_empty(), "fixture should have trace data");
-    for t in &traces {
-        assert!(!t.trace_id.is_empty());
-        assert!(t.call_count > 0);
-        assert!(t.started_at <= t.ended_at);
-    }
-}
-
-#[test]
-fn fixture_trace_detail_loads_tools() {
-    let reader = fixture_reader();
-    let traces = reader.recent_traces(1).unwrap();
-    assert!(!traces.is_empty());
-    let detail = reader.trace_detail(&traces[0].trace_id).unwrap();
-    assert_eq!(detail.trace_id, traces[0].trace_id);
-    assert!(!detail.calls.is_empty());
-}
-
 // ── writer+reader: model call with usage_details roundtrip ─────────
 
 #[tokio::test]
@@ -373,9 +321,13 @@ async fn model_call_usage_details_roundtrip() {
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
-    let stats = reader.session_stats().unwrap();
-    assert_eq!(*stats.total_usage_details.get("cache_read").unwrap_or(&0), 800);
-    assert_eq!(*stats.total_usage_details.get("thinking").unwrap_or(&0), 200);
+    let calls = reader.recent_model_calls(1).unwrap();
+    assert_eq!(calls[0].1.usage_details.get("cache_read"), Some(&800));
+    assert_eq!(calls[0].1.usage_details.get("thinking"), Some(&200));
+
+    let usage_details = ledger_counters(&path).await.model.usage_details;
+    assert_eq!(usage_details.get("cache_read"), Some(&800));
+    assert_eq!(usage_details.get("thinking"), Some(&200));
 }
 
 // ── writer+reader: tool_calls + tool_responses roundtrip ───────────
@@ -423,65 +375,26 @@ async fn model_call_tool_data_roundtrip() {
 
     let reader = DbReader::open(&path).unwrap();
 
-    // Verify via trace_detail
-    let detail = reader.trace_detail("trace-tools").unwrap();
-    assert_eq!(detail.calls.len(), 1);
-    let mc = &detail.calls[0];
-    assert_eq!(mc.call.tool_calls.len(), 2);
-    assert_eq!(mc.call.tool_calls[0].tool_name, "get_weather");
-    assert_eq!(mc.call.tool_calls[1].tool_name, "search");
-    assert_eq!(mc.call.tool_responses.len(), 1);
-    assert_eq!(mc.call.tool_responses[0].call_id, "call_prev");
-    assert!(!mc.call.tool_responses[0].is_error);
+    // The tool data landed attached to its model call.
+    let calls = reader.recent_model_calls(10).unwrap();
+    assert_eq!(calls.len(), 1);
+    let (model_call_id, call) = &calls[0];
+    assert_eq!(call.trace_id.as_deref(), Some("trace-tools"));
+    let tool_calls = reader.tool_calls_for(*model_call_id).unwrap();
+    assert_eq!(tool_calls.len(), 2);
+    assert_eq!(tool_calls[0].tool_name, "get_weather");
+    assert_eq!(tool_calls[1].tool_name, "search");
+    let tool_responses = reader.tool_responses_for(*model_call_id).unwrap();
+    assert_eq!(tool_responses.len(), 1);
+    assert_eq!(tool_responses[0].call_id, "call_prev");
+    assert!(!tool_responses[0].is_error);
 
-    // Also verify tool_usage_frequency
-    let freq = reader.tool_usage_frequency(10).unwrap();
-    assert_eq!(freq.len(), 2);
-
-    // Also verify session_stats tool count
-    let stats = reader.session_stats().unwrap();
-    assert_eq!(stats.total_tool_calls, 2);
-}
-
-#[tokio::test]
-async fn net_events_over_time_buckets_correctly() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("test.db");
-    let writer = DbWriter::open(&path, 64).unwrap();
-
-    // Insert events: one right now, one 30 mins ago, one 2 hours ago.
-    let now = SystemTime::now();
-    let mut ev1 = sample_net_event("now.com", Decision::Allowed);
-    ev1.timestamp = now;
-    let mut ev2 = sample_net_event("30m-ago.com", Decision::Denied);
-    ev2.timestamp = now - Duration::from_secs(30 * 60);
-    let mut ev3 = sample_net_event("2h-ago.com", Decision::Allowed);
-    ev3.timestamp = now - Duration::from_secs(150 * 60);
-
-    writer.write(WriteOp::NetEvent(ev1)).await;
-    writer.write(WriteOp::NetEvent(ev2)).await;
-    writer.write(WriteOp::NetEvent(ev3)).await;
-
-    // Explicitly drop writer to flush all pending async writes
-    drop(writer);
-
-    let reader = DbReader::open(&path).unwrap();
-
-    // Bucket by 60 mins (1 hour), get last 3 hours (3 buckets)
-    // bucket 0: 3 hours ago -> 2 hours ago (ev3)
-    // bucket 1: 2 hours ago -> 1 hour ago (no events)
-    // bucket 2: 1 hour ago -> now (ev1, ev2)
-    let buckets = reader.net_events_over_time(60, 3).unwrap();
-    assert_eq!(buckets.len(), 3);
-
-    assert_eq!(buckets[0].allowed, 1);
-    assert_eq!(buckets[0].denied, 0);
-
-    assert_eq!(buckets[1].allowed, 0);
-    assert_eq!(buckets[1].denied, 0);
-
-    assert_eq!(buckets[2].allowed, 1);
-    assert_eq!(buckets[2].denied, 1);
+    // And both calls were counted, once each, under their own names.
+    let tools = ledger_counters(&path).await.tools;
+    assert_eq!(tools.calls, 2);
+    assert_eq!(tools.by_tool.len(), 2);
+    assert_eq!(tools.by_tool["get_weather"].calls, 1);
+    assert_eq!(tools.by_tool["search"].calls, 1);
 }
 
 // ── MCP call tests ────────────────────────────────────────────────────

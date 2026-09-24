@@ -221,3 +221,23 @@ fn parse_query_result(json: &str) -> (Vec<String>, Vec<BTreeMap<String, serde_js
         .collect();
     (columns, rows)
 }
+
+/// The counter snapshot the writer committed beside its rows, read the way
+/// the service reads it: through an external reader handle.
+async fn ledger_counters(path: &std::path::Path) -> capsem_logger::counters::LedgerCounters {
+    capsem_logger::DbHandle::open_external_reader(path)
+        .unwrap()
+        .ledger_counters()
+        .await
+        .unwrap()
+}
+
+/// The single integer a `SELECT COUNT(*) ...` returns, read back through the
+/// reader's raw-query path so the count is of rows that actually landed.
+fn count_rows(reader: &DbReader, sql: &str) -> u64 {
+    let (_, rows) = parse_query_result(&reader.query_raw(sql).unwrap());
+    let [row] = rows.as_slice() else {
+        panic!("{sql} returned {} rows, expected 1", rows.len());
+    };
+    row.values().next().and_then(serde_json::Value::as_u64).unwrap()
+}

@@ -71,10 +71,6 @@ consumers = [
 ]
 symbols = [
   "fixture_query_raw_select",
-  "fixture_recent_traces_non_empty",
-  "fixture_token_usage_non_empty",
-  "fixture_top_domains_non_empty",
-  "fixture_trace_detail_loads_tools",
   "query_raw_aggregate",
   "query_raw_empty_result",
   "query_raw_integer_and_null_types",

@@ -158,9 +158,8 @@ async fn history_routes_read_history_ledger_from_session_db() {
     writer.shutdown_blocking();
 
     let reader = capsem_logger::DbReader::open(&db_path).unwrap();
-    let direct_counts = reader.history_counts().unwrap();
-    assert_eq!(direct_counts.exec_count, 1);
-    assert_eq!(direct_counts.audit_count, 1);
+    assert_eq!(reader.recent_exec_events(10).unwrap().len(), 1);
+    assert_eq!(reader.recent_audit_events(10).unwrap().len(), 1);
     let (status, counts) = route_request(
         app.clone(),
         axum::http::Method::GET,

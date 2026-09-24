@@ -361,7 +361,7 @@ async fn repeated_decisions_share_a_counted_snapshot_without_losing_occurrences(
 }
 
 #[tokio::test]
-async fn security_rule_stats_are_regenerated_from_session_db() {
+async fn security_rule_counters_are_committed_with_the_rows() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("security-rule-stats.db");
     let writer = DbWriter::open(&db_path, 64).unwrap();
@@ -409,24 +409,24 @@ async fn security_rule_stats_are_regenerated_from_session_db() {
     }
     drop(writer);
 
-    let reader = crate::reader::DbReader::open(&db_path).unwrap();
-    let stats = reader.security_rule_stats().unwrap();
-    assert_eq!(stats.total, 3);
-    assert!(stats
-        .by_action
-        .iter()
-        .any(|entry| entry.rule_action == "block" && entry.count == 2));
-    assert!(stats
-        .by_event_type
-        .iter()
-        .any(|entry| entry.event_type == "model.call" && entry.count == 2));
-    let block = stats
-        .by_rule
-        .iter()
-        .find(|entry| entry.rule_id == "openai_api_block")
-        .unwrap();
-    assert_eq!(block.rule_action, "block");
-    assert_eq!(block.detection_level, "critical");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let security = crate::counters::load(&conn).unwrap().security;
+    assert_eq!(security.matches, 3);
+    assert_eq!(security.by_action.get("block"), Some(&2));
+    assert_eq!(security.by_event_type.get("model.call"), Some(&2));
+    assert_eq!(security.by_level.get("none"), Some(&1));
+    let block = &security.by_rule["openai_api_block"]["block"]["critical"];
     assert_eq!(block.count, 2);
     assert_eq!(block.latest_event_id, "000000000002");
+    assert_eq!(block.latest_timestamp_unix_ms, 1_789_000_000_002);
+
+    // The run rows the two matches were folded into agree with the snapshot.
+    let run_total: i64 = conn
+        .query_row(
+            "SELECT SUM(count) FROM security_rule_runs WHERE rule_id = 'openai_api_block'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(run_total, 2);
 }

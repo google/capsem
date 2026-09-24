@@ -5,7 +5,6 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use crate::reader::DbReader;
-use crate::reader::SessionStats;
 use crate::writer::{DbWriter, WriteOp};
 
 /// Public DB-boundary contract for Capsem session ledgers.
@@ -568,20 +567,6 @@ impl DbHandle {
             ),
         }
         result
-    }
-
-    /// Read the compact canonical session aggregates through the DB worker.
-    ///
-    /// These go down the batch rail rather than a request of their own, so
-    /// `stats/summary` -- polled per VM, on a timer, by the TUI and the
-    /// desktop UI both -- is answered from this handle's cache whenever the
-    /// ledger has not moved. A private request would have needed a second copy
-    /// of the freshness protocol to earn the same thing.
-    pub async fn session_stats(&self) -> DbResult<SessionStats> {
-        let raw = self
-            .query_many(crate::reader::session_stats::session_stats_batch())
-            .await?;
-        SessionStats::from_query_batch(&raw)
     }
 
     /// The session's counter snapshot, as its writer last committed it.

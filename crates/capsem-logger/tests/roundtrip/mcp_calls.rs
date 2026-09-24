@@ -26,7 +26,7 @@ async fn tool_call_roundtrip_from_mcp_observation() {
     assert_eq!(c["policy_action"], "allow");
     assert_eq!(c["policy_rule"], "mcp.tool.github__search_repos");
     assert_eq!(c["policy_reason"], "local policy allowed");
-    assert_eq!(reader.recent_tool_calls(10).unwrap().len(), 1);
+    assert_eq!(ledger_counters(&path).await.tools.calls, 1);
 }
 
 #[tokio::test]
@@ -64,11 +64,11 @@ async fn tool_call_search_from_unified_ledger() {
             .count(),
         0
     );
-    assert_eq!(reader.recent_tool_calls(10).unwrap().len(), 3);
+    assert_eq!(ledger_counters(&path).await.tools.calls, 3);
 }
 
 #[tokio::test]
-async fn tool_call_stats() {
+async fn tool_call_counters_by_server() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mcp-stats.db");
     let writer = DbWriter::open(&path, 64).unwrap();
@@ -92,37 +92,41 @@ async fn tool_call_stats() {
         .await;
     drop(writer);
 
+    // Every decision is a tool call: denied, warned and errored calls are
+    // counted alongside the allowed ones, per server and in total.
+    let tools = ledger_counters(&path).await.tools;
+    assert_eq!(tools.calls, 5);
+    assert_eq!(tools.mcp.len(), 2, "{:?}", tools.mcp);
+    let per_server = |server: &str| tools.mcp[server].values().map(|usage| usage.calls).sum::<u64>();
+    assert_eq!(per_server("github"), 3);
+    assert_eq!(per_server("slack"), 2);
+
+    // The decision each call carried landed on its row.
     let reader = DbReader::open(&path).unwrap();
-    let stats = reader.tool_call_stats().unwrap();
-
-    assert_eq!(stats.total, 5);
-    assert_eq!(stats.allowed, 2);
-    assert_eq!(stats.warned, 1);
-    assert_eq!(stats.denied, 1);
-    assert_eq!(stats.errored, 1);
-    assert_eq!(stats.by_server.len(), 2);
-
-    // Sorted by count DESC: github=3, slack=2
-    assert_eq!(stats.by_server[0].server_name, "github");
-    assert_eq!(stats.by_server[0].count, 3);
-    assert_eq!(stats.by_server[0].warned, 1);
-    assert_eq!(stats.by_server[1].server_name, "slack");
-    assert_eq!(stats.by_server[1].count, 2);
-    assert_eq!(stats.by_server[1].denied, 1);
+    let rows = mcp_tool_rows(&reader);
+    let decisions = |decision: &str| rows.iter().filter(|row| row["decision"] == decision).count();
+    assert_eq!(
+        (
+            decisions("allowed"),
+            decisions("warned"),
+            decisions("denied"),
+            decisions("error")
+        ),
+        (2, 1, 1, 1)
+    );
 }
 
 #[tokio::test]
-async fn tool_call_stats_empty_db() {
+async fn tool_call_counters_empty_db() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mcp-empty.db");
     let writer = DbWriter::open(&path, 64).unwrap();
     drop(writer);
 
-    let reader = DbReader::open(&path).unwrap();
-    let stats = reader.tool_call_stats().unwrap();
-    assert_eq!(stats.total, 0);
-    assert_eq!(stats.allowed, 0);
-    assert_eq!(stats.by_server.len(), 0);
+    let tools = ledger_counters(&path).await.tools;
+    assert_eq!(tools.calls, 0);
+    assert!(tools.by_tool.is_empty());
+    assert!(tools.mcp.is_empty());
 }
 
 #[tokio::test]
@@ -164,7 +168,7 @@ async fn mcp_schema_migration_idempotent() {
     let reader = DbReader::open(&path).unwrap();
     let calls = mcp_tool_rows(&reader);
     assert_eq!(calls.len(), 2);
-    assert_eq!(reader.recent_tool_calls(10).unwrap().len(), 2);
+    assert_eq!(ledger_counters(&path).await.tools.calls, 2);
 }
 
 #[tokio::test]

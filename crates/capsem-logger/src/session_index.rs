@@ -308,16 +308,6 @@ impl SessionIndex {
         Ok(())
     }
 
-    /// Update request counts for a session.
-    pub fn update_request_counts(&self, id: &str, total: u64, allowed: u64, denied: u64) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "UPDATE sessions SET total_requests = ?1, allowed_requests = ?2, denied_requests = ?3
-             WHERE id = ?4",
-            params![total as i64, allowed as i64, denied as i64, id],
-        )?;
-        Ok(())
-    }
-
     /// Mark all "running" sessions as "crashed". Returns count of affected rows.
     pub fn mark_running_as_crashed(&self) -> rusqlite::Result<usize> {
         let count = self
@@ -429,114 +419,6 @@ impl SessionIndex {
         count_rows(&self.conn, "SELECT COUNT(*) FROM sessions").map(|n| n as usize)
     }
 
-    // -- Cross-session aggregation reads ------------------------------------
-
-    /// Global stats aggregated across all sessions.
-    pub fn global_stats(&self) -> rusqlite::Result<GlobalStats> {
-        self.conn.query_row(
-            "SELECT
-                COUNT(*),
-                COALESCE(SUM(total_input_tokens), 0),
-                COALESCE(SUM(total_output_tokens), 0),
-                COALESCE(SUM(total_estimated_cost), 0.0),
-                COALESCE(SUM(total_tool_calls), 0),
-                COALESCE(SUM(total_file_events), 0),
-                COALESCE(SUM(total_requests), 0),
-                COALESCE(SUM(allowed_requests), 0),
-                COALESCE(SUM(denied_requests), 0)
-             FROM sessions",
-            [],
-            |row| {
-                Ok(GlobalStats {
-                    total_sessions: row.get::<_, i64>(0)? as u64,
-                    total_input_tokens: row.get::<_, i64>(1)? as u64,
-                    total_output_tokens: row.get::<_, i64>(2)? as u64,
-                    total_estimated_cost: row.get::<_, f64>(3)?,
-                    total_tool_calls: row.get::<_, i64>(4)? as u64,
-                    total_file_events: row.get::<_, i64>(5)? as u64,
-                    total_requests: row.get::<_, i64>(6)? as u64,
-                    total_allowed: row.get::<_, i64>(7)? as u64,
-                    total_denied: row.get::<_, i64>(8)? as u64,
-                })
-            },
-        )
-    }
-
-    /// Top providers by call count across all sessions.
-    pub fn top_providers(&self, limit: usize) -> rusqlite::Result<Vec<ProviderSummary>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT provider,
-                    SUM(call_count),
-                    SUM(input_tokens),
-                    SUM(output_tokens),
-                    SUM(estimated_cost),
-                    SUM(total_duration_ms)
-             FROM ai_usage
-             GROUP BY provider
-             ORDER BY SUM(call_count) DESC
-             LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit as i64], |row| {
-            Ok(ProviderSummary {
-                provider: row.get(0)?,
-                call_count: row.get::<_, i64>(1)? as u64,
-                input_tokens: row.get::<_, i64>(2)? as u64,
-                output_tokens: row.get::<_, i64>(3)? as u64,
-                estimated_cost: row.get::<_, f64>(4)?,
-                total_duration_ms: row.get::<_, i64>(5)? as u64,
-            })
-        })?;
-        rows.collect()
-    }
-
-    /// Top tools by call count across all sessions.
-    pub fn top_tools(&self, limit: usize) -> rusqlite::Result<Vec<ToolSummary>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT tool_name,
-                    SUM(call_count),
-                    SUM(total_bytes),
-                    SUM(total_duration_ms)
-             FROM tool_usage
-             GROUP BY tool_name
-             ORDER BY SUM(call_count) DESC
-             LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit as i64], |row| {
-            Ok(ToolSummary {
-                tool_name: row.get(0)?,
-                call_count: row.get::<_, i64>(1)? as u64,
-                total_bytes: row.get::<_, i64>(2)? as u64,
-                total_duration_ms: row.get::<_, i64>(3)? as u64,
-            })
-        })?;
-        rows.collect()
-    }
-
-    /// Top MCP tools by call count across all sessions.
-    pub fn top_mcp_tools(&self, limit: usize) -> rusqlite::Result<Vec<McpToolSummary>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT tool_name,
-                    server_name,
-                    SUM(call_count),
-                    SUM(total_bytes),
-                    SUM(total_duration_ms)
-             FROM mcp_usage
-             GROUP BY tool_name, server_name
-             ORDER BY SUM(call_count) DESC
-             LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit as i64], |row| {
-            Ok(McpToolSummary {
-                tool_name: row.get(0)?,
-                server_name: row.get(1)?,
-                call_count: row.get::<_, i64>(2)? as u64,
-                total_bytes: row.get::<_, i64>(3)? as u64,
-                total_duration_ms: row.get::<_, i64>(4)? as u64,
-            })
-        })?;
-        rows.collect()
-    }
-
     // -- Raw SQL query ------------------------------------------------------
 
     /// Execute an arbitrary read-only SQL query with optional bind parameters
@@ -633,37 +515,6 @@ impl SessionIndex {
     }
 
     // -- Per-session summary writes -----------------------------------------
-
-    /// Update the summary columns on a session row.
-    #[allow(clippy::too_many_arguments)]
-    pub fn update_session_summary(
-        &self,
-        id: &str,
-        input_tokens: u64,
-        output_tokens: u64,
-        cost: f64,
-        tool_calls: u64,
-        file_events: u64,
-    ) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "UPDATE sessions SET
-                total_input_tokens = ?1,
-                total_output_tokens = ?2,
-                total_estimated_cost = ?3,
-                total_tool_calls = ?4,
-                total_file_events = ?5
-             WHERE id = ?6",
-            params![
-                input_tokens as i64,
-                output_tokens as i64,
-                cost,
-                tool_calls as i64,
-                file_events as i64,
-                id,
-            ],
-        )?;
-        Ok(())
-    }
 
     /// Record a session's final totals, copied from its ledger's counter
     /// snapshot, with its per-provider, per-tool and per-MCP-tool usage.

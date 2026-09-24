@@ -61,14 +61,32 @@ fn update_session_rollup_from_session_db_copies_the_snapshot_by_id() {
     assert_eq!(record.total_file_events, 3);
     assert_eq!((record.exec_count, record.audit_event_count), (1, 2));
 
-    let providers = idx.top_providers(10).unwrap();
-    assert_eq!(providers.len(), 1);
-    assert_eq!((providers[0].call_count, providers[0].output_tokens), (2, 23));
-    let tools = idx.top_tools(10).unwrap();
-    assert_eq!(tools.iter().map(|tool| tool.call_count).sum::<u64>(), 3);
+    let providers: Vec<(String, i64, i64)> = idx
+        .conn
+        .prepare("SELECT provider, call_count, output_tokens FROM ai_usage WHERE session_id = ?1")
+        .unwrap()
+        .query_map([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(providers, vec![("anthropic".to_string(), 2, 23)]);
+    let tool_calls: i64 = idx
+        .conn
+        .query_row(
+            "SELECT SUM(call_count) FROM tool_usage WHERE session_id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(tool_calls, 3);
     // Two servers exposing a tool of the same name are two rows.
-    let mcp_tools = idx.top_mcp_tools(10).unwrap();
-    assert_eq!(mcp_tools.len(), 2, "{mcp_tools:?}");
+    assert_eq!(
+        usage_rows(
+            &idx,
+            "SELECT server_name || '/' || tool_name, call_count FROM mcp_usage ORDER BY server_name"
+        ),
+        vec![("github/search".to_string(), 1), ("linear/search".to_string(), 1)]
+    );
 }
 
 #[test]

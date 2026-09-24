@@ -247,10 +247,10 @@ async fn model_items_request_dedup_hashes_full_body_not_capped_preview() {
     assert!(!request_items[0].0.contains("-turn-"), "content is the capped preview");
 }
 
-// ── Count queries ────────────────────────────────────────────────────
+// ── Counter snapshot ─────────────────────────────────────────────────
 
 #[tokio::test]
-async fn net_event_counts() {
+async fn net_counters_split_by_decision() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
@@ -270,15 +270,15 @@ async fn net_event_counts() {
         .await;
     drop(writer);
 
-    let reader = capsem_logger::DbReader::open(&path).unwrap();
-    let counts = reader.net_event_counts().unwrap();
-    assert_eq!(counts.total, 6);
-    assert_eq!(counts.allowed, 3);
-    assert_eq!(counts.denied, 2);
+    let net = ledger_counters(&path).await.net;
+    assert_eq!(net.total, 6);
+    assert_eq!(net.allowed, 3);
+    assert_eq!(net.denied, 2);
+    assert_eq!(net.error, 1);
 }
 
 #[tokio::test]
-async fn model_call_count() {
+async fn model_call_counter() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
@@ -289,7 +289,8 @@ async fn model_call_count() {
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
-    assert_eq!(reader.model_call_count().unwrap(), 5);
+    assert_eq!(count_rows(&reader, "SELECT COUNT(*) FROM model_calls"), 5);
+    assert_eq!(ledger_counters(&path).await.model.total.calls, 5);
 }
 
 // ── Ordering ─────────────────────────────────────────────────────────
@@ -327,10 +328,11 @@ async fn empty_db_queries() {
     let reader = capsem_logger::DbReader::open(&path).unwrap();
     assert!(reader.recent_net_events(10).unwrap().is_empty());
     assert!(reader.recent_model_calls(10).unwrap().is_empty());
-    let empty = reader.net_event_counts().unwrap();
-    assert_eq!((empty.total, empty.allowed, empty.denied), (0, 0, 0));
-    assert_eq!(reader.model_call_count().unwrap(), 0);
     assert!(reader.tool_calls_for(999).unwrap().is_empty());
+    assert_eq!(
+        ledger_counters(&path).await,
+        capsem_logger::counters::LedgerCounters::default()
+    );
 }
 
 // ── Writer shutdown ──────────────────────────────────────────────────
@@ -354,7 +356,7 @@ async fn writer_drop_flushes_pending_writes() {
     }
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
-    assert_eq!(reader.net_event_counts().unwrap().total, 10);
+    assert_eq!(count_rows(&reader, "SELECT COUNT(*) FROM net_events"), 10);
 }
 
 // ── Concurrent writes ────────────────────────────────────────────────
@@ -375,7 +377,7 @@ async fn concurrent_async_writes() {
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
-    assert_eq!(reader.net_event_counts().unwrap().total, 50);
+    assert_eq!(count_rows(&reader, "SELECT COUNT(*) FROM net_events"), 50);
 }
 
 // ── WAL concurrent access ───────────────────────────────────────────
@@ -579,7 +581,7 @@ async fn rapid_fire_writes() {
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
-    assert_eq!(reader.net_event_counts().unwrap().total, 500);
+    assert_eq!(count_rows(&reader, "SELECT COUNT(*) FROM net_events"), 500);
 }
 
 // ── Mixed operations ─────────────────────────────────────────────────
@@ -601,8 +603,8 @@ async fn mixed_net_events_and_model_calls() {
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
-    assert_eq!(reader.net_event_counts().unwrap().total, 2);
-    assert_eq!(reader.model_call_count().unwrap(), 2);
+    assert_eq!(count_rows(&reader, "SELECT COUNT(*) FROM net_events"), 2);
+    assert_eq!(count_rows(&reader, "SELECT COUNT(*) FROM model_calls"), 2);
 }
 
 // ── Model call with no tools ─────────────────────────────────────────
@@ -717,7 +719,7 @@ async fn creates_parent_directories() {
 
     assert!(path.exists());
     let reader = capsem_logger::DbReader::open(&path).unwrap();
-    assert_eq!(reader.net_event_counts().unwrap().total, 1);
+    assert_eq!(count_rows(&reader, "SELECT COUNT(*) FROM net_events"), 1);
 }
 
 // ========================================================================
@@ -801,12 +803,12 @@ async fn model_call_content_fields_capped() {
     );
 }
 
-// ── MEDIUM: net_event_counts error events explicitly counted ────────────
+// ── MEDIUM: net error events explicitly counted ─────────────────────────
 
 /// Error events must be counted in total but not in allowed or denied.
 /// This makes the arithmetic relationship explicit.
 #[tokio::test]
-async fn net_event_counts_error_counted_in_total_only() {
+async fn net_counters_count_errors_in_total_only() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.db");
     let writer = DbWriter::open(&path, 64).unwrap();
@@ -825,14 +827,14 @@ async fn net_event_counts_error_counted_in_total_only() {
         .await;
     drop(writer);
 
-    let reader = DbReader::open(&path).unwrap();
-    let counts = reader.net_event_counts().unwrap();
+    let counts = ledger_counters(&path).await.net;
     assert_eq!(counts.total, 4);
     assert_eq!(counts.allowed, 1);
     assert_eq!(counts.denied, 1);
     // Error events are in total but not in allowed or denied.
     let error_count = counts.total - counts.allowed - counts.denied;
     assert_eq!(error_count, 2, "error events must be counted in total only");
+    assert_eq!(counts.error, error_count);
 }
 
 // ── MEDIUM: Multiple model calls get distinct row IDs ───────────────────
