@@ -90,6 +90,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Security latest and detection routes now return rule matches from counted
+  ledger runs instead of failing to map the reconstructed rule snapshot.
+
 - Focused host builds and direct bounded Cargo commands now enforce the shared
   Cargo target's configured size before compiling. These paths previously
   bypassed the 180 GiB retention contract, allowing worktree-specific units to
