@@ -370,6 +370,7 @@ Read `/dev-gate` before changing any of it.
 - `just test` writes benchmark recordings under `cache/target/tests/benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
 - Rust is pinned to 1.97.1 in `rust-toolchain.toml`, bootstrap, CI, and Docker. Bump every surface together in a deliberate monthly toolchain PR and handle new-lint fallout there.
 - Bare `python3` on macOS is 3.9 and gives wrong answers (phantom syntax errors, silently dead hooks). Run repository Python with `uv run --project build_system --frozen python`.
+- Never `cd` into a subdirectory in an agent shell. The working directory persists across calls, and a worktree session cannot move it back: one `cd crates/.../src` once left every later shell call, subagents included, failing its PreToolUse hook. Use absolute paths, `git -C`, or `(cd dir && ...)` in a subshell. Agent hooks in `.claude/settings.json` resolve their scripts through `$CLAUDE_PROJECT_DIR` and run under `uv` for the same reason.
 - `magika` pulls `ort`, which downloads a native library from a CDN at build time. Build with `ORT_STRATEGY=system`.
 - A same-size mutation of a Python test file can be served from a stale `.pyc`. Clear `tests/__pycache__` before trusting a mutation-and-restore check.
 - Processes under any Seatbelt profile cannot exec setuid binaries: `/bin/ps` fails. Use syscalls, and prove sandbox fixes under `sandbox-exec`.
