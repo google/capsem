@@ -31,11 +31,14 @@ def enforce_repository(
     paths: CachePaths, policy: CachePolicy, cache_id: str, *, reason: str
 ) -> EnforcementResult:
     """Prune one repository owner, or all owners, when a maximum is crossed."""
-    inventory = select_inventory(scan_inventory(paths, policy, retention=True), cache_id)
+    stage_ids = None if cache_id == "all" else frozenset({cache_id})
+    inventory = select_inventory(scan_inventory(paths, policy, retention=True, stage_ids=stage_ids), cache_id)
     plan = plan_prune(inventory, policy)
     if plan.actions:
         apply_prune(paths, plan, reason=reason)
-    after = select_inventory(scan_inventory(paths, policy, retention=True), cache_id)
+        after = select_inventory(scan_inventory(paths, policy, retention=True, stage_ids=stage_ids), cache_id)
+    else:
+        after = inventory
     violations = plan_prune(after, policy).violations
     return EnforcementResult(
         cache_id=cache_id,

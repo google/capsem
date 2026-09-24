@@ -80,6 +80,7 @@ class Run(Action, name="run"):
         check: bool = True,
         log: Path | None = None,
         outside_sandbox: bool = False,
+        timeout_seconds: float | None = None,
     ) -> None:
         self._command = Command(
             argv=tuple(str(part) for part in argv),
@@ -87,6 +88,7 @@ class Run(Action, name="run"):
             env=dict(env or {}),
             check=check,
             log=log,
+            timeout_seconds=timeout_seconds,
         )
         self._outside_sandbox = outside_sandbox
 
@@ -106,11 +108,7 @@ class Run(Action, name="run"):
 
     def perform(self, context: Context) -> None:
         command = self._command
-        runner = (
-            escaping_runner(context, str(command))
-            if self._outside_sandbox
-            else context.runner
-        )
+        runner = escaping_runner(context, str(command)) if self._outside_sandbox else context.runner
         runner.run(
             command.argv,
             cwd=command.cwd,
@@ -124,6 +122,7 @@ class Run(Action, name="run"):
             ),
             check=command.check,
             log=command.log,
+            timeout_seconds=command.timeout_seconds,
         )
 
 
@@ -181,9 +180,7 @@ class Script(Action, name="script"):
             outside_sandbox=self._outside_sandbox,
         )
         runner = (
-            escaping_runner(context, self._relative)
-            if self._outside_sandbox
-            else context.runner
+            escaping_runner(context, self._relative) if self._outside_sandbox else context.runner
         )
         if self._root is None:
             runner.script(self._relative, *self._args, env=env, check=self._check)

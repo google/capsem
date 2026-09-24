@@ -570,6 +570,7 @@ async fn run_async_main_loop(
             Arc::clone(&mcp_inflight),
             capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
         )
+        .with_builtin_ledger(Arc::clone(&db), capsem_core::mcp::builtin_server_names(&mcp_servers))
         .with_scoped_tools(Arc::new(GuestExposureTools::new(
             Arc::clone(&job_store.publisher),
             ctrl_tx.clone(),

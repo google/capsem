@@ -197,11 +197,13 @@ async fn revert_file_security_event_emits_from_async_runtime() {
     std::fs::write(session.join("workspace/important.txt"), "changed").unwrap();
 
     let args = serde_json::json!({"path": "important.txt", "checkpoint": "cp-0"});
-    let (resp, file_event) =
-        handle_revert_file_with_security_event(&args, &sched, &session.join("workspace"), Some(serde_json::json!(1)));
+    let (resp, record) =
+        handle_revert_file_with_record(&args, &sched, &session.join("workspace"), Some(serde_json::json!(1)));
 
     assert!(resp.error.is_none());
-    let file_event = file_event.expect("successful revert must produce file event");
+    let record = record.expect("successful revert must produce a record");
+    assert_eq!(record.checkpoint, "cp-0");
+    let file_event = crate::mcp::builtin_ledger::file_event(&record);
     assert_eq!(file_event.action, capsem_logger::FileAction::Restored);
     assert_eq!(file_event.path, "important.txt (from cp-0)");
 

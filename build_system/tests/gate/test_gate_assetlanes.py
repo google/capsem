@@ -185,7 +185,8 @@ def test_asset_plan_builds_and_signs_host_binaries_before_assembly() -> None:
     fragment(plan, CONFIG)
 
     assert plan.after_of("assets.pack-initrds") == {"assets.sweep"}
-    assert plan.after_of("assets.build-host-binaries") == {"assets.pack-initrds"}
+    assert plan.after_of("assets.cargo-cache-enforcement") == {"assets.pack-initrds"}
+    assert plan.after_of("assets.build-host-binaries") == {"assets.cargo-cache-enforcement"}
     assert plan.after_of("assets.sign-host-binaries") == {"assets.build-host-binaries"}
     assert plan.after_of("assets.assemble") == {"assets.sign-host-binaries"}
     assert CONFIG.path(CONFIG.service.binary) in plan.step_named(

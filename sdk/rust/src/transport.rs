@@ -12,6 +12,7 @@ pub enum MediaType {
     #[default]
     Json,
     Binary,
+    Gzip,
 }
 
 impl MediaType {
@@ -19,6 +20,7 @@ impl MediaType {
         match self {
             Self::Json => "application/json",
             Self::Binary => "application/octet-stream",
+            Self::Gzip => "application/gzip",
         }
     }
 }

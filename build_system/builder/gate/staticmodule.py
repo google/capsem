@@ -11,6 +11,7 @@ from __future__ import annotations
 from . import (
     audits,
     host,
+    hostbuild,
     hostpackage,
     imagebases,
     installplan,
@@ -175,10 +176,10 @@ def static(
     # macOS signing needs real runtime executables; a composed candidate hands
     # over the existing producer so this never rebuilds a prepared runtime.
     if runtime is None and host.on_macos():
-        runtime = phase.add(
-            hostpackage.build_step(
-                config, env=toolchain.ort_environment(config, toolchain.OrtConsumer.STATIC)
-            ),
+        runtime = hostbuild.add(
+            phase,
+            config,
+            env=toolchain.ort_environment(config, toolchain.OrtConsumer.STATIC),
             after=(ort, frontend),
         )
     signing_inputs = (coverage, runtime) if runtime is not None else (coverage,)

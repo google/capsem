@@ -176,7 +176,7 @@ open rusqlite connections or `DbReader` directly.
 Do not "fix" route latency by hardcoding route-specific query helpers in
 `DbWriter`, by adding service caches, or by swallowing missing tables/columns as
 empty data. The correct diagnosis target is the DB object: connection/thread
-ownership, `mem`/disk layout, batching, flush, rehydration, and query execution.
+ownership, `mem`/disk layout, batching, flush, and query execution.
 If the schema is missing, surface the broken ledger contract.
 
 Write down what you find. The diagnosis should explain *why* the bug exists, not just *where* the symptom appears.

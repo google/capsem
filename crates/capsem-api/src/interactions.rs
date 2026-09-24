@@ -1,6 +1,6 @@
 //! Shared inspection objects derived from retained model/MCP ledger evidence.
 //! Preview captures do not imply complete messages or a complete conversation.
-use crate::{BodyDirection, ToolDecision, ToolOrigin};
+use crate::{ToolDecision, ToolOrigin};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -184,12 +184,13 @@ pub struct InteractionToolResult {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct InteractionBody {
     pub event_id: String,
-    pub direction: BodyDirection,
+    pub source_table: String,
+    pub direction: String,
     pub content_type: Option<String>,
     pub original_bytes: u64,
     pub stored_bytes: u64,
+    pub truncated: bool,
     pub body_hash: String,
-    pub payload: CapturedPayload,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

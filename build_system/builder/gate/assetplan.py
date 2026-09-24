@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from . import assetdependencies, assetreceipt, hostpackage, initrd
+from . import assetdependencies, assetreceipt, hostbuild, hostpackage, initrd
 from .actions import Call
 from .assetlanes import RequireLaneReceipts, SealPackedReceipts, discover_profiles, lane_assets
 from .assets import AssetGate
@@ -163,8 +163,10 @@ def fragment(plan, config, *, after: tuple = ()):
         ),
         after=(swept,),
     )
-    built = phase.add(
-        hostpackage.build_step(config, label="build-host-binaries"),
+    built = hostbuild.add(
+        phase,
+        config,
+        label="build-host-binaries",
         after=(packed,),
     )
     signed = phase.add(

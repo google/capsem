@@ -10,8 +10,7 @@ use capsem_foundation::time::epoch_to_parts;
 /// Session lifecycle:
 ///   running -> stopped    (graceful shutdown, rollup done)
 ///   running -> crashed    (ungraceful, backfill on next startup)
-///   stopped/crashed -> vacuumed   (DB checkpointed + vacuumed + gzipped)
-///   vacuumed -> terminated        (disk artifacts deleted, only main.db record)
+///   stopped/crashed -> terminated (disk artifacts deleted, only main.db record)
 use serde::{de, Deserialize, Deserializer, Serialize};
 
 /// Generate a unique timestamp suffix for archival directories.
@@ -67,8 +66,6 @@ pub struct SessionRecord {
     pub total_estimated_cost: f64,
     pub total_tool_calls: u64,
     pub total_file_events: u64,
-    pub compressed_size_bytes: Option<u64>,
-    pub vacuumed_at: Option<String>,
     /// "block" (legacy) or "virtiofs" (VirtioFS overlay).
     pub storage_mode: String,
     /// BLAKE3 hash of the rootfs asset used by this session.

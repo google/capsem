@@ -194,7 +194,7 @@ their own telemetry/security projection caches. They call a logger DB object to
 run queries and writes.
 
 The DB layer owns connection threads, `mem`/disk table layout, batching, flush,
-rehydration, WAL tuning, and future FTS5/search. It does not own product route
+WAL tuning, and future FTS5/search. It does not own product route
 semantics by hardcoding route-specific helper methods in `DbWriter`; callers may
 own query intent while the DB object owns execution. Missing ledger tables or
 columns are schema-contract failures, not empty data.

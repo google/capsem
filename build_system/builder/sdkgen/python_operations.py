@@ -5,7 +5,7 @@ from __future__ import annotations
 import keyword
 import re
 
-from .operations import Route
+from .operations import Route, is_binary_media_type
 from .python import HEADER, module_name, nullable, type_name
 
 
@@ -18,7 +18,7 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         if keyword.iskeyword(name):
             raise ValueError(f"unsupported operation identifier: {name}")
         response = operation.success
-        binary = response.media_type == "application/octet-stream"
+        binary = is_binary_media_type(response.media_type)
         schemas = [parameter.schema_ for parameter in operation.parameters] + [response.schema]
         arguments = []
         validation = []
@@ -52,7 +52,8 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
             if operation.request_body.media_type == "application/json":
                 lines.append("        json_body=True,")
         if binary:
-            lines.append("        accept=MediaType.BINARY,")
+            member = "GZIP" if response.media_type == "application/gzip" else "BINARY"
+            lines.append(f"        accept=MediaType.{member},")
         lines.append("        timeout=request_timeout,")
         lines.append("    )")
         if not binary:

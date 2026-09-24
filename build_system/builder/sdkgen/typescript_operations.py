@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from .operations import Route
+from .operations import Route, is_binary_media_type
 from .schema import Schema
 from .typescript import HEADER, type_name
 from .typescript_validation import expression
@@ -36,7 +36,7 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
             properties["body"] = operation.request_body.schema
             required.append("body")
         response = operation.success
-        binary = response.media_type == "application/octet-stream"
+        binary = is_binary_media_type(response.media_type)
         schemas = [*properties.values(), response.schema]
         arguments = ""
         if properties:
@@ -47,17 +47,19 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         if properties:
             validator = expression(Schema(type="object", properties=properties, required=required))
             lines.append(f"  const input = {validator}.parse(parameters);")
+        response_media = "GZIP" if response.media_type == "application/gzip" else "BINARY" if binary else "JSON"
         lines += [f"  {'return' if binary else 'const payload ='} await transport.request(Method.{route.method.name}, {json.dumps(route.path)}, {{",
-                  f"    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.{'BINARY' if binary else 'JSON'},"]
+                  f"    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.{response_media},"]
         for location, keyword in (("path", "parameters"), ("query", "query")):
             fields = [f"{json.dumps(p.name)}: input[{json.dumps(p.name)}]"
                       for p in operation.parameters if p.location == location]
             if fields:
                 lines.append(f"    {keyword}: {{{', '.join(fields)}}},")
         if operation.request_body:
-            body_binary = operation.request_body.media_type == "application/octet-stream"
+            body_binary = is_binary_media_type(operation.request_body.media_type)
             value = "input.body" if body_binary else "JSON.stringify(input.body)"
-            lines.append(f"    body: {value}, contentType: MediaType.{'BINARY' if body_binary else 'JSON'},")
+            request_media = "GZIP" if operation.request_body.media_type == "application/gzip" else "BINARY" if body_binary else "JSON"
+            lines.append(f"    body: {value}, contentType: MediaType.{request_media},")
         lines.append("  });")
         if not binary:
             lines.append(f"  return {expression(response.schema)}.parse(JSON.parse(new TextDecoder().decode(payload)));")

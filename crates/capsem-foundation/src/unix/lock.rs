@@ -8,6 +8,7 @@ use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use nix::errno::Errno;
 use nix::fcntl::{Flock, FlockArg};
@@ -90,7 +91,14 @@ fn held_locks() -> &'static Mutex<HashMap<PathBuf, Reservation>> {
 /// compared with the path after `flock`, closing the open-to-lock replacement
 /// race. Expected contention is a typed outcome rather than an IO error.
 pub fn try_acquire(path: &Path, mode: LockMode) -> io::Result<LockAttempt> {
-    try_acquire_after_open(path, mode, || {})
+    try_acquire_inner(path, mode, true, || {})
+}
+
+/// Try to lock an existing lockfile without creating it or changing its
+/// permissions. Read-only ledger handles use this so opening cannot mutate or
+/// repair session state.
+pub fn try_acquire_existing(path: &Path, mode: LockMode) -> io::Result<LockAttempt> {
+    try_acquire_inner(path, mode, false, || {})
 }
 
 /// Acquire a shared or exclusive lock, waiting until contention clears.
@@ -106,13 +114,29 @@ pub fn acquire(path: &Path, mode: LockMode) -> io::Result<FileLock> {
     }
 }
 
-fn try_acquire_inner(path: &Path, mode: LockMode, after_open: impl FnOnce()) -> io::Result<LockAttempt> {
-    let registry_key = prepare_key(path)?;
+/// Acquire an existing lockfile until an absolute deadline.
+pub fn acquire_existing_until(path: &Path, mode: LockMode, deadline: Instant) -> io::Result<FileLock> {
+    loop {
+        match try_acquire_existing(path, mode)? {
+            LockAttempt::Acquired(lock) => return Ok(lock),
+            LockAttempt::Contended if Instant::now() >= deadline => {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("timed out acquiring existing lock {}", path.display()),
+                ));
+            }
+            LockAttempt::Contended => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
+}
+
+fn try_acquire_inner(path: &Path, mode: LockMode, create: bool, after_open: impl FnOnce()) -> io::Result<LockAttempt> {
+    let registry_key = prepare_key(path, create)?;
     if !reserve(&registry_key, mode)? {
         return Ok(LockAttempt::Contended);
     }
 
-    let result = acquire_reserved(path, mode, after_open);
+    let result = acquire_reserved(path, mode, create, after_open);
     if !matches!(&result, Ok(LockAttempt::Acquired(_))) {
         release_reservation(&registry_key, mode);
     }
@@ -125,9 +149,9 @@ fn try_acquire_inner(path: &Path, mode: LockMode, after_open: impl FnOnce()) -> 
     })
 }
 
-fn acquire_reserved(path: &Path, mode: LockMode, after_open: impl FnOnce()) -> io::Result<LockAttempt> {
+fn acquire_reserved(path: &Path, mode: LockMode, create: bool, after_open: impl FnOnce()) -> io::Result<LockAttempt> {
     let file = OpenOptions::new()
-        .create(true)
+        .create(create)
         .read(true)
         .write(true)
         .truncate(false)
@@ -152,7 +176,24 @@ fn acquire_reserved(path: &Path, mode: LockMode, after_open: impl FnOnce()) -> i
             ),
         ));
     }
-    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    if metadata.nlink() != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("lock path {} has {} links, not 1", path.display(), metadata.nlink()),
+        ));
+    }
+    let permissions = metadata.permissions().mode() & 0o777;
+    if create {
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    } else if permissions != 0o600 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "existing lock path {} has mode {permissions:o}, not 600",
+                path.display()
+            ),
+        ));
+    }
     after_open();
 
     let argument = match mode {
@@ -184,7 +225,7 @@ fn acquire_reserved(path: &Path, mode: LockMode, after_open: impl FnOnce()) -> i
     }))
 }
 
-fn prepare_key(path: &Path) -> io::Result<PathBuf> {
+fn prepare_key(path: &Path, create: bool) -> io::Result<PathBuf> {
     let absolute = std::path::absolute(path)?;
     let parent = absolute
         .parent()
@@ -195,7 +236,9 @@ fn prepare_key(path: &Path) -> io::Result<PathBuf> {
                 format!("lock path {} has no parent", path.display()),
             )
         })?;
-    std::fs::create_dir_all(parent)?;
+    if create {
+        std::fs::create_dir_all(parent)?;
+    }
     let parent = std::fs::canonicalize(parent)?;
     let name = absolute.file_name().ok_or_else(|| {
         io::Error::new(
@@ -243,8 +286,9 @@ fn release_reservation(key: &Path, mode: LockMode) {
     }
 }
 
+#[cfg(test)]
 fn try_acquire_after_open(path: &Path, mode: LockMode, after_open: impl FnOnce()) -> io::Result<LockAttempt> {
-    try_acquire_inner(path, mode, after_open)
+    try_acquire_inner(path, mode, true, after_open)
 }
 
 #[cfg(test)]

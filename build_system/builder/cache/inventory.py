@@ -174,15 +174,23 @@ def _unclassified_inventory(
 def scan_inventory(
     paths: CachePaths, policy: CachePolicy, *, now_ns: int | None = None,
     retention: bool = False,
+    stage_ids: frozenset[str] | None = None,
 ) -> CacheInventory:
-    """Scan configured leaves without creating cache directories or following links."""
+    """Scan configured leaves, or only named owners for a focused enforcement."""
+    if stage_ids is not None:
+        unknown = stage_ids.difference(policy.stages)
+        if unknown:
+            raise KeyError(f"unknown cache stages: {', '.join(sorted(unknown))}")
     allocated_seen: set[tuple[int, int]] = set()
-    scan_order = sorted(policy.stages, key=lambda stage_id: (stage_id != "objects", stage_id))
+    scan_order = sorted(
+        (stage_id for stage_id in policy.stages if stage_ids is None or stage_id in stage_ids),
+        key=lambda stage_id: (stage_id != "objects", stage_id),
+    )
     by_id = {
         stage_id: _stage_inventory(stage_id, paths, policy, allocated_seen, retention=retention)
         for stage_id in scan_order
     }
-    unclassified = _unclassified_inventory(paths, policy, allocated_seen)
+    unclassified = _unclassified_inventory(paths, policy, allocated_seen) if stage_ids is None else ()
     stages = tuple(by_id[stage_id] for stage_id in sorted(by_id))
     return CacheInventory(
         root=paths.root,

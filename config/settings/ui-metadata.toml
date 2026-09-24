@@ -578,7 +578,7 @@ max = 1048576
 
 [settings.vm.resources.retention_days]
 name = "Session retention"
-description = "Number of days to retain session data."
+description = "Days of body evidence a persistent VM keeps; failed-session directories older than this are removed at service start."
 type = "number"
 default = 30
 
@@ -605,16 +605,6 @@ default = 100
 [settings.vm.resources.max_disk_gb.meta]
 min = 1
 max = 1000
-
-[settings.vm.resources.terminated_retention_days]
-name = "Terminated session retention"
-description = "Days to keep terminated session records in the index. After this, the record is permanently deleted."
-type = "number"
-default = 365
-
-[settings.vm.resources.terminated_retention_days.meta]
-min = 30
-max = 3650
 
 # -- Appearance --------------------------------------------------------------
 

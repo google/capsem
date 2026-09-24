@@ -1683,8 +1683,7 @@ pub(super) fn write_profile_vm_resources_toml(path: &Path, profile: &ProfileConf
          retention_days = 30\n\
          max_sessions = 100\n\
          min_content_sessions = 25\n\
-         max_disk_gb = 100\n\
-         terminated_retention_days = 365\n",
+         max_disk_gb = 100\n",
         profile.vm.cpu_count, profile.vm.ram_gb, profile.vm.scratch_disk_size_gb
     );
     fs::write(path, content).with_context(|| format!("write {}", path.display()))

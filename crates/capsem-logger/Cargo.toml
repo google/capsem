@@ -11,6 +11,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+capsem-archive = { path = "../capsem-archive" }
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-proto = { path = "../capsem-proto" }
 rusqlite = { workspace = true }
@@ -22,12 +23,15 @@ serde_json = { workspace = true }
 blake3 = "1"
 uuid = { version = "1", features = ["v4"] }
 metrics = "0.24"
+tempfile = "3"
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+# Reading the WARC export back the way an external tool does: member by member.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+sha2 = "0.10"
 metrics-util = "0.19"
 criterion = { version = "0.5", features = ["html_reports"] }
 memmap2 = "0.9"

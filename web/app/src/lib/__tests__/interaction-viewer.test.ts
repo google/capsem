@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BodyDirection,
   CaptureStatus,
   InteractionBlockKind,
   InteractionMessageKind,
@@ -78,13 +77,9 @@ const report: InteractionReport = {
     },
   ],
   bodies: [{
-    event_id: 'cccccccccccc', direction: BodyDirection.REQUEST,
+    event_id: 'cccccccccccc', direction: 'request',
     body_hash: 'sha256:body', original_bytes: 24, stored_bytes: 24,
-    content_type: 'application/json',
-    payload: {
-      status: CaptureStatus.COMPLETE,
-      content: { kind: JsonContentKind.JSON, value: { method: 'tools/call' } },
-    },
+    content_type: 'application/json', truncated: false,
   }],
 };
 

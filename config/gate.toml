@@ -906,7 +906,7 @@ unused-type-ignore-comment = 3
 # policy change. This is historical debt, not capacity: every value may shrink
 # and no value may grow.
 [lint.suppression_budget]
-noqa = 228
+noqa = 227
 type_ignore = 22
 ty_ignore = 5
 ruff_global_ignore = 1
@@ -991,6 +991,7 @@ direct_machine_access = [
     # The process half of proc's one execution funnel, split at the module
     # ceiling. It owns exact foreground process trees across sandbox sessions.
     "processgroup.py",
+    "processstop.py",
     "pidfiles.py",
     "locks.py",
     "runlog.py",
@@ -1102,7 +1103,7 @@ must_stay_below_lines = 3000
 "crates/capsem-admin/src/assets_channel_render.rs" = 1719
 "crates/capsem-admin/src/assets_channel_validation.rs" = 1412
 "crates/capsem-admin/src/main.rs" = 2182
-"crates/capsem-admin/src/profile_images.rs" = 2189
+"crates/capsem-admin/src/profile_images.rs" = 2188
 "crates/capsem-admin/src/release_graph.rs" = 1089
 "crates/capsem-admin/src/release_graph/tests.rs" = 1323
 "crates/capsem-agent/src/tests.rs" = 1280
@@ -1113,31 +1114,25 @@ must_stay_below_lines = 3000
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1856
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk/tests.rs" = 1059
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 1997
-"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2437
-"crates/capsem-core/src/net/mitm_proxy/telemetry_hook/tests.rs" = 1188
+"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2435
 "crates/capsem-core/src/net/policy_config/profile_contract.rs" = 1900
 "crates/capsem-core/src/net/policy_config/profile_contract/tests.rs" = 1125
 "crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1553
-"crates/capsem-core/src/security_engine/mod.rs" = 2422
+"crates/capsem-core/src/security_engine/mod.rs" = 2303
 "crates/capsem-core/tests/mitm_integration.rs" = 2161
-"crates/capsem-logger/src/db/handle_tests.rs" = 1410
-"crates/capsem-logger/src/reader.rs" = 1602
-"crates/capsem-logger/src/schema.rs" = 1206
-"crates/capsem-logger/src/schema/tests.rs" = 1032
-"crates/capsem-logger/src/session_index.rs" = 1270
-"crates/capsem-logger/src/session_index/tests.rs" = 1205
-"crates/capsem-logger/src/writer.rs" = 1104
-"crates/capsem-logger/src/writer/tests.rs" = 1946
+"crates/capsem-logger/src/reader.rs" = 1343
+"crates/capsem-logger/src/session_index/tests.rs" = 1194
+"crates/capsem-logger/src/writer/tests.rs" = 1544
 "crates/capsem-mock-server/src/main.rs" = 1416
-"crates/capsem-process/src/vsock.rs" = 1447
+"crates/capsem-process/src/vsock.rs" = 1444
 "crates/capsem-proto/src/tests.rs" = 1446
-"crates/capsem-service/src/ledger_routes.rs" = 2277
-"crates/capsem-service/src/main.rs" = 1424
+"crates/capsem-service/src/ledger_routes.rs" = 2063
+"crates/capsem-service/src/main.rs" = 1422
 "crates/capsem-service/src/profile_routes.rs" = 2068
+"crates/capsem-service/src/tests/assets_registry.rs" = 1352
+"crates/capsem-service/src/tests/lifecycle.rs" = 1998
+"crates/capsem-service/src/tests/profile_routes.rs" = 2194
 "crates/capsem-service/src/vm_files.rs" = 1435
-"crates/capsem-service/src/tests/assets_registry.rs" = 1481
-"crates/capsem-service/src/tests/lifecycle.rs" = 2064
-"crates/capsem-service/src/tests/profile_routes.rs" = 2600
 "crates/capsem-tui/src/tests.rs" = 1563
 "crates/capsem-tui/src/ui.rs" = 1081
 "crates/capsem/src/main.rs" = 2216
@@ -1727,6 +1722,11 @@ built_elsewhere = ["capsem-app"]
 guest_crate = "capsem-agent"
 
 release_binary = "cache/target/cargo/debug/capsem"
+# A cold host cohort is large enough that compilation is its own bounded gate
+# step. Signing is deliberately much tighter: ad-hoc local codesign does no
+# network work and a stuck invocation should fail where it is attributed.
+build_timeout_seconds = 1800
+sign_timeout_seconds = 30
 
 [frontend]
 workspace = "web/app"
@@ -2385,7 +2385,7 @@ rust_coverage_crate_minimum = 40.0
 # Raise to about measured minus 2.5, not minus 3: a floor on the band's edge
 # is refused by the next run's +0.04 jitter.
 rust_coverage_ratchet_headroom = 3.0
-rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-api = 40.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-network = 85.0, capsem-process = 40.0, capsem-proto = 90.82, capsem-router = 65.4, capsem-sdk = 97.0, capsem-service = 67.73, capsem-tray = 54.0, capsem-tui = 70.0 }
+rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-api = 40.0, capsem-archive = 97.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-network = 85.0, capsem-process = 40.0, capsem-proto = 90.82, capsem-router = 65.4, capsem-sdk = 97.0, capsem-service = 67.73, capsem-tray = 54.0, capsem-tui = 70.0 }
 # macOS compiles a different cfg-selected line inventory. Its stronger floors
 # must not raise Linux thresholds using code that Linux cannot compile or test.
 # Overrides may only increase the shared floors; no platform gets an exemption.
@@ -2967,6 +2967,7 @@ slowest_steps = 10
 [benchmark.routes]
 internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route", "/internal/vms/{id}/exposures/{exposure_id}/preview-session" = "The authenticated gateway asks the service for owner-scoped bootstrap material over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap" = "The authenticated gateway exchanges a single-use browser bootstrap token over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-admission" = "The authenticated gateway asks the service and VM owner to admit one browser descriptor over the local service UDS" }
 measured = [
+    "/vms/{id}/bodies/{event_id}",
     "/vms/{id}/changes",
     "/vms/{id}/status",
     "/vms/{id}/exposures",
@@ -3059,6 +3060,7 @@ unmeasured = [
     "/vms/{id}/detection/status",
     "/vms/{id}/enforcement/latest",
     "/vms/{id}/enforcement/status",
+    "/vms/{id}/bodies/export.warc.gz",
     "/vms/{id}/exec",
     "/vms/{id}/files/content",
     "/vms/{id}/files/list",

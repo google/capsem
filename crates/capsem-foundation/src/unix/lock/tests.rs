@@ -5,7 +5,11 @@ use std::process::{Command, Stdio};
 
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 
-use super::{acquire, try_acquire, try_acquire_after_open, LockAttempt, LockMode};
+use std::time::{Duration, Instant};
+
+use super::{
+    acquire, acquire_existing_until, try_acquire, try_acquire_after_open, try_acquire_existing, LockAttempt, LockMode,
+};
 
 fn acquired(attempt: LockAttempt) -> super::FileLock {
     match attempt {
@@ -83,6 +87,53 @@ fn lock_refuses_a_symlink() {
 }
 
 #[test]
+fn lock_refuses_a_hard_linked_backing_file() {
+    let root = tempfile::tempdir().unwrap();
+    let original = root.path().join("original");
+    let path = root.path().join("lock");
+    std::fs::write(&original, b"").unwrap();
+    std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::hard_link(&original, &path).unwrap();
+    assert_eq!(
+        try_acquire_existing(&path, LockMode::Shared).unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+}
+
+#[test]
+fn existing_acquisition_never_creates_or_repairs_the_lockfile() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("archive.lock");
+    assert_eq!(
+        try_acquire_existing(&path, LockMode::Shared).unwrap_err().kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert!(!path.exists());
+
+    std::fs::write(&path, b"").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+    assert_eq!(
+        try_acquire_existing(&path, LockMode::Shared).unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o640);
+}
+
+#[test]
+fn existing_acquisition_obeys_its_deadline_and_owns_an_independent_descriptor() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("archive.lock");
+    let exclusive = acquired(try_acquire(&path, LockMode::Exclusive).unwrap());
+    let error = acquire_existing_until(&path, LockMode::Shared, Instant::now()).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    drop(exclusive);
+
+    let first = acquire_existing_until(&path, LockMode::Shared, Instant::now() + Duration::from_secs(1)).unwrap();
+    let second = acquire_existing_until(&path, LockMode::Shared, Instant::now() + Duration::from_secs(1)).unwrap();
+    assert_ne!(first.as_raw_fd(), second.as_raw_fd());
+}
+
+#[test]
 fn lock_refuses_a_path_replaced_after_open() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("lock");
@@ -131,11 +182,52 @@ fn another_process_contends_and_release_is_observed() {
 }
 
 #[test]
+fn cross_process_shared_existing_leases_coexist_and_exclude_publication() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("lock");
+    drop(acquired(try_acquire(&path, LockMode::Exclusive).unwrap()));
+    let executable = std::env::current_exe().unwrap();
+    let mut child = Command::new(executable)
+        .args(["--exact", "unix::lock::tests::subprocess_lock_holder", "--nocapture"])
+        .env("CAPSEM_FOUNDATION_LOCK_HELPER", &path)
+        .env("CAPSEM_FOUNDATION_LOCK_MODE", "shared")
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    while stdout.read_line(&mut line).unwrap() != 0 {
+        if line.contains("LOCKED") {
+            break;
+        }
+        line.clear();
+    }
+    assert!(line.contains("LOCKED"));
+    let local = acquired(try_acquire_existing(&path, LockMode::Shared).unwrap());
+    assert!(matches!(
+        try_acquire_existing(&path, LockMode::Exclusive).unwrap(),
+        LockAttempt::Contended
+    ));
+    drop(local);
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(matches!(
+        try_acquire_existing(&path, LockMode::Exclusive).unwrap(),
+        LockAttempt::Acquired(_)
+    ));
+}
+
+#[test]
 fn subprocess_lock_holder() {
     let Some(path) = std::env::var_os("CAPSEM_FOUNDATION_LOCK_HELPER") else {
         return;
     };
-    let _lock = acquired(try_acquire(std::path::Path::new(&path), LockMode::Exclusive).unwrap());
+    let mode = if std::env::var_os("CAPSEM_FOUNDATION_LOCK_MODE").as_deref() == Some(std::ffi::OsStr::new("shared")) {
+        LockMode::Shared
+    } else {
+        LockMode::Exclusive
+    };
+    let _lock = acquired(try_acquire(std::path::Path::new(&path), mode).unwrap());
     println!("LOCKED");
     use std::io::Write;
     std::io::stdout().flush().unwrap();

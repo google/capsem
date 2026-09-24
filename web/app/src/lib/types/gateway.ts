@@ -71,8 +71,6 @@ export interface SessionRecord {
   total_estimated_cost: number;
   total_tool_calls: number;
   total_file_events: number;
-  compressed_size_bytes: number | null;
-  vacuumed_at: string | null;
   storage_mode: string | null;
   rootfs_hash: string | null;
   rootfs_version: string | null;

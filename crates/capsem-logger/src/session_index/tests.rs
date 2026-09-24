@@ -56,8 +56,6 @@ fn sample_record(id: &str, status: &str) -> SessionRecord {
         total_estimated_cost: 0.0,
         total_tool_calls: 0,
         total_file_events: 0,
-        compressed_size_bytes: None,
-        vacuumed_at: None,
         storage_mode: "block".to_string(),
         rootfs_hash: None,
         rootfs_version: None,
@@ -145,10 +143,9 @@ fn update_session_rollup_from_session_db_copies_counts_by_id() {
             INSERT INTO tool_calls DEFAULT VALUES;
             INSERT INTO tool_calls DEFAULT VALUES;
 
-            CREATE TABLE fs_events (id INTEGER PRIMARY KEY);
-            INSERT INTO fs_events DEFAULT VALUES;
-            INSERT INTO fs_events DEFAULT VALUES;
-            INSERT INTO fs_events DEFAULT VALUES;
+            -- Three changes and one overflow marker, which is not one of them.
+            CREATE TABLE fs_events (id INTEGER PRIMARY KEY, action TEXT NOT NULL);
+            INSERT INTO fs_events (action) VALUES ('created'), ('modified'), ('deleted'), ('overflow');
 
             CREATE TABLE exec_events (id INTEGER PRIMARY KEY);
             INSERT INTO exec_events DEFAULT VALUES;
@@ -203,7 +200,7 @@ fn update_session_rollup_from_session_db_fails_when_id_is_missing() {
                 estimated_cost_usd REAL
             );
             CREATE TABLE tool_calls (id INTEGER PRIMARY KEY);
-            CREATE TABLE fs_events (id INTEGER PRIMARY KEY);
+            CREATE TABLE fs_events (id INTEGER PRIMARY KEY, action TEXT NOT NULL);
             CREATE TABLE exec_events (id INTEGER PRIMARY KEY);
             CREATE TABLE audit_events (id INTEGER PRIMARY KEY);
             ",
@@ -335,106 +332,6 @@ fn mark_running_as_crashed_empty_db() {
     let idx = SessionIndex::open_in_memory().unwrap();
     let count = idx.mark_running_as_crashed().unwrap();
     assert_eq!(count, 0);
-}
-
-// -- Age-based culling --
-
-#[test]
-fn terminate_older_than_days() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-
-    // Old session (2020).
-    let mut old = sample_record("20200101-120000-0000", "stopped");
-    old.created_at = "2020-01-01T12:00:00Z".to_string();
-    idx.create_session(&old).unwrap();
-
-    // Recent session (use a date far in the future to avoid flaking).
-    let mut recent = sample_record("20260225-143052-a7f3", "stopped");
-    recent.created_at = "2099-01-01T00:00:00Z".to_string();
-    idx.create_session(&recent).unwrap();
-
-    let terminated = idx.terminate_older_than_days(7).unwrap();
-    assert_eq!(terminated, 1);
-    // Row still exists, just status changed.
-    assert_eq!(idx.count().unwrap(), 2);
-    let records = idx.recent(10).unwrap();
-    let old_rec = records.iter().find(|r| r.id == "20200101-120000-0000").unwrap();
-    assert_eq!(old_rec.status, "terminated");
-}
-
-#[test]
-fn terminate_older_preserves_running() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-
-    let mut old_running = sample_record("20200101-120000-0000", "running");
-    old_running.created_at = "2020-01-01T12:00:00Z".to_string();
-    idx.create_session(&old_running).unwrap();
-
-    let terminated = idx.terminate_older_than_days(7).unwrap();
-    assert_eq!(terminated, 0);
-    assert_eq!(idx.recent(1).unwrap()[0].status, "running");
-}
-
-#[test]
-fn terminate_older_includes_vacuumed() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-
-    let mut old = sample_record("20200101-120000-0000", "vacuumed");
-    old.created_at = "2020-01-01T12:00:00Z".to_string();
-    idx.create_session(&old).unwrap();
-
-    let terminated = idx.terminate_older_than_days(7).unwrap();
-    assert_eq!(terminated, 1);
-    let records = idx.recent(1).unwrap();
-    assert_eq!(records[0].status, "terminated");
-}
-
-// -- Count-based culling --
-
-#[test]
-fn terminate_excess_sessions() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-    for i in 0..5 {
-        let mut rec = sample_record(&format!("20260225-{i:06}-0000"), "stopped");
-        rec.created_at = format!("2026-02-25T{i:02}:00:00Z");
-        idx.create_session(&rec).unwrap();
-    }
-    let terminated = idx.terminate_excess_sessions(3).unwrap();
-    assert_eq!(terminated, 2);
-    // All rows still exist, 2 are now terminated.
-    assert_eq!(idx.count().unwrap(), 5);
-    let terminated_recs = idx.sessions_by_status("terminated").unwrap();
-    assert_eq!(terminated_recs.len(), 2);
-}
-
-#[test]
-fn terminate_excess_ignores_running() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-    for i in 0..3 {
-        let mut rec = sample_record(&format!("20260225-{i:06}-0000"), "stopped");
-        rec.created_at = format!("2026-02-25T{i:02}:00:00Z");
-        idx.create_session(&rec).unwrap();
-    }
-    let mut running = sample_record("20260225-100000-0000", "running");
-    running.created_at = "2026-02-24T00:00:00Z".to_string();
-    idx.create_session(&running).unwrap();
-
-    let terminated = idx.terminate_excess_sessions(2).unwrap();
-    assert_eq!(terminated, 1);
-    // running session untouched.
-    let r = idx.recent(10).unwrap();
-    assert!(r
-        .iter()
-        .any(|rec| rec.id == "20260225-100000-0000" && rec.status == "running"));
-}
-
-#[test]
-fn terminate_excess_noop_under_cap() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
-        .unwrap();
-    let terminated = idx.terminate_excess_sessions(10).unwrap();
-    assert_eq!(terminated, 0);
 }
 
 // -- Disk culling helper --
@@ -843,6 +740,49 @@ fn schema_upgrade_from_v4_preserves_data() {
         })
         .unwrap();
     assert!(!persistent);
+
+    // A v4 ledger really had the vacuum columns, so this is the drop path.
+    assert!(!has_column(&conn, "compressed_size_bytes"));
+    assert!(!has_column(&conn, "vacuumed_at"));
+    let audit_event_count: i64 = conn
+        .query_row(
+            "SELECT audit_event_count FROM sessions WHERE id = 'test-v4'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(audit_event_count, 0);
+}
+
+/// A session that reached the dead `vacuumed` state becomes a stopped one.
+#[test]
+fn schema_upgrade_rewrites_the_vacuumed_state() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.pragma_update(None, "user_version", 7u32).unwrap();
+    conn.execute_batch(crate::session_index::SESSION_SCHEMA).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE sessions ADD COLUMN compressed_size_bytes INTEGER;
+         ALTER TABLE sessions ADD COLUMN vacuumed_at TEXT;",
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO sessions (id, mode, status, created_at, vacuumed_at, compressed_size_bytes)
+         VALUES ('test-v7', 'gui', 'vacuumed', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', 4096)",
+        [],
+    )
+    .unwrap();
+
+    SessionIndex::ensure_schema(&conn).unwrap();
+
+    let status: String = conn
+        .query_row("SELECT status FROM sessions WHERE id = 'test-v7'", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        status, "stopped",
+        "a state no session can reach is not kept in the data"
+    );
+    assert!(!has_column(&conn, "vacuumed_at"));
+    assert!(!has_column(&conn, "compressed_size_bytes"));
 }
 
 #[test]
@@ -887,80 +827,43 @@ fn schema_upgrade_from_v2_preserves_data() {
         .unwrap();
     assert_eq!(count, 1);
 
-    // New columns exist with NULL defaults.
-    let compressed: Option<i64> = conn
-        .query_row(
-            "SELECT compressed_size_bytes FROM sessions WHERE id = 'test-id'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert!(compressed.is_none());
-
-    let vacuumed: Option<String> = conn
-        .query_row("SELECT vacuumed_at FROM sessions WHERE id = 'test-id'", [], |row| {
+    // Every column the current shape has, including the two the v6->v7 step
+    // adds: the branch-per-version migration used to stamp SCHEMA_VERSION
+    // after one jump, leaving older ledgers current-but-incomplete.
+    let exec_count: i64 = conn
+        .query_row("SELECT exec_count FROM sessions WHERE id = 'test-id'", [], |row| {
             row.get(0)
         })
         .unwrap();
-    assert!(vacuumed.is_none());
+    assert_eq!(exec_count, 0);
+    assert!(
+        !has_column(&conn, "compressed_size_bytes"),
+        "the vacuum columns are gone"
+    );
+    assert!(!has_column(&conn, "vacuumed_at"), "the vacuum columns are gone");
+}
+
+/// Whether `sessions` has a column, for the migration assertions.
+fn has_column(conn: &Connection, column: &str) -> bool {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1)",
+        rusqlite::params![column],
+        |row| row.get(0),
+    )
+    .unwrap()
 }
 
 // -- New lifecycle methods --
 
 #[test]
-fn mark_vacuumed_sets_fields() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
-        .unwrap();
-    idx.mark_vacuumed("20260225-143052-a7f3", 12345, "2026-02-25T15:00:00Z")
-        .unwrap();
-
-    let records = idx.recent(1).unwrap();
-    assert_eq!(records[0].status, "vacuumed");
-    assert_eq!(records[0].compressed_size_bytes, Some(12345));
-    assert_eq!(records[0].vacuumed_at.as_deref(), Some("2026-02-25T15:00:00Z"));
-}
-
-#[test]
 fn mark_terminated_sets_status() {
     let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "vacuumed"))
+    idx.create_session(&sample_record("20260225-143052-a7f3", "stopped"))
         .unwrap();
     idx.mark_terminated("20260225-143052-a7f3").unwrap();
 
     let records = idx.recent(1).unwrap();
     assert_eq!(records[0].status, "terminated");
-}
-
-#[test]
-fn unvacuumed_sessions_returns_correct_set() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-
-    // Stopped without vacuum -- should be returned.
-    let mut s1 = sample_record("20260225-100000-0000", "stopped");
-    s1.created_at = "2026-02-25T10:00:00Z".to_string();
-    idx.create_session(&s1).unwrap();
-
-    // Crashed without vacuum -- should be returned.
-    let mut s2 = sample_record("20260225-110000-0000", "crashed");
-    s2.created_at = "2026-02-25T11:00:00Z".to_string();
-    idx.create_session(&s2).unwrap();
-
-    // Running -- should NOT be returned.
-    let mut s3 = sample_record("20260225-120000-0000", "running");
-    s3.created_at = "2026-02-25T12:00:00Z".to_string();
-    idx.create_session(&s3).unwrap();
-
-    // Already vacuumed -- should NOT be returned.
-    let mut s4 = sample_record("20260225-130000-0000", "vacuumed");
-    s4.created_at = "2026-02-25T13:00:00Z".to_string();
-    s4.vacuumed_at = Some("2026-02-25T14:00:00Z".to_string());
-    idx.create_session(&s4).unwrap();
-
-    let unvacuumed = idx.unvacuumed_sessions().unwrap();
-    assert_eq!(unvacuumed.len(), 2);
-    assert_eq!(unvacuumed[0].id, "20260225-100000-0000");
-    assert_eq!(unvacuumed[1].id, "20260225-110000-0000");
 }
 
 #[test]
@@ -1018,14 +921,7 @@ fn full_lifecycle_running_to_terminated() {
         .unwrap();
     assert_eq!(idx.recent(1).unwrap()[0].status, "stopped");
 
-    // stopped -> vacuumed
-    idx.mark_vacuumed("20260225-143052-a7f3", 5000, "2026-02-25T15:01:00Z")
-        .unwrap();
-    let rec = &idx.recent(1).unwrap()[0];
-    assert_eq!(rec.status, "vacuumed");
-    assert_eq!(rec.compressed_size_bytes, Some(5000));
-
-    // vacuumed -> terminated
+    // stopped -> terminated
     idx.mark_terminated("20260225-143052-a7f3").unwrap();
     assert_eq!(idx.recent(1).unwrap()[0].status, "terminated");
 
@@ -1041,24 +937,14 @@ fn checkpoint_succeeds_on_in_memory_db() {
 }
 
 #[test]
-fn new_columns_null_by_default() {
-    let idx = SessionIndex::open_in_memory().unwrap();
-    idx.create_session(&sample_record("20260225-143052-a7f3", "running"))
-        .unwrap();
-    let records = idx.recent(1).unwrap();
-    assert!(records[0].compressed_size_bytes.is_none());
-    assert!(records[0].vacuumed_at.is_none());
-}
-
-#[test]
-fn stopped_sessions_includes_vacuumed() {
+fn stopped_sessions_includes_crashed() {
     let idx = SessionIndex::open_in_memory().unwrap();
 
     let mut s1 = sample_record("20260225-100000-0000", "stopped");
     s1.created_at = "2026-02-25T10:00:00Z".to_string();
     idx.create_session(&s1).unwrap();
 
-    let mut s2 = sample_record("20260225-110000-0000", "vacuumed");
+    let mut s2 = sample_record("20260225-110000-0000", "crashed");
     s2.created_at = "2026-02-25T11:00:00Z".to_string();
     idx.create_session(&s2).unwrap();
 
@@ -1067,7 +953,7 @@ fn stopped_sessions_includes_vacuumed() {
     idx.create_session(&s3).unwrap();
 
     let stopped = idx.stopped_sessions_oldest_first().unwrap();
-    assert_eq!(stopped.len(), 2); // stopped + vacuumed, not terminated
+    assert_eq!(stopped.len(), 2); // stopped + crashed, not terminated
     assert_eq!(stopped[0].id, "20260225-100000-0000");
     assert_eq!(stopped[1].id, "20260225-110000-0000");
 }
@@ -1202,4 +1088,107 @@ fn query_raw_restores_write_on_error() {
     idx.create_session(&sample_record("20260225-143053-b8e4", "running"))
         .unwrap();
     assert_eq!(idx.count().unwrap(), 2);
+}
+
+// -- Fork metadata and MCP rollups --
+//
+// These lived in an inline `mod retention_tests` at the bottom of
+// session_index.rs, beside the terminators this change deleted. They belong
+// in the sibling tests.rs the rest of the crate uses.
+
+/// A session with the content counters a rollup assertion needs.
+fn content_session(
+    id: &str,
+    created_at: &str,
+    status: &str,
+    tokens: u64,
+    tool_calls: u64,
+    requests: u64,
+) -> SessionRecord {
+    let mut record = sample_record(id, status);
+    record.created_at = created_at.to_string();
+    record.total_input_tokens = tokens;
+    record.total_tool_calls = tool_calls;
+    record.total_requests = requests;
+    record
+}
+
+#[test]
+fn session_with_forked_from_roundtrips() {
+    let idx = SessionIndex::open_in_memory().unwrap();
+    let mut s = content_session("20260326-100000-0001", "2026-03-26T10:00:00Z", "running", 0, 0, 0);
+    s.forked_from = Some("my-image".into());
+    s.persistent = true;
+    idx.create_session(&s).unwrap();
+
+    let sessions = idx.recent(10).unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].forked_from.as_deref(), Some("my-image"));
+    assert!(sessions[0].persistent);
+}
+
+#[test]
+fn v6_schema_has_forked_from_and_persistent() {
+    // Verify the schema includes the new columns by inserting and querying
+    let idx = SessionIndex::open_in_memory().unwrap();
+    let mut s = content_session("20260326-100000-0001", "2026-03-26T10:00:00Z", "running", 0, 0, 0);
+    s.forked_from = Some("test-img".into());
+    s.persistent = true;
+    idx.create_session(&s).unwrap();
+
+    // Raw query to verify columns exist
+    let (src_img, pers): (Option<String>, bool) = idx
+        .conn
+        .query_row(
+            "SELECT forked_from, persistent FROM sessions WHERE id = ?1",
+            params!["20260326-100000-0001"],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(src_img.as_deref(), Some("test-img"));
+    assert!(pers);
+}
+
+#[test]
+fn top_mcp_tools_groups_by_server_name() {
+    let idx = SessionIndex::open_in_memory().unwrap();
+    let s1 = content_session("s1", "2026-03-01T10:00:00Z", "stopped", 10, 5, 1);
+    let s2 = content_session("s2", "2026-03-02T10:00:00Z", "stopped", 10, 5, 1);
+    idx.create_session(&s1).unwrap();
+    idx.create_session(&s2).unwrap();
+
+    // Same tool_name "search" from different servers in different sessions
+    idx.replace_mcp_usage(
+        "s1",
+        &[McpToolSummary {
+            tool_name: "search".into(),
+            server_name: "github".into(),
+            call_count: 3,
+            total_bytes: 100,
+            total_duration_ms: 50,
+        }],
+    )
+    .unwrap();
+    idx.replace_mcp_usage(
+        "s2",
+        &[McpToolSummary {
+            tool_name: "search".into(),
+            server_name: "jira".into(),
+            call_count: 2,
+            total_bytes: 80,
+            total_duration_ms: 40,
+        }],
+    )
+    .unwrap();
+
+    let results = idx.top_mcp_tools(10).unwrap();
+    // Should return 2 entries (one per server), not merge them into 1
+    assert_eq!(
+        results.len(),
+        2,
+        "same tool_name from different servers should be separate rows"
+    );
+    let servers: Vec<&str> = results.iter().map(|r| r.server_name.as_str()).collect();
+    assert!(servers.contains(&"github"), "github server missing");
+    assert!(servers.contains(&"jira"), "jira server missing");
 }

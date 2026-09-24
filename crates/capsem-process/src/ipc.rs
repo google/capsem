@@ -106,6 +106,9 @@ fn emit_guest_write_file_event(
         action: capsem_logger::FileAction::Created,
         path: guest_write_ledger_path(path),
         size: Some(size as u64),
+        // The guest reports a write of `size` bytes, which is a file by
+        // construction; the guest agent has no directory-write path.
+        kind: capsem_logger::FileKind::File,
         trace_id,
         credential_ref: None,
     };
@@ -844,6 +847,8 @@ pub(crate) async fn handle_ipc_connection(
                         }
                     };
                     let servers = runtime_config.mcp_servers(mcp_builtin_binary.as_deref(), mcp_builtin_env);
+                    mcp.endpoint
+                        .set_builtin_servers(capsem_core::mcp::builtin_server_names(&servers));
                     match mcp.aggregator.refresh(servers).await {
                         Ok(()) => {
                             capsem_core::try_send!(

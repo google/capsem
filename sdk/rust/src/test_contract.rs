@@ -77,6 +77,7 @@ pub struct Case {
     method: String,
     query: Vec<(String, String)>,
     request_media: Option<String>,
+    response_media: String,
 }
 
 impl Case {
@@ -156,8 +157,15 @@ impl Case {
             202
         };
         let content = &operation["responses"][success_status.to_string()]["content"];
-        let binary = content.get("application/octet-stream").is_some();
-        let response_schema = &content["application/json"]["schema"];
+        let response_media = if content.get("application/gzip").is_some() {
+            "application/gzip"
+        } else if content.get("application/octet-stream").is_some() {
+            "application/octet-stream"
+        } else {
+            "application/json"
+        };
+        let binary = response_media != "application/json";
+        let response_schema = &content[response_media]["schema"];
         let response = if binary {
             Value::Null
         } else {
@@ -173,6 +181,7 @@ impl Case {
             method: method.to_uppercase(),
             query,
             request_media,
+            response_media: response_media.into(),
         }
     }
 
@@ -192,14 +201,7 @@ impl Case {
         let url = reqwest::Url::parse(&format!("http://localhost{}", parts.uri)).unwrap();
         assert_eq!(url.query_pairs().into_owned().collect::<Vec<_>>(), self.query);
         assert_eq!(parts.headers["authorization"], "Bearer private-token");
-        assert_eq!(
-            parts.headers["accept"],
-            if self.binary {
-                "application/octet-stream"
-            } else {
-                "application/json"
-            }
-        );
+        assert_eq!(parts.headers["accept"], self.response_media);
         match self.request_media.as_deref() {
             Some("application/octet-stream") => assert_eq!(body, vec![0, 255, 13, 10]),
             Some(media) => {

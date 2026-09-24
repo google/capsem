@@ -953,13 +953,16 @@ def test_both_release_lanes_reuse_fail_closed_static_module() -> None:
     assert "cargo clippy --workspace --all-targets -- -D warnings" in _gate_issues()
 
 
-def test_frontend_release_gate_is_owned_by_the_canonical_test() -> None:
+def test_frontend_release_gate_is_owned_by_the_gate_graph() -> None:
     justfile = _read("justfile")
+    webaudits = _read("build_system/builder/gate/webaudits.py")
     web_gate = _read("build_system/scripts/web/check-web-surface.sh")
 
     assert "\ntest-frontend:" not in justfile
     block = justfile.split("\n_test-candidate:", 1)[1].split("\n_build-host-image:", 1)[0]
-    assert "bash build_system/scripts/web/check-web-surface.sh frontend" in block
+    assert "capsem-gate test-fast" in block
+    assert 'Run(["bash", frontend.build_script, frontend.build_target])' in webaudits
+    assert 'build_target = "frontend-build"' in _read("config/gate.toml")
     assert "pnpm --dir web/app run check" in web_gate
     assert "pnpm --dir web/app run test" in web_gate
     assert "pnpm --dir web/app run build" in web_gate

@@ -348,18 +348,3 @@ export const FILE_EVENTS_OVER_TIME_SQL = `
   GROUP BY bucket, action
   ORDER BY bucket, action
 `;
-
-// -- Files tab (event list) ------------------------------------------------
-
-export const FILE_EVENTS_ALL_SQL = `
-  SELECT id, timestamp, action, path, size
-  FROM fs_events
-  ORDER BY id DESC
-`;
-
-export const FILE_EVENTS_SEARCH_SQL = `
-  SELECT id, timestamp, action, path, size
-  FROM fs_events
-  WHERE path LIKE ?
-  ORDER BY id DESC
-`;

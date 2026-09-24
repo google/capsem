@@ -1,9 +1,10 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .archived_event_body import ArchivedEventBody as ArchivedEventBody
 from .asset_manifest_status import AssetManifestStatus as AssetManifestStatus
 from .audit_event import AuditEvent as AuditEvent
 from .audit_history_details import AuditHistoryDetails as AuditHistoryDetails
-from .body_direction import BodyDirection as BodyDirection
+from .body_encoding import BodyEncoding as BodyEncoding
 from .capture_status import CaptureStatus as CaptureStatus
 from .captured_content import CapturedContent as CapturedContent
 from .captured_payload import CapturedPayload as CapturedPayload
@@ -20,6 +21,7 @@ from .credential_outcome import CredentialOutcome as CredentialOutcome
 from .dns_event import DnsEvent as DnsEvent
 from .error_event import ErrorEvent as ErrorEvent
 from .error_response import ErrorResponse as ErrorResponse
+from .event_bodies_response import EventBodiesResponse as EventBodiesResponse
 from .event_body import EventBody as EventBody
 from .exec_history_details import ExecHistoryDetails as ExecHistoryDetails
 from .exec_output import ExecOutput as ExecOutput

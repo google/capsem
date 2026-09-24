@@ -1,4 +1,4 @@
-//! Reader readiness and reconciliation against the writer-owned disk schema.
+//! Reader readiness, and the one question a cross-process reader must ask.
 use super::*;
 
 impl DbReader {
@@ -10,52 +10,64 @@ impl DbReader {
         schema::validate_ready_schema(&self.conn)
     }
 
-    /// Refresh DB-owned hot memory tables from disk for externally-written DBs.
+    /// The ledger's `data_version` when it differs from the last one committed
+    /// here, or `None` when nothing has changed since.
     ///
-    /// Normal writer-owned handles do not call this on read because their
-    /// memory tables are the write truth. Service session route handles use it
-    /// because capsem-process owns the writes and disk is the process boundary.
+    /// `data_version` is SQLite's own answer to "did another connection commit
+    /// since I last looked". Neither the file's size nor its mtime answers that
+    /// question -- a WAL-only commit moves neither -- and a reader in another
+    /// process has nothing else to go on.
     ///
-    /// Returns whether another connection's commit was absorbed, which is what
-    /// the owning handle's read-cache epochs advance on.
-    pub(crate) fn sync_from_disk(&self) -> rusqlite::Result<bool> {
-        // Skip copying when no external connection has committed.
-        // `data_version` is SQLite's own answer to "did another connection
-        // commit since I last looked"; a writer in another process moves it,
-        // this connection's own memory-schema writes do not.
+    /// Observing is deliberately separate from recording: the observation is a
+    /// promise that everything derived from it will be redone, so it is only
+    /// committed once that work has actually succeeded. See
+    /// `commit_observed_version`.
+    pub(crate) fn observe_data_version(&self) -> rusqlite::Result<Option<i64>> {
         let data_version: i64 = self.conn.query_row("PRAGMA main.data_version", [], |row| row.get(0))?;
-        if self.synced_data_version.get() == Some(data_version) {
-            return Ok(false);
-        }
-        let schema_version: i64 = self
-            .conn
-            .query_row("PRAGMA main.schema_version", [], |row| row.get(0))?;
-        let schema_changed = self.synced_schema_version.get() != Some(schema_version);
-        self.conn.pragma_update(None, "query_only", "OFF")?;
-        let result = schema::with_memory_schema_lock(|| {
-            if schema_changed {
-                schema::reconcile_memory_tables_from_disk(&self.conn)?;
-                schema::validate_ready_schema(&self.conn).map_err(rusqlite::Error::InvalidParameterName)?;
-            }
-            schema::sync_memory_tables_from_disk(&self.conn, schema::hot_ledger_tables())?;
-            if schema_changed {
-                schema::create_memory_read_views(&self.conn)?;
-            }
-            Ok(())
-        });
-        let restore = self.conn.pragma_update(None, "query_only", "ON");
-        if result.is_ok() {
-            // Recorded as read before the copy: a commit that lands during
-            // the copy leaves a newer version behind and triggers the next one.
-            self.synced_data_version.set(Some(data_version));
-            self.synced_schema_version.set(Some(schema_version));
-            self.disk_syncs.set(self.disk_syncs.get() + 1);
-        }
-        result.and(restore).map(|()| true)
+        Ok((self.synced_data_version.get() != Some(data_version)).then_some(data_version))
     }
 
-    /// How many times the memory tables were rebuilt from disk.
-    pub fn disk_syncs(&self) -> u64 {
+    /// Record an observation whose dependent work completed successfully.
+    ///
+    /// Committing it earlier would lose the change: a query that then failed
+    /// would leave this reader believing it had already accounted for a commit
+    /// it never read, and every later poll would answer from a cache built
+    /// before it -- until the writer happened to commit again.
+    pub(crate) fn commit_observed_version(&self, data_version: i64) {
+        self.synced_data_version.set(Some(data_version));
+        self.disk_syncs.set(self.disk_syncs.get() + 1);
+    }
+
+    /// How many observed ledger changes this reader has committed.
+    #[cfg(test)]
+    pub(crate) fn disk_syncs(&self) -> u64 {
         self.disk_syncs.get()
+    }
+
+    /// How many caller-owned queries this reader actually executed.
+    ///
+    /// A batch served from the handle's `query_many` cache never reaches the
+    /// reader, so this is what distinguishes a cache hit from a re-execution.
+    #[cfg(test)]
+    pub(crate) fn queries_executed(&self) -> u64 {
+        self.queries_executed.get()
+    }
+
+    pub(crate) fn record_query_executed(&self) {
+        self.queries_executed.set(self.queries_executed.get() + 1);
+    }
+
+    /// Schema names attached to this reader's connection.
+    #[cfg(test)]
+    pub(crate) fn attached_schemas(&self) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("PRAGMA database_list")?;
+        let names = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        names.collect()
+    }
+
+    /// How long this reader waits out a file lock before failing, in ms.
+    #[cfg(test)]
+    pub(crate) fn busy_timeout_ms(&self) -> rusqlite::Result<i64> {
+        self.conn.query_row("PRAGMA busy_timeout", [], |row| row.get(0))
     }
 }

@@ -426,16 +426,15 @@ def test_in_container_commands_write_only_where_the_container_user_owns() -> Non
 
 
 def test_runtime_recipes_materialize_generated_config_before_service() -> None:
-    # `_prepared-runtime` owns this sequence for every runtime entry point, so
-    # the ordering is asserted once where it lives rather than re-checked in
-    # each caller. Four copies of it is how a fifth caller drops a step.
-    prepared = _recipe_block("_prepared-runtime:")
-    assert "_pack-initrd" in prepared
-    assert "_materialize-config" in prepared
-    assert prepared.index("_pack-initrd") < prepared.index("_materialize-config")
-
-    for recipe in ["shell:", "run-service:"]:
-        assert "_prepared-runtime" in _recipe_block(recipe)
+    # Runtime preparation is one graph now. Its profile content is produced
+    # before host compilation/signing, and the service cannot prepare until
+    # that exact signed runtime exists.
+    for command in ("ensure-service", "shell", "exec"):
+        plan = _command(command, guest_command="true")._describe()
+        assert plan.after_of("prepare.cargo-cache-enforcement") == {"prepare.materialize-config"}
+        assert plan.after_of("prepare.build-binaries") == {"prepare.cargo-cache-enforcement"}
+        assert plan.after_of("prepare.sign") == {"prepare.build-binaries"}
+        assert plan.after_of("prepare") == {"prepare.sign"}
 
 
 def test_materialize_config_uses_admin_profile_command() -> None:

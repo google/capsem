@@ -42,4 +42,3 @@ def install_fork_probe_with_service_client(client, vm_name: str) -> None:
     )
     assert resp and resp.get("exit_code") == 0, f"local package install failed: {resp}"
     assert exec_output_text(resp).strip().endswith(FORK_PROBE_OUTPUT), resp
-

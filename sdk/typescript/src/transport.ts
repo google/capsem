@@ -1,6 +1,6 @@
 /** One authenticated fetch transport, with bounded requests and explicit cancellation. */
 export enum Method {GET = 'GET', POST = 'POST', PUT = 'PUT', DELETE = 'DELETE'}
-export enum MediaType {JSON = 'application/json', BINARY = 'application/octet-stream'}
+export enum MediaType {JSON = 'application/json', BINARY = 'application/octet-stream', GZIP = 'application/gzip'}
 
 type QueryValue = string | number | boolean | readonly (string | number | boolean)[] | null | undefined;
 export interface CallOptions {

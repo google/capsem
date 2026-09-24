@@ -30,7 +30,7 @@ async fn call(tool: &str, args: Value) -> JsonRpcResponse {
         &loopback_allowed_rules(),
         &BTreeMap::new(),
         Some(serde_json::json!(1)),
-        &test_db(),
+        &mut Vec::new(),
     )
     .await
 }

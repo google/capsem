@@ -85,11 +85,12 @@ async fn model_items_dedup_by_trace_kind_hash_and_call_id_across_restarts() {
     call.trace_id = Some("trace_ironbank_dedup".to_string());
     call.model = Some("gemma4:latest".to_string());
     call.path = "/v1/responses".to_string();
-    call.request_body_preview =
-        Some(r#"{"model":"gemma4:latest","input":"write nonce","tools":[{"name":"exec_command"}]}"#.to_string());
+    call.request_body =
+        Some(br#"{"model":"gemma4:latest","input":"write nonce","tools":[{"name":"exec_command"}]}"#.to_vec());
     call.thinking_content = Some("dedup reasoning".to_string());
     call.text_content = Some("dedup response".to_string());
     call.tool_calls = vec![ToolCallEntry {
+        event_id: None,
         call_index: 0,
         call_id: "call_dedup_01".to_string(),
         tool_name: "exec_command".to_string(),
@@ -107,14 +108,15 @@ async fn model_items_dedup_by_trace_kind_hash_and_call_id_across_restarts() {
     }
 
     let mut response_call = call.clone();
-    response_call.request_body_preview = Some(
-        r#"{"input":[{"type":"function_call_output","call_id":"call_dedup_01","output":"Process exited with code 0"}]}"#
-            .to_string(),
+    response_call.request_body = Some(
+        br#"{"input":[{"type":"function_call_output","call_id":"call_dedup_01","output":"Process exited with code 0"}]}"#
+            .to_vec(),
     );
     response_call.thinking_content = None;
     response_call.text_content = None;
     response_call.tool_calls = Vec::new();
     response_call.tool_responses = vec![ToolResponseEntry {
+        event_id: None,
         call_id: "call_dedup_01".to_string(),
         content_preview: Some("Process exited with code 0".to_string()),
         is_error: false,
@@ -196,6 +198,51 @@ async fn model_items_without_trace_id_dedup_across_restarts() {
         .query_row("SELECT count(*) FROM model_items", [], |row| row.get(0))
         .unwrap();
     assert_eq!(final_count, first_count);
+}
+
+/// content_hash feeds `UNIQUE(trace_id, kind, content_hash, call_id)` and the
+/// `INSERT OR IGNORE` dedup guard in `insert_model_items`. It must be computed
+/// on the ORIGINAL request body, not the capped display copy: two distinct
+/// turns in the same trace whose request bodies are identical for the first
+/// 4KB (e.g. share a system prompt) but differ after PREVIEW_BYTES (2KB) must
+/// not collapse into a single "request" item.
+#[tokio::test]
+async fn model_items_request_dedup_hashes_full_body_not_capped_preview() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+
+    let shared_prefix = "a".repeat(4096);
+    let mut first_call = sample_model_call("anthropic");
+    first_call.trace_id = Some("trace-hash-full-body".to_string());
+    first_call.request_body = Some(format!("{shared_prefix}-turn-one").into_bytes());
+    first_call.tool_calls = Vec::new();
+    first_call.tool_responses = Vec::new();
+
+    let mut second_call = first_call.clone();
+    second_call.request_body = Some(format!("{shared_prefix}-turn-two").into_bytes());
+
+    let writer = DbWriter::open(&path, 64).unwrap();
+    writer.write(WriteOp::ModelCall(first_call)).await;
+    writer.write(WriteOp::ModelCall(second_call)).await;
+    drop(writer);
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let request_items: Vec<(String, String)> = conn
+        .prepare("SELECT content, content_hash FROM model_items WHERE trace_id = 'trace-hash-full-body' AND kind = 'request' ORDER BY id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(
+        request_items.len(),
+        2,
+        "both request items must survive dedup: {request_items:#?}"
+    );
+    assert_ne!(request_items[0].1, request_items[1].1, "content_hash must differ");
+    assert!(request_items[0].0.ends_with("-turn-one"));
+    assert!(request_items[1].0.ends_with("-turn-two"));
 }
 
 // ── Count queries ────────────────────────────────────────────────────
@@ -394,10 +441,8 @@ async fn empty_strings() {
         matched_rule: Some("".to_string()),
         request_headers: Some("".to_string()),
         response_headers: Some("".to_string()),
-        request_body_preview: Some("".to_string()),
-        response_body_preview: Some("".to_string()),
-        request_body_full: None,
-        response_body_full: None,
+        request_body: None,
+        response_body: None,
         conn_type: Some("".to_string()),
         policy_mode: None,
         policy_action: None,
@@ -440,13 +485,12 @@ async fn unicode_strings() {
         messages_count: 1,
         tools_count: 0,
         request_bytes: 100,
-        request_body_preview: None,
-        request_body_full: None,
+        request_body: None,
         message_id: None,
         status_code: Some(200),
         text_content: Some("Bonjour le monde!".to_string()),
         thinking_content: None,
-        response_body_full: Some("Bonjour le monde!".to_string()),
+        response_body: Some(b"Bonjour le monde!".to_vec()),
         stop_reason: Some("end_turn".to_string()),
         input_tokens: Some(5),
         output_tokens: Some(3),
@@ -470,6 +514,13 @@ async fn unicode_strings() {
     assert_eq!(calls[0].1.text_content.as_deref(), Some("Bonjour le monde!"));
 }
 
+/// `net_events.*_body_preview` is a compact display field only (writer.rs);
+/// the forensic copy of a large body lives in `event_body_blobs`. This test
+/// used to assert the preview round-tripped at full size -- that was
+/// asserting the bug this cap fixes (previews duplicating up to 256KB of
+/// bytes already stored in full in the blob table). Now it asserts the
+/// preview is capped at `PREVIEW_BYTES` while the blob keeps the exact
+/// original body.
 #[tokio::test]
 async fn large_body_previews() {
     let dir = tempfile::tempdir().unwrap();
@@ -478,15 +529,33 @@ async fn large_body_previews() {
 
     let large_body = "x".repeat(100_000);
     let mut event = sample_net_event("big.com", Decision::Allowed);
-    event.request_body_preview = Some(large_body.clone());
-    event.response_body_preview = Some(large_body.clone());
+    event.event_id = Some("1a2b3c4d5e6f".into());
+    event.request_body = Some(large_body.clone().into_bytes());
+    event.response_body = Some(large_body.clone().into_bytes());
 
     writer.write(WriteOp::NetEvent(event)).await;
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
     let events = reader.recent_net_events(10).unwrap();
-    assert_eq!(events[0].request_body_preview.as_ref().unwrap().len(), 100_000);
+    // PREVIEW_BYTES (writer.rs) -- kept as a literal here since this is an
+    // external integration-test crate and the constant is crate-private.
+    assert_eq!(events[0].request_body.as_ref().unwrap().len(), 2 * 1024);
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let (original_bytes, stored_bytes): (i64, i64) = conn
+        .query_row(
+            "SELECT original_bytes, stored_bytes FROM event_body_blobs
+             WHERE event_id = '1a2b3c4d5e6f' AND direction = 'request'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(original_bytes, 100_000, "the blob keeps the full body size");
+    assert_eq!(
+        stored_bytes, 100_000,
+        "the blob keeps the full body bytes, not the capped preview"
+    );
 }
 
 // ── Rapid-fire writes ────────────────────────────────────────────────
@@ -568,6 +637,7 @@ async fn model_call_many_tools() {
     let mut call = sample_model_call("anthropic");
     call.tool_calls = (0..10)
         .map(|i| ToolCallEntry {
+            event_id: None,
             call_index: i,
             call_id: format!("toolu_{i:02}"),
             tool_name: format!("tool_{i}"),
@@ -578,6 +648,7 @@ async fn model_call_many_tools() {
         .collect();
     call.tool_responses = (0..5)
         .map(|i| ToolResponseEntry {
+            event_id: None,
             call_id: format!("toolu_{i:02}"),
             content_preview: Some(format!("result {i}")),
             is_error: i == 3,
@@ -677,16 +748,16 @@ async fn net_event_body_preview_capped() {
 
     let huge = "x".repeat(500_000); // 500KB -- well beyond any reasonable preview
     let mut event = sample_net_event("big.com", Decision::Allowed);
-    event.request_body_preview = Some(huge.clone());
-    event.response_body_preview = Some(huge);
+    event.request_body = Some(huge.clone().into_bytes());
+    event.response_body = Some(huge.into_bytes());
 
     writer.write(WriteOp::NetEvent(event)).await;
     drop(writer);
 
     let reader = DbReader::open(&path).unwrap();
     let events = reader.recent_net_events(10).unwrap();
-    let req_preview = events[0].request_body_preview.as_ref().unwrap();
-    let resp_preview = events[0].response_body_preview.as_ref().unwrap();
+    let req_preview = events[0].request_body.as_ref().unwrap();
+    let resp_preview = events[0].response_body.as_ref().unwrap();
     assert!(
         req_preview.len() <= 262_144,
         "request_body_preview should be capped at 256KB, got {}",
@@ -710,7 +781,7 @@ async fn model_call_content_fields_capped() {
     let mut call = sample_model_call("anthropic");
     call.text_content = Some(huge.clone());
     call.thinking_content = Some(huge);
-    call.request_body_preview = Some("z".repeat(500_000));
+    call.request_body = Some("z".repeat(500_000).into_bytes());
 
     writer.write(WriteOp::ModelCall(call)).await;
     drop(writer);
@@ -774,6 +845,7 @@ async fn multiple_model_calls_get_distinct_ids() {
 
     let mut call1 = sample_model_call("anthropic");
     call1.tool_calls = vec![ToolCallEntry {
+        event_id: None,
         call_index: 0,
         call_id: "tc_first".to_string(),
         tool_name: "tool_a".to_string(),
@@ -785,6 +857,7 @@ async fn multiple_model_calls_get_distinct_ids() {
 
     let mut call2 = sample_model_call("openai");
     call2.tool_calls = vec![ToolCallEntry {
+        event_id: None,
         call_index: 0,
         call_id: "tc_second".to_string(),
         tool_name: "tool_b".to_string(),
@@ -837,6 +910,50 @@ async fn writer_reader_on_file_backed_sees_data() {
     let events = reader.recent_net_events(10).unwrap();
     assert_eq!(events.len(), 1, "reader from writer.reader() should see written data");
     assert_eq!(events[0].domain, "live.com");
+}
+
+/// Two writes of the same model call must agree on its items' ids.
+///
+/// Every other column of a `model_items` row is derived from the call, so a
+/// random id here was the one value that made replaying a session produce a
+/// different ledger -- which is what stopped the fixture regenerator from
+/// being byte-reproducible.
+#[tokio::test]
+async fn model_item_ids_are_derived_from_the_item_not_minted_per_write() {
+    async fn item_ids(path: &std::path::Path) -> Vec<String> {
+        let writer = DbWriter::open(path, 64).unwrap();
+        writer.write(WriteOp::ModelCall(sample_model_call("anthropic"))).await;
+        drop(writer);
+        let conn = rusqlite::Connection::open(path).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT event_id FROM model_items ORDER BY item_index")
+            .unwrap();
+        let ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        ids
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let first = item_ids(&dir.path().join("first.db")).await;
+    let second = item_ids(&dir.path().join("second.db")).await;
+
+    assert!(!first.is_empty(), "the sample call must produce items to compare");
+    assert_eq!(first, second, "the same call must mint the same item ids");
+
+    // Derived, not constant: rows that differ in identity still differ in id,
+    // and the column's CHECK still holds.
+    let unique = first.iter().collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(unique.len(), first.len(), "distinct items keep distinct ids");
+    for id in &first {
+        assert_eq!(id.len(), 12, "event_id is 12 characters: {id}");
+        assert!(
+            id.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "event_id is lowercase hex: {id}"
+        );
+    }
 }
 
 // ── Session stats + new query methods ───────────────────────────────

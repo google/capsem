@@ -170,13 +170,13 @@ pub struct CredentialEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct EventBody {
     pub event_id: String,
-    pub direction: BodyDirection,
+    pub source_table: String,
+    pub direction: String,
     pub content_type: Option<String>,
     pub original_bytes: u64,
     pub stored_bytes: u64,
     pub truncated: bool,
     pub body_hash: String,
-    pub body: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -204,13 +204,6 @@ pub enum ToolOrigin {
     Builtin,
     Local,
     McpProxy,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum BodyDirection {
-    Request,
-    Response,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

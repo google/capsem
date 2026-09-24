@@ -116,6 +116,65 @@ fn regular_files_round_trip_through_constrained_options() {
 }
 
 #[test]
+fn private_file_creation_is_exclusive_owner_only_and_directory_syncable() {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let dir = ContainedDir::open_root(root.path()).unwrap();
+    let file = dir.create_new_private_file(std::ffi::OsStr::new("generation")).unwrap();
+    assert!(file.as_raw_fd() >= 0);
+    assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+    assert!(dir.create_new_private_file(std::ffi::OsStr::new("generation")).is_err());
+    dir.sync().unwrap();
+}
+
+#[test]
+fn existing_private_append_refuses_permissions_and_extra_links() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let dir = ContainedDir::open_root(root.path()).unwrap();
+    let path = root.path().join("generation");
+    std::fs::write(&path, b"bytes").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(dir.open_existing_private_append(OsStr::new("generation")).is_ok());
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+    assert_eq!(
+        dir.open_existing_private_append(OsStr::new("generation"))
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::hard_link(&path, root.path().join("extra-link")).unwrap();
+    assert_eq!(
+        dir.open_existing_private_append(OsStr::new("generation"))
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::PermissionDenied
+    );
+}
+
+#[test]
+fn private_directory_validation_uses_the_opened_descriptor() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let private = root.path().join("private");
+    std::fs::create_dir(&private).unwrap();
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let dir = ContainedDir::open_root(&private).unwrap();
+    dir.validate_private().unwrap();
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o750)).unwrap();
+    assert_eq!(
+        dir.validate_private().unwrap_err().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+}
+
+#[test]
 fn special_files_are_refused_without_blocking() {
     let tree = tree();
     nix::unistd::mkfifo(&tree.root_path.join("pipe"), Mode::from_bits_truncate(0o600)).unwrap();

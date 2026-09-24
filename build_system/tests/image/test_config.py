@@ -41,7 +41,6 @@ retention_days = 30
 max_sessions = 100
 min_content_sessions = 25
 max_disk_gb = 100
-terminated_retention_days = 365
 """)
     return guest
 
@@ -186,7 +185,6 @@ max_body_capture = 4096
 retention_days = 30
 max_sessions = 100
 max_disk_gb = 100
-terminated_retention_days = 365
 """
 
 VM_ENVIRONMENT_TOML = """\

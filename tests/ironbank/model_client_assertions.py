@@ -7,6 +7,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Protocol
 
+from helpers.body_archive import SessionArchive
 from ironbank.model_ledger import (
     ModelLedgerRun,
     ModelLedgerSpec,
@@ -30,19 +31,26 @@ def assert_imported_script_contains(
     env: ModelClientEnvironment,
     expected_text: str,
 ) -> None:
+    # The decided-about event is archive-backed, so the search reads the
+    # payloads rather than a column that no longer holds them.
     with closing(sqlite3.connect(f"file:{env.db_path}?mode=ro", uri=True)) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            """
-            SELECT event_json
-            FROM security_decision_events
-            WHERE event_type = 'file.import'
-              AND event_json LIKE ?
-            ORDER BY id DESC
-            """,
-            (f"%{expected_text}%",),
-        ).fetchall()
-    assert rows, f"imported script ledger should preserve {expected_text!r}"
+        event_ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT event_id FROM security_decision_events WHERE event_type = 'file.import' "
+                "ORDER BY id DESC"
+            ).fetchall()
+        ]
+    # Searched as stored text, the way the LIKE over the column was, so
+    # re-serializing the parsed JSON cannot change what matches.
+    with SessionArchive(env.db_path) as archive:
+        preserved = [
+            event_id
+            for event_id in event_ids
+            if expected_text.encode()
+            in (archive.read(event_id, "security_decision_events", "payload") or b"")
+        ]
+    assert preserved, f"imported script ledger should preserve {expected_text!r}"
 
 
 def assert_one_model_client(

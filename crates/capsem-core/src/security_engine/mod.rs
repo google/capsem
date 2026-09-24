@@ -45,6 +45,9 @@ pub const DUMMY_EICAR_TEST_STRING: &str = r#"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-S
 
 mod emission;
 pub use emission::{emit_security_write, emit_security_write_blocking, RuntimeSecurityEvent};
+mod file_facts;
+use file_facts::explicit_primary_file_event;
+pub use file_facts::{security_event_from_explicit_file_event, security_event_from_file_event};
 mod event_type;
 pub use event_type::{RuntimeSecurityEventFamily, RuntimeSecurityEventType, SecurityEventTypeParseError};
 
@@ -86,15 +89,7 @@ pub async fn emit_explicit_file_security_write_and_rules(
     rules: &SecurityRuleSet,
     event: ExplicitFileSecurityEvent,
 ) -> Option<SecurityEventId> {
-    let primary = FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: event.action,
-        path: event.path.clone(),
-        size: event.size,
-        trace_id: event.trace_id.clone(),
-        credential_ref: event.credential_ref.clone(),
-    };
+    let primary = explicit_primary_file_event(&event);
     let security_event = security_event_from_explicit_file_event(&event);
     let event_type = runtime_file_event_type(event.action);
     let event_id = emit_security_write(db, WriteOp::FileEvent(primary)).await?;
@@ -178,15 +173,7 @@ pub async fn emit_explicit_file_security_write_and_rules_with_plugins(
     plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     event: ExplicitFileSecurityEvent,
 ) -> Result<Option<SecurityRuleEmission>, String> {
-    let primary = FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: event.action,
-        path: event.path.clone(),
-        size: event.size,
-        trace_id: event.trace_id.clone(),
-        credential_ref: event.credential_ref.clone(),
-    };
+    let primary = explicit_primary_file_event(&event);
     let security_event = security_event_from_explicit_file_event(&event);
     let event_type = runtime_file_event_type(event.action);
     emit_security_boundary_with_plugins(
@@ -254,119 +241,9 @@ pub const fn runtime_file_event_type(action: FileAction) -> RuntimeSecurityEvent
     match action {
         FileAction::Imported => RuntimeSecurityEventType::FileImport,
         FileAction::Exported => RuntimeSecurityEventType::FileExport,
-        FileAction::Created | FileAction::Modified | FileAction::Deleted | FileAction::Restored | FileAction::Read => {
-            RuntimeSecurityEventType::FileEvent
-        }
+        FileAction::Created | FileAction::Modified | FileAction::Deleted => RuntimeSecurityEventType::FileEvent,
+        FileAction::Restored | FileAction::Read | FileAction::Overflow => RuntimeSecurityEventType::FileEvent,
     }
-}
-
-pub fn security_event_from_file_event(event: &FileEvent) -> SecurityEvent {
-    let mut file = FileSecurityEvent::default();
-    let path = Some(event.path.clone());
-    let name = file_name(&event.path);
-    let ext = file_ext(&event.path);
-    match event.action {
-        FileAction::Created => {
-            file.create_path = path;
-            file.create_name = name;
-            file.create_ext = ext;
-        }
-        FileAction::Modified | FileAction::Restored => {
-            file.write_path = path;
-            file.write_name = name;
-            file.write_ext = ext;
-        }
-        FileAction::Deleted => {
-            file.delete_path = path;
-            file.delete_name = name;
-            file.delete_ext = ext;
-        }
-        FileAction::Read => {
-            file.read_path = path;
-            file.read_name = name;
-            file.read_ext = ext;
-        }
-        FileAction::Imported => {
-            file.import_path = path;
-            file.import_name = name;
-            file.import_ext = ext;
-        }
-        FileAction::Exported => {
-            file.export_path = path;
-            file.export_name = name;
-            file.export_ext = ext;
-        }
-    }
-    let mut security_event = SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
-    if let Some(trace_id) = event.trace_id.clone() {
-        security_event = security_event.with_trace_id(trace_id);
-    }
-    if let Some(credential_ref) = event.credential_ref.clone() {
-        security_event = security_event.with_credential_ref(credential_ref);
-    }
-    security_event
-}
-
-pub fn security_event_from_explicit_file_event(event: &ExplicitFileSecurityEvent) -> SecurityEvent {
-    let mut file = FileSecurityEvent::default();
-    let path = Some(event.path.clone());
-    let name = file_name(&event.path);
-    let ext = file_ext(&event.path);
-    let mime_type = event.mime_type.clone();
-    let content = event.content.clone();
-    file.content = content.clone();
-    match event.action {
-        FileAction::Created => {
-            file.create_path = path;
-            file.create_name = name;
-            file.create_ext = ext;
-            file.create_mime_type = mime_type;
-            file.create_content = content;
-        }
-        FileAction::Modified | FileAction::Restored => {
-            file.write_path = path;
-            file.write_name = name;
-            file.write_ext = ext;
-            file.write_mime_type = mime_type;
-            file.write_content = content;
-        }
-        FileAction::Deleted => {
-            file.delete_path = path;
-            file.delete_name = name;
-            file.delete_ext = ext;
-            file.delete_mime_type = mime_type;
-            file.delete_content = content;
-        }
-        FileAction::Read => {
-            file.read_path = path;
-            file.read_name = name;
-            file.read_ext = ext;
-            file.read_mime_type = mime_type;
-            file.read_content = content;
-        }
-        FileAction::Imported => {
-            file.import_path = path;
-            file.import_name = name;
-            file.import_ext = ext;
-            file.import_mime_type = mime_type;
-            file.import_content = content;
-        }
-        FileAction::Exported => {
-            file.export_path = path;
-            file.export_name = name;
-            file.export_ext = ext;
-            file.export_mime_type = mime_type;
-            file.export_content = content;
-        }
-    }
-    let mut security_event = SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
-    if let Some(trace_id) = event.trace_id.clone() {
-        security_event = security_event.with_trace_id(trace_id);
-    }
-    if let Some(credential_ref) = event.credential_ref.clone() {
-        security_event = security_event.with_credential_ref(credential_ref);
-    }
-    security_event
 }
 
 pub async fn emit_process_complete_security_write_and_rules(
@@ -706,38 +583,38 @@ impl SecurityEnforcementDecision {
         matches!(self.action, SecurityEnforcementAction::Allow)
     }
 
-    pub fn with_ask_resolution(&self, resolution: &SecurityAskEvent) -> Result<Self, SecurityActionError> {
+    /// Apply an ask's resolution. It takes the three things it reads rather
+    /// than a whole `SecurityAskEvent`: a recorded resolution keeps no payload.
+    pub fn with_ask_resolution(
+        &self,
+        ask_id: &str,
+        status: SecurityAskStatus,
+        reason: Option<&str>,
+    ) -> Result<Self, SecurityActionError> {
         if !matches!(self.action, SecurityEnforcementAction::Ask) {
             return Err(SecurityActionError::new(
                 "only ask enforcement decisions can consume ask resolutions",
             ));
         }
-        if self.ask_id.as_ref().map(SecurityEventId::as_str) != Some(resolution.ask_id.as_str()) {
+        if self.ask_id.as_ref().map(SecurityEventId::as_str) != Some(ask_id) {
             return Err(SecurityActionError::new(format!(
-                "ask resolution '{}' does not match enforcement ask id",
-                resolution.ask_id
+                "ask resolution '{ask_id}' does not match enforcement ask id"
             )));
         }
-        match resolution.status {
-            SecurityAskStatus::Pending => Err(SecurityActionError::new(format!(
-                "ask '{}' is still pending",
-                resolution.ask_id
-            ))),
-            SecurityAskStatus::Approved => Ok(Self {
-                action: SecurityEnforcementAction::Allow,
-                rule_id: self.rule_id.clone(),
-                rule_name: self.rule_name.clone(),
-                reason: resolution.reason.clone().or_else(|| self.reason.clone()),
-                ask_id: self.ask_id.clone(),
-            }),
-            SecurityAskStatus::Denied => Ok(Self {
-                action: SecurityEnforcementAction::Block,
-                rule_id: self.rule_id.clone(),
-                rule_name: self.rule_name.clone(),
-                reason: resolution.reason.clone().or_else(|| self.reason.clone()),
-                ask_id: self.ask_id.clone(),
-            }),
-        }
+        let action = match status {
+            SecurityAskStatus::Pending => {
+                return Err(SecurityActionError::new(format!("ask '{ask_id}' is still pending")))
+            }
+            SecurityAskStatus::Approved => SecurityEnforcementAction::Allow,
+            SecurityAskStatus::Denied => SecurityEnforcementAction::Block,
+        };
+        Ok(Self {
+            action,
+            rule_id: self.rule_id.clone(),
+            rule_name: self.rule_name.clone(),
+            reason: reason.map(str::to_string).or_else(|| self.reason.clone()),
+            ask_id: self.ask_id.clone(),
+        })
     }
 }
 
@@ -1853,6 +1730,9 @@ pub struct FileSecurityEvent {
     pub delete_mime_type: Option<String>,
     pub delete_content: Option<String>,
     pub content: Option<String>,
+    /// What the path is: `file`, `dir`, `symlink` or `other`. A rule that
+    /// cares only about directory creation says `file.kind == "dir"`.
+    pub kind: Option<String>,
 }
 
 impl FileSecurityEvent {
@@ -1896,6 +1776,7 @@ impl FileSecurityEvent {
             "delete.mime_type" => borrowed_string(self.delete_mime_type.as_deref()),
             "delete.content" => borrowed_string(self.delete_content.as_deref()),
             "content" => borrowed_string(self.content.as_deref()),
+            "kind" => borrowed_string(self.kind.as_deref()),
             _ => None,
         }
     }

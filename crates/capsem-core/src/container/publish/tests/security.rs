@@ -482,12 +482,33 @@ async fn a_refused_container_pull_is_audited_with_image_identity() {
     assert!(rows.contains("container_pull"), "{rows}");
     assert!(rows.contains("registry.example/private/app:1"), "{rows}");
     assert!(rows.contains("registry.example"), "{rows}");
-    let decisions = capsem_logger::DbReader::open(&path)
+    let indexed = capsem_logger::DbReader::open(&path)
         .unwrap()
         .query_raw_with_params(
-            "SELECT event_json FROM security_decision_events WHERE event_type = 'network.lifecycle'",
+            "SELECT event_id FROM event_body_blobs
+             WHERE source_table = 'security_decision_events' AND direction = 'payload'",
             &[],
         )
+        .unwrap();
+    let indexed: serde_json::Value = serde_json::from_str(&indexed).unwrap();
+    let event_id = indexed["rows"][0][0].as_str().unwrap();
+    let decision = capsem_logger::DbHandle::open_external_reader(&path)
+        .unwrap()
+        .read_body(
+            event_id,
+            "security_decision_events",
+            capsem_logger::BodyDirection::Payload,
+        )
+        .await
+        .unwrap()
+        .expect("the denied pull decision payload is archived");
+    assert_eq!(
+        decision.content_type.as_deref(),
+        Some("application/vnd.capsem.security+msgpack")
+    );
+    let decisions = capsem_proto::forensic::SecurityForensicEvent::decode(&decision.bytes)
+        .unwrap()
+        .to_json()
         .unwrap();
     assert!(decisions.contains("registry.example/private/app:1"), "{decisions}");
     assert!(decisions.contains("registry.example"), "{decisions}");

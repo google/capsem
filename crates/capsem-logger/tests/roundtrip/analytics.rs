@@ -252,6 +252,7 @@ async fn tool_usage_frequency() {
     let mut call = sample_model_call("anthropic");
     call.tool_calls = vec![
         ToolCallEntry {
+            event_id: None,
             call_index: 0,
             call_id: "t1".into(),
             tool_name: "read_file".into(),
@@ -260,6 +261,7 @@ async fn tool_usage_frequency() {
             trace_id: None,
         },
         ToolCallEntry {
+            event_id: None,
             call_index: 1,
             call_id: "t2".into(),
             tool_name: "write_file".into(),
@@ -272,6 +274,7 @@ async fn tool_usage_frequency() {
 
     let mut call2 = sample_model_call("anthropic");
     call2.tool_calls = vec![ToolCallEntry {
+        event_id: None,
         call_index: 0,
         call_id: "t3".into(),
         tool_name: "read_file".into(),

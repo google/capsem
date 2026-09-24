@@ -22,8 +22,6 @@
 # Underscore recipes are implementation detail. No workflow may call one:
 # `tests/citadel/test_ci_calls_only_public_recipes.py` refuses it.
 
-host_crates := "-p capsem-service -p capsem-process -p capsem-router -p capsem -p capsem-tui -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
-
 # Inventory and control the repository cache. Positional arguments preserve
 # every caller-owned argv boundary, including multiword option values.
 [positional-arguments]
@@ -34,15 +32,14 @@ cache *command:
 _stamp-version:
     @uv run --project build_system --frozen capsem-gate stamp-version
 
-# Build one profile's VM assets for one architecture: kernel, then rootfs.
+# Build one profile's VM assets for one architecture.
 build-assets arch profile="":
-    just _build-kernel {{quote(arch)}} {{quote(profile)}}
-    just _build-rootfs {{quote(arch)}} {{quote(profile)}}
+    uv run --project build_system --frozen capsem-gate build-assets {{quote(profile)}} {{quote(arch)}}
 
 
 # Host-crate unit tests against the Linux KVM backend, with coverage.
 test-linux-rust:
-    just _gate-linux-rust
+    uv run --project build_system --frozen capsem-gate linux-rust
 
 
 # Qualify the candidate packages against the manifest-selected profiles.
@@ -70,26 +67,8 @@ release-profile channel profile source_commit force="false":
     uv run --project build_system --frozen capsem-gate release-profile {{quote(channel)}} {{quote(profile)}} {{quote(source_commit)}} --force {{quote(force)}}
 
 
-# Compile all host binaries
-_build-host:
-    cargo build {{host_crates}}
-
-# Codesign all host binaries (macOS only, needed for Virtualization.framework)
-_sign: _build-host
-    uv run --project build_system --frozen capsem-gate sign
-
-
-# Ensure capsem-service daemon is running with the current binary.
-# Kills any existing dev-owned instance (via pidfile -- never pkill-by-name)
-# and relaunches fresh. Honors CAPSEM_HOME / CAPSEM_RUN_DIR env vars so
-# `just test` and `just vm-smoke` run against an isolated test home
-# without ever touching the user's locally installed capsem.
-_ensure-service: _sign
-    uv run --project build_system --frozen capsem-gate ensure-service
-
-
 # Start service daemon + Tauri GUI with hot-reloading
-_dev-ui: _ensure-dev-ready _pnpm-install run-service
+_dev-ui: _ensure-dev-ready _pnpm-install
     uv run --project build_system --frozen capsem-gate dev ui
 
 
@@ -120,27 +99,29 @@ dev surface="ui": _ensure-dev-ready _pnpm-install
 
 # Build the desktop application with its embedded frontend.
 build profile="debug":
-    just _build-ui {{quote(profile)}}
+    uv run --project build_system --frozen capsem-gate build-ui {{quote(profile)}}
 
 # Build every host binary plus the desktop and documentation surfaces.
 # VM/release assets remain profile-owned and are built by the canonical test
 # and release workflows, not hidden inside a routine source build.
 build-all profile="debug":
-    just build {{quote(profile)}}
-    just _build-host
-    just build-docs
+    uv run --project build_system --frozen capsem-gate build-ui {{quote(profile)}}
+    uv run --project build_system --frozen capsem-gate build-host
+    bash build_system/scripts/web/check-web-surface.sh docs
+    bash build_system/scripts/web/check-web-surface.sh site
 
 # Start service daemon + boot temporary VM + shell (~10s after first build)
-shell: _prepared-runtime _ensure-service
+shell:
     uv run --project build_system --frozen capsem-gate shell
 
 
 # Start capsem-service daemon (builds, signs, launches or reuses running instance)
-run-service: _prepared-runtime _ensure-service
+run-service:
+    uv run --project build_system --frozen capsem-gate ensure-service
 
 # Execute a command in a fresh temporary VM (auto-provisioned and destroyed)
 # Usage: just exec "echo hello"   or   just exec "ls -la"
-exec +CMD: run-service
+exec +CMD:
     uv run --project build_system --frozen capsem-gate exec -- {{quote(CMD)}}
 
 
@@ -166,7 +147,7 @@ _build-assets profile="" arch="":
 # architectures, the exact CI-facing build primitives, generated-manifest
 # validation, and a real shell marker from each profile-owned host-arch image.
 # Outputs stay under cache/target/ so the gate never mutates a source-owned directory.
-_gate-assets: _bootstrap _install-tools _generate-settings _sign
+_gate-assets: _bootstrap _install-tools _generate-settings
     @uv run --project build_system --frozen capsem-gate assets
 
 # Run ALL tests: Rust + frontend + Python + injection + integration + bench + cross-compile + install e2e. No shortcuts.
@@ -372,26 +353,9 @@ _pnpm-install:
 _release-site-pnpm-install:
     cd build_system/release_site && CI=true pnpm install --frozen-lockfile
 
-_frontend: _pnpm-install
-    bash build_system/scripts/web/check-web-surface.sh frontend-build
-
-_compile: _frontend _clean-stale
-    cargo build -p capsem
-
-_sign-release: _compile
-    uv run --project build_system --frozen capsem-gate sign
-
-
 _pack-initrd:
     uv run --project build_system --frozen capsem-gate pack-initrd
 
 
 _materialize-config:
     bash build_system/scripts/build/materialize-config.sh
-
-
-# One bootable local runtime: verified assets, the initrd repacked around the
-# current guest binaries, and a materialized profile catalog. `test` and
-# `vm-smoke` both need exactly this before they can run anything against a VM,
-# so they name it once instead of repeating the sequence.
-_prepared-runtime: _check-assets _pack-initrd _materialize-config

@@ -579,6 +579,8 @@ async fn a_retired_network_keeps_its_history_and_a_new_same_name_network_starts_
     write_events(&registry, old.id, 3, 100).await;
     registry.retire(old.id, 2).await.unwrap();
     let new = registry.create("team", 3).await.unwrap();
+    // A restarted service: the old one, and its writer on `new`, are gone.
+    drop(registry);
     let mut reloaded = NetworkRegistry::load(root).await.unwrap();
     let history = reloaded.logs(old.id, &LogQuery::default()).await.unwrap();
     assert_eq!(
