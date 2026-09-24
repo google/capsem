@@ -231,7 +231,8 @@ pub fn write_settings_file(path: &Path, file: &SettingsFile) -> Result<(), Strin
         std::fs::create_dir_all(parent).map_err(|e| format!("failed to create dir {}: {}", parent.display(), e))?;
     }
     let content = toml::to_string_pretty(file).map_err(|e| format!("failed to serialize settings: {e}"))?;
-    std::fs::write(path, content).map_err(|e| format!("failed to write {}: {}", path.display(), e))
+    capsem_foundation::unix::fs::atomic_write_private(path, content.as_bytes())
+        .map_err(|e| format!("failed to write {}: {}", path.display(), e))
 }
 
 /// Load local UI settings and corp constraints from standard locations.

@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use capsem_foundation::unix::fs::atomic_write_private;
 use serde::{Deserialize, Serialize};
 
 use super::provider_profile::{AiProviderProfile, ModelEndpointRegistry, ProviderRuleProfile};
@@ -532,10 +533,7 @@ impl Profile {
         );
         rules.validate()?;
 
-        let serialized =
-            toml::to_string_pretty(&rules).map_err(|error| format!("serialize enforcement file: {error}"))?;
-        fs::write(&enforcement_path, serialized)
-            .map_err(|error| format!("write enforcement file {}: {error}", enforcement_path.display()))?;
+        write_enforcement_file(&enforcement_path, &rules)?;
         let (new_hash, new_size) = file_hash_and_size(&enforcement_path)?;
         self.config.files.enforcement = Some(ProfileFileDescriptor {
             path: enforcement_descriptor.path.clone(),
@@ -635,10 +633,7 @@ impl Profile {
         default.action = action;
         rules.validate()?;
 
-        let serialized =
-            toml::to_string_pretty(&rules).map_err(|error| format!("serialize enforcement file: {error}"))?;
-        fs::write(&enforcement_path, serialized)
-            .map_err(|error| format!("write enforcement file {}: {error}", enforcement_path.display()))?;
+        write_enforcement_file(&enforcement_path, &rules)?;
         let (new_hash, new_size) = self.update_enforcement_pin(&enforcement_descriptor.path, &enforcement_path)?;
         self.save()?;
 
@@ -682,10 +677,7 @@ impl Profile {
         rules
             .compile(SecurityRuleSource::User)
             .map_err(|error| format!("compile profile enforcement rules after mutation: {error}"))?;
-        let serialized =
-            toml::to_string_pretty(&rules).map_err(|error| format!("serialize enforcement file: {error}"))?;
-        fs::write(&enforcement_path, serialized)
-            .map_err(|error| format!("write enforcement file {}: {error}", enforcement_path.display()))?;
+        write_enforcement_file(&enforcement_path, &rules)?;
         let (new_hash, new_size) = self.update_enforcement_pin(&enforcement_descriptor.path, &enforcement_path)?;
         self.save()?;
         Ok(ProfileMutationSummary {
@@ -719,10 +711,7 @@ impl Profile {
         rules
             .compile(SecurityRuleSource::User)
             .map_err(|error| format!("compile profile enforcement rules after delete: {error}"))?;
-        let serialized =
-            toml::to_string_pretty(&rules).map_err(|error| format!("serialize enforcement file: {error}"))?;
-        fs::write(&enforcement_path, serialized)
-            .map_err(|error| format!("write enforcement file {}: {error}", enforcement_path.display()))?;
+        write_enforcement_file(&enforcement_path, &rules)?;
         let (new_hash, new_size) = self.update_enforcement_pin(&enforcement_descriptor.path, &enforcement_path)?;
         self.save()?;
         Ok(ProfileMutationSummary {
@@ -944,7 +933,8 @@ impl Profile {
     pub fn save(&self) -> Result<(), String> {
         let path = self.profile_dir.join("profile.toml");
         let content = toml::to_string_pretty(&self.config).map_err(|error| format!("serialize profile: {error}"))?;
-        fs::write(&path, content).map_err(|error| format!("write profile {}: {error}", path.display()))
+        atomic_write_private(&path, content.as_bytes())
+            .map_err(|error| format!("write profile {}: {error}", path.display()))
     }
 
     fn profile_toml_relative_path(&self) -> String {
@@ -1826,6 +1816,13 @@ fn profile_asset_path(assets_dir: &Path, arch: &str, descriptor: &ProfileAssetDe
     Ok(assets_dir
         .join(arch)
         .join(capsem_assets::asset_manager::hash_filename(&descriptor.name, hash)))
+}
+
+/// Publish an enforcement file whole: a reload never reads a partial rule set.
+fn write_enforcement_file(path: &Path, rules: &SecurityRuleProfile) -> Result<(), String> {
+    let serialized = toml::to_string_pretty(rules).map_err(|error| format!("serialize enforcement file: {error}"))?;
+    atomic_write_private(path, serialized.as_bytes())
+        .map_err(|error| format!("write enforcement file {}: {error}", path.display()))
 }
 
 fn file_hash_and_size(path: &Path) -> Result<(String, u64), String> {

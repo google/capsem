@@ -1220,11 +1220,10 @@ impl ServiceState {
         std::fs::create_dir_all(&active_profile_dir)
             .with_context(|| format!("create {}", active_profile_dir.display()))?;
         let active_profile_path = active_profile_dir.join(ACTIVE_PROFILE_FILE);
-        std::fs::write(
-            &active_profile_path,
-            toml::to_string_pretty(&active_profile).context("serialize active profile")?,
-        )
-        .with_context(|| format!("write {}", active_profile_path.display()))?;
+        let serialized = toml::to_string_pretty(&active_profile).context("serialize active profile")?;
+        // capsem-process reads this on every reload: publish it whole.
+        capsem_foundation::unix::fs::atomic_write_private(&active_profile_path, serialized.as_bytes())
+            .with_context(|| format!("write {}", active_profile_path.display()))?;
 
         let stale_runtime_config = session_dir.join("runtime-config");
         if stale_runtime_config.exists() {

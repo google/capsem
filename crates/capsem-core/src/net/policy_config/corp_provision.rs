@@ -4,6 +4,7 @@
 //! requiring root access to /etc/capsem/. Config is installed to
 //! ~/.capsem/corp.toml with source metadata in ~/.capsem/corp-source.json.
 
+use capsem_foundation::unix::fs::atomic_write_private;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -127,7 +128,7 @@ pub fn install_corp_config(capsem_dir: &Path, content: &str, source: &CorpSource
     std::fs::create_dir_all(capsem_dir).context("cannot create ~/.capsem")?;
 
     let corp_path = capsem_dir.join("corp.toml");
-    std::fs::write(&corp_path, content).context("cannot write corp.toml")?;
+    atomic_write_private(&corp_path, content.as_bytes()).context("cannot write corp.toml")?;
     info!(path = %corp_path.display(), "installed corp config");
 
     write_corp_source(capsem_dir, source)
@@ -291,7 +292,7 @@ pub fn install_inline_corp_config(capsem_dir: &Path, toml_content: &str) -> Resu
 fn write_corp_source(capsem_dir: &Path, source: &CorpSource) -> Result<()> {
     let path = capsem_dir.join("corp-source.json");
     let json = serde_json::to_string_pretty(source).context("cannot serialize corp source")?;
-    std::fs::write(&path, json).context("cannot write corp-source.json")
+    atomic_write_private(&path, json.as_bytes()).context("cannot write corp-source.json")
 }
 
 #[cfg(test)]
