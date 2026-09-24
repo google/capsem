@@ -21,7 +21,6 @@ capsem-guard = { path = "../capsem-guard" }
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 clap.workspace = true
@@ -34,13 +33,13 @@ bytes.workspace = true
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 rand = "0.9"
-futures.workspace = true
 url = "2"
 
 [lints]
 workspace = true
 
 [dev-dependencies]
+tracing-subscriber.workspace = true
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 tokio-tungstenite = "0.29.0"

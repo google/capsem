@@ -15,11 +15,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 capsem-router = { path = "../capsem-router" }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tracing-appender = { workspace = true }
 serde = { workspace = true }
-serde_yaml = { workspace = true }
-rmp-serde = { workspace = true }
 capsem-proto = { path = "../capsem-proto" }
 capsem-assets = { path = "../capsem-assets" }
 capsem-config = { path = "../capsem-config" }
@@ -28,15 +24,12 @@ capsem-foundation = { path = "../capsem-foundation" }
 capsem-logger = { path = "../capsem-logger" }
 capsem-telemetry = { path = "../capsem-telemetry" }
 libc = "0.2"
-nix = { version = "0.29", features = ["fs"] }
 blake3 = "1"
 toml = { workspace = true }
-rusqlite = { workspace = true }
 humantime = { workspace = true }
 rcgen = { workspace = true }
 time = { workspace = true }
 rustls = { workspace = true }
-rustls-pemfile = { workspace = true }
 tokio-rustls = { workspace = true }
 webpki-roots = { workspace = true }
 hyper = { workspace = true }
@@ -46,10 +39,8 @@ http = { workspace = true }
 pin-project-lite = "0.2"
 reqwest = { workspace = true }
 futures = { workspace = true }
-tokio-stream = { workspace = true }
 async-compression = { workspace = true }
 tokio-util = { workspace = true }
-sse-stream = { workspace = true }
 bytes = "1"
 serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -62,7 +53,6 @@ hickory-proto = { workspace = true }
 # answer cache (T3.f). Pure-Rust, no_std-compatible, single small dep.
 lru = "0.18.2"
 ego-tree = "0.10"
-walkdir = "2"
 # Metrics facade. No recorder registered in this sprint -- emission is a
 # single relaxed atomic add against a no-op recorder. T5 wires the
 # exporter (likely OTel via opentelemetry-otlp).
@@ -79,13 +69,17 @@ objc2 = { workspace = true }
 objc2-virtualization = { workspace = true }
 objc2-foundation = { workspace = true }
 block2 = { workspace = true }
-dispatch2 = { workspace = true }
 core-foundation-sys = "0.8"
 
 [lints]
 workspace = true
 
 [dev-dependencies]
+sse-stream = { workspace = true }
+rustls-pemfile = { workspace = true }
+rusqlite = { workspace = true }
+nix = { version = "0.29", features = ["fs"] }
+tracing-subscriber = { workspace = true }
 rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
 # test-util enables tokio's deterministic paused clock (start_paused / time::advance)
 # for timing tests that must not depend on wall-clock. Dev-only; no prod impact.

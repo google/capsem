@@ -35,8 +35,6 @@ path = "src/tun_pump.rs"
 
 [dependencies]
 nix = { version = "0.29", features = ["fs", "ioctl", "poll", "term", "signal", "process"] }
-rmp-serde = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 capsem-proto = { path = "../capsem-proto" }
 capsem-foundation = { path = "../capsem-foundation" }
@@ -44,6 +42,7 @@ tracing.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
+serde = { workspace = true }
 tempfile = "3"
 
 [lints]

@@ -693,7 +693,6 @@ dependencies = [
  "inquire",
  "regex",
  "reqwest 0.12.28",
- "self-replace",
  "semver",
  "serde",
  "serde_json",
@@ -704,7 +703,6 @@ dependencies = [
  "tokio-tungstenite",
  "toml 0.8.2",
  "tracing",
- "tracing-subscriber",
  "urlencoding",
 ]
 
@@ -737,7 +735,6 @@ dependencies = [
  "capsem-foundation",
  "capsem-proto",
  "nix 0.29.0",
- "rmp-serde",
  "serde",
  "serde_json",
  "tempfile",
@@ -761,7 +758,6 @@ version = "0.6.3"
 dependencies = [
  "capsem-proto",
  "filetime",
- "serde",
  "serde_json",
  "tauri",
  "tauri-build",
@@ -859,7 +855,6 @@ dependencies = [
  "capsem-telemetry",
  "core-foundation-sys",
  "criterion",
- "dispatch2 0.2.0",
  "dotenvy",
  "ego-tree",
  "flate2",
@@ -885,29 +880,24 @@ dependencies = [
  "regex",
  "reqwest 0.12.28",
  "rmcp",
- "rmp-serde",
  "rusqlite",
  "rustls",
  "rustls-pemfile",
  "scraper",
  "serde",
  "serde_json",
- "serde_yaml",
  "sse-stream",
  "tempfile",
  "thiserror 2.0.20",
  "time",
  "tokio",
  "tokio-rustls",
- "tokio-stream",
  "tokio-util",
  "toml 0.8.2",
  "tracing",
- "tracing-appender",
  "tracing-subscriber",
  "uuid",
  "vm-fdt",
- "walkdir",
  "webpki-roots 0.26.11",
 ]
 
@@ -977,7 +967,6 @@ dependencies = [
 name = "capsem-guard"
 version = "0.6.3"
 dependencies = [
- "anyhow",
  "capsem-foundation",
  "tempfile",
  "thiserror 2.0.20",
@@ -1025,7 +1014,6 @@ dependencies = [
  "http",
  "reqwest 0.12.28",
  "rmcp",
- "rmp-serde",
  "serde",
  "serde_json",
  "sse-stream",
@@ -1033,7 +1021,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1041,23 +1028,18 @@ name = "capsem-mcp-builtin"
 version = "0.6.3"
 dependencies = [
  "anyhow",
- "blake3",
  "capsem-core",
  "capsem-foundation",
  "capsem-guard",
  "capsem-proto",
  "regex",
- "reqwest 0.12.28",
  "rmcp",
- "scraper",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "toml 0.8.2",
  "tracing",
- "tracing-subscriber",
- "walkdir",
 ]
 
 [[package]]
@@ -1110,15 +1092,12 @@ dependencies = [
  "clap",
  "core-foundation-sys",
  "futures",
- "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
- "tokio-util",
  "toml 0.8.2",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1202,12 +1181,10 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-tungstenite",
- "tokio-util",
  "toml 0.8.2",
  "tower",
  "tower-http",
  "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 
@@ -1244,7 +1221,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "tray-icon 0.22.2",
 ]
 
@@ -2092,18 +2068,6 @@ dependencies = [
  "option-ext",
  "redox_users",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "dispatch2"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a0d569e003ff27784e0e14e4a594048698e0c0f0b66cabcb51511be55a7caa0"
-dependencies = [
- "bitflags 2.13.2",
- "block2",
- "libc",
- "objc2",
 ]
 
 [[package]]
@@ -4354,7 +4318,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a180dd8642fa45cdb7dd721cd4c11b1cadd4929ce112ebd8b9f5803cc79d536"
 dependencies = [
  "bitflags 2.13.2",
- "dispatch2 0.3.1",
+ "dispatch2",
  "objc2",
 ]
 
@@ -4365,7 +4329,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e022c9d066895efa1345f8e33e584b9f958da2fd4cd116792e15e07e4720a807"
 dependencies = [
  "bitflags 2.13.2",
- "dispatch2 0.3.1",
+ "dispatch2",
  "objc2",
  "objc2-core-foundation",
  "objc2-io-surface",
@@ -4506,7 +4470,7 @@ checksum = "8edb98625ad1f7dea2e82ab54d5bdf3f477e6645b550f4a7cced1818be9ff59d"
 dependencies = [
  "bitflags 2.13.2",
  "block2",
- "dispatch2 0.3.1",
+ "dispatch2",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
@@ -5771,7 +5735,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a15ad77d9e70a92437d8f74c35d99b4e4691128df018833e99f90bcd36152672"
 dependencies = [
  "block2",
- "dispatch2 0.3.1",
+ "dispatch2",
  "glib-sys",
  "gobject-sys",
  "gtk-sys",
@@ -6120,17 +6084,6 @@ dependencies = [
  "rustc-hash",
  "servo_arc",
  "smallvec",
-]
-
-[[package]]
-name = "self-replace"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03ec815b5eab420ab893f63393878d89c90fdd94c0bcc44c07abb8ad95552fb7"
-dependencies = [
- "fastrand",
- "tempfile",
- "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6727,7 +6680,7 @@ dependencies = [
  "core-graphics",
  "crossbeam-channel",
  "dbus",
- "dispatch2 0.3.1",
+ "dispatch2",
  "dlopen2",
  "dpi",
  "gdkwayland-sys",

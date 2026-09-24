@@ -22,9 +22,7 @@ png = "0.18"
 reqwest = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 
@@ -34,3 +32,6 @@ objc2-foundation = "0.3"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+serde_json = { workspace = true }
