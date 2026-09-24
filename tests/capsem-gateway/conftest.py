@@ -116,7 +116,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             else:
                 self._send_error(404, f"sandbox {vm_id} not found")
         elif path_only.startswith("/vms/") and (
-            path_only.endswith("/snapshots/status") or path_only.endswith("/changes")
+            path_only.endswith(("/snapshots/status", "/changes"))
         ):
             # Retired routes (#228), still served here so that a gateway 404
             # proves the gateway refuses to forward them.
