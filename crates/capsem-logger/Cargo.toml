@@ -48,3 +48,7 @@ harness = false
 [[bench]]
 name = "db_external_reader_poll"
 harness = false
+
+[[bench]]
+name = "session_stats_poll"
+harness = false
