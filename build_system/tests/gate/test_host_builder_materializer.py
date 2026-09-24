@@ -119,7 +119,7 @@ def test_host_builder_mutable_tool_inventory_is_closed() -> None:
         {
             "cargo": 9,
             "rustup": 4,
-            "apt-get": 1,
+            "apt-get": 2,
             "curl": 1,
             "npm": 1,
             "wget": 1,
@@ -141,6 +141,21 @@ def test_host_builder_multiarch_sources_require_the_shared_snapshot() -> None:
     for mutable in ("archive.ubuntu.com", "ports.ubuntu.com", "security.ubuntu.com"):
         assert mutable not in source
     assert "|| true" not in source
+
+
+def test_host_builder_apt_snapshot_outage_has_a_deadline() -> None:
+    """A 503 from the pinned snapshot must not occupy a release runner for an hour."""
+    source = (PROJECT_ROOT / CONFIG.hostimage.dockerfile).read_text(encoding="utf-8")
+    limits = {
+        command: int(seconds)
+        for seconds, command in re.findall(
+            r"timeout --signal=TERM --kill-after=5s (\d+)s apt-get (update|install)",
+            source,
+        )
+    }
+    assert set(limits) == {"update", "install"}
+    assert 0 < limits["update"] <= 300
+    assert 0 < limits["install"] <= 600
 
 
 def test_host_builder_identity_changes_with_every_declared_input(tmp_path: Path) -> None:
@@ -210,10 +225,7 @@ def test_macos_release_installs_only_config_owned_cargo_tools() -> None:
     job = str(steps)
     assert "cargo install" not in job
     assert "cargo-auditable" not in job
-    source = (
-        PROJECT_ROOT
-        / "build_system/builder/image/tools/bootstrap/cargo_tools.py"
-    ).read_text(
+    source = (PROJECT_ROOT / "build_system/builder/image/tools/bootstrap/cargo_tools.py").read_text(
         encoding="utf-8"
     )
     assert "subprocess.run(tool.install, check=True)" in source

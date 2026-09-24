@@ -53,10 +53,12 @@ RUN bash /tmp/sources-multiarch.sh "$APT_SNAPSHOT_BASE" "$APT_SNAPSHOT_ID" \
 # Native-arch Tauri dev libraries are installed in the same transaction so
 # the complete multiarch indexes are fetched exactly once. Cross builds swap
 # these packages at container runtime (see swap-dev-libs.sh).
+# Bound each network phase: a snapshot outage once held this layer for 57 minutes.
 # ---- Native-arch Tauri dev libraries ----
 RUN test -n "$WORKSPACE_APT_PACKAGES" \
     && test -n "$WORKSPACE_CROSS_APT_PACKAGES" \
-    && apt-get update && apt-get install -y --no-install-recommends \
+    && timeout --signal=TERM --kill-after=5s 300s apt-get update \
+    && timeout --signal=TERM --kill-after=5s 600s apt-get install -y --no-install-recommends \
     $WORKSPACE_APT_PACKAGES \
     $WORKSPACE_CROSS_APT_PACKAGES \
     curl \
