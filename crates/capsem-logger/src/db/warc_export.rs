@@ -996,6 +996,5 @@ impl<W: Write> Write for CountingWriter<W> {
         self.inner.flush()
     }
 }
-
 #[cfg(test)]
 mod tests;

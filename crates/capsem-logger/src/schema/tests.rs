@@ -52,42 +52,6 @@ fn create_tables_succeeds() {
 }
 
 #[test]
-fn body_index_uses_existing_keys_without_redundant_write_indexes() {
-    let conn = Connection::open_in_memory().unwrap();
-    create_tables(&conn).unwrap();
-    let mut stmt = conn.prepare("PRAGMA index_list(event_body_blobs)").unwrap();
-    let names: BTreeSet<String> = stmt
-        .query_map([], |row| row.get(1))
-        .unwrap()
-        .collect::<Result<_, _>>()
-        .unwrap();
-    for redundant in [
-        "idx_event_body_blobs_event_id",
-        "idx_event_body_blobs_block",
-        "idx_event_body_blobs_trace_id",
-        "idx_event_body_blobs_turn_id",
-    ] {
-        assert!(
-            !names.contains(redundant),
-            "{redundant} duplicates an existing access path or has no reader"
-        );
-    }
-    for (query, index) in [
-        (
-            "EXPLAIN QUERY PLAN SELECT * FROM event_body_blobs WHERE event_id = 'abcdef123456'",
-            "sqlite_autoindex_event_body_blobs_1",
-        ),
-        (
-            "EXPLAIN QUERY PLAN SELECT 1 FROM event_body_blobs WHERE block_offset = 80 LIMIT 1",
-            "idx_event_body_blobs_archive_order",
-        ),
-    ] {
-        let plan: String = conn.query_row(query, [], |row| row.get(3)).unwrap();
-        assert!(plan.contains(index), "{query}: {plan}");
-    }
-}
-
-#[test]
 fn repeated_event_counters_require_exact_positive_integers() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();

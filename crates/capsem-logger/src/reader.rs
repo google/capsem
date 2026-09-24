@@ -450,10 +450,8 @@ impl DbReader {
         rows.collect()
     }
 
-    /// Query recent stored security rule matches, newest first: the row, with
-    /// the rule snapshot as it was at match time. The matched event's payload
-    /// is archive-backed, read by event id with `BodyDirection::Payload`.
-    /// Endpoints may project less, but must not consult live rules for truth.
+    /// Recent rule matches retain their match-time snapshot; payloads are
+    /// archive-backed by event id, never reconstructed from live rules.
     pub fn recent_security_rule_events(&self, limit: usize) -> rusqlite::Result<Vec<SecurityRuleMatch>> {
         let mut stmt = self.conn.prepare(
             "SELECT event.timestamp_unix_ms, event.event_id, event.event_type, event.rule_id,
