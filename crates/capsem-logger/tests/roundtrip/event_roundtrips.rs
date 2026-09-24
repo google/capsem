@@ -241,8 +241,10 @@ async fn model_items_request_dedup_hashes_full_body_not_capped_preview() {
         "both request items must survive dedup: {request_items:#?}"
     );
     assert_ne!(request_items[0].1, request_items[1].1, "content_hash must differ");
-    assert!(request_items[0].0.ends_with("-turn-one"));
-    assert!(request_items[1].0.ends_with("-turn-two"));
+    // The stored content is the capped display copy, identical for both turns;
+    // only the full-body hash tells them apart, which is the point.
+    assert_eq!(request_items[0].0, request_items[1].0);
+    assert!(!request_items[0].0.contains("-turn-"), "content is the capped preview");
 }
 
 // ── Count queries ────────────────────────────────────────────────────
