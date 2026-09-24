@@ -201,12 +201,10 @@ def test_file_process_routes_pay_full_ledger_debt_blackbox():
     modify_path = f"ironbank-modified-{uuid.uuid4().hex[:8]}.txt"
     delete_path = f"ironbank-deleted-{uuid.uuid4().hex[:8]}.txt"
     script_path = f"ironbank-file-process-{uuid.uuid4().hex[:8]}.sh"
-    # Prose, not `key: value`. The listing's mime comes from Magika, which
-    # classifies by content and deliberately does not let the extension vote --
-    # so `upload:<random hex>` in a `.txt` file is a short line shaped exactly
-    # like a CSS or CSV record, and the answer depended on the nonce. One run
-    # of the complete gate got `text/css`; the reproduction lives in
-    # `capsem-service`'s `fs_utils` tests.
+    # Prose, so the fixture reads as what it is. The listing's mime comes from
+    # the file's extension plus a UTF-8 check on its head (`capsem-service`'s
+    # `fs_utils`), which is deterministic; the Magika classifier it replaced
+    # read `upload:<random hex>` as CSS or CSV depending on the nonce.
     upload_body = (
         "This is the ironbank upload fixture for the file and process "
         f"ledger.\nCorrelation nonce {nonce} identifies this run so "

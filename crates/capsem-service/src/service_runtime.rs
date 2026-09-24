@@ -232,12 +232,6 @@ pub(super) async fn run_service() -> Result<()> {
         }
     }
 
-    let magika_session = magika::Session::builder()
-        .with_inter_threads(1)
-        .with_intra_threads(1)
-        .build()
-        .expect("failed to init magika file-type detection");
-
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     let asset_reconcile = load_asset_reconcile_state(&asset_status_path);
     let profile_summary_cache = build_profile_summary_cache()
@@ -269,7 +263,6 @@ pub(super) async fn run_service() -> Result<()> {
         asset_reconcile: Mutex::new(asset_reconcile),
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
-        magika: Mutex::new(magika_session),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: Mutex::new(profile_summary_cache),
         profile_cache: Mutex::new(profile_cache),

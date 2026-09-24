@@ -617,6 +617,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The files API no longer runs the Magika model to type workspace files.
+  A file's type now comes from its extension, and a file with an unknown
+  extension is text when its head is UTF-8 with no NUL byte. Typing is
+  deterministic, the service no longer loads ONNX Runtime at start, and
+  building no longer downloads a native library. Content-based typing returns
+  with Magika v2 once it is production-ready
+  ([#234](https://github.com/google/capsem/issues/234)).
+
 - The `vm.resources.terminated_retention_days` setting. It was offered in the
   settings UI and written into every generated profile, and nothing read it. A
   retention policy that appears to be in force and is not is worse than none.

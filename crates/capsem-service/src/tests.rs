@@ -11,16 +11,6 @@ mod profile_rule_push;
 
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-fn test_magika() -> Mutex<magika::Session> {
-    Mutex::new(
-        magika::Session::builder()
-            .with_inter_threads(1)
-            .with_intra_threads(1)
-            .build()
-            .expect("magika init"),
-    )
-}
-
 fn test_profile_summary_cache() -> Vec<api::ProfileSummary> {
     build_profile_summary_cache().expect("test profile summary cache should build")
 }
@@ -112,7 +102,6 @@ pub(crate) fn make_test_state_owned() -> ServiceState {
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
-        magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: Mutex::new(test_profile_summary_cache()),
         profile_cache: Mutex::new(test_profile_cache()),
@@ -198,7 +187,6 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
-        magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: Mutex::new(test_profile_summary_cache()),
         profile_cache: Mutex::new(test_profile_cache()),
@@ -745,7 +733,6 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
-        magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: Mutex::new(test_profile_summary_cache()),
         profile_cache: Mutex::new(test_profile_cache()),

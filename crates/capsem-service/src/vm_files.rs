@@ -386,9 +386,7 @@ use std::ffi::OsString;
 use capsem_foundation::unix::contained::{
     is_not_directory, is_symlink_refusal, ContainedDir, ContainedOpenOptions, EntryKind,
 };
-use capsem_service::fs_utils::{
-    identify_bytes_sync, identify_file_sync, unknown_file_type, FileContentQuery, FileListQuery,
-};
+use capsem_service::fs_utils::{identify_bytes, identify_file, FileContentQuery, FileListQuery, FileType};
 use capsem_service::fs_utils::{resolve_dir_path, FilePath};
 
 // ---------------------------------------------------------------------------
@@ -477,7 +475,6 @@ pub(super) fn list_dir_recursive(
     rel_prefix: &str,
     current_depth: u32,
     max_depth: u32,
-    magika: &Mutex<magika::Session>,
 ) -> Vec<FileListEntry> {
     let mut items = match dir.entries() {
         Ok(items) => items,
@@ -504,7 +501,7 @@ pub(super) fn list_dir_recursive(
             let children = if current_depth < max_depth {
                 dir.descend(&item.name)
                     .ok()
-                    .map(|child| list_dir_recursive(&child, &rel_path, current_depth + 1, max_depth, magika))
+                    .map(|child| list_dir_recursive(&child, &rel_path, current_depth + 1, max_depth))
             } else {
                 None
             };
@@ -520,9 +517,9 @@ pub(super) fn list_dir_recursive(
                 children,
             });
         } else {
-            let (label, mime, _group, is_text) = match dir.open_file(&item.name, ContainedOpenOptions::read_only()) {
-                Ok(mut file) => identify_file_sync(magika, StdPath::new(&name), &mut file),
-                Err(_) => unknown_file_type(),
+            let file_type = match dir.open_file(&item.name, ContainedOpenOptions::read_only()) {
+                Ok(mut file) => identify_file(StdPath::new(&name), &mut file),
+                Err(_) => FileType::UNKNOWN,
             };
             entries.push(FileListEntry {
                 name,
@@ -530,9 +527,9 @@ pub(super) fn list_dir_recursive(
                 entry_type: api::FileEntryType::File,
                 size: item.size,
                 mtime: item.mtime_secs,
-                mime: Some(mime),
-                label: Some(label),
-                is_text: Some(is_text),
+                mime: Some(file_type.mime.to_string()),
+                label: Some(file_type.label.to_string()),
+                is_text: Some(file_type.is_text),
                 children: None,
             });
         }
@@ -552,8 +549,8 @@ pub(super) async fn handle_list_files(
         .walk(StdPath::new(&rel_path))
         .map_err(workspace_io_error)?;
 
-    // Directory reads and Magika are blocking I/O -- run in spawn_blocking
-    let entries = tokio::task::spawn_blocking(move || list_dir_recursive(&target, &rel_path, 1, depth, &state.magika))
+    // Directory reads are blocking I/O -- run in spawn_blocking
+    let entries = tokio::task::spawn_blocking(move || list_dir_recursive(&target, &rel_path, 1, depth))
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?;
 
@@ -631,7 +628,6 @@ pub(super) async fn handle_download_file(
     let (parent, name) = resolve_workspace_target(&state, &id, &relative, false)?;
 
     // Open without following symlinks, read, and detect type in spawn_blocking
-    let state_clone = Arc::clone(&state);
     let (data, mime, filename) = tokio::task::spawn_blocking(move || {
         use std::io::Read;
         let file = parent
@@ -650,7 +646,7 @@ pub(super) async fn handle_download_file(
             ));
         }
         let name = name.to_string_lossy().into_owned();
-        let (_, mime_str, _, _) = identify_bytes_sync(&state_clone.magika, StdPath::new(&name), &data);
+        let mime_str = identify_bytes(StdPath::new(&name), &data).mime.to_string();
         // Sanitize the filename for Content-Disposition
         let safe_name: String = name
             .chars()
