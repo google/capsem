@@ -329,3 +329,48 @@ fn entry_identity_moves_on_an_edit_even_when_mtime_is_restored() {
     assert_eq!(after.mtime, before.mtime, "with mtime restored");
     assert_ne!(after, before, "still changes the identity, through ctime");
 }
+
+#[test]
+fn create_new_refuses_every_existing_entry_including_links() {
+    let tree = tree();
+    std::fs::write(tree.root_path.join("file"), b"keep").unwrap();
+    symlink(tree.outside.join("target"), tree.root_path.join("dangling")).unwrap();
+    for name in ["file", "dangling"] {
+        let error = tree
+            .root
+            .open_file(OsStr::new(name), ContainedOpenOptions::write_create_new(0o600))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{name}: {error}");
+    }
+    assert!(!tree.outside.join("target").exists(), "a dangling link was not written through");
+    let mut fresh = tree
+        .root
+        .open_file(OsStr::new("fresh"), ContainedOpenOptions::write_create_new(0o640))
+        .unwrap();
+    fresh.write_all(b"new").unwrap();
+    assert_eq!(std::fs::read(tree.root_path.join("fresh")).unwrap(), b"new");
+}
+
+#[test]
+fn symlink_creation_stores_the_target_verbatim_and_never_replaces() {
+    let tree = tree();
+    tree.root
+        .symlink(OsStr::new("link"), OsStr::new("../../etc/passwd"))
+        .unwrap();
+    assert_eq!(
+        std::fs::read_link(tree.root_path.join("link")).unwrap(),
+        Path::new("../../etc/passwd")
+    );
+    let error = tree.root.symlink(OsStr::new("link"), OsStr::new("other")).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+    assert!(tree.root.symlink(OsStr::new("../escape"), OsStr::new("x")).is_err());
+}
+
+#[test]
+fn mode_reads_permission_bits_from_the_descriptor() {
+    use std::os::unix::fs::PermissionsExt;
+    let tree = tree();
+    std::fs::create_dir(tree.root_path.join("dir")).unwrap();
+    std::fs::set_permissions(tree.root_path.join("dir"), std::fs::Permissions::from_mode(0o750)).unwrap();
+    assert_eq!(tree.root.descend(OsStr::new("dir")).unwrap().mode().unwrap(), 0o750);
+}

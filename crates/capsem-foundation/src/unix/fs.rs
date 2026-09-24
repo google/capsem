@@ -9,6 +9,12 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsE
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod durability;
+mod extents;
+
+pub use durability::{set_mode, sync, sync_before_barrier, sync_filesystem};
+pub use extents::{clone_file_into, copy_sparse, CloneMethod};
+
 const PRIVATE_DIR_MODE: u32 = 0o700;
 const PRIVATE_FILE_MODE: u32 = 0o600;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);

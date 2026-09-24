@@ -26,13 +26,11 @@ pub unsafe fn close_inherited_descriptors() -> io::Result<()> {
         }
     }
     for fd in descriptors {
-        // SAFETY: the caller guarantees no live Rust owner or fd reuse. The
-        // directory iterator itself has closed; EBADF for that fd is expected.
-        if unsafe { libc::close(fd) } < 0 {
-            let error = io::Error::last_os_error();
-            if error.raw_os_error() != Some(libc::EBADF) {
-                return Err(error);
-            }
+        // The caller guarantees no live Rust owner or fd reuse. The directory
+        // iterator itself has closed; EBADF for that fd is expected.
+        match nix::unistd::close(fd) {
+            Ok(()) | Err(nix::errno::Errno::EBADF) => {}
+            Err(error) => return Err(super::errno::io(error)),
         }
     }
     Ok(())

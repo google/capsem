@@ -6,13 +6,14 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io;
-use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
 use nix::errno::Errno;
 use nix::fcntl::{openat, readlinkat, AtFlags, OFlag};
+use nix::unistd::symlinkat;
 use nix::sys::stat::{fstatat, mkdirat, Mode, SFlag};
 use nix::unistd::{unlinkat, UnlinkatFlags};
 
@@ -28,6 +29,7 @@ pub struct ContainedDir {
 pub struct ContainedOpenOptions {
     write: bool,
     truncate: bool,
+    exclusive: bool,
     mode: u32,
 }
 
@@ -36,6 +38,7 @@ impl ContainedOpenOptions {
         Self {
             write: false,
             truncate: false,
+            exclusive: false,
             mode: 0,
         }
     }
@@ -44,6 +47,18 @@ impl ContainedOpenOptions {
         Self {
             write: true,
             truncate: false,
+            exclusive: false,
+            mode,
+        }
+    }
+
+    /// Create a file that must not already exist under any name or type,
+    /// including a symlink or a dangling one.
+    pub const fn write_create_new(mode: u32) -> Self {
+        Self {
+            write: true,
+            truncate: false,
+            exclusive: true,
             mode,
         }
     }
@@ -52,6 +67,7 @@ impl ContainedOpenOptions {
         Self {
             write: true,
             truncate: true,
+            exclusive: false,
             mode,
         }
     }
@@ -61,6 +77,9 @@ impl ContainedOpenOptions {
             let mut flags = OFlag::O_WRONLY | OFlag::O_CREAT;
             if self.truncate {
                 flags |= OFlag::O_TRUNC;
+            }
+            if self.exclusive {
+                flags |= OFlag::O_EXCL;
             }
             flags
         } else {
@@ -113,7 +132,7 @@ fn dir_flags() -> OFlag {
     OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC
 }
 
-fn permission_mode(mode: u32) -> Mode {
+pub(super) fn permission_mode(mode: u32) -> Mode {
     let bits = mode & 0o7777;
     Mode::from_bits_truncate(permission_bits(bits))
 }
@@ -141,6 +160,12 @@ fn owned(fd: i32) -> OwnedFd {
     // SAFETY: `fd` was just returned by a successful openat and is not owned
     // anywhere else.
     unsafe { OwnedFd::from_raw_fd(fd) }
+}
+
+impl AsFd for ContainedDir {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.fd.as_fd()
+    }
 }
 
 impl ContainedDir {
@@ -231,6 +256,21 @@ impl ContainedDir {
             current = step(&current, name)?;
         }
         Ok(current)
+    }
+
+    /// Permission bits of this directory, read from the open descriptor.
+    pub fn mode(&self) -> io::Result<u32> {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = File::from(self.fd.try_clone()?).metadata()?;
+        Ok(metadata.permissions().mode() & 0o7777)
+    }
+
+    /// Create a symlink child. An existing entry of any type is an error; the
+    /// target is stored verbatim and never resolved.
+    pub fn symlink(&self, name: &OsStr, target: &OsStr) -> io::Result<()> {
+        check_component(name)?;
+        symlinkat(target, Some(self.fd.as_raw_fd()), name)?;
+        Ok(())
     }
 
     fn is_symlink(&self, name: &OsStr) -> io::Result<bool> {
