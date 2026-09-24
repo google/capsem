@@ -288,20 +288,6 @@ impl ServiceState {
             }
         }
 
-        if session_db_path_for_session_dir(&session_dir).exists() {
-            if let Err(error) = self.register_session_db_handle(id, &session_dir) {
-                instance_reaper::kill_and_reap(child);
-                return Err(error);
-            }
-        } else {
-            info!(
-                vm_id = id,
-                operation = "defer_session_db_handle_registration",
-                session_dir = %session_dir.display(),
-                "session DB not present yet; route will register the external reader lazily"
-            );
-        }
-
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
             id.to_string(),

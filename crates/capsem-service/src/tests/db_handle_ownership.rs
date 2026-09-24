@@ -46,3 +46,16 @@ fn service_db_handle_open_is_owned_by_explicit_service_state_owners() {
          explicit schema failure semantics stay centralized."
     );
 }
+
+#[test]
+fn provision_never_opens_the_ledger_its_child_is_creating() {
+    let provision = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm_lifecycle/provision.rs"))
+        .expect("provision source must be readable");
+    assert!(
+        !provision.contains("register_session_db_handle("),
+        "provision must not register the session DB reader. capsem-process creates session.db \
+         and writes its schema after spawn, so the file can exist with no tables yet; opening it \
+         then refused the ledger as stale and provision killed a healthy VM (trunk test-install, \
+         2026-09-24). Routes register the reader lazily once the ledger is ready."
+    );
+}
