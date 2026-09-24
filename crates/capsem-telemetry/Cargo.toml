@@ -1,0 +1,19 @@
+[package]
+name = "capsem-telemetry"
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+metrics = "0.24"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+metrics-util = "0.19"

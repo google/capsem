@@ -426,7 +426,7 @@ fn block_read_records_queue_and_request_metrics() {
     let counter_total = |name: &str| -> u64 {
         snap.iter()
             .filter_map(|(key, _, _, value)| match (key.key().name(), value) {
-                (metric, DebugValue::Counter(count)) if metric == name => Some(*count),
+                (recorded, DebugValue::Counter(count)) if recorded == name => Some(*count),
                 _ => None,
             })
             .sum()
@@ -436,15 +436,15 @@ fn block_read_records_queue_and_request_metrics() {
             .any(|(key, _, _, value)| key.key().name() == name && matches!(value, DebugValue::Histogram(_)))
     };
 
-    assert_eq!(counter_total(METRIC_QUEUE_NOTIFICATIONS_TOTAL), 1);
-    assert_eq!(counter_total(METRIC_QUEUE_DRAINS_TOTAL), 1);
-    assert_eq!(counter_total(METRIC_DESCRIPTORS_DRAINED_TOTAL), 1);
-    assert_eq!(counter_total(METRIC_USED_ENTRIES_TOTAL), 1);
-    assert_eq!(counter_total(METRIC_INTERRUPTS_TOTAL), 1);
-    assert_eq!(counter_total(METRIC_REQUESTS_TOTAL), 1);
-    assert_eq!(counter_total(METRIC_REQUEST_BYTES_TOTAL), 512);
-    assert!(histogram_present(METRIC_REQUEST_DURATION_MS));
-    assert!(histogram_present(METRIC_QUEUE_DRAIN_DURATION_MS));
+    assert_eq!(counter_total(metric::QUEUE_NOTIFICATIONS_TOTAL), 1);
+    assert_eq!(counter_total(metric::QUEUE_DRAINS_TOTAL), 1);
+    assert_eq!(counter_total(metric::DESCRIPTORS_DRAINED_TOTAL), 1);
+    assert_eq!(counter_total(metric::USED_ENTRIES_TOTAL), 1);
+    assert_eq!(counter_total(metric::INTERRUPTS_TOTAL), 1);
+    assert_eq!(counter_total(metric::REQUESTS_TOTAL), 1);
+    assert_eq!(counter_total(metric::REQUEST_BYTES_TOTAL), 512);
+    assert!(histogram_present(metric::REQUEST_DURATION_MS));
+    assert!(histogram_present(metric::QUEUE_DRAIN_DURATION_MS));
 }
 
 #[cfg(target_os = "linux")]
@@ -493,7 +493,7 @@ fn block_io_uring_records_async_metrics() {
     let counter_total = |name: &str| -> u64 {
         snap.iter()
             .filter_map(|(key, _, _, value)| match (key.key().name(), value) {
-                (metric, DebugValue::Counter(count)) if metric == name => Some(*count),
+                (recorded, DebugValue::Counter(count)) if recorded == name => Some(*count),
                 _ => None,
             })
             .sum()
@@ -503,14 +503,14 @@ fn block_io_uring_records_async_metrics() {
             .any(|(key, _, _, value)| key.key().name() == name && matches!(value, DebugValue::Histogram(_)))
     };
 
-    assert_eq!(counter_total(METRIC_ASYNC_SUBMISSIONS_TOTAL), 1);
-    assert_eq!(counter_total(METRIC_ASYNC_COMPLETIONS_TOTAL), 1);
-    assert_eq!(counter_total(METRIC_USED_ENTRIES_TOTAL), 1);
-    assert_eq!(counter_total(METRIC_INTERRUPTS_TOTAL), 1);
-    assert_eq!(counter_total(METRIC_REQUESTS_TOTAL), 1);
-    assert_eq!(counter_total(METRIC_REQUEST_BYTES_TOTAL), 512);
-    assert!(histogram_present(METRIC_ASYNC_IN_FLIGHT));
-    assert!(histogram_present(METRIC_REQUEST_DURATION_MS));
+    assert_eq!(counter_total(metric::ASYNC_SUBMISSIONS_TOTAL), 1);
+    assert_eq!(counter_total(metric::ASYNC_COMPLETIONS_TOTAL), 1);
+    assert_eq!(counter_total(metric::USED_ENTRIES_TOTAL), 1);
+    assert_eq!(counter_total(metric::INTERRUPTS_TOTAL), 1);
+    assert_eq!(counter_total(metric::REQUESTS_TOTAL), 1);
+    assert_eq!(counter_total(metric::REQUEST_BYTES_TOTAL), 512);
+    assert!(histogram_present(metric::ASYNC_IN_FLIGHT));
+    assert!(histogram_present(metric::REQUEST_DURATION_MS));
 }
 
 #[test]

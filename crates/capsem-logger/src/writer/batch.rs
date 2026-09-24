@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::counters::{self, LedgerTally, StoredEffect};
+use capsem_telemetry::db::{DB_WRITE_OPS_TOTAL, DB_WRITE_OP_REJECTED_TOTAL};
 
 /// Storage work completed by a batch or by its per-operation salvage pass.
 pub(super) struct BatchWriteOutcome {

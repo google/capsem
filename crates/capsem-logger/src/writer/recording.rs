@@ -9,7 +9,7 @@
 
 use std::time::Instant;
 
-use super::{
+use capsem_telemetry::db::{
     DB_ENQUEUE_TOTAL, DB_ENQUEUE_WAIT_MS, DB_WRITE_BATCH_CAPACITY, DB_WRITE_BATCH_DURATION_MS,
     DB_WRITE_BATCH_ROWS_PER_SEC, DB_WRITE_BATCH_SIZE, DB_WRITE_BATCH_TOTAL,
 };

@@ -28,7 +28,6 @@ use tracing::{debug, instrument, warn};
 
 use crate::net::dns::cache::DnsAnswerCache;
 use crate::net::dns::resolver::DnsResolver;
-use crate::net::mitm_proxy::metrics as m;
 use crate::net::parsers::dns_parser::{
     build_nxdomain, build_ptr_response, build_redirect_response, build_servfail, parse_query, DnsQuery,
 };
@@ -37,6 +36,7 @@ use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet, SharedP
 use crate::security_engine::{
     evaluate_security_boundary, DnsSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementDecision, SecurityEvent,
 };
+use capsem_telemetry::dns as m;
 
 const CAPSEM_LOCAL_NXDOMAIN_SUFFIX: &str = ".capsem-bogus";
 const CAPSEM_LOCAL_NXDOMAIN_RULE: &str = "resolver.local_nxdomain.capsem_bogus";

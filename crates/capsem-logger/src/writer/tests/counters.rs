@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::counters::fixtures::{exec, exec_done};
+use capsem_telemetry::db::DB_WRITE_OPS_TOTAL;
 
 /// A ledger file with the writer's schemas, and nothing else running on it.
 fn ledger(path: &Path) -> (Connection, BodyArchive, LedgerTally) {

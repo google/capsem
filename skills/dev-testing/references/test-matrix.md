@@ -14,6 +14,7 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 |-------|------|:--------:|:--------:|:-----------:|:----:|
 | `capsem-foundation` | Host primitives | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-archive` | Session body archive | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-telemetry` | Metric name/unit/description catalog | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-assets` | Asset lifecycle | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-api` | Gateway wire types and OpenAPI | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-sdk` (`sdk/rust`) | Async HTTP gateway transport and clients | Yes | Compile/no-run | Clippy | Yes |

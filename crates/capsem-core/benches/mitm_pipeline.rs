@@ -10,14 +10,16 @@
 //! empty-pipeline overhead, dispatch with N registered hooks, and the
 //! `ctx.emit()` recursion depth.
 
-use capsem_core::net::mitm_proxy::metrics as mitm_metrics;
+use capsem_telemetry::{dns, mitm};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use metrics::counter;
 
 fn bench_describe(c: &mut Criterion) {
     c.bench_function("metrics_describe_all", |b| {
         b.iter(|| {
-            mitm_metrics::describe_all();
+            // The MITM proxy's own metrics, the set this bench has always described.
+            capsem_telemetry::describe(mitm::SPECS);
+            capsem_telemetry::describe(dns::SPECS);
         });
     });
 }
@@ -29,7 +31,7 @@ fn bench_counter_emit(c: &mut Criterion) {
             // counter resolves to a single relaxed atomic add against
             // the global no-op recorder. This is the per-request cost
             // hooks pay until T5 wires an exporter.
-            counter!(black_box("mitm.requests_total"), "decision" => "allow").increment(1);
+            counter!(black_box(mitm::REQUESTS_TOTAL), "decision" => "allow").increment(1);
         });
     });
 }

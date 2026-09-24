@@ -4,6 +4,10 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
+use capsem_telemetry::db::{
+    DB_QUERY_DURATION_MS, DB_QUERY_PARAMS_COUNT, DB_QUERY_RESULT_BYTES, DB_QUERY_RESULT_ROWS, DB_QUERY_TOTAL,
+};
+
 use crate::reader::DbReader;
 use crate::writer::{DbWriter, WriteOp};
 
@@ -83,12 +87,6 @@ pub enum ReadCacheDomain {
     /// mutation ledger rows are orthogonal and must not evict this projection.
     SessionSummary,
 }
-
-pub const DB_QUERY_TOTAL: &str = "db.query_total";
-pub const DB_QUERY_DURATION_MS: &str = "db.query_duration_ms";
-pub const DB_QUERY_RESULT_ROWS: &str = "db.query_result_rows";
-pub const DB_QUERY_RESULT_BYTES: &str = "db.query_result_bytes";
-pub const DB_QUERY_PARAMS_COUNT: &str = "db.query_params_count";
 
 fn elapsed_ms(started: Instant) -> u128 {
     started.elapsed().as_millis()

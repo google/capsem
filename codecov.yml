@@ -147,6 +147,7 @@ component_management:
       paths:
         - crates/capsem-archive/src/**
         - crates/capsem-logger/src/**
+        - crates/capsem-telemetry/src/**
         - crates/capsem-core/src/pty_log.rs
         - crates/capsem-core/src/session/**
 

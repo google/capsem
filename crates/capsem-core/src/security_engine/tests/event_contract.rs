@@ -1,4 +1,5 @@
 use super::*;
+use capsem_telemetry::security::{SECURITY_EVENT_EMIT_DURATION_MS, SECURITY_EVENT_EMIT_TOTAL};
 
 #[tokio::test]
 async fn closed_audit_emission_reports_failure_instead_of_an_accepted_identity() {

@@ -20,7 +20,6 @@ pub mod interpreter_hook;
 mod mcp_endpoint;
 mod mcp_frame;
 mod mcp_observe;
-pub mod metrics;
 pub mod pipeline;
 pub mod protocol;
 pub mod spans;
@@ -38,6 +37,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
 use capsem_logger::{DbWriter, Decision, McpCall, NetEvent, WriteOp};
+use capsem_telemetry::mitm as m;
 use http_body_util::Full;
 use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
@@ -135,7 +135,7 @@ struct ConnectionGauge;
 
 impl Drop for ConnectionGauge {
     fn drop(&mut self) {
-        ::metrics::gauge!(metrics::ACTIVE_CONNECTIONS).decrement(1.0);
+        ::metrics::gauge!(m::ACTIVE_CONNECTIONS).decrement(1.0);
     }
 }
 
@@ -392,7 +392,7 @@ pub async fn handle_connection(vsock_fd: OwnedFd, config: Arc<MitmProxyConfig>) 
     // incremented inside `handle_inner` once the first-byte sniff has
     // classified the wire payload (T2.1). Errors before classification
     // count as `protocol="unknown"`.
-    ::metrics::gauge!(metrics::ACTIVE_CONNECTIONS).increment(1.0);
+    ::metrics::gauge!(m::ACTIVE_CONNECTIONS).increment(1.0);
     let _gauge_guard = ConnectionGauge;
 
     let result = handle_inner(vsock_fd, &config).await;
@@ -576,7 +576,7 @@ async fn handle_inner(vsock_fd: OwnedFd, config: &Arc<MitmProxyConfig>) -> Resul
             classify_span.record("protocol", Protocol::Unknown.label());
             classify_span.record("status", "error");
             classify_span.record("error_kind", "unknown_protocol");
-            ::metrics::counter!(metrics::CONNECTIONS_TOTAL,
+            ::metrics::counter!(m::CONNECTIONS_TOTAL,
                 "protocol" => Protocol::Unknown.label())
             .increment(1);
             let first = initial_buf.first().copied().unwrap_or(0);
@@ -587,7 +587,7 @@ async fn handle_inner(vsock_fd: OwnedFd, config: &Arc<MitmProxyConfig>) -> Resul
             ));
         }
     };
-    ::metrics::counter!(metrics::CONNECTIONS_TOTAL,
+    ::metrics::counter!(m::CONNECTIONS_TOTAL,
         "protocol" => detected.label())
     .increment(1);
     classify_span.record("protocol", detected.label());
@@ -648,11 +648,11 @@ async fn serve_tls(
         .map_err(|e| {
             tls_span.record("status", "error");
             tls_span.record("error_kind", "guest_tls_handshake");
-            ::metrics::histogram!(metrics::TLS_HANDSHAKE_MS).record(handshake_start.elapsed().as_secs_f64() * 1000.0);
+            ::metrics::histogram!(m::TLS_HANDSHAKE_MS).record(handshake_start.elapsed().as_secs_f64() * 1000.0);
             (String::new(), Decision::Error, format!("TLS handshake: {e}"))
         })?;
     tls_span.record("status", "ok");
-    ::metrics::histogram!(metrics::TLS_HANDSHAKE_MS).record(handshake_start.elapsed().as_secs_f64() * 1000.0);
+    ::metrics::histogram!(m::TLS_HANDSHAKE_MS).record(handshake_start.elapsed().as_secs_f64() * 1000.0);
 
     // The SNI is guest-controlled; normalize it so policy, dial and
     // telemetry all see the identity the leaf was minted for.
@@ -923,7 +923,7 @@ async fn handle_request(
     let matched_rule = "security.http.default".to_string();
 
     tracing::Span::current().record("decision", "allow");
-    ::metrics::counter!(metrics::REQUESTS_TOTAL,
+    ::metrics::counter!(m::REQUESTS_TOTAL,
         "protocol" => protocol.label(), "decision" => "allow")
     .increment(1);
 
@@ -1759,8 +1759,8 @@ async fn handle_request(
                     upstream_lock_us, ready_us, tcp_us,
                     error = %e, "upstream TCP connect failed"
                 );
-                ::metrics::histogram!(metrics::UPSTREAM_DIAL_MS).record(dial_start.elapsed().as_secs_f64() * 1000.0);
-                ::metrics::counter!(metrics::REQUESTS_TOTAL,
+                ::metrics::histogram!(m::UPSTREAM_DIAL_MS).record(dial_start.elapsed().as_secs_f64() * 1000.0);
+                ::metrics::counter!(m::REQUESTS_TOTAL,
                     "protocol" => protocol.label(), "decision" => "upstream_error")
                 .increment(1);
                 return Ok(make_502(
@@ -1802,17 +1802,15 @@ async fn handle_request(
                     .await
                 {
                     Ok(tls) => {
-                        ::metrics::histogram!(metrics::UPSTREAM_DIAL_MS)
-                            .record(dial_start.elapsed().as_secs_f64() * 1000.0);
+                        ::metrics::histogram!(m::UPSTREAM_DIAL_MS).record(dial_start.elapsed().as_secs_f64() * 1000.0);
                         tls
                     }
                     Err(e) => {
                         upstream_prepare_span.record("decision", "error");
                         upstream_prepare_span.record("status", "error");
                         upstream_prepare_span.record("error_kind", "upstream_tls_handshake");
-                        ::metrics::histogram!(metrics::UPSTREAM_DIAL_MS)
-                            .record(dial_start.elapsed().as_secs_f64() * 1000.0);
-                        ::metrics::counter!(metrics::REQUESTS_TOTAL,
+                        ::metrics::histogram!(m::UPSTREAM_DIAL_MS).record(dial_start.elapsed().as_secs_f64() * 1000.0);
+                        ::metrics::counter!(m::REQUESTS_TOTAL,
                             "protocol" => protocol.label(), "decision" => "upstream_error")
                         .increment(1);
                         return Ok(make_502(
@@ -1856,7 +1854,7 @@ async fn handle_request(
                 (sender, hs)
             }
             Protocol::Http => {
-                ::metrics::histogram!(metrics::UPSTREAM_DIAL_MS).record(dial_start.elapsed().as_secs_f64() * 1000.0);
+                ::metrics::histogram!(m::UPSTREAM_DIAL_MS).record(dial_start.elapsed().as_secs_f64() * 1000.0);
                 let upstream_io = TokioIo::new(upstream_tcp);
                 let handshake_start = Instant::now();
                 let (sender, conn) = match hyper::client::conn::http1::handshake(upstream_io)
@@ -1868,7 +1866,7 @@ async fn handle_request(
                         upstream_prepare_span.record("decision", "error");
                         upstream_prepare_span.record("status", "error");
                         upstream_prepare_span.record("error_kind", "upstream_http_handshake");
-                        ::metrics::counter!(metrics::REQUESTS_TOTAL,
+                        ::metrics::counter!(m::REQUESTS_TOTAL,
                             "protocol" => protocol.label(), "decision" => "upstream_error")
                         .increment(1);
                         return Ok(make_502(

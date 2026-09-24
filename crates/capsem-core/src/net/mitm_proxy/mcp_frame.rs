@@ -24,8 +24,8 @@ use crate::security_engine::{
 use capsem_proto::mcp_contracts::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
 
 use super::fd_stream::{AsyncFdStream, ReplayReader};
-use super::metrics;
 use super::McpEndpointState;
+use capsem_telemetry::mitm as m;
 mod wire;
 pub(super) use wire::truncate_preview;
 use wire::{
@@ -162,7 +162,7 @@ where
                 FrameRead::InvalidFrame { stream_id, error } => {
                     warn!(stream_id, error, "invalid framed MCP frame discarded");
                     ::metrics::counter!(
-                        metrics::PARSER_EVENTS_TOTAL,
+                        m::PARSER_EVENTS_TOTAL,
                         "parser" => "mcp_frame",
                         "kind" => "invalid_frame",
                     )
@@ -235,7 +235,7 @@ where
             );
 
             ::metrics::counter!(
-                metrics::PARSER_EVENTS_TOTAL,
+                m::PARSER_EVENTS_TOTAL,
                 "parser" => "mcp_json_rpc",
                 "kind" => summary.kind.label(),
             )
@@ -380,14 +380,14 @@ where
     match &result {
         Ok(()) => {
             ::metrics::counter!(
-                metrics::MCP_DISCONNECTS_TOTAL,
+                m::MCP_DISCONNECTS_TOTAL,
                 "reason" => "eof",
             )
             .increment(1);
         }
         Err(_) => {
             ::metrics::counter!(
-                metrics::MCP_DISCONNECTS_TOTAL,
+                m::MCP_DISCONNECTS_TOTAL,
                 "reason" => "error",
             )
             .increment(1);

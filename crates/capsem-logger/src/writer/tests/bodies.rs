@@ -8,6 +8,7 @@ use capsem_archive::ArchiveError;
 
 use super::*;
 use crate::writer::bodies::takes_the_archive_out_of_service;
+use capsem_telemetry::db::{DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL, DB_ARCHIVE_BODIES_DROPPED_TOTAL};
 
 fn active_generation_path(conn: &rusqlite::Connection, db_path: &std::path::Path) -> std::path::PathBuf {
     let state = crate::schema::archive_state(conn).unwrap();
@@ -572,7 +573,7 @@ fn identical_bytes_share_a_span_only_inside_the_open_block() {
         .snapshot()
         .into_vec()
         .into_iter()
-        .filter(|(key, _, _, _)| key.key().name() == crate::writer::DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL)
+        .filter(|(key, _, _, _)| key.key().name() == DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL)
         .map(|(_, _, _, value)| match value {
             DebugValue::Counter(count) => count,
             other => panic!("deduplicated bodies are a counter, not {other:?}"),

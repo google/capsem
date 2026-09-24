@@ -10,6 +10,7 @@ use capsem_logger::{
     SecurityDecisionStage as LoggedSecurityDecisionStage, SecurityDetectionLevel as LoggedDetectionLevel,
     SecurityRuleAction as LoggedRuleAction, SecurityRuleEvent, SubstitutionEvent, WriteOp,
 };
+use capsem_telemetry::security::{SECURITY_PLUGIN_EXECUTION_DURATION_MS, SECURITY_PLUGIN_EXECUTION_TOTAL};
 use serde::ser::{SerializeStruct, Serializer};
 use serde::Serialize;
 use serde_json::json;
@@ -41,10 +42,6 @@ use rule_decision::*;
 pub use rule_emission::*;
 
 pub const SECURITY_EVENT_EMIT_SPAN: &str = "capsem.security_event.emit";
-pub const SECURITY_EVENT_EMIT_TOTAL: &str = "security_event.emit_total";
-pub const SECURITY_EVENT_EMIT_DURATION_MS: &str = "security_event.emit_duration_ms";
-pub const SECURITY_PLUGIN_EXECUTION_TOTAL: &str = "security_plugin.execution_total";
-pub const SECURITY_PLUGIN_EXECUTION_DURATION_MS: &str = "security_plugin.execution_duration_ms";
 pub const DUMMY_EICAR_TEST_STRING: &str = r#"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"#;
 
 mod emission;

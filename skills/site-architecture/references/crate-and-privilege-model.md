@@ -14,6 +14,9 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-archive`**: block-compressed body archive for session ledgers.
   Pure Rust (`miniz_oxide`); SQLite keeps the index, this crate keeps the
   bytes, and every block is blake3-verified before a body is returned.
+- **`capsem-telemetry`**: the one owner of every `metrics`-facade metric name,
+  with its kind, unit and description. Depends only on `metrics`; emitting
+  crates import names from it and never spell a metric name themselves.
 - **`capsem-assets`**: asset manifests, compatibility, download, resolution,
   and verification.
 - **`capsem-config`**: config types, parsing, validation, resolution, and

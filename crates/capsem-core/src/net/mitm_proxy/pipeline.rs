@@ -23,8 +23,8 @@ use super::hooks::{
     ArcChunkHook, ArcHook, ChunkCtx, ChunkEndFuture, ConnMeta, DynEmitter, EmitError, HookCtx, HookOutcome, HookState,
     Registration, StopAction,
 };
-use super::metrics as m;
 use bytes::{Bytes, BytesMut};
+use capsem_telemetry::mitm as m;
 use std::time::Instant;
 use tracing::{debug, trace, Instrument};
 

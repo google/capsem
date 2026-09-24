@@ -856,6 +856,7 @@ dependencies = [
  "capsem-logger",
  "capsem-proto",
  "capsem-router",
+ "capsem-telemetry",
  "core-foundation-sys",
  "criterion",
  "dispatch2 0.2.0",
@@ -992,6 +993,7 @@ dependencies = [
  "capsem-archive",
  "capsem-foundation",
  "capsem-proto",
+ "capsem-telemetry",
  "criterion",
  "flate2",
  "humantime",
@@ -1205,6 +1207,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "capsem-telemetry"
+version = "0.6.3"
+dependencies = [
+ "metrics",
+ "metrics-util",
 ]
 
 [[package]]

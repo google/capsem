@@ -36,6 +36,7 @@ See `/dev-just` for the full recipe reference and dependency chains.
 ```
 crates/capsem-foundation/      Low-level paths, UDS, logging, polling, and IPC handshake
 crates/capsem-archive/  Block-compressed body archive for session ledgers (pure Rust)
+crates/capsem-telemetry/       Every metrics-facade metric name, kind, unit, and description
 crates/capsem-assets/          Asset manifest compatibility, resolution, download, and verification
 crates/capsem-api/             Gateway wire types and OpenAPI contract shared by clients
 sdk/rust/                     capsem-sdk: async HTTP gateway clients sharing capsem-api DTOs

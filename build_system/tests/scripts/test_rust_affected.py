@@ -135,6 +135,7 @@ def test_real_workspace_inventory_matches_cargo_members() -> None:
         "capsem-sdk",
         "capsem-proto",
         "capsem-service",
+        "capsem-telemetry",
         "capsem-tray",
         "capsem-tui",
     }

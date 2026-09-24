@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
+use capsem_telemetry::db::{DB_MEMORY_UNFLUSHED_OPS, DB_SHUTDOWN_FLUSH_MS};
 use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension};
 use tracing::{error, warn};
 use uuid::Uuid;
@@ -79,27 +80,6 @@ const DISK_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 pub const DB_ENQUEUE_SPAN: &str = "capsem.db.enqueue";
 pub const DB_WRITE_BATCH_SPAN: &str = "capsem.db.write_batch";
 pub const DB_SHUTDOWN_FLUSH_SPAN: &str = "capsem.db.shutdown_flush";
-
-pub const DB_ENQUEUE_WAIT_MS: &str = "db.enqueue_wait_ms";
-pub const DB_ENQUEUE_TOTAL: &str = "db.enqueue_total";
-pub const DB_WRITE_BATCH_TOTAL: &str = "db.write_batch_total";
-pub const DB_WRITE_BATCH_DURATION_MS: &str = "db.write_batch_duration_ms";
-pub const DB_WRITE_OP_REJECTED_TOTAL: &str = "db.write_op_rejected_total";
-pub const DB_WRITE_BATCH_SIZE: &str = "db.write_batch_size";
-pub const DB_WRITE_BATCH_CAPACITY: &str = "db.write_batch_capacity";
-pub const DB_WRITE_BATCH_ROWS_PER_SEC: &str = "db.write_batch_rows_per_sec";
-pub const DB_WRITE_OPS_TOTAL: &str = "db.write_ops_total";
-pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
-/// Bodies the archive gave up on, by the step that gave up: the only place a
-/// poisoned archive surfaces besides a log line.
-pub const DB_ARCHIVE_BODIES_DROPPED_TOTAL: &str = "db.archive_bodies_dropped_total";
-/// Bodies indexed against identical bytes already stored, labelled by
-/// scope: `block` (the open block) or `archive` (a committed earlier segment).
-pub const DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL: &str = "db.archive_bodies_deduplicated_total";
-/// Ops the writer holds in memory waiting for a disk flush. It falls to zero
-/// on every flush that lands; a value that only climbs is a disk the writer
-/// cannot flush to, with the session's rows piling up in RAM.
-pub const DB_MEMORY_UNFLUSHED_OPS: &str = "db.memory_unflushed_ops";
 
 /// What the writer reads `event_body_blobs.created_at` and
 /// `body_blocks.sealed_at` from.
