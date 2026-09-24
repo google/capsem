@@ -38,6 +38,7 @@ before anything is allocated or inflated, because it comes off disk.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import importlib
 import importlib.util
@@ -498,3 +499,22 @@ def forensic_payload(body: bytes) -> dict[str, Any]:
     for name in FORENSIC_OPTION_FIELDS:
         payload.setdefault(name, None)
     return payload
+
+
+def served_security_payload(
+    client: Any, vm_id: str, event_id: str, source_table: str = "security_rule_events"
+) -> dict[str, Any]:
+    """The forensic payload of one event, as `GET /vms/{id}/bodies/{event_id}` serves it.
+
+    The black-box counterpart of `security_payload`: a route row names the
+    event, and its payload is an archived body like any other.
+    """
+    served = client.get(f"/vms/{vm_id}/bodies/{event_id}")
+    for body in served["bodies"]:
+        if (body["source_table"], body["direction"]) != (source_table, "payload"):
+            continue
+        assert not body["truncated"] and not body["truncated_for_transport"], body
+        content = str(body["content"])
+        raw = base64.b64decode(content) if body["encoding"] == "base64" else content.encode()
+        return forensic_payload(raw)
+    raise AssertionError(f"{source_table} has no served payload for {event_id}: {served}")

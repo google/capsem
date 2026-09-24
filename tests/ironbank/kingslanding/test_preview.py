@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 import pytest
+from helpers.body_archive import served_security_payload
 from helpers.constants import CODE_PROFILE_ID
 
 from tests.ironbank.kingslanding.test_publish import redis
@@ -270,19 +271,19 @@ def test_authenticated_container_preview_streams_and_revokes(redis, service):
     assert _hits(client, vm_id) == before
 
     rows = []
+    # One payload fetch per event, not one per poll.
+    payloads: dict[str, dict] = {}
 
     def denied_audit():
         rows[:] = client.get(f"/vms/{vm_id}/security/latest?limit=2000")
+        for row in rows:
+            if row["event_type"] == "network.connect" and row["event_id"] not in payloads:
+                payloads[row["event_id"]] = served_security_payload(client, vm_id, row["event_id"])
+        events = (payloads[row["event_id"]] for row in rows if row["event_type"] == "network.connect")
         return any(
-            row["event_type"] == "network.connect"
-            and json.loads(row["event_json"])
-            .get("network", {})
-            .get("route", {})
-            .get("mode")
-            == "preview"
-            and json.loads(row["event_json"]).get("decision", {}).get("effective")
-            == "block"
-            for row in rows
+            ((event["network"] or {}).get("route") or {}).get("mode") == "preview"
+            and (event["decision"] or {}).get("effective") == "block"
+            for event in events
         )
 
     wait_for(denied_audit, "denied preview audit", timeout=15)
