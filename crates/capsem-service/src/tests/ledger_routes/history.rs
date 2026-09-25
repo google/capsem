@@ -39,15 +39,16 @@ async fn history_app() -> (axum::Router, tempfile::TempDir, Vec<(String, String)
                 credential_ref: None,
             }))
             .await;
+        let stdout = format!("out-{exec_id}").into_bytes();
         writer
             .write(capsem_logger::WriteOp::ExecEventComplete(
                 capsem_logger::ExecEventComplete {
                     exec_id: exec_id as u64,
                     exit_code: 0,
                     duration_ms: 1,
-                    stdout_preview: Some(format!("out-{exec_id}")),
-                    stderr_preview: None,
-                    stdout_bytes: 6,
+                    stdout_bytes: stdout.len() as u64,
+                    stdout,
+                    stderr: Vec::new(),
                     stderr_bytes: 0,
                     pid: None,
                 },

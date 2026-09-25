@@ -145,5 +145,42 @@ fn owning_handle_poll(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, external_reader_poll, owning_handle_poll);
+/// What readiness costs a route, which is the part of a poll that must not
+/// grow with the ledger: the first check a fresh handle makes, a repeated
+/// check on a healthy ledger, and a repeated check on one whose schema is
+/// broken -- failed readiness is retried, so its cost is paid every poll.
+fn external_reader_ready(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    for &(rows, label) in SIZES {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session.db");
+        seed_dns_rows(&path, rows);
+
+        c.bench_function(&format!("external_reader_ready_first_{label}"), |b| {
+            b.iter(|| {
+                let reader = DbHandle::open_external_reader(&path).expect("external reader");
+                rt.block_on(reader.ready()).expect("ready");
+            });
+        });
+
+        let reader = DbHandle::open_external_reader(&path).expect("external reader");
+        rt.block_on(reader.ready()).expect("ready");
+        c.bench_function(&format!("external_reader_ready_repeated_{label}"), |b| {
+            b.iter(|| rt.block_on(reader.ready()).expect("ready"));
+        });
+
+        let broken = dir.path().join("broken.db");
+        seed_dns_rows(&broken, rows);
+        Connection::open(&broken)
+            .expect("open broken db")
+            .execute_batch("DROP TABLE profile_mutation_events;")
+            .expect("drop a required table");
+        let reader = DbHandle::open_external_reader(&broken).expect("external reader");
+        c.bench_function(&format!("external_reader_ready_failed_{label}"), |b| {
+            b.iter(|| rt.block_on(reader.ready()).expect_err("a broken schema is not ready"));
+        });
+    }
+}
+
+criterion_group!(benches, external_reader_poll, owning_handle_poll, external_reader_ready);
 criterion_main!(benches);

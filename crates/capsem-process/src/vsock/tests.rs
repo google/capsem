@@ -745,18 +745,18 @@ match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
 fn exec_output_is_capped_against_an_endless_guest_stream() {
     let mut reader = std::io::Cursor::new(encoded_exec_output(
         capsem_proto::ExecOutputChannel::Stdout,
-        MAX_EXEC_OUTPUT_BYTES * 2,
+        exec_output::EXEC_LEDGER_BODY_BYTES * 2,
     ));
     let captured = exec_output::read_exec_output(&mut reader);
 
     assert_eq!(
         captured.stdout.len(),
-        MAX_EXEC_OUTPUT_BYTES,
+        exec_output::EXEC_LEDGER_BODY_BYTES,
         "retained buffer must stop at the cap"
     );
     assert_eq!(
         captured.stdout_bytes,
-        (MAX_EXEC_OUTPUT_BYTES * 2) as u64,
+        (exec_output::EXEC_LEDGER_BODY_BYTES * 2) as u64,
         "the reported total is what the guest wrote, not what was kept"
     );
 }
@@ -767,24 +767,27 @@ fn exec_output_keeps_the_prefix_and_drains_to_eof() {
     // guest blocked on a full socket instead of finishing its command.
     let mut reader = std::io::Cursor::new(encoded_exec_output(
         capsem_proto::ExecOutputChannel::Stdout,
-        MAX_EXEC_OUTPUT_BYTES + 4096,
+        exec_output::EXEC_LEDGER_BODY_BYTES + 4096,
     ));
     let captured = exec_output::read_exec_output(&mut reader);
 
     assert!(captured.stdout.iter().all(|b| *b == b'y'), "prefix is intact");
-    assert_eq!(captured.stdout.len(), MAX_EXEC_OUTPUT_BYTES);
-    assert_eq!(captured.stdout_bytes, (MAX_EXEC_OUTPUT_BYTES + 4096) as u64);
+    assert_eq!(captured.stdout.len(), exec_output::EXEC_LEDGER_BODY_BYTES);
+    assert_eq!(
+        captured.stdout_bytes,
+        (exec_output::EXEC_LEDGER_BODY_BYTES + 4096) as u64
+    );
 }
 
 #[test]
 fn output_at_exactly_the_cap_is_not_reported_as_truncated() {
     let mut reader = std::io::Cursor::new(encoded_exec_output(
         capsem_proto::ExecOutputChannel::Stdout,
-        MAX_EXEC_OUTPUT_BYTES,
+        exec_output::EXEC_LEDGER_BODY_BYTES,
     ));
     let captured = exec_output::read_exec_output(&mut reader);
 
-    assert_eq!(captured.stdout.len(), MAX_EXEC_OUTPUT_BYTES);
+    assert_eq!(captured.stdout.len(), exec_output::EXEC_LEDGER_BODY_BYTES);
     assert_eq!(
         captured.stdout_bytes,
         captured.stdout.len() as u64,

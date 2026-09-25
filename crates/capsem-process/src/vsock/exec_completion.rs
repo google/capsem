@@ -54,23 +54,31 @@ pub(super) async fn complete(
     };
     let event_id = active.event_id;
     let duration_ms = active.started_at.elapsed().as_millis() as u64;
-    let stdout = active.captured;
-    let stderr = active.captured_stderr;
     let stdout_bytes = active.total_bytes;
     let stderr_bytes = active.stderr_bytes;
     let streaming = stream.is_some();
-    let truncated = !streaming && (stdout_bytes > stdout.len() as u64 || stderr_bytes > stderr.len() as u64);
+    // A streamed exec already delivered its bytes; a buffered one returns the
+    // leading slices one result frame carries. That copy is the only one, and
+    // it is bounded by the result's cap, not by the ledger's.
+    let (response_stdout, response_stderr) = active
+        .response_cut
+        .unwrap_or((active.captured.len(), active.captured_stderr.len()));
+    let truncated = !streaming && (stdout_bytes > response_stdout as u64 || stderr_bytes > response_stderr as u64);
+    let response = (!streaming).then(|| {
+        (
+            active.captured[..response_stdout].to_vec(),
+            active.captured_stderr[..response_stderr].to_vec(),
+        )
+    });
 
+    // The ledger takes the captured lanes themselves, moved, not copied: up to
+    // the logger's body cap each, whatever the result or the stream carried.
     let complete = capsem_logger::ExecEventComplete {
         exec_id: id,
         exit_code,
         duration_ms,
-        stdout_preview: Some(
-            String::from_utf8_lossy(&stdout[..stdout.len().min(super::exec_output::EXEC_LEDGER_PREVIEW_BYTES)]).into(),
-        ),
-        stderr_preview: Some(
-            String::from_utf8_lossy(&stderr[..stderr.len().min(super::exec_output::EXEC_LEDGER_PREVIEW_BYTES)]).into(),
-        ),
+        stdout: active.captured,
+        stderr: active.captured_stderr,
         stdout_bytes,
         stderr_bytes,
         pid: None,
@@ -94,9 +102,10 @@ pub(super) async fn complete(
                 message: "exec stream consumer disconnected".into(),
             }
         } else {
+            let (stdout, stderr) = response.unwrap_or_default();
             JobResult::Exec {
-                stdout: if streaming { Vec::new() } else { stdout },
-                stderr: if streaming { Vec::new() } else { stderr },
+                stdout,
+                stderr,
                 exit_code,
                 truncated,
             }

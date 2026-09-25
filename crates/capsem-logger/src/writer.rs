@@ -63,7 +63,9 @@ const HEADER_BYTES: usize = 16 * 1024;
 /// session once carried 75 MB of "previews" averaging 28 KB, mirrored into
 /// RAM by two processes on top of the identical bytes stored beside them.
 pub(crate) const PREVIEW_BYTES: usize = 2 * 1024;
-pub(crate) const MAX_BODY_BLOB_BYTES: usize = 10 * 1024 * 1024;
+/// The most one archived body stores; a producer that retains more has
+/// nowhere to put it. Guest exec capture sizes its per-lane buffer by this.
+pub const MAX_BODY_BLOB_BYTES: usize = 10 * 1024 * 1024;
 const DEFAULT_BATCH_CAPACITY: usize = 10_000;
 /// Unflushed ops that force a disk flush before the interval is up.
 ///
@@ -163,9 +165,17 @@ pub(crate) fn cap_preview(s: &Option<String>) -> Option<String> {
 /// full to produce 2 KiB of it -- and the second cap absorbs the replacement
 /// character a cut multi-byte sequence expands into.
 pub(crate) fn body_preview(body: Option<&[u8]>) -> Option<String> {
-    let bytes = body.filter(|bytes| !bytes.is_empty())?;
+    body.filter(|bytes| !bytes.is_empty()).map(output_preview)
+}
+
+/// The display preview of captured output, empty output included.
+///
+/// One definition for every consumer of a preview: the ledger column and the
+/// security-rule input both read this, so a rule never sees more than a UI
+/// list shows and neither pays for transcoding the whole body.
+pub fn output_preview(bytes: &[u8]) -> String {
     let head = &bytes[..bytes.len().min(PREVIEW_BYTES)];
-    cap_bytes(&Some(String::from_utf8_lossy(head).into_owned()), PREVIEW_BYTES)
+    cap_bytes(&Some(String::from_utf8_lossy(head).into_owned()), PREVIEW_BYTES).unwrap_or_default()
 }
 
 fn blake3_ref(value: &str) -> String {

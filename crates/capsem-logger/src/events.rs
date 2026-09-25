@@ -794,13 +794,21 @@ pub struct ExecEvent {
 }
 
 /// Completion data for a structured exec command (sent when GuestToHost::ExecDone arrives).
+///
+/// It carries the output itself, not a preview of it: the writer archives
+/// each lane as a body and derives the display preview there, so the preview
+/// and the evidence cannot be confused with one another.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecEventComplete {
     pub exec_id: u64,
     pub exit_code: i32,
     pub duration_ms: u64,
-    pub stdout_preview: Option<String>,
-    pub stderr_preview: Option<String>,
+    /// Each lane's leading bytes exactly as the guest wrote them, not
+    /// necessarily UTF-8. The archive stores at most `MAX_BODY_BLOB_BYTES`.
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    /// What the guest wrote per lane. More than the lane's bytes means
+    /// capture or storage cut it, and the archived body says so.
     pub stdout_bytes: u64,
     pub stderr_bytes: u64,
     pub pid: Option<u32>,

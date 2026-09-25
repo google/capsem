@@ -182,13 +182,7 @@ pub fn validate_select_only(sql: &str) -> Result<(), String> {
 /// SQL before execution.
 pub struct DbReader {
     conn: Connection,
-    /// `PRAGMA main.data_version` as of the last change this reader both saw
-    /// and finished acting on. It moves only when another connection commits
-    /// to the file, so an unchanged value means results derived from it are
-    /// still current.
-    synced_data_version: Cell<Option<i64>>,
-    disk_syncs: Cell<u64>,
-    queries_executed: Cell<u64>,
+    sync: schema_sync::SyncState,
 }
 
 impl DbReader {

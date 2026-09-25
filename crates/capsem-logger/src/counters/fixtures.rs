@@ -65,7 +65,7 @@ pub(crate) fn exec(exec_id: u64) -> WriteOp {
 
 pub(crate) fn exec_done(exec_id: u64) -> WriteOp {
     WriteOp::ExecEventComplete(from::<ExecEventComplete>(json!({
-        "exec_id": exec_id, "exit_code": 0, "duration_ms": 4, "stdout_bytes": 0, "stderr_bytes": 0,
+        "exec_id": exec_id, "exit_code": 0, "duration_ms": 4, "stdout": [], "stderr": [], "stdout_bytes": 0, "stderr_bytes": 0,
     })))
 }
 

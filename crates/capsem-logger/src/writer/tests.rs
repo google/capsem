@@ -829,8 +829,8 @@ fn exec_event_insert_then_update_roundtrip() {
                     exec_id: 42,
                     exit_code: 0,
                     duration_ms: 120,
-                    stdout_preview: Some("out".into()),
-                    stderr_preview: None,
+                    stdout: "out".into(),
+                    stderr: Vec::new(),
                     stdout_bytes: 128,
                     stderr_bytes: 0,
                     pid: Some(1234),
@@ -872,7 +872,7 @@ fn exec_event_insert_then_update_roundtrip() {
     assert_eq!(exit, 0);
     assert_eq!(duration, 120);
     assert_eq!(stdout_preview.as_deref(), Some("out"));
-    assert!(stderr_preview.is_none());
+    assert_eq!(stderr_preview.as_deref(), Some(""), "silent, not missing");
     assert_eq!(stdout_bytes, 128);
     assert_eq!(pid, Some(1234));
 }

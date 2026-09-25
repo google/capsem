@@ -40,9 +40,7 @@ impl DbReader {
     fn with_connection(conn: Connection) -> Self {
         Self {
             conn,
-            synced_data_version: Cell::new(None),
-            disk_syncs: Cell::new(0),
-            queries_executed: Cell::new(0),
+            sync: Default::default(),
         }
     }
 }

@@ -168,3 +168,5 @@ async fn a_deposited_empty_capture_stays_a_successful_empty_result() {
         JobResult::Exec { stdout, exit_code: 0, truncated: false, .. } if stdout.is_empty()
     ));
 }
+
+mod ledger;
