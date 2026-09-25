@@ -1,7 +1,7 @@
 use std::ptr::NonNull;
 use std::time::{Instant, SystemTime};
 
-use capsem_logger::{schema, DbHandle, Decision, DnsEvent, WriteOp};
+use capsem_logger::{schema, DbHandle, DbWriter, Decision, DnsEvent, WriteOp};
 use memmap2::Mmap;
 use rusqlite::{
     params,
@@ -119,10 +119,13 @@ fn dns_event(idx: usize) -> WriteOp {
     })
 }
 
+/// The writer creates the ledger -- its schema and its body archive -- and the
+/// rows go in directly, so the bench measures reads rather than the writer
+/// queue. `create_tables` alone names an archive generation nobody created.
 fn seed_dns_rows(path: &std::path::Path, rows: usize) {
+    DbWriter::open(path, 8).expect("create ledger").shutdown_blocking();
     let mut conn = Connection::open(path).expect("open seed db");
     schema::apply_pragmas(&conn).expect("apply pragmas");
-    schema::create_tables(&conn).expect("create schema");
 
     let tx = conn.transaction().expect("seed transaction");
     {
