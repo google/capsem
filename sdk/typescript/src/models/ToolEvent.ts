@@ -16,6 +16,7 @@ export interface ToolEvent {
   "model_call_id"?: number | null;
   "model_parent_missing": boolean;
   "process_name"?: string | null;
+  "response_event_id"?: string | null;
   "response_preview"?: string | null;
   "server_name": string;
   "source": ToolOrigin;

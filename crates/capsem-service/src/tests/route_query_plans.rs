@@ -127,7 +127,10 @@ fn route_statements() -> Vec<RouteStatement> {
             STATS_DETAIL_BODY_BLOBS_SQL,
             vec![json!(STATS_DETAIL_PROCESS_EVENTS_LIMIT)],
         )
-        .probing(&["sqlite_autoindex_event_body_blobs_1 (event_id=?)"])
+        .probing(&[
+            "sqlite_autoindex_event_body_blobs_1 (event_id=?)",
+            "idx_tool_responses_call_id (call_id=?)",
+        ])
         .merging_windows(),
         RouteStatement::window("interactions.model_items", MODEL_ITEMS_SQL, vec![])
             .probing(&["SEARCH mc USING INTEGER PRIMARY KEY (rowid=?)"]),

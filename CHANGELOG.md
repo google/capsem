@@ -178,6 +178,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Rootfs components cached with the old OBOM are rebuilt once
   (google/capsem#241).
 
+- A tool response longer than its 2 KB preview can now be read in full from
+  `GET /vms/{id}/stats/detail`. The response is archived under its own event
+  id, which no list named, so clients had the preview and no key to fetch the
+  rest. Tool events now carry `response_event_id`, the body index lists that
+  response's body, and `GET /vms/{id}/bodies/{response_event_id}` serves it
+  (google/capsem#245).
+
 - `GET /vms/{id}/timeline?since=...` returns recent events on long sessions.
   It used to read only the oldest 10,000 events of the whole ledger and
   filter them afterwards, so a recent `since` on a busy session came back

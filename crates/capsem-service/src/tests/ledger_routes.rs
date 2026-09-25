@@ -716,7 +716,7 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
             trace_id: Some("trace-winterfell".to_string()),
         }],
         tool_responses: vec![capsem_logger::ToolResponseEntry {
-            event_id: None,
+            event_id: Some("abcdef123454".to_string()),
             call_id: "tool-winterfell".to_string(),
             content_preview: Some("Wrote winterfell.md".to_string()),
             is_error: false,
@@ -765,6 +765,7 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
     assert_eq!(detail["model_events"][0]["input_tokens"], 9, "{detail}");
     assert_eq!(detail["tool_events"][0]["call_id"], "tool-winterfell", "{detail}");
     assert_eq!(detail["tool_events"][0]["tool_name"], "Write", "{detail}");
+    bodies::assert_tool_response_is_indexed(&detail, "abcdef123454", "Wrote winterfell.md");
     // Body bytes are archive-backed now; the stats payload names them.
     assert_eq!(detail["body_blobs"]["abcdef123453"][0]["direction"], "request");
     assert_eq!(
