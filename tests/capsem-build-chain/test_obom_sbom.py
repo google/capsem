@@ -111,7 +111,19 @@ def test_builder_emits_obom_and_keeps_build_ledger_debug_scoped() -> None:
         for child in ast.walk(cdxgen_call.args[0])
         if isinstance(child, ast.Constant) and isinstance(child.value, str)
     ]
-    assert {"--pull", "never", "--network", "/rootfs", "-t", "rootfs", "-o"} <= set(cdxgen_command)
+    assert {"--pull", "never", "--network", "-t", "rootfs", "-o"} <= set(cdxgen_command)
+    # The rootfs is unpacked inside the scanner container, at the scan root,
+    # never on the host (#241): only the tar crosses the mount, read-only.
+    assert 'OBOM_SCAN_ROOT = "/rootfs"' in builder
+    names = {child.id for child in ast.walk(cdxgen_call.args[0]) if isinstance(child, ast.Name)}
+    assert "OBOM_SCAN_ROOT" in names
+    assert any(
+        isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Name)
+        and child.func.id == "_extract_rootfs_command"
+        for child in ast.walk(cdxgen_call.args[0])
+    )
+    assert ":/rootfs:ro" not in builder
     assert any(
         isinstance(child, ast.Call)
         and isinstance(child.func, ast.Name)

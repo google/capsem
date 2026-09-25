@@ -47,6 +47,12 @@ BUILD_LEDGER_NAME = "build-ledger.log"
 CONTAINER_PROBE_TIMEOUT_SECONDS = 60
 CONTAINER_PROBE_CLEANUP_TIMEOUT_SECONDS = 15
 OBOM_COMMAND_TIMEOUT_SECONDS = 600
+# Where the scanner container unpacks the rootfs; stripped from every OBOM path.
+OBOM_SCAN_ROOT = "/rootfs"
+# How a rootfs component's post-build outputs (EROFS, OBOM) are produced. It is
+# part of the component cache key, so change it whenever that procedure
+# changes the bytes: a cached component keeps whatever OBOM it was built with.
+ROOTFS_OUTPUT_RECIPE = "obom-in-container-extract"
 
 # Guest binaries COPY'd into the rootfs (cross-compiled Rust binaries).
 GUEST_BINARIES = [
@@ -1087,25 +1093,35 @@ def _scanner_output_command(command: list[str], *, output_path: str) -> list[str
     ]
 
 
-def _normalize_cyclonedx_obom(
-    path: Path,
-    rootfs_dir: Path,
-    *,
-    architecture: str,
-) -> None:
+def _extract_rootfs_command(tar_path: str) -> list[str]:
+    """Unpack the exported rootfs at `OBOM_SCAN_ROOT`, then run what follows.
+
+    Runs as root inside the scanner container, on the container's own Linux
+    filesystem. Unpacking on the host instead produced a wrong OBOM, slowly
+    (#241): a macOS checkout is case-insensitive and folded iptables'
+    `libxt_TOS.so` and `libxt_tos.so` into one file, an unprivileged
+    extraction dropped every setuid and setgid bit the scan exists to report,
+    and cdxgen then walked the unpacked tree across the VM file share, which
+    cost 200-330 s against about 20 s here.
+    """
+    excludes = " ".join(f"--exclude='{pattern}'" for pattern in ("dev/*", "proc/*", "sys/*"))
+    return [
+        "sh",
+        "-eu",
+        "-c",
+        f'mkdir {OBOM_SCAN_ROOT}; tar {excludes} -xf "$1" -C {OBOM_SCAN_ROOT}; shift; exec "$@"',
+        "capsem-rootfs-extract",
+        tar_path,
+    ]
+
+
+def _normalize_cyclonedx_obom(path: Path, *, architecture: str) -> None:
     """Remove build-host context while preserving exported-rootfs evidence."""
     document = json.loads(path.read_text())
-    rootfs_prefixes = [str(rootfs_dir), "/rootfs"]
-    relative_rootfs = os.path.relpath(rootfs_dir)
-    if relative_rootfs not in rootfs_prefixes:
-        rootfs_prefixes.append(relative_rootfs)
 
     def normalize(value: Any) -> Any:
         if isinstance(value, str):
-            normalized = value
-            for rootfs_prefix in rootfs_prefixes:
-                normalized = normalized.replace(rootfs_prefix, "")
-            return normalized or "/"
+            return value.replace(OBOM_SCAN_ROOT, "") or "/"
         if isinstance(value, list):
             normalized_items = [normalize(item) for item in value]
             return sorted(
@@ -1208,66 +1224,47 @@ def generate_cyclonedx_obom(
     The build ledger records declared build inputs. This OBOM is the runtime
     inventory for what actually ended up in the base image.
     """
-    import tempfile
-
     network_value = require_container_network(runtime_network)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_parent = repo_root / "cache" / "tmp"
-    tmp_parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="capsem-obom-", dir=tmp_parent) as tmp:
-        rootfs_dir = Path(tmp) / "rootfs"
-        rootfs_dir.mkdir()
-        run_cmd(
-            [
-                "tar",
-                "--exclude=dev/*",
-                "--exclude=proc/*",
-                "--exclude=sys/*",
-                "-xf",
-                str(rootfs_tar),
-                "-C",
-                str(rootfs_dir),
-            ],
-            timeout=OBOM_COMMAND_TIMEOUT_SECONDS,
-        )
-        # cdxgen's rootfs mode is the only offline mode that inventories the
-        # extracted guest. Its internal validation rejects Debian's lowercase
-        # `sendmail` spelling before writing output, so emit first, normalize
-        # that known SPDX spelling, then run the paired strict schema validator.
-        run_cmd(
-            [
-                runtime,
-                "run",
-                "--rm",
-                "--pull",
-                "never",
-                "--network",
-                network_value,
-                "--platform",
-                tool_platform,
-                "-v",
-                f"{rootfs_dir}:/rootfs:ro",
-                "-v",
-                f"{output_path.parent.resolve()}:/output",
-                tool_image,
-                *_scanner_output_command(
-                    [
-                        *_cdxgen_command(),
-                        "/rootfs",
-                        "-t",
-                        "rootfs",
-                        "--no-validate",
-                        "-o",
-                        f"/output/{output_path.name}",
-                    ],
-                    output_path=f"/output/{output_path.name}",
-                ),
-            ],
-            capture=True,
-            timeout=OBOM_COMMAND_TIMEOUT_SECONDS,
-        )
-        _normalize_cyclonedx_obom(output_path, rootfs_dir, architecture=architecture)
+    # cdxgen's rootfs mode is the only offline mode that inventories the
+    # extracted guest. Its internal validation rejects Debian's lowercase
+    # `sendmail` spelling before writing output, so emit first, normalize
+    # that known SPDX spelling, then run the paired strict schema validator.
+    run_cmd(
+        [
+            runtime,
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--network",
+            network_value,
+            "--platform",
+            tool_platform,
+            "-v",
+            f"{rootfs_tar.parent.resolve()}:/input:ro",
+            "-v",
+            f"{output_path.parent.resolve()}:/output",
+            tool_image,
+            *_scanner_output_command(
+                [
+                    *_extract_rootfs_command(f"/input/{rootfs_tar.name}"),
+                    *_cdxgen_command(),
+                    OBOM_SCAN_ROOT,
+                    "-t",
+                    "rootfs",
+                    "--no-validate",
+                    "-o",
+                    f"/output/{output_path.name}",
+                ],
+                output_path=f"/output/{output_path.name}",
+            ),
+        ],
+        capture=True,
+        timeout=OBOM_COMMAND_TIMEOUT_SECONDS,
+    )
+    _normalize_cyclonedx_obom(output_path, architecture=architecture)
     _validate_cyclonedx_obom(output_path, architecture=architecture)
     run_cmd(
         [
@@ -1504,6 +1501,26 @@ def _rootfs_config_input_record(
             "cluster_size": erofs.cluster_size,
         },
     }
+
+
+def _rootfs_component_identity(
+    build_inputs: dict[str, Any],
+    rootfs_config: dict[str, Any],
+    asset_tools_image: str,
+) -> str:
+    """The rootfs component cache key.
+
+    The component carries the EROFS and the OBOM, which the asset tools image
+    and `ROOTFS_OUTPUT_RECIPE` produce from the exported filesystem, so both
+    belong in the key beside the image's own build inputs.
+    """
+    return componentcache.build_identity(
+        build_inputs,
+        extra={
+            **rootfs_config,
+            "outputs": {"asset_tools_image": asset_tools_image, "recipe": ROOTFS_OUTPUT_RECIPE},
+        },
+    )
 
 
 def _select_rootfs_asset(asset_dir: Path) -> str | None:
@@ -2034,8 +2051,8 @@ def build_image(
             build_inputs["dependency_image"] = dependency_image.as_record()
             build_inputs["asset_tools_image"] = asset_tools_image = _asset_tools_image(config, repo_root)
             rootfs_config = _rootfs_config_input_record(config, arch_name)
-            component_identity = componentcache.build_identity(
-                build_inputs, extra=rootfs_config
+            component_identity = _rootfs_component_identity(
+                build_inputs, rootfs_config, asset_tools_image
             )
             restored = componentcache.restore(
                 repo_root, "rootfs", component_identity, arch_output
