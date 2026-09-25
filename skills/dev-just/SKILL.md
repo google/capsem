@@ -30,7 +30,7 @@ allowlist update in the same change.
 | `just test [source-commit] [normal\|force] [reason]` | Reusable complete local verification; low-impact repeats route to focused owners, while exceptional force requires a reason. Optional before release. |
 | `slow` (fourth `test` argument, third `focus-test` argument) | Permission to rebuild host VM assets whose expensive inputs changed: `Cargo.lock`, `build_system/uv.lock`, the toolchain, builder Dockerfiles, the kernel defconfig. Without it a run whose assets went stale that way stops at the first asset step and names the input, since the rebuild is the guest builder image, every agent, the initrd, the images and the host binaries. Source-only staleness (a `capsem-core` edit) rebuilds without asking. |
 | `just release-binaries <channel> <source-commit>` | Dispatch qualification and publication of packages against pulled profiles. |
-| `just release-profile <channel> <profile> <source-commit>` | Dispatch qualification and publication of one profile against the pulled package. |
+| `just release-profile <channel> <profile> <source-commit>` | Dispatch qualification and publication of one profile (or `all`, behind one source proof) against the pulled package. |
 
 `just --summary` must print exactly the names in `[just].approved` and nothing
 else. The count is not repeated here on purpose: this line used to say "those

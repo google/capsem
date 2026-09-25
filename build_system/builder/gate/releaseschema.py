@@ -80,6 +80,7 @@ class ReleaseConfig(Strict):
     fetch_manifest: str
     binaries: str
     profile: tuple[str, ...]
+    all_profiles: Annotated[str, StringConstraints(min_length=1)]
     preflight_dir: str
     channel_source: str
     default_repository: str

@@ -34,11 +34,17 @@ def _require_channel(config: GateConfig, channel: str) -> None:
         )
 
 
-def _require_profile(config: GateConfig, profile: str) -> None:
-
+def _selected_profiles(config: GateConfig, profile: str) -> list[str]:
+    """The profiles one `release-profile` run dispatches, in dispatch order."""
     known = imagebuild.profiles(config)
+    every = config.release.all_profiles
+    if every in known:
+        raise GateError(f"a profile is named {every!r}, which release-profile reserves for every profile")
+    if profile == every:
+        return known
     if profile not in known:
-        raise GateError(f"unknown profile {profile!r}; expected one of {', '.join(known)}")
+        raise GateError(f"unknown profile {profile!r}; expected {every!r} or one of {', '.join(known)}")
+    return [profile]
 
 
 class ReleaseBinariesCommand(
@@ -177,7 +183,7 @@ class ReleaseProfileCommand(
     QualifiedRelease,
     GateCommand,
     name="release-profile",
-    help="release one exact previously-qualified channel profile",
+    help="release one channel profile, or every profile with `all`",
 ):
     exclusive = True
     publishes = True
@@ -210,7 +216,7 @@ class ReleaseProfileCommand(
         # validated its channel and this did not, which is the kind of asymmetry
         # nobody notices until the run that needed it.
         _require_channel(config, self._args.channel)
-        _require_profile(config, self._args.profile)
+        profiles = _selected_profiles(config, self._args.profile)
 
         clean = self._worktree_steps(plan, self.source_commit())
         accepted = self._live_advisory_proof(plan, after=clean)
@@ -260,18 +266,24 @@ class ReleaseProfileCommand(
                 # this authors an immutable publication and dispatches a
                 # workflow, and it must do that from the repository being
                 # released rather than from a tree about to be reclaimed.
-                Run(
-                    [
-                        *settings.profile,
-                        "--channel",
-                        self._args.channel,
-                        "--profile",
-                        self._args.profile,
-                        "--source-commit",
-                        str(self.source_commit()),
-                    ],
-                    cwd=checkout,
-                    outside_sandbox=True,
+                # One dispatch per profile, in order, behind the one proof
+                # above: each waits on its hosted run, and the first failure
+                # stops the rest.
+                *(
+                    Run(
+                        [
+                            *settings.profile,
+                            "--channel",
+                            self._args.channel,
+                            "--profile",
+                            profile,
+                            "--source-commit",
+                            str(self.source_commit()),
+                        ],
+                        cwd=checkout,
+                        outside_sandbox=True,
+                    )
+                    for profile in profiles
                 ),
                 kind=Kind.PUBLISH,
                 needs=frozenset({Needs.NETWORK}),
