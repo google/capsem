@@ -18,9 +18,14 @@ registry, directly or through the items that build it.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
-from citadel.test_ledger_counter_boundary import CHAR_LITERAL, LITERAL, ROOT, is_test_source, literals
+from citadel.test_ledger_counter_boundary import (
+    CHAR_LITERAL,
+    LITERAL,
+    ROOT,
+    is_test_source,
+    literals,
+)
 
 ROUTE_STATEMENTS_RATIONALE = """
 A route statement the plan registry does not reach is one nobody measures.
