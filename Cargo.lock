@@ -664,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "capsem"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "blake3",
@@ -699,7 +699,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-admin"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "blake3",
@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-agent"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "capsem-foundation",
  "capsem-proto",
@@ -735,7 +735,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-api"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -745,7 +745,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-app"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "capsem-proto",
  "filetime",
@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-archive"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "blake3",
  "capsem-foundation",
@@ -778,7 +778,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-assets"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -798,7 +798,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-bench"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "capsem-foundation",
@@ -815,7 +815,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-config"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "capsem-proto",
  "regex",
@@ -828,7 +828,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-core"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -893,7 +893,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-credentials"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "capsem-foundation",
  "capsem-proto",
@@ -905,7 +905,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-foundation"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "blake3",
  "capsem-proto",
@@ -923,7 +923,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-gateway"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -954,7 +954,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-guard"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "capsem-foundation",
  "tempfile",
@@ -964,7 +964,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-logger"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "blake3",
@@ -990,7 +990,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-mcp-aggregator"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -1014,7 +1014,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-mcp-builtin"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "capsem-core",
@@ -1033,7 +1033,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-mock-server"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-network"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "capsem-proto",
  "tokio",
@@ -1068,7 +1068,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-process"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -1091,7 +1091,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-proto"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-router"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "bytes",
  "capsem-foundation",
@@ -1126,7 +1126,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-sdk"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "axum",
  "capsem-api",
@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-service"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -1179,7 +1179,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-telemetry"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1195,7 +1195,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-tray"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "capsem-foundation",
@@ -1215,7 +1215,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-tui"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "capsem-sdk",
