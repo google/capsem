@@ -113,58 +113,34 @@ pub(super) async fn handle_history(
     Path(id): Path<String>,
     Query(params): Query<api::HistoryQuery>,
 ) -> Result<Json<api::HistoryResponse>, AppError> {
-    let session = history_ledger_for_vm(&state, &id).await?;
-    Ok(Json(query_history_ledger(&session, &params)))
+    Ok(Json(ledger_routes::history::history_page(&state, &id, &params).await?))
 }
 
 /// GET /vms/{id}/history/processes -- process-centric view of audit events.
 pub(super) async fn handle_history_processes(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<axum::response::Response, AppError> {
+) -> Result<Json<api::HistoryProcessesResponse>, AppError> {
     let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-    let slot = match session_response_cache_lookup(&state, &id, "history_processes", "history", &db_path).await? {
-        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
-        SessionResponseCache::Miss(slot) => slot,
-    };
-    let session = history_ledger_for_vm(&state, &id).await?;
-    let processes = session.processes.into_iter().take(100).collect();
-    let response = api::HistoryProcessesResponse { processes };
-    let body = serde_json::to_vec(&response).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize history processes response: {error}"),
-        )
-    })?;
-    slot.store(&state, &body);
-    Ok(json_bytes_response(Bytes::from(body)))
+    let counters =
+        ledger_routes::activity::read_counters(&state, &id, "history", &session_dir.join("session.db")).await?;
+    Ok(Json(api::HistoryProcessesResponse {
+        processes: ledger_routes::activity::history_processes(&counters, 100),
+    }))
 }
 
 /// GET /vms/{id}/history/counts -- exec and audit event counts.
 pub(super) async fn handle_history_counts(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<axum::response::Response, AppError> {
+) -> Result<Json<api::HistoryCountsResponse>, AppError> {
     let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-    let slot = match session_response_cache_lookup(&state, &id, "history_counts", "history", &db_path).await? {
-        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
-        SessionResponseCache::Miss(slot) => slot,
-    };
-    let session = history_ledger_for_vm(&state, &id).await?;
-    let response = api::HistoryCountsResponse {
-        exec_count: session.counts.exec_count,
-        audit_count: session.counts.audit_count,
-    };
-    let body = serde_json::to_vec(&response).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize history counts response: {error}"),
-        )
-    })?;
-    slot.store(&state, &body);
-    Ok(json_bytes_response(Bytes::from(body)))
+    let counters =
+        ledger_routes::activity::read_counters(&state, &id, "history", &session_dir.join("session.db")).await?;
+    Ok(Json(api::HistoryCountsResponse {
+        exec_count: counters.exec.started,
+        audit_count: counters.audit.events,
+    }))
 }
 
 /// Acquire the host-wide VZ lifecycle flock (`startup::VzHostLock`)

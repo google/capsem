@@ -13,7 +13,7 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use capsem_logger::{schema, DbHandle, DbWriter, Decision, DnsEvent, WriteOp};
+use capsem_logger::{DbHandle, DbWriter, Decision, DnsEvent, WriteOp};
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use rusqlite::{params, Connection};
 
@@ -42,13 +42,14 @@ fn dns_event(idx: usize) -> WriteOp {
     })
 }
 
-/// Seed `rows` DNS rows straight into the file, before any writer opens it.
+/// Seed `rows` DNS rows straight into the file while no writer holds it.
 /// Setup only: a million rows through the writer queue would measure the
 /// writer, not the poll.
 fn seed_dns_rows(path: &Path, rows: usize) {
+    // A writer creates the ledger whole -- schema, archive generation and
+    // lock -- so the rows seeded below land in a ledger any writer reopens.
+    DbWriter::open(path, 1).expect("create ledger").shutdown_blocking();
     let mut conn = Connection::open(path).expect("open seed db");
-    schema::apply_pragmas(&conn).expect("apply pragmas");
-    schema::create_tables(&conn).expect("create schema");
     let tx = conn.transaction().expect("seed transaction");
     {
         let mut stmt = tx

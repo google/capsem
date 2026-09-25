@@ -320,9 +320,9 @@ struct ServiceState {
     /// body. Plugin policy refresh clears this cache so repeated UI/TUI probes
     /// do not re-run plugin simulation or serialize identical payloads.
     evaluate_response_cache: Mutex<HashMap<Vec<u8>, Bytes>>,
-    /// Final `/vms/list` JSON bytes keyed by the in-memory lifecycle snapshot.
-    /// The fingerprint includes running VM uptime seconds, so repeated polling
-    /// reuses bytes within the same visible state without freezing the counter.
+    /// `/vms/list` lifecycle rows keyed by the in-memory lifecycle snapshot
+    /// (uptime seconds included). Activity totals are read per poll from
+    /// each ledger's cached counter snapshot, never cached here.
     list_response_cache: Mutex<Option<CachedListResponse>>,
     /// One-entry hot evaluate cache for repeated probes with the same exact
     /// body. Checked before allocating the multi-entry cache key.
@@ -387,7 +387,7 @@ struct CachedEvaluateResponse {
 #[derive(Clone)]
 struct CachedListResponse {
     fingerprint: String,
-    bytes: Bytes,
+    listed: (ListResponse, Vec<PathBuf>),
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

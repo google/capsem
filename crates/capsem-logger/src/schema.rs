@@ -59,12 +59,19 @@ pub(crate) fn create_tables_with_archive_header(
             conn.execute(
                 "INSERT INTO archive_state(
                      singleton, archive_id, generation_id, format_version, committed_end, revision
-                 ) VALUES(1, ?1, ?2, 3, ?3, 1)",
+                 ) VALUES(1, ?1, ?2, 4, ?3, 1)",
                 rusqlite::params![
                     header.archive_id.as_bytes().as_slice(),
                     header.generation_id.as_bytes().as_slice(),
                     FILE_HEADER_BYTES as i64,
                 ],
+            )?;
+            // A new ledger has counted nothing: an empty snapshot, not no row.
+            conn.execute(
+                "INSERT INTO ledger_counters(singleton, counters) VALUES(1, ?1)",
+                [crate::counters::LedgerCounters::default()
+                    .encode()
+                    .map_err(|error| contract_error(&format!("{error:#}")))?],
             )?;
         }
         if !table_exists(conn, "main", "transport_schema")? {
@@ -121,7 +128,11 @@ fn stamp_under_lock(conn: &Connection) -> rusqlite::Result<()> {
 /// recorded anything, not how much.
 fn recorded_rows(conn: &Connection) -> rusqlite::Result<Option<(&'static str, i64)>> {
     for (table, _) in READY_SCHEMA_COLUMNS {
-        if matches!(*table, "archive_state" | "transport_events" | "transport_schema") {
+        // Bookkeeping rows every ledger is created with are not activity.
+        if matches!(
+            *table,
+            "archive_state" | "ledger_counters" | "transport_events" | "transport_schema"
+        ) {
             continue;
         }
         if !table_exists(conn, "main", table)? {
@@ -156,7 +167,7 @@ pub(crate) fn archive_schema_status(conn: &Connection) -> rusqlite::Result<Archi
     for (table, _) in READY_SCHEMA_COLUMNS {
         if *table != "archive_state" && table_exists(conn, "main", table)? {
             return Err(contract_error(
-                "session ledger predates required archive_state format v3; refusing implicit v2 migration",
+                "session ledger predates required archive_state (format v4); refusing implicit v2 migration",
             ));
         }
     }
@@ -185,9 +196,11 @@ pub(crate) fn archive_state(conn: &Connection) -> rusqlite::Result<ArchiveState>
         .map_err(|_| contract_error("archive_state generation_id must be a 16-byte UUIDv4 blob"))?;
     let archive_id = ArchiveId::from_bytes(archive).map_err(|error| contract_error(&error.to_string()))?;
     let generation_id = GenerationId::from_bytes(generation).map_err(|error| contract_error(&error.to_string()))?;
-    if format_version != 3 {
+    // v4 added the persisted counter snapshot. An older ledger has none, and
+    // nothing rebuilds one by scanning: it is refused, not upgraded.
+    if format_version != 4 {
         return Err(contract_error(&format!(
-            "archive_state format version {format_version} is unsupported; expected 3"
+            "archive_state format version {format_version} is unsupported; expected 4"
         )));
     }
     let committed_end = u64::try_from(committed_end)
@@ -203,7 +216,7 @@ pub(crate) fn archive_state(conn: &Connection) -> rusqlite::Result<ArchiveState>
             archive_id,
             generation_id,
         },
-        format_version: 3,
+        format_version: 4,
         committed_end,
         revision,
     })
@@ -299,11 +312,7 @@ mod pragmas;
 use columns::READY_SCHEMA_COLUMNS;
 #[cfg(test)]
 pub(crate) use columns::READY_SCHEMA_COLUMNS as REQUIRED_COLUMNS_FOR_TESTS;
-pub use pragmas::{
-    apply_pragmas, apply_reader_pragmas, record_sqlite_mmap_telemetry, DB_SQLITE_FILE_SIZE_BYTES,
-    DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL, DB_SQLITE_MMAP_CONFIG_BYTES, DB_SQLITE_MMAP_COVERAGE_RATIO,
-    DB_SQLITE_MMAP_EFFECTIVE_BYTES, DB_SQLITE_WAL_SIZE_BYTES, SQLITE_MMAP_SIZE_BYTES,
-};
+pub use pragmas::{apply_pragmas, apply_reader_pragmas, record_sqlite_mmap_telemetry, SQLITE_MMAP_SIZE_BYTES};
 
 /// Validate that a session DB is structurally ready for ledger routes.
 ///

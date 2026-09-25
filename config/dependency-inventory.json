@@ -821,6 +821,18 @@
    "tracing-subscriber"
   ]
  },
+ "capsem-archive": {
+  "build_script": false,
+  "dependencies": [
+   "blake3",
+   "capsem-foundation",
+   "flate2",
+   "miniz_oxide",
+   "tempfile",
+   "thiserror",
+   "uuid"
+  ]
+ },
  "capsem-assets": {
   "build_script": false,
   "dependencies": [
@@ -884,6 +896,7 @@
    "capsem-logger",
    "capsem-proto",
    "capsem-router",
+   "capsem-telemetry",
    "core-foundation-sys",
    "criterion",
    "dispatch2",
@@ -903,7 +916,6 @@
    "metrics",
    "metrics-util",
    "nix",
-   "notify",
    "objc2",
    "objc2-foundation",
    "objc2-virtualization",
@@ -1013,9 +1025,12 @@
   "dependencies": [
    "anyhow",
    "blake3",
+   "capsem-archive",
    "capsem-foundation",
    "capsem-proto",
+   "capsem-telemetry",
    "criterion",
+   "flate2",
    "humantime",
    "memmap2",
    "metrics",
@@ -1023,6 +1038,7 @@
    "rusqlite",
    "serde",
    "serde_json",
+   "sha2",
    "tempfile",
    "tokio",
    "tracing",
@@ -1062,7 +1078,6 @@
    "capsem-core",
    "capsem-foundation",
    "capsem-guard",
-   "capsem-logger",
    "capsem-proto",
    "regex",
    "reqwest",
@@ -1218,6 +1233,13 @@
    "tracing",
    "tracing-subscriber",
    "uuid"
+  ]
+ },
+ "capsem-telemetry": {
+  "build_script": false,
+  "dependencies": [
+   "metrics",
+   "metrics-util"
   ]
  },
  "capsem-tray": {
@@ -2363,12 +2385,6 @@
   "build_script": false,
   "dependencies": []
  },
- "fsevent-sys": {
-  "build_script": false,
-  "dependencies": [
-   "libc"
-  ]
- },
  "futf": {
   "build_script": false,
   "dependencies": [
@@ -3220,26 +3236,6 @@
    "cfb"
   ]
  },
- "inotify": {
-  "build_script": false,
-  "dependencies": [
-   "bitflags",
-   "futures-core",
-   "futures-util",
-   "inotify-sys",
-   "libc",
-   "maplit",
-   "rand",
-   "tempfile",
-   "tokio"
-  ]
- },
- "inotify-sys": {
-  "build_script": true,
-  "dependencies": [
-   "libc"
-  ]
- },
  "inquire": {
   "build_script": false,
   "dependencies": [
@@ -3268,17 +3264,6 @@
    "proc-macro2",
    "quote",
    "syn"
-  ]
- },
- "instant": {
-  "build_script": false,
-  "dependencies": [
-   "cfg-if",
-   "js-sys",
-   "stdweb",
-   "wasm-bindgen",
-   "wasm-bindgen-test",
-   "web-sys"
   ]
  },
  "io-uring": {
@@ -3578,23 +3563,6 @@
  "konst_macro_rules": {
   "build_script": false,
   "dependencies": []
- },
- "kqueue": {
-  "build_script": false,
-  "dependencies": [
-   "criterion",
-   "dhat",
-   "kqueue-sys",
-   "libc",
-   "tempfile"
-  ]
- },
- "kqueue-sys": {
-  "build_script": false,
-  "dependencies": [
-   "bitflags",
-   "libc"
-  ]
  },
  "lab": {
   "build_script": false,
@@ -4056,37 +4024,6 @@
    "memchr",
    "minimal-lexical",
    "proptest"
-  ]
- },
- "notify": {
-  "build_script": false,
-  "dependencies": [
-   "bitflags",
-   "crossbeam-channel",
-   "filetime",
-   "fsevent-sys",
-   "inotify",
-   "insta",
-   "kqueue",
-   "libc",
-   "log",
-   "mio",
-   "nix",
-   "notify-types",
-   "serde_json",
-   "tempfile",
-   "walkdir",
-   "windows-sys"
-  ]
- },
- "notify-types": {
-  "build_script": false,
-  "dependencies": [
-   "insta",
-   "instant",
-   "rstest",
-   "serde",
-   "serde_json"
   ]
  },
  "nu-ansi-term": {

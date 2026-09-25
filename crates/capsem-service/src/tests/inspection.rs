@@ -75,13 +75,22 @@ async fn stats_detail_has_typed_nullable_events_and_captured_bodies() {
     std::fs::create_dir_all(&session).unwrap();
     let db_path = session.join("session.db");
     let writer = capsem_logger::DbWriter::open(&db_path, 8).unwrap();
+    // Model usage is counted by the writer, so the model call goes through it;
+    // the rest are rows the route reads back as written.
+    writer.write_blocking(capsem_logger::WriteOp::ModelCall(
+        serde_json::from_value(serde_json::json!({
+            "event_id": "abcdef000001", "timestamp": 1_789_000_000.0, "provider": "custom-provider",
+            "method": "POST", "path": "/model", "stream": false, "messages_count": 0, "tools_count": 0,
+            "request_bytes": 0, "input_tokens": 5_000_000_000_u64, "usage_details": {}, "duration_ms": 0,
+            "response_bytes": 0, "estimated_cost_usd": 0.125, "tool_calls": [], "tool_responses": [],
+        }))
+        .unwrap(),
+    ));
     writer.shutdown_blocking();
     let connection = rusqlite::Connection::open(&db_path).unwrap();
     connection
         .execute_batch(
             r#"
-        INSERT INTO model_calls(event_id,timestamp,provider,method,path,input_tokens,estimated_cost_usd)
-        VALUES('abcdef000001','2026-09-10T00:00:00Z','custom-provider','POST','/model',5000000000,0.125);
         INSERT INTO tool_calls(call_index,call_id,tool_name,origin)
         VALUES(0,'tool-1','custom-tool','native');
         INSERT INTO net_events(timestamp,domain,decision,bytes_received)

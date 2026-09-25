@@ -1485,14 +1485,11 @@ async fn stats_detail_route_reads_session_db_ledger() {
 
     let (status, info) = route_request(app, axum::http::Method::GET, "/vms/stats-detail-vm/info", None).await;
     assert_eq!(status, StatusCode::OK, "{info}");
-    assert_eq!(
-        info.get("model_call_count"),
-        None,
-        "/vms/{{id}}/info stays lifecycle/storage only; stats/detail is the ledger surface"
-    );
-    assert_eq!(info.get("total_input_tokens"), None);
-    assert_eq!(info.get("total_output_tokens"), None);
-    assert_eq!(info.get("total_tool_calls"), None);
+    // /info carries the same totals the toolbar summary reports.
+    assert_eq!(info["total_input_tokens"], summary["total_input_tokens"]);
+    assert_eq!(info["total_output_tokens"], summary["total_output_tokens"]);
+    assert_eq!(info["total_tool_calls"], summary["total_tool_calls"]);
+    assert_eq!(info["total_requests"], summary["total_requests"]);
 }
 
 async fn write_test_model_call(db_path: &std::path::Path, provider: &str, model: &str, event_id: &str) {
@@ -1970,13 +1967,8 @@ async fn stats_detail_ledger_exposes_orphan_tool_parent_inconsistency() {
     .await;
     assert_eq!(status, StatusCode::OK, "{info}");
     assert_eq!(
-        info.get("total_tool_calls"),
-        None,
-        "/vms/{{id}}/info stays lifecycle/storage only; stats/detail is the ledger surface"
-    );
-    assert!(
-        info.get("model_call_count").is_none() || info["model_call_count"] == serde_json::Value::Null,
-        "orphan tool diagnostics must not invent a model count"
+        info["model_call_count"], 0,
+        "orphan tool diagnostics must not invent a model count: {info}"
     );
 
     let (status, timeline) = route_request(

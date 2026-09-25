@@ -28,6 +28,25 @@ fn parse_since_accepts_rfc3339() {
     assert!(parse_since("2026-05-02T17:30:00Z").is_some());
 }
 
+/// `since` is request input: a value out of range is refused, never an
+/// arithmetic overflow in the handler.
+#[test]
+fn parse_since_refuses_out_of_range_values() {
+    for since in [
+        "99999999999999999d",
+        "18446744073709551615s",
+        "1969-12-31T23:59:59Z",
+        "0000-01-01T00:00:00Z",
+        "2026-00-10T00:00:00Z",
+        "2026-03-00T00:00:00Z",
+        "2026-13-01T00:00:00Z",
+        "2026-01-01T24:00:00Z",
+    ] {
+        assert!(parse_since(since).is_none(), "{since}");
+    }
+    assert_eq!(parse_since("1970-01-01T00:00:00Z"), Some(SystemTime::UNIX_EPOCH));
+}
+
 #[test]
 fn scan_panics_finds_text_panic_with_thread_name() {
     let dir = TempDir::new().unwrap();

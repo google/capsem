@@ -253,12 +253,21 @@ pub(super) fn insert_exec_event(conn: &Connection, event: &ExecEvent, target: Wr
     Ok(())
 }
 
+/// What a completion did to its start row.
+#[derive(Debug, Default)]
+pub(super) struct ExecCompletion {
+    /// It set `exit_code` on a row that had none: the first completion.
+    pub(super) first: bool,
+    /// The row it updated was already flushed to disk.
+    pub(super) on_disk: bool,
+}
+
 pub(super) fn update_exec_event(
     conn: &Connection,
     complete: &ExecEventComplete,
     exec_floor: i64,
     bodies: &mut BodyArchive,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<ExecCompletion> {
     let stdout_preview = cap_preview(&complete.stdout_preview);
     let stderr_preview = cap_preview(&complete.stderr_preview);
     // The exec row was inserted when the command started; its event_id is
@@ -280,7 +289,7 @@ pub(super) fn update_exec_event(
             exec_id = complete.exec_id,
             "exec completion has no start row; its output is not archived"
         );
-        return Ok(());
+        return Ok(ExecCompletion::default());
     };
     for (direction, body, produced) in [
         (
@@ -309,7 +318,7 @@ pub(super) fn update_exec_event(
             },
         );
     }
-    let exec_events = start.table;
+    let exec_events = &start.table;
     execute_cached(
         conn,
         &format!(
@@ -334,7 +343,10 @@ pub(super) fn update_exec_event(
             start.id,
         ],
     )?;
-    Ok(())
+    Ok(ExecCompletion {
+        first: !start.completed,
+        on_disk: !start.table.starts_with("mem."),
+    })
 }
 
 /// The exec start row a completion belongs to, and the table it is in now.
@@ -343,6 +355,8 @@ struct ExecStart {
     id: i64,
     event_id: String,
     trace_id: Option<String>,
+    /// A completion already set its exit code.
+    completed: bool,
 }
 
 /// Find the start row of `exec_id`.
@@ -357,7 +371,7 @@ fn find_exec_start(conn: &Connection, exec_id: u64, exec_floor: i64) -> rusqlite
     let in_memory = lookup_exec_start(
         conn,
         &memory_table,
-        &format!("SELECT id, event_id, trace_id FROM {memory_table} WHERE exec_id = ?1 ORDER BY id DESC LIMIT 1"),
+        &format!("SELECT id, event_id, trace_id, exit_code IS NOT NULL FROM {memory_table} WHERE exec_id = ?1 ORDER BY id DESC LIMIT 1"),
         params![exec_id as i64],
     )?;
     if in_memory.is_some() {
@@ -366,7 +380,7 @@ fn find_exec_start(conn: &Connection, exec_id: u64, exec_floor: i64) -> rusqlite
     lookup_exec_start(
         conn,
         "main.exec_events",
-        "SELECT id, event_id, trace_id FROM main.exec_events
+        "SELECT id, event_id, trace_id, exit_code IS NOT NULL FROM main.exec_events
          WHERE exec_id = ?1 AND id > ?2 ORDER BY id DESC LIMIT 1",
         params![exec_id as i64, exec_floor],
     )
@@ -385,6 +399,7 @@ fn lookup_exec_start(
                 id: row.get(0)?,
                 event_id: row.get(1)?,
                 trace_id: row.get(2)?,
+                completed: row.get(3)?,
             })
         })
         .optional()

@@ -194,6 +194,47 @@ pub(crate) async fn handle_triage(
     Ok(axum::Json(out))
 }
 
+/// The triage statements, by the key each answer is reported under.
+///
+/// Each reads the newest `limit` matching rows through an ordered index or the
+/// rowid, so it stops once it has them instead of sorting every match. Tool
+/// errors walk the rowid backwards: `NOT INDEXED` keeps the planner off
+/// `idx_tool_calls_origin`, which for an `IN` list returns rows out of id order
+/// and sorts every counted tool call, and insertion order is newest first where
+/// `timestamp` is not (a call recorded without one sorted last).
+pub(crate) fn session_triage_statements(limit: usize) -> [(&'static str, String); 3] {
+    let origins = capsem_logger::counters::counted_tool_origins_sql();
+    [
+        (
+            "denied_net",
+            format!(
+                "SELECT timestamp, domain, decision, status_code, duration_ms \
+                 FROM net_events WHERE decision = 'denied' OR status_code >= 500 \
+                 ORDER BY timestamp DESC LIMIT {limit}"
+            ),
+        ),
+        (
+            "tool_errors",
+            format!(
+                "SELECT timestamp, server_name, method, decision, policy_mode, policy_action, \
+                        policy_rule, policy_reason, error_message, duration_ms \
+                 FROM tool_calls NOT INDEXED \
+                 WHERE origin IN ({origins}) \
+                   AND (decision IN ('denied','error') OR error_message IS NOT NULL) \
+                 ORDER BY id DESC LIMIT {limit}"
+            ),
+        ),
+        (
+            "exec_failures",
+            format!(
+                "SELECT timestamp, exec_id, command, exit_code, duration_ms \
+                 FROM exec_events WHERE exit_code IS NOT NULL AND exit_code != 0 \
+                 ORDER BY timestamp DESC LIMIT {limit}"
+            ),
+        ),
+    ]
+}
+
 pub(crate) async fn session_db_triage(
     vm_id: &str,
     db: &capsem_logger::DbHandle,
@@ -203,33 +244,9 @@ pub(crate) async fn session_db_triage(
     db.ready()
         .await
         .map_err(|error| anyhow!("session triage ledger is not ready for {vm_id}: {error}"))?;
-    let denied_net_sql = format!(
-        "SELECT timestamp, domain, decision, status_code, duration_ms \
-         FROM net_events WHERE decision = 'denied' OR status_code >= 500 \
-         ORDER BY timestamp DESC LIMIT {limit}"
-    );
-    let tool_errors_sql = format!(
-        "SELECT timestamp, server_name, method, decision, policy_mode, policy_action, \
-                policy_rule, policy_reason, error_message, duration_ms \
-         FROM tool_calls \
-         WHERE origin IN ('native', 'mcp', 'builtin', 'local') \
-           AND (decision IN ('denied','error') OR error_message IS NOT NULL) \
-         ORDER BY timestamp DESC LIMIT {limit}"
-    );
-    let exec_failures_sql = format!(
-        "SELECT timestamp, exec_id, command, exit_code, duration_ms \
-         FROM exec_events WHERE exit_code IS NOT NULL AND exit_code != 0 \
-         ORDER BY timestamp DESC LIMIT {limit}"
-    );
-
-    async fn read_query(
-        db: &capsem_logger::DbHandle,
-        vm_id: &str,
-        db_path: &std::path::Path,
-        query_name: &str,
-        sql: &str,
-    ) -> anyhow::Result<serde_json::Value> {
-        let raw = db.query(sql, &[]).await.map_err(|error| {
+    let mut answers = serde_json::Map::new();
+    for (query_name, sql) in session_triage_statements(limit) {
+        let raw = db.query(&sql, &[]).await.map_err(|error| {
             error!(
                 vm_id,
                 query_name,
@@ -239,7 +256,7 @@ pub(crate) async fn session_db_triage(
             );
             anyhow!("session triage query {query_name} failed: {error}")
         })?;
-        serde_json::from_str(&raw).map_err(|error| {
+        let value = serde_json::from_str(&raw).map_err(|error| {
             error!(
                 vm_id,
                 query_name,
@@ -248,18 +265,10 @@ pub(crate) async fn session_db_triage(
                 "session triage ledger query returned invalid JSON"
             );
             anyhow!("session triage query {query_name} returned invalid JSON: {error}")
-        })
+        })?;
+        answers.insert(query_name.to_string(), value);
     }
-
-    let denied_net_v = read_query(db, vm_id, db_path, "denied_net", &denied_net_sql).await?;
-    let tool_errors_v = read_query(db, vm_id, db_path, "tool_errors", &tool_errors_sql).await?;
-    let exec_failures_v = read_query(db, vm_id, db_path, "exec_failures", &exec_failures_sql).await?;
-
-    Ok(serde_json::json!({
-        "denied_net": denied_net_v,
-        "tool_errors": tool_errors_v,
-        "exec_failures": exec_failures_v,
-    }))
+    Ok(serde_json::Value::Object(answers))
 }
 
 pub(crate) fn limit_columnar_query_json(value: &serde_json::Value, limit: usize) -> serde_json::Value {

@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::LazyLock;
 use std::time::SystemTime;
 
 use serde_json::json;
@@ -13,7 +12,7 @@ use crate::events::{
 use crate::WriteOp;
 
 const DB_BOUNDARY_RATIONALE: &str = "DB boundary contract: capsem-logger owns DB execution/storage; callers own query intent only. See AGENTS.md and skills/dev-testing/SKILL.md.";
-static DB_FLUSH_FAILURE_TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+use crate::writer::DISK_FLUSH_FAULT_LOCK as DB_FLUSH_FAILURE_TEST_LOCK;
 
 mod bodies;
 mod correctness;

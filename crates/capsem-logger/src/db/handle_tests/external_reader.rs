@@ -310,15 +310,15 @@ async fn two_polled_batches_are_cached_side_by_side() {
     );
 }
 
-/// `stats/summary` is a poll like any other, so it is answered from the cache
-/// like any other.
+/// The counter snapshot behind `stats/summary` and `/info` is a poll like any
+/// other, so it is answered from the cache like any other.
 ///
-/// It used to be a worker request of its own, which meant every poll of every
-/// running session re-ran three aggregates over the file no matter how long
-/// the ledger had stood still.
+/// The summary used to be a worker request of its own, which meant every poll
+/// of every running session re-ran its aggregates over the file no matter how
+/// long the ledger had stood still.
 #[tokio::test]
-async fn session_stats_are_served_from_the_batch_cache() {
-    let p = temp_db_path("external-session-stats-cached");
+async fn ledger_counters_are_served_from_the_batch_cache() {
+    let p = temp_db_path("external-ledger-counters-cached");
     let writer = DbHandle::open(&p).expect("open owning writer handle");
     writer
         .write(WriteOp::NetEvent(make_net_event("stats.example", Decision::Allowed)))
@@ -330,25 +330,25 @@ async fn session_stats_are_served_from_the_batch_cache() {
     reader.ready().await.expect("external reader ready");
 
     // The counter has to move on the first call, or "it did not move on the
-    // second" proves nothing: the old private request ran its aggregates
-    // without counting them, and would have passed the cache assertion below
-    // while re-running everything on every poll.
+    // second" proves nothing: a private request that ran its query without
+    // counting it would pass the cache assertion below while re-reading the
+    // file on every poll.
     let before_first = reader.queries_executed_for_tests().await.expect("read counter");
-    let first = reader.session_stats().await.expect("first session stats");
-    assert_eq!(first.net_total, 1);
-    assert_eq!(first.net_allowed, 1);
+    let first = reader.ledger_counters().await.expect("first counters");
+    assert_eq!(first.net.total, 1);
+    assert_eq!(first.net.allowed, 1);
     let executed = reader.queries_executed_for_tests().await.expect("read counter");
     assert!(
         executed > before_first,
-        "the first summary poll must execute and count its aggregates. {DB_BOUNDARY_RATIONALE}"
+        "the first counters poll must execute and count its query. {DB_BOUNDARY_RATIONALE}"
     );
 
-    let second = reader.session_stats().await.expect("second session stats");
-    assert_eq!(second.net_total, first.net_total);
+    let second = reader.ledger_counters().await.expect("second counters");
+    assert_eq!(second, first);
     assert_eq!(
         reader.queries_executed_for_tests().await.expect("read counter"),
         executed,
-        "an unchanged ledger must answer a summary poll without re-running its aggregates. \
+        "an unchanged ledger must answer a counters poll without re-reading the file. \
          {DB_BOUNDARY_RATIONALE}"
     );
 
@@ -358,12 +358,12 @@ async fn session_stats_are_served_from_the_batch_cache() {
         .expect("second write");
     writer.flush().await.expect("flush writer");
 
-    let third = reader.session_stats().await.expect("session stats after commit");
-    assert_eq!(third.net_total, 2, "a commit must be visible to the next poll");
-    assert_eq!(third.net_denied, 1);
+    let third = reader.ledger_counters().await.expect("counters after commit");
+    assert_eq!(third.net.total, 2, "a commit must be visible to the next poll");
+    assert_eq!(third.net.denied, 1);
     assert!(
         reader.queries_executed_for_tests().await.expect("read counter") > executed,
-        "a changed ledger must re-run the aggregates. {DB_BOUNDARY_RATIONALE}"
+        "a changed ledger must re-read the snapshot. {DB_BOUNDARY_RATIONALE}"
     );
 }
 

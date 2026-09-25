@@ -3,8 +3,10 @@
 use super::*;
 
 mod bodies;
+mod counters;
 mod headers;
 mod producer;
+mod recording;
 mod security;
 mod unflushed;
 
@@ -687,89 +689,6 @@ fn writer_channel_capacity_applies_backpressure() {
 }
 
 #[test]
-fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
-    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
-
-    let recorder = DebuggingRecorder::new();
-    let snapshotter = recorder.snapshotter();
-    let (tx, rx) = writer_channel(16);
-    tx.send(super::WriterMessage::write(WriteOp::FileEvent(file_event(
-        "/metrics",
-        crate::events::FileAction::Created,
-        None,
-    ))))
-    .unwrap();
-    drop(tx);
-
-    let conn = rusqlite::Connection::open_in_memory().unwrap();
-    crate::schema::apply_pragmas(&conn).unwrap();
-    crate::schema::create_tables(&conn).unwrap();
-    crate::schema::create_memory_tables(&conn, &crate::schema::memory_uri_for_name("writer-metrics-test")).unwrap();
-
-    let pending_body_bytes = AtomicU64::new(0);
-    metrics::with_local_recorder(&recorder, || {
-        writer_loop(
-            conn,
-            rx,
-            None,
-            16,
-            &pending_body_bytes,
-            BodyArchive::disabled(SystemTime::now),
-        )
-    });
-
-    let snapshot = snapshotter.snapshot().into_vec();
-    assert!(snapshot
-        .iter()
-        .any(|(key, _, _, value)| key.key().name() == DB_WRITE_BATCH_TOTAL && matches!(value, DebugValue::Counter(1))));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_WRITE_BATCH_DURATION_MS && matches!(value, DebugValue::Histogram(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_WRITE_BATCH_SIZE && matches!(value, DebugValue::Histogram(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_WRITE_BATCH_CAPACITY && matches!(value, DebugValue::Gauge(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_WRITE_BATCH_ROWS_PER_SEC && matches!(value, DebugValue::Histogram(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_WRITE_OPS_TOTAL && matches!(value, DebugValue::Counter(1))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_SHUTDOWN_FLUSH_MS && matches!(value, DebugValue::Histogram(_))
-    }));
-}
-
-#[test]
-fn db_writer_records_enqueue_metrics() {
-    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
-
-    let recorder = DebuggingRecorder::new();
-    let snapshotter = recorder.snapshotter();
-    let _guard = metrics::set_default_local_recorder(&recorder);
-
-    let dir = tempfile::tempdir().unwrap();
-    let writer = DbWriter::open(&dir.path().join("enqueue.db"), 1).unwrap();
-    let accepted = writer.try_write(WriteOp::FileEvent(file_event(
-        "/enqueue",
-        crate::events::FileAction::Created,
-        None,
-    )));
-    assert!(accepted);
-    writer.shutdown_blocking();
-
-    let snapshot = snapshotter.snapshot().into_vec();
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_ENQUEUE_WAIT_MS && matches!(value, DebugValue::Histogram(_))
-    }));
-    assert!(snapshot
-        .iter()
-        .any(|(key, _, _, value)| { key.key().name() == DB_ENQUEUE_TOTAL && matches!(value, DebugValue::Counter(_)) }));
-}
-
-#[test]
 fn brokered_substitution_persists_reference_and_not_secret() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("broker.db");
@@ -1044,56 +963,6 @@ fn mcp_call_insert_populates_row() {
     assert_eq!(row.action.as_deref(), Some("allow"));
     assert_eq!(row.rule.as_deref(), Some("mcp.tool.github__list_issues"));
     assert_eq!(row.reason.as_deref(), Some("local policy allow"));
-}
-
-#[test]
-fn mcp_protocol_only_event_does_not_claim_tool_storage() {
-    use metrics_util::debugging::DebuggingRecorder;
-
-    let recorder = DebuggingRecorder::new();
-    let snapshotter = recorder.snapshotter();
-    let conn = rusqlite::Connection::open_in_memory().unwrap();
-    let event = WriteOp::McpCall(crate::events::McpCall {
-        event_id: Some("abcdef123456".into()),
-        timestamp: std::time::SystemTime::now(),
-        server_name: "github".into(),
-        method: "tools/list".into(),
-        tool_name: None,
-        request_id: Some("r1".into()),
-        request_preview: Some("{}".into()),
-        response_preview: Some(r#"{"tools":[]}"#.into()),
-        decision: "allowed".into(),
-        duration_ms: 1,
-        error_message: None,
-        process_name: Some("agent".into()),
-        bytes_sent: 2,
-        bytes_received: 12,
-        transport: "vsock_frame".into(),
-        policy_mode: Some("security_event".into()),
-        policy_action: Some("allow".into()),
-        policy_rule: Some("profiles.rules.default_mcp".into()),
-        policy_reason: None,
-        trace_id: Some("trace-list".into()),
-        credential_ref: None,
-    });
-
-    let mut bodies = BodyArchive::open_for_tests(None, SystemTime::now, &conn);
-    let outcome = metrics::with_local_recorder(&recorder, || {
-        execute_memory_batch(&conn, &[event], &mut bodies, 0).unwrap()
-    });
-    let snapshot = snapshotter.snapshot().into_vec();
-
-    assert!(
-        outcome.tables.is_empty(),
-        "protocol-only MCP evidence must not dirty the user tool ledger"
-    );
-    assert_eq!(outcome.written, 0);
-    assert!(
-        snapshot
-            .iter()
-            .all(|(key, _, _, _)| key.key().name() != DB_WRITE_OPS_TOTAL),
-        "a no-op protocol event must not count as a persisted logger write"
-    );
 }
 
 #[test]

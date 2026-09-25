@@ -8,6 +8,7 @@ members = [
     "crates/capsem-credentials",
     "crates/capsem-foundation",
     "crates/capsem-archive",
+    "crates/capsem-telemetry",
     "crates/capsem-proto",
     "crates/capsem-core",
     "crates/capsem-app",

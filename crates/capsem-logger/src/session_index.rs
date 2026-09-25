@@ -10,7 +10,7 @@ pub struct SessionIndex {
 }
 
 /// Current schema version for main.db.
-pub const SCHEMA_VERSION: u32 = 8;
+pub const SCHEMA_VERSION: u32 = 9;
 
 pub const SESSION_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS sessions (
@@ -70,12 +70,9 @@ pub const SESSION_SCHEMA: &str = "
         call_count    INTEGER NOT NULL DEFAULT 0,
         total_bytes   INTEGER NOT NULL DEFAULT 0,
         total_duration_ms INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (session_id, tool_name)
+        PRIMARY KEY (session_id, server_name, tool_name)
     );
 ";
-
-/// An overflow marker is not a file event; it says some went unrecorded.
-const FILE_EVENT_COUNT: &str = "SELECT COUNT(*) FROM fs_events WHERE action != 'overflow'";
 
 /// One count. A missing table is a schema violation and bubbles up, not a zero.
 fn count_rows(conn: &Connection, sql: &str) -> rusqlite::Result<i64> {
@@ -179,8 +176,42 @@ impl SessionIndex {
             )?;
         }
         Self::drop_vacuum_lifecycle(conn)?;
+        Self::key_mcp_usage_by_server(conn)?;
+        // A ledger old enough to predate a usage table gets it here.
+        conn.execute_batch(SESSION_SCHEMA)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
+    }
+
+    /// v8 -> v9: `mcp_usage` is keyed by server as well as tool.
+    ///
+    /// Keyed by `(session_id, tool_name)`, two MCP servers exposing a tool of
+    /// the same name -- `search`, `read` -- could not both be recorded for one
+    /// session. The rows are carried over as they are.
+    fn key_mcp_usage_by_server(conn: &Connection) -> rusqlite::Result<()> {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'mcp_usage')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Ok(());
+        }
+        conn.execute_batch(
+            "ALTER TABLE mcp_usage RENAME TO mcp_usage_v8;
+             CREATE TABLE mcp_usage (
+                 session_id    TEXT NOT NULL,
+                 tool_name     TEXT NOT NULL,
+                 server_name   TEXT NOT NULL,
+                 call_count    INTEGER NOT NULL DEFAULT 0,
+                 total_bytes   INTEGER NOT NULL DEFAULT 0,
+                 total_duration_ms INTEGER NOT NULL DEFAULT 0,
+                 PRIMARY KEY (session_id, server_name, tool_name)
+             );
+             INSERT INTO mcp_usage SELECT session_id, tool_name, server_name, call_count,
+                 total_bytes, total_duration_ms FROM mcp_usage_v8;
+             DROP TABLE mcp_usage_v8;",
+        )
     }
 
     /// v7 -> v8: the vacuum lifecycle is gone.
@@ -273,16 +304,6 @@ impl SessionIndex {
         self.conn.execute(
             "UPDATE sessions SET status = ?1, stopped_at = ?2 WHERE id = ?3",
             params![status, stopped_at, id],
-        )?;
-        Ok(())
-    }
-
-    /// Update request counts for a session.
-    pub fn update_request_counts(&self, id: &str, total: u64, allowed: u64, denied: u64) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "UPDATE sessions SET total_requests = ?1, allowed_requests = ?2, denied_requests = ?3
-             WHERE id = ?4",
-            params![total as i64, allowed as i64, denied as i64, id],
         )?;
         Ok(())
     }
@@ -398,114 +419,6 @@ impl SessionIndex {
         count_rows(&self.conn, "SELECT COUNT(*) FROM sessions").map(|n| n as usize)
     }
 
-    // -- Cross-session aggregation reads ------------------------------------
-
-    /// Global stats aggregated across all sessions.
-    pub fn global_stats(&self) -> rusqlite::Result<GlobalStats> {
-        self.conn.query_row(
-            "SELECT
-                COUNT(*),
-                COALESCE(SUM(total_input_tokens), 0),
-                COALESCE(SUM(total_output_tokens), 0),
-                COALESCE(SUM(total_estimated_cost), 0.0),
-                COALESCE(SUM(total_tool_calls), 0),
-                COALESCE(SUM(total_file_events), 0),
-                COALESCE(SUM(total_requests), 0),
-                COALESCE(SUM(allowed_requests), 0),
-                COALESCE(SUM(denied_requests), 0)
-             FROM sessions",
-            [],
-            |row| {
-                Ok(GlobalStats {
-                    total_sessions: row.get::<_, i64>(0)? as u64,
-                    total_input_tokens: row.get::<_, i64>(1)? as u64,
-                    total_output_tokens: row.get::<_, i64>(2)? as u64,
-                    total_estimated_cost: row.get::<_, f64>(3)?,
-                    total_tool_calls: row.get::<_, i64>(4)? as u64,
-                    total_file_events: row.get::<_, i64>(5)? as u64,
-                    total_requests: row.get::<_, i64>(6)? as u64,
-                    total_allowed: row.get::<_, i64>(7)? as u64,
-                    total_denied: row.get::<_, i64>(8)? as u64,
-                })
-            },
-        )
-    }
-
-    /// Top providers by call count across all sessions.
-    pub fn top_providers(&self, limit: usize) -> rusqlite::Result<Vec<ProviderSummary>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT provider,
-                    SUM(call_count),
-                    SUM(input_tokens),
-                    SUM(output_tokens),
-                    SUM(estimated_cost),
-                    SUM(total_duration_ms)
-             FROM ai_usage
-             GROUP BY provider
-             ORDER BY SUM(call_count) DESC
-             LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit as i64], |row| {
-            Ok(ProviderSummary {
-                provider: row.get(0)?,
-                call_count: row.get::<_, i64>(1)? as u64,
-                input_tokens: row.get::<_, i64>(2)? as u64,
-                output_tokens: row.get::<_, i64>(3)? as u64,
-                estimated_cost: row.get::<_, f64>(4)?,
-                total_duration_ms: row.get::<_, i64>(5)? as u64,
-            })
-        })?;
-        rows.collect()
-    }
-
-    /// Top tools by call count across all sessions.
-    pub fn top_tools(&self, limit: usize) -> rusqlite::Result<Vec<ToolSummary>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT tool_name,
-                    SUM(call_count),
-                    SUM(total_bytes),
-                    SUM(total_duration_ms)
-             FROM tool_usage
-             GROUP BY tool_name
-             ORDER BY SUM(call_count) DESC
-             LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit as i64], |row| {
-            Ok(ToolSummary {
-                tool_name: row.get(0)?,
-                call_count: row.get::<_, i64>(1)? as u64,
-                total_bytes: row.get::<_, i64>(2)? as u64,
-                total_duration_ms: row.get::<_, i64>(3)? as u64,
-            })
-        })?;
-        rows.collect()
-    }
-
-    /// Top MCP tools by call count across all sessions.
-    pub fn top_mcp_tools(&self, limit: usize) -> rusqlite::Result<Vec<McpToolSummary>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT tool_name,
-                    server_name,
-                    SUM(call_count),
-                    SUM(total_bytes),
-                    SUM(total_duration_ms)
-             FROM mcp_usage
-             GROUP BY tool_name, server_name
-             ORDER BY SUM(call_count) DESC
-             LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit as i64], |row| {
-            Ok(McpToolSummary {
-                tool_name: row.get(0)?,
-                server_name: row.get(1)?,
-                call_count: row.get::<_, i64>(2)? as u64,
-                total_bytes: row.get::<_, i64>(3)? as u64,
-                total_duration_ms: row.get::<_, i64>(4)? as u64,
-            })
-        })?;
-        rows.collect()
-    }
-
     // -- Raw SQL query ------------------------------------------------------
 
     /// Execute an arbitrary read-only SQL query with optional bind parameters
@@ -603,43 +516,13 @@ impl SessionIndex {
 
     // -- Per-session summary writes -----------------------------------------
 
-    /// Update the summary columns on a session row.
-    #[allow(clippy::too_many_arguments)]
-    pub fn update_session_summary(
-        &self,
-        id: &str,
-        input_tokens: u64,
-        output_tokens: u64,
-        cost: f64,
-        tool_calls: u64,
-        file_events: u64,
-    ) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "UPDATE sessions SET
-                total_input_tokens = ?1,
-                total_output_tokens = ?2,
-                total_estimated_cost = ?3,
-                total_tool_calls = ?4,
-                total_file_events = ?5
-             WHERE id = ?6",
-            params![
-                input_tokens as i64,
-                output_tokens as i64,
-                cost,
-                tool_calls as i64,
-                file_events as i64,
-                id,
-            ],
-        )?;
-        Ok(())
-    }
-
-    /// Update a main.db session row by rolling up durable counts from its
-    /// per-session `session.db`.
+    /// Record a session's final totals, copied from its ledger's counter
+    /// snapshot, with its per-provider, per-tool and per-MCP-tool usage.
     ///
-    /// This intentionally queries the canonical session ledger tables directly
-    /// inside capsem-logger. Missing tables or columns are schema violations
-    /// and bubble up as errors instead of being treated as empty ledgers.
+    /// The snapshot is what the session's writer committed beside its rows,
+    /// so the rollup and the live routes report the same numbers; nothing
+    /// here scans the ledger. A ledger without a snapshot is a broken ledger
+    /// and fails the rollup rather than recording zeros.
     pub fn update_session_rollup_from_session_db(
         &self,
         id: &str,
@@ -648,30 +531,15 @@ impl SessionIndex {
         session_db_path: &Path,
     ) -> rusqlite::Result<()> {
         let session_conn = Connection::open_with_flags(session_db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        let (total_requests, allowed_requests, denied_requests): (i64, i64, i64) = session_conn.query_row(
-            "SELECT
-                    COUNT(*),
-                    COALESCE(SUM(CASE WHEN decision = 'allowed' THEN 1 ELSE 0 END), 0),
-                    COALESCE(SUM(CASE WHEN decision = 'denied' THEN 1 ELSE 0 END), 0)
-                 FROM net_events",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )?;
-        let (input_tokens, output_tokens, estimated_cost): (i64, i64, f64) = session_conn.query_row(
-            "SELECT
-                    COALESCE(SUM(input_tokens), 0),
-                    COALESCE(SUM(output_tokens), 0),
-                    COALESCE(SUM(estimated_cost_usd), 0.0)
-                 FROM model_calls",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )?;
-        let total_tool_calls = count_rows(&session_conn, "SELECT COUNT(*) FROM tool_calls")?;
-        let total_file_events = count_rows(&session_conn, FILE_EVENT_COUNT)?;
-        let exec_count = count_rows(&session_conn, "SELECT COUNT(*) FROM exec_events")?;
-        let audit_event_count = count_rows(&session_conn, "SELECT COUNT(*) FROM audit_events")?;
-
-        let updated = self.conn.execute(
+        let counters = crate::counters::load(&session_conn)?;
+        let overflow = counters
+            .files
+            .by_action
+            .get(crate::events::FileAction::Overflow.as_str())
+            .copied()
+            .unwrap_or_default();
+        let tx = self.conn.unchecked_transaction()?;
+        let updated = tx.execute(
             "UPDATE sessions SET
                 status = ?1,
                 stopped_at = ?2,
@@ -689,23 +557,66 @@ impl SessionIndex {
             params![
                 status,
                 stopped_at,
-                total_requests,
-                allowed_requests,
-                denied_requests,
-                input_tokens,
-                output_tokens,
-                estimated_cost,
-                total_tool_calls,
-                total_file_events,
-                exec_count,
-                audit_event_count,
+                counters.net.total as i64,
+                counters.net.allowed as i64,
+                counters.net.denied as i64,
+                counters.model.total.input_tokens as i64,
+                counters.model.total.output_tokens as i64,
+                crate::counters::usd_from_micro(counters.model.total.cost_micro_usd),
+                counters.tools.calls as i64,
+                counters.files.events.saturating_sub(overflow) as i64,
+                counters.exec.started as i64,
+                counters.audit.events as i64,
                 id,
             ],
         )?;
         if updated == 0 {
             return Err(rusqlite::Error::QueryReturnedNoRows);
         }
-        Ok(())
+        let providers: Vec<ProviderSummary> = counters
+            .model
+            .by_model
+            .iter()
+            .map(|(provider, models)| ProviderSummary {
+                provider: provider.clone(),
+                call_count: models.values().map(|usage| usage.calls).sum(),
+                input_tokens: models.values().map(|usage| usage.input_tokens).sum(),
+                output_tokens: models.values().map(|usage| usage.output_tokens).sum(),
+                estimated_cost: crate::counters::usd_from_micro(
+                    models.values().map(|usage| usage.cost_micro_usd).sum(),
+                ),
+                total_duration_ms: models.values().map(|usage| usage.duration_ms).sum(),
+            })
+            .collect();
+        let tools: Vec<ToolSummary> = counters
+            .tools
+            .by_tool
+            .iter()
+            .map(|(tool_name, usage)| ToolSummary {
+                tool_name: tool_name.clone(),
+                call_count: usage.calls,
+                total_bytes: usage.bytes_sent.saturating_add(usage.bytes_received),
+                total_duration_ms: usage.duration_ms,
+            })
+            .collect();
+        let mcp: Vec<McpToolSummary> = counters
+            .tools
+            .mcp
+            .iter()
+            .flat_map(|(server_name, tools)| {
+                tools.iter().map(move |(tool_name, usage)| McpToolSummary {
+                    tool_name: tool_name.clone(),
+                    server_name: server_name.clone(),
+                    call_count: usage.calls,
+                    total_bytes: usage.bytes_sent.saturating_add(usage.bytes_received),
+                    total_duration_ms: usage.duration_ms,
+                })
+            })
+            .collect();
+        self.replace_ai_usage(id, &providers)?;
+        self.replace_tool_usage(id, &tools)?;
+        self.replace_mcp_usage(id, &mcp)?;
+        tx.commit()
     }
 
     /// Replace all AI usage rows for a session (DELETE + INSERT batch).

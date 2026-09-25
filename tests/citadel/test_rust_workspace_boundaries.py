@@ -34,6 +34,18 @@ FOCUSED_DEPENDENCY_RULES = {
     "capsem-mcp-aggregator": frozenset(
         {"capsem-core", "capsem-logger", "capsem-assets", "capsem-config", "rusqlite"}
     ),
+    # The metric catalog sits below every emitter, including capsem-logger.
+    "capsem-telemetry": frozenset(
+        {
+            "capsem-core",
+            "capsem-logger",
+            "capsem-foundation",
+            "capsem-config",
+            "capsem-proto",
+            "rusqlite",
+            "tokio",
+        }
+    ),
 }
 
 # These are ceilings, not current line counts.  They leave room for attributes

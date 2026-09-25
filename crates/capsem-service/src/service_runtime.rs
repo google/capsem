@@ -1,6 +1,7 @@
 use super::*;
 
 mod shutdown;
+pub(crate) mod telemetry_export;
 
 pub(super) async fn run_service() -> Result<()> {
     let args = Args::parse();
@@ -292,6 +293,14 @@ pub(super) async fn run_service() -> Result<()> {
     });
     hydrate_startup_route_caches(&state).map_err(|AppError(_, message)| anyhow!("{message}"))?;
     state.hydrate_session_db_handles();
+    // Kept for the life of the service: dropping the exporter flushes and stops
+    // export, and dropping the instruments stops observing sessions.
+    let _metric_export = telemetry_export::install().map(|exporter| {
+        let table = telemetry_export::SessionTable::default();
+        let instruments = telemetry_export::register(&exporter.meter(), &table);
+        telemetry_export::spawn_refresh(Arc::clone(&state), table);
+        (exporter, instruments)
+    });
     // The count cap only ran when a new failure landed, so a machine that
     // stopped failing kept its last 32 post-mortems forever; this is where a
     // service that is simply running again gets to notice. It is deliberately

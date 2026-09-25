@@ -31,11 +31,11 @@ async fn vm_list_stays_lightweight_and_info_reads_file_activity_through_db_owner
         .iter()
         .find(|vm| vm.id == "list-hot-vm")
         .expect("running VM listed");
-    assert!(
-        listed.total_input_tokens.is_none(),
-        "/vms/list is a hot route and must not read session.db telemetry"
-    );
-    assert!(listed.model_call_count.is_none());
+    // Totals come from the ledger's counter snapshot: one cached primary-key
+    // lookup per VM, not an aggregate over its rows.
+    assert_eq!(listed.total_file_events, Some(1));
+    assert_eq!(listed.model_call_count, Some(0));
+    assert_eq!(listed.total_requests, Some(0));
 
     let Json(info) = handle_info(State(state), Path("list-hot-vm".into()))
         .await
@@ -43,11 +43,8 @@ async fn vm_list_stays_lightweight_and_info_reads_file_activity_through_db_owner
     let body = serde_json::to_value(&info).unwrap();
     assert_eq!(body["files"]["total_events"], 1);
     assert_eq!(body["files"]["actions"][0]["action"], "created");
-    assert!(
-        info.total_file_events.is_none(),
-        "/vms/{{id}}/info must not inline raw telemetry SQL; use ledger DB APIs"
-    );
-    assert!(info.model_call_count.is_none());
+    assert_eq!(info.total_file_events, Some(1));
+    assert_eq!(info.model_call_count, Some(0));
 }
 
 #[tokio::test]
@@ -203,15 +200,16 @@ async fn info_route_reports_nested_ai_activity_through_db_owner() {
     let typed: capsem_api::SandboxInfo = serde_json::from_value(body.clone()).unwrap();
     assert_eq!(typed.profile_id, "code");
     assert!(typed.ai.is_some());
-    assert!(
-        body.get("model_call_count").is_none(),
-        "/vms/{{id}}/info must not inline ledger counters; use /vms/{{id}}/stats/detail"
-    );
-    assert!(body.get("total_input_tokens").is_none());
-    assert!(body.get("total_thinking_tokens").is_none());
-    assert!(body.get("total_output_tokens").is_none());
-    assert!(body.get("total_tool_calls").is_none());
-    assert!(body.get("total_estimated_cost").is_none());
+    // The flat totals the list, gateway status, TUI and CLI read agree with
+    // the nested activity. The model's own tool call has origin `model`,
+    // which is not a counted tool call; the MCP call is.
+    assert_eq!(body["model_call_count"], 1);
+    assert_eq!(body["total_input_tokens"], 12);
+    assert_eq!(body["total_thinking_tokens"], 3);
+    assert_eq!(body["total_output_tokens"], 7);
+    assert_eq!(body["total_tool_calls"], 1);
+    assert_eq!(body["total_estimated_cost"], 0.001);
+    assert_eq!(body["denied_requests"], 1);
 }
 
 #[tokio::test]
@@ -281,9 +279,17 @@ async fn info_rejects_unknown_file_activity_instead_of_silently_dropping_it() {
         credential_ref: None,
     }));
     writer.shutdown_blocking();
+    // The writer only counts actions it can name, so an unknown one can only
+    // arrive in a snapshot something else wrote.
     let connection = rusqlite::Connection::open(&db_path).unwrap();
+    let mut counters = capsem_logger::counters::LedgerCounters::default();
+    counters.files.events = 1;
+    counters.files.by_action.insert("invented_action".into(), 1);
     connection
-        .execute("UPDATE fs_events SET action = 'invented_action'", [])
+        .execute(
+            "UPDATE ledger_counters SET counters = ?1 WHERE singleton = 1",
+            [counters.encode().unwrap()],
+        )
         .unwrap();
     drop(connection);
     insert_fake_instance_with_session_dir(&state, "invalid-action-vm", std::process::id(), session);
@@ -296,4 +302,104 @@ async fn info_rejects_unknown_file_activity_instead_of_silently_dropping_it() {
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
     assert!(body.to_string().contains("invented_action"), "{body}");
+}
+
+/// A watcher that could not keep up writes an overflow marker. The marker is
+/// not a file action, and the API has no name for one: listing it used to
+/// fail `/info` for the rest of the session.
+#[tokio::test]
+async fn info_survives_a_file_overflow_marker_and_does_not_count_it() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let app = build_service_router(Arc::clone(&state));
+    let session_dir = state.run_dir.join("sessions").join("overflow-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    for (action, path) in [
+        (capsem_logger::FileAction::Created, "/root/a.txt"),
+        (capsem_logger::FileAction::Overflow, ""),
+        (capsem_logger::FileAction::Modified, "/root/a.txt"),
+    ] {
+        writer.write_blocking(capsem_logger::WriteOp::FileEvent(capsem_logger::FileEvent {
+            event_id: None,
+            timestamp: std::time::SystemTime::now(),
+            action,
+            path: path.into(),
+            kind: capsem_logger::FileKind::File,
+            size: Some(512),
+            trace_id: None,
+            credential_ref: None,
+        }));
+    }
+    writer.flush_checked().await.unwrap();
+    writer.shutdown_blocking();
+    insert_fake_instance_with_session_dir(&state, "overflow-vm", std::process::id(), session_dir);
+
+    let (status, body) = route_request(app, axum::http::Method::GET, "/vms/overflow-vm/info", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["files"]["total_events"], 2, "{body}");
+    assert_eq!(
+        body["files"]["actions"],
+        serde_json::json!([{"action": "created", "count": 1}, {"action": "modified", "count": 1}])
+    );
+}
+
+/// A stopped persistent VM keeps its totals: they are in its ledger, not in a
+/// running process, so `capsem list` shows what the session did.
+#[tokio::test]
+async fn list_reports_totals_for_a_stopped_persistent_vm_and_none_without_a_ledger() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session_dir = state.run_dir.join("persistent/stopped-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 8).unwrap();
+    writer.write_blocking(capsem_logger::WriteOp::ExecEvent(capsem_logger::ExecEvent {
+        event_id: None,
+        timestamp: std::time::SystemTime::now(),
+        exec_id: 1,
+        command: "true".into(),
+        source: "api".into(),
+        trace_id: None,
+        process_name: None,
+        credential_ref: None,
+    }));
+    writer.write_blocking(capsem_logger::WriteOp::FileEvent(capsem_logger::FileEvent {
+        event_id: None,
+        timestamp: std::time::SystemTime::now(),
+        action: capsem_logger::FileAction::Deleted,
+        path: "/root/gone".into(),
+        kind: capsem_logger::FileKind::File,
+        size: None,
+        trace_id: None,
+        credential_ref: None,
+    }));
+    writer.shutdown_blocking();
+    let entry = test_persistent_entry("stopped-vm", session_dir);
+    let stopped_id = entry.id.clone();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert("stopped-vm".to_string(), entry);
+    let unbooted_dir = state.run_dir.join("sessions/unbooted-vm");
+    std::fs::create_dir_all(&unbooted_dir).unwrap();
+    insert_fake_instance_with_session_dir(&state, "unbooted-vm", std::process::id(), unbooted_dir);
+
+    let list: ListResponse = decode_response_json(handle_list(State(Arc::clone(&state))).await).await;
+    let stopped = list
+        .sandboxes
+        .iter()
+        .find(|vm| vm.id == stopped_id)
+        .expect("stopped VM listed");
+    assert_eq!(stopped.total_file_events, Some(1));
+    assert_eq!(stopped.total_requests, Some(0));
+    let unbooted = list
+        .sandboxes
+        .iter()
+        .find(|vm| vm.id == "unbooted-vm")
+        .expect("running VM listed");
+    assert_eq!(
+        unbooted.total_file_events, None,
+        "a VM with no ledger yet has no totals, not zero activity"
+    );
 }

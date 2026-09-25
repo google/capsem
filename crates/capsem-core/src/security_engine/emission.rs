@@ -1,10 +1,8 @@
 //! Security audit admission and its shared async/blocking telemetry.
 use super::forensics::{logger_write_credential_ref, logger_write_trace_id, trace_runtime_security_event};
-use super::{
-    RuntimeSecurityEventFamily, RuntimeSecurityEventType, SecurityEventId, SECURITY_EVENT_EMIT_DURATION_MS,
-    SECURITY_EVENT_EMIT_SPAN, SECURITY_EVENT_EMIT_TOTAL,
-};
+use super::{RuntimeSecurityEventFamily, RuntimeSecurityEventType, SecurityEventId, SECURITY_EVENT_EMIT_SPAN};
 use capsem_logger::{DbWriter, WriteOp};
+use capsem_telemetry::security::{SECURITY_EVENT_EMIT_DURATION_MS, SECURITY_EVENT_EMIT_TOTAL};
 use std::time::Instant;
 use tracing::Instrument;
 

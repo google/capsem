@@ -11,6 +11,11 @@ fn temp_db_path(name: &str) -> PathBuf {
     p
 }
 
+/// The counter snapshot the writer committed at `path`, read back whole.
+fn counters_at(path: &Path) -> crate::counters::LedgerCounters {
+    crate::counters::load(&rusqlite::Connection::open(path).unwrap()).unwrap()
+}
+
 fn make_net_event(domain: &str, decision: Decision) -> NetEvent {
     NetEvent {
         event_id: None,
@@ -107,8 +112,7 @@ fn writer_creates_tables() {
 
     // Verify tables exist by opening a reader and querying
     let reader = DbReader::open(&p).expect("open reader");
-    let counts = reader.net_event_counts().unwrap();
-    assert_eq!(counts.total, 0);
+    assert!(reader.recent_net_events(10).unwrap().is_empty());
 
     std::fs::remove_file(&p).ok();
 }
@@ -209,21 +213,16 @@ async fn write_read_roundtrip_mcp_call() {
 }
 
 #[test]
-fn empty_db_returns_zero_counts() {
+fn empty_db_returns_zero_counters() {
     let p = temp_db_path("empty-counts");
     let writer = DbWriter::open(&p, 16).unwrap();
     drop(writer);
 
     let reader = DbReader::open(&p).unwrap();
-    let counts = reader.net_event_counts().unwrap();
-    assert_eq!(counts.total, 0);
-    assert_eq!(counts.allowed, 0);
-    assert_eq!(reader.model_call_count().unwrap(), 0);
-    assert_eq!(reader.file_event_count().unwrap(), 0);
-
-    let stats = reader.session_stats().unwrap();
-    assert_eq!(stats.net_total, 0);
-    assert_eq!(stats.model_call_count, 0);
+    assert!(reader.recent_net_events(10).unwrap().is_empty());
+    assert!(reader.recent_model_calls(10).unwrap().is_empty());
+    assert!(reader.recent_file_events(10).unwrap().is_empty());
+    assert_eq!(counters_at(&p), crate::counters::LedgerCounters::default());
 
     std::fs::remove_file(&p).ok();
 }
@@ -270,7 +269,8 @@ async fn concurrent_writes_dont_corrupt() {
     drop(writer);
 
     let reader = DbReader::open(&p).unwrap();
-    let counts = reader.net_event_counts().unwrap();
+    assert_eq!(reader.recent_net_events(100).unwrap().len(), 50);
+    let counts = counters_at(&p).net;
     assert_eq!(counts.total, 50);
     assert_eq!(counts.allowed, 25);
     assert_eq!(counts.denied, 25);
@@ -306,7 +306,8 @@ async fn wal_survives_close_reopen() {
     drop(writer);
 
     let reader = DbReader::open(&p).unwrap();
-    let c = reader.net_event_counts().unwrap();
+    assert_eq!(reader.recent_net_events(10).unwrap().len(), 2);
+    let c = counters_at(&p).net;
     assert_eq!((c.total, c.allowed, c.denied), (2, 1, 1));
 
     let writer2 = DbWriter::open(&p, 16).unwrap();
@@ -315,9 +316,12 @@ async fn wal_survives_close_reopen() {
         .await;
     drop(writer2);
 
+    // The reopened writer resumed from the committed snapshot rather than
+    // starting a second count from zero.
     let reader2 = DbReader::open(&p).unwrap();
-    let c2 = reader2.net_event_counts().unwrap();
-    assert_eq!((c2.total, c2.allowed, c2.denied), (3, 1, 1));
+    assert_eq!(reader2.recent_net_events(10).unwrap().len(), 3);
+    let c2 = counters_at(&p).net;
+    assert_eq!((c2.total, c2.allowed, c2.denied, c2.error), (3, 1, 1, 1));
 
     std::fs::remove_file(&p).ok();
 }

@@ -957,20 +957,15 @@ match = 'http.host == "api.openai.com"'
     assert_eq!(ask_rows[0].resolver.as_deref(), Some("tester"));
     assert_eq!(ask_rows[1].status, capsem_logger::SecurityAskStatus::Pending);
 
-    let stats = reader.security_rule_stats().unwrap();
-    assert_eq!(stats.total, 4);
-    assert!(stats
-        .by_action
-        .iter()
-        .any(|entry| entry.rule_action == "block" && entry.count == 1));
-    assert!(stats
-        .by_action
-        .iter()
-        .any(|entry| entry.rule_action == "postprocess" && entry.count == 1));
-    assert!(stats
-        .by_rule
-        .iter()
-        .any(|entry| entry.rule_id == "profiles.rules.github_postprocess"
-            && entry.detection_level == "informational"
-            && entry.latest_event_id == github_event_id.as_str()));
+    let security = capsem_logger::DbHandle::open_external_reader(&db_path)
+        .unwrap()
+        .ledger_counters()
+        .await
+        .unwrap()
+        .security;
+    assert_eq!(security.matches, 4);
+    assert_eq!(security.by_action.get("block"), Some(&1));
+    assert_eq!(security.by_action.get("postprocess"), Some(&1));
+    let postprocess = &security.by_rule["profiles.rules.github_postprocess"]["postprocess"]["informational"];
+    assert_eq!(postprocess.latest_event_id, github_event_id.as_str());
 }

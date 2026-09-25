@@ -1,0 +1,44 @@
+[package]
+name = "capsem-telemetry"
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+# OTLP/HTTP export of the metrics facade. Off for the crates that only record
+# (logger, core); on for the processes that own export (service, process).
+export = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-http",
+    "dep:reqwest",
+    "dep:http",
+    "dep:bytes",
+    "dep:async-trait",
+]
+
+[dependencies]
+metrics = "0.24"
+opentelemetry = { version = "0.33", default-features = false, features = ["metrics"], optional = true }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["metrics"], optional = true }
+# http-proto only: protobuf over HTTP, no tonic transport and no TLS provider
+# of its own. The HTTP client is ours (export.rs), on the workspace reqwest.
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "metrics"], optional = true }
+opentelemetry-http = { version = "0.33", default-features = false, optional = true }
+reqwest = { workspace = true, features = ["blocking"], optional = true }
+http = { version = "1", optional = true }
+bytes = { version = "1", optional = true }
+async-trait = { version = "0.1", optional = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+metrics-util = "0.19"
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["metrics", "testing"] }

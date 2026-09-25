@@ -7,7 +7,18 @@ pub(super) fn session_db_path_for_session_dir(session_dir: &StdPath) -> PathBuf 
     session_dir.join("session.db")
 }
 
+/// The one place the service opens a per-session external reader. Blocking:
+/// callers on the runtime reach it through `spawn_blocking`.
+fn open_session_db_reader(db_path: &StdPath) -> Result<capsem_logger::DbHandle, String> {
+    capsem_logger::DbHandle::open_external_reader(db_path).map_err(|error| error.to_string())
+}
+
 impl ServiceState {
+    /// Register `vm_id`'s ledger reader, opening it on this thread.
+    ///
+    /// Opening a reader is a blocking SQLite open and schema check, so this is
+    /// for code already off the runtime: startup hydration and `resume_sandbox`.
+    /// Async routes call [`Self::register_session_db_handle_async`].
     pub(crate) fn register_session_db_handle(
         &self,
         vm_id: &str,
@@ -15,28 +26,72 @@ impl ServiceState {
     ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
         let db_path = session_db_path_for_session_dir(session_dir);
         let started = std::time::Instant::now();
-        let handles = self.session_db_handles.lock().unwrap();
-        if let Some(handle) = handles.get(vm_id) {
-            if handle.path() == db_path.as_path() {
-                tracing::debug!(
-                    vm_id,
-                    db_path = %db_path.display(),
-                    operation = "register_session_db_handle",
-                    duration_ms = started.elapsed().as_millis(),
-                    "reused existing session DB handle"
-                );
-                return Ok(Arc::clone(handle));
-            }
-            warn!(
+        if let Some(handle) = self.registered_session_db_handle(vm_id, &db_path, started) {
+            return Ok(handle);
+        }
+        let opened = open_session_db_reader(&db_path);
+        self.install_session_db_handle(vm_id, db_path, opened, started)
+    }
+
+    /// Register `vm_id`'s ledger reader without blocking a tokio worker.
+    ///
+    /// Same answer as [`Self::register_session_db_handle`]; the open runs on
+    /// the blocking pool, where a slow disk or a large schema check stalls one
+    /// blocking thread instead of every request sharing the worker.
+    pub(crate) async fn register_session_db_handle_async(
+        &self,
+        vm_id: &str,
+        session_dir: &StdPath,
+    ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
+        let db_path = session_db_path_for_session_dir(session_dir);
+        let started = std::time::Instant::now();
+        if let Some(handle) = self.registered_session_db_handle(vm_id, &db_path, started) {
+            return Ok(handle);
+        }
+        let open_path = db_path.clone();
+        let opened = tokio::task::spawn_blocking(move || open_session_db_reader(&open_path))
+            .await
+            .unwrap_or_else(|error| Err(format!("session DB open task failed: {error}")));
+        self.install_session_db_handle(vm_id, db_path, opened, started)
+    }
+
+    /// The handle already registered for `vm_id` at `db_path`, if any. A
+    /// handle for another path is left for the caller to replace.
+    fn registered_session_db_handle(
+        &self,
+        vm_id: &str,
+        db_path: &StdPath,
+        started: std::time::Instant,
+    ) -> Option<Arc<capsem_logger::DbHandle>> {
+        let handle = self.session_db_handles.lock().unwrap().get(vm_id).cloned()?;
+        if handle.path() == db_path {
+            tracing::debug!(
                 vm_id,
-                cached_db_path = %handle.path().display(),
                 db_path = %db_path.display(),
                 operation = "register_session_db_handle",
-                "replacing session DB handle for rebound session path"
+                duration_ms = started.elapsed().as_millis(),
+                "reused existing session DB handle"
             );
+            return Some(handle);
         }
-        drop(handles);
-        let handle = match capsem_logger::DbHandle::open_external_reader(&db_path) {
+        warn!(
+            vm_id,
+            cached_db_path = %handle.path().display(),
+            db_path = %db_path.display(),
+            operation = "register_session_db_handle",
+            "replacing session DB handle for rebound session path"
+        );
+        None
+    }
+
+    fn install_session_db_handle(
+        &self,
+        vm_id: &str,
+        db_path: PathBuf,
+        opened: Result<capsem_logger::DbHandle, String>,
+        started: std::time::Instant,
+    ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
+        let handle = match opened {
             Ok(handle) => Arc::new(handle),
             Err(error) => {
                 error!(
@@ -53,9 +108,10 @@ impl ServiceState {
                 ));
             }
         };
-        let mut handles = self.session_db_handles.lock().unwrap();
-        handles.insert(vm_id.to_string(), Arc::clone(&handle));
-        drop(handles);
+        self.session_db_handles
+            .lock()
+            .unwrap()
+            .insert(vm_id.to_string(), Arc::clone(&handle));
         info!(
             vm_id,
             db_path = %db_path.display(),

@@ -892,27 +892,31 @@ For AI provider traffic, the response body is parsed inline to extract:
 - Stop reason (end_turn, tool_use, max_tokens)
 - Trace ID for multi-turn correlation
 
-## Aggregation queries
+## Session totals: the counter snapshot
 
-The `DbReader` provides pre-built aggregate queries:
+Session totals are not computed by scanning the ledger. The writer keeps a
+counter snapshot (`capsem_logger::counters::LedgerCounters`) and commits it in
+the same transaction as the rows it counts, so a count can never include a row
+that was rolled back or refused. Readers take it whole with
+`DbHandle::ledger_counters()`, one primary-key lookup answered from the
+handle's cache while the ledger is idle.
 
-| Query | Returns | Use case |
-|-------|---------|----------|
-| `session_stats()` | `SessionStats` | Dashboard summary: totals for net, model, tokens, cost |
-| `provider_token_usage()` | `Vec<ProviderTokenUsage>` | Per-provider breakdown: call count, tokens, cost |
-| `domain_counts()` | `Vec<DomainCount>` | Per-domain request counts with allowed/denied split |
-| `time_buckets()` | `Vec<TimeBucket>` | Requests over time (for charts) |
-| `tool_usage()` | `Vec<ToolUsageCount>` | Most-used tools by call count |
-| `tool_usage_with_stats()` | `Vec<ToolUsageWithStats>` | Tool usage with byte and duration stats |
-| `mcp_tool_usage()` | `Vec<McpToolUsage>` | MCP tool usage by server and tool name |
-| `trace_summaries()` | `Vec<TraceSummary>` | Per-trace: tokens, cost, duration, tool count |
-| `trace_detail(id)` | `TraceDetail` | All model calls in a trace with tool data |
+| Counter group | Holds |
+|---------------|-------|
+| `net` | Requests by decision (allowed, denied, error) and byte totals |
+| `model` | Calls, tokens, duration and cost (integer micro-USD), in total, by provider and model, and per usage-detail key |
+| `tools` | Tool calls in the counted origins, by tool, and MCP calls by server and tool |
+| `files` | File events by action; overflow markers are their own action |
+| `exec`, `audit` | Exec starts and completions; audit events by executable |
+| `security`, `plugins`, `credentials` | Rule matches by action, event type, level and rule; plugin executions; brokered credential use |
+
+The session rollup into `main.db` copies this snapshot when a session stops.
 
 ## Access patterns
 
 | Access point | Protocol | Query type |
 |-------------|----------|------------|
-| `capsem info <id> --stats` | CLI -> service HTTP `/vms/{id}/info` | Pre-built `SessionStats` |
+| `capsem info <id> --stats` | CLI -> service HTTP `/vms/{id}/info` | The ledger counter snapshot |
 | Frontend Stats tab | Gateway -> typed VM-scoped ledger routes | Per-table summaries and event inspection |
 | MCP `capsem_timeline` | MCP -> service HTTP `/vms/{id}/timeline` | Typed time-ordered event stream |
 | MCP logs/triage tools | MCP -> typed service routes | Logs, panic triage, and operational diagnostics |

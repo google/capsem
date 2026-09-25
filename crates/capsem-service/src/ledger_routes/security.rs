@@ -1,14 +1,10 @@
 //! The security ledger a session keeps, and the routes that read it.
 //!
-//! One place owns the rule-match window: the SQL that selects it, the stats
-//! that summarize it, and the two ways to read it -- the row alone for the
-//! list views, and the row plus its archived forensic payload for the
-//! hydration paths that actually parse one.
+//! One place owns the rule-match window: the SQL that selects it, and the
+//! stats that summarize the whole session, which come from the ledger's
+//! counter snapshot rather than from the window.
 
 use super::*;
-
-#[cfg(test)]
-mod tests;
 
 pub(crate) fn is_detection_rule_event(event: &capsem_logger::SecurityRuleMatch) -> bool {
     event.detection_level != capsem_logger::SecurityDetectionLevel::None
@@ -18,12 +14,6 @@ pub(crate) fn is_detection_rule_event(event: &capsem_logger::SecurityRuleMatch) 
 pub(crate) struct SecuritySessionLedger {
     pub(crate) latest: Vec<capsem_logger::SecurityRuleMatch>,
     pub(crate) stats: capsem_logger::SecurityRuleStats,
-    pub(crate) brokered_credentials: Vec<capsem_logger::BrokeredCredentialStat>,
-    /// The archived forensic payload of each match in `latest`, by event id,
-    /// and empty unless the caller asked for it. The payload is a body now,
-    /// and only the hydration paths that actually parse it should pay to read
-    /// it -- the list views want the row.
-    pub(crate) payloads: BTreeMap<String, String>,
 }
 
 impl Default for SecuritySessionLedger {
@@ -31,8 +21,6 @@ impl Default for SecuritySessionLedger {
         Self {
             latest: Vec::new(),
             stats: empty_security_rule_stats(),
-            brokered_credentials: Vec::new(),
-            payloads: BTreeMap::new(),
         }
     }
 }
@@ -50,7 +38,7 @@ pub(crate) fn empty_security_rule_stats() -> capsem_logger::SecurityRuleStats {
 // The matched event's payload is archive-backed: it is read by event id with
 // `BodyDirection::Payload`, and the index metadata travels with the other
 // bodies in the stats-detail payload.
-const SECURITY_LATEST_SQL: &str = r#"
+pub(crate) const SECURITY_LATEST_SQL: &str = r#"
 SELECT event.timestamp_unix_ms, event.event_id, event.event_type, event.rule_id,
        event.rule_action, event.detection_level,
        COALESCE(event.rule_json, run.rule_json) AS rule_json, event.trace_id,
@@ -61,92 +49,21 @@ ORDER BY event.timestamp_unix_ms DESC, event.id DESC
 LIMIT ?
 "#;
 
-const SECURITY_STATS_TOTAL_SQL: &str =
-    r#"SELECT COALESCE(SUM(count), 0) AS total FROM security_rule_runs INDEXED BY idx_security_rule_runs_action"#;
-
-const SECURITY_STATS_BY_ACTION_SQL: &str = r#"
-SELECT rule_action, SUM(count) AS count
-FROM security_rule_runs INDEXED BY idx_security_rule_runs_action
-GROUP BY rule_action
-ORDER BY rule_action
-"#;
-
-const SECURITY_STATS_BY_EVENT_TYPE_SQL: &str = r#"
-SELECT event_type, SUM(count) AS count
-FROM security_rule_runs INDEXED BY idx_security_rule_runs_event_type
-GROUP BY event_type
-ORDER BY event_type
-"#;
-
-const SECURITY_STATS_BY_LEVEL_SQL: &str = r#"
-SELECT detection_level, SUM(count) AS count
-FROM security_rule_runs INDEXED BY idx_security_rule_runs_action
-GROUP BY detection_level
-ORDER BY detection_level
-"#;
-
-const SECURITY_STATS_BY_RULE_SQL: &str = r#"
-SELECT
-    sre.rule_id,
-    sre.rule_action,
-    sre.detection_level,
-    SUM(sre.count) AS count,
-    (
-        SELECT latest.event_id
-        FROM security_rule_events latest
-        WHERE latest.rule_id = sre.rule_id
-          AND latest.rule_action = sre.rule_action
-          AND latest.detection_level = sre.detection_level
-        ORDER BY latest.timestamp_unix_ms DESC, latest.id DESC
-        LIMIT 1
-    ) AS latest_event_id,
-    MAX(sre.last_timestamp_unix_ms) AS latest_timestamp_unix_ms
-FROM security_rule_runs AS sre INDEXED BY idx_security_rule_runs_action
-GROUP BY sre.rule_id, sre.rule_action, sre.detection_level
-ORDER BY latest_timestamp_unix_ms DESC
-"#;
-
-const BROKERED_CREDENTIAL_STATS_SQL: &str = r#"
-SELECT MAX(provider) AS provider, substitution_ref AS credential_ref, COUNT(*) AS observed_count,
-       SUM(CASE WHEN outcome = 'injected' THEN 1 ELSE 0 END) AS injected_count,
-       MAX(timestamp) AS last_seen
-FROM substitution_events
-WHERE material_class = 'credential'
-GROUP BY substitution_ref
-ORDER BY MAX(timestamp) DESC
-LIMIT 100
-"#;
-
-/// How many recent matches a security ledger read reports on. The payload
-/// read, when one is asked for, covers the same window.
-const SECURITY_LATEST_LIMIT: usize = 2000;
+/// How many recent matches a security ledger read reports on.
+pub(crate) const SECURITY_LATEST_LIMIT: usize = 2000;
 
 pub(crate) async fn read_security_session_ledger(
     state: &ServiceState,
     vm_id: &str,
     db_path: &StdPath,
 ) -> Result<Option<SecuritySessionLedger>, AppError> {
-    read_security_ledger(state, vm_id, db_path, false).await
-}
-
-/// The same ledger, plus each match's archived forensic payload.
-///
-/// Only the plugin and credential hydration paths need this: they parse the
-/// payload to count plugin executions and credential observations. Every
-/// other reader wants the row, which is why the payload left it.
-pub(crate) async fn read_security_session_ledger_with_payloads(
-    state: &ServiceState,
-    vm_id: &str,
-    db_path: &StdPath,
-) -> Result<Option<SecuritySessionLedger>, AppError> {
-    read_security_ledger(state, vm_id, db_path, true).await
+    read_security_ledger(state, vm_id, db_path).await
 }
 
 async fn read_security_ledger(
     state: &ServiceState,
     vm_id: &str,
     db_path: &StdPath,
-    with_payloads: bool,
 ) -> Result<Option<SecuritySessionLedger>, AppError> {
     let db = open_ready_session_db(state, vm_id, "security", db_path).await?;
     let latest = query_route_typed_rows::<capsem_logger::SecurityRuleMatch>(
@@ -160,112 +77,7 @@ async fn read_security_ledger(
     )
     .await?;
     let stats = security_stats(vm_id, db_path, &db).await?;
-    let brokered_credentials = query_route_typed_rows(
-        vm_id,
-        "security",
-        "brokered_credentials",
-        db_path,
-        &db,
-        BROKERED_CREDENTIAL_STATS_SQL,
-        &[],
-    )
-    .await?;
-    // Keyed to `latest`, not chosen again by its own ordering: two windows
-    // picked independently -- one by timestamp, one by index id -- drift the
-    // moment a flush lands between them, and a page of rows carrying another
-    // page's payloads is a projection that lies.
-    let payloads = if with_payloads {
-        security_payloads(vm_id, db_path, &db, &latest).await?
-    } else {
-        BTreeMap::new()
-    };
-    Ok(Some(SecuritySessionLedger {
-        latest,
-        stats,
-        brokered_credentials,
-        payloads,
-    }))
-}
-
-/// What one hydration pass may hold in archived payloads at once.
-///
-/// The window is 2000 matches and a body may be 10 MiB, so the row count alone
-/// permits 20 GiB. In practice a payload is about a kilobyte and the whole
-/// window fits in single-digit megabytes; this is the ceiling for the session
-/// that is not typical, and reaching it is reported rather than hidden.
-const SECURITY_PAYLOAD_BUDGET_BYTES: usize = 64 * 1024 * 1024;
-
-/// The archived payload of each match in `latest`, by event id.
-///
-/// The DB handle owns the archive; this is one read for the whole window
-/// rather than one per row, and a payload that is not valid UTF-8 is not a
-/// payload this ledger wrote.
-///
-/// A session whose archive cannot be opened, or that gave up mid-session,
-/// simply has no bodies to return: the map comes back short or empty and the
-/// caller's own accounting degrades with it -- fewer plugin executions, fewer
-/// brokered credentials -- with `last_error` naming the events it could not
-/// read. That is the intended failure: an archive that lost bodies must not
-/// take the rest of the ledger down with it, and must not be reported as a
-/// session that had none.
-async fn security_payloads(
-    vm_id: &str,
-    db_path: &StdPath,
-    db: &capsem_logger::DbHandle,
-    latest: &[capsem_logger::SecurityRuleMatch],
-) -> Result<BTreeMap<String, String>, AppError> {
-    let event_ids: Vec<&str> = latest.iter().map(|event| event.event_id.as_str()).collect();
-    let archived = db
-        .read_bodies_for_events(
-            &event_ids,
-            "security_rule_events",
-            capsem_logger::BodyDirection::Payload,
-            SECURITY_PAYLOAD_BUDGET_BYTES,
-        )
-        .await
-        .map_err(|error| ledger_route_error(vm_id, "security", "read payloads of", db_path, &error))?;
-    if archived.truncated_rows > 0 {
-        warn!(
-            vm_id,
-            truncated_rows = archived.truncated_rows,
-            budget_bytes = SECURITY_PAYLOAD_BUDGET_BYTES,
-            "security payload budget reached; plugin and credential hydration will undercount"
-        );
-    }
-    Ok(archived
-        .bodies
-        .into_iter()
-        .filter_map(|body| {
-            let payload = forensic_payload_json(body.content_type.as_deref(), &body.bytes);
-            payload.map(|payload| (body.event_id, payload))
-        })
-        .collect())
-}
-
-fn forensic_payload_json(content_type: Option<&str>, bytes: &[u8]) -> Option<String> {
-    if content_type == Some("application/vnd.capsem.security+msgpack") {
-        capsem_proto::forensic::SecurityForensicEvent::decode(bytes)
-            .and_then(|event| event.to_json())
-            .ok()
-    } else {
-        String::from_utf8(bytes.to_vec()).ok()
-    }
-}
-
-pub(crate) async fn read_profile_security_ledgers(
-    state: &ServiceState,
-    profile_id: &str,
-) -> Result<Vec<(String, SecuritySessionLedger)>, AppError> {
-    let mut ledgers = Vec::new();
-    for (vm_id, session_dir) in profile_session_dirs(state, profile_id) {
-        let Some(session) =
-            read_security_session_ledger_with_payloads(state, &vm_id, &session_dir.join("session.db")).await?
-        else {
-            continue;
-        };
-        ledgers.push((vm_id, session));
-    }
-    Ok(ledgers)
+    Ok(Some(SecuritySessionLedger { latest, stats }))
 }
 
 pub(crate) async fn security_latest_for_vm(
@@ -287,32 +99,10 @@ pub(crate) async fn security_latest_for_vm(
         .collect())
 }
 
-/// The five aggregates behind `GET /vms/{id}/security/status`, as one batch.
-///
-/// The handle caches a batch whole and keyed by its statements, so a poll of a
-/// session whose ledger has not moved is answered without the reader thread
-/// touching the file. Five separate queries could not be: each would be its
-/// own round trip, and none of them is what the handle caches.
-///
-/// `security_status_aggregates_run_on_indexes` runs `EXPLAIN QUERY PLAN` over
-/// these exact strings and pins the covering index each must be answered
-/// from.
-pub(crate) fn security_stats_batch() -> Vec<(String, Vec<serde_json::Value>)> {
-    vec![
-        (SECURITY_STATS_TOTAL_SQL.to_string(), Vec::new()),
-        (SECURITY_STATS_BY_ACTION_SQL.to_string(), Vec::new()),
-        (SECURITY_STATS_BY_EVENT_TYPE_SQL.to_string(), Vec::new()),
-        (SECURITY_STATS_BY_LEVEL_SQL.to_string(), Vec::new()),
-        (SECURITY_STATS_BY_RULE_SQL.to_string(), Vec::new()),
-    ]
-}
-
 /// The security ledger's aggregates alone.
 ///
-/// This used to read the whole ledger and throw away all but `stats`: two
-/// thousand matched rows and a hundred brokered-credential rows fetched,
-/// decoded and dropped on a route that is polled on a timer and reports six
-/// counts. It reads what it reports.
+/// A primary-key read of the counter snapshot, not the ledger: the route is
+/// polled on a timer and reports six counts.
 pub(crate) async fn security_stats_for_vm(
     state: &ServiceState,
     vm_id: &str,
@@ -323,67 +113,19 @@ pub(crate) async fn security_stats_for_vm(
     security_stats(vm_id, &db_path, &db).await
 }
 
-/// Run `security_stats_batch` on an open handle and read the stats out of it.
+/// The session's rule-match statistics, from its counter snapshot.
 ///
 /// The one way this crate computes `SecurityRuleStats`: the status poll and
-/// the full ledger read both come here, so they cannot disagree about the
-/// numbers, and a full read right after a poll finds the batch already cached.
+/// the full ledger read both come here, so they cannot disagree. They count
+/// every match the session made, not the window `latest` shows.
 async fn security_stats(
     vm_id: &str,
     db_path: &StdPath,
     db: &capsem_logger::DbHandle,
 ) -> Result<capsem_logger::SecurityRuleStats, AppError> {
-    let raw = db
-        .query_many(security_stats_batch())
+    let counters = db
+        .ledger_counters()
         .await
-        .map_err(|error| ledger_route_error(vm_id, "security", "query stats", db_path, &error))?;
-    let [total, by_action, by_event_type, by_level, by_rule] = raw.as_slice() else {
-        return Err(ledger_route_error(
-            vm_id,
-            "security",
-            "query stats",
-            db_path,
-            format!("stats batch returned {} results, expected 5", raw.len()),
-        ));
-    };
-    Ok(capsem_logger::SecurityRuleStats {
-        total: stats_objects(vm_id, db_path, "stats_total", total)?
-            .first()
-            .and_then(|row| row.get("total"))
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
-        by_action: stats_rows(vm_id, db_path, "stats_by_action", by_action)?,
-        by_event_type: stats_rows(vm_id, db_path, "stats_by_event_type", by_event_type)?,
-        by_level: stats_rows(vm_id, db_path, "stats_by_level", by_level)?,
-        by_rule: stats_rows(vm_id, db_path, "stats_by_rule", by_rule)?,
-    })
-}
-
-/// One statement's result out of a batch, as row objects, failing the way a
-/// single read of the same statement would.
-fn stats_objects(
-    vm_id: &str,
-    db_path: &StdPath,
-    query_name: &'static str,
-    raw: &str,
-) -> Result<Vec<serde_json::Value>, AppError> {
-    let value =
-        serde_json::from_str(raw).map_err(|error| ledger_route_error(vm_id, "security", query_name, db_path, error))?;
-    Ok(query_json_to_objects(value))
-}
-
-/// The same, decoded onto the ledger type the statement describes.
-fn stats_rows<T: DeserializeOwned>(
-    vm_id: &str,
-    db_path: &StdPath,
-    query_name: &'static str,
-    raw: &str,
-) -> Result<Vec<T>, AppError> {
-    stats_objects(vm_id, db_path, query_name, raw)?
-        .into_iter()
-        .map(|object| {
-            serde_json::from_value(object)
-                .map_err(|error| ledger_route_error(vm_id, "security", query_name, db_path, error))
-        })
-        .collect()
+        .map_err(|error| ledger_route_error(vm_id, "security", "counters", db_path, &error))?;
+    Ok(super::activity::security_stats(&counters))
 }

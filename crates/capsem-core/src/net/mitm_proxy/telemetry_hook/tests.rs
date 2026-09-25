@@ -312,7 +312,7 @@ fn google_non_streaming_function_call_is_logged_as_model_tool_call() {
 }
 
 #[test]
-fn agy_google_tool_call_survives_into_session_stats() {
+fn agy_google_tool_call_survives_into_ledger_counters() {
     let mut req_ctx = anthropic_req_ctx();
     req_ctx.domain = "daily-cloudcode-pa.googleapis.com".into();
     req_ctx.process_name = Some("agy".into());
@@ -344,16 +344,24 @@ fn agy_google_tool_call_survives_into_session_stats() {
     writer.write_blocking(capsem_logger::WriteOp::ModelCall(model_call));
     writer.shutdown_blocking();
 
+    // Counted the way every surface reads it: the writer's committed snapshot.
+    let counters = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            capsem_logger::DbHandle::open_external_reader(&db_path)
+                .unwrap()
+                .ledger_counters()
+                .await
+        })
+        .unwrap();
+    assert_eq!(counters.model.total.calls, 1);
+    assert_eq!(counters.tools.calls, 1);
+    assert_eq!(counters.tools.by_tool.len(), 1);
+    assert_eq!(counters.tools.by_tool["search_web"].calls, 1);
+
     let reader = capsem_logger::DbReader::open(&db_path).unwrap();
-    let stats = reader.session_stats().unwrap();
-    assert_eq!(stats.model_call_count, 1);
-    assert_eq!(stats.total_tool_calls, 1);
-
-    let usage = reader.tool_usage_frequency(10).unwrap();
-    assert_eq!(usage.len(), 1);
-    assert_eq!(usage[0].tool_name, "search_web");
-    assert_eq!(usage[0].count, 1);
-
     let calls = reader.recent_model_calls(1).unwrap();
     assert_eq!(calls.len(), 1);
     let tool_rows = reader.tool_calls_for(calls[0].0).unwrap();

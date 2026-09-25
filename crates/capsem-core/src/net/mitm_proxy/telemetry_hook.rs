@@ -27,7 +27,6 @@ use tracing::{info, warn};
 use super::body::BodyStats;
 use super::hooks::{ChunkCtx, ChunkEndFuture, ChunkHook};
 use super::interpreter_hook::LlmEventStream;
-use super::metrics as m;
 use super::util::is_llm_api_path;
 use crate::credential_broker::{
     broker_and_log_observations, detect_http_body_credentials, log_brokered_injections,
@@ -46,6 +45,7 @@ use crate::security_engine::{
     emit_evaluated_security_rules, emit_security_write, HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent,
     RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
 };
+use capsem_telemetry::mitm as m;
 
 /// Per-request snapshot of the request-side fields that the response
 /// completion handler needs in order to build a `NetEvent` /

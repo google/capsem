@@ -5,7 +5,7 @@ mod mcp;
 mod payload;
 use payload::{preview_payload, text_payload};
 
-const MODEL_ITEMS_SQL: &str = r#"
+pub(crate) const MODEL_ITEMS_SQL: &str = r#"
 SELECT mi.event_id, mi.timestamp, mi.model_call_id, mc.event_id AS model_event_id,
        mi.trace_id, mi.turn_id, mi.item_index, mi.kind, mi.call_id, mi.content,
        (SELECT CASE WHEN MAX(tr.is_error NOT IN (0, 1)) = 1 THEN 2
@@ -18,7 +18,7 @@ WHERE mi.kind != 'tool_call'
 ORDER BY mi.id DESC LIMIT 200
 "#;
 
-const TOOL_CALLS_SQL: &str = r#"
+pub(crate) const TOOL_CALLS_SQL: &str = r#"
 SELECT tc.event_id, COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp, '') AS timestamp,
        tc.model_call_id, mc.event_id AS model_event_id, tc.trace_id, tc.turn_id,
        tc.call_id, tc.tool_name, tc.server_name, tc.origin, tc.decision, tc.method,

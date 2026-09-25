@@ -34,8 +34,8 @@ use super::coalesce::LookupKey;
 use crate::net::parsers::dns_parser::DnsQuery;
 use tracing::trace;
 
-use crate::net::mitm_proxy::metrics as m;
 use crate::net::policy::NetworkMechanics;
+use capsem_telemetry::dns as m;
 
 /// Default cache capacity (entries). Picked to keep ~64 KB of memory
 /// in the worst case (1024 * 64-byte answers); bounds RSS without

@@ -1111,28 +1111,26 @@ must_stay_below_lines = 3000
 "crates/capsem-core/src/auto_snapshot/tests.rs" = 1034
 "crates/capsem-core/src/hypervisor/kvm/mod.rs" = 1031
 "crates/capsem-core/src/hypervisor/kvm/sys.rs" = 1895
-"crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1856
+"crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1768
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk/tests.rs" = 1059
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 1997
-"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2435
+"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2433
 "crates/capsem-core/src/net/policy_config/profile_contract.rs" = 1900
 "crates/capsem-core/src/net/policy_config/profile_contract/tests.rs" = 1125
 "crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1553
-"crates/capsem-core/src/security_engine/mod.rs" = 2076
-"crates/capsem-core/tests/mitm_integration.rs" = 2161
-"crates/capsem-logger/src/reader.rs" = 1343
-"crates/capsem-logger/src/session_index/tests.rs" = 1194
-"crates/capsem-logger/src/writer/tests.rs" = 1544
+"crates/capsem-core/src/security_engine/mod.rs" = 2073
+"crates/capsem-core/tests/mitm_integration.rs" = 2023
+"crates/capsem-logger/src/writer/tests.rs" = 1413
 "crates/capsem-mock-server/src/main.rs" = 1416
 "crates/capsem-process/src/vsock.rs" = 1444
 "crates/capsem-proto/src/tests.rs" = 1446
-"crates/capsem-service/src/ledger_routes.rs" = 2063
+"crates/capsem-service/src/ledger_routes.rs" = 1625
 "crates/capsem-service/src/main.rs" = 1422
 "crates/capsem-service/src/profile_routes.rs" = 2068
 "crates/capsem-service/src/tests/assets_registry.rs" = 1352
-"crates/capsem-service/src/tests/lifecycle.rs" = 1998
+"crates/capsem-service/src/tests/lifecycle.rs" = 1990
 "crates/capsem-service/src/tests/profile_routes.rs" = 2194
-"crates/capsem-service/src/vm_files.rs" = 1435
+"crates/capsem-service/src/vm_files.rs" = 1355
 "crates/capsem-tui/src/tests.rs" = 1563
 "crates/capsem-tui/src/ui.rs" = 1081
 "crates/capsem/src/main.rs" = 2216
@@ -2389,7 +2387,7 @@ rust_coverage_crate_minimum = 40.0
 # Raise to about measured minus 2.5, not minus 3: a floor on the band's edge
 # is refused by the next run's +0.04 jitter.
 rust_coverage_ratchet_headroom = 3.0
-rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-api = 40.0, capsem-archive = 97.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-network = 85.0, capsem-process = 40.0, capsem-proto = 90.82, capsem-router = 65.4, capsem-sdk = 97.0, capsem-service = 67.73, capsem-tray = 54.0, capsem-tui = 70.0 }
+rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-api = 40.0, capsem-archive = 97.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-network = 85.0, capsem-process = 40.0, capsem-proto = 90.82, capsem-router = 65.4, capsem-sdk = 97.0, capsem-service = 67.73, capsem-telemetry = 97.0, capsem-tray = 54.0, capsem-tui = 70.0 }
 # macOS compiles a different cfg-selected line inventory. Its stronger floors
 # must not raise Linux thresholds using code that Linux cannot compile or test.
 # Overrides may only increase the shared floors; no platform gets an exemption.

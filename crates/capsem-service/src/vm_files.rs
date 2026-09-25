@@ -1,4 +1,5 @@
 mod provision;
+pub(super) use crate::sandbox_info::handle_list;
 pub(crate) use provision::handle_provision;
 mod snapshots;
 use super::*;
@@ -12,9 +13,9 @@ mod storage;
 pub(crate) use storage::storage_diagnostics;
 mod fork;
 mod ipc_command;
-#[cfg(test)]
-pub(crate) use diagnostics::session_db_triage;
 pub(crate) use diagnostics::{handle_host_logs, handle_logs, handle_panics, handle_service_logs, handle_triage};
+#[cfg(test)]
+pub(crate) use diagnostics::{session_db_triage, session_triage_statements};
 pub(crate) use fork::handle_fork;
 pub(super) use ipc_command::send_ipc_command;
 
@@ -1018,74 +1019,6 @@ pub(super) fn list_response_fingerprint(state: &ServiceState) -> String {
     fingerprint
 }
 
-pub(super) fn build_list_response(state: &ServiceState) -> ListResponse {
-    let mut sandboxes: Vec<SandboxInfo> = Vec::new();
-
-    // Running instances. Keep this list route in-memory only; callers that
-    // need ledger-backed counters use explicit stats routes instead of making
-    // every UI/TUI poll open session.db.
-    {
-        let instances = state.instances.lock().unwrap();
-        for i in instances.values() {
-            sandboxes.push(sandbox_info::running_sandbox_info(i));
-        }
-    }
-
-    // Stopped/Suspended/Defunct persistent VMs (not in instances map).
-    // `Defunct` surfaces a boot failure so users see the problem in
-    // `capsem list` instead of a misleading "Stopped" -- last_error
-    // carries the tail of process.log for one-line diagnosis.
-    let inactive_persistent: Vec<PersistentVmEntry> = {
-        let registry = state.persistent_registry.lock().unwrap();
-        let instances = state.instances.lock().unwrap();
-        registry
-            .list()
-            .filter(|entry| !instances.contains_key(&persistent_entry_vm_id(entry)))
-            .cloned()
-            .collect()
-    };
-    for entry in inactive_persistent {
-        let vm_id = persistent_entry_vm_id(&entry);
-        let (status, can_resume, blocked_reason) = state.persistent_entry_resume_state_cached(&entry);
-        sandboxes.push(sandbox_info::inactive_sandbox_info(
-            vm_id,
-            &entry,
-            status,
-            can_resume,
-            blocked_reason,
-        ));
-    }
-
-    ListResponse { sandboxes }
-}
-
-pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum::response::Response {
-    // The fingerprint stats and hashes files for every inactive entry; the
-    // UI polls this route, so it runs off the worker as one unit.
-    match state.off_worker(|state| list_response_bytes(&state)).await {
-        Ok(bytes) => json_bytes_response(bytes),
-        Err(error) => error.into_response(),
-    }
-}
-
-fn list_response_bytes(state: &ServiceState) -> Bytes {
-    state.reconcile_persistent_defunct_from_logs();
-    let fingerprint = list_response_fingerprint(state);
-    if let Some(cached) = state.list_response_cache.lock().unwrap().clone() {
-        if cached.fingerprint == fingerprint {
-            return cached.bytes;
-        }
-    }
-
-    let response = build_list_response(state);
-    let bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_default());
-    *state.list_response_cache.lock().unwrap() = Some(CachedListResponse {
-        fingerprint,
-        bytes: bytes.clone(),
-    });
-    bytes
-}
-
 pub(super) async fn handle_info(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -1283,21 +1216,8 @@ pub(super) async fn handle_stats_summary(
 ) -> Result<Json<api::VmStatsSummaryResponse>, AppError> {
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
-    let db = open_ready_session_db(&state, &id, "stats_summary", &db_path).await?;
-    let stats = db
-        .session_stats()
-        .await
-        .map_err(|error| ledger_route_error(&id, "stats_summary", "query", &db_path, error))?;
-    Ok(Json(api::VmStatsSummaryResponse {
-        total_requests: stats.net_total,
-        allowed_requests: stats.net_allowed,
-        denied_requests: stats.net_denied,
-        total_input_tokens: stats.total_input_tokens,
-        total_thinking_tokens: stats.total_usage_details.get("thinking").copied().unwrap_or_default(),
-        total_output_tokens: stats.total_output_tokens,
-        total_tool_calls: stats.total_tool_calls,
-        total_estimated_cost: stats.total_estimated_cost_usd,
-    }))
+    let counters = ledger_routes::activity::read_counters(&state, &id, "stats_summary", &db_path).await?;
+    Ok(Json(ledger_routes::activity::stats_summary(&counters)))
 }
 
 /// Wait until a VM signals readiness via a `.ready` sentinel file.

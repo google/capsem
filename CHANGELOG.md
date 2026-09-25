@@ -131,6 +131,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `GET /vms/{id}/timeline?since=...` returns recent events on long sessions.
+  It used to read only the oldest 10,000 events of the whole ledger and
+  filter them afterwards, so a recent `since` on a busy session came back
+  empty, and events in the cutoff's own second were dropped. Each layer now
+  reads its own indexed window from the cutoff (google/capsem#223).
+
+- `GET /vms/{id}/history` reports a correct `total` and pages past 10,000
+  rows. It used to load every exec and audit row and page them in memory,
+  silently stopping at the reader's 10,000-row cap. Paging, layer and search
+  now run in SQL, and the unfiltered total comes from the session's counters
+  (google/capsem#223).
+
+- The diagnostics triage lists the newest tool errors first even when one
+  has no recorded time, and `/stats` tool events no longer sort every tool
+  call in the session to show the latest 200 (google/capsem#223).
+
+- A `since` value too large or out of range (`99999999999999999d`,
+  `0000-01-01T00:00:00Z`, a month of `00`) is refused by `/timeline`,
+  `/triage` and `/panics` instead of overflowing into a garbage cutoff.
+
+- `GET /stats` top providers, tools and MCP tools are no longer always empty:
+  a session's stop now records its per-provider, per-tool and per-MCP-tool
+  usage in `main.db`, copied from its counter snapshot. Its `total_tool_calls`
+  counts the same tool calls every other surface does, rather than every
+  `tool_calls` row including a model merely naming an MCP tool. Two MCP
+  servers exposing a tool of the same name are now two rows, not a collision
+  (`main.db` schema v9).
+
+- Plugin runtime (executions, applied, skipped, durations, detections) and
+  brokered credential counts no longer stop growing after a session's first
+  2000 rule matches: they came from re-parsing the payloads of the latest 2000
+  matches and now come from the session's counter snapshot. Security status
+  and history counts read the same snapshot instead of scanning the ledger.
+
+- `capsem list`, `/vms/list`, `/vms/{id}/info`, gateway `/status` and the TUI
+  now show each session's real tokens, cost, tool calls, requests and file
+  events, for running and stopped persistent VMs. These fields had been empty
+  since the service stopped aggregating them.
+
+- `/vms/{id}/info` no longer fails for a VM whose file watcher once fell
+  behind. The overflow marker it records is not a file action, and listing it
+  made the whole route error; it is now left out of the file activity totals.
+  `/info`, `/stats/summary` and the stats detail model list read the session's
+  counter snapshot instead of aggregating the ledger on every poll.
+
 - Creating a VM no longer fails now and then with "session ledger predates
   the transport ledger". Provision opened the new session's ledger before the
   VM process had finished creating it, took the half-created file for a stale
@@ -341,6 +386,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removed before the SDK contract reaches v1.
 
 ### Added
+
+- OpenTelemetry metric export. Set the corp config's `open_telemetry` to an
+  OTLP/HTTP base endpoint (metrics go to `/v1/metrics`), or the standard
+  `OTEL_EXPORTER_OTLP_*` environment for the service. The service exports its
+  own metrics and each session's totals -- requests, tokens, cost, model and
+  tool calls, file events, rule matches -- labelled only with `session.id`,
+  `profile.id` and `persistent`. Each VM process exports its ledger, proxy,
+  DNS, security and disk metrics to the corp endpoint, never with collector
+  credentials. Nothing is exported unless configured (google/capsem#223).
 
 - Captured bodies are readable in the stats view. Expanding an event fetches
   its request and response bodies, tool results, exec output or security-rule
@@ -569,6 +623,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Rust guest relay, aggregator, and built-in MCP components remain.
 
 ### Changed
+
+- Session ledgers are now format v4: each one carries its own running totals
+  (requests, tokens, cost, tool calls, rule matches, plugin and credential
+  activity), written in the same transaction as the rows they count, so stats
+  no longer have to be recomputed from the whole ledger (google/capsem#223).
+  A v3 ledger is refused rather than upgraded; a named VM created before this
+  change cannot be resumed and has to be recreated.
 
 - Session ledgers keep captured bodies in version 3 compressed generations
   beside the database. Request and response bodies, tool results, exec output and the

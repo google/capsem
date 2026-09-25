@@ -10,10 +10,13 @@ use super::*;
 
 /// Tables that live on disk only and never mirror into the memory schema:
 /// the body index and its block table are written straight to disk beside the
-/// archive file they point into, the schema markers are not data, and
-/// the network registry tables (`network_db`) are small state, not a ledger.
+/// archive file they point into, the schema markers are not data, the counter
+/// snapshot is rewritten in each flush transaction beside the rows it counts,
+/// and the network registry tables (`network_db`) are small state, not a
+/// ledger.
 const DISK_ONLY_TABLES: &[&str] = &[
     "archive_state",
+    "ledger_counters",
     "event_body_blobs",
     "body_blocks",
     "transport_schema",

@@ -1,3 +1,4 @@
+pub mod counters;
 pub mod db;
 pub mod events;
 pub mod network_db;
@@ -20,11 +21,8 @@ pub use events::{
     TransportEvent, TransportEventKind, CREDENTIAL_REF_PREFIX,
 };
 pub use reader::{
-    validate_select_only, BrokeredCredentialStat, DbReader, DomainCount, FileEventStats, HistoryCounts, HistoryEntry,
-    McpToolUsage, NetEventCounts, ProcessEntry, ProviderTokenUsage, SecurityRuleActionCount,
+    validate_select_only, DbReader, HistoryEntry, ProcessEntry, SecurityRuleActionCount,
     SecurityRuleDetectionLevelCount, SecurityRuleEventTypeCount, SecurityRuleStats, SecurityRuleStatsByRule,
-    SessionStats, TimeBucket, ToolCallStats, ToolServerCallCount, ToolUsageCount, ToolUsageWithStats, TraceDetail,
-    TraceModelCall, TraceSummary,
 };
 pub use session_index::{ensure_session_index_schema, record_session_start, record_session_stop, SessionIndex};
 pub use session_types::{

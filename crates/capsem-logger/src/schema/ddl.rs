@@ -87,9 +87,18 @@ pub const CREATE_SCHEMA: &str = "
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         archive_id BLOB NOT NULL CHECK (typeof(archive_id) = 'blob' AND length(archive_id) = 16),
         generation_id BLOB NOT NULL CHECK (typeof(generation_id) = 'blob' AND length(generation_id) = 16),
-        format_version INTEGER NOT NULL CHECK (typeof(format_version) = 'integer' AND format_version = 3),
+        format_version INTEGER NOT NULL CHECK (typeof(format_version) = 'integer' AND format_version = 4),
         committed_end INTEGER NOT NULL CHECK (typeof(committed_end) = 'integer' AND committed_end >= 80),
         revision INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision >= 1)
+    );
+
+    -- The session's counters: one named-field MessagePack snapshot, rewritten
+    -- in the same transaction as the rows it counts, so a reader takes every
+    -- total with one primary-key lookup instead of aggregating the tables.
+    -- Created with the ledger; absence is a broken ledger, not zero activity.
+    CREATE TABLE IF NOT EXISTS ledger_counters (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        counters BLOB NOT NULL CHECK (typeof(counters) = 'blob')
     );
 
     -- One block of an archive generation. The bytes live in the archive file;
@@ -196,24 +205,13 @@ pub const CREATE_SCHEMA: &str = "
         ON tool_responses(event_id, id);
     CREATE INDEX IF NOT EXISTS idx_model_calls_trace_id
         ON model_calls(trace_id);
+    -- The timeline reads each layer's window from a cutoff in time order.
+    CREATE INDEX IF NOT EXISTS idx_model_calls_timestamp
+        ON model_calls(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp
+        ON tool_calls(timestamp);
 
-    -- The indexes the polled session summary runs on. `stats/summary` is asked
-    -- for on a timer, per VM, by the TUI and the desktop UI, and the service
-    -- answers it from the file rather than a RAM mirror -- so these three
-    -- aggregates are the most repeated reads in the product. Each is covering:
-    -- SQLite sums the counters out of the index and never touches a table row,
-    -- which matters because `net_events` and `model_calls` carry headers, body
-    -- previews and assistant text that the summary has no use for.
-    -- `reader/tests/query_plan.rs` fails if any of them stops being used.
-    CREATE INDEX IF NOT EXISTS idx_net_events_decision_bytes
-        ON net_events(decision, bytes_sent, bytes_received);
-    CREATE INDEX IF NOT EXISTS idx_model_calls_usage_totals
-        ON model_calls(input_tokens, output_tokens, duration_ms, estimated_cost_usd);
-    -- Partial, because the `json_each` walk that merges usage details selects
-    -- exactly the rows that have any: an index over the NULLs would be one
-    -- entry per call for nothing.
-    CREATE INDEX IF NOT EXISTS idx_model_calls_usage_details
-        ON model_calls(usage_details) WHERE usage_details IS NOT NULL;
+    -- The diagnostics triage filters tool errors by counted origin.
     CREATE INDEX IF NOT EXISTS idx_tool_calls_origin
         ON tool_calls(origin);
 
@@ -399,10 +397,6 @@ pub const CREATE_SCHEMA: &str = "
         CHECK (last_timestamp_unix_ms >= first_timestamp_unix_ms),
         UNIQUE (event_type, rule_id, rule_action, detection_level, rule_json)
     );
-    CREATE INDEX IF NOT EXISTS idx_security_rule_runs_action
-        ON security_rule_runs(rule_action, detection_level, rule_id, event_type, count, last_timestamp_unix_ms);
-    CREATE INDEX IF NOT EXISTS idx_security_rule_runs_event_type
-        ON security_rule_runs(event_type, count);
 
     CREATE TABLE IF NOT EXISTS security_rule_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -433,19 +427,6 @@ pub const CREATE_SCHEMA: &str = "
         ON security_rule_events(rule_id);
     CREATE INDEX IF NOT EXISTS idx_security_rule_events_event_type
         ON security_rule_events(event_type);
-    -- The index `security/status` groups on. That route is polled beside
-    -- `stats/summary`, and its worst statement is the per-rule breakdown: for
-    -- each (rule, action, level) group it asks for the newest match, which
-    -- without this index is a scan of the whole table per group plus a sort.
-    -- The column order is what makes one index serve three statements: the
-    -- action count groups on the leading column, the per-rule breakdown scans
-    -- it as a covering index, and its correlated lookup meets all three
-    -- equalities and then reads the ordering columns in the order it wants.
-    -- The level count scans it too, grouping three values in a temp B-tree;
-    -- an index of its own would be a write on every rule match to save that.
-    -- capsem-service's `security_status_aggregates_run_on_indexes` pins it.
-    CREATE INDEX IF NOT EXISTS idx_security_rule_events_rule_stats
-        ON security_rule_events(rule_action, detection_level, rule_id, timestamp_unix_ms, id, event_id);
 
     CREATE TABLE IF NOT EXISTS security_decision_runs (
         id INTEGER PRIMARY KEY,

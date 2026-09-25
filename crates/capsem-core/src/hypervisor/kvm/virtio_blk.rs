@@ -14,8 +14,8 @@ use std::sync::{mpsc, Arc, Once};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, ensure, Context, Result};
+use capsem_telemetry::virtio_blk as metric;
 use io_uring::{opcode, types, IoUring};
-use metrics::{describe_counter, describe_histogram, Unit};
 
 use super::memory::GuestMemoryRef;
 use super::virtio_mmio::{QueueConfig, VirtioDevice};
@@ -66,23 +66,6 @@ const VIRTIO_BLK_S_UNSUPP: u8 = 2;
 
 // Request header size: type(u32) + reserved(u32) + sector(u64) = 16 bytes
 const REQ_HEADER_SIZE: usize = 16;
-
-// OTel-ready metric names. The metrics facade is no-op unless a recorder is
-// installed, and still gives us stable names for future OTLP export.
-const METRIC_QUEUE_NOTIFICATIONS_TOTAL: &str = "virtio.blk.queue_notifications_total";
-const METRIC_QUEUE_DRAINS_TOTAL: &str = "virtio.blk.queue_drains_total";
-const METRIC_DESCRIPTORS_DRAINED_TOTAL: &str = "virtio.blk.descriptors_drained_total";
-const METRIC_USED_ENTRIES_TOTAL: &str = "virtio.blk.used_entries_total";
-const METRIC_INTERRUPTS_TOTAL: &str = "virtio.blk.interrupts_total";
-const METRIC_REQUESTS_TOTAL: &str = "virtio.blk.requests_total";
-const METRIC_REQUEST_BYTES_TOTAL: &str = "virtio.blk.request_bytes_total";
-const METRIC_REQUEST_DURATION_MS: &str = "virtio.blk.request_duration_ms";
-const METRIC_QUEUE_DRAIN_DURATION_MS: &str = "virtio.blk.queue_drain_duration_ms";
-const METRIC_QUIESCE_DRAIN_DURATION_MS: &str = "virtio.blk.quiesce_drain_duration_ms";
-const METRIC_ASYNC_SUBMISSIONS_TOTAL: &str = "virtio.blk.async_submissions_total";
-const METRIC_ASYNC_COMPLETIONS_TOTAL: &str = "virtio.blk.async_completions_total";
-const METRIC_ASYNC_FALLBACKS_TOTAL: &str = "virtio.blk.async_fallbacks_total";
-const METRIC_ASYNC_IN_FLIGHT: &str = "virtio.blk.async_in_flight";
 
 static DESCRIBE_METRICS: Once = Once::new();
 
@@ -973,7 +956,7 @@ impl VirtioBlockDevice {
                     }
 
                     ::metrics::counter!(
-                        METRIC_ASYNC_FALLBACKS_TOTAL,
+                        metric::ASYNC_FALLBACKS_TOTAL,
                         "operation" => request_operation_label(type_),
                     )
                     .increment(1);
@@ -1166,11 +1149,11 @@ impl BlockIoUring {
             }
         }
         ::metrics::counter!(
-            METRIC_ASYNC_SUBMISSIONS_TOTAL,
+            metric::ASYNC_SUBMISSIONS_TOTAL,
             "operation" => request_operation_label(type_),
         )
         .increment(1);
-        ::metrics::histogram!(METRIC_ASYNC_IN_FLIGHT, "backend" => "io_uring").record(self.pending.len() as f64);
+        ::metrics::histogram!(metric::ASYNC_IN_FLIGHT, "backend" => "io_uring").record(self.pending.len() as f64);
         Ok(())
     }
 
@@ -1198,7 +1181,7 @@ impl BlockIoUring {
             };
             emit_request_metrics(request.type_, request.total_data, status, request.started.elapsed());
             ::metrics::counter!(
-                METRIC_ASYNC_COMPLETIONS_TOTAL,
+                metric::ASYNC_COMPLETIONS_TOTAL,
                 "operation" => request_operation_label(request.type_),
                 "status" => request_status_label(status),
             )
@@ -1231,25 +1214,25 @@ impl BlockIoUring {
         if result.used_entries > 0 {
             queue.flush_used();
             result.should_interrupt = queue.prepare_kick();
-            ::metrics::counter!(METRIC_USED_ENTRIES_TOTAL, "backend" => "io_uring")
+            ::metrics::counter!(metric::USED_ENTRIES_TOTAL, "backend" => "io_uring")
                 .increment(u64::from(result.used_entries));
             if result.should_interrupt {
                 ::metrics::counter!(
-                    METRIC_INTERRUPTS_TOTAL,
+                    metric::INTERRUPTS_TOTAL,
                     "backend" => "io_uring",
                     "decision" => "raised",
                 )
                 .increment(1);
             } else {
                 ::metrics::counter!(
-                    METRIC_INTERRUPTS_TOTAL,
+                    metric::INTERRUPTS_TOTAL,
                     "backend" => "io_uring",
                     "decision" => "suppressed",
                 )
                 .increment(1);
             }
         }
-        ::metrics::histogram!(METRIC_ASYNC_IN_FLIGHT, "backend" => "io_uring").record(self.pending.len() as f64);
+        ::metrics::histogram!(metric::ASYNC_IN_FLIGHT, "backend" => "io_uring").record(self.pending.len() as f64);
         result
     }
 }
@@ -1266,78 +1249,7 @@ struct CompletionResult {
 }
 
 fn describe_metrics_once() {
-    DESCRIBE_METRICS.call_once(|| {
-        describe_counter!(
-            METRIC_QUEUE_NOTIFICATIONS_TOTAL,
-            Unit::Count,
-            "Virtio block queue notifications observed by backend."
-        );
-        describe_counter!(
-            METRIC_QUEUE_DRAINS_TOTAL,
-            Unit::Count,
-            "Virtio block queue drain attempts by backend."
-        );
-        describe_counter!(
-            METRIC_DESCRIPTORS_DRAINED_TOTAL,
-            Unit::Count,
-            "Virtio block descriptor chains drained by backend."
-        );
-        describe_counter!(
-            METRIC_USED_ENTRIES_TOTAL,
-            Unit::Count,
-            "Virtio block used-ring entries published to the guest."
-        );
-        describe_counter!(
-            METRIC_INTERRUPTS_TOTAL,
-            Unit::Count,
-            "Virtio block interrupt decisions, partitioned by raised|suppressed."
-        );
-        describe_counter!(
-            METRIC_REQUESTS_TOTAL,
-            Unit::Count,
-            "Virtio block requests by operation and completion status."
-        );
-        describe_counter!(
-            METRIC_REQUEST_BYTES_TOTAL,
-            Unit::Bytes,
-            "Virtio block request payload bytes by operation and completion status."
-        );
-        describe_histogram!(
-            METRIC_REQUEST_DURATION_MS,
-            Unit::Milliseconds,
-            "Virtio block request processing wall time."
-        );
-        describe_histogram!(
-            METRIC_QUEUE_DRAIN_DURATION_MS,
-            Unit::Milliseconds,
-            "Virtio block queue drain wall time per backend wake."
-        );
-        describe_histogram!(
-            METRIC_QUIESCE_DRAIN_DURATION_MS,
-            Unit::Milliseconds,
-            "Virtio block quiesce drain wait time before checkpoint."
-        );
-        describe_counter!(
-            METRIC_ASYNC_SUBMISSIONS_TOTAL,
-            Unit::Count,
-            "Virtio block io_uring submissions by operation."
-        );
-        describe_counter!(
-            METRIC_ASYNC_COMPLETIONS_TOTAL,
-            Unit::Count,
-            "Virtio block io_uring completions by operation and completion status."
-        );
-        describe_counter!(
-            METRIC_ASYNC_FALLBACKS_TOTAL,
-            Unit::Count,
-            "Virtio block requests handled by synchronous fallback from the async path."
-        );
-        describe_histogram!(
-            METRIC_ASYNC_IN_FLIGHT,
-            Unit::Count,
-            "Virtio block io_uring in-flight request depth after submit/completion."
-        );
-    });
+    DESCRIBE_METRICS.call_once(|| capsem_telemetry::describe(metric::SPECS));
 }
 
 fn duration_ms(duration: Duration) -> f64 {
@@ -1355,21 +1267,21 @@ fn emit_request_metrics(type_: u32, total_data: u32, status: u8, duration: Durat
     let operation = request_operation_label(type_);
     let status_label = request_status_label(status);
     ::metrics::counter!(
-        METRIC_REQUESTS_TOTAL,
+        metric::REQUESTS_TOTAL,
         "operation" => operation,
         "status" => status_label,
     )
     .increment(1);
     if total_data > 0 {
         ::metrics::counter!(
-            METRIC_REQUEST_BYTES_TOTAL,
+            metric::REQUEST_BYTES_TOTAL,
             "operation" => operation,
             "status" => status_label,
         )
         .increment(u64::from(total_data));
     }
     ::metrics::histogram!(
-        METRIC_REQUEST_DURATION_MS,
+        metric::REQUEST_DURATION_MS,
         "operation" => operation,
         "status" => status_label,
     )
@@ -1377,24 +1289,24 @@ fn emit_request_metrics(type_: u32, total_data: u32, status: u8, duration: Durat
 }
 
 fn emit_queue_notification_metric(backend: &'static str, count: u64) {
-    ::metrics::counter!(METRIC_QUEUE_NOTIFICATIONS_TOTAL, "backend" => backend).increment(count);
+    ::metrics::counter!(metric::QUEUE_NOTIFICATIONS_TOTAL, "backend" => backend).increment(count);
 }
 
 fn emit_queue_drain_metrics(backend: &'static str, result: &QueueProcessResult) {
-    ::metrics::counter!(METRIC_QUEUE_DRAINS_TOTAL, "backend" => backend).increment(1);
+    ::metrics::counter!(metric::QUEUE_DRAINS_TOTAL, "backend" => backend).increment(1);
     if result.processed > 0 {
-        ::metrics::counter!(METRIC_DESCRIPTORS_DRAINED_TOTAL, "backend" => backend)
+        ::metrics::counter!(metric::DESCRIPTORS_DRAINED_TOTAL, "backend" => backend)
             .increment(u64::from(result.processed));
     }
     if result.used_entries > 0 {
-        ::metrics::counter!(METRIC_USED_ENTRIES_TOTAL, "backend" => backend).increment(u64::from(result.used_entries));
+        ::metrics::counter!(metric::USED_ENTRIES_TOTAL, "backend" => backend).increment(u64::from(result.used_entries));
     }
     if result.should_interrupt {
-        ::metrics::counter!(METRIC_INTERRUPTS_TOTAL, "backend" => backend, "decision" => "raised").increment(1);
+        ::metrics::counter!(metric::INTERRUPTS_TOTAL, "backend" => backend, "decision" => "raised").increment(1);
     } else if result.processed > 0 {
-        ::metrics::counter!(METRIC_INTERRUPTS_TOTAL, "backend" => backend, "decision" => "suppressed").increment(1);
+        ::metrics::counter!(metric::INTERRUPTS_TOTAL, "backend" => backend, "decision" => "suppressed").increment(1);
     }
-    ::metrics::histogram!(METRIC_QUEUE_DRAIN_DURATION_MS, "backend" => backend)
+    ::metrics::histogram!(metric::QUEUE_DRAIN_DURATION_MS, "backend" => backend)
         .record(duration_ms(result.drain_duration));
 }
 
@@ -1546,7 +1458,7 @@ impl VirtioDevice for VirtioBlockDevice {
         let result = done_rx
             .recv_timeout(Duration::from_secs(2))
             .context("wait for virtio-blk drain");
-        ::metrics::histogram!(METRIC_QUIESCE_DRAIN_DURATION_MS, "backend" => "ioeventfd")
+        ::metrics::histogram!(metric::QUIESCE_DRAIN_DURATION_MS, "backend" => "ioeventfd")
             .record(duration_ms(started.elapsed()));
         result.map(|_| ())
     }

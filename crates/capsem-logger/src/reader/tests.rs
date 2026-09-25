@@ -1,8 +1,6 @@
 use super::*;
 use serde_json::{json, Value};
 
-mod query_plan;
-
 fn setup_reader_with_data() -> DbReader {
     let reader = DbReader::open_in_memory().unwrap();
     reader
@@ -149,7 +147,7 @@ fn bind_params_do_not_bypass_validation() {
 }
 
 // -----------------------------------------------------------------------
-// Richer fixture covering multiple tables, used by aggregate tests below.
+// Richer fixture covering multiple tables, used by the read tests below.
 // -----------------------------------------------------------------------
 
 fn setup_full_fixture() -> DbReader {
@@ -186,40 +184,6 @@ fn setup_full_fixture() -> DbReader {
             ",
     ).unwrap();
     reader
-}
-
-// -----------------------------------------------------------------------
-// Counts / aggregates
-// -----------------------------------------------------------------------
-
-#[test]
-fn net_event_counts_reports_decision_split() {
-    let r = setup_full_fixture();
-    let c = r.net_event_counts().unwrap();
-    assert_eq!(c.total, 5);
-    assert_eq!(c.allowed, 3);
-    assert_eq!(c.denied, 1);
-}
-
-#[test]
-fn net_event_counts_empty_db_returns_zero() {
-    let r = DbReader::open_in_memory().unwrap();
-    let c = r.net_event_counts().unwrap();
-    assert_eq!(c.total, 0);
-    assert_eq!(c.allowed, 0);
-    assert_eq!(c.denied, 0);
-}
-
-#[test]
-fn model_call_count_matches_inserts() {
-    let r = setup_full_fixture();
-    assert_eq!(r.model_call_count().unwrap(), 3);
-}
-
-#[test]
-fn file_event_count_matches_inserts() {
-    let r = setup_full_fixture();
-    assert_eq!(r.file_event_count().unwrap(), 3);
 }
 
 // -----------------------------------------------------------------------
@@ -267,60 +231,6 @@ fn recent_security_rule_events_orders_newest_first_and_keeps_the_rule_snapshot()
     assert_eq!(latest[0].rule_action, SecurityRuleAction::Block);
     assert_eq!(latest[0].detection_level, SecurityDetectionLevel::Critical);
     assert!(latest[0].rule_json.contains("block_openai"));
-}
-
-#[test]
-fn security_rule_stats_are_db_only() {
-    let r = DbReader::open_in_memory().unwrap();
-    r.conn
-        .execute_batch(
-            "INSERT INTO security_rule_runs (
-                    event_type, rule_id, rule_action, detection_level, rule_json,
-                    count, first_timestamp_unix_ms, last_timestamp_unix_ms
-                 ) VALUES
-                    ('model.call', 'block_openai', 'block', 'critical', '{}',
-                     2, 1789000000000, 1789000000001),
-                    ('http.request', 'allow_github', 'allow', 'none', '{}',
-                     1, 1789000000002, 1789000000002);
-             INSERT INTO security_rule_events (
-                    timestamp_unix_ms, event_id, event_type, rule_id,
-                    rule_action, detection_level, rule_json, run_id
-                 ) VALUES
-                    (1789000000000, '111111111111', 'model.call', 'block_openai',
-                     'block', 'critical', NULL, 1),
-                    (1789000000001, '222222222222', 'model.call', 'block_openai',
-                     'block', 'critical', NULL, 1),
-                    (1789000000002, '333333333333', 'http.request', 'allow_github',
-                     'allow', 'none', NULL, 2)",
-        )
-        .unwrap();
-
-    let stats = r.security_rule_stats().unwrap();
-    assert_eq!(stats.total, 3);
-    assert!(stats
-        .by_action
-        .iter()
-        .any(|entry| entry.rule_action == "block" && entry.count == 2));
-    assert!(stats
-        .by_event_type
-        .iter()
-        .any(|entry| entry.event_type == "model.call" && entry.count == 2));
-    assert!(stats
-        .by_level
-        .iter()
-        .any(|entry| entry.detection_level == "critical" && entry.count == 2));
-    assert!(stats
-        .by_level
-        .iter()
-        .any(|entry| entry.detection_level == "none" && entry.count == 1));
-    let block = stats
-        .by_rule
-        .iter()
-        .find(|entry| entry.rule_id == "block_openai")
-        .unwrap();
-    assert_eq!(block.count, 2);
-    assert_eq!(block.latest_event_id, "222222222222");
-    assert_eq!(block.latest_timestamp_unix_ms, 1_789_000_000_001);
 }
 
 #[test]
@@ -379,198 +289,6 @@ fn search_net_events_respects_limit() {
     // Match all 5 rows by using a pattern that shows up everywhere.
     let hits = r.search_net_events(".com", 2).unwrap();
     assert_eq!(hits.len(), 2);
-}
-
-// -----------------------------------------------------------------------
-// Aggregations: top_domains, session_stats
-// -----------------------------------------------------------------------
-
-#[test]
-fn top_domains_ranks_by_count_desc() {
-    let r = setup_full_fixture();
-    let ds = r.top_domains(10).unwrap();
-    assert_eq!(ds.len(), 4); // 4 distinct domains
-                             // github has 2 rows, everything else has 1 — it should be first.
-    assert_eq!(ds[0].domain, "api.github.com");
-    assert_eq!(ds[0].count, 2);
-    assert_eq!(ds[0].allowed, 2);
-    assert_eq!(ds[0].denied, 0);
-}
-
-#[test]
-fn top_domains_attributes_denied_vs_allowed() {
-    let r = setup_full_fixture();
-    let ds = r.top_domains(10).unwrap();
-    let evil = ds.iter().find(|d| d.domain == "evil.com").unwrap();
-    assert_eq!(evil.allowed, 0);
-    assert_eq!(evil.denied, 1);
-}
-
-#[test]
-fn top_domains_respects_limit() {
-    let r = setup_full_fixture();
-    let ds = r.top_domains(1).unwrap();
-    assert_eq!(ds.len(), 1);
-}
-
-#[test]
-fn session_stats_sums_net_and_model_columns() {
-    let r = setup_full_fixture();
-    let s = r.session_stats().unwrap();
-    assert_eq!(s.net_total, 5);
-    assert_eq!(s.net_allowed, 3);
-    assert_eq!(s.net_denied, 1);
-    assert_eq!(s.net_error, 1);
-    assert_eq!(s.net_bytes_sent, 100 + 500 + 50 + 10);
-    assert_eq!(s.net_bytes_received, 200 + 900 + 100);
-    assert_eq!(s.model_call_count, 3);
-    assert_eq!(s.total_input_tokens, 100 + 50 + 30);
-    assert_eq!(s.total_output_tokens, 200 + 75 + 60);
-    assert_eq!(s.total_model_duration_ms, 1500 + 800 + 400);
-    // Session stats report the unified tool ledger: model-native tool
-    // calls plus MCP-origin calls observed at the boundary.
-    assert_eq!(s.total_tool_calls, 5);
-    // Floating point sum — allow tiny tolerance.
-    assert!((s.total_estimated_cost_usd - 0.018).abs() < 1e-9);
-}
-
-#[test]
-fn session_stats_empty_db() {
-    let r = DbReader::open_in_memory().unwrap();
-    let s = r.session_stats().unwrap();
-    assert_eq!(s.net_total, 0);
-    assert_eq!(s.model_call_count, 0);
-    assert_eq!(s.total_tool_calls, 0);
-    assert_eq!(s.total_estimated_cost_usd, 0.0);
-    assert!(s.total_usage_details.is_empty());
-}
-
-#[test]
-fn tool_call_stats_counts_unified_tool_ledger_rows() {
-    let r = DbReader::open_in_memory().unwrap();
-    r.conn
-        .execute_batch(
-            "INSERT INTO tool_calls (timestamp, origin, transport, server_name, method, call_index, call_id, tool_name, arguments, decision, duration_ms)
-                 VALUES
-                    ('2026-01-01T00:00:04Z', 'mcp', 'vsock_frame', 'capsem', 'tools/call', 0, 'mcp-1', 'local__fetch_http', '{}', 'allowed', 9),
-                    ('2026-01-01T00:00:05Z', 'mcp', 'http', 'github', 'tools/call', 0, 'mcp-2', 'github__search', '{}', 'denied', 11),
-                    ('2026-01-01T00:00:06Z', 'native', 'http', 'model', NULL, 0, 'native-1', 'bash', '{}', 'allowed', 1);",
-        )
-        .unwrap();
-
-    let stats = r.tool_call_stats().unwrap();
-    assert_eq!(stats.total, 3);
-    assert_eq!(stats.allowed, 2);
-    assert_eq!(stats.denied, 1);
-    assert_eq!(stats.by_server.len(), 3);
-    assert_eq!(stats.by_server[0].server_name, "capsem");
-    assert_eq!(stats.by_server[0].count, 1);
-    assert_eq!(stats.by_server[1].server_name, "github");
-    assert_eq!(stats.by_server[1].count, 1);
-    assert_eq!(stats.by_server[2].server_name, "model");
-    assert_eq!(stats.by_server[2].count, 1);
-}
-
-#[test]
-fn recent_tool_calls_reads_unified_model_and_mcp_rows() {
-    let r = DbReader::open_in_memory().unwrap();
-    r.conn
-        .execute_batch(
-            "INSERT INTO tool_calls (
-                    id, event_id, timestamp, model_call_id, origin, transport, server_name, method,
-                    request_id, call_index, call_id, tool_name, arguments, response_preview,
-                    decision, duration_ms, bytes_sent, bytes_received, policy_rule, trace_id
-                 ) VALUES
-                    (100, 'aaaaaaaaaaaa', '2026-01-01T00:00:01Z', 1, 'native', 'http', 'model', NULL,
-                     NULL, 0, 'call-model', 'write_file', '{\"path\":\"poem.md\"}',
-                     'ok', 'allowed', 7, 10, 20, NULL, 'trace-model'),
-                    (101, 'bbbbbbbbbbbb', '2026-01-01T00:00:02Z', NULL, 'mcp', 'vsock_frame', 'capsem', 'tools/call',
-                     'req-1', 0, 'req-1', 'local__fetch_http', '{\"url\":\"https://example.com\"}',
-                     '{\"status\":200}', 'denied', 9, 30, 40, 'profiles.rules.block_fetch', 'trace-mcp');",
-        )
-        .unwrap();
-
-    let rows = r.recent_tool_calls(10).unwrap();
-    let mcp = rows.iter().find(|row| row.origin == "mcp").unwrap();
-    assert_eq!(mcp.event_id, "bbbbbbbbbbbb");
-    assert_eq!(mcp.model_call_id, None);
-    assert_eq!(mcp.transport, "vsock_frame");
-    assert_eq!(mcp.server_name.as_deref(), Some("capsem"));
-    assert_eq!(mcp.method.as_deref(), Some("tools/call"));
-    assert_eq!(mcp.request_id.as_deref(), Some("req-1"));
-    assert_eq!(mcp.tool_name, "local__fetch_http");
-    assert_eq!(mcp.arguments.as_deref(), Some("{\"url\":\"https://example.com\"}"));
-    assert_eq!(mcp.response_preview.as_deref(), Some("{\"status\":200}"));
-    assert_eq!(mcp.decision, "denied");
-    assert_eq!(mcp.policy_rule.as_deref(), Some("profiles.rules.block_fetch"));
-
-    let native = rows.iter().find(|row| row.origin == "native").unwrap();
-    assert_eq!(native.model_call_id, Some(1));
-    assert_eq!(native.transport, "http");
-    assert_eq!(native.tool_name, "write_file");
-    assert_eq!(native.response_preview.as_deref(), Some("ok"));
-}
-
-#[test]
-fn raw_tool_call_count_matches_unified_ledger_rows() {
-    let r = DbReader::open_in_memory().unwrap();
-    r.conn
-        .execute_batch(
-            "INSERT INTO tool_calls (timestamp, origin, server_name, method, call_index, call_id, tool_name, arguments, decision, duration_ms)
-                 VALUES
-                    ('2026-01-01T00:00:00Z', 'mcp', 'capsem', 'tools/call', 0, 'call-1', 'local__snapshots_changes', '{}', 'allowed', 4),
-                    ('2026-01-01T00:00:01Z', 'mcp', 'capsem', 'tools/call', 0, 'call-2', 'local__fetch_http', '{}', 'allowed', 9),
-                    ('2026-01-01T00:00:02Z', 'native', 'model', NULL, 0, 'call-3', 'write_file', '{}', 'allowed', 1);",
-        )
-        .unwrap();
-
-    assert_eq!(r.tool_call_stats().unwrap().total, 3);
-    assert_eq!(r.raw_tool_call_count().unwrap(), 3);
-}
-
-#[test]
-fn brokered_credential_stats_merges_injected_rows_without_provider() {
-    let r = DbReader::open_in_memory().unwrap();
-    let credential_ref = crate::events::credential_reference("google", "ya29.runtime-token");
-    r.conn
-        .execute(
-            "INSERT INTO substitution_events (
-                    timestamp, material_class, source, event_type, algorithm,
-                    substitution_ref, outcome, provider, trace_id
-                 ) VALUES (?1, 'credential', ?2, 'http.response', 'blake3', ?3, 'captured', 'google', 'trace-1')",
-            params![
-                "2026-06-14T22:00:00Z",
-                "http.body.response.$.access_token",
-                credential_ref,
-            ],
-        )
-        .unwrap();
-    r.conn
-        .execute(
-            "INSERT INTO substitution_events (
-                    timestamp, material_class, source, event_type, algorithm,
-                    substitution_ref, outcome, provider, trace_id
-                 ) VALUES (?1, 'credential', ?2, 'http.request', 'blake3', ?3, 'injected', NULL, 'trace-2')",
-            params!["2026-06-14T22:00:01Z", "http.header.authorization", credential_ref,],
-        )
-        .unwrap();
-    r.conn
-        .execute(
-            "INSERT INTO substitution_events (
-                    timestamp, material_class, source, event_type, algorithm,
-                    substitution_ref, outcome, provider, trace_id
-                 ) VALUES (?1, 'credential', ?2, 'http.request', 'blake3', ?3, 'injected', NULL, 'trace-3')",
-            params!["2026-06-14T22:00:02Z", "http.query.access_token", credential_ref,],
-        )
-        .unwrap();
-
-    let stats = r.brokered_credential_stats().unwrap();
-    assert_eq!(stats.len(), 1);
-    assert_eq!(stats[0].provider.as_deref(), Some("google"));
-    assert_eq!(stats[0].credential_ref, credential_ref);
-    assert_eq!(stats[0].observed_count, 3);
-    assert_eq!(stats[0].injected_count, 2);
-    assert_eq!(stats[0].last_seen.as_deref(), Some("2026-06-14T22:00:02Z"));
 }
 
 // -----------------------------------------------------------------------

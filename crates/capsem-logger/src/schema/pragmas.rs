@@ -6,6 +6,10 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use capsem_telemetry::db::{
+    DB_SQLITE_FILE_SIZE_BYTES, DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL, DB_SQLITE_MMAP_CONFIG_BYTES,
+    DB_SQLITE_MMAP_COVERAGE_RATIO, DB_SQLITE_MMAP_EFFECTIVE_BYTES, DB_SQLITE_WAL_SIZE_BYTES,
+};
 use rusqlite::Connection;
 
 /// How long a disk-only reader waits out an exclusive file lock, matching the
@@ -18,12 +22,6 @@ const READER_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// whether a query reads through SQLite's page cache, mmap, or DB-owned memory
 /// tables.
 pub const SQLITE_MMAP_SIZE_BYTES: i64 = 256 * 1024 * 1024;
-pub const DB_SQLITE_MMAP_CONFIG_BYTES: &str = "db.sqlite_mmap_config_bytes";
-pub const DB_SQLITE_MMAP_EFFECTIVE_BYTES: &str = "db.sqlite_mmap_effective_bytes";
-pub const DB_SQLITE_FILE_SIZE_BYTES: &str = "db.sqlite_file_size_bytes";
-pub const DB_SQLITE_WAL_SIZE_BYTES: &str = "db.sqlite_wal_size_bytes";
-pub const DB_SQLITE_MMAP_COVERAGE_RATIO: &str = "db.sqlite_mmap_coverage_ratio";
-pub const DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL: &str = "db.sqlite_mmap_budget_checks_total";
 
 fn apply_mmap_pragma(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "mmap_size", SQLITE_MMAP_SIZE_BYTES)

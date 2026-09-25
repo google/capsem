@@ -523,7 +523,7 @@ async fn dispatch_records_hook_metrics() {
     let inv_count: u64 = snap
         .iter()
         .find_map(|(k, _, _, v)| match (k.key().name(), v) {
-            ("mitm.hook_invocations_total", DebugValue::Counter(c)) => Some(*c),
+            (m::HOOK_INVOCATIONS_TOTAL, DebugValue::Counter(c)) => Some(*c),
             _ => None,
         })
         .expect("mitm.hook_invocations_total counter present");
@@ -531,7 +531,7 @@ async fn dispatch_records_hook_metrics() {
 
     let dur_present = snap
         .iter()
-        .any(|(k, _, _, v)| matches!(v, DebugValue::Histogram(_)) && k.key().name() == "mitm.hook_duration_ms");
+        .any(|(k, _, _, v)| matches!(v, DebugValue::Histogram(_)) && k.key().name() == m::HOOK_DURATION_MS);
     assert!(dur_present, "mitm.hook_duration_ms histogram recorded");
 }
 

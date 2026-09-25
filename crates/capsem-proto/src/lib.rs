@@ -15,6 +15,7 @@ mod exec_stream;
 pub mod forensic;
 pub mod handshake;
 pub mod ipc;
+pub mod ledger_counters;
 pub mod mcp;
 pub mod mcp_aggregator;
 pub mod mcp_contracts;

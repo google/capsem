@@ -183,8 +183,9 @@ pub struct SandboxInfo {
     pub network: Option<crate::VmNetworkInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<crate::VmFilesInfo>,
-    // -- Telemetry (populated by explicit stats/status aggregation surfaces,
-    // omitted from hot lifecycle routes such as /vms/{id}/info) --
+    // -- Telemetry: the session's activity totals, from its ledger's counter
+    // snapshot, on /vms/list and /vms/{id}/info. Absent when the ledger is
+    // not ready, never reported as zero for a ledger nobody could read. --
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

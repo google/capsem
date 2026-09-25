@@ -64,9 +64,12 @@
 
 use super::*;
 
+#[path = "fixture_regen/lift.rs"]
+mod lift;
 #[cfg(test)]
 #[path = "fixture_regen/tests.rs"]
 mod tests;
+use lift::lift_v3_source;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, UNIX_EPOCH};
@@ -313,7 +316,15 @@ fn archived_bodies(db_path: &std::path::Path, conn: &Connection) -> SourceBodies
         return SourceBodies::new();
     }
 
-    let db = capsem_logger::DbHandle::open_external_reader(db_path).expect("open the source ledger's archive");
+    // A v3 source has the same body archive a v4 ledger has; v4 only added
+    // the counter snapshot. Reading its bodies goes through a scratch copy
+    // with the marker lifted, which the product never does: nothing upgrades
+    // a ledger in place, and the replay rebuilds the counters from the rows.
+    let lifted = lift_v3_source(db_path, conn);
+    let db_path = lifted
+        .as_ref()
+        .map_or(db_path.to_path_buf(), |dir| dir.path().join("test.db"));
+    let db = capsem_logger::DbHandle::open_external_reader(&db_path).expect("open the source ledger's archive");
     let mut bodies = SourceBodies::new();
     for event_id in event_ids {
         // One query per event returns every direction it stored, and the

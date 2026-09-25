@@ -39,13 +39,11 @@ use capsem_archive::{ArchiveError, ArchiveId, BodyLogWriter, BodyRef, FileHeader
 use capsem_foundation::unix::contained::{ContainedDir, EntryKind};
 use capsem_foundation::unix::fs::{durable_sync_directory, ensure_private_dir};
 use capsem_foundation::unix::lock::{self, FileLock, LockAttempt, LockMode};
+use capsem_telemetry::db::{DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL, DB_ARCHIVE_BODIES_DROPPED_TOTAL};
 use rusqlite::{params, Connection, OptionalExtension};
 use tracing::warn;
 
-use super::{
-    blake3_bytes_ref, execute_cached, format_timestamp, LedgerClock, DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL,
-    MAX_BODY_BLOB_BYTES,
-};
+use super::{blake3_bytes_ref, execute_cached, format_timestamp, LedgerClock, MAX_BODY_BLOB_BYTES};
 
 /// How long a block may stay open before the next body starts a new one.
 ///
@@ -887,7 +885,7 @@ impl BodyArchive {
         if count == 0 {
             return;
         }
-        ::metrics::counter!(super::DB_ARCHIVE_BODIES_DROPPED_TOTAL, "reason" => reason).increment(count as u64);
+        ::metrics::counter!(DB_ARCHIVE_BODIES_DROPPED_TOTAL, "reason" => reason).increment(count as u64);
     }
 
     /// Whether a test asked this archive to close its block at every flush.

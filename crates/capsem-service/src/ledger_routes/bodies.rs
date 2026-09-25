@@ -63,8 +63,6 @@ ORDER BY event_id, direction
 /// [`STATS_DETAIL_BODY_BLOBS_SQL`] both bind it; neither spells the number.
 pub(crate) const STATS_DETAIL_PROCESS_EVENTS_LIMIT: usize = 100;
 
-/// Index rows grouped by the event they describe, so the detail view can look
-/// up one event's metadata without scanning the list.
 /// Twelve lowercase hex characters, which is what the ledger's CHECK
 /// constraints enforce on the way in.
 const EVENT_ID_LEN: usize = 12;

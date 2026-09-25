@@ -4,8 +4,11 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
+use capsem_telemetry::db::{
+    DB_QUERY_DURATION_MS, DB_QUERY_PARAMS_COUNT, DB_QUERY_RESULT_BYTES, DB_QUERY_RESULT_ROWS, DB_QUERY_TOTAL,
+};
+
 use crate::reader::DbReader;
-use crate::reader::SessionStats;
 use crate::writer::{DbWriter, WriteOp};
 
 /// Public DB-boundary contract for Capsem session ledgers.
@@ -84,12 +87,6 @@ pub enum ReadCacheDomain {
     /// mutation ledger rows are orthogonal and must not evict this projection.
     SessionSummary,
 }
-
-pub const DB_QUERY_TOTAL: &str = "db.query_total";
-pub const DB_QUERY_DURATION_MS: &str = "db.query_duration_ms";
-pub const DB_QUERY_RESULT_ROWS: &str = "db.query_result_rows";
-pub const DB_QUERY_RESULT_BYTES: &str = "db.query_result_bytes";
-pub const DB_QUERY_PARAMS_COUNT: &str = "db.query_params_count";
 
 fn elapsed_ms(started: Instant) -> u128 {
     started.elapsed().as_millis()
@@ -570,18 +567,18 @@ impl DbHandle {
         result
     }
 
-    /// Read the compact canonical session aggregates through the DB worker.
+    /// The session's counter snapshot, as its writer last committed it.
     ///
-    /// These go down the batch rail rather than a request of their own, so
-    /// `stats/summary` -- polled per VM, on a timer, by the TUI and the
-    /// desktop UI both -- is answered from this handle's cache whenever the
-    /// ledger has not moved. A private request would have needed a second copy
-    /// of the freshness protocol to earn the same thing.
-    pub async fn session_stats(&self) -> DbResult<SessionStats> {
+    /// One primary-key lookup, down the same cached batch rail as every other
+    /// polled read: an idle poll is answered without touching the file.
+    pub async fn ledger_counters(&self) -> DbResult<crate::counters::LedgerCounters> {
         let raw = self
-            .query_many(crate::reader::session_stats::session_stats_batch())
+            .query_many(vec![(crate::counters::SNAPSHOT_SQL.to_string(), Vec::new())])
             .await?;
-        SessionStats::from_query_batch(&raw)
+        let [snapshot] = raw.as_slice() else {
+            return Err(format!("ledger counters returned {} results, expected 1", raw.len()));
+        };
+        crate::counters::from_snapshot_result(snapshot)
     }
 
     /// Unwrap a worker reply, expiring this handle's read caches first when the

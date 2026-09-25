@@ -71,10 +71,6 @@ consumers = [
 ]
 symbols = [
   "fixture_query_raw_select",
-  "fixture_recent_traces_non_empty",
-  "fixture_token_usage_non_empty",
-  "fixture_top_domains_non_empty",
-  "fixture_trace_detail_loads_tools",
   "query_raw_aggregate",
   "query_raw_empty_result",
   "query_raw_integer_and_null_types",
@@ -97,7 +93,7 @@ symbols = [
 # session through today's writer:
 #   cargo test -p capsem-logger --test roundtrip -- --ignored regenerate_session_fixture
 # then update these digests in the same commit.
-sha256 = "05bae40113aec0b9eb2e271e24d5c1fd8b7f49000fbe3faa55c5b32790caffea"
+sha256 = "fbe1ca0c6a8718fc17053792deac3fd8db5ea9ff6c42d64e45c762694329335f"
 regenerator = "crates/capsem-logger/tests/roundtrip/fixture_regen.rs"
 
 # The ledger's bodies live in the selected generation beside it. The index in

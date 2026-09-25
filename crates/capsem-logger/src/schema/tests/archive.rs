@@ -37,12 +37,12 @@ fn body_index_uses_existing_keys_without_redundant_write_indexes() {
 }
 
 #[test]
-fn archive_state_is_a_typed_required_v3_singleton() {
+fn archive_state_is_a_typed_required_v4_singleton() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
 
     let state = archive_state(&conn).expect("decode archive state");
-    assert_eq!(state.format_version, 3);
+    assert_eq!(state.format_version, 4);
     assert_eq!(state.committed_end, capsem_archive::FILE_HEADER_BYTES as u64);
     assert_eq!(state.revision, 1);
     let storage: (String, i64, String, i64, String, String, String) = conn
@@ -98,7 +98,7 @@ fn archive_state_rejects_missing_extra_and_wrongly_typed_rows() {
 
     conn.execute(
         "INSERT INTO archive_state(singleton,archive_id,generation_id,format_version,committed_end,revision)
-         VALUES(1,zeroblob(16),zeroblob(16),3,80,1)",
+         VALUES(1,zeroblob(16),zeroblob(16),4,80,1)",
         [],
     )
     .unwrap();
@@ -135,5 +135,26 @@ fn a_pre_archive_body_table_fails_to_open_by_name() {
     assert!(
         error.contains("archive_state") && error.contains("v2"),
         "opening a pre-generation ledger must name the missing identity contract: {error}"
+    );
+}
+
+/// A v3 ledger carries no counter snapshot, and nothing rebuilds one by
+/// scanning its rows: it is refused by version, not upgraded.
+#[test]
+fn a_v3_ledger_is_refused_rather_than_upgraded() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    // Recreate the singleton as v3 wrote it, around the v4 CHECK.
+    conn.execute_batch(
+        "PRAGMA ignore_check_constraints = ON;
+         UPDATE archive_state SET format_version = 3;
+         PRAGMA ignore_check_constraints = OFF;",
+    )
+    .unwrap();
+    let error = archive_state(&conn).unwrap_err().to_string();
+    assert!(error.contains("format version 3 is unsupported; expected 4"), "{error}");
+    assert!(
+        create_tables(&conn).is_err(),
+        "a writer must not adopt a v3 ledger either"
     );
 }
