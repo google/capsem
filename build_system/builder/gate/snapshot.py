@@ -183,7 +183,7 @@ def _materialize_repository(source: Path, target: Path) -> None:
 
     `--no-checkout` because the working tree arrives separately and writing it
     twice would be the expensive half. That leaves the index empty, so
-    `read-tree` fills it from `HEAD`: `git ls-files` and `git check-ignore`
+    `reset` fills it from `HEAD`: `git ls-files` and `git check-ignore`
     read the index, and `faults`, `auditfs` and `sourcestate` all depend on
     them inside the prefix.
 
@@ -204,9 +204,9 @@ def _materialize_repository(source: Path, target: Path) -> None:
     )
     (scratch / ".git").rename(target / ".git")
     remove(scratch)
-    # Without this the index is empty, every tracked file reads as untracked,
-    # and `git ls-files` names nothing.
-    subprocess.run(["git", "-C", str(target), "read-tree", "HEAD"], check=True)
+    # Fills the empty index from HEAD with stat data, so `ls-files` names the
+    # tree and the first `git diff` in the prefix need not rehash every file.
+    subprocess.run(["git", "-C", str(target), "reset", "--quiet"], check=True)
 
 
 def _copy_carried(source: Path, target: Path, config: GateConfig) -> None:
