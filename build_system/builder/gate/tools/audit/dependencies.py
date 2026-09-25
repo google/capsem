@@ -1,4 +1,4 @@
-"""Audit Python and Node lockfiles with the maintained OSV scanner."""
+"""Audit every shipped lockfile -- Rust, Python, Node -- with the maintained OSV scanner."""
 
 from __future__ import annotations
 
@@ -29,12 +29,14 @@ def _lockfiles(root: Path, policy: DependencyAuditConfig) -> tuple[Path, ...]:
 
 def _digest(root: Path, policy: DependencyAuditConfig, lockfiles: tuple[Path, ...]) -> str:
     payload = {
-        "schema": 1,
+        "schema": 2,
         "policy": policy.model_dump(mode="json"),
         "lockfiles": {
             path.relative_to(root).as_posix(): subject_digest(path.read_bytes())
             for path in lockfiles
         },
+        # A widened exception list is a different verdict, not a cache hit.
+        "config": subject_digest((root / policy.config).read_bytes()),
     }
     return subject_digest(
         json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -64,7 +66,7 @@ def audit_dependencies(
         return 0
 
     tool = resolve(cache_paths, policy.tool)
-    command = [str(tool.path), *policy.scanner_args]
+    command = [str(tool.path), *policy.scanner_args, "--config", policy.config]
     for configured in policy.lockfiles:
         command.extend(("--lockfile", configured))
     result = runner(

@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use rmcp::handler::server::{router::Router, wrapper::Parameters, ServerHandler};
-use rmcp::model::{CallToolResult, Content, Implementation, InitializeResult, Meta, ServerCapabilities};
+use rmcp::model::{CallToolResult, ContentBlock, Implementation, InitializeResult, Meta, ServerCapabilities};
 use rmcp::schemars::{self, JsonSchema};
 use rmcp::{tool, tool_router, ServiceExt};
 use serde::{Deserialize, Serialize};
@@ -199,8 +199,8 @@ async fn call_builtin(handler: &BuiltinHandler, name: &str, args: serde_json::Va
 /// row an investigator most wants -- so records ride on error results too.
 fn tool_result(outcome: Result<String, String>, records: &[BuiltinLedgerRecord]) -> CallToolResult {
     let mut result = match outcome {
-        Ok(text) => CallToolResult::success(vec![Content::text(text)]),
-        Err(text) => CallToolResult::error(vec![Content::text(text)]),
+        Ok(text) => CallToolResult::success(vec![ContentBlock::text(text)]),
+        Err(text) => CallToolResult::error(vec![ContentBlock::text(text)]),
     };
     if !records.is_empty() {
         let mut meta = Meta::new();

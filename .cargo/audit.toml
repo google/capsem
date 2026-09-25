@@ -40,4 +40,19 @@ ignore = [
   # API is stable and we only call from_pem on trusted input. Swap target
   # is rustls-pki-types readers; tracked but not blocking.
   "RUSTSEC-2025-0134",
+
+  # --- proc-macro-error unmaintained (RUSTSEC-2024-0370) -----------------
+  # A build-time proc macro of glib-macros 0.18, i.e. the same GTK stack
+  # Tauri and tray-icon pin as glib above. It runs in the compiler, not in
+  # anything we ship, and leaves with the glib 0.18 pin.
+  "RUSTSEC-2024-0370",
+
+  # --- bincode 1.x unmaintained (RUSTSEC-2025-0141) ----------------------
+  # A dev-dependency of capsem-foundation only: the ipc_framing_micro bench
+  # measures our frame codec against the legacy bincode encoding, which is
+  # the point of that bench. Nothing built for release links it.
+  "RUSTSEC-2025-0141",
 ]
+# OSV scans Cargo.lock too and must ignore exactly this list, in
+# .config/osv-scanner.toml; build_system/tests/scripts/test_dependency_audit.py holds
+# the two in step.

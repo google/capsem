@@ -458,7 +458,7 @@ impl McpServerManager {
         match client.list_all_resources().await {
             Ok(resources) => {
                 for resource in resources {
-                    let uri = resource.raw.uri.as_str();
+                    let uri = resource.uri.as_str();
                     if uri.is_empty() {
                         continue;
                     }
@@ -466,9 +466,9 @@ impl McpServerManager {
                     self.resource_catalog.push(McpResourceDef {
                         namespaced_uri: ns_uri.clone(),
                         original_uri: uri.to_string(),
-                        name: Some(resource.raw.name.clone()),
-                        description: resource.raw.description.clone(),
-                        mime_type: resource.raw.mime_type.clone(),
+                        name: Some(resource.name.clone()),
+                        description: resource.description.clone(),
+                        mime_type: resource.mime_type.clone(),
                         server_name: def.name.clone(),
                     });
                     self.resource_routing.insert(ns_uri, def.name.clone());
