@@ -1443,6 +1443,9 @@ notes = ["build_system/scripts/release/release-binaries.py", "--precheck"]
 fetch_manifest = "build_system/scripts/release/fetch-channel-source-manifest.py"
 binaries = "build_system/scripts/release/release-binaries.py"
 profile = ["cargo", "run", "-p", "capsem-admin", "--", "release"]
+# `release-profile <channel> all` dispatches every profile behind one shared
+# source proof instead of repeating it once per profile. No profile may use it.
+all_profiles = "all"
 preflight_dir = "cache/target/release/staging/preflight"
 channel_source = "cache/target/release/staging/preflight/channel-source.json"
 default_repository = "google/capsem"
@@ -2020,6 +2023,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_prefix.py",
     "build_system/tests/gate/test_gate_resume.py",
     "build_system/tests/gate/test_gate_release_isolation.py",
+    "build_system/tests/gate/test_gate_release_profile_all.py",
     "build_system/tests/gate/test_gate_release_source_commit.py",
     "build_system/tests/gate/test_gate_run_transfer.py",
     "build_system/tests/gate/test_gate_qualification_evidence.py",

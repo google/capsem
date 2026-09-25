@@ -391,7 +391,9 @@ First-party release entrypoints are deliberately asymmetric:
 - `just release-profile <channel> <profile> <source-commit>` calls `capsem-admin release`
   directly for the selected channel/profile. The command gives the workflow a
   unique correlation identity, discovers that exact run, and waits for its
-  terminal status before returning.
+  terminal status before returning. `<profile>` may be `all`: the source
+  proof and source-ref publication run once, then every profile is dispatched
+  and awaited in turn, and the first failed run stops the rest.
 - `just release-binaries <channel> <source-commit>` calls one checked-in, adversarially tested
   binary-release script.
 

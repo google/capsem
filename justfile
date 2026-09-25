@@ -17,7 +17,7 @@
 #   install                build and install the complete local macOS product
 #   test                   reusable complete local verification
 #   release-binaries       publish packages for one channel
-#   release-profile        publish one channel/profile
+#   release-profile        publish one channel/profile, or `all` of them
 #
 # Underscore recipes are implementation detail. No workflow may call one:
 # `tests/citadel/test_ci_calls_only_public_recipes.py` refuses it.
