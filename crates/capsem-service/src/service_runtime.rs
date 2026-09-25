@@ -170,6 +170,14 @@ pub(super) async fn run_service() -> Result<()> {
 
     let registry_path = run_dir.join("persistent_registry.json");
     let persistent_registry = PersistentRegistry::load(registry_path)?;
+    // Stopped VMs laid out before the overlay left the guest share are moved
+    // now, so no route reads an image through a path the guest could redirect.
+    // A refused VM stays registered and fails loudly when it is resumed.
+    for entry in persistent_registry.data.vms.values() {
+        if let Err(error) = capsem_core::session::adopt_system_overlay(&entry.session_dir) {
+            error!(vm = %entry.name, error = %error, "system overlay refused");
+        }
+    }
     let mut networks =
         capsem_core::net::network_registry::NetworkRegistry::load(capsem_foundation::paths::capsem_networks_dir())
             .await
@@ -224,12 +232,6 @@ pub(super) async fn run_service() -> Result<()> {
         }
     }
 
-    let magika_session = magika::Session::builder()
-        .with_inter_threads(1)
-        .with_intra_threads(1)
-        .build()
-        .expect("failed to init magika file-type detection");
-
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     let asset_reconcile = load_asset_reconcile_state(&asset_status_path);
     let profile_summary_cache = build_profile_summary_cache()
@@ -261,7 +263,6 @@ pub(super) async fn run_service() -> Result<()> {
         asset_reconcile: Mutex::new(asset_reconcile),
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
-        magika: Mutex::new(magika_session),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: Mutex::new(profile_summary_cache),
         profile_cache: Mutex::new(profile_cache),

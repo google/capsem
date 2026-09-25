@@ -114,7 +114,7 @@ def is_test_source(path: Path) -> bool:
         or "tests" in parts
         or "benches" in parts
         or any(Path(part).stem.endswith("_tests") for part in parts)
-        or path.parent.name == "counters" and path.name in {"oracle.rs", "fixtures.rs", "equivalence.rs"}
+        or (path.parent.name == "counters" and path.name in {"oracle.rs", "fixtures.rs", "equivalence.rs"})
     )
 
 

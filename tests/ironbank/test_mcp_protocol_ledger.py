@@ -13,6 +13,7 @@ from contextlib import closing, suppress
 from pathlib import Path
 
 import pytest
+from helpers.body_archive import security_payload
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -30,6 +31,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.session_ledger import ledger_totals, open_session_ledger
 from log_streams import assert_service_log_evidence
 
 pytestmark = pytest.mark.integration
@@ -45,7 +47,6 @@ EXPECTED_SECURITY_COLUMNS = {
     "rule_action",
     "detection_level",
     "rule_json",
-    "event_json",
     "trace_id",
     "turn_id",
     "credential_ref",
@@ -54,7 +55,7 @@ EXPECTED_SECURITY_COLUMNS = {
 
 def _connect_session_db(service: ServiceInstance, session_id: str) -> sqlite3.Connection:
     db_path = vm_session_db_path(service.tmp_dir, service.client(), session_id)
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = open_session_ledger(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -65,7 +66,7 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 def _query_rows(client, session_id: str, sql: str) -> list[dict]:
     db_path = vm_session_db_path(Path(client.socket_path).parent, client, session_id)
-    with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
+    with closing(open_session_ledger(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         return [dict(row) for row in conn.execute(sql).fetchall()]
 
@@ -325,7 +326,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
                 security_by_event.setdefault(row["event_id"], []).append(row)
                 assert row["trace_id"] == trace_id
                 assert json.loads(row["rule_json"])["name"]
-                event = json.loads(row["event_json"])
+                event = security_payload(conn, row["event_id"])
                 assert event["mcp"]["server_name"] == observed_server
                 assert event["tcp"]["port"] == "3713"
                 assert event["ip"]["value"] == "127.0.0.1"
@@ -348,7 +349,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             for row in list_security:
                 assert row["trace_id"]
                 assert json.loads(row["rule_json"])["name"]
-            list_event = json.loads(list_security[0]["event_json"])
+            list_event = security_payload(conn, list_security[0]["event_id"])
             assert list_event["event_type"] == "mcp.tool_list"
             assert list_event["mcp"]["method"] == "tools/list"
             listed_tools = json.loads(list_event["mcp"]["tool_list"])["result"]["tools"]
@@ -376,7 +377,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
                 and row["rule_action"] == "ask"
                 for row in call_security
             )
-            call_event = json.loads(call_security[0]["event_json"])
+            call_event = security_payload(conn, call_security[0]["event_id"])
             assert call_event["event_type"] == "mcp.tool_call"
             assert call_event["mcp"]["method"] == "tools/call"
             assert call_event["mcp"]["tool_call_name"] == "fixture_lookup"
@@ -473,7 +474,11 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             timeout_s=20,
         )
         assert info["profile_id"] == CODE_PROFILE_ID
-        assert info.get("total_tool_calls") is None
+        # The session's totals are the writer's counter snapshot (#223),
+        # written with the rows it counts.
+        with closing(_connect_session_db(service, vm_id)) as conn:
+            totals = ledger_totals(conn)
+        assert info["total_tool_calls"] == totals["total_tool_calls"] > 0
         stats_detail = client.get(f"/vms/{vm_id}/stats/detail", timeout=30)
         assert isinstance(stats_detail, dict)
         mcp_tool_events = [

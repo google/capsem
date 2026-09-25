@@ -1112,7 +1112,7 @@ async fn handle_request(
                     sniffed_model_request = true;
                     sniff_matched = true;
                     sniff_span.record("provider", provider_label(effective_ai_provider));
-                    tracing::info!(
+                    tracing::debug!(
                         target: "capsem.mitm",
                         host = domain,
                         path,
@@ -1127,7 +1127,7 @@ async fn handle_request(
                 if let Some(observed) = observed_mcp_http_request_for_body(&body_bytes, domain, upstream_port, &path) {
                     sniff_matched = true;
                     sniff_span.record("mcp_method", observed.method.as_str());
-                    tracing::info!(
+                    tracing::debug!(
                         target: "capsem.mitm",
                         host = domain,
                         path,

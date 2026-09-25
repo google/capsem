@@ -14,8 +14,8 @@ pub(crate) fn physical_bytes(metadata: &std::fs::Metadata) -> u64 {
 }
 
 pub(crate) fn storage_diagnostics(session_dir: &StdPath) -> Option<api::StorageDiagnostics> {
-    let rootfs_image_path = capsem_core::guest_share_dir(session_dir).join("system/rootfs.img");
-    let metadata = std::fs::metadata(&rootfs_image_path).ok()?;
+    let rootfs_image_path = capsem_core::session::system_overlay_image_path(session_dir);
+    let metadata = capsem_core::session::system_overlay_metadata(session_dir).ok()?;
     let space = capsem_foundation::unix::fs::filesystem_space(session_dir).ok()?;
 
     Some(api::StorageDiagnostics {

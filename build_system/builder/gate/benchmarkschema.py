@@ -159,7 +159,6 @@ class BenchmarkGatesConfig(Strict):
     http_p99_ms: int
     throughput_min_bytes: int
     throughput_min_mbps: int
-    snapshot_op_ms: int
     #: Liveness rather than speed: a read reporting zero means the measurement
     #: did not happen.
     storage_min_mbps: int

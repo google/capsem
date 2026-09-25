@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { HostLogSource, SnapshotOrigin, type VmStatsDetailResponse, type SnapshotsStatus } from '@capsem/sdk';
+import { HostLogSource, type VmStatsDetailResponse } from '@capsem/sdk';
 
 const mockFetch = vi.fn<typeof fetch>();
 vi.stubGlobal('fetch', mockFetch);
@@ -16,10 +16,6 @@ const stats: VmStatsDetailResponse = {
   model_events: [], tool_events: [], http_events: [], dns_events: [], file_events: [],
   process_events: [], audit_events: [], credential_events: [], body_blobs: {},
 };
-const snapshots: SnapshotsStatus = {
-  total: 1, auto_count: 1, manual_count: 0, manual_available: 12,
-  snapshots: [{ checkpoint: 'cp-0', slot: 0, origin: SnapshotOrigin.AUTO, timestamp: 'unix:1' }],
-};
 
 beforeEach(async () => {
   mockFetch.mockReset();
@@ -33,8 +29,6 @@ beforeEach(async () => {
 const reads = [
   { name: 'VM logs', read: () => api.getVmLogs('vm 1'), path: '/vms/vm%201/logs', value: { logs: 'session log', serial_logs: null, process_logs: 'process log' } },
   { name: 'stats detail', read: () => api.getVmStatsDetail('vm 1'), path: '/vms/vm%201/stats/detail', value: stats },
-  { name: 'snapshot status', read: () => api.getVmSnapshotStatus('vm 1'), path: '/vms/vm%201/snapshots/status', value: snapshots },
-  { name: 'snapshot list', read: () => api.listVmSnapshots('vm 1'), path: '/vms/vm%201/snapshots/list', value: { total: 1, snapshots: snapshots.snapshots } },
 ];
 
 it.each(reads)('validates and authenticates $name', async ({ read, value, path }) => {
@@ -72,11 +66,6 @@ it('rejects invalid host log sources and nested stats fields', async () => {
   mockFetch.mockResolvedValueOnce(json({ ...stats, model_stats: [{ provider: 'google', call_count: '1' }] }));
   await expect(api.getVmStatsDetail('vm 1')).rejects.toThrow();
   expect(api.isConnected()).toBe(true);
-});
-
-it('rejects an unknown snapshot origin', async () => {
-  mockFetch.mockResolvedValueOnce(json({ ...snapshots, snapshots: [{ ...snapshots.snapshots[0], origin: 'future' }] }));
-  await expect(api.getVmSnapshotStatus('vm 1')).rejects.toThrow();
 });
 
 it.each(['logs', 'stats', 'service'] as const)('retains the offline fallback for %s connection failures', async kind => {

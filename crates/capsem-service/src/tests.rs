@@ -11,16 +11,6 @@ mod profile_rule_push;
 
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-fn test_magika() -> Mutex<magika::Session> {
-    Mutex::new(
-        magika::Session::builder()
-            .with_inter_threads(1)
-            .with_intra_threads(1)
-            .build()
-            .expect("magika init"),
-    )
-}
-
 fn test_profile_summary_cache() -> Vec<api::ProfileSummary> {
     build_profile_summary_cache().expect("test profile summary cache should build")
 }
@@ -112,7 +102,6 @@ pub(crate) fn make_test_state_owned() -> ServiceState {
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
-        magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: Mutex::new(test_profile_summary_cache()),
         profile_cache: Mutex::new(test_profile_cache()),
@@ -198,7 +187,6 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
-        magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: Mutex::new(test_profile_summary_cache()),
         profile_cache: Mutex::new(test_profile_cache()),
@@ -314,6 +302,35 @@ pub(crate) fn only_reloads(received: &[ServiceToProcess], count: usize) -> bool 
         && received
             .iter()
             .all(|message| matches!(message, ServiceToProcess::ReloadConfig { .. }))
+}
+
+/// A VM owner that answers `CloneState` the way the real one does once the
+/// guest is frozen -- by cloning `source` -- or refuses with `refusal`.
+pub(crate) fn spawn_fake_fork_owner(
+    uds_path: &StdPath,
+    source: PathBuf,
+    refusal: Option<&'static str>,
+) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
+    spawn_fake_process(uds_path, 1, move |message| {
+        let reply = match message {
+            ServiceToProcess::CloneState { id, destination } => {
+                let (size_bytes, error) = match refusal {
+                    None => (
+                        Some(capsem_core::session::clone_sandbox_state(&source, StdPath::new(destination)).unwrap()),
+                        None,
+                    ),
+                    Some(reason) => (None, Some(reason.to_string())),
+                };
+                Some(ProcessToService::CloneStateResult {
+                    id: *id,
+                    size_bytes,
+                    error,
+                })
+            }
+            other => panic!("fork sent an unexpected owner message: {other:?}"),
+        };
+        Box::pin(async move { reply })
+    })
 }
 
 /// A fake process that answers ping, and reloads by reporting the digest of
@@ -716,7 +733,6 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
-        magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: Mutex::new(test_profile_summary_cache()),
         profile_cache: Mutex::new(test_profile_cache()),
@@ -753,6 +769,7 @@ mod async_io_contract;
 mod db_handle_ownership;
 mod files_api;
 mod files_paths;
+mod fork;
 mod inspection;
 mod interactions;
 mod ipc_command;
@@ -767,7 +784,6 @@ mod restart;
 mod route_query_plans;
 mod session_identity;
 mod settings_files;
-mod snapshots_api;
 mod system_contracts;
 mod telemetry_export;
 mod transcript;

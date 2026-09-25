@@ -5062,12 +5062,6 @@ def test_rust_http_stack_uses_webpki_roots_not_platform_keychain_verifier() -> N
     assert "rustls-tls-webpki-roots" in reqwest_line
     assert '"rustls"' not in reqwest_line
 
-    service_manifest = (PROJECT_ROOT / "crates" / "capsem-service" / "Cargo.toml").read_text()
-    ort_line = next(line for line in service_manifest.splitlines() if line.startswith("ort = "))
-    assert "default-features = false" in ort_line
-    assert '"tls-rustls"' in ort_line
-    assert '"tls-native"' not in ort_line
-
     for package in ["rustls-platform-verifier", "native-tls", "security-framework"]:
         result = subprocess.run(
             ["cargo", "tree", "-i", package, "--workspace", "--edges", "all"],
@@ -5376,8 +5370,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
 
     # And the property none of the originals asserted, because it was not true:
     # the lane runs with no outbound network, which is what proved the mid-run
-    # `pnpm install` and the `cdn.pyke.io` fetch inside `ort`'s build script
-    # were there at all.
+    # `pnpm install` and a build script's CDN fetch were there at all.
     assert "--network none" in linux_rust_gate
 
     # `nextest` moved out of the argv with the mount that bound its state; the
@@ -6566,19 +6559,24 @@ def test_suspend_snapshot_freezes_ext4_upper_before_ack_and_thaws_first_on_resto
     )
 
 
-def test_fork_route_flushes_without_thaw_before_clone() -> None:
-    """Pre-fork quiescence must not pay fsfreeze cost and thaw before clone."""
-    vm_files = PROJECT_ROOT / "crates" / "capsem-service" / "src" / "vm_files.rs"
-    parent = vm_files.read_text()
-    source = vm_files.with_name("vm_files").joinpath("fork.rs").read_text()
-    assert "mod fork;" in parent
-    assert "pub(crate) use fork::handle_fork;" in parent
-    fork_block = source.split("async fn handle_fork", maxsplit=1)[1].split(
-        "Ok(Json(ForkResponse", maxsplit=1
-    )[0]
+def test_fork_clones_inside_the_owner_under_a_guest_freeze() -> None:
+    """A running fork is cloned by its own process with the guest frozen.
 
-    assert 'command: "sync; true".to_string()' in fork_block
-    assert 'command: "fsfreeze' not in fork_block
+    The fork used to run `sync; true` in the guest and copy the live ext4
+    overlay, which a slow sparse copy could tear. The freeze and the thaw must
+    live in one process, so no other process's failure can leave a guest
+    frozen, and the service must not fall back to an unfrozen copy.
+    """
+    service = PROJECT_ROOT / "crates" / "capsem-service" / "src"
+    parent = (service / "vm_files.rs").read_text()
+    fork = (service / "vm_files" / "fork.rs").read_text()
+    owner = (PROJECT_ROOT / "crates" / "capsem-process" / "src" / "vsock" / "clone_state.rs").read_text()
+
+    assert "pub(crate) use fork::{clone_session_state, handle_fork};" in parent
+    assert "ServiceToProcess::CloneState {" in fork
+    assert "sync; true" not in fork
+    assert "with_quiescence(" in owner
+    assert "clone_sandbox_state(" in owner.split("with_quiescence(", 1)[1]
 
 
 def test_linux_vm_launch_preformats_system_overlay_before_boot() -> None:
@@ -6593,7 +6591,7 @@ def test_linux_vm_launch_preformats_system_overlay_before_boot() -> None:
     assert "pub fn preformat_system_overlay_image_if_needed" in core
     assert "pub fn ensure_preformatted_system_overlay_template" in core
     assert "pub fn preformat_system_overlay_image_from_template_if_needed" in core
-    assert "auto_snapshot::clone_file(template_path, &tmp_path)" in core
+    assert "session::clone_file(template_path, &tmp_path)" in core
     assert "system_overlay_has_ext4_magic(path)?" in core
     assert "lazy_itable_init=1,lazy_journal_init=1" in core
     assert '.arg("size=4")' in core

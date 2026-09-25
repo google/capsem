@@ -159,7 +159,6 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     python, syntax = guards.python, guards.syntax
     node = phase.add(toolchain.node(config), after=(python,))
     rust = phase.add(toolchain.rust(config), after=(python,))
-    ort = phase.add(toolchain.ort(config, toolchain.OrtConsumer.FAST), after=(python,))
     formatted = phase.add(audits.rust_format(config), after=(syntax, rust))
 
     live = audits.live(config)
@@ -212,10 +211,10 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     channel = phase.add(webaudits.release_channel(config), after=(syntax, node))
     # One surface is Clippy's prerequisite; the rest are leaves of their own.
     blocking = webaudits.blocking_surface(config, surfaces)
-    clippy = phase.add(webaudits.clippy(config), after=(blocking, rust, ort))
+    clippy = phase.add(webaudits.clippy(config), after=(blocking, rust))
     # The guest feature set embeds no frontend, so it waits only for the
     # toolchain and shares the binaries lock with workspace clippy.
-    guest = phase.add(webaudits.clippy_guest(config), after=(syntax, rust, ort))
+    guest = phase.add(webaudits.clippy_guest(config), after=(syntax, rust))
     return (
         *audited,
         *sdk_checked,

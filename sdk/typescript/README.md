@@ -54,8 +54,8 @@ profile, pass an object from `await hv.profiles.list()` to `create` or `run`.
 VM names resolve through `hv.list()` and cache the canonical ID. Missing or
 ambiguous names fail before a VM operation is sent.
 
-Methods mirror the gateway, including `vm.history()`, `vm.files.history(checkpoint)`,
-`vm.timeline()`, `vm.snapshots.list/status()` and `vm.stats.summary/details()`.
+Methods mirror the gateway, including `vm.history()`, `vm.timeline()` and
+`vm.stats.summary/details()`.
 Query options retain the gateway's spelling, such as `max_bytes` and `trace_id`.
 `hv.update()` applies the update. File access requires a running VM security
 ledger; stopped VMs return the gateway's conflict error.
@@ -90,7 +90,7 @@ ready, while `vm.container.status()` remains a read-only diagnostic.
 browser-authentication flow when `authenticate` is true. The SDK infers whether
 the workload target is the container or VM. `list` and `close` manage the same
 typed port objects.
-Snapshot create/restore and mounts remain pending.
+Mounts remain pending.
 
 `hv.run(command)` executes once in a temporary VM. `hv.debug.panics()`, `hv.debug.triage()`
 and `hv.purge()` expose diagnostics and cleanup. `hv.profiles` provides typed

@@ -970,7 +970,7 @@ fn create_tables_keeps_snapshots_out_of_session_db() {
         .unwrap();
     assert_eq!(
         count, 0,
-        "snapshots are host recovery state; session.db is the user/security activity ledger"
+        "workspace snapshots were retired (#228); session.db has no snapshot table"
     );
 }
 
@@ -978,17 +978,19 @@ fn create_tables_keeps_snapshots_out_of_session_db() {
 fn security_event_type_check_rejects_snapshot_event() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    let result = conn.execute(
-        "INSERT INTO security_rule_events (
-                timestamp_unix_ms, event_id, event_type, rule_id, rule_name,
-                rule_action, detection_level, provider, rule_snapshot, event_payload
-             ) VALUES (
-                1, 'abcdef123456', 'snapshot.event', 'profiles.rules.snapshot',
-                'snapshot', 'allow', 'none', 'profiles', '{}', '{}'
-             )",
-        [],
-    );
-    assert!(result.is_err(), "snapshot.event must not be a security-event type");
+    // The same row with a real event type is accepted, so the refusal below
+    // can only be the event-type CHECK.
+    let insert = |event_type: &str| {
+        conn.execute(
+            "INSERT INTO security_rule_events (
+                    timestamp_unix_ms, event_id, event_type, rule_id, rule_action, rule_json
+                 ) VALUES (1, 'abcdef123456', ?1, 'profiles.rules.snapshot', 'allow', '{}')",
+            [event_type],
+        )
+    };
+    insert("file.event").expect("a well-formed rule match is accepted");
+    let error = insert("snapshot.event").expect_err("snapshot.event must not be a security-event type");
+    assert!(error.to_string().contains("CHECK constraint failed"), "{error}");
 }
 
 mod dns;

@@ -20,8 +20,14 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
             },
             Some(8),
         ),
-        (ServiceToProcess::SnapshotStatus { id: 9 }, Some(9)),
         (ServiceToProcess::McpRefreshTools { id: 10 }, Some(10)),
+        (
+            ServiceToProcess::CloneState {
+                id: 12,
+                destination: "/tmp/fork".into(),
+            },
+            Some(12),
+        ),
         (
             ServiceToProcess::LinkDetach {
                 id: 11,

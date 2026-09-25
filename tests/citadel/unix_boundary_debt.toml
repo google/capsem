@@ -19,9 +19,7 @@
 "crates/capsem-agent/src/terminal_bridge.rs" = "a998fbd07bf14d4d1f7d01fc2756142c9fffd037a8840fe28fcf9723df4db656"
 "crates/capsem-agent/src/vsock_io.rs" = "6d6ee5324842033a0b18abb541b96ccc720c124010da8aea1970eeeb4a9fac17"
 "crates/capsem-agent/src/tun_pump.rs" = "b77a77db872cf985b6f4c3456c6d0594a850d434f084d2743903aac7ea9ed6c1"
-"crates/capsem-core/src/auto_snapshot.rs" = "8c74a509534e2ab852cbd8a486536065090ea2064fbe111752f5637b2e3abc6e"
-"crates/capsem-core/src/auto_snapshot/sparse_copy.rs" = "2ae415613b699b3ee820ff965560126503f0e6a2bd5063323dd1dc778079d603"
-"crates/capsem-core/src/hypervisor/apple_vz/machine.rs" = "6b58f0be51ae99954999ec72250f8439fa6ee56c5fd8b62f8950431810d48d20"
+"crates/capsem-core/src/hypervisor/apple_vz/machine.rs" = "12cb27de40f21a8a237b1b148e84a0d04e1e8e5512c422953cbe92e61858b771"
 "crates/capsem-core/src/hypervisor/fuse/file_handles.rs" = "8c554b16db7c779aec5cb136aaa9f72d19a16ae58f9afbc6200ca7dbd45d8933"
 "crates/capsem-core/src/hypervisor/fuse/inode_table.rs" = "8b6d76dfaeea22135bfe43e1f5bbb7db56645f62661f1dc98b83ae21ea83d128"
 "crates/capsem-core/src/hypervisor/fuse/mod.rs" = "9d369eaa322adb9caa7bb31e0027add0954e2b1227bd0f6f94b4d7eca6e16de6"
@@ -41,5 +39,92 @@
 "crates/capsem-core/src/hypervisor/kvm/virtio_vsock/lifecycle.rs" = "83c7ec268765e594bebe53715a3d148a37e0cd9ad3dd9bb58f1d15a4eaba093b"
 
 [domain_abi.manifest]
-"crates/capsem-agent/Cargo.toml" = "9245c6bea71309fec74943f2fd51f427e401e5c08d66fc78defced051a7e9a99"
-"crates/capsem-core/Cargo.toml" = "3512ff7e4cd15fd714394f3a490a7ecab92625a98c46b267e54c6616a6edb67b"
+"crates/capsem-agent/Cargo.toml" = "b398a0923373865e5a92490a2a42837c6ee6f95271ade61f08f0442d44dc7f8a"
+"crates/capsem-core/Cargo.toml" = "5599b092b8f17f520d7ba8a7caca26f71ad50d33a79017bcf5644dc423330ddc"
+
+# Raw libc calls and extern "C" bindings inside capsem-foundation itself.
+# Key: "<path>::<call>". Each names why nix cannot express it; a call nix
+# wraps also states the nix_gap. See test_foundation_raw_calls_*.
+[foundation.raw_calls."crates/capsem-foundation/src/proctable.rs::proc_listallpids"]
+fingerprint = "e90559c3fbb6b172e5174c053887cfb555f9cf0c9eccd737be7993c3b6b07c1d"
+reason = "macOS libproc process enumeration; no nix wrapper exists"
+
+[foundation.raw_calls."crates/capsem-foundation/src/proctable.rs::proc_pidinfo"]
+fingerprint = "f59fa43256cb12ebd40513dfc1bea27933cbfdaf4f466ed368ea831b032a13f3"
+reason = "macOS libproc per-process info; no nix wrapper exists"
+
+[foundation.raw_calls."crates/capsem-foundation/src/proctable.rs::sysctl"]
+fingerprint = "18b225fe63f4d3bd55217c8b572bb776b3055f02b56bf57301b63e8f490e7db1"
+reason = "macOS KERN_PROCARGS2 argv read; nix has no sysctl wrapper"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/fd.rs::connect"]
+fingerprint = "1d23c648463d80e59d3b00cf4d23967a31c4dd5200e25d36d3a5b4edf93b48c5"
+reason = "Linux TCP abort: connect(AF_UNSPEC) dissolves the association before close"
+nix_gap = "nix SockaddrLike has no AF_UNSPEC address, so the disconnect form cannot be expressed"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/fd.rs::disconnectx"]
+fingerprint = "4f0e800ee9702991a5957745641540d9e536b04204819c614420f4a12467fb43"
+reason = "macOS TCP abort via disconnectx; nix has no wrapper"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/fd.rs::setsockopt"]
+fingerprint = "003d8fd29845c26d97ce2f3c5f7d4a3ee00a3e84c0fe122c71385f8b0d650fde"
+reason = "Linux AF_VSOCK buffer bounds (SO_VM_SOCKETS_BUFFER_* 0/1/2) set before credit can grow"
+nix_gap = "nix::sys::socket::sockopt defines no AF_VSOCK buffer options, so there is no SetSockOpt type"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/fs/extents.rs::fclonefileat"]
+fingerprint = "1382b8391823c31f4fbdbf23e319493504ee03a024fcd02c45f543e466af0d2d"
+reason = "macOS APFS clone from an open descriptor into a directory descriptor; no nix wrapper"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/process.rs::getloadavg"]
+fingerprint = "f0720ea72a4811bd1ce6b506f2b6ee445cb5c61c89cdec7fa63fb70d7f217cb7"
+reason = "host load average for admission; nix has no wrapper"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/process.rs::proc_listpgrppids"]
+fingerprint = "c1be64a4c316e2674c3627d8193db0d380ccf0d8cf6c4c7bf701ee9e525b51d8"
+reason = "macOS libproc process-group listing; no nix wrapper"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/process.rs::waitid"]
+fingerprint = "28b3eead89af899046069d614987786cfce11ef7131806a89f7b6da5df2d3363"
+reason = "observe a child's exit without reaping it (WNOWAIT) on macOS and Linux alike"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/router_channel.rs::CMSG_DATA"]
+fingerprint = "65cd09a890cd95efb96ea231cd413136f47e5d6dd2ad1a80903767a2482f78cf"
+reason = "Darwin keeps the original cmsg_len after MSG_CTRUNC; only descriptors actually copied into the buffer may be adopted, which needs manual CMSG walking bounded by msg_controllen"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/router_channel.rs::CMSG_FIRSTHDR"]
+fingerprint = "13f3edeed14bdd9ca8ec458aa21ea7fc18e798e3a1ddb2ca4e3ff4f53ead4722"
+reason = "Darwin keeps the original cmsg_len after MSG_CTRUNC; only descriptors actually copied into the buffer may be adopted, which needs manual CMSG walking bounded by msg_controllen"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/router_channel.rs::CMSG_LEN"]
+fingerprint = "33d3b76f95568504e3a7f4b3e6c631ab24db134db9569ee2a16e1178c1cb2fcc"
+reason = "Darwin keeps the original cmsg_len after MSG_CTRUNC; only descriptors actually copied into the buffer may be adopted, which needs manual CMSG walking bounded by msg_controllen"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/router_channel.rs::CMSG_NXTHDR"]
+fingerprint = "6218bccab72a8878b04c736f1c862b5bf2158a521e1f40a3ee7f6b199aba2457"
+reason = "Darwin keeps the original cmsg_len after MSG_CTRUNC; only descriptors actually copied into the buffer may be adopted, which needs manual CMSG walking bounded by msg_controllen"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/router_channel.rs::CMSG_SPACE"]
+fingerprint = "944b64b816fb164c0cdfa2fb6092c4b26a402860ba24375cbfcdaab7e27aca00"
+reason = "Darwin keeps the original cmsg_len after MSG_CTRUNC; only descriptors actually copied into the buffer may be adopted, which needs manual CMSG walking bounded by msg_controllen"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/router_channel.rs::recvmsg"]
+fingerprint = "21f99cf2d53b8a1abdef4b2a025fd4ca17bb69117235f217ee2b1fab37a5f906"
+reason = "Darwin keeps the original cmsg_len after MSG_CTRUNC; only descriptors actually copied into the buffer may be adopted, which needs manual CMSG walking bounded by msg_controllen"
+nix_gap = "nix's ControlMessageOwned decoder trusts cmsg_len after MSG_CTRUNC and could adopt descriptors never delivered"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/router_channel.rs::sendmsg"]
+fingerprint = "da2c40b60aa9b1116425ac8f5c226e06782ab6580d053400c96a74858df06ac0"
+reason = "descriptor passing must not raise SIGPIPE when the router peer has gone"
+nix_gap = "nix MsgFlags has no MSG_NOSIGNAL on macOS, so the send would signal instead of failing"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/router_sandbox.rs::sandbox_free_error"]
+fingerprint = "429f4efde365972763d15c7976b45af1d29819c8342fa1c4da5be3e123555fdb"
+reason = "macOS Seatbelt error release paired with sandbox_init"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/router_sandbox.rs::sandbox_init"]
+fingerprint = "3b3192659d01c462a3964d74c36d497e6ca02030c510cbcfde55f10b6fa61102"
+reason = "macOS Seatbelt confinement of the router; no nix wrapper"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/router_sandbox/linux.rs::syscall"]
+fingerprint = "d14267a19410254a6633ba264e8046ea3dbd9c9046b72006155d76ee76db008f"
+reason = "seccomp(2) filter install with TSYNC; nix has no seccomp"

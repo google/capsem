@@ -45,8 +45,8 @@ struct RunningServer {
 ///
 /// `next` round-robins across `peers`, but only for tools whose original
 /// (post-namespace-strip) name appears in `pool_safe_tools`. Tools NOT in
-/// that allowlist pin to `peers[0]` so per-process state (e.g. the
-/// builtin's `Arc<Mutex<AutoSnapshotScheduler>>`) stays consistent.
+/// that allowlist pin to `peers[0]` so any per-process state they hold
+/// stays consistent.
 struct ServerPool {
     peers: Vec<RunningServer>,
     next: AtomicUsize,

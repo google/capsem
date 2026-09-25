@@ -41,7 +41,7 @@ offending option, never its value, and are written to stderr.
 The server exposes typed tools for VM and OCI-container creation, lifecycle
 actions, container status, port lifecycle, command execution, file
 listing and byte-preserving transfers, logs, history, timeline, statistics,
-snapshots, panics, and triage. VM tools take the immutable `vm_id` returned by
+panics, and triage. VM tools take the immutable `vm_id` returned by
 `capsem_list` or `capsem_create`. File content can be passed as UTF-8 or base64.
 
 Network tools create, list, inspect and retire private networks, attach or detach

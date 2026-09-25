@@ -8,6 +8,7 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
+from helpers.session_ledger import open_session_ledger
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_scripts import agy_cli_script
 
@@ -24,7 +25,7 @@ def test_agy_replay_records_google_credential_broker_events(
         agy_cli_script(model_client_env.mock_base_url),
     )
 
-    with closing(sqlite3.connect(f"file:{model_client_env.db_path}?mode=ro", uri=True)) as conn:
+    with closing(open_session_ledger(model_client_env.db_path)) as conn:
         conn.row_factory = sqlite3.Row
         net_rows = conn.execute(
             """

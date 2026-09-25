@@ -7,8 +7,8 @@ sidebar:
 
 This page tracks the two release-relevant platforms. macOS arm64 remains the
 performance baseline. Linux KVM x86_64 is fully exercising the 1.5 release gate:
-the numbers are acceptable, with storage, snapshot latency, and cold lifecycle
-readiness still the main Linux gaps.
+the numbers are acceptable, with storage and cold lifecycle readiness still the
+main Linux gaps.
 
 Linux release validation from the current run: main Python `1627 passed`, `78
 skipped`, coverage `90.09%`; release-site shared dist `112 passed`; serial
@@ -112,9 +112,7 @@ ledger paths passed in Ironbank.
 </svg>
 
 Additional app-side data: Linux Codex startup mean `364.5ms`; macOS Codex
-startup mean `116.9ms`. Snapshot operations on Linux remain release-usable:
-10-file create/list/changes/revert/delete is `2474.5 / 968.8 / 976.9 / 1356.9 /
-992.7ms`; 500-file path is `1194.1 / 1018.5 / 1078.3 / 1003.9 / 1022.1ms`.
+startup mean `116.9ms`.
 
 ## Network
 

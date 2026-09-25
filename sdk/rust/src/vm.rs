@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::sync::OnceCell;
 
 use crate::client::Client;
-use crate::resources::{Container, Files, Ports, Snapshots, Stats, VmNetworks};
+use crate::resources::{Container, Files, Ports, Stats, VmNetworks};
 use crate::{models, operations as api, Error, Result, VmSelector};
 
 mod queries;
@@ -252,9 +252,6 @@ impl VM {
         .await
     }
 
-    pub fn snapshots(&self) -> Snapshots<'_> {
-        Snapshots(self)
-    }
     pub fn stats(&self) -> Stats<'_> {
         Stats(self)
     }

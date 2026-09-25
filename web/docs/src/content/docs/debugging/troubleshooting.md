@@ -102,4 +102,4 @@ just inspect-session              # Most recent session
 just inspect-session <id>         # Specific session
 ```
 
-This shows MCP tool usage, network requests, boot timing, and snapshot operations. Useful for diagnosing slow operations or missing telemetry.
+This shows MCP tool usage, network requests, and boot timing. Useful for diagnosing slow operations or missing telemetry.

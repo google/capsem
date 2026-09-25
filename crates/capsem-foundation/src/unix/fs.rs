@@ -9,6 +9,12 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsE
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod durability;
+mod extents;
+
+pub use durability::{set_mode, sync, sync_before_barrier, sync_filesystem};
+pub use extents::{clone_file_into, copy_sparse, CloneMethod};
+
 const PRIVATE_DIR_MODE: u32 = 0o700;
 const PRIVATE_FILE_MODE: u32 = 0o600;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -113,15 +119,10 @@ pub fn durable_sync_file(file: &File) -> io::Result<()> {
     #[cfg(target_os = "macos")]
     {
         loop {
-            // SAFETY: `file` owns a live descriptor and F_FULLFSYNC does not
-            // retain the integer after this synchronous call.
-            let result = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) };
-            if result == 0 {
-                return Ok(());
-            }
-            let error = io::Error::last_os_error();
-            if error.kind() != io::ErrorKind::Interrupted {
-                return Err(error);
+            match nix::fcntl::fcntl(file.as_raw_fd(), nix::fcntl::FcntlArg::F_FULLFSYNC) {
+                Ok(_) => return Ok(()),
+                Err(nix::errno::Errno::EINTR) => {}
+                Err(error) => return Err(super::errno::io(error)),
             }
         }
     }

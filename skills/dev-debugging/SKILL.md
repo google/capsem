@@ -208,7 +208,7 @@ When diagnosis reveals a **systemic pattern** (the same mistake repeated across 
 - **Document the pattern in the relevant skill** (e.g., dev-rust-patterns) so it's never reintroduced.
 - **Add tests that would catch the pattern** if it recurs (e.g., a contract test between the frontend and backend response format).
 
-Example: Snapshot MCP hang was caused by blocking I/O (clonefile, walkdir, blake3) on tokio worker threads. The same anti-pattern existed in 7 file tool handlers, the auto-snapshot timer, and asset hash verification. Fixing only the reported `snapshots_create` call would have left 9 other sites broken.
+Example: an MCP tool hang was caused by blocking I/O (clonefile, walkdir, blake3) on tokio worker threads. The same anti-pattern existed in 7 sibling tool handlers, a background timer, and asset hash verification. Fixing only the reported call would have left 9 other sites broken.
 
 ## Step 3: Fix with a comprehensive solution
 

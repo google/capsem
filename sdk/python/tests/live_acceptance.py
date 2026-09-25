@@ -50,8 +50,6 @@ async def main() -> None:
             assert isinstance(await vm.history(limit=10), models.HistoryResponse)
             assert isinstance(await vm.stats.summary(), models.VmStatsSummaryResponse)
             assert isinstance(await vm.stats.details(), models.VmStatsDetailResponse)
-            assert isinstance(await vm.snapshots.list(), models.SnapshotsList)
-            assert isinstance(await vm.snapshots.status(), models.SnapshotsStatus)
             stopped = await vm.stop()
             assert stopped.success and stopped.persistent
             assert (await vm.info()).status == models.VmLifecycleState.STOPPED

@@ -146,12 +146,9 @@ def test_focused_static_builds_every_runtime_binary_before_macos_signing(monkeyp
     build = plan.step_named("static.build-binaries")
     assert plan.after_of("static.sign") >= {build.label, "static.rust-coverage"}
     assert plan.after_of(build.label) == {"static.cargo-cache-enforcement"}
-    assert plan.after_of("static.cargo-cache-enforcement") >= {
-        "static.toolchain.ort", "static.web.frontend-bundle",
-    }
+    assert plan.after_of("static.cargo-cache-enforcement") >= {"static.web.frontend-bundle"}
     output = "\n".join(build.render())
     assert "cargo build" in output
-    assert "ORT_STRATEGY=system" in output
     assert {CONFIG.path(binary) for binary in CONFIG.signing.binaries} <= set(build.produces)
 
 
@@ -183,27 +180,6 @@ def test_dependency_audit_reads_lockfiles_without_materializing_node_modules() -
     plan = _plan(FastModule)
 
     assert plan.after_of("fast.audit.dependencies") == {"fast.audit.source-syntax"}
-
-
-@pytest.mark.parametrize(
-    ("module", "materializer", "consumer"),
-    [
-        (FastModule, "fast.toolchain.ort", "fast.clippy"),
-        (StaticModule, "static.toolchain.ort", "static.rust-coverage"),
-    ],
-)
-def test_rust_builds_wait_for_the_verified_host_ort_distribution(
-    module, materializer: str, consumer: str
-) -> None:
-    plan = _plan(module)
-    materialize = next(step for step in plan.steps if step.label == materializer)
-    build = next(step for step in plan.steps if step.label == consumer)
-
-    assert _wave_of(module, consumer) > _wave_of(module, materializer)
-    assert any("[outside kernel sandbox]" in line for line in materialize.render())
-    rendered = "\n".join(build.render())
-    assert "ORT_STRATEGY=system" in rendered
-    assert "ORT_LIB_LOCATION=" in rendered
 
 
 def test_static_materializes_only_dependency_helpers_outside_the_sandbox() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 
+from helpers.session_ledger import open_session_ledger
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_scripts import gemini_api_script
 from ironbank.model_pricing import assert_model_call_price
@@ -28,7 +29,7 @@ def test_gemini_api_streaming_and_nonstreaming_ledger_contract(
     assert result["nonstream_model"] == "gemini-3.5-flash"
     assert result["nonce"] in result["nonstream_text"]
 
-    with closing(sqlite3.connect(f"file:{model_client_env.db_path}?mode=ro", uri=True)) as conn:
+    with closing(open_session_ledger(model_client_env.db_path)) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """

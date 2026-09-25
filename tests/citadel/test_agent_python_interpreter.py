@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -154,3 +155,39 @@ def test_every_python_hook_command_runs_a_self_reexecing_launcher() -> None:
             if not _calls_reexec(script):
                 offenders.append(command)
     assert not offenders, AGENT_PYTHON_RATIONALE + f"\nthese hooks run on the system python: {offenders}"
+
+
+STALE_PROJECT_DIR_RATIONALE = """\
+A hook finds its script in the checkout the session works in.
+
+In a worktree session Claude Code sets $CLAUDE_PROJECT_DIR to the main
+checkout, which can sit on an older commit. A hook that looked for its script
+only there failed on every Bash call -- `echo ok` included -- once the main
+checkout lacked the file, and the session could run nothing until restarted.
+Resolve the root with `git rev-parse --show-toplevel` and fall back to
+$CLAUDE_PROJECT_DIR only outside a git tree.
+"""
+
+
+@pytest.mark.parametrize("event", ["SessionStart", "PreToolUse"])
+def test_hooks_run_when_the_project_dir_is_a_stale_checkout(event: str, tmp_path: Path) -> None:
+    """Drive each hook as Claude Code does, from a worktree whose
+    $CLAUDE_PROJECT_DIR names a checkout without the hook scripts."""
+    stale = tmp_path / "stale-main-checkout"
+    stale.mkdir()
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "echo ok"}})
+    commands = _commands(event)
+    assert commands, f"no {event} hook to drive"
+    for command in commands:
+        result = subprocess.run(
+            ["/bin/sh", "-c", command],
+            cwd=PROJECT_ROOT,
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(stale)},
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, (
+            STALE_PROJECT_DIR_RATIONALE + f"\n{event} hook failed: {command}\n{result.stderr[-800:]}"
+        )

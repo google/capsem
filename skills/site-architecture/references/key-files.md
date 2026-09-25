@@ -22,7 +22,8 @@
 - `crates/capsem-core/src/vm/serial.rs` -- serial console pipe setup (boot logs)
 - `crates/capsem-core/src/vm/vsock.rs` -- vsock manager, control messages, coalescing buffer
 - `crates/capsem-core/src/fs_monitor.rs` -- host-side workspace monitor: its own walkdir scan loop (FSEvents misses VirtioFS writes), following no symlinks, on a cadence derived from the scan's own cost
-- `crates/capsem-core/src/auto_snapshot.rs` -- rolling auto-snapshot scheduler (APFS clonefile ring buffer)
+- `crates/capsem-core/src/session/clone.rs` -- `clone_sandbox_state`: fork/create-from clone of `guest/{system,workspace}` and the session ledger
+- `crates/capsem-foundation/src/unix/tree_clone.rs` -- descriptor-relative, no-follow CoW tree clone (clonefile/FICLONE, sparse-copy fallback)
 
 ## Gateway
 
@@ -59,7 +60,7 @@
 
 - `mcp/typescript/src/` -- SDK-backed npm host MCP server and typed tool handlers
 - `crates/capsem-mcp-aggregator/src/` -- external-server lifecycle and transport
-- `crates/capsem-mcp-builtin/src/main.rs` -- built-in HTTP and file/snapshot tools
+- `crates/capsem-mcp-builtin/src/main.rs` -- built-in HTTP tools and the `echo` transport probe
 - `crates/capsem-core/src/mcp/` -- VM/session-side MCP runtime integration
 
 ## Shared host plumbing

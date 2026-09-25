@@ -14,9 +14,8 @@ the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
 | Profiles and MCP | `profiles.list`, `profiles.mcp(profile).info/servers/default_permission/get`; scoped `server.tools.list/call`, `server.refresh` |
 | VM | `info`, `exec`, `persist`, `start`, `stop`, `pause`, `resume`, `delete`, `fork` |
 | VM inspection | `log`, `history`, `timeline` |
-| VM files | `files.list/read/write/history` |
+| VM files | `files.list/read/write` |
 | VM networks | `networks.list/attach/detach` |
-| VM snapshots | `snapshots.list`, `snapshots.status` |
 | VM stats | `stats.summary`, `stats.details` |
 | VM container | `container.status` |
 | VM ports | `ports.open/list/close` |
@@ -80,7 +79,7 @@ Creation uses the gateway catalog's default profile when `profile` is omitted:
 the client reads `default_profile_id` from `GET /status` once and caches it, so
 no profile name is compiled into an SDK. Explicit profile selection accepts a
 typed object returned by `profiles.list`, rather than a raw profile ID.
-Snapshot creation/restoration and mounts remain deferred.
+Mounts remain deferred.
 
 The separately installed [`@capsem/mcp`](../mcp/typescript/README.md) package
 uses the TypeScript SDK to present these resources to AI agents over stdio. It
@@ -107,7 +106,7 @@ These Ironbank tests use disposable services and explicit gateway credentials:
 
 - `test_braavos_sdk.py`: all three SDKs, authentication, profile/MCP and host
   diagnostic resources, name resolution,
-  stopped workspace files, snapshot changes and file-access refusal.
+  stopped workspace files and file-access refusal.
 - `test_sdk_live.py`: Python and TypeScript create/exec, exact binary transfer,
   fork isolation, stop/start, pause/resume and deletion on Apple VZ.
 - `test_sdk_model.py`: Python inspection of a real VM's model/tool interaction

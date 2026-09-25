@@ -49,8 +49,7 @@ pub struct McpServerDef {
     pub pool_size: Option<u32>,
     /// Original tool names (post-namespace strip) that are safe to
     /// round-robin across pool peers. Tools NOT in this list pin to
-    /// `peers[0]` so per-process state (e.g. the builtin's
-    /// `Arc<Mutex<AutoSnapshotScheduler>>`) stays consistent. Empty
+    /// `peers[0]` so any per-process state they hold stays consistent. Empty
     /// list ⇒ all tools pin to peers[0] (no fan-out).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pool_safe_tools: Vec<String>,

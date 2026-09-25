@@ -1032,30 +1032,6 @@ def verify_session(session_id: str, session_dir: Path) -> bool:
                 f"launch log filename {latest.name} does not match expected format",
             )
 
-    # ── auto-snapshots ────────────────────────────────────────────────
-    print(f"\n{BOLD}auto-snapshots{RESET}")
-    snap_dir = session_dir / "auto_snapshots"
-    r.check(
-        snap_dir.exists(),
-        "auto_snapshots directory exists",
-        f"auto_snapshots directory NOT found at {snap_dir}",
-    )
-    if snap_dir.exists():
-        slot0 = snap_dir / "0"
-        r.check(
-            slot0.exists(),
-            "boot snapshot slot 0 exists",
-            "boot snapshot slot 0 NOT found (auto-snapshot scheduler may not have run)",
-        )
-        if slot0.exists():
-            has_workspace = (slot0 / "workspace").exists()
-            has_system = (slot0 / "system").exists()
-            r.check(
-                has_workspace and has_system,
-                "slot 0 contains workspace/ and system/ subdirectories",
-                f"slot 0 missing subdirs (workspace={has_workspace}, system={has_system})",
-            )
-
     # ── summary ──────────────────────────────────────────────────────
     print(f"\n{BOLD}{'=' * 60}{RESET}")
     total = len(r.passed) + len(r.failed) + len(r.warned)

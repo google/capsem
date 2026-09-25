@@ -74,7 +74,6 @@ ONLINE_FAST = {
     # explicitly offline and stays inside the kernel boundary.
     "sdk.python.prewarm",
     "fast.toolchain.node",
-    "fast.toolchain.ort",
     "fast.toolchain.rust",
 }
 
@@ -908,7 +907,6 @@ def test_only_named_dependency_inputs_cross_the_fast_gate_network_boundary(
             "host-image",
             "install.materialize",
             "static.guest-builder",
-            "static.toolchain.ort",
         }
     assert marked >= expected
     assert not {

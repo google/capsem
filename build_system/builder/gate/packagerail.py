@@ -2,8 +2,8 @@
 
 Native cross-compilation, no QEMU. The image runs on the host architecture and
 targets the other through `--target` plus multiarch system libraries. An
-explicit network-open step materializes the locked Cargo/pnpm graphs and exact
-ORT archive into a per-target helper; the source image and runtime consume its
+explicit network-open step materializes the locked Cargo/pnpm graphs into a
+per-target helper; the source image and runtime consume its
 exact OCI ID with networking disabled. `CARGO_TARGET_DIR=/cargo-target` inside
 the container keeps first-party build output out of both the helper and host.
 

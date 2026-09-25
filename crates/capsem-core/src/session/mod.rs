@@ -1,6 +1,9 @@
 //! Session management: unique session IDs, session index DB, and lifecycle.
 
+mod clone;
 mod maintenance;
+mod overlay;
+mod workspace;
 
 #[cfg(test)]
 mod tests;
@@ -9,7 +12,13 @@ pub use capsem_logger::{
     epoch_to_iso, generate_session_id, is_valid_session_id, now_iso, GlobalStats, McpToolSummary, ProviderSummary,
     SessionIndex, SessionRecord, ToolSummary,
 };
+pub use clone::{clone_file, clone_sandbox_state};
 pub use maintenance::*;
+pub use overlay::{
+    adopt_system_overlay, open_system_overlay, system_overlay_image_path, system_overlay_metadata, SYSTEM_OVERLAY_DIR,
+    SYSTEM_OVERLAY_IMAGE,
+};
+pub use workspace::{open_workspace, WORKSPACE_DIR};
 
 /// Distil a captured `process.log`/`serial.log` tail down to the one line
 /// worth putting in front of a human.

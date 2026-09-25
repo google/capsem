@@ -13,7 +13,6 @@ VALID_MODES = (
     "rootfs",
     "storage",
     "startup",
-    "snapshot",
     "mitm-load",
     "mcp-load",
     "dns-load",
@@ -43,7 +42,7 @@ def main():
     if mode in ("-h", "--help"):
         console.print(
             "Usage: capsem-bench "
-            "[disk|rootfs|storage|startup|snapshot|mitm-load|mcp-load|dns-load|all] "
+            "[disk|rootfs|storage|startup|mitm-load|mcp-load|dns-load|all] "
             "[OPTIONS]"
         )
         console.print()
@@ -52,7 +51,6 @@ def main():
         console.print("  rootfs              Rootfs read I/O benchmarks")
         console.print("  storage             Rootfs/workspace/tmpfs/overlay storage split")
         console.print("  startup             CLI cold-start latency")
-        console.print("  snapshot            Snapshot ops (create/list/revert/delete via MCP)")
         console.print("  mitm-load [C[,C]] [SECONDS]  MITM proxy load test")
         console.print("  mcp-load [C[,C]] [SECONDS]   MCP path load test")
         console.print("  dns-load [C[,C]] [SECONDS]   DNS proxy load test")
@@ -103,10 +101,6 @@ def main():
     if mode in ("startup", "all"):
         from .startup import startup_bench
         output["startup"] = startup_bench()
-
-    if mode in ("snapshot", "all"):
-        from .snapshot import snapshot_bench
-        output["snapshot"] = snapshot_bench()
 
     if mode == "all" and os.environ.get(MOCK_SERVER_PROTOCOL_BASE_URL_ENV):
         protocol_output = _run_rust_protocol_artifact()

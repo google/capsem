@@ -62,23 +62,15 @@ pub fn wait_readable(fd: BorrowedFd<'_>, timeout: Duration) -> io::Result<bool> 
     let timeout_ms = timeout.as_nanos().saturating_add(999_999) / 1_000_000;
     let timeout_ms = i32::try_from(timeout_ms)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "poll timeout is too large"))?;
-    let mut descriptor = libc::pollfd {
-        fd: fd.as_raw_fd(),
-        events: libc::POLLIN | libc::POLLHUP,
-        revents: 0,
-    };
-    retry_eintr(|| {
-        // SAFETY: poll borrows this initialized descriptor for the duration of
-        // the call; the borrowed fd remains live for the whole function.
-        let ready = unsafe { libc::poll(&mut descriptor, 1, timeout_ms) };
-        if ready >= 0 {
-            Ok(ready)
-        } else {
-            Err(Errno::last())
-        }
-    })
-    .map(|ready| ready > 0)
-    .map_err(errno::io)
+    let timeout = nix::poll::PollTimeout::try_from(timeout_ms)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "poll timeout is too large"))?;
+    let mut descriptors = [nix::poll::PollFd::new(
+        fd,
+        nix::poll::PollFlags::POLLIN | nix::poll::PollFlags::POLLHUP,
+    )];
+    retry_eintr(|| nix::poll::poll(&mut descriptors, timeout))
+        .map(|ready| ready > 0)
+        .map_err(errno::io)
 }
 
 /// Shut down one or both halves of a connected socket.

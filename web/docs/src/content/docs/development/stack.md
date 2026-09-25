@@ -22,7 +22,7 @@ flowchart TD
 
     subgraph stage2["2. Initrd repack"]
         INITRD_IN["initrd.img\n(from build-assets)"]
-        SCRIPTS["capsem-init + doctor\n+ bench + snapshots"]
+        SCRIPTS["capsem-init + doctor\n+ bench"]
         REPACK["cpio + gzip repack"]
         INITRD_IN --> REPACK
         AGENT & NETPROXY & MCP & SYSUTIL --> REPACK
@@ -100,7 +100,7 @@ The initrd is a gzipped cpio archive that the kernel unpacks into RAM at boot. T
 
 1. Extracts the base initrd (produced by `just build-assets code`)
 2. Copies in the freshly cross-compiled guest binaries (chmod 555, read-only)
-3. Copies in shell scripts: `capsem-init` (PID 1), `capsem-doctor`, `capsem-bench`, `snapshots`
+3. Copies in shell scripts: `capsem-init` (PID 1), `capsem-doctor`, `capsem-bench`
 4. Repacks with `cpio + gzip`
 5. Regenerates BLAKE3 checksums (`B3SUMS` + `manifest.json`)
 6. `_materialize-config` uses the updated manifest to generate

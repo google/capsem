@@ -33,6 +33,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.session_ledger import open_session_ledger
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -95,7 +96,7 @@ def _serve_apt_repository(root: Path):
 
 def _connect_session_db(service: ServiceInstance, session_id: str) -> sqlite3.Connection:
     db_path = vm_session_db_path(service.tmp_dir, service.client(), session_id)
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = open_session_ledger(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 

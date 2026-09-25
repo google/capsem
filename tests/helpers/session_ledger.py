@@ -1,0 +1,101 @@
+"""Open a session ledger the way a black-box test reads it.
+
+A repeated rule match stores its rule snapshot once, in `security_rule_runs`,
+and each occurrence row in `security_rule_events` points at it through
+`run_id` with its own `rule_json` NULL (see `capsem-logger`'s schema). That is
+a storage decision, not a different event: each occurrence still matched
+exactly one rule. Tests assert the event, so the connection this opens shows a
+temporary `security_rule_events` with the rule resolved through its run and
+the event's own columns, and nothing a test writes can reach the ledger.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+#: The occurrence columns a test reads; `run_id` is resolved, not shown.
+_EVENT_COLUMNS = (
+    "id",
+    "timestamp_unix_ms",
+    "event_id",
+    "event_type",
+    "rule_id",
+    "rule_action",
+    "detection_level",
+    "trace_id",
+    "turn_id",
+    "credential_ref",
+)
+
+
+def resolve_rule_runs(conn: sqlite3.Connection) -> sqlite3.Connection:
+    """Shadow `security_rule_events` with its rule-resolved logical view.
+
+    A ledger without the table (another database) is returned untouched. A
+    ledger with occurrences but no runs table is a broken schema and raises.
+    """
+    tables = {row[0] for row in conn.execute("SELECT name FROM main.sqlite_master WHERE type = 'table'")}
+    if "security_rule_events" not in tables:
+        return conn
+    if "security_rule_runs" not in tables:
+        raise AssertionError("session ledger has security_rule_events but no security_rule_runs")
+    columns = ", ".join(f"e.{name}" for name in _EVENT_COLUMNS)
+    conn.execute(
+        f"""
+        CREATE TEMP VIEW IF NOT EXISTS security_rule_events AS
+        SELECT {columns}, COALESCE(e.rule_json, r.rule_json) AS rule_json
+        FROM main.security_rule_events AS e
+        LEFT JOIN main.security_rule_runs AS r ON r.id = e.run_id
+        """
+    )
+    return conn
+
+
+def open_session_ledger(db_path: Path | str) -> sqlite3.Connection:
+    """Read-only connection to a session ledger, rule matches resolved.
+
+    Closed before any failure propagates: callers poll a ledger that is still
+    being created, and each failed attempt must not leave a connection behind.
+    """
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        return resolve_rule_runs(conn)
+    except BaseException:
+        conn.close()
+        raise
+
+
+#: `capsem_logger::counters::COUNTED_TOOL_ORIGINS`: the origins every surface
+#: counts as a tool call. `mcp_proxy` is a model naming an MCP tool that is
+#: recorded again as `mcp`, so it is not one. Held equal to the Rust constant
+#: by tests/test_session_ledger_helper.py.
+COUNTED_TOOL_ORIGINS = ("native", "mcp", "builtin", "local")
+
+
+def ledger_counters(conn: sqlite3.Connection) -> dict:
+    """The writer's counter snapshot, decoded (`capsem_proto::ledger_counters`).
+
+    Sparse, named MessagePack: an absent section or field is its default.
+    """
+    from helpers.messagepack import decode
+
+    (blob,) = conn.execute("SELECT counters FROM main.ledger_counters WHERE singleton = 1").fetchone()
+    counters = decode(blob)
+    assert isinstance(counters, dict), f"ledger_counters is not a map: {type(counters).__name__}"
+    return counters
+
+
+def ledger_totals(conn: sqlite3.Connection) -> dict[str, int]:
+    """The totals the writer's counters must report, counted from the rows.
+
+    The oracle for a route that serves the counter snapshot: the snapshot is
+    written with the rows it counts, so the two agree on a quiesced ledger.
+    """
+    marks = ", ".join("?" for _ in COUNTED_TOOL_ORIGINS)
+    return {
+        "model_call_count": conn.execute("SELECT COUNT(*) FROM model_calls").fetchone()[0],
+        "total_tool_calls": conn.execute(
+            f"SELECT COUNT(*) FROM tool_calls WHERE origin IN ({marks})", COUNTED_TOOL_ORIGINS
+        ).fetchone()[0],
+    }

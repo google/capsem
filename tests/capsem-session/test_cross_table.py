@@ -49,7 +49,7 @@ def test_mcp_tool_calls_are_direct_tool_evidence(session_db):
 
 
 def test_snapshots_are_not_cross_table_activity(session_db):
-    """Snapshots are exposed through VM snapshot routes, not session.db joins."""
+    """The retired snapshot ledger table is dropped, never joined as activity."""
     rows = session_db.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='snapshot_events'"
     ).fetchall()

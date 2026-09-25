@@ -4,10 +4,9 @@ use super::*;
 /// one step under the registry lock.
 ///
 /// The directory is not moved here. A running capsem-process holds its
-/// session directory by path -- the VirtioFS workspace, the auto-snapshot
-/// scheduler, the MCP file tools and every lazily opened session.db reader
-/// name `sessions/<id>/...` -- so renaming it under a live process left
-/// snapshots, file tools and history failing until the next restart. The
+/// session directory by path -- the VirtioFS workspace and every lazily
+/// opened session.db reader name `sessions/<id>/...` -- so renaming it under a
+/// live process left them failing until the next restart. The
 /// move to `persistent/<id>` is [`settle_persistent_session_dir`], run once
 /// the process has exited.
 ///

@@ -30,14 +30,11 @@ pub(super) fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         | ServiceToProcess::McpListTools { .. }
         | ServiceToProcess::McpRefreshTools { .. }
         | ServiceToProcess::McpCallTool { .. }
-        | ServiceToProcess::SnapshotStatus { .. } => IpcAction::Job,
+        | ServiceToProcess::CloneState { .. } => IpcAction::Job,
         ServiceToProcess::ConnectPort { .. }
         | ServiceToProcess::AbortPorts { .. }
         | ServiceToProcess::PlugCable { .. }
-        | ServiceToProcess::UnplugCable { .. }
-        | ServiceToProcess::PrepareSnapshot
-        | ServiceToProcess::Unfreeze
-        | ServiceToProcess::Resume => IpcAction::Unexpected,
+        | ServiceToProcess::UnplugCable { .. } => IpcAction::Unexpected,
         ServiceToProcess::ReloadConfig { .. } => IpcAction::Reload,
         ServiceToProcess::Shutdown | ServiceToProcess::Suspend { .. } => IpcAction::Lifecycle,
     }

@@ -1,5 +1,4 @@
 pub mod auditfs;
-pub mod auto_snapshot;
 pub mod container;
 pub mod credential_broker;
 pub mod fs_monitor;
@@ -39,17 +38,19 @@ pub use hypervisor::apple_vz::{is_main_thread, AppleVzHypervisor};
 #[cfg(target_os = "linux")]
 pub use hypervisor::kvm::KvmHypervisor;
 
+/// The session subdirectory shared with the guest over VirtioFS.
+pub const GUEST_SHARE_DIR: &str = "guest";
+
 /// Create VirtioFS session directories for the single-share hybrid architecture.
 ///
 /// The session_dir has two zones:
-/// - `guest/` -- shared with the VM via VirtioFS (only this subtree is exposed)
-///   - `system/rootfs.img` -- sparse ext4 image for the overlayfs upper.
-///     Attached to the guest as a virtio-blk device (`/dev/vdb`); never
-///     accessed from the guest through the VirtioFS share. Sits in the
-///     share so the host can introspect it while the VM is stopped.
+/// - `guest/` -- shared read-write with the VM via VirtioFS; the guest can
+///   replace anything below it, so the host never follows a path into it
 ///   - `workspace/`        -- direct host-visible files for /root (AI workspace)
 /// - Host-only (NOT shared with guest):
-///   - `auto_snapshots/`   -- rolling ring buffer for host-side APFS clone snapshots
+///   - `system/rootfs.img` -- sparse ext4 image for the overlayfs upper,
+///     attached to the guest as a virtio-blk device (`/dev/vdb`); see
+///     `session::adopt_system_overlay` for why it is not in the share
 ///   - `session.db`        -- telemetry database
 ///   - `serial.log`        -- terminal output log
 ///   - `checkpoint.vzsave` -- suspend checkpoint
@@ -58,39 +59,36 @@ pub use hypervisor::kvm::KvmHypervisor;
 /// preformatted ext4 template before boot when `mke2fs` is available; the
 /// guest keeps a first-boot formatting fallback for restored or
 /// externally-created unformatted images. Forked sessions already have a
-/// formatted image (cloned from snapshot).
+/// formatted image (cloned from their source).
 pub fn create_virtiofs_session(session_dir: &Path, system_img_size_gb: u32) -> std::io::Result<()> {
-    use std::fs::OpenOptions;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
+    use std::ffi::OsStr;
+    use std::os::unix::fs::PermissionsExt;
 
-    let guest_dir = session_dir.join("guest");
-    std::fs::create_dir_all(guest_dir.join("system"))?;
-    std::fs::create_dir_all(guest_dir.join("workspace"))?;
-    std::fs::create_dir_all(session_dir.join("auto_snapshots"))?;
-
-    // Create compat symlinks so existing code using session_dir/workspace and
-    // session_dir/system still works. The real dirs live inside guest/ which
-    // is the only subtree shared with the VM via VirtioFS.
-    for name in &["system", "workspace"] {
-        let link = session_dir.join(name);
-        let target = std::path::Path::new("guest").join(name);
-        if !link.exists() {
-            std::os::unix::fs::symlink(&target, &link)?;
-        }
-    }
-
-    let img_path = guest_dir.join("system").join("rootfs.img");
-    if !img_path.exists() {
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&img_path)?;
-        file.set_len(u64::from(system_img_size_gb) * 1024 * 1024 * 1024)?;
-    }
-
+    std::fs::create_dir_all(session_dir)?;
     std::fs::set_permissions(session_dir, std::fs::Permissions::from_mode(0o700))?;
+    session::adopt_system_overlay(session_dir)?;
+
+    let root = ContainedDir::open_root(session_dir)?;
+    root.walk_creating(Path::new(GUEST_SHARE_DIR).join("workspace").as_path(), 0o755)?;
+    // Compat link so code using session_dir/workspace still works. The real
+    // directory lives inside guest/, the only subtree shared with the VM.
+    if root.entry_kind(OsStr::new("workspace"))?.is_none() {
+        root.symlink(
+            OsStr::new("workspace"),
+            Path::new(GUEST_SHARE_DIR).join("workspace").as_os_str(),
+        )?;
+    }
+
+    let system = root.descend(OsStr::new(session::SYSTEM_OVERLAY_DIR))?;
+    match system.open_file(
+        OsStr::new(session::SYSTEM_OVERLAY_IMAGE),
+        ContainedOpenOptions::write_create_new(0o600),
+    ) {
+        Ok(file) => file.set_len(system_overlay_image_len(system_img_size_gb))?,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
     Ok(())
 }
 
@@ -254,7 +252,7 @@ pub fn preformat_system_overlay_image_from_template_if_needed(
             .unwrap_or(0)
     ));
     let _ = std::fs::remove_file(&tmp_path);
-    auto_snapshot::clone_file(template_path, &tmp_path).map_err(|error| std::io::Error::other(error.to_string()))?;
+    session::clone_file(template_path, &tmp_path)?;
     std::fs::rename(&tmp_path, path)?;
 
     if !system_overlay_matches(path, size_gb)? {
@@ -280,7 +278,7 @@ pub fn preformat_system_overlay_image_from_template_if_needed(
 
 /// Return the guest-visible VirtioFS share path within a session directory.
 pub fn guest_share_dir(session_dir: &Path) -> std::path::PathBuf {
-    session_dir.join("guest")
+    session_dir.join(GUEST_SHARE_DIR)
 }
 
 /// Create a sparse scratch disk image file.

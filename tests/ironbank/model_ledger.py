@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from helpers.body_archive import session_archive
+from helpers.session_ledger import open_session_ledger
 from ironbank.model_pricing import assert_model_call_price
 
 
@@ -557,7 +558,7 @@ def assert_live_model_ledger_exchange(
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     assert db_path.exists(), f"missing session DB: {db_path}"
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = open_session_ledger(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 

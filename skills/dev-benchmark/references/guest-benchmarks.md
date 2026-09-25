@@ -9,7 +9,6 @@
 | storage | `capsem-bench storage` | Rootfs plus `/root`, tmp, log, and run paths |
 | startup | `capsem-bench startup` | Python, Node, Claude, Gemini, Codex startup |
 | protocol | `capsem-bench-rs protocol` | HTTP/model/SSE/credential/MCP/DNS scenarios |
-| snapshot | `capsem-bench snapshot` | MCP create/list/changes/revert/delete |
 | all | `capsem-bench all` | Canonical suite; merges Rust protocol results |
 
 Hot protocol release evidence requires paired `host_direct` and
@@ -26,15 +25,6 @@ history command: run the owner, review JSON, and commit a new file without
 overwriting prior evidence. Compare Linux x86_64 and macOS arm64 only after the
 same owner reruns both; `build_system/scripts/build/benchmark_report.py` validates/renders them.
 
-## Snapshot diagnosis
-
-Snapshot covers 10/100/500-file workspaces through guest CLI → MCP → vsock →
-gateway → filesystem. Run `just exec "capsem-bench snapshot"`; add
-`RUST_LOG=capsem=debug` and inspect `clone_ws_ms`, `clone_sys_ms`, and `hash_ms`.
-Use `build_system/scripts/doctor/check_session.py` or query `tool_calls` in the session database for
-per-operation durations. High clone time means workspace size or CoW fallback;
-high hash time means walk overhead; slow compact means overlapping snapshots.
-
 ## Storage and rootfs diagnosis
 
 - Run `disk` for sequential throughput and confirm VirtioFS/block mode.
@@ -47,7 +37,7 @@ high hash time means walk overhead; slow compact means overlapping snapshots.
 `capsem-bench all` must keep storage attribution so Linux and macOS artifacts
 both identify rootfs/workspace/tmpfs costs; only long load diagnostics are
 opt-in. Structured output is `/tmp/capsem-benchmark.json` and includes version,
-timestamp, host, per-category results, and size-scoped snapshot results.
+timestamp, host, and per-category results.
 
 ## Environment
 

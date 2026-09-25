@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Capsem Gateway",
-    "version": "1.0.0"
+    "version": "2.0.0"
   },
   "paths": {
     "/host-logs/{name}": {
@@ -1339,77 +1339,6 @@
         }
       }
     },
-    "/vms/{id}/changes": {
-      "get": {
-        "operationId": "getVmChanges",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "checkpoint",
-            "in": "query",
-            "description": "Checkpoint from snapshots.list(), for example cp-0.",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "description": "Number of file changes to skip, in path order.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Maximum returned changes. Defaults to 200, capped at 2000.",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChangesResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/vms/{id}/container": {
       "get": {
         "operationId": "getVmContainer",
@@ -2358,90 +2287,6 @@
         }
       }
     },
-    "/vms/{id}/snapshots/list": {
-      "get": {
-        "operationId": "listVmSnapshots",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SnapshotsList"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/vms/{id}/snapshots/status": {
-      "get": {
-        "operationId": "getVmSnapshotsStatus",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SnapshotsStatus"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/vms/{id}/start": {
       "post": {
         "operationId": "startVm",
@@ -3093,34 +2938,6 @@
           }
         }
       },
-      "ChangesResponse": {
-        "type": "object",
-        "required": [
-          "checkpoint",
-          "changes",
-          "total",
-          "has_more"
-        ],
-        "properties": {
-          "changes": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/FileChange"
-            }
-          },
-          "checkpoint": {
-            "type": "string",
-            "description": "The requested baseline. Changes describe UTF-8 file paths and symlinks;\ndirectories are traversed, and symlink targets are never followed.\nA live workspace can change during the comparison."
-          },
-          "has_more": {
-            "type": "boolean"
-          },
-          "total": {
-            "type": "integer",
-            "minimum": 0
-          }
-        }
-      },
       "ContainerSpec": {
         "type": "object",
         "description": "An OCI image run as a VM's workload.\n\n`Debug` shows the image and environment names only: arguments and\nenvironment values can carry secrets, and registry access always does.",
@@ -3734,41 +3551,6 @@
             "minimum": 0
           }
         }
-      },
-      "FileChange": {
-        "type": "object",
-        "required": [
-          "path",
-          "kind",
-          "is_symlink"
-        ],
-        "properties": {
-          "is_symlink": {
-            "type": "boolean"
-          },
-          "kind": {
-            "$ref": "#/components/schemas/FileChangeKind"
-          },
-          "path": {
-            "type": "string"
-          },
-          "size": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "minimum": 0
-          }
-        }
-      },
-      "FileChangeKind": {
-        "type": "string",
-        "enum": [
-          "created",
-          "modified",
-          "deleted"
-        ]
       },
       "FileEntryType": {
         "type": "string",
@@ -6368,102 +6150,6 @@
           },
           "ts": {
             "type": "string"
-          }
-        }
-      },
-      "SnapshotInfo": {
-        "type": "object",
-        "required": [
-          "checkpoint",
-          "slot",
-          "origin",
-          "timestamp"
-        ],
-        "properties": {
-          "checkpoint": {
-            "type": "string"
-          },
-          "hash": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "origin": {
-            "$ref": "#/components/schemas/SnapshotOrigin"
-          },
-          "slot": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "timestamp": {
-            "type": "string"
-          }
-        }
-      },
-      "SnapshotOrigin": {
-        "type": "string",
-        "enum": [
-          "auto",
-          "manual"
-        ]
-      },
-      "SnapshotsList": {
-        "type": "object",
-        "required": [
-          "total",
-          "snapshots"
-        ],
-        "properties": {
-          "snapshots": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SnapshotInfo"
-            }
-          },
-          "total": {
-            "type": "integer",
-            "minimum": 0
-          }
-        }
-      },
-      "SnapshotsStatus": {
-        "type": "object",
-        "required": [
-          "total",
-          "auto_count",
-          "manual_count",
-          "manual_available",
-          "snapshots"
-        ],
-        "properties": {
-          "auto_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "manual_available": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "manual_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "snapshots": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SnapshotInfo"
-            }
-          },
-          "total": {
-            "type": "integer",
-            "minimum": 0
           }
         }
       },

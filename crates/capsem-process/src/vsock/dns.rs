@@ -77,7 +77,7 @@ pub(super) async fn serve_dns_session(
     let write_task = tokio::spawn(async move {
         while let Some(frame) = frames_rx.recv().await {
             if let Err(error) = write_all(&writer, &frame).await {
-                warn!(error = %error, "DNS port: write failed");
+                debug!(error = %error, "DNS port: write failed");
                 return;
             }
         }
@@ -89,14 +89,14 @@ pub(super) async fn serve_dns_session(
             Ok(Some(payload)) => payload,
             Ok(None) => break,
             Err(error) => {
-                warn!(error = %error, "DNS port: read failed");
+                debug!(error = %error, "DNS port: read failed");
                 break;
             }
         };
         let request = match capsem_proto::decode_dns_request(&payload) {
             Ok(request) => request,
             Err(error) => {
-                warn!(error = %error, "DNS port: decode_dns_request failed");
+                debug!(error = %error, "DNS port: decode_dns_request failed");
                 break;
             }
         };

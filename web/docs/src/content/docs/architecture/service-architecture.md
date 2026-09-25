@@ -18,7 +18,7 @@ Seven binaries run on the host machine. They are installed to
 | **capsem-service** | Background daemon | Axum HTTP over UDS (`~/.capsem/run/service.sock`) |
 | **capsem-process** | Per-VM process | Spawned by service, bounded MessagePack over UDS (after a MessagePack Hello) |
 | **capsem-mcp-aggregator** | External MCP server connections | Length-prefixed MessagePack frames over stdin/stdout, spawned by capsem-process |
-| **capsem-mcp-builtin** | Built-in HTTP and file/snapshot tools | stdio MCP, spawned by the aggregator |
+| **capsem-mcp-builtin** | Built-in HTTP tools | stdio MCP, spawned by the aggregator |
 | **capsem-gateway** | HTTP/WebSocket gateway | TCP port 19222, proxies to service UDS |
 | **capsem-tray** | System tray | Polls gateway for VM status |
 
@@ -146,7 +146,7 @@ Each running VM gets its own `capsem-process` child. This provides security isol
 - **Socket permissions 0600**: only the owning user can connect to per-VM sockets
 - **Session directory 0700**: contains workspace, system, serial.log, session.db
 - **No guest-triggered exit**: control channel errors cause loop exit, not `process::exit()`
-- **VirtioFS boundary**: only `session_dir/guest/` is shared -- host-only files (session.db, serial.log, snapshots, checkpoints) are outside the share
+- **VirtioFS boundary**: only `session_dir/guest/` is shared -- host-only files (session.db, serial.log, checkpoints) are outside the share
 - **MCP aggregator isolation**: external MCP server connections run in a separate subprocess (`capsem-mcp-aggregator`) with only network access -- no VM, database, or filesystem access. See [MCP Aggregator](/architecture/mcp-aggregator/) for details.
 
 ## Service HTTP API
@@ -322,7 +322,7 @@ from VM asset releases.
 | `capsem-process` | bin | Per-VM. Boots VM via capsem-core, bridges vsock, job store |
 | `capsem` | bin | CLI. HTTP over UDS to service, direct UDS to process for shell |
 | `capsem-mcp-aggregator` | bin | Isolated subprocess. Manages external MCP server connections over length-prefixed MessagePack frames |
-| `capsem-mcp-builtin` | bin | Isolated built-in HTTP and file/snapshot MCP tools |
+| `capsem-mcp-builtin` | bin | Isolated built-in HTTP MCP tools |
 | `capsem-gateway` | bin | HTTP gateway. Axum on TCP:19222, Bearer auth, `/vms/{id}/stream` WebSocket tunnel to the service |
 | `capsem-app` | bin | Thin Tauri webview. Points at gateway, bundles web/app/dist for the service-unavailable screen |
 | `capsem-tray` | bin | System tray. Polls gateway, shows VM status |

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- A short observed credential no longer rewrites stored bodies. Redaction
+  replaced every occurrence of any observed key, so `ollama launch`'s literal
+  key `ollama` turned each "ollama" in a prompt into a credential reference,
+  and a guest could scrub any word from the ledger by sending it as a key.
+  Values shorter than 12 bytes, like local-model placeholders, are still
+  referenced and brokered but left in place; every real provider key and
+  OAuth token is longer and is still redacted everywhere (google/capsem#242).
+
 - Changing an MCP permission (the profile default or a single tool) now takes
   effect in running VMs before the route returns. It used to update the
   profile file only, so running VMs kept enforcing the old permission until an
@@ -49,6 +57,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Headers were stored unredacted, and bodies were scrubbed only of credentials
   seen in bodies, so a key sent in `x-api-key` could be stored verbatim in an
   echoed header or body (google/capsem#229, #218).
+
+- A guest can no longer point the host at a host directory by replacing its
+  workspace with a symlink. The files API opened the workspace by path, so a
+  root guest that swapped it for a link could list, download and upload files
+  in any directory the service user can reach; the file monitor walked the
+  linked tree into the session ledger and parsed its `.env` files into the
+  credential broker; and `capsem doctor --bundle` copied whatever a planted
+  `doctor-bundle.tar` link named. All three now reach the share through
+  descriptors opened from the host-owned session directory and refuse links.
+
+- A guest can no longer get a host file attached as its disk. The system
+  overlay image (`rootfs.img`) lived inside the read-write VirtioFS share, and
+  the host attaches it to the VM by path, so a root guest could mount the
+  share, replace the image with a symlink to any file the service user can
+  open, and receive that file as a writable disk on its next boot; the service
+  and `capsem support --include-rootfs` read through the same link. The image
+  now lives in the session's host-only `system/` directory. Existing sessions
+  are moved on service start and on boot; a session whose image was replaced
+  by a link is refused instead of booted.
+
+- Forking a sandbox or creating one from another no longer follows the guest's
+  symlinks. The clone opened guest workspace entries by path, so a guest that
+  swapped a file or directory for a link during the copy could get a host file
+  readable by the service copied into the new sandbox. Every step is now a
+  descriptor-relative, no-follow operation; links are recreated as links,
+  setuid/setgid/sticky bits are dropped, a fork whose system image is not a
+  regular file is refused, and the macOS fallback no longer shells out to
+  `cp -R`.
 
 - A file export from the guest is refused when its security event cannot be
   recorded or evaluated. It used to log a warning and hand the file over
@@ -180,6 +216,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the transport ledger". Provision opened the new session's ledger before the
   VM process had finished creating it, took the half-created file for a stale
   one, and killed the VM it had just started.
+
+- The files API and the web Files view now show a workspace folder named
+  `system`, at any depth. It was filtered out as if it were the overlay image's
+  directory, which has never been inside the workspace.
 
 - Security latest and detection routes now return rule matches from counted
   ledger runs instead of failing to map the reconstructed rule snapshot.
@@ -598,6 +638,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The files API no longer runs the Magika model to type workspace files.
+  A file's type now comes from its extension, and a file with an unknown
+  extension is text when its head is UTF-8 with no NUL byte. Typing is
+  deterministic, the service no longer loads ONNX Runtime at start, and
+  building no longer downloads a native library. Content-based typing returns
+  with Magika v2 once it is production-ready
+  ([#234](https://github.com/google/capsem/issues/234)).
+
 - The `vm.resources.terminated_retention_days` setting. It was offered in the
   settings UI and written into every generated profile, and nothing read it. A
   retention policy that appears to be in force and is not is worse than none.
@@ -622,6 +670,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The duplicate Rust host MCP crate has been retired in favor of `@capsem/mcp`;
   the Rust guest relay, aggregator, and built-in MCP components remain.
 
+- Workspace snapshots are gone (google/capsem#228). Sessions no longer start an
+  automatic snapshot scheduler or keep an `auto_snapshots/` ring, which copied
+  the system image into every slot. Removed with it: the guest MCP tools
+  `snapshots_changes/list/revert/create/delete/history/compact`, the in-VM
+  `snapshots` command, `GET /vms/{id}/snapshots/status`, `/snapshots/list` and
+  `/vms/{id}/changes`, the SDK `vm.snapshots` resource and `files.history`
+  (Python, TypeScript, Rust), the `@capsem/mcp` tools `capsem_snapshots`,
+  `capsem_snapshot_status` and `capsem_file_history`, the `vm.snapshots.*`
+  settings, and the `capsem-bench snapshot` dimension. The gateway contract is
+  now version 2.0.0. Snapshot directories already on disk are left untouched,
+  and an old settings file that still names `vm.snapshots.*` keeps loading.
+
 ### Changed
 
 - Session ledgers are now format v4: each one carries its own running totals
@@ -630,6 +690,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer have to be recomputed from the whole ledger (google/capsem#223).
   A v3 ledger is refused rather than upgraded; a named VM created before this
   change cannot be resumed and has to be recreated.
+
+- Forking a running sandbox, or creating one from a running persistent
+  sandbox, now freezes the guest's system filesystem for the copy. The fork
+  used to run `sync` and copy the live ext4 overlay, which a slow copy (no
+  reflinks) could tear into an image the fork cannot boot. The sandbox's own
+  process now freezes, clones and always thaws, so the guest pauses system
+  writes only for the copy, and a service that goes away mid-fork cannot leave
+  it frozen. A guest that does not freeze within 10 seconds gets no fork, and
+  a failed fork leaves no directory behind.
 
 - Session ledgers keep captured bodies in version 3 compressed generations
   beside the database. Request and response bodies, tool results, exec output and the

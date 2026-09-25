@@ -72,11 +72,9 @@ pub(super) fn confine() -> io::Result<()> {
         len: filter.len() as u16,
         filter: filter.as_mut_ptr(),
     };
+    nix::sys::prctl::set_no_new_privs().map_err(super::super::errno::io)?;
     // SAFETY: the kernel copies the initialized filter synchronously. TSYNC
     // refuses installation if any existing thread cannot receive this policy.
-    if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
     let result = unsafe { libc::syscall(libc::SYS_seccomp, 1u32, 1u32, &program) };
     if result != 0 {
         return Err(if result < 0 {

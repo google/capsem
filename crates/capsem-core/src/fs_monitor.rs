@@ -2,8 +2,8 @@
 //!
 //! Apple VZ VirtioFS writes bypass FSEvents, so the workspace has to be
 //! polled. The monitor owns that poll loop rather than delegating it: it walks
-//! the tree with `walkdir` and `follow_links(false)`, diffs the walk against
-//! the previous one, and emits the difference.
+//! the tree descriptor-relative, following nothing, diffs the walk against the
+//! previous one, and emits the difference.
 //!
 //! Owning the loop is a security property, not a preference. The `notify`
 //! crate's polling watcher walks with link-following hardcoded on and ignores
@@ -12,7 +12,11 @@
 //! filesystem. Nothing here follows a link: a symlink is recorded as a symlink
 //! and never descended, and the one place that reads bytes (`.env` credential
 //! brokering) opens with `O_NOFOLLOW` and refuses anything that is not a
-//! regular file. `tests/citadel/test_fs_monitor_has_no_exclusions.py` refuses
+//! regular file. The walk and that open both start from a workspace descriptor
+//! opened once, from the host-owned session directory: the workspace is an
+//! entry of the guest's share, and a guest that swaps it for a link to a host
+//! directory must not get that directory walked into its ledger or its `.env`
+//! files brokered. `tests/citadel/test_fs_monitor_has_no_exclusions.py` refuses
 //! that watcher and that setting by name, which is why this paragraph spells
 //! neither.
 //!
@@ -23,15 +27,14 @@
 
 use std::collections::HashMap;
 use std::io::Read;
-use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use capsem_foundation::unix::fs as unix_fs;
+use capsem_foundation::unix::contained::{ContainedDir, ContainedEntry, ContainedOpenOptions, EntryKind};
 use capsem_logger::{DbWriter, FileAction, FileEvent, FileKind};
 
 use crate::credential_broker::{broker_and_log_observations, parse_env_credentials};
@@ -76,25 +79,18 @@ const EMIT_CHUNK: usize = 1_000;
 /// Largest `.env` the credential broker will read.
 const MAX_ENV_BYTES: u64 = 1024 * 1024;
 
-/// The one place a `FileType` becomes a ledger `kind`.
-///
-/// Order matters: a symlink to a directory reports `is_dir()` through a
-/// following stat, and calling it a directory is exactly the confusion that
-/// lets a link pass for the thing it points at.
-fn kind_of(file_type: std::fs::FileType) -> FileKind {
-    if file_type.is_symlink() {
-        FileKind::Symlink
-    } else if file_type.is_dir() {
-        FileKind::Dir
-    } else if file_type.is_file() {
-        FileKind::File
-    } else {
-        FileKind::Other
+/// The one place a listed entry becomes a ledger `kind`. A symlink is a
+/// symlink, never the thing it points at.
+fn kind_of(entry: &ContainedEntry) -> FileKind {
+    match entry.kind {
+        EntryKind::Directory => FileKind::Dir,
+        EntryKind::File => FileKind::File,
+        EntryKind::Other if entry.is_symlink => FileKind::Symlink,
+        EntryKind::Other => FileKind::Other,
     }
 }
 
-/// One emitted change. The absolute path is derived from `strip_prefix` rather
-/// than stored: at 100k queued events the `PathBuf` was half the memory and
+/// One emitted change. Only the workspace-relative path is kept: at 100k queued events the `PathBuf` was half the memory and
 /// every byte of it was already in `path`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct QueuedEvent {
@@ -130,49 +126,45 @@ impl SnapshotEntry {
 }
 
 /// Walk the workspace, stat-ing each entry exactly once and following nothing.
-fn workspace_snapshot(watch_dir: &Path, strip_prefix: &Path) -> HashMap<String, SnapshotEntry> {
+fn workspace_snapshot(workspace: &ContainedDir) -> HashMap<String, SnapshotEntry> {
     // Every entry, with nothing pruned: a walk that skips a directory is a
     // ledger that lies about it.
     let mut snapshot = HashMap::new();
-    for entry in walkdir::WalkDir::new(watch_dir)
-        .min_depth(1)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let fs_path = entry.path();
-        // A non-UTF8 filename is recorded lossily rather than skipped: a name
-        // the ledger cannot spell exactly is still a change that happened, and
-        // dropping it would be one more way to write a file the record does
-        // not mention.
-        let rel = fs_path
-            .strip_prefix(strip_prefix)
-            .unwrap_or(fs_path)
-            .to_string_lossy()
-            .to_string();
-        if rel.is_empty() {
-            continue;
-        }
-        // `follow_links(false)` makes this the entry's own lstat, and it is
-        // the only stat any part of the monitor performs for this path.
-        let Ok(metadata) = entry.metadata() else {
-            continue;
-        };
-        let modified = metadata
-            .modified()
-            .ok()
-            .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|value| (value.as_secs(), value.subsec_nanos()));
-        snapshot.insert(
-            rel,
-            SnapshotEntry {
-                kind: kind_of(metadata.file_type()),
-                len: metadata.len(),
-                modified,
-                changed: (metadata.ctime(), metadata.ctime_nsec()),
-                ino: metadata.ino(),
-            },
-        );
+    let mut pending = match workspace.try_clone() {
+        Ok(root) => vec![(root, String::new())],
+        Err(_) => Vec::new(),
+    };
+    while let Some((dir, prefix)) = pending.pop() {
+        let _ = dir.visit_entries(|entry| {
+            // A non-UTF8 filename is recorded lossily rather than skipped: a
+            // name the ledger cannot spell exactly is still a change that
+            // happened, and dropping it would be one more way to write a file
+            // the record does not mention.
+            let name = entry.name.to_string_lossy();
+            let rel = if prefix.is_empty() {
+                name.into_owned()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            if entry.kind == EntryKind::Directory {
+                // Refuses a link swapped in since the listing's own lstat.
+                if let Ok(child) = dir.descend(&entry.name) {
+                    pending.push((child, rel.clone()));
+                }
+            }
+            let (seconds, nanos) = entry.identity.mtime;
+            snapshot.insert(
+                rel,
+                SnapshotEntry {
+                    kind: kind_of(&entry),
+                    len: entry.identity.size,
+                    modified: u64::try_from(seconds).ok().zip(u32::try_from(nanos).ok()),
+                    changed: entry.identity.ctime,
+                    ino: entry.identity.ino,
+                },
+            );
+            Ok(true)
+        });
     }
     snapshot
 }
@@ -270,8 +262,7 @@ fn overflow_event(deferred: usize) -> QueuedEvent {
 
 /// Everything the scan loop needs about the tree it watches.
 struct ScanConfig {
-    watch_dir: PathBuf,
-    strip_prefix: PathBuf,
+    workspace: ContainedDir,
     /// Cadence for the next scan; re-derived from each scan's own cost.
     interval: Duration,
     /// Events emitted from one scan before the rest is deferred to the next.
@@ -284,9 +275,8 @@ struct EmitContext<'a> {
     db: &'a DbWriter,
     security_rules: &'a Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
     trace_state: &'a Arc<std::sync::Mutex<TraceState>>,
-    /// Prefix removed from absolute paths when recording, and therefore the
-    /// prefix that turns a recorded path back into one on disk.
-    strip_prefix: &'a Path,
+    /// The watched tree; recorded paths are relative to it.
+    workspace: &'a ContainedDir,
 }
 
 /// Host-side file system monitor.
@@ -309,13 +299,10 @@ pub struct FsMonitor {
 }
 
 impl FsMonitor {
-    /// Start monitoring `watch_dir` and writing events to `db`.
-    ///
-    /// `strip_prefix` is removed from absolute paths before recording
-    /// (e.g., pass `upper/root/` so paths are relative to /root).
+    /// Start monitoring `workspace` and writing events, with paths relative
+    /// to it, to `db`. Open it with `crate::session::open_workspace`.
     pub fn start(
-        watch_dir: PathBuf,
-        strip_prefix: PathBuf,
+        workspace: ContainedDir,
         db: Arc<DbWriter>,
         security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
         trace_state: Arc<std::sync::Mutex<TraceState>>,
@@ -323,12 +310,12 @@ impl FsMonitor {
         // The baseline walk is the same walk each scan performs, so it is also
         // the first measurement of what a scan costs.
         let scan_started = Instant::now();
-        let snapshot = workspace_snapshot(&watch_dir, &strip_prefix);
+        let snapshot = workspace_snapshot(&workspace);
         let scan_duration = scan_started.elapsed();
         let poll_interval = poll_interval_for_scan(scan_duration);
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
-        info!(dir = %watch_dir.display(), entries = snapshot.len(), scan_ms = scan_duration.as_millis(),
+        info!(dir = %workspace.path().display(), entries = snapshot.len(), scan_ms = scan_duration.as_millis(),
               poll_ms = poll_interval.as_millis(),
               "host fs-monitor started (poll mode, FSEvents unreliable for VirtioFS)");
 
@@ -342,8 +329,7 @@ impl FsMonitor {
                 rt.block_on(Self::scan_loop(
                     shutdown_rx,
                     ScanConfig {
-                        watch_dir,
-                        strip_prefix,
+                        workspace,
                         interval: poll_interval,
                         max_batch: MAX_QUEUE_SIZE,
                     },
@@ -389,7 +375,7 @@ impl FsMonitor {
             db: &db,
             security_rules: &security_rules,
             trace_state: &trace_state,
-            strip_prefix: &config.strip_prefix,
+            workspace: &config.workspace,
         };
         let mut interval = config.interval;
         let mut stopping = false;
@@ -403,7 +389,7 @@ impl FsMonitor {
             }
 
             let scan_started = Instant::now();
-            let mut current = workspace_snapshot(&config.watch_dir, &config.strip_prefix);
+            let mut current = workspace_snapshot(&config.workspace);
             let scan_duration = scan_started.elapsed();
             let mut batch = reconciliation_events(&snapshot, &current);
             let raw = batch.len();
@@ -500,8 +486,9 @@ impl FsMonitor {
     /// bytes, and both are about the same attack: a guest that plants `.env`
     /// as a symlink to a host file (`~/.aws/credentials`, a private key) so
     /// the host parses and stores what it points at. The kind comes from the
-    /// scan's own lstat, and the open is `O_NOFOLLOW` and regular-file-only,
-    /// so a link swapped in after the scan is refused too.
+    /// scan's own lstat, and every component is opened `O_NOFOLLOW` from the
+    /// workspace descriptor, regular-file-only for the last, so a link swapped
+    /// in after the scan -- at any depth -- is refused too.
     async fn broker_env_file_credentials(
         ctx: &EmitContext<'_>,
         rules: &SecurityRuleSet,
@@ -510,8 +497,13 @@ impl FsMonitor {
         if event.action == FileAction::Deleted || event.kind != FileKind::File || !is_env_candidate(&event.path) {
             return None;
         }
-        let fs_path = ctx.strip_prefix.join(&event.path);
-        let file = unix_fs::open_regular_file_no_follow(&fs_path).ok()?;
+        let path = Path::new(&event.path);
+        let file = ctx
+            .workspace
+            .walk(path.parent()?)
+            .ok()?
+            .open_file(path.file_name()?, ContainedOpenOptions::read_only())
+            .ok()?;
         // fstat on the open handle, so the size that is checked belongs to the
         // same file that is about to be read.
         if file.metadata().ok()?.len() > MAX_ENV_BYTES {

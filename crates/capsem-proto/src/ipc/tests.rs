@@ -248,37 +248,6 @@ fn exec_result_nonzero_exit() {
 }
 
 #[test]
-fn snapshot_status_roundtrip() {
-    let msg = ProcessToService::SnapshotStatusResult {
-        id: 7,
-        status: super::SnapshotStatus {
-            total: 1,
-            auto_count: 1,
-            manual_count: 0,
-            manual_available: 12,
-            snapshots: vec![super::SnapshotSlotStatus {
-                checkpoint: "cp-0".into(),
-                slot: 0,
-                origin: "auto".into(),
-                name: None,
-                timestamp: "2026-06-11T00:00:00Z".into(),
-                hash: None,
-            }],
-        },
-    };
-    let bytes = serde_json::to_vec(&msg).unwrap();
-    let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
-    match msg2 {
-        ProcessToService::SnapshotStatusResult { id, status } => {
-            assert_eq!(id, 7);
-            assert_eq!(status.total, 1);
-            assert_eq!(status.snapshots[0].checkpoint, "cp-0");
-        }
-        _ => panic!("wrong variant"),
-    }
-}
-
-#[test]
 fn write_file_result_success() {
     let msg = ProcessToService::WriteFileResult {
         id: 5,
@@ -444,22 +413,6 @@ fn reload_config_roundtrip() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn prepare_snapshot_roundtrip() {
-    let msg = ServiceToProcess::PrepareSnapshot;
-    let bytes = serde_json::to_vec(&msg).unwrap();
-    let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
-    assert!(matches!(msg2, ServiceToProcess::PrepareSnapshot));
-}
-
-#[test]
-fn unfreeze_roundtrip() {
-    let msg = ServiceToProcess::Unfreeze;
-    let bytes = serde_json::to_vec(&msg).unwrap();
-    let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
-    assert!(matches!(msg2, ServiceToProcess::Unfreeze));
-}
-
-#[test]
 fn suspend_roundtrip() {
     let msg = ServiceToProcess::Suspend {
         checkpoint_path: "/tmp/checkpoint.vzsave".into(),
@@ -472,14 +425,6 @@ fn suspend_roundtrip() {
         }
         _ => panic!("wrong variant"),
     }
-}
-
-#[test]
-fn resume_roundtrip() {
-    let msg = ServiceToProcess::Resume;
-    let bytes = serde_json::to_vec(&msg).unwrap();
-    let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
-    assert!(matches!(msg2, ServiceToProcess::Resume));
 }
 
 #[test]
@@ -505,12 +450,29 @@ fn suspend_requested_roundtrip() {
 }
 
 #[test]
-fn snapshot_ready_roundtrip() {
-    let msg = ProcessToService::SnapshotReady { id: "vm-snap".into() };
+fn clone_state_roundtrip() {
+    let msg = ServiceToProcess::CloneState {
+        id: 12,
+        destination: "/run/persistent/fork".into(),
+    };
     let bytes = serde_json::to_vec(&msg).unwrap();
-    let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
-    match msg2 {
-        ProcessToService::SnapshotReady { id } => assert_eq!(id, "vm-snap"),
+    match serde_json::from_slice::<ServiceToProcess>(&bytes).unwrap() {
+        ServiceToProcess::CloneState { id, destination } => {
+            assert_eq!(id, 12);
+            assert_eq!(destination, "/run/persistent/fork");
+        }
+        _ => panic!("wrong variant"),
+    }
+    let reply = ProcessToService::CloneStateResult {
+        id: 12,
+        size_bytes: Some(4096),
+        error: None,
+    };
+    let bytes = serde_json::to_vec(&reply).unwrap();
+    match serde_json::from_slice::<ProcessToService>(&bytes).unwrap() {
+        ProcessToService::CloneStateResult { id, size_bytes, error } => {
+            assert_eq!((id, size_bytes, error), (12, Some(4096), None));
+        }
         _ => panic!("wrong variant"),
     }
 }

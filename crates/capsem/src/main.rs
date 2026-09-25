@@ -3,6 +3,7 @@ mod completions;
 mod container_image;
 mod container_run;
 mod create_command;
+mod doctor_bundle;
 mod doctor_output;
 use doctor_output::push_doctor_output_tail;
 mod grouped_help;
@@ -2099,40 +2100,13 @@ async fn main() -> Result<()> {
             // <session_dir>/guest/doctor-bundle.tar on the host.
             if *bundle {
                 let session_dir = run_dir.join("instances").join(&vm_id);
-                let candidates = [
-                    session_dir.join("guest").join("doctor-bundle.tar"),
-                    session_dir.join("workspace").join("doctor-bundle.tar"),
-                ];
                 let dest = run_dir.join("doctor-latest.tar");
-                let mut copied = false;
-                for src in &candidates {
-                    if src.exists() {
-                        if let Err(e) = std::fs::copy(src, &dest) {
-                            eprintln!(
-                                "warning: failed to copy doctor bundle from {} -> {}: {e}",
-                                src.display(),
-                                dest.display()
-                            );
-                        } else {
-                            eprintln!(
-                                "Doctor bundle: {} ({} bytes)",
-                                dest.display(),
-                                std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0)
-                            );
-                            copied = true;
-                        }
-                        break;
-                    }
-                }
-                if !copied {
-                    eprintln!(
-                        "warning: no doctor bundle found in any of {} -- the in-VM script may have failed before tar",
-                        candidates
-                            .iter()
-                            .map(|p| p.display().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
+                match doctor_bundle::copy_out(&session_dir, &dest) {
+                    Ok(bytes) => eprintln!("Doctor bundle: {} ({bytes} bytes)", dest.display()),
+                    Err(e) => eprintln!(
+                        "warning: no doctor bundle copied from {} -- the in-VM script may have failed before tar: {e}",
+                        session_dir.display()
+                    ),
                 }
             }
 

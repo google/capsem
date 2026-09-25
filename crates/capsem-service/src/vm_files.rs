@@ -1,11 +1,7 @@
 mod provision;
+use super::*;
 pub(super) use crate::sandbox_info::handle_list;
 pub(crate) use provision::handle_provision;
-mod snapshots;
-use super::*;
-#[cfg(test)]
-pub(super) use snapshots::snapshot_status_from_session_dir;
-pub(super) use snapshots::{handle_vm_changes, handle_vm_snapshots_list, handle_vm_snapshots_status};
 
 mod diagnostics;
 mod launch;
@@ -16,7 +12,7 @@ mod ipc_command;
 pub(crate) use diagnostics::{handle_host_logs, handle_logs, handle_panics, handle_service_logs, handle_triage};
 #[cfg(test)]
 pub(crate) use diagnostics::{session_db_triage, session_triage_statements};
-pub(crate) use fork::handle_fork;
+pub(crate) use fork::{clone_session_state, handle_fork};
 pub(super) use ipc_command::send_ipc_command;
 
 pub(super) fn main_db_path_for_run_dir(run_dir: &StdPath) -> PathBuf {
@@ -28,9 +24,8 @@ pub(super) fn gib(bytes: u64) -> u64 {
 }
 
 pub(super) fn session_rootfs_size_gb(entry: &PersistentVmEntry) -> Result<u32> {
-    let rootfs = capsem_core::guest_share_dir(&entry.session_dir).join("system/rootfs.img");
-    let metadata = std::fs::metadata(&rootfs)
-        .with_context(|| format!("VM '{}' rootfs.img unavailable at {}", entry.name, rootfs.display()))?;
+    let metadata = capsem_core::session::system_overlay_metadata(&entry.session_dir)
+        .with_context(|| format!("VM '{}' system overlay rootfs.img unavailable", entry.name))?;
     let gib_bytes = 1024_u64 * 1024 * 1024;
     if metadata.len() == 0 || metadata.len() % gib_bytes != 0 {
         return Err(anyhow!(
@@ -391,9 +386,7 @@ use std::ffi::OsString;
 use capsem_foundation::unix::contained::{
     is_not_directory, is_symlink_refusal, ContainedDir, ContainedOpenOptions, EntryKind,
 };
-use capsem_service::fs_utils::{
-    identify_bytes_sync, identify_file_sync, unknown_file_type, FileContentQuery, FileListQuery,
-};
+use capsem_service::fs_utils::{identify_bytes, identify_file, FileContentQuery, FileListQuery, FileType};
 use capsem_service::fs_utils::{resolve_dir_path, FilePath};
 
 // ---------------------------------------------------------------------------
@@ -412,11 +405,11 @@ use capsem_service::fs_utils::{resolve_dir_path, FilePath};
 /// Open the workspace root of sandbox `id` as a containment handle.
 pub(super) fn workspace_root(state: &ServiceState, id: &str) -> Result<ContainedDir, AppError> {
     let session_dir = resolve_session_dir(state, id)?;
-    let root = capsem_core::guest_share_dir(&session_dir).join("workspace");
-    ContainedDir::open_root(&root).map_err(|e| {
+    // Never by path: the guest can replace its workspace with a host link.
+    capsem_core::session::open_workspace(&session_dir).map_err(|e| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("open workspace {}: {e}", root.display()),
+            format!("open workspace of {}: {e}", session_dir.display()),
         )
     })
 }
@@ -482,14 +475,12 @@ pub(super) fn list_dir_recursive(
     rel_prefix: &str,
     current_depth: u32,
     max_depth: u32,
-    magika: &Mutex<magika::Session>,
 ) -> Vec<FileListEntry> {
     let mut items = match dir.entries() {
         Ok(items) => items,
         Err(_) => return Vec::new(),
     };
-    // Skip the system directory (rootfs overlay, not user content)
-    items.retain(|item| item.kind != EntryKind::Other && item.name != "system");
+    items.retain(|item| item.kind != EntryKind::Other);
     items.sort_by(|a, b| {
         let a_is_dir = a.kind == EntryKind::Directory;
         let b_is_dir = b.kind == EntryKind::Directory;
@@ -509,7 +500,7 @@ pub(super) fn list_dir_recursive(
             let children = if current_depth < max_depth {
                 dir.descend(&item.name)
                     .ok()
-                    .map(|child| list_dir_recursive(&child, &rel_path, current_depth + 1, max_depth, magika))
+                    .map(|child| list_dir_recursive(&child, &rel_path, current_depth + 1, max_depth))
             } else {
                 None
             };
@@ -525,9 +516,9 @@ pub(super) fn list_dir_recursive(
                 children,
             });
         } else {
-            let (label, mime, _group, is_text) = match dir.open_file(&item.name, ContainedOpenOptions::read_only()) {
-                Ok(mut file) => identify_file_sync(magika, StdPath::new(&name), &mut file),
-                Err(_) => unknown_file_type(),
+            let file_type = match dir.open_file(&item.name, ContainedOpenOptions::read_only()) {
+                Ok(mut file) => identify_file(StdPath::new(&name), &mut file),
+                Err(_) => FileType::UNKNOWN,
             };
             entries.push(FileListEntry {
                 name,
@@ -535,9 +526,9 @@ pub(super) fn list_dir_recursive(
                 entry_type: api::FileEntryType::File,
                 size: item.size,
                 mtime: item.mtime_secs,
-                mime: Some(mime),
-                label: Some(label),
-                is_text: Some(is_text),
+                mime: Some(file_type.mime.to_string()),
+                label: Some(file_type.label.to_string()),
+                is_text: Some(file_type.is_text),
                 children: None,
             });
         }
@@ -557,8 +548,8 @@ pub(super) async fn handle_list_files(
         .walk(StdPath::new(&rel_path))
         .map_err(workspace_io_error)?;
 
-    // Directory reads and Magika are blocking I/O -- run in spawn_blocking
-    let entries = tokio::task::spawn_blocking(move || list_dir_recursive(&target, &rel_path, 1, depth, &state.magika))
+    // Directory reads are blocking I/O -- run in spawn_blocking
+    let entries = tokio::task::spawn_blocking(move || list_dir_recursive(&target, &rel_path, 1, depth))
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?;
 
@@ -636,7 +627,6 @@ pub(super) async fn handle_download_file(
     let (parent, name) = resolve_workspace_target(&state, &id, &relative, false)?;
 
     // Open without following symlinks, read, and detect type in spawn_blocking
-    let state_clone = Arc::clone(&state);
     let (data, mime, filename) = tokio::task::spawn_blocking(move || {
         use std::io::Read;
         let file = parent
@@ -655,7 +645,7 @@ pub(super) async fn handle_download_file(
             ));
         }
         let name = name.to_string_lossy().into_owned();
-        let (_, mime_str, _, _) = identify_bytes_sync(&state_clone.magika, StdPath::new(&name), &data);
+        let mime_str = identify_bytes(StdPath::new(&name), &data).mime.to_string();
         // Sanitize the filename for Content-Disposition
         let safe_name: String = name
             .chars()
@@ -1053,19 +1043,12 @@ pub(super) async fn handle_info(
             .off_worker(move |state| state.persistent_entry_resume_state_cached(&resume_entry))
             .await?;
         let mut info = sandbox_info::inactive_sandbox_info(vm_id, &entry, status, can_resume, blocked_reason);
-        // Disk usage is a recursive walk of the session dir (including every
-        // snapshot clone). Run it off the async worker so it does not stall the
-        // axum runtime, and log rather than silently swallow a failure.
+        // Disk usage is a recursive walk of the session dir: off the async
+        // worker so it does not stall the axum runtime.
         let session_dir = entry.session_dir.clone();
         info.size_bytes =
-            match tokio::task::spawn_blocking(move || capsem_core::auto_snapshot::sandbox_disk_usage(&session_dir))
-                .await
-            {
-                Ok(Ok(bytes)) => Some(bytes),
-                Ok(Err(error)) => {
-                    tracing::debug!(error = %error, "sandbox disk usage computation failed");
-                    None
-                }
+            match tokio::task::spawn_blocking(move || capsem_core::session::disk_usage_bytes(&session_dir)).await {
+                Ok(bytes) => Some(bytes),
                 Err(error) => {
                     tracing::debug!(error = %error, "sandbox disk usage task failed");
                     None

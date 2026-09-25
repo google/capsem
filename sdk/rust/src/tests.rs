@@ -223,10 +223,6 @@ async fn controls_and_resources_use_the_canonical_vm_routes() {
     drop(vm);
     fork.info().await.unwrap();
     request(&mut server, "/vms/vm-1/info").await;
-    fork.snapshots().list().await.unwrap();
-    request(&mut server, "/vms/vm-1/snapshots/list").await;
-    fork.snapshots().status().await.unwrap();
-    request(&mut server, "/vms/vm-1/snapshots/status").await;
     fork.stats().summary().await.unwrap();
     request(&mut server, "/vms/vm-1/stats/summary").await;
     fork.stats().details().await.unwrap();
@@ -268,16 +264,6 @@ async fn query_options_preserve_wire_names_enums_and_root_listing() {
     })
     .await
     .unwrap();
-    vm.files()
-        .history(
-            "cp-1",
-            PageOptions {
-                limit: Some(2),
-                offset: Some(3),
-            },
-        )
-        .await
-        .unwrap();
     vm.files().list("", None).await.unwrap();
     vm.files().list("/root/folder", Some(2)).await.unwrap();
     vm.files().exact().list("/root", None).await.unwrap();
@@ -285,7 +271,6 @@ async fn query_options_preserve_wire_names_enums_and_root_listing() {
         "/vms/vm-1/logs?grep=hello+world&tail=2&max_bytes=64",
         "/vms/vm-1/history?limit=2&offset=3&search=printf&layer=exec",
         "/vms/vm-1/timeline?trace_id=trace&since=1h&limit=1&layers=net%2Cmodel",
-        "/vms/vm-1/changes?checkpoint=cp-1&offset=3&limit=2",
         "/vms/vm-1/files/list",
         "/vms/vm-1/files/list?path=%2Froot%2Ffolder&depth=2",
         "/vms/vm-1/files/list?path=%2Froot&exact=true",

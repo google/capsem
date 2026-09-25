@@ -2,19 +2,17 @@
 //!
 //! Runs as a stdio MCP server subprocess, managed by the aggregator.
 //! Exposes HTTP tools (fetch_http, grep_http, http_headers) and
-//! file/snapshot tools (when CAPSEM_SESSION_DIR is set).
+//! the echo transport probe.
 //!
 //! Config via environment variables:
 //! - CAPSEM_ACTIVE_PROFILE: Session active profile whose security rules/plugins govern tools.
-//! - CAPSEM_SESSION_DIR: Session directory (parent of workspace). Enables snapshot tools.
+//! - CAPSEM_SESSION_DIR: Session directory; holds the per-peer singleton lock.
 //!
 //! It writes no ledger. capsem-process is the one writer of a session's
 //! ledger, so what these tools do that only this process can see -- the HTTP
-//! requests it makes, the files a revert puts back -- goes back to it as
-//! records on each tool result (see `capsem_proto::mcp_contracts::builtin_ledger`).
+//! requests it makes -- goes back to it as records on each tool result (see `capsem_proto::mcp_contracts::builtin_ledger`).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,12 +22,10 @@ use rmcp::model::{CallToolResult, Content, Implementation, InitializeResult, Met
 use rmcp::schemars::{self, JsonSchema};
 use rmcp::{tool, tool_router, ServiceExt};
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
 use tracing::info;
 
-use capsem_core::auto_snapshot::AutoSnapshotScheduler;
+use capsem_core::mcp::builtin_tools;
 use capsem_core::mcp::builtin_tools::BuiltinHttpClient;
-use capsem_core::mcp::{builtin_tools, file_tools};
 use capsem_core::net::policy_config::{ActiveProfileFile, SecurityPluginConfig, SecurityRuleSet};
 use capsem_proto::mcp_contracts::builtin_ledger::{self, BuiltinLedgerRecord, BUILTIN_LEDGER_META_KEY};
 use capsem_proto::mcp_contracts::JsonRpcResponse;
@@ -91,68 +87,6 @@ struct HttpHeadersParams {
     method: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-struct SnapshotPaginationParams {
-    /// Character offset to start from (default: 0).
-    #[serde(default)]
-    start_index: Option<u64>,
-    /// Maximum characters to return (default: 5000).
-    #[serde(default)]
-    max_length: Option<u64>,
-    /// Output format: 'text' (default) or 'json'.
-    #[serde(default)]
-    format: Option<String>,
-    /// Include full per-file snapshot changes. Defaults to compact summaries.
-    #[serde(default)]
-    include_changes: Option<bool>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-struct SnapshotHistoryParams {
-    /// File path to show history for (relative to workspace root or absolute).
-    path: String,
-    /// Character offset to start from (default: 0).
-    #[serde(default)]
-    start_index: Option<u64>,
-    /// Maximum characters to return (default: 5000).
-    #[serde(default)]
-    max_length: Option<u64>,
-    /// Output format: 'text' (default) or 'json'.
-    #[serde(default)]
-    format: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-struct SnapshotNameParams {
-    /// Name for the snapshot.
-    name: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-struct SnapshotRevertParams {
-    /// File path to revert (relative to workspace root or absolute).
-    path: String,
-    /// Checkpoint ID (e.g. "cp-3"). Optional -- auto-picks the newest
-    /// snapshot that contains the file when absent.
-    #[serde(default)]
-    checkpoint: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-struct SnapshotDeleteParams {
-    /// Checkpoint ID to delete (e.g. "cp-3").
-    checkpoint: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-struct SnapshotCompactParams {
-    /// List of checkpoint IDs to compact.
-    checkpoints: Vec<String>,
-    /// Name for the resulting merged snapshot (optional; auto-generated if missing).
-    #[serde(default)]
-    name: Option<String>,
-}
-
 // -- Handler --
 
 #[derive(Clone)]
@@ -160,8 +94,6 @@ struct BuiltinHandler {
     http_client: BuiltinHttpClient,
     security_rules: Arc<SecurityRuleSet>,
     plugin_policy: Arc<BTreeMap<String, SecurityPluginConfig>>,
-    scheduler: Option<Arc<Mutex<AutoSnapshotScheduler>>>,
-    workspace_dir: Option<PathBuf>,
 }
 
 impl ServerHandler for BuiltinHandler {
@@ -237,153 +169,6 @@ impl BuiltinHandler {
     )]
     async fn http_headers(&self, Parameters(params): Parameters<HttpHeadersParams>) -> CallToolResult {
         call_builtin(self, "http_headers", to_args(&params)).await
-    }
-
-    // -- Snapshot tools --
-
-    #[tool(
-        name = "snapshots_changes",
-        description = "List files changed in the workspace compared to automatic checkpoints. Shows newest changes first, paginated."
-    )]
-    async fn snapshots_changes(
-        &self,
-        Parameters(params): Parameters<SnapshotPaginationParams>,
-    ) -> Result<String, String> {
-        let (sched, ws) = self.snapshot_state()?;
-        let args = to_args(&params);
-        let resp = run_snapshot_blocking(move || {
-            let sched = sched.lock().unwrap_or_else(|e| e.into_inner());
-            file_tools::handle_list_changed_files(&args, &sched, &ws, None)
-        })
-        .await?;
-        extract_text(resp)
-    }
-
-    #[tool(
-        name = "snapshots_list",
-        description = "List all snapshots (automatic and manual) with metadata and per-snapshot diffs."
-    )]
-    async fn snapshots_list(&self, Parameters(params): Parameters<SnapshotPaginationParams>) -> Result<String, String> {
-        let (sched, ws) = self.snapshot_state()?;
-        let args = to_args(&params);
-        let resp = run_snapshot_blocking(move || {
-            let sched = sched.lock().unwrap_or_else(|e| e.into_inner());
-            file_tools::handle_list_snapshots(&args, &sched, &ws, None)
-        })
-        .await?;
-        extract_text(resp)
-    }
-
-    #[tool(
-        name = "snapshots_revert",
-        description = "Restore a file from a checkpoint to the current workspace."
-    )]
-    async fn snapshots_revert(&self, Parameters(params): Parameters<SnapshotRevertParams>) -> CallToolResult {
-        let (sched, ws) = match self.snapshot_state() {
-            Ok(state) => state,
-            Err(error) => return tool_result(Err(error), &[]),
-        };
-        let args = to_args(&params);
-        let reverted = run_snapshot_blocking(move || {
-            let sched = sched.lock().unwrap_or_else(|e| e.into_inner());
-            file_tools::handle_revert_file_with_record(&args, &sched, &ws, None)
-        })
-        .await;
-        let (resp, record) = match reverted {
-            Ok(reverted) => reverted,
-            Err(error) => return tool_result(Err(error), &[]),
-        };
-        let records: Vec<_> = record.map(BuiltinLedgerRecord::FileReverted).into_iter().collect();
-        tool_result(extract_text(resp), &records)
-    }
-
-    #[tool(
-        name = "snapshots_create",
-        description = "Create a named manual snapshot (checkpoint)."
-    )]
-    async fn snapshots_create(&self, Parameters(params): Parameters<SnapshotNameParams>) -> Result<String, String> {
-        let (sched, _ws) = self.snapshot_state()?;
-        let args = to_args(&params);
-        let resp = run_snapshot_blocking(move || {
-            let mut sched = sched.lock().unwrap_or_else(|e| e.into_inner());
-            file_tools::handle_snapshot(&args, &mut sched, None)
-        })
-        .await?;
-        extract_text(resp)
-    }
-
-    #[tool(
-        name = "snapshots_delete",
-        description = "Delete a manual snapshot by checkpoint ID."
-    )]
-    async fn snapshots_delete(&self, Parameters(params): Parameters<SnapshotDeleteParams>) -> Result<String, String> {
-        let (sched, _ws) = self.snapshot_state()?;
-        let args = to_args(&params);
-        let resp = run_snapshot_blocking(move || {
-            let sched = sched.lock().unwrap_or_else(|e| e.into_inner());
-            file_tools::handle_delete_snapshot(&args, &sched, None)
-        })
-        .await?;
-        extract_text(resp)
-    }
-
-    #[tool(name = "snapshots_history", description = "Show revert history for the session.")]
-    async fn snapshots_history(&self, Parameters(params): Parameters<SnapshotHistoryParams>) -> Result<String, String> {
-        let (sched, ws) = self.snapshot_state()?;
-        let args = to_args(&params);
-        let resp = run_snapshot_blocking(move || {
-            let sched = sched.lock().unwrap_or_else(|e| e.into_inner());
-            file_tools::handle_snapshots_history(&args, &sched, &ws, None)
-        })
-        .await?;
-        extract_text(resp)
-    }
-
-    #[tool(
-        name = "snapshots_compact",
-        description = "Compact snapshot storage by merging specified checkpoints."
-    )]
-    async fn snapshots_compact(&self, Parameters(params): Parameters<SnapshotCompactParams>) -> Result<String, String> {
-        let (sched, _ws) = self.snapshot_state()?;
-        let args = to_args(&params);
-        let resp = run_snapshot_blocking(move || {
-            let mut sched = sched.lock().unwrap_or_else(|e| e.into_inner());
-            file_tools::handle_snapshots_compact(&args, &mut sched, None)
-        })
-        .await?;
-        extract_text(resp)
-    }
-}
-
-/// Run a snapshot operation off the async worker pool.
-///
-/// The snapshot handlers do heavy synchronous work -- walkdir, clonefile,
-/// blake3 over the whole workspace -- while holding the scheduler lock. Running
-/// that directly on a tokio worker (as the handlers previously did) stalls the
-/// rmcp runtime and every concurrent tool call for its duration. `spawn_blocking`
-/// moves it to the blocking pool; the closure takes the (std) scheduler lock so
-/// the operations still serialize against each other.
-async fn run_snapshot_blocking<F, R>(f: F) -> Result<R, String>
-where
-    F: FnOnce() -> R + Send + 'static,
-    R: Send + 'static,
-{
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| format!("snapshot task failed: {e}"))
-}
-
-impl BuiltinHandler {
-    fn snapshot_state(&self) -> Result<(Arc<Mutex<AutoSnapshotScheduler>>, PathBuf), String> {
-        let sched = self
-            .scheduler
-            .as_ref()
-            .ok_or("snapshot tools unavailable (no session directory)")?;
-        let ws = self
-            .workspace_dir
-            .as_ref()
-            .ok_or("snapshot tools unavailable (no workspace directory)")?;
-        Ok((Arc::clone(sched), ws.clone()))
     }
 }
 
@@ -520,42 +305,10 @@ async fn main() -> Result<()> {
     let security_rules = Arc::new(active_profile.compile_security_rule_set().map_err(anyhow::Error::msg)?);
     let plugin_policy = Arc::new(active_profile.plugins.clone());
 
-    // Snapshot scheduler (optional, requires CAPSEM_SESSION_DIR).
-    let (scheduler, workspace_dir) = match std::env::var("CAPSEM_SESSION_DIR") {
-        Ok(session_dir) => {
-            let session_path = PathBuf::from(&session_dir);
-            let guest_ws = capsem_core::guest_share_dir(&session_path).join("workspace");
-            let ws = if guest_ws.exists() {
-                guest_ws
-            } else {
-                session_path.join("workspace")
-            };
-            if ws.exists() {
-                let sched = AutoSnapshotScheduler::new(
-                    session_path,
-                    10, // max auto snapshots
-                    12, // max manual snapshots
-                    std::time::Duration::from_secs(300),
-                );
-                info!(workspace = %ws.display(), "snapshot tools enabled");
-                (Some(Arc::new(Mutex::new(sched))), Some(ws))
-            } else {
-                tracing::warn!(path = %ws.display(), "workspace directory not found, snapshot tools disabled");
-                (None, None)
-            }
-        }
-        Err(_) => {
-            info!("CAPSEM_SESSION_DIR not set, snapshot tools disabled");
-            (None, None)
-        }
-    };
-
     let handler = BuiltinHandler {
         http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),
         security_rules,
         plugin_policy,
-        scheduler,
-        workspace_dir,
     };
 
     let tools = BuiltinHandler::tool_router();

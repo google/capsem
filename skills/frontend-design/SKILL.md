@@ -103,7 +103,6 @@ Domain-specific tokens defined in `@theme { }` block:
 | Status | `--color-allowed`, `--color-denied`, `--color-caution` | Decision states |
 | Providers | `--color-provider-anthropic`, `-google`, `-openai`, `-mistral` | Brand identity |
 | Token types | `--color-token-input`, `-output`, `-cache` | Usage tracking |
-| Snapshots | `--color-snap-manual`, `-auto` | Snapshot types |
 | File actions | `--color-file-created`, `-modified`, `-deleted` | FS events |
 | Syntax | `--color-json-*`, `--color-sh-*` | Code highlighting |
 | Spans | `--color-span-thinking`, `-tool`, `-answer` | Trace viewer |
@@ -167,7 +166,7 @@ Key gateway endpoints:
 | `GET /` | Health check (no auth) |
 | `GET /status` | Aggregated VM status (1s cache TTL) |
 | `GET /vms/{id}/stream` | `capsem.stream.v1` WebSocket (terminal, streaming exec, container attach), tunneled to the service |
-| Explicit allowlist | Profile, session, stats, enforcement, detection, plugin, MCP, credential, snapshot, and debug routes used by the UI/TUI |
+| Explicit allowlist | Profile, session, stats, enforcement, detection, plugin, MCP, credential, and debug routes used by the UI/TUI |
 
 The gateway forwards only routes that are deliberately registered in its route table.
 Unknown, retired, or misspelled routes must return 404 instead of falling through to

@@ -1,12 +1,11 @@
 //! Files-API helpers that don't depend on `ServiceState`.
 //!
-//! `sanitize_file_path` is the allowlist-based input gate; the Magika helpers
-//! adapt the `magika` crate's API for use in `spawn_blocking` contexts.
+//! `sanitize_file_path` is the allowlist-based input gate; `identify_file`
+//! and `identify_bytes` type a workspace file for the files API.
 //! `resolve_workspace_target` lives in `vm_files.rs` because it borrows
 //! `&ServiceState`.
 
 use std::io::Read;
-use std::sync::Mutex;
 
 use axum::http::StatusCode;
 
@@ -130,114 +129,114 @@ fn workspace_relative(raw: &str, exact: bool, container: bool) -> Result<&str, A
     }
 }
 
-/// Extract file-type info from Magika `FileType` as `(label, mime, group, is_text)`.
-pub fn extract_magika_info(ft: &magika::FileType) -> (String, String, String, bool) {
-    let info = ft.info();
-    (
-        info.label.to_string(),
-        info.mime_type.to_string(),
-        info.group.to_string(),
-        info.is_text,
-    )
+/// What the files API reports about a file's type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileType {
+    /// Short name the UI uses as a syntax-highlighting hint (`python`, `png`).
+    pub label: &'static str,
+    pub mime: &'static str,
+    pub group: &'static str,
+    pub is_text: bool,
 }
 
-/// The tuple for a file that could not be typed. Typing is best-effort, so
-/// handlers never plumb its errors.
-pub fn unknown_file_type() -> (String, String, String, bool) {
-    (
-        "unknown".into(),
-        "application/octet-stream".into(),
-        "unknown".into(),
-        false,
-    )
-}
+impl FileType {
+    pub const TEXT: Self = Self::new("text", "text/plain", "text", true);
+    pub const UNKNOWN: Self = Self::new("unknown", "application/octet-stream", "unknown", false);
 
-/// Identify an already-open regular file with Magika. Taking the handle rather
-/// than a path means the bytes classified are the bytes the caller opened --
-/// with `O_NOFOLLOW` -- and not whatever a guest has since put at that name.
-/// Runs synchronously under the session mutex; callers wrap in `spawn_blocking`.
-pub fn identify_file_sync(
-    magika: &Mutex<magika::Session>,
-    name: &std::path::Path,
-    file: &mut std::fs::File,
-) -> (String, String, String, bool) {
-    let mut head = Vec::with_capacity(UTF8_PROBE_BYTES);
-    if file
-        .by_ref()
-        .take(UTF8_PROBE_BYTES as u64)
-        .read_to_end(&mut head)
-        .is_err()
-    {
-        return unknown_file_type();
-    }
-    let mut session = magika.lock().unwrap();
-    match session.identify_content_sync(&mut *file) {
-        Ok(ft) => normalize_file_type(name, &head, extract_magika_info(&ft)),
-        Err(_) => unknown_file_type(),
+    const fn new(label: &'static str, mime: &'static str, group: &'static str, is_text: bool) -> Self {
+        Self {
+            label,
+            mime,
+            group,
+            is_text,
+        }
     }
 }
 
-/// Identify bytes already read into memory. See `identify_file_sync`.
-pub fn identify_bytes_sync(
-    magika: &Mutex<magika::Session>,
-    name: &std::path::Path,
-    data: &[u8],
-) -> (String, String, String, bool) {
-    let mut session = magika.lock().unwrap();
-    match session.identify_content_sync(data) {
-        Ok(ft) => normalize_file_type(
-            name,
-            &data[..data.len().min(UTF8_PROBE_BYTES)],
-            extract_magika_info(&ft),
-        ),
-        Err(_) => unknown_file_type(),
+/// Bytes read from the head of a file to decide whether it is text.
+const TEXT_PROBE_BYTES: usize = 8192;
+
+/// Type an already-open regular file from its name and the head of its
+/// content. Taking the handle rather than a path means the bytes classified
+/// are the bytes the caller opened -- with `O_NOFOLLOW` -- and not whatever a
+/// guest has since put at that name.
+pub fn identify_file(name: &std::path::Path, file: &mut std::fs::File) -> FileType {
+    let mut head = Vec::with_capacity(TEXT_PROBE_BYTES);
+    match file.take(TEXT_PROBE_BYTES as u64).read_to_end(&mut head) {
+        Ok(_) => identify_bytes(name, &head),
+        Err(_) => FileType::UNKNOWN,
     }
 }
 
-const UTF8_PROBE_BYTES: usize = 8192;
-
-/// Rescue a file Magika gave up on: a plain-text extension plus a UTF-8 head
-/// is text.
-fn normalize_file_type(
-    name: &std::path::Path,
-    head: &[u8],
-    detected: (String, String, String, bool),
-) -> (String, String, String, bool) {
-    let (label, mime, group, is_text) = detected;
-    if is_text || mime != "application/octet-stream" {
-        return (label, mime, group, is_text);
-    }
-    if has_plain_text_extension(name) && std::str::from_utf8(head).is_ok() {
-        return ("text".into(), "text/plain".into(), "text".into(), true);
-    }
-    (label, mime, group, is_text)
-}
-
-fn has_plain_text_extension(path: &std::path::Path) -> bool {
-    path.extension()
+/// Type bytes already in memory. See `identify_file`.
+//
+// TODO(magika-v2): content-based typing returns once Magika v2 (pure Rust)
+// is production-ready, google/capsem#234. Magika v1 pulled in ONNX Runtime,
+// a native library downloaded at build time, for a UI hint.
+pub fn identify_bytes(name: &std::path::Path, data: &[u8]) -> FileType {
+    let head = &data[..data.len().min(TEXT_PROBE_BYTES)];
+    let text = looks_like_text(head);
+    let extension = name
+        .extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| {
-            matches!(
-                ext.to_ascii_lowercase().as_str(),
-                "txt"
-                    | "text"
-                    | "md"
-                    | "markdown"
-                    | "log"
-                    | "json"
-                    | "toml"
-                    | "yaml"
-                    | "yml"
-                    | "csv"
-                    | "tsv"
-                    | "sh"
-                    | "py"
-                    | "js"
-                    | "ts"
-                    | "rs"
-            )
-        })
-        .unwrap_or(false)
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    match by_extension(&extension) {
+        // A text extension on binary content is not believed.
+        Some(known) if known.is_text && !text => FileType::UNKNOWN,
+        Some(known) => known,
+        None if text => FileType::TEXT,
+        None => FileType::UNKNOWN,
+    }
+}
+
+/// No NUL byte, and valid UTF-8 up to a character the probe may have cut.
+fn looks_like_text(head: &[u8]) -> bool {
+    !head.contains(&0)
+        && match std::str::from_utf8(head) {
+            Ok(_) => true,
+            Err(error) => error.error_len().is_none(),
+        }
+}
+
+fn by_extension(extension: &str) -> Option<FileType> {
+    let (label, mime, group, is_text) = match extension {
+        "txt" | "text" | "log" | "ini" | "cfg" | "conf" => ("text", "text/plain", "text", true),
+        "md" | "markdown" => ("markdown", "text/markdown", "text", true),
+        "csv" => ("csv", "text/csv", "text", true),
+        "tsv" => ("tsv", "text/tab-separated-values", "text", true),
+        "json" => ("json", "application/json", "code", true),
+        "toml" => ("toml", "application/toml", "code", true),
+        "yaml" | "yml" => ("yaml", "application/yaml", "code", true),
+        "xml" => ("xml", "text/xml", "code", true),
+        "html" | "htm" => ("html", "text/html", "code", true),
+        "css" => ("css", "text/css", "code", true),
+        "sh" | "bash" | "zsh" => ("shell", "text/x-shellscript", "code", true),
+        "py" => ("python", "text/x-python", "code", true),
+        "js" | "mjs" | "cjs" | "jsx" => ("javascript", "text/javascript", "code", true),
+        "ts" | "tsx" => ("typescript", "application/typescript", "code", true),
+        "rs" => ("rust", "text/x-rust", "code", true),
+        "go" => ("go", "text/x-go", "code", true),
+        "c" | "h" => ("c", "text/x-c", "code", true),
+        "cc" | "cpp" | "hpp" => ("cpp", "text/x-c++", "code", true),
+        "java" => ("java", "text/x-java", "code", true),
+        "rb" => ("ruby", "text/x-ruby", "code", true),
+        "sql" => ("sql", "application/sql", "code", true),
+        "svg" => ("svg", "image/svg+xml", "image", true),
+        "png" => ("png", "image/png", "image", false),
+        "jpg" | "jpeg" => ("jpeg", "image/jpeg", "image", false),
+        "gif" => ("gif", "image/gif", "image", false),
+        "webp" => ("webp", "image/webp", "image", false),
+        "ico" => ("ico", "image/vnd.microsoft.icon", "image", false),
+        "pdf" => ("pdf", "application/pdf", "document", false),
+        "zip" => ("zip", "application/zip", "archive", false),
+        "gz" | "tgz" => ("gzip", "application/gzip", "archive", false),
+        "tar" => ("tar", "application/x-tar", "archive", false),
+        "zst" => ("zstd", "application/zstd", "archive", false),
+        "wasm" => ("wasm", "application/wasm", "executable", false),
+        _ => return None,
+    };
+    Some(FileType::new(label, mime, group, is_text))
 }
 
 #[cfg(test)]

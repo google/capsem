@@ -252,7 +252,7 @@ def test_a_failed_boot_preserves_only_host_side_evidence() -> None:
 
     config = gate_config.load(PROJECT_ROOT)
 
-    assert set(config.assets.evidence_prune_dirs) == {"guest", "auto_snapshots"}
+    assert set(config.assets.evidence_prune_dirs) == {"guest"}
     assert ".log" in config.assets.evidence_suffixes
     assert ".toml" in config.assets.evidence_suffixes, (
         "vm/active_profile.toml records the asset pins a hash mismatch is argued from"

@@ -53,7 +53,7 @@ mcp/typescript/                SDK-backed npm host MCP server for AI agents (std
 crates/capsem-router/     Confined TCP publication companion (data descriptors only)
 crates/capsem-network/    Host end of a guest tun0: smoltcp over a framed VSOCK packet stream
 crates/capsem-mcp-aggregator/  Low-privilege subprocess: connects to external MCP servers
-crates/capsem-mcp-builtin/     Stdio MCP server for built-in tools (HTTP, file/snapshot)
+crates/capsem-mcp-builtin/     Stdio MCP server for built-in tools (HTTP)
 crates/capsem-agent/           Guest PTY agent + net-proxy + dns-proxy + mcp-server + sysutil + tun pump (musl)
 crates/capsem-app/             Thin Tauri desktop shell (points at gateway)
 crates/capsem-tray/            System tray (polls gateway, quick actions)
@@ -173,8 +173,10 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 
 ## Fix what you find
 
-Quality and reliability are P0, not something to trade for a smaller diff. See
-something, say something, do something.
+Capsem's quality, security and performance are the responsibility of every
+coding agent working in it, not of whoever owns the area. They are P0, not
+something to trade for a smaller diff. See something, say something, do
+something.
 
 When the work turns up a defect -- a bug, a lint or type violation, a failing
 guard, a stale path, a vulnerable dependency the audit flags -- fix it and
@@ -194,19 +196,19 @@ If it is small, fix it test-first (a failing test, then the change -- see
 open a GitHub bug (or ask to) with enough detail to act on, rather than
 dropping it silently.
 
-Stop and ask only when the fix is genuinely a judgment call: it changes
-user-visible behavior, weakens a security boundary, forces a real scope
-expansion, or picks between options a maintainer should choose (for example a
-dependency major-version bump, or suppressing an advisory instead of
-upgrading). State the finding and your recommendation, then act on the answer.
-A trivial patch bump, a lint fix, a stale-literal cleanup: just do it and say
-what you did.
+A vulnerability is the strongest case of this rule, not an exception to it.
+When you find one -- a guest-to-host path, an auth or policy bypass, a leak,
+a missing no-follow -- fix it now, in this session, test-first, as its own
+`security:` commit, even when it sits outside the task you were given. Do not
+park it waiting for a decision, and do not describe an unfixed vulnerability
+in a public issue: the fix, its test and the CHANGELOG entry are the report.
+Tell the user what you found and what you changed while you do it.
 
 Stop and ask only when the fix is genuinely a judgment call: it changes
-user-visible behavior, weakens a security boundary, forces a real scope
-expansion, or picks between options a maintainer should choose (for example a
-dependency major-version bump, or suppressing an advisory instead of
-upgrading). State the finding and your recommendation, then act on the answer.
+user-visible behavior, would weaken a security boundary (closing one is never
+a reason to wait), forces a real scope expansion, or picks between options a
+maintainer should choose (for example a dependency major-version bump, or
+suppressing an advisory instead of upgrading). State the finding and your recommendation, then act on the answer.
 A trivial patch bump, a lint fix, a stale-literal cleanup: just do it and say
 what you did.
 
@@ -307,6 +309,27 @@ Telemetry and security ledgers are database-owned.
 
 Every change touching logged data needs tests that guard this boundary.
 
+## Host Unix Boundary
+
+Every host syscall, file-descriptor operation and guest-writable filesystem
+access goes through `capsem_foundation::unix`. It is the one testable surface
+between Capsem and the kernel, so it is where no-follow, CLOEXEC, EINTR and
+errno handling are proven once instead of re-derived at each call site.
+
+- Application crates never call `nix` or `libc`. If foundation lacks a
+  primitive, add it there, with tests, and call it.
+- Anything a guest can write -- the VirtioFS share, a workspace, a system
+  image -- is reached through `unix::contained::ContainedDir` descriptors,
+  never by path. A path is followed at open time, and a guest can swap any
+  entry for a symlink between a check and a use.
+- Inside foundation, `nix` makes the syscall. A raw `libc::` call is kept only
+  where `nix` cannot express it, with the reason recorded.
+
+`tests/citadel/test_unix_boundary.py` holds all three: an exact inventory of
+raw references outside foundation, an exact inventory of raw calls inside it,
+and adversarial cases for the spellings that used to slip through. Load
+`/dev-rust-patterns` before touching either.
+
 ## The gate contract
 
 The justfile dispatches; `src/capsem/gate/` decides. No recipe carries a shell
@@ -371,8 +394,7 @@ Read `/dev-gate` before changing any of it.
 - `just test` writes benchmark recordings under `cache/target/tests/benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
 - Rust is pinned to 1.97.1 in `rust-toolchain.toml`, bootstrap, CI, and Docker. Bump every surface together in a deliberate monthly toolchain PR and handle new-lint fallout there.
 - Bare `python3` on macOS is 3.9 and gives wrong answers (phantom syntax errors, silently dead hooks). Run repository Python with `uv run --project build_system --frozen python`.
-- Never `cd` into a subdirectory in an agent shell. The working directory persists across calls, and a worktree session cannot move it back: one `cd crates/.../src` once left every later shell call, subagents included, failing its PreToolUse hook. Use absolute paths, `git -C`, or `(cd dir && ...)` in a subshell. Agent hooks in `.claude/settings.json` resolve their scripts through `$CLAUDE_PROJECT_DIR` and run under `uv` for the same reason.
-- `magika` pulls `ort`, which downloads a native library from a CDN at build time. Build with `ORT_STRATEGY=system`.
+- Never `cd` into a subdirectory in an agent shell. The working directory persists across calls, and a worktree session cannot move it back: one `cd crates/.../src` once left every later shell call, subagents included, failing its PreToolUse hook. Use absolute paths, `git -C`, or `(cd dir && ...)` in a subshell. Agent hooks in `.claude/settings.json` run under `uv` for the same reason, and resolve their scripts from `git rev-parse --show-toplevel` -- the checkout the session works in -- not `$CLAUDE_PROJECT_DIR` alone: in a worktree session that names the main checkout, and when it sat on an older commit without the hook script every Bash call failed until restart.
 - A same-size mutation of a Python test file can be served from a stale `.pyc`. Clear `tests/__pycache__` before trusting a mutation-and-restore check.
 - Processes under any Seatbelt profile cannot exec setuid binaries: `/bin/ps` fails. Use syscalls, and prove sandbox fixes under `sandbox-exec`.
 - A failing `kingslanding` test reproduces in about two minutes by running its one pytest file in the latest `cache/worktrees/<run>`; re-sign rebuilt binaries ad hoc with the virtualization entitlement.

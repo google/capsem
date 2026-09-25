@@ -72,28 +72,6 @@ def _verify_main_db(
         )
 
 
-def _verify_snapshots(results: ResultSink, session_dir: Path) -> None:
-    print(f"\n{BOLD}auto-snapshots{RESET}")
-    snapshots = session_dir / "auto_snapshots"
-    results.check(
-        snapshots.exists(),
-        "auto_snapshots directory exists",
-        f"auto_snapshots directory NOT found at {snapshots}",
-    )
-    if not snapshots.exists():
-        return
-    slot = snapshots / "0"
-    results.check(slot.exists(), "boot snapshot slot 0 exists", "boot snapshot slot 0 NOT found")
-    if slot.exists():
-        workspace = (slot / "workspace").exists()
-        system = (slot / "system").exists()
-        results.check(
-            workspace and system,
-            "slot 0 contains workspace/ and system/ subdirectories",
-            f"slot 0 missing subdirs (workspace={workspace}, system={system})",
-        )
-
-
 def _valid_log_entry(line: str) -> bool:
     try:
         entry = json.loads(line)
@@ -136,5 +114,4 @@ def verify_host_artifacts(
 ) -> None:
     """Validate every host-side artifact after the session DB is closed."""
     _verify_main_db(results, session_id, db_path, main_db)
-    _verify_snapshots(results, session_dir)
     _verify_log(results, session_dir)

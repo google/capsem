@@ -607,7 +607,6 @@ identity_inputs = [
     "build_system/docker/Dockerfile.package-builder",
     "build_system/scripts/build/rustc-workspace-wrapper.sh",
     "build_system/docker/swap-dev-libs.sh",
-    "build_system/builder/image/tools/build/materialize_package_ort.py",
 ]
 identity_globs = ["crates/*/Cargo.toml"]
 # BuildKit and containers have different network vocabularies. `default` is
@@ -620,7 +619,6 @@ cargo_store = "/opt/capsem/package-cargo"
 pnpm_store = "/opt/capsem/package-pnpm"
 apt_lists_cache_id = "capsem-package-apt-lists"
 apt_archives_cache_id = "capsem-package-apt-archives"
-ort_lib_location = "/opt/capsem/onnxruntime"
 
 # Installing the exact package into a clean systemd container and proving it
 # works: every binary present and reporting the package's own version, the
@@ -780,11 +778,10 @@ materialized_profiles_dir = "profiles"
 current_link = "current"
 
 # Copied out of a failed run before its scratch is removed. Host-side
-# diagnostics only: `guest/` and `auto_snapshots/` duplicate the guest's own
-# workspace once per generation, and the same filter keeps the VM disk image
-# and session.db out of cache/target/.
+# diagnostics only: `guest/` duplicates the guest's own workspace, and the
+# same filter keeps the VM disk image and session.db out of cache/target/.
 evidence_suffixes = [".log", ".json", ".toml"]
-evidence_prune_dirs = ["guest", "auto_snapshots"]
+evidence_prune_dirs = ["guest"]
 # AF_UNIX paths must stay under macOS SUN_LEN once the gateway appends its
 # session path, and cache/target/tests/ironbank is already too long.
 run_dir_template = "/tmp/capsem-a.XXXXXX"
@@ -891,7 +888,7 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 1
-invalid-argument-type = 68
+invalid-argument-type = 64
 invalid-assignment = 6
 invalid-return-type = 4
 no-matching-overload = 6
@@ -906,7 +903,7 @@ unused-type-ignore-comment = 3
 # policy change. This is historical debt, not capacity: every value may shrink
 # and no value may grow.
 [lint.suppression_budget]
-noqa = 227
+noqa = 225
 type_ignore = 22
 ty_ignore = 5
 ruff_global_ignore = 1
@@ -1108,7 +1105,6 @@ must_stay_below_lines = 3000
 "crates/capsem-admin/src/release_graph/tests.rs" = 1323
 "crates/capsem-agent/src/tests.rs" = 1280
 "crates/capsem-assets/src/asset_manager.rs" = 1355
-"crates/capsem-core/src/auto_snapshot/tests.rs" = 1034
 "crates/capsem-core/src/hypervisor/kvm/mod.rs" = 1031
 "crates/capsem-core/src/hypervisor/kvm/sys.rs" = 1895
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1768
@@ -1122,19 +1118,19 @@ must_stay_below_lines = 3000
 "crates/capsem-core/tests/mitm_integration.rs" = 2023
 "crates/capsem-logger/src/writer/tests.rs" = 1413
 "crates/capsem-mock-server/src/main.rs" = 1416
-"crates/capsem-process/src/vsock.rs" = 1444
+"crates/capsem-process/src/vsock.rs" = 1400
 "crates/capsem-proto/src/tests.rs" = 1446
 "crates/capsem-service/src/ledger_routes.rs" = 1625
-"crates/capsem-service/src/main.rs" = 1422
+"crates/capsem-service/src/main.rs" = 1420
 "crates/capsem-service/src/profile_routes.rs" = 2068
 "crates/capsem-service/src/tests/assets_registry.rs" = 1352
-"crates/capsem-service/src/tests/lifecycle.rs" = 1990
+"crates/capsem-service/src/tests/lifecycle.rs" = 1784
 "crates/capsem-service/src/tests/profile_routes.rs" = 2194
-"crates/capsem-service/src/vm_files.rs" = 1355
+"crates/capsem-service/src/vm_files.rs" = 1338
 "crates/capsem-tui/src/tests.rs" = 1563
 "crates/capsem-tui/src/ui.rs" = 1081
-"crates/capsem/src/main.rs" = 2216
-"crates/capsem/src/support_bundle.rs" = 1047
+"crates/capsem/src/main.rs" = 2190
+"crates/capsem/src/support_bundle.rs" = 1034
 "crates/capsem/src/tests.rs" = 1323
 "crates/capsem/src/update.rs" = 2488
 "crates/capsem/src/update/asset_install.rs" = 1400
@@ -1305,35 +1301,6 @@ rust_targets = [
 ]
 # rust-lld comes from here.
 rust_components = ["llvm-tools"]
-
-# ort-sys has a networked build script even after Cargo has fetched every
-# locked crate. Resolve its static library once through the named egress edge,
-# then point Clippy, coverage and the package helper at the same verified
-# bytes. Host selection is data: Linux and Apple Silicon use different
-# archives, while both Linux package targets share this authority.
-[toolchain.ort]
-script = "build_system/scripts/build/materialize-package-ort.py"
-archive_cache_template = "~/.cache/capsem/ort/archive-{sha256}.tar.lzma2"
-output_template = "cache/target/toolchain/ort/{consumer}-{target}-{sha256}"
-strategy_variable = "ORT_STRATEGY"
-location_variable = "ORT_LIB_LOCATION"
-strategy = "system"
-
-[toolchain.ort.host_targets]
-Linux = { arm64 = "aarch64-unknown-linux-gnu", x86_64 = "x86_64-unknown-linux-gnu" }
-Darwin = { arm64 = "aarch64-apple-darwin" }
-
-[toolchain.ort.distributions.aarch64-unknown-linux-gnu]
-url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/aarch64-unknown-linux-gnu.tar.lzma2"
-sha256 = "c25248c32d84f228b9d584b84b31e1577e4810d46beb5e304e9fa340c000176c"
-
-[toolchain.ort.distributions.x86_64-unknown-linux-gnu]
-url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/x86_64-unknown-linux-gnu.tar.lzma2"
-sha256 = "8c57d059aaaee407812a5698d6706c79e090ad69e1a14204309e802dcbbaa35f"
-
-[toolchain.ort.distributions.aarch64-apple-darwin]
-url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/aarch64-apple-darwin.tar.lzma2"
-sha256 = "0897a0e1b840566a97e5a49497b02cbc204be2d006815174b639bc99731840f9"
 
 # One native Linux dependency authority. Bootstrap, both hosted Linux gates,
 # and the Docker host builder consume these exact values; none keeps a private
@@ -1529,7 +1496,7 @@ lint_features = ["capsem-bench/guest"]
 
 # Checked-in guest payloads copied in beside the binaries.
 init = "guest/artifacts/capsem-init"
-files = ["guest/artifacts/capsem-doctor", "guest/artifacts/capsem-bench", "guest/artifacts/snapshots"]
+files = ["guest/artifacts/capsem-doctor", "guest/artifacts/capsem-bench"]
 trees = ["guest/artifacts/capsem_bench", "guest/artifacts/diagnostics"]
 prune = "__pycache__"
 
@@ -1614,8 +1581,7 @@ base_tag_template = "capsem-linux-rust-base:{digest}"
 lane_tag = "capsem-linux-rust:latest"
 # The files that decide what the base image contains, and therefore its
 # identity. `base_dockerfile` is hashed alongside these without being listed
-# again -- it carries the ONNX Runtime version, the build arguments' defaults
-# and every `RUN` -- and so is the current image id of `tag`, because `:latest`
+# again -- it carries the build arguments' defaults and every `RUN` -- and so is the current image id of `tag`, because `:latest`
 # is a pointer and a rebuilt parent is a different image under the same name.
 #
 # Not the workspace manifests: `cargo fetch --locked` fetches everything the
@@ -2970,11 +2936,9 @@ slowest_steps = 10
 internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route", "/internal/vms/{id}/exposures/{exposure_id}/preview-session" = "The authenticated gateway asks the service for owner-scoped bootstrap material over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap" = "The authenticated gateway exchanges a single-use browser bootstrap token over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-admission" = "The authenticated gateway asks the service and VM owner to admit one browser descriptor over the local service UDS" }
 measured = [
     "/vms/{id}/bodies/{event_id}",
-    "/vms/{id}/changes",
     "/vms/{id}/status",
     "/vms/{id}/exposures",
     "/vms/{id}/security/status",
-    "/vms/{id}/snapshots/status",
     "/status",
     "/version",
     "/vms/list",
@@ -3079,7 +3043,6 @@ unmeasured = [
     "/vms/{id}/save",
     "/vms/{id}/save/status",
     "/vms/{id}/security/latest",
-    "/vms/{id}/snapshots/list",
     "/vms/{id}/start",
     "/vms/{id}/stats/detail",
     "/vms/{id}/stats/summary",
@@ -3268,7 +3231,6 @@ http_min_rps = 5
 http_p99_ms = 5000
 throughput_min_bytes = 1000000
 throughput_min_mbps = 1
-snapshot_op_ms = 5000
 # The storage split's floors are liveness, not speed: a read reporting 0 MB/s
 # or 0 IOPS means the measurement did not happen, which is the failure worth
 # catching there.

@@ -7,7 +7,7 @@ description: Rust patterns and hard-won lessons. Use when writing Rust in capsem
 
 ## Async / non-blocking
 
-Capsem uses tokio for all async I/O. The MITM proxy, vsock manager, file monitor, and auto-snapshot scheduler are all async.
+Capsem uses tokio for all async I/O. The MITM proxy, vsock manager, and file monitor are all async.
 
 ### Never block the tokio runtime
 
@@ -26,7 +26,7 @@ Any code path that does blocking I/O inside an async function or while holding a
 - `blake3::Hasher` on large data (hash computation)
 - `std::thread::sleep`
 
-**The fix pattern** -- same as `call_mcp_tool` in `crates/capsem-app/src/commands/mcp.rs`:
+**The fix pattern** -- in `capsem-service`, route handlers go through `ServiceState::off_worker` (`crates/capsem-service/src/blocking.rs`), and `crates/capsem-service/src/tests/async_io_contract.rs` refuses direct blocking calls. Elsewhere, the shape is:
 ```rust
 let result = tokio::task::spawn_blocking(move || {
     let rt = tokio::runtime::Handle::current();
@@ -37,7 +37,7 @@ let result = tokio::task::spawn_blocking(move || {
 }).await.unwrap_or_else(|e| /* handle panic */);
 ```
 
-**Known fixed sites (2026-03-27):** MCP file tool dispatch, auto-snapshot timer (vsock_wiring.rs), asset hash verification (asset_manager.rs). If you add new file tools or snapshot operations, use the same `spawn_blocking` pattern.
+**Example site:** the fork clone (`crates/capsem-service/src/vm_files/fork.rs`) runs `clone_sandbox_state` -- fsync, clonefile, and a full tree walk -- on the blocking pool. Any new tree copy, hash, or directory walk reachable from an async handler needs the same treatment.
 
 ### Channel patterns
 
@@ -115,8 +115,18 @@ across the CLI, service, process, guard, credentials, and core.
   checks must remain in the same syscall sequence; do not put a path-based
   check in front of a separate path-based action.
 - Use `unix::fs` for owner-only directories, no-follow regular-file access,
-  filesystem capacity, and atomic private publication. Use `unix::lock` for
-  advisory locks, including synchronous read-modify-write sections.
+  filesystem capacity, atomic private publication, permission bits
+  (`set_mode`), durability (`sync`, `sync_before_barrier`,
+  `sync_filesystem`) and copy-on-write cloning (`clone_file_into`,
+  `copy_sparse`). Use `unix::tree_clone` to copy a directory tree a guest can
+  write. Use `unix::lock` for advisory locks, including synchronous
+  read-modify-write sections.
+- When foundation lacks a primitive, add it to foundation with its tests;
+  never reach for `nix` or `libc` at the call site "just this once".
+- Inside foundation, `nix` is the syscall layer and `unix::errno::io` converts
+  its errors. A raw `libc::` call is allowed only where `nix` cannot express it
+  (no wrapper, or a platform gap such as `MSG_NOSIGNAL` on macOS), and each
+  one is listed with that reason in `tests/citadel/unix_boundary_debt.toml`.
 - Put each primitive in its own module with tests in the sibling `tests.rs`.
   Cover errno preservation, ownership after the source is dropped, symlink and
   path-replacement races, special files, exact modes, and concurrent callers.
@@ -125,7 +135,12 @@ Direct Unix calls remain valid only in modules that implement a kernel or
 platform ABI rather than reusable host policy, such as KVM/FUSE and guest audit
 plumbing. `tests/citadel/test_unix_boundary.py` and its exact domain-ABI
 inventory enforce that distinction; extending the inventory requires explicit
-review, not a convenience exemption.
+review, not a convenience exemption. The same guard inventories every raw
+`libc::` call and `extern "C"` binding inside foundation itself, rejects a new
+one that `nix` already wraps, and catches aliased imports (`use ::libc as sys`),
+`extern "C" { fn ... }` blocks and renamed or table-form manifest
+dependencies. Before it did, foundation's own internals were unscanned and
+raw calls with `nix` wrappers accumulated there unnoticed.
 
 ## Bidirectional I/O -- thread per direction
 
@@ -317,13 +332,13 @@ looked for, with nothing wrong at either site.
 
 6. **serde_json::Value on LLM hot path**: Three ai_traffic struct fields (`ResponseInfo.output`, `FunctionResponse.response`, `FunctionCall.args`) used `serde_json::Value` for large payloads that were only stringified. This forced full DOM allocation on every streaming request. Fixed by removing unused fields and switching to `Box<serde_json::value::RawValue>`.
 
-7. **Prefer syscalls over subprocesses**: `std::process::Command` costs 5-30ms per spawn (fork/exec). If a syscall does the same thing, use it. Example: `cp -c -R` for APFS clonefile was 20-30ms; direct `libc::clonefile()` is <1ms. On Linux, `ReflinkSnapshot` already uses `FICLONE` ioctl directly -- no subprocess. Always check if the OS provides a syscall before reaching for `Command`.
+7. **Prefer syscalls over subprocesses**: `std::process::Command` costs 5-30ms per spawn (fork/exec). If a syscall does the same thing, use it. Example: `cp -c -R` for APFS clonefile was 20-30ms; a direct clone syscall is <1ms. `capsem_foundation::unix::fs::clone_file_into` uses `fclonefileat` on macOS and the `FICLONE` ioctl on Linux -- no subprocess. Always check if the OS provides a syscall before reaching for `Command`.
 
-7. **Blocking I/O in MCP file tools**: All 7 snapshot file tool handlers ran blocking I/O (clonefile subprocess, walkdir, blake3) directly on tokio worker threads while holding a `tokio::sync::Mutex`. The auto-snapshot timer did the same. This caused snapshot creation to hang from the model's perspective. Fixed by wrapping in `spawn_blocking` everywhere.
+7. **Blocking I/O in MCP tool handlers**: Tool handlers once ran blocking I/O (clonefile subprocess, walkdir, blake3) directly on tokio worker threads while holding a `tokio::sync::Mutex`, so tool calls hung from the model's perspective. Fixed by wrapping in `spawn_blocking` everywhere; see the anti-pattern section above.
 
-7. **Single-file CoW**: Added `clone_file()` helper that uses APFS clonefile on macOS and FICLONE on Linux for instant CoW copies. Used in snapshot compact (host-to-host). **Not safe for revert** (snapshot-to-VirtioFS-workspace) because APFS clonefile is metadata-only and VirtioFS may serve stale data to the guest. Revert must use `std::fs::copy` (byte copy) so the guest sees the new content immediately.
+7. **Clone guest-writable trees through descriptors, never paths**: Everything below `session_dir/guest/` is guest-controlled and may change mid-copy (an entry swapped for a symlink to a host path). Fork/create-from therefore go through `capsem_core::session::clone_sandbox_state`, which composes `capsem_foundation::unix::tree_clone`: descriptor-relative `O_NOFOLLOW` opens, exclusive destination creation, symlinks recreated but never followed, special files skipped, setuid/setgid/sticky bits dropped, and a non-regular `rootfs.img` refused. File contents clone from the open descriptor via `unix::fs::clone_file_into` (shared extents, or a sparse copy when the filesystem cannot share them). Never add a path-based `std::fs::copy`/`walkdir` copy of guest state. A CoW clone is metadata-only, so flush `rootfs.img` before cloning (`flush_system_overlay`) or the clone captures stale data.
 
-8. **Platform-gate all macOS-only APIs**: Any code using macOS-only symbols (`libc::clonefile`, Apple framework bindings, etc.) must be wrapped in `#[cfg(target_os = "macos")]` -- both the struct/impl and the tests. The Linux app build (Tauri deb/AppImage) compiles the full workspace; ungated macOS symbols cause `cannot find function` errors on Linux CI. This burned v0.14.7: `ApfsSnapshot` used `libc::clonefile` without a cfg gate. Rule: when adding platform-specific code, gate the definition, the impl, and the tests.
+8. **Platform-gate all macOS-only APIs**: Any code using macOS-only symbols (`libc::clonefile`, Apple framework bindings, etc.) must be wrapped in `#[cfg(target_os = "macos")]` -- both the struct/impl and the tests. The Linux app build (Tauri deb/AppImage) compiles the full workspace; ungated macOS symbols cause `cannot find function` errors on Linux CI. This burned v0.14.7: a clone helper used `libc::clonefile` without a cfg gate. Rule: when adding platform-specific code, gate the definition, the impl, and the tests.
 
 9. **Readiness gates must reflect actual state**: `handle_ipc_connection` responded to Ping with Pong the moment the UDS socket existed -- before vsock connections, boot handshake, or command handler spawn. `wait_for_vm_ready` treated Pong as "ready", so exec commands were sent to a process that couldn't handle them yet, blocking silently in a channel until `setup_vsock` finished. Tests masked this with `wait_exec_ready()` client-side retry loops, creating a double-wait: 30 client retries x 30s server wait each. Fix: `Arc<AtomicBool>` (`vm_ready`) gated by `setup_vsock` after BootReady; IPC handler only sends Pong when the flag is set. One wait, one place -- the server waits; the client calls once. When adding any new IPC readiness check, never respond "ready" based on socket existence alone; check actual process state via a shared flag or state enum.
 
@@ -337,7 +352,7 @@ looked for, with nothing wrong at either site.
 
 14. **File permissions for sensitive logs**: `serial.log` contains raw terminal output and may include secrets typed by the user. Create with explicit `mode(0o600)` via `OpenOptionsExt`, and enforce permissions even if the file already exists (re-set with `set_permissions`).
 
-15. **VirtioFS share boundary -- only guest/ subtree**: The VirtioFS share must point at `session_dir/guest/`, not `session_dir` itself. Host-only files (`session.db`, `serial.log`, `auto_snapshots/`, `checkpoint.vzsave`) must stay outside the share. When adding new host-side files to `session_dir`, they are automatically outside the guest boundary. When adding new guest-visible content, put it under `guest/`. Compat symlinks (`session_dir/{system,workspace} -> guest/{system,workspace}`) let existing host code reference the old paths. Use `capsem_core::guest_share_dir(session_dir)` to get the share root.
+15. **VirtioFS share boundary -- only guest/ subtree**: The VirtioFS share must point at `session_dir/guest/`, not `session_dir` itself. Host-only files (`session.db`, `serial.log`, `checkpoint.vzsave`) must stay outside the share. When adding new host-side files to `session_dir`, they are automatically outside the guest boundary. When adding new guest-visible content, put it under `guest/`. Compat symlinks (`session_dir/{system,workspace} -> guest/{system,workspace}`) let existing host code reference the old paths. Use `capsem_core::guest_share_dir(session_dir)` to get the share root.
 
 16. **VM route id is not the display name**: `SandboxInfo.id`, route path ids,
 `InstanceInfo.id`, DB handle keys, session directory basenames, and

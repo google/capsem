@@ -19,7 +19,6 @@ REQUIRED_FILES = [
     "tips.txt",
     "capsem-doctor",
     "capsem-bench",
-    "snapshots",
 ]
 
 REQUIRED_DIRS = [
@@ -103,7 +102,7 @@ class TestDoctorConsistency:
         docker_src = (PROJECT_ROOT / "build_system/builder/image/docker.py").read_text()
         doctor_src = (PROJECT_ROOT / "build_system/builder/image/doctor.py").read_text()
 
-        # Both should reference capsem-bashrc, banner.txt, snapshots, etc.
-        for name in ["capsem-bashrc", "banner.txt", "capsem-init", "snapshots"]:
+        # Both should reference capsem-bashrc, banner.txt, capsem-init, etc.
+        for name in ["capsem-bashrc", "banner.txt", "capsem-init"]:
             assert name in docker_src, f"docker.py missing reference to {name}"
             assert name in doctor_src, f"doctor.py missing reference to {name}"

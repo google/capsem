@@ -9,15 +9,18 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 
 ## Engineering standard
 
-Quality and reliability are P0. See something, say something, do something.
+Quality, security and performance are P0 and every coding agent's
+responsibility. See something, say something, do something.
 When you notice a defect or an improvement while working -- a bug, a fragile
 path, a lint or guard failure, a small refactor that clarifies, a way to make
 something faster or more reliable, a vulnerable dependency -- do not walk past
 it as "not my problem." Small: fix it test-first (`/dev-testing`) and commit
 it in its own scoped commit. Too big to fold in: open a GitHub bug with enough
-detail to act on. Stop to ask only for genuine judgment calls (user-visible
-behavior, a security boundary, real scope, or a maintainer's dependency
-choice), and even then lead with a recommendation. The full contract is
+detail to act on. A vulnerability is fixed immediately, test-first, in its own
+`security:` commit -- never parked, never filed publicly while unfixed. Stop
+to ask only for genuine judgment calls (user-visible behavior, weakening a
+security boundary, real scope, or a maintainer's dependency choice), and even
+then lead with a recommendation. The full contract is
 `AGENTS.md` -> "Fix what you find".
 
 ## Crate map
@@ -42,7 +45,7 @@ choice), and even then lead with a recommendation. The full contract is
 | `capsem-router` | Confined TCP publication companion. Relays declared listeners to granted VSOCK data descriptors; no VM control authority. | `lib.rs`, `main.rs` |
 | `capsem-network` | Private networks between VMs: the u16-framed ethernet frame codec for a cable and the switch's MAC forwarding table. Pure code; the I/O lives in `capsem-router --network`, one L2 switch per network that VMs `plug()` into. | `frames.rs`, `switch.rs` |
 | `capsem-mcp-aggregator` | Low-privilege subprocess. Connects to external MCP servers and routes tool calls. Communicates with `capsem-process` via length-prefixed msgpack on stdio. No VM / DB / FS access. | `main.rs` (frame loop, server manager) |
-| `capsem-mcp-builtin` | Stdio MCP server subprocess exposing built-in tools: HTTP (fetch, grep, headers) and file/snapshot (when `CAPSEM_SESSION_DIR` is set). Managed by the aggregator. | `main.rs` (rmcp handler) |
+| `capsem-mcp-builtin` | Stdio MCP server subprocess exposing built-in tools: HTTP (fetch, grep, headers) and the `echo` transport probe. Managed by the aggregator. | `main.rs` (rmcp handler) |
 | `capsem-gateway` | TCP-to-UDS HTTP gateway. Frontend + tray connect through this. | `main.rs` (Axum router), `proxy.rs`, `status.rs`, `terminal.rs`, `auth.rs` |
 | `capsem-app` | Thin Tauri webview shell. Points at gateway (`http://127.0.0.1:19222`). 2 IPC commands: `open_url`, `check_for_app_update`. Bundles `web/app/dist` so it can render the service-unavailable screen. Crate name matches directory; binary is `capsem-app`. | `main.rs` |
 | `capsem-tray` | System tray. Polls gateway for VM status, quick actions (open dashboard, quit). | `main.rs`, `menu.rs` |
@@ -161,7 +164,7 @@ Config naming is strict:
   on parsing, wiring, lifecycle, and presentation. Do not move unrelated logic
   into `capsem-core` merely because more than one caller needs it.
 - **Fork images are first-class objects.** `capsem fork <session> <image-name>`
-  snapshots a session into a reusable template. Forked images depend on the
+  clones a session into a reusable template. Forked images depend on the
   base profile asset set and must remain compatible with the profile contract.
 - **Public surfaces are approval-gated.** `config/public-surface.toml` is the
   exact allowlist for public Just recipes, Capsem CLI command paths, and

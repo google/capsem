@@ -33,6 +33,25 @@ fn replacing_plugin_policy_snapshot_is_visible_to_later_readers() {
     assert_eq!(after["log_sanitizer"].mode, SecurityPluginMode::Rewrite);
 }
 
+#[test]
+fn retired_snapshot_settings_in_existing_files_are_ignored() {
+    // Workspace snapshots were retired (#228). A corp or profile file written
+    // before then may still carry `vm.snapshots.*`; it must keep loading, and
+    // the retired keys must not resurface as settings.
+    let retired = file_with(vec![
+        ("vm.snapshots.auto_max", SettingValue::Number(10)),
+        ("vm.snapshots.manual_max", SettingValue::Number(12)),
+        ("vm.snapshots.auto_interval", SettingValue::Number(300)),
+    ]);
+    super::super::ownership::validate_corp_toml_contract(&retired).unwrap();
+    super::super::ownership::validate_profile_toml_contract(&retired).unwrap();
+
+    let resolved = resolve_settings(&SettingsFile::default(), &retired);
+
+    assert!(!resolved.is_empty());
+    assert!(resolved.iter().all(|setting| !setting.id.starts_with("vm.snapshots.")));
+}
+
 // -----------------------------------------------------------------------
 // A: Corp override (7)
 // -----------------------------------------------------------------------

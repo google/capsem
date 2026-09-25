@@ -54,11 +54,6 @@ export const routeFixtures: Record<string, object> = {
     http_events: [], interactions: {bodies: [], items: []}, model_events: [], model_stats: [],
     process_events: [], tool_events: [],
   },
-  'GET /vms/vm-1/snapshots/list': {snapshots: [], total: 0},
-  'GET /vms/vm-1/snapshots/status': {
-    auto_count: 0, manual_available: 0, manual_count: 0, snapshots: [], total: 0,
-  },
-  'GET /vms/vm-1/changes': {changes: [], checkpoint: 'cp-1', has_more: false, total: 0},
   'GET /vms/vm-1/container': {image: 'docker://busybox:latest', state: 'running'},
   'POST /vms/vm-1/exposures': {
     access: 'loopback_tcp', id: '49152', host_port: 49152, guest_port: 8080, target: 'container',

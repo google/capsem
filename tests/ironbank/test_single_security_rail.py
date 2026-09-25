@@ -96,10 +96,13 @@ def test_session_event_writes_stay_behind_dbwriter() -> None:
     allowed_direct_sqlite = {
         "crates/capsem-logger/src/db.rs",
         "crates/capsem-logger/src/reader.rs",
+        # Split out of reader.rs and db.rs: the reader's connection setup and
+        # the ledger copy (VACUUM INTO) are still the logger's own opens.
+        "crates/capsem-logger/src/reader/open.rs",
+        "crates/capsem-logger/src/db/maintenance.rs",
         "crates/capsem-logger/src/schema.rs",
         "crates/capsem-logger/src/session_index.rs",
         "crates/capsem-logger/src/writer.rs",
-        "crates/capsem-core/src/auto_snapshot.rs",
         "crates/capsem-core/src/session/index.rs",
         "crates/capsem-core/src/session/maintenance.rs",
         # The benchmark time series is its own database with its own schema,

@@ -8,16 +8,10 @@ writes the basename it created and this reads it back rather than looking around
 
 from __future__ import annotations
 
-import hashlib
-import importlib.util
-import io
-import lzma
 import os
 import re
 import shutil
 import subprocess
-import sys
-import tarfile
 from pathlib import Path
 
 import pytest
@@ -396,7 +390,7 @@ def test_an_unknown_channel_is_refused_before_anything_is_built() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_package_helper_inputs_and_ort_are_config_authoritative() -> None:
+def test_package_helper_inputs_are_config_authoritative() -> None:
     builder = CONFIG.package.builder
 
     assert builder.materialize_build_network == "default"
@@ -410,14 +404,6 @@ def test_package_helper_inputs_and_ort_are_config_authoritative() -> None:
     assert set(CONFIG.toolchain.linux.cross_host_packages) <= set(
         CONFIG.toolchain.linux.apt_packages
     )
-    package_targets = {arch.rust_target for arch in CONFIG.architectures.values()}
-    assert package_targets <= CONFIG.toolchain.ort.distributions.keys()
-    for target in package_targets:
-        distribution = CONFIG.toolchain.ort.distributions[target]
-        assert distribution.url.startswith("https://cdn.pyke.io/")
-        assert len(distribution.sha256) == 64
-        int(distribution.sha256, 16)
-        assert distribution.url.endswith(f"{target}.tar.lzma2")
 
 
 @pytest.mark.parametrize(
@@ -459,7 +445,6 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     dockerfile = (PROJECT_ROOT / builder.dockerfile).read_text(encoding="utf-8")
     normalized_dockerfile = " ".join(dockerfile.replace("\\\n", " ").split())
     script = (PROJECT_ROOT / CONFIG.package.build_script).read_text(encoding="utf-8")
-    materializer = "build_system/builder/image/tools/build/materialize_package_ort.py"
 
     assert "ENV RUSTUP_AUTO_INSTALL=0" in dockerfile
     assert 'grep -F "${selected}-"' in dockerfile
@@ -475,11 +460,6 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert "pnpm fetch --frozen-lockfile" in dockerfile
     assert "web/app/pnpm-workspace.yaml" in builder.identity_inputs
     assert "web/app/pnpm-workspace.yaml" in dockerfile
-    assert "ORT_STRATEGY=system" in dockerfile
-    assert "ORT_LIB_LOCATION" in dockerfile
-    assert f"COPY {materializer} /usr/local/bin/materialize-package-ort.py" in dockerfile
-    assert materializer in builder.identity_inputs
-    assert "build_system/scripts/build/materialize-package-ort.py" not in builder.identity_inputs
     assert "cargo build" not in dockerfile
     assert "COPY --from=dependency-fetch /cargo-target" not in dockerfile
     assert 'test -n "${APT_SNAPSHOT_BASE}"' in dockerfile
@@ -541,7 +521,6 @@ def test_package_helper_final_stage_contains_only_materialized_dependency_stores
     assert "COPY --from=dependency-fetch /capsem-deps/cargo/registry" in final
     assert "COPY --from=dependency-fetch /capsem-deps/cargo/git" in final
     assert "COPY --from=dependency-fetch /capsem-deps/pnpm" in final
-    assert "COPY --from=dependency-fetch /capsem-deps/ort" in final
     assert "ENV CARGO_HOME=${CARGO_STORE}" in final
     assert "ENV CAPSEM_PNPM_STORE=${PNPM_STORE}" in final
 
@@ -770,95 +749,6 @@ def test_foreign_package_swap_stops_when_native_removal_fails(tmp_path: Path) ->
     assert "apt-get install" not in recorded
 
 
-def _ort_materializer():
-    path = PROJECT_ROOT / "build_system/builder/image/tools/build/materialize_package_ort.py"
-    spec = importlib.util.spec_from_file_location("package_ort_materializer", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _ort_archive(name: str, payload: bytes) -> bytes:
-    tar = io.BytesIO()
-    with tarfile.open(fileobj=tar, mode="w") as archive:
-        member = tarfile.TarInfo(name)
-        member.size = len(payload)
-        archive.addfile(member, io.BytesIO(payload))
-    return lzma.compress(
-        tar.getvalue(),
-        format=lzma.FORMAT_RAW,
-        filters=[{"id": lzma.FILTER_LZMA2, "dict_size": 1 << 26}],
-    )
-
-
-def test_ort_materializer_verifies_and_extracts_only_the_static_distribution(
-    tmp_path: Path,
-) -> None:
-    materializer = _ort_materializer()
-    payload = _ort_archive("libonnxruntime.a", b"static-ort")
-    source = tmp_path / "source.lzma2"
-    source.write_bytes(payload)
-    downloaded = tmp_path / "downloaded.lzma2"
-    tar = tmp_path / "archive.tar"
-    output = tmp_path / "ort"
-
-    materializer._download(source.as_uri(), hashlib.sha256(payload).hexdigest(), downloaded)
-    materializer._decompress(downloaded, tar)
-    materializer._extract(tar, output)
-
-    assert (output / "libonnxruntime.a").read_bytes() == b"static-ort"
-    assert (output / "libonnxruntime.a").stat().st_mode & 0o777 == 0o444
-
-
-def test_ort_materializer_rejects_an_archive_path_escape(tmp_path: Path) -> None:
-    materializer = _ort_materializer()
-    compressed = tmp_path / "escape.lzma2"
-    compressed.write_bytes(_ort_archive("../escaped", b"no"))
-    tar = tmp_path / "escape.tar"
-    materializer._decompress(compressed, tar)
-
-    with pytest.raises(ValueError, match="escapes its root"):
-        materializer._extract(tar, tmp_path / "output")
-
-    assert not (tmp_path / "escaped").exists()
-
-
-def test_ort_materializer_reuses_verified_archive_and_repairs_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    materializer = _ort_materializer()
-    payload = _ort_archive("libonnxruntime.a", b"static-ort")
-    source = tmp_path / "source.lzma2"
-    source.write_bytes(payload)
-    cache = tmp_path / "cache" / "ort.lzma2"
-    output = tmp_path / "ort"
-    argv = [
-        str(PROJECT_ROOT / CONFIG.toolchain.ort.script),
-        "--url",
-        source.as_uri(),
-        "--sha256",
-        hashlib.sha256(payload).hexdigest(),
-        "--archive-cache",
-        str(cache),
-        "--replace",
-        "--output",
-        str(output),
-    ]
-
-    monkeypatch.setattr(sys, "argv", argv)
-    materializer.main()
-    source.unlink()
-    (output / "libonnxruntime.a").chmod(0o644)
-    (output / "libonnxruntime.a").write_bytes(b"corrupt")
-    materializer.main()
-
-    assert (output / "libonnxruntime.a").read_bytes() == b"static-ort"
-    cache.write_bytes(b"corrupt")
-    with pytest.raises(ValueError, match="cached ORT archive digest mismatch"):
-        materializer.main()
-
-
 @pytest.mark.parametrize(
     ("host_name", "target_name"),
     (("x86_64", "arm64"), ("arm64", "x86_64")),
@@ -909,7 +799,6 @@ def test_package_helper_is_host_native_and_target_specific(
     assert f"PNPM_STORE={config.package.builder.pnpm_store}" in build
     assert f"APT_LISTS_CACHE_ID={config.package.builder.apt_lists_cache_id}" in build
     assert f"APT_ARCHIVES_CACHE_ID={config.package.builder.apt_archives_cache_id}" in build
-    assert CONFIG.toolchain.ort.distributions[target.rust_target].sha256 in build
     assert f"INPUT_IDENTITY=capsem-package-builder-{target.name}:" in build
     assert "INPUT_KEY=" not in build
     assert any("sha256:" in note for note in runner.notes)

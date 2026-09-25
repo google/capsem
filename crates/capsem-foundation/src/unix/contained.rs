@@ -6,14 +6,15 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io;
-use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
 use nix::errno::Errno;
-use nix::fcntl::{openat, readlinkat, AtFlags, OFlag};
+use nix::fcntl::{openat, readlinkat, renameat, AtFlags, OFlag};
 use nix::sys::stat::{fstatat, mkdirat, Mode, SFlag};
+use nix::unistd::symlinkat;
 use nix::unistd::{unlinkat, UnlinkatFlags};
 
 /// A handle on one directory below the containment root.
@@ -28,6 +29,7 @@ pub struct ContainedDir {
 pub struct ContainedOpenOptions {
     write: bool,
     truncate: bool,
+    exclusive: bool,
     mode: u32,
 }
 
@@ -36,6 +38,7 @@ impl ContainedOpenOptions {
         Self {
             write: false,
             truncate: false,
+            exclusive: false,
             mode: 0,
         }
     }
@@ -44,6 +47,18 @@ impl ContainedOpenOptions {
         Self {
             write: true,
             truncate: false,
+            exclusive: false,
+            mode,
+        }
+    }
+
+    /// Create a file that must not already exist under any name or type,
+    /// including a symlink or a dangling one.
+    pub const fn write_create_new(mode: u32) -> Self {
+        Self {
+            write: true,
+            truncate: false,
+            exclusive: true,
             mode,
         }
     }
@@ -52,6 +67,7 @@ impl ContainedOpenOptions {
         Self {
             write: true,
             truncate: true,
+            exclusive: false,
             mode,
         }
     }
@@ -61,6 +77,9 @@ impl ContainedOpenOptions {
             let mut flags = OFlag::O_WRONLY | OFlag::O_CREAT;
             if self.truncate {
                 flags |= OFlag::O_TRUNC;
+            }
+            if self.exclusive {
+                flags |= OFlag::O_EXCL;
             }
             flags
         } else {
@@ -81,6 +100,9 @@ pub enum EntryKind {
 pub struct ContainedEntry {
     pub name: OsString,
     pub kind: EntryKind,
+    /// Whether this `Other` entry is a symlink rather than a FIFO, socket or
+    /// device. Reported, never followed.
+    pub is_symlink: bool,
     pub size: u64,
     pub mtime_secs: u64,
     pub identity: EntryIdentity,
@@ -113,7 +135,7 @@ fn dir_flags() -> OFlag {
     OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC
 }
 
-fn permission_mode(mode: u32) -> Mode {
+pub(super) fn permission_mode(mode: u32) -> Mode {
     let bits = mode & 0o7777;
     Mode::from_bits_truncate(permission_bits(bits))
 }
@@ -141,6 +163,12 @@ fn owned(fd: i32) -> OwnedFd {
     // SAFETY: `fd` was just returned by a successful openat and is not owned
     // anywhere else.
     unsafe { OwnedFd::from_raw_fd(fd) }
+}
+
+impl AsFd for ContainedDir {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.fd.as_fd()
+    }
 }
 
 impl ContainedDir {
@@ -231,6 +259,45 @@ impl ContainedDir {
             current = step(&current, name)?;
         }
         Ok(current)
+    }
+
+    /// Permission bits of this directory, read from the open descriptor.
+    pub fn mode(&self) -> io::Result<u32> {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = File::from(self.fd.try_clone()?).metadata()?;
+        Ok(metadata.permissions().mode() & 0o7777)
+    }
+
+    /// Create a symlink child. An existing entry of any type is an error; the
+    /// target is stored verbatim and never resolved.
+    pub fn symlink(&self, name: &OsStr, target: &OsStr) -> io::Result<()> {
+        check_component(name)?;
+        symlinkat(target, Some(self.fd.as_raw_fd()), name)?;
+        Ok(())
+    }
+
+    /// Move the child `name` to `to_name` below `to`, replacing an existing
+    /// entry there as rename(2) does. Neither name is resolved: a symlink
+    /// moves as the link itself and its target is never touched.
+    pub fn rename_to(&self, name: &OsStr, to: &ContainedDir, to_name: &OsStr) -> io::Result<()> {
+        check_component(name)?;
+        check_component(to_name)?;
+        renameat(Some(self.fd.as_raw_fd()), name, Some(to.fd.as_raw_fd()), to_name)?;
+        Ok(())
+    }
+
+    /// Remove the symlink child `name` without following it. Any other entry
+    /// type is refused, so a caller retiring a link it made cannot delete
+    /// whatever a writer put in its place.
+    pub fn remove_symlink(&self, name: &OsStr) -> io::Result<()> {
+        check_component(name)?;
+        if !self.is_symlink(name)? {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is not a symlink", Path::new(name).display()),
+            ));
+        }
+        unlinkat(Some(self.fd.as_raw_fd()), name, UnlinkatFlags::NoRemoveDir).map_err(Into::into)
     }
 
     fn is_symlink(&self, name: &OsStr) -> io::Result<bool> {
@@ -378,6 +445,7 @@ impl ContainedDir {
             if !visit(ContainedEntry {
                 name: name.to_owned(),
                 kind: kind_of(stat.st_mode),
+                is_symlink: SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT == SFlag::S_IFLNK,
                 size: u64::try_from(stat.st_size).unwrap_or(0),
                 mtime_secs: u64::try_from(stat.st_mtime).unwrap_or(0),
                 identity: identity_of(&stat),

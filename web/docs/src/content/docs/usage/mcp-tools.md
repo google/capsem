@@ -91,8 +91,6 @@ security ledger. Cancelling a request never deletes a VM.
 | `capsem_timeline` | `vm_id`, `trace_id?`, `since?`, `limit?`, `layers?` | Read correlated session events. |
 | `capsem_history` | `vm_id`, `search?`, `limit?`, `offset?` | Read command and audit history. |
 | `capsem_stats` / `capsem_stats_detail` | `vm_id` | Read aggregate or typed detailed telemetry. |
-| `capsem_snapshots` / `capsem_snapshot_status` | `vm_id` | Inspect filesystem snapshots. |
-| `capsem_file_history` | `vm_id`, `checkpoint`, `limit?`, `offset?` | List workspace changes since a snapshot checkpoint. |
 
 These tools query the same logger-owned data used by the SDK and UI. They do not
 open SQLite directly or maintain a second projection cache.

@@ -47,8 +47,8 @@ def base_tag(config: GateConfig, docker: Docker) -> str:
     key is an environment change the sealed lane silently never sees. Two were
     missing --
 
-      the Dockerfile itself, which carries the ONNX Runtime version, the build
-      arguments' defaults and every `RUN` that shapes the image
+      the Dockerfile itself, which carries the build arguments' defaults and
+      every `RUN` that shapes the image
 
       `capsem-host-builder:latest`, which the image is `FROM`. A mutable tag is
       a different image after each rebuild, so its *identity* is hashed rather

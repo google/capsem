@@ -86,7 +86,6 @@ def static(
     phase = plan.phase("static")
     settings = config.modules
     leaves: list[Step] = []
-    ort = phase.add(toolchain.ort(config, toolchain.OrtConsumer.STATIC), after=after)
     node = node or phase.add(toolchain.node(config), after=after)
     # Generated once per run. Standalone, this module makes it; composed, it
     # is handed the one the fast phase already made, because the script
@@ -169,19 +168,14 @@ def static(
     # Both need a built workspace, so both wait on the same three and share
     # one exclusive. They live in `rustchecks` because this module is at the
     # size ceiling the gate holds itself to.
-    built = (agents, ort, frontend)
+    built = (agents, frontend)
     coverage = phase.add(rustchecks.coverage(config), after=built)
     leaves.append(phase.add(rustchecks.doctests(config), after=built))
     # Coverage builds test harnesses in its own target directory. Standalone
     # macOS signing needs real runtime executables; a composed candidate hands
     # over the existing producer so this never rebuilds a prepared runtime.
     if runtime is None and host.on_macos():
-        runtime = hostbuild.add(
-            phase,
-            config,
-            env=toolchain.ort_environment(config, toolchain.OrtConsumer.STATIC),
-            after=(ort, frontend),
-        )
+        runtime = hostbuild.add(phase, config, after=(frontend,))
     signing_inputs = (coverage, runtime) if runtime is not None else (coverage,)
     leaves.append(phase.add(hostpackage.sign_step(config), after=signing_inputs))
     return tuple(leaves)

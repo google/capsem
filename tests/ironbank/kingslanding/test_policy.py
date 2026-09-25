@@ -4,10 +4,11 @@ import contextlib
 import json
 import re
 import socket
-import sqlite3
 
 import pytest
+from helpers.body_archive import served_security_payload, session_archive
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.session_ledger import open_session_ledger
 
 from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_publish import redis
@@ -74,17 +75,22 @@ def test_container_pull_policy_stops_before_registry_egress_and_redacts_credenti
 
         kept = sorted((service.tmp_dir / "sessions").glob(f"{vm_id}-failed-*"))
         assert len(kept) == 1, f"the refused create's ledger is kept: {kept}"
-        with contextlib.closing(sqlite3.connect(f"file:{kept[0] / 'session.db'}?mode=ro", uri=True)) as db:
+        # Each match's event is an archived payload, read from the kept ledger.
+        with (
+            contextlib.closing(open_session_ledger(kept[0] / "session.db")) as db,
+            session_archive(db) as archive,
+        ):
             rows = [
-                {"event_type": event_type, "event_json": event_json}
-                for event_type, event_json in db.execute("SELECT event_type, event_json FROM security_rule_events")
+                {"event_type": event_type, "event": archive.security_payload(event_id)}
+                for event_type, event_id in db.execute("SELECT event_type, event_id FROM security_rule_events")
             ]
         assert any(
             row["event_type"] == "network.lifecycle"
-            and json.loads(row["event_json"]).get("container", {}).get("image") == reference
+            and (row["event"]["container"] or {}).get("image") == reference
             for row in rows
         ), rows
-        rendered = json.dumps(rows)
+        # A decoded payload can hold bytes; render them rather than refuse.
+        rendered = json.dumps(rows, default=repr)
         assert reference in rendered and registry_host in rendered
         assert password not in rendered and username not in rendered
         logs = "\n".join(
@@ -185,26 +191,31 @@ def test_expose_security_prevents_redis_accept_and_retains_trusted_facts(redis, 
         assert _redis_command(stream, "PING") == b"PONG"
 
         rows = []
+        # One payload fetch per event, not one per poll.
+        payloads: dict[str, dict] = {}
 
         def audited():
-            rows[:] = client.get(f"/vms/{vm_id}/security/latest?limit=2000")
-            seen = {
-                json.loads(row["event_json"])["network"]["source"]["address"]
-                for row in rows
+            latest = client.get(f"/vms/{vm_id}/security/latest?limit=2000")
+            for row in latest:
+                if row["event_type"] == "network.connect" and row["event_id"] not in payloads:
+                    payloads[row["event_id"]] = served_security_payload(client, vm_id, row["event_id"])
+            rows[:] = [
+                {**row, "event": payloads[row["event_id"]]}
+                for row in latest
                 if row["event_type"] == "network.connect"
-            }
+            ]
+            seen = {row["event"]["network"]["source"]["address"] for row in rows}
             return denied_peers <= seen
 
         wait_for(audited, "denied connection security rows", timeout=15)
         for row in rows:
-            if row["event_type"] != "network.connect":
-                continue
-            event = json.loads(row["event_json"])
+            event = row["event"]
             facts = event["network"]
             if facts["source"]["address"] not in denied_peers:
                 continue
             assert event["decision"]["effective"] == ("ask" if policy == "ask" else "block")
-            assert facts["source"]["vm"] is None
+            # The payload is sparse: a host peer has no `vm` rather than a null one.
+            assert facts["source"].get("vm") is None
             assert facts["destination"]["address"] == "127.0.0.1:6379"
             assert facts["destination"]["vm"]["id"] == vm_id
             # An unnamed VM is known by its route id; its list label is the UI's.

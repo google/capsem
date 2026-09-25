@@ -187,12 +187,22 @@ See [Virtualization Security](/security/virtualization/) for threat model, path 
 
 `VmHandle` provides lifecycle control (`stop()`, `state()`) and serial console access (`serial()`). It also supports downcast to the concrete backend type via `as_any()` for platform-specific operations. Dropping a `VmHandle` does NOT stop the VM -- callers must invoke `stop()` explicitly.
 
-## Auto-Snapshots
+## Fork Cloning
 
-The host takes rolling snapshots of the workspace directory at a configurable interval (default 5 minutes, 12 slots). Snapshots are a **host-side** operation -- the guest has no knowledge of them.
+`capsem fork` and create-from clone a sandbox's host-only `system/` overlay
+and its `guest/workspace` tree into a new session directory. The overlay image
+lives outside the VirtioFS share because it is attached as the guest's disk by
+path; a guest that could reach it could swap it for a link to a host file. Cloning is a **host-side**
+operation -- the guest has no knowledge of it. Because the guest can write every
+entry in the share, the clone never resolves a guest path: it walks the tree
+through descriptor-relative, no-follow operations
+(`capsem_foundation::unix::tree_clone`), recreates symlinks as links without
+following them, skips special files, drops setuid/setgid/sticky bits, and refuses
+a `rootfs.img` that is not a regular file.
 
-- **macOS**: APFS `clonefile()` -- instant copy-on-write
-- **Linux / ChromeOS / Windows**: Hardlink-based incremental -- unchanged files are hardlinked from the previous snapshot, only changed files are copied. Near-instant for typical workloads since few files change between 5-minute intervals.
+- **macOS**: APFS `clonefile` from the open descriptor -- instant copy-on-write
+- **Linux**: `FICLONE` ioctl on filesystems that share extents
+- **Fallback**: sparse byte copy that writes only non-zero blocks
 
 ## Guest Images
 

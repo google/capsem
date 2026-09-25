@@ -72,7 +72,6 @@ operation!(detach_network_member, "detachNetworkMember", DetachNetworkMemberPara
 operation!(get_network_logs, "getNetworkLogs", GetNetworkLogsParams);
 operation!(create_vm, "createVm", CreateVmParams);
 operation!(list_vms, "listVms");
-operation!(get_vm_changes, "getVmChanges", GetVmChangesParams);
 operation!(delete_vm, "deleteVm", DeleteVmParams);
 operation!(exec_vm, "execVm", ExecVmParams);
 operation!(download_vm_file, "downloadVmFile", DownloadVmFileParams);
@@ -88,12 +87,6 @@ operation!(pause_vm, "pauseVm", PauseVmParams);
 operation!(persist_vm, "persistVm", PersistVmParams);
 operation!(resume_vm, "resumeVm", ResumeVmParams);
 operation!(restart_hypervisor, "restartHypervisor");
-operation!(list_vm_snapshots, "listVmSnapshots", ListVmSnapshotsParams);
-operation!(
-    get_vm_snapshots_status,
-    "getVmSnapshotsStatus",
-    GetVmSnapshotsStatusParams
-);
 operation!(start_vm, "startVm", StartVmParams);
 operation!(get_vm_stats_detail, "getVmStatsDetail", GetVmStatsDetailParams);
 operation!(get_vm_stats_summary, "getVmStatsSummary", GetVmStatsSummaryParams);

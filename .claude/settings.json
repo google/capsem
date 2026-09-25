@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --project \"$CLAUDE_PROJECT_DIR/build_system\" --frozen python \"$CLAUDE_PROJECT_DIR/build_system/scripts/build/print-gate-digest.py\""
+            "command": "root=$(git rev-parse --show-toplevel 2>/dev/null) || root=\"$CLAUDE_PROJECT_DIR\"; uv run --project \"$root/build_system\" --frozen python \"$root/build_system/scripts/build/print-gate-digest.py\""
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --project \"$CLAUDE_PROJECT_DIR/build_system\" --frozen python \"$CLAUDE_PROJECT_DIR/.claude/hooks/refuse-bare-python.py\""
+            "command": "root=$(git rev-parse --show-toplevel 2>/dev/null) || root=\"$CLAUDE_PROJECT_DIR\"; uv run --project \"$root/build_system\" --frozen python \"$root/.claude/hooks/refuse-bare-python.py\""
           }
         ]
       }

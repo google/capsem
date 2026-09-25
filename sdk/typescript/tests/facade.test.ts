@@ -51,7 +51,6 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       await vm.exec('uname -a', {timeout_secs: 60});
       await vm.exec('true');
       await vm.start(); await vm.persist('saved'); await vm.pause(); await vm.resume(); await vm.stop();
-      await vm.snapshots.list(); await vm.snapshots.status();
       await vm.stats.summary(); await vm.stats.details();
       await vm.history({layer: HistoryLayerFilter.EXEC, limit: 5});
       await vm.history();
@@ -61,7 +60,6 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       await vm.log();
       await vm.files.list(); await vm.files.list('/nested', {depth: 2});
       await vm.files.list('/root', {exact: true});
-      await vm.files.history('cp-10', {limit: 2}); await vm.files.history('cp-10');
       const fork = await vm.fork('copy', {description: 'checkpoint'});
       expect(fork.id).toBe('fork-0'); expect(fork.name).toBe('copy');
       fork.close();
@@ -73,8 +71,8 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       await vm.delete();
       const expected = [
         '/vms/list', '/vms/vm-0/info', '/vms/vm-0/exec', '/vms/vm-0/exec', '/vms/vm-0/start',
-        '/vms/vm-0/save', '/vms/vm-0/pause', '/vms/vm-0/resume', '/vms/vm-0/stop', '/vms/vm-0/snapshots/list',
-        '/vms/vm-0/snapshots/status', '/vms/vm-0/stats/summary', '/vms/vm-0/stats/detail',
+        '/vms/vm-0/save', '/vms/vm-0/pause', '/vms/vm-0/resume', '/vms/vm-0/stop',
+        '/vms/vm-0/stats/summary', '/vms/vm-0/stats/detail',
         '/vms/vm-0/history', '/vms/vm-0/history',
       ];
       expect(received.slice(0, expected.length).map(request => request.url.split('?')[0])).toEqual(expected);

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import sqlite3
 from contextlib import closing
 from pathlib import Path
 from typing import Protocol
 
 from helpers.body_archive import SessionArchive
+from helpers.session_ledger import open_session_ledger
 from ironbank.model_ledger import (
     ModelLedgerRun,
     ModelLedgerSpec,
@@ -33,7 +33,7 @@ def assert_imported_script_contains(
 ) -> None:
     # The decided-about event is archive-backed, so the search reads the
     # payloads rather than a column that no longer holds them.
-    with closing(sqlite3.connect(f"file:{env.db_path}?mode=ro", uri=True)) as conn:
+    with closing(open_session_ledger(env.db_path)) as conn:
         event_ids = [
             row[0]
             for row in conn.execute(

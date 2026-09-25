@@ -159,7 +159,7 @@ def test_invalid_input_fails_before_network_io(package: ModuleType) -> None:
             with pytest.raises(ValidationError):
                 await package.operations.get_hypervisor_logs(transport, name="unknown")
             with pytest.raises(ValidationError):
-                await package.operations.get_vm_changes(transport, id="vm", checkpoint="cp-10", limit=-1)
+                await package.operations.get_vm_history(transport, id="vm", limit=-1)
     asyncio.run(run())
 
 

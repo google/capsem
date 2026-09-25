@@ -63,7 +63,6 @@ markers = [
     "mcp: MCP black-box integration tests (require capsem-service + VM assets)",
     "integration: Service/CLI integration tests (require capsem-service + VM)",
     "session: Session.db telemetry tests (require capsem-service + VM + workload)",
-    "snapshot: Snapshot lifecycle tests (require capsem-service + VM)",
     "isolation: Multi-VM isolation tests (require capsem-service + 2+ VMs)",
     "security: Security invariant tests (require capsem-service + VM)",
     "config: Config obedience tests (require capsem-service + VM)",

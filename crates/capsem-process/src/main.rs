@@ -186,7 +186,7 @@ fn prepare_session_layout(session_dir: &Path, scratch_disk_size_gb: u32) -> Resu
 
     #[cfg(not(test))]
     {
-        let rootfs_img = guest_dir.join("system/rootfs.img");
+        let rootfs_img = capsem_core::session::system_overlay_image_path(session_dir);
         let template_img = capsem_core::system_overlay_template_path_for_session(session_dir, scratch_disk_size_gb);
         match capsem_core::preformat_system_overlay_image_from_template_if_needed(
             &rootfs_img,
@@ -241,7 +241,7 @@ fn main() -> Result<()> {
     let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
     let virtiofs_shares = vec![VirtioFsShare {
         tag: "capsem".into(),
-        host_path: guest_dir.clone(),
+        host_path: guest_dir,
         read_only: false,
     }];
 
@@ -249,10 +249,10 @@ fn main() -> Result<()> {
     // the guest). capsem-init mounts it as the overlayfs upper directly --
     // native virtio-blk speaks block-device semantics and doesn't EIO under
     // writeback pressure across save_state/restore_state, unlike the prior
-    // loop-on-VirtioFS path. The file lives in the VirtioFS share so the
-    // host can introspect it while the VM is stopped, but the guest only
-    // opens it via virtio-blk, never through the share.
-    let system_img = guest_dir.join("system").join("rootfs.img");
+    // loop-on-VirtioFS path. The file lives in the host-only session
+    // `system/` directory, outside the share, so the guest cannot swap it
+    // for a link to a host file (`capsem_core::session::adopt_system_overlay`).
+    let system_img = capsem_core::session::system_overlay_image_path(&session_dir);
     let machine_identifier_path = session_dir.join("machine_identifier");
     let serial_log_path = session_dir.join("serial.log");
     let (vm, vsock_rx, sm) = boot_vm(BootOptions {
@@ -461,14 +461,17 @@ async fn run_async_main_loop(
     let model_trace_state = Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new()));
 
     // Start host file monitor to record fs_events.
-    let workspace_dir = capsem_core::guest_share_dir(&session_dir).join("workspace");
-    match capsem_core::fs_monitor::FsMonitor::start(
-        workspace_dir.clone(),
-        workspace_dir.clone(),
-        Arc::clone(&db),
-        Arc::clone(&security_rules),
-        Arc::clone(&model_trace_state),
-    ) {
+    // Opened once, by descriptor: the guest can swap its workspace for a host link.
+    match capsem_core::session::open_workspace(&session_dir)
+        .map_err(anyhow::Error::from)
+        .and_then(|workspace| {
+            capsem_core::fs_monitor::FsMonitor::start(
+                workspace,
+                Arc::clone(&db),
+                Arc::clone(&security_rules),
+                Arc::clone(&model_trace_state),
+            )
+        }) {
         Ok(monitor) => {
             info!("host file monitor started");
             shutdown.lock().await.fs_monitor = Some(monitor);
@@ -496,34 +499,6 @@ async fn run_async_main_loop(
         runtime_config.active_profile_path.to_string_lossy().to_string(),
     );
     let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env.clone());
-    let snap_auto_max = 10usize;
-    let snap_manual_max = 12usize;
-    let snap_interval = 300u64;
-
-    let scheduler = capsem_core::auto_snapshot::AutoSnapshotScheduler::new(
-        session_dir.clone(),
-        snap_auto_max,
-        snap_manual_max,
-        std::time::Duration::from_secs(snap_interval),
-    );
-    let scheduler = Arc::new(tokio::sync::Mutex::new(scheduler));
-
-    // Defer initial snapshot to background -- workspace is empty at boot, no need to block.
-    {
-        let sched = Arc::clone(&scheduler);
-        tokio::spawn(async move {
-            let mut s = sched.lock().await;
-            if let Ok(slot) = s.take_snapshot() {
-                info!(
-                    slot = slot.slot,
-                    files_count = slot.files_count,
-                    origin = "auto",
-                    "auto snapshot captured"
-                );
-            }
-        });
-    }
-
     // Spawn the isolated MCP aggregator subprocess.
     let aggregator_client = spawn_mcp_aggregator(&mcp_servers, &session_dir, &args.id, &trace_id).await?;
 
@@ -634,36 +609,6 @@ async fn run_async_main_loop(
         )
         .with_private_names(private_names),
     );
-
-    let sched_clone = Arc::clone(&scheduler);
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(snap_interval));
-        tick.tick().await;
-        loop {
-            tick.tick().await;
-            let sched = Arc::clone(&sched_clone);
-            let result = tokio::task::spawn_blocking(move || {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(async {
-                    let mut s = sched.lock().await;
-                    s.take_snapshot()
-                })
-            })
-            .await;
-            match result {
-                Ok(Ok(slot)) => {
-                    info!(
-                        slot = slot.slot,
-                        files_count = slot.files_count,
-                        origin = "auto",
-                        "auto snapshot captured"
-                    );
-                }
-                Ok(Err(e)) => tracing::warn!(error = %e, "auto-snapshot failed"),
-                Err(e) => tracing::warn!(error = %e, "auto-snapshot task panicked"),
-            }
-        }
-    });
 
     let ipc_tx_clone = ipc_tx.clone();
     let job_store_clone = Arc::clone(&job_store);
@@ -787,7 +732,6 @@ async fn run_async_main_loop(
         let runtime_source_c = runtime_source.clone();
         let builtin_bin_c = builtin_bin.clone();
         let builtin_env_c = builtin_env.clone();
-        let sched_c = Arc::clone(&scheduler);
         let ready_c = Arc::clone(&vm_ready);
 
         tokio::spawn(async move {
@@ -802,7 +746,6 @@ async fn run_async_main_loop(
                 runtime_source_c,
                 builtin_bin_c,
                 builtin_env_c,
-                sched_c,
                 ready_c,
             )
             .await

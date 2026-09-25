@@ -6,6 +6,8 @@ use std::io::{self, ErrorKind};
 use std::mem::{size_of, size_of_val, zeroed};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
+
+use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 use tokio::io::unix::AsyncFd;
 use tokio::sync::Mutex;
 
@@ -188,7 +190,7 @@ fn receive_record(socket: RawFd, bytes: &mut [u8], fds: &mut Vec<OwnedFd>) -> io
                     std::slice::from_raw_parts(libc::CMSG_DATA(header).cast::<RawFd>(), length / size_of::<RawFd>());
                 for &raw in delivered {
                     let descriptor = OwnedFd::from_raw_fd(raw);
-                    if libc::fcntl(raw, libc::F_SETFD, libc::FD_CLOEXEC) < 0 {
+                    if fcntl(raw, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC)).is_err() {
                         invalid = true;
                     }
                     fds.push(descriptor);

@@ -20,8 +20,8 @@ check_ephemeral_model() {
     fi
 
     # FAIL: conditional mke2fs skip on scratch disk (block mode must always format).
-    # The VirtioFS ext4 loopback check (blkid + mke2fs for /mnt/shared/system/rootfs.img)
-    # is expected and safe -- it only formats on first boot of the loopback image.
+    # The system overlay check (blkid + mke2fs for /dev/vdb in VirtioFS mode)
+    # is expected and safe -- it only formats on first boot of the overlay image.
     # We only flag if the BLOCK mode scratch disk (/dev/vdb) conditionally skips formatting.
     if grep -B5 'mke2fs.*scratch\|mke2fs.*vdb' "$init" | grep -qE 'blkid.*ext4'; then
         fail "capsem-init conditionally skips mke2fs on scratch disk -- would persist across reboots"

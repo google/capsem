@@ -142,17 +142,12 @@ class GateConfig(Strict):
                 object.__setattr__(arch, "name", key)
             if not arch.pkg_config_template:
                 object.__setattr__(arch, "pkg_config_template", self.pkg_config_template)
-        required_ort = {arch.rust_target for arch in self.architectures.values()}
-        missing_rust_targets = sorted(required_ort - set(self.toolchain.rust_targets))
+        required_targets = {arch.rust_target for arch in self.architectures.values()}
+        missing_rust_targets = sorted(required_targets - set(self.toolchain.rust_targets))
         if missing_rust_targets:
             raise ValueError(
                 "architecture Rust targets are missing from toolchain.rust_targets: "
                 + ", ".join(missing_rust_targets)
-            )
-        missing_ort = sorted(required_ort - set(self.toolchain.ort.distributions))
-        if missing_ort:
-            raise ValueError(
-                "package target ORT distributions are missing: " + ", ".join(missing_ort)
             )
         return self
 

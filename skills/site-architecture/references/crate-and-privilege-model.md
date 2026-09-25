@@ -39,7 +39,7 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-router`**: Seatbelt/seccomp-confined companion with two jobs from one binary. Per VM owner, a TCP relay for published host ports only (connected descriptor pairs over a private, bounded grant channel). Per named network, `--network`: that network's layer-2 switch. The service plugs each attached VM's cable (a duplicate of that cable's VSOCK 5009 stream) into it; it forwards ethernet frames on MAC only, floods broadcast under a cap, and carries every protocol. No service control socket, ambient file access, listener acceptance, or virtualization entitlement in either job.
 - **`capsem-network`**: the cable's frame codec (`u16` length + ethernet frame) and the switch's MAC forwarding table as pure code. The kernel inside each guest does ARP, IP and everything above; no host process parses past a frame's MAC addresses.
 - **`capsem-mcp-aggregator`**: low-privilege external-MCP subprocess manager.
-- **`capsem-mcp-builtin`**: built-in HTTP and file/snapshot MCP tools.
+- **`capsem-mcp-builtin`**: built-in HTTP MCP tools.
 - **`capsem-gateway`**: authenticated TCP-to-UDS HTTP/WebSocket gateway.
 - **`capsem-app`**: thin Tauri webview shell pointing at the gateway.
 - **`capsem-tray`**: system tray status and quick actions through the gateway.
@@ -58,7 +58,7 @@ capsem-process is a **low-privilege** per-VM process. Security invariants:
 5. **Gateway auth layer**: external access goes through capsem-gateway (Bearer token, rate limiting, localhost CORS). Per-VM sockets are not exposed to the network.
 6. **Rootfs read-only**: profile rootfs asset mounted read-only. Guest binaries deployed chmod 555.
 7. **Guest binary security**: all injected binaries are read-only. Guest cannot modify its own agent.
-8. **VirtioFS boundary**: only `session_dir/guest/` is shared via VirtioFS (contains `system/` and `workspace/`). Host-only files (`session.db`, `serial.log`, `auto_snapshots/`, `checkpoint.vzsave`) are outside the share. Compat symlinks at `session_dir/{system,workspace}` point into `guest/` so existing code paths work unchanged.
+8. **VirtioFS boundary**: only `session_dir/guest/` is shared via VirtioFS (contains `system/` and `workspace/`). Host-only files (`session.db`, `serial.log`, `checkpoint.vzsave`) are outside the share. Compat symlinks at `session_dir/{system,workspace}` point into `guest/` so existing code paths work unchanged.
 
 ### What capsem-process CAN access
 - Its own session_dir (read-write)

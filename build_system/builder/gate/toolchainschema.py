@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
-
-from pydantic import NonNegativeInt, StrictBool, StringConstraints, model_validator
+from pydantic import NonNegativeInt, StrictBool, model_validator
 
 from .configschema import SafeToken, Strict
 
@@ -32,44 +30,6 @@ class CrateTool(Strict):
 
 LinuxPackage = SafeToken
 PkgConfigModule = SafeToken
-Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-
-
-class OrtDistribution(Strict):
-    """One digest-authorized ort-sys static distribution."""
-
-    url: str
-    sha256: Sha256
-
-
-class OrtToolchainConfig(Strict):
-    """The pre-sandbox ORT materializer shared by every Rust build rail."""
-
-    script: str
-    archive_cache_template: str
-    output_template: str
-    strategy_variable: str
-    location_variable: str
-    strategy: str
-    host_targets: dict[str, dict[str, str]]
-    distributions: dict[str, OrtDistribution]
-
-    @model_validator(mode="after")
-    def every_host_target_has_a_distribution(self) -> OrtToolchainConfig:
-        selected = {
-            target
-            for architectures in self.host_targets.values()
-            for target in architectures.values()
-        }
-        missing = sorted(selected - set(self.distributions))
-        if missing:
-            raise ValueError("toolchain.ort host targets are missing: " + ", ".join(missing))
-        if "{sha256}" not in self.archive_cache_template:
-            raise ValueError("toolchain.ort archive cache must include {sha256}")
-        required = ("{consumer}", "{target}", "{sha256}")
-        if any(field not in self.output_template for field in required):
-            raise ValueError("toolchain.ort output must include {consumer}, {target}, and {sha256}")
-        return self
 
 
 class LinuxWorkspaceConfig(Strict):
@@ -120,7 +80,6 @@ class ToolchainConfig(Strict):
     node_env: dict[str, str]
     rust_targets: tuple[str, ...]
     rust_components: tuple[str, ...]
-    ort: OrtToolchainConfig
     linux: LinuxWorkspaceConfig
     crates: tuple[CrateTool, ...]
 

@@ -742,7 +742,6 @@
    "inquire",
    "regex",
    "reqwest",
-   "self-replace",
    "semver",
    "serde",
    "serde_json",
@@ -753,7 +752,6 @@
    "tokio-tungstenite",
    "toml",
    "tracing",
-   "tracing-subscriber",
    "urlencoding"
   ]
  },
@@ -784,7 +782,6 @@
    "capsem-foundation",
    "capsem-proto",
    "nix",
-   "rmp-serde",
    "serde",
    "serde_json",
    "tempfile",
@@ -806,7 +803,6 @@
   "dependencies": [
    "capsem-proto",
    "filetime",
-   "serde",
    "serde_json",
    "tauri",
    "tauri-build",
@@ -899,7 +895,6 @@
    "capsem-telemetry",
    "core-foundation-sys",
    "criterion",
-   "dispatch2",
    "dotenvy",
    "ego-tree",
    "flate2",
@@ -925,29 +920,24 @@
    "regex",
    "reqwest",
    "rmcp",
-   "rmp-serde",
    "rusqlite",
    "rustls",
    "rustls-pemfile",
    "scraper",
    "serde",
    "serde_json",
-   "serde_yaml",
    "sse-stream",
    "tempfile",
    "thiserror",
    "time",
    "tokio",
    "tokio-rustls",
-   "tokio-stream",
    "tokio-util",
    "toml",
    "tracing",
-   "tracing-appender",
    "tracing-subscriber",
    "uuid",
    "vm-fdt",
-   "walkdir",
    "webpki-roots"
   ]
  },
@@ -1013,7 +1003,6 @@
  "capsem-guard": {
   "build_script": false,
   "dependencies": [
-   "anyhow",
    "capsem-foundation",
    "tempfile",
    "thiserror",
@@ -1059,38 +1048,31 @@
    "http",
    "reqwest",
    "rmcp",
-   "rmp-serde",
    "serde",
    "serde_json",
    "sse-stream",
    "tempfile",
    "tokio",
    "tokio-util",
-   "tracing",
-   "tracing-subscriber"
+   "tracing"
   ]
  },
  "capsem-mcp-builtin": {
   "build_script": false,
   "dependencies": [
    "anyhow",
-   "blake3",
    "capsem-core",
    "capsem-foundation",
    "capsem-guard",
    "capsem-proto",
    "regex",
-   "reqwest",
    "rmcp",
-   "scraper",
    "serde",
    "serde_json",
    "tempfile",
    "tokio",
    "toml",
-   "tracing",
-   "tracing-subscriber",
-   "walkdir"
+   "tracing"
   ]
  },
  "capsem-mock-server": {
@@ -1139,15 +1121,12 @@
    "clap",
    "core-foundation-sys",
    "futures",
-   "reqwest",
    "serde",
    "serde_json",
    "tempfile",
    "tokio",
-   "tokio-util",
    "toml",
-   "tracing",
-   "tracing-subscriber"
+   "tracing"
   ]
  },
  "capsem-proto": {
@@ -1215,8 +1194,6 @@
    "filetime",
    "futures",
    "humantime",
-   "magika",
-   "ort",
    "rand",
    "reqwest",
    "rusqlite",
@@ -1226,12 +1203,10 @@
    "tokio",
    "tokio-stream",
    "tokio-tungstenite",
-   "tokio-util",
    "toml",
    "tower",
    "tower-http",
    "tracing",
-   "tracing-subscriber",
    "uuid"
   ]
  },
@@ -1258,7 +1233,6 @@
    "serde_json",
    "tokio",
    "tracing",
-   "tracing-subscriber",
    "tray-icon"
   ]
  },
@@ -2885,12 +2859,6 @@
    "streebog"
   ]
  },
- "hmac-sha256": {
-  "build_script": false,
-  "dependencies": [
-   "digest"
-  ]
- },
  "html5ever": {
   "build_script": false,
   "dependencies": [
@@ -3734,14 +3702,6 @@
   "build_script": false,
   "dependencies": []
  },
- "lzma-rust2": {
-  "build_script": false,
-  "dependencies": [
-   "criterion",
-   "liblzma",
-   "sha2"
-  ]
- },
  "mac": {
   "build_script": false,
   "dependencies": []
@@ -3754,19 +3714,6 @@
    "serde_json",
    "serde_test",
    "winapi"
-  ]
- },
- "magika": {
-  "build_script": false,
-  "dependencies": [
-   "data-encoding",
-   "flate2",
-   "ndarray",
-   "ort",
-   "serde",
-   "serde_json",
-   "thiserror",
-   "tokio"
   ]
  },
  "markup5ever": {
@@ -3796,18 +3743,6 @@
    "routefinder",
    "tokio",
    "tower"
-  ]
- },
- "matrixmultiply": {
-  "build_script": true,
-  "dependencies": [
-   "autocfg",
-   "bencher",
-   "itertools",
-   "num_cpus",
-   "once_cell",
-   "rawpointer",
-   "thread-tree"
   ]
  },
  "memchr": {
@@ -3937,26 +3872,6 @@
    "wry"
   ]
  },
- "ndarray": {
-  "build_script": false,
-  "dependencies": [
-   "approx",
-   "cblas-sys",
-   "defmac",
-   "itertools",
-   "libc",
-   "matrixmultiply",
-   "num-complex",
-   "num-integer",
-   "num-traits",
-   "portable-atomic",
-   "portable-atomic-util",
-   "quickcheck",
-   "rawpointer",
-   "rayon",
-   "serde"
-  ]
- },
  "ndk": {
   "build_script": false,
   "dependencies": [
@@ -4043,17 +3958,6 @@
    "num-traits",
    "quickcheck",
    "rand",
-   "serde"
-  ]
- },
- "num-complex": {
-  "build_script": false,
-  "dependencies": [
-   "bytecheck",
-   "bytemuck",
-   "num-traits",
-   "rand",
-   "rkyv",
    "serde"
   ]
  },
@@ -4470,34 +4374,6 @@
    "futures-executor",
    "futures-util",
    "pin-project-lite"
-  ]
- },
- "ort": {
-  "build_script": false,
-  "dependencies": [
-   "anyhow",
-   "half",
-   "image",
-   "libloading",
-   "ndarray",
-   "num-complex",
-   "ort-sys",
-   "sha2",
-   "smallvec",
-   "tokio",
-   "tracing",
-   "tracing-subscriber",
-   "ureq"
-  ]
- },
- "ort-sys": {
-  "build_script": true,
-  "dependencies": [
-   "glob",
-   "hmac-sha256",
-   "lzma-rust2",
-   "pkg-config",
-   "ureq"
   ]
  },
  "palette": {
@@ -5264,10 +5140,6 @@
    "wasm-bindgen"
   ]
  },
- "rawpointer": {
-  "build_script": false,
-  "dependencies": []
- },
  "rayon": {
   "build_script": false,
   "dependencies": [
@@ -5778,14 +5650,6 @@
    "to_shmem_derive"
   ]
  },
- "self-replace": {
-  "build_script": false,
-  "dependencies": [
-   "fastrand",
-   "tempfile",
-   "windows-sys"
-  ]
- },
  "semver": {
   "build_script": false,
   "dependencies": [
@@ -6115,14 +5979,6 @@
   "dependencies": [
    "libc",
    "windows-sys"
-  ]
- },
- "socks": {
-  "build_script": false,
-  "dependencies": [
-   "byteorder",
-   "libc",
-   "winapi"
   ]
  },
  "softbuffer": {
@@ -7428,46 +7284,6 @@
   "build_script": false,
   "dependencies": []
  },
- "ureq": {
-  "build_script": false,
-  "dependencies": [
-   "assert_no_alloc",
-   "auto-args",
-   "base64",
-   "brotli-decompressor",
-   "cookie_store",
-   "der",
-   "encoding_rs",
-   "env_logger",
-   "flate2",
-   "getrandom",
-   "log",
-   "mime_guess",
-   "native-tls",
-   "percent-encoding",
-   "rustls",
-   "rustls-pki-types",
-   "rustls-platform-verifier",
-   "serde",
-   "serde_json",
-   "socks",
-   "ureq-proto",
-   "url",
-   "utf8-zero",
-   "webpki-root-certs",
-   "webpki-roots",
-   "winreg"
-  ]
- },
- "ureq-proto": {
-  "build_script": false,
-  "dependencies": [
-   "base64",
-   "http",
-   "httparse",
-   "log"
-  ]
- },
  "url": {
   "build_script": false,
   "dependencies": [
@@ -7496,10 +7312,6 @@
   ]
  },
  "utf-8": {
-  "build_script": false,
-  "dependencies": []
- },
- "utf8-zero": {
   "build_script": false,
   "dependencies": []
  },

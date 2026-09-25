@@ -1,11 +1,10 @@
 use crate::client::Client;
 
-use crate::{models, operations as api, DiagnosticOptions, NetworkLogOptions, PageOptions, Result, TriageOptions, VM};
+use crate::{models, operations as api, DiagnosticOptions, NetworkLogOptions, Result, TriageOptions, VM};
 
 /// Paths are the guest's: `/root/x` in a VM, `/workspace/x` in its container,
 /// or `x` relative to the workspace; see [`Files::exact`].
 pub struct Files<'a>(pub(crate) &'a VM, pub(crate) bool);
-pub struct Snapshots<'a>(pub(crate) &'a VM);
 pub struct Stats<'a>(pub(crate) &'a VM);
 pub struct Container<'a>(pub(crate) &'a VM);
 pub struct Ports<'a>(pub(crate) &'a VM);
@@ -68,40 +67,6 @@ impl Files<'_> {
             exact: self.exact_param(),
         };
         api::list_vm_files(&self.0.client.transport, &params, self.0.client.options).await
-    }
-
-    pub async fn history(&self, checkpoint: &str, options: PageOptions) -> Result<models::ChangesResponse> {
-        let params = api::GetVmChangesParams {
-            id: self.0.resolve().await?,
-            checkpoint: checkpoint.into(),
-            limit: options.limit,
-            offset: options.offset,
-        };
-        api::get_vm_changes(&self.0.client.transport, &params, self.0.client.options).await
-    }
-}
-
-impl Snapshots<'_> {
-    pub async fn list(&self) -> Result<models::SnapshotsList> {
-        api::list_vm_snapshots(
-            &self.0.client.transport,
-            &api::ListVmSnapshotsParams {
-                id: self.0.resolve().await?,
-            },
-            self.0.client.options,
-        )
-        .await
-    }
-
-    pub async fn status(&self) -> Result<models::SnapshotsStatus> {
-        api::get_vm_snapshots_status(
-            &self.0.client.transport,
-            &api::GetVmSnapshotsStatusParams {
-                id: self.0.resolve().await?,
-            },
-            self.0.client.options,
-        )
-        .await
     }
 }
 

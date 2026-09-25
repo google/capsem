@@ -29,7 +29,6 @@ async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     await vm.files.write("/workspace/hello.txt", b"hello\n")
     contents = await vm.files.read("/workspace/hello.txt")
     files = await vm.files.list()
-    snapshots = await vm.snapshots.list()
     details = await vm.stats.details()
     history = await vm.history()
     timeline = await vm.timeline(layers=[TimelineLayer.EXEC, TimelineLayer.MODEL])
@@ -55,9 +54,7 @@ defaults. Memory is a positive integer in GiB.
 
 `hv.list()` returns a typed VM inventory. `hv.update()` applies the configured
 update. VM lifecycle methods are `start`, `stop`, `pause`, `resume`, `delete`
-and `fork(name)`. A fork returns another `VM` handle. Snapshot inspection uses
-`vm.snapshots.list()` and `status()`; `vm.files.history(checkpoint)` compares
-workspace paths against an existing checkpoint. Stats has `summary()` and
+and `fork(name)`. A fork returns another `VM` handle. Stats has `summary()` and
 `details()`.
 
 Objects and enums live in `capsem.models`. `HttpError` exposes the gateway's
@@ -74,8 +71,8 @@ returned by `create` and `fork` share their parent's connection. Close the
 owning client with `async with` or `await close()`; closing a shared VM handle
 does not close sibling handles. Closing a client does not stop or delete VMs.
 File import/export requires a running VM's security ledger; copying from or to
-a stopped VM returns `HttpError` with status 409. Stopped workspace listing and
-snapshot comparisons remain available.
+a stopped VM returns `HttpError` with status 409. Stopped workspace listing
+remains available.
 
 `await hv.restart()` returns a typed HTTP 202 acknowledgement. It requires an
 idle service managed by launchd or systemd; active/starting VMs return 409 and
@@ -93,7 +90,7 @@ a read-only diagnostic. `vm.ports.open()` opens a plain loopback TCP port by
 default. `authenticate=True` uses the browser-authentication flow and returns
 its URL and bootstrap material. The SDK selects the container namespace for
 container workloads and the VM namespace otherwise.
-Snapshot creation/restoration and mounts remain pending.
+Mounts remain pending.
 
 `hv.run(command)` executes once in a temporary VM. `hv.debug.panics()` and
 `hv.debug.triage()` expose host and optional VM-ledger diagnostics, and `hv.purge()`

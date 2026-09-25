@@ -10,6 +10,7 @@ import time
 from contextlib import contextmanager, suppress
 
 import pytest
+from helpers.body_archive import security_payload
 from helpers.constants import (
     ASSETS_DIR,
     CODE_PROFILE_ID,
@@ -26,6 +27,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.session_ledger import open_session_ledger
 
 pytestmark = pytest.mark.integration
 
@@ -57,7 +59,7 @@ EXPECTED_MCP_TOOL_FIELDS = {
 @contextmanager
 def _connect_session_db(service: ServiceInstance, client, session_id: str):
     db_path = vm_session_db_path(service.tmp_dir, client, session_id)
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = open_session_ledger(db_path)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -302,8 +304,8 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             security_rows = _rows(
                 conn,
                 """
-                SELECT event_type, rule_id, rule_action, detection_level,
-                       event_json, rule_json, trace_id
+                SELECT event_id, event_type, rule_id, rule_action, detection_level,
+                       rule_json, trace_id
                 FROM security_rule_events
                 WHERE event_id = ?
                 ORDER BY id
@@ -322,7 +324,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             )
             assert all(row["trace_id"] == tool_row["trace_id"] for row in security_rows)
             for row in security_rows:
-                event = json.loads(row["event_json"])
+                event = security_payload(conn, row["event_id"])
                 rule = json.loads(row["rule_json"])
                 assert event["event_type"] == "mcp.tool_call"
                 assert event["mcp"]["server_name"] == "local"

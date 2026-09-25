@@ -38,9 +38,10 @@ before anything is allocated or inflated, because it comes off disk.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import importlib
-import json
+import importlib.util
 import sqlite3
 import zlib
 from pathlib import Path
@@ -180,18 +181,25 @@ class SessionArchive:
         with contextlib.closing(
             sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
         ) as conn:
+            # The committed end comes from the same snapshot as the row: on a
+            # live ledger the writer keeps appending after this reader opened,
+            # and a row naming bytes past the end read then is still committed.
             row = conn.execute(
                 """
                 SELECT b.block_offset, b.body_offset, b.body_len, b.body_hash,
-                       k.disk_len, k.raw_len
+                       k.disk_len, k.raw_len, s.committed_end, s.generation_id
                 FROM event_body_blobs b
                 JOIN body_blocks k ON k.block_offset = b.block_offset
+                JOIN archive_state s ON s.singleton = 1
                 WHERE b.event_id = ? AND b.source_table = ? AND b.direction = ?
                 """,
                 (event_id, source_table, direction),
             ).fetchone()
         if row is None:
             return None
+        if row[7] != self._expected_generation_id:
+            raise AssertionError(f"{self.db_path} selected another archive generation while it was being read")
+        self.committed_end = max(self.committed_end, int(row[6]))
         block_offset, body_offset, body_len, body_hash, disk_len, raw_len = (
             int(row[0]), int(row[1]), int(row[2]), row[3], int(row[4]), int(row[5])
         )
@@ -225,7 +233,7 @@ class SessionArchive:
         body = self.read(event_id, source_table, "payload")
         if body is None:
             raise AssertionError(f"{source_table} has no archived payload for {event_id}")
-        return json.loads(body.decode())
+        return forensic_payload(body)
 
     def _verify_file_header(self) -> None:
         with self.generation_path.open("rb") as file:
@@ -441,3 +449,79 @@ def security_payload(
 ) -> dict[str, Any]:
     """`security_payload_at`, for a test that already holds the connection."""
     return security_payload_at(_main_db_path(conn), event_id, source_table)
+
+
+#: `capsem_proto::forensic::SecurityForensicEvent` fields that are skipped when
+#: empty and restored to their default on decode. Held equal to the Rust struct
+#: by tests/test_messagepack_helper.py.
+FORENSIC_LIST_FIELDS = (
+    "credential_observations",
+    "credential_injections",
+    "action_trace",
+    "detections",
+    "plugin_executions",
+)
+FORENSIC_OPTION_FIELDS = (
+    "credential_ref",
+    "decision",
+    "container",
+    "http_request",
+    "http",
+    "dns",
+    "mcp",
+    "model",
+    "file",
+    "process",
+    "ip",
+    "tcp",
+    "udp",
+    "network",
+)
+
+
+def _messagepack() -> Any:
+    """The sibling decoder, loaded by path: this module is itself loaded by
+    path from the doctor's archive check, where no `helpers` package exists."""
+    spec = importlib.util.spec_from_file_location(
+        "capsem_test_messagepack", Path(__file__).with_name("messagepack.py")
+    )
+    if spec is None or spec.loader is None:
+        raise AssertionError("tests/helpers/messagepack.py is missing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def forensic_payload(body: bytes) -> dict[str, Any]:
+    """A security payload as the ledger archives it: sparse, named MessagePack.
+
+    Decoded the way the Rust type decodes it, so an absent list is empty and an
+    absent option is None rather than a missing key.
+    """
+    payload = _messagepack().decode(body)
+    if not isinstance(payload, dict):
+        raise AssertionError(f"security payload is not a map: {type(payload).__name__}")
+    for name in FORENSIC_LIST_FIELDS:
+        payload.setdefault(name, [])
+    for name in FORENSIC_OPTION_FIELDS:
+        payload.setdefault(name, None)
+    return payload
+
+
+def served_security_payload(
+    client: Any, vm_id: str, event_id: str, source_table: str = "security_rule_events"
+) -> dict[str, Any]:
+    """The forensic payload of one event, as `GET /vms/{id}/bodies/{event_id}` serves it.
+
+    The black-box counterpart of `security_payload`: a route row names the
+    event, and its payload is an archived body like any other.
+    """
+    served = client.get(f"/vms/{vm_id}/bodies/{event_id}")
+    for body in served["bodies"]:
+        if (body["source_table"], body["direction"]) != (source_table, "payload"):
+            continue
+        assert not body["truncated"] and not body["truncated_for_transport"], body
+        content = str(body["content"])
+        raw = base64.b64decode(content) if body["encoding"] == "base64" else content.encode()
+        return forensic_payload(raw)
+    raise AssertionError(f"{source_table} has no served payload for {event_id}: {served}")

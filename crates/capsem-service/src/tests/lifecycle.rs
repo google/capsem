@@ -33,156 +33,6 @@ fn tempdir_test_states_use_distinct_session_index_databases() {
 }
 
 #[tokio::test]
-async fn handle_fork_creates_persistent_sandbox() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    // Create a real session dir for the fake instance
-    let session_dir = state.run_dir.join("sessions/fork-src");
-    std::fs::create_dir_all(session_dir.join("system")).unwrap();
-    std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
-    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
-    state.instances.lock().unwrap().insert(
-        "fork-src".into(),
-        InstanceInfo {
-            id: "fork-src".into(),
-            name: "fork-src".into(),
-            uds_path: PathBuf::from("/tmp/fork-src.sock"),
-            session_dir: session_dir.clone(),
-            ..test_instance()
-        },
-    );
-    let result = handle_fork(
-        State(state.clone()),
-        Path("fork-src".into()),
-        Json(ForkRequest {
-            name: "my-fork".into(),
-            description: Some("test".into()),
-        }),
-    )
-    .await
-    .unwrap();
-    assert_ne!(result.0.id, "my-fork");
-    uuid::Uuid::parse_str(&result.0.id).expect("fork response id should be a UUID");
-    assert_eq!(result.0.name, "my-fork");
-    assert!(result.0.size_bytes > 0);
-    // Verify fork created a persistent sandbox entry in the registry
-    let registry = state.persistent_registry.lock().unwrap();
-    let entry = registry.get("my-fork").unwrap();
-    assert_eq!(entry.profile_id, "code");
-    assert_eq!(entry.profile_revision, test_profile_revision());
-    assert_eq!(entry.profile_payload_hash, test_profile_payload_hash());
-    assert_eq!(entry.asset_pins, test_asset_pins());
-    assert_eq!(entry.forked_from, Some("fork-src".into()));
-    assert_eq!(entry.description, Some("test".into()));
-    assert_eq!(entry.base_version, "0.0.0");
-    drop(registry);
-}
-
-#[tokio::test]
-async fn handle_fork_not_found() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    // state is already Arc<ServiceState> from make_test_state*
-    let err = handle_fork(
-        State(state),
-        Path("ghost".into()),
-        Json(ForkRequest {
-            name: "img".into(),
-            description: None,
-        }),
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.0, StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn handle_fork_duplicate_returns_conflict() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    let session_dir = state.run_dir.join("sessions/dup-src");
-    std::fs::create_dir_all(session_dir.join("system")).unwrap();
-    std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
-    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
-    state.instances.lock().unwrap().insert(
-        "dup-src".into(),
-        InstanceInfo {
-            id: "dup-src".into(),
-            name: "dup-src".into(),
-            uds_path: PathBuf::from("/tmp/dup-src.sock"),
-            session_dir,
-            ..test_instance()
-        },
-    );
-    // state is already Arc<ServiceState> from make_test_state*
-    // First fork succeeds
-    let _ = handle_fork(
-        State(state.clone()),
-        Path("dup-src".into()),
-        Json(ForkRequest {
-            name: "same-name".into(),
-            description: None,
-        }),
-    )
-    .await
-    .unwrap();
-    // Second fork with same name returns CONFLICT
-    let err = handle_fork(
-        State(state),
-        Path("dup-src".into()),
-        Json(ForkRequest {
-            name: "same-name".into(),
-            description: None,
-        }),
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.0, StatusCode::CONFLICT);
-}
-
-#[tokio::test]
-async fn handle_fork_from_persistent_registry() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    let session_dir = state.run_dir.join("persistent/pers-vm");
-    std::fs::create_dir_all(session_dir.join("system")).unwrap();
-    std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
-    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
-    let vm_id = new_persistent_vm_id();
-    {
-        let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert(
-            "pers-vm".into(),
-            PersistentVmEntry {
-                id: vm_id.clone(),
-                created_at: "2026-01-01T00:00:00Z".into(),
-                ..test_persistent_entry("pers-vm", session_dir.clone())
-            },
-        );
-    }
-    // state is already Arc<ServiceState> from make_test_state*
-    let result = handle_fork(
-        State(state.clone()),
-        Path(vm_id),
-        Json(ForkRequest {
-            name: "from-pers".into(),
-            description: None,
-        }),
-    )
-    .await
-    .unwrap();
-    assert_ne!(result.0.id, "from-pers");
-    uuid::Uuid::parse_str(&result.0.id).expect("fork response id should be a UUID");
-    assert_eq!(result.0.name, "from-pers");
-    let registry = state.persistent_registry.lock().unwrap();
-    let entry = registry.get("from-pers").unwrap();
-    assert_eq!(entry.profile_id, "code");
-    assert_eq!(entry.profile_revision, test_profile_revision());
-    assert_eq!(entry.profile_payload_hash, test_profile_payload_hash());
-    assert_eq!(entry.asset_pins, test_asset_pins());
-    drop(registry);
-}
-
-#[tokio::test]
 async fn handle_persist_preserves_profile_identity() {
     let (state, _dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
@@ -283,7 +133,7 @@ fn persistent_resume_uses_saved_profile_when_current_profile_revision_advances()
         toml::from_str(&std::fs::read_to_string(&active_profile_path).unwrap()).unwrap();
     active_profile.revision = "older-supported-revision".to_string();
     std::fs::write(&active_profile_path, toml::to_string_pretty(&active_profile).unwrap()).unwrap();
-    let rootfs = capsem_core::guest_share_dir(&session_dir).join("system/rootfs.img");
+    let rootfs = capsem_core::session::system_overlay_image_path(&session_dir);
     std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
     std::fs::File::create(rootfs)
         .unwrap()
@@ -328,7 +178,7 @@ fn persistent_resume_allows_deprecated_pins_but_blocks_explicit_revocation() {
     state
         .materialize_active_profile(&runtime_profile, &session_dir)
         .unwrap();
-    let rootfs = capsem_core::guest_share_dir(&session_dir).join("system/rootfs.img");
+    let rootfs = capsem_core::session::system_overlay_image_path(&session_dir);
     std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
     std::fs::File::create(rootfs)
         .unwrap()
@@ -410,62 +260,6 @@ fn resume_rejects_profile_payload_hash_drift() {
     assert!(
         err.to_string().contains("payload hash mismatch"),
         "resume must fail closed on profile payload hash drift, got: {err}"
-    );
-}
-
-#[tokio::test]
-async fn handle_fork_rejects_asset_pin_drift() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    let session_dir = state.run_dir.join("persistent/pin-drift");
-    std::fs::create_dir_all(session_dir.join("system")).unwrap();
-    std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
-    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
-    let mut pins = test_asset_pins();
-    pins.rootfs.hash = "blake3:0000000000000000000000000000000000000000000000000000000000000000".into();
-    let vm_id = new_persistent_vm_id();
-    {
-        let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert(
-            "pin-drift".into(),
-            PersistentVmEntry {
-                id: vm_id.clone(),
-                name: "pin-drift".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: pins,
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir,
-                forked_from: None,
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
-            },
-        );
-    }
-
-    let err = handle_fork(
-        State(state),
-        Path(vm_id),
-        Json(ForkRequest {
-            name: "blocked-fork".into(),
-            description: None,
-        }),
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.0, StatusCode::PRECONDITION_FAILED);
-    assert!(
-        err.1.contains("asset pins changed"),
-        "fork must fail closed on asset pin drift, got: {}",
-        err.1
     );
 }
 
@@ -632,8 +426,8 @@ async fn handle_info_reports_storage_diagnostics_for_persistent_vm() {
     let (state, _dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
     let session_dir = state.run_dir.join("persistent/storage-info");
-    std::fs::create_dir_all(session_dir.join("guest/system")).unwrap();
-    let rootfs = session_dir.join("guest/system/rootfs.img");
+    std::fs::create_dir_all(session_dir.join("system")).unwrap();
+    let rootfs = session_dir.join("system/rootfs.img");
     let file = std::fs::File::create(&rootfs).unwrap();
     file.set_len(8 * 1024 * 1024 * 1024).unwrap();
 
@@ -663,7 +457,7 @@ async fn handle_vm_status_reports_storage_diagnostics_for_persistent_vm() {
     install_test_profile_assets(&state);
     let session_dir = state.run_dir.join("persistent/storage-status");
     capsem_core::create_virtiofs_session(&session_dir, 4).unwrap();
-    let rootfs = session_dir.join("guest/system/rootfs.img");
+    let rootfs = session_dir.join("system/rootfs.img");
 
     let entry = test_persistent_entry("storage-status", session_dir);
     let vm_id = entry.id.clone();
@@ -1669,7 +1463,7 @@ async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
     let vm_id = new_persistent_vm_id();
     let session_dir = state.run_dir.join("persistent").join(&vm_id);
     std::fs::create_dir_all(&session_dir).unwrap();
-    let rootfs = capsem_core::guest_share_dir(&session_dir).join("system/rootfs.img");
+    let rootfs = capsem_core::session::system_overlay_image_path(&session_dir);
     std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
     std::fs::File::create(rootfs)
         .unwrap()

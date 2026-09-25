@@ -259,11 +259,26 @@ pub fn redact_observed_credentials_in_bytes(bytes: &[u8], observations: &[Creden
     }
 }
 
+/// Shortest observed value that is rewritten wherever it appears.
+///
+/// Redaction is a substring rewrite across stored headers and bodies, so a
+/// short value rewrites every word it happens to spell. Local-model tools send
+/// placeholders (`ollama launch` sends `ollama`; `EMPTY`, `lm-studio`,
+/// `sk-1234`), and a guest can send any word it wants scrubbed from the
+/// ledger. Every brokered provider key and OAuth token is far longer than
+/// this, so the floor costs no secret and keeps the stored bodies true to what
+/// left the VM. A shorter value is still observed, referenced and brokered.
+pub const MIN_REDACTED_CREDENTIAL_LEN: usize = 12;
+
 /// Replace each observed credential in `text`, raw or percent-encoded, with its
-/// `credential:blake3:` reference.
+/// `credential:blake3:` reference. Values under [`MIN_REDACTED_CREDENTIAL_LEN`]
+/// are left in place.
 pub fn redact_observed_credentials_in_text(text: &str, observations: &[CredentialObservation]) -> String {
     let mut redacted = text.to_string();
     for observation in observations {
+        if observation.raw_value.len() < MIN_REDACTED_CREDENTIAL_LEN {
+            continue;
+        }
         redacted = redacted.replace(&observation.raw_value, &observation.credential_ref());
         let encoded = percent_encode_query_value(&observation.raw_value);
         if encoded != observation.raw_value {

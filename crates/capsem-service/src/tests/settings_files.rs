@@ -194,7 +194,6 @@ pub(super) fn make_test_state_with_tempdir_at(dir: tempfile::TempDir) -> (Arc<Se
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
-        magika: test_magika(),
         plugin_policy_by_profile: Mutex::new(HashMap::new()),
         profile_summary_cache: Mutex::new(test_profile_summary_cache()),
         profile_cache: Mutex::new(test_profile_cache()),
@@ -327,13 +326,11 @@ fn list_dir_returns_correct_structure() {
     std::fs::write(ws.join("src/main.rs"), "fn main() {}").unwrap();
     std::fs::write(ws.join("README.md"), "# Hello").unwrap();
 
-    let magika = test_magika();
     let entries = list_dir_recursive(
         &capsem_foundation::unix::contained::ContainedDir::open_root(ws).unwrap(),
         "",
         1,
         2,
-        &magika,
     );
 
     // Should have src/ dir and README.md file
@@ -358,40 +355,38 @@ fn list_dir_respects_depth_limit() {
     std::fs::create_dir_all(ws.join("a/b/c")).unwrap();
     std::fs::write(ws.join("a/b/c/deep.txt"), "deep").unwrap();
 
-    let magika = test_magika();
     // depth 1: should list "a" but not recurse into "a/b"
     let entries = list_dir_recursive(
         &capsem_foundation::unix::contained::ContainedDir::open_root(ws).unwrap(),
         "",
         1,
         1,
-        &magika,
     );
     let a = entries.iter().find(|e| e.name == "a").unwrap();
     assert!(a.children.is_none());
 }
 
 #[test]
-fn list_dir_skips_system_but_shows_hidden() {
+/// The listing is rooted at the workspace, never at the share, so a folder
+/// named `system` is the user's own. It used to be hidden at every depth: a
+/// leftover from when the overlay image sat in a share-level `system/`.
+fn list_dir_shows_hidden_entries_and_a_user_system_folder() {
     let dir = tempfile::tempdir().unwrap();
     let ws = dir.path();
     std::fs::create_dir_all(ws.join(".hidden")).unwrap();
     std::fs::create_dir_all(ws.join("system")).unwrap();
     std::fs::write(ws.join("visible.txt"), "yes").unwrap();
 
-    let magika = test_magika();
     let entries = list_dir_recursive(
         &capsem_foundation::unix::contained::ContainedDir::open_root(ws).unwrap(),
         "",
         1,
         1,
-        &magika,
     );
-    // .hidden + visible.txt shown; system/ filtered out
-    assert_eq!(entries.len(), 2);
+    assert_eq!(entries.len(), 3);
     assert!(entries.iter().any(|e| e.name == ".hidden"));
     assert!(entries.iter().any(|e| e.name == "visible.txt"));
-    assert!(!entries.iter().any(|e| e.name == "system"));
+    assert!(entries.iter().any(|e| e.name == "system"));
 }
 
 #[test]
@@ -403,13 +398,11 @@ fn list_dir_sorts_dirs_first_then_alphabetical() {
     std::fs::write(ws.join("apple.txt"), "a").unwrap();
     std::fs::create_dir_all(ws.join("beta")).unwrap();
 
-    let magika = test_magika();
     let entries = list_dir_recursive(
         &capsem_foundation::unix::contained::ContainedDir::open_root(ws).unwrap(),
         "",
         1,
         1,
-        &magika,
     );
     // Dirs first (alpha, beta), then files (apple.txt, zebra.txt)
     assert_eq!(entries[0].name, "alpha");

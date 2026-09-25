@@ -250,8 +250,6 @@ struct ServiceState {
     asset_reconcile: Mutex<AssetReconcileState>,
     asset_reconcile_inflight: AtomicBool,
     asset_status_path: PathBuf,
-    /// Magika file-type detection session (thread-safe, shared)
-    magika: Mutex<magika::Session>,
     /// Profile-owned plugin policy overrides. Effective policy is built-in
     /// plugin defaults plus overrides for the profile executing the VM.
     plugin_policy_by_profile: Mutex<HashMap<String, BTreeMap<String, SecurityPluginConfig>>>,

@@ -127,14 +127,11 @@ component_management:
         - crates/capsem-core/src/security_engine/**
         - crates/capsem-core/src/credential_broker.rs
 
-    # MCP endpoint, builtin HTTP tools, file/snapshot tools,
-    # MCP policy, auto-snapshots, FS monitor.
+    # MCP endpoint, builtin HTTP tools, MCP policy, FS monitor.
     - component_id: tooling
       name: Tooling
       paths:
         - crates/capsem-core/src/mcp/**
-        - crates/capsem-core/src/auto_snapshot.rs
-        - crates/capsem-core/src/auto_snapshot/**
         - crates/capsem-core/src/auditfs.rs
         - crates/capsem-core/src/contained_fs.rs
         - crates/capsem-core/src/fs_monitor.rs

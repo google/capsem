@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from . import clippyrun, toolchain
+from . import clippyrun
 from .actions import Run
 from .config import GateConfig
 from .execution import SATURATES, Kind, Needs, Speed, Step, step
@@ -58,7 +58,7 @@ def _keyed_clippy(config: GateConfig, cargo_args: list[str]) -> Run:
     argv, environment = clippyrun.invocation(
         config.toolchain.clippy_workspace_wrapper, cargo_args, ["-D", "warnings"]
     )
-    return Run(argv, env={**toolchain.ort_environment(config, toolchain.OrtConsumer.FAST), **environment})
+    return Run(argv, env=environment)
 
 
 def clippy(config: GateConfig) -> Step:

@@ -7,6 +7,10 @@ The associated Sprinty ledger is worktree-local at
 
 ## Historical decision: snapshot retirement is outside this sprint
 
+Done in #228: snapshots are gone, and the clone primitives this section
+mentions now live in `capsem_core::session::clone` and
+`capsem_foundation::unix::tree_clone`.
+
 The active sprint and Sol handoff cover PR #227 only. The retirement decision
 below is preserved as future context, not an implementation assignment.
 S07-001 and the counters, IPC and confinement subsprints are deprecated from

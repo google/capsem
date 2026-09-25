@@ -19,79 +19,36 @@ fn loopback_allowed_rules() -> SecurityRuleSet {
     .expect("test security rules compile")
 }
 
-fn handler_without_snapshots() -> BuiltinHandler {
+fn handler() -> BuiltinHandler {
     BuiltinHandler {
         http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),
         security_rules: Arc::new(SecurityRuleSet::new(Vec::new())),
         plugin_policy: Arc::new(BTreeMap::new()),
-        scheduler: None,
-        workspace_dir: None,
     }
-}
-
-fn handler_with_snapshots(root: &std::path::Path) -> BuiltinHandler {
-    let workspace = root.join("workspace");
-    std::fs::create_dir_all(&workspace).unwrap();
-    BuiltinHandler {
-        scheduler: Some(Arc::new(Mutex::new(AutoSnapshotScheduler::new(
-            root.to_path_buf(),
-            2,
-            2,
-            Duration::from_secs(60),
-        )))),
-        workspace_dir: Some(workspace),
-        ..handler_without_snapshots()
-    }
-}
-
-#[test]
-fn snapshot_pagination_params_preserve_include_changes() {
-    let params: SnapshotPaginationParams = serde_json::from_value(serde_json::json!({
-        "format": "json",
-        "include_changes": true
-    }))
-    .expect("snapshot pagination params should deserialize");
-
-    let args = to_args(&params);
-    assert_eq!(args["format"], "json");
-    assert_eq!(args["include_changes"], true);
 }
 
 #[test]
 fn router_and_server_info_expose_the_complete_builtin_surface() {
     let tools = BuiltinHandler::tool_router();
-    let names = tools
+    let mut names = tools
         .list_all()
         .iter()
         .map(|tool| tool.name.to_string())
         .collect::<Vec<_>>();
-    for expected in [
-        "echo",
-        "fetch_http",
-        "grep_http",
-        "http_headers",
-        "snapshots_changes",
-        "snapshots_list",
-        "snapshots_revert",
-        "snapshots_create",
-        "snapshots_delete",
-        "snapshots_history",
-        "snapshots_compact",
-    ] {
-        assert!(
-            names.iter().any(|name| name == expected),
-            "missing builtin tool {expected}"
-        );
-    }
+    names.sort();
+    // Exact: the builtin surface is guest-callable, so any tool added or
+    // brought back (the retired `snapshots_*` family wrote and reverted host
+    // session state) must be a deliberate change to this list.
+    assert_eq!(names, ["echo", "fetch_http", "grep_http", "http_headers"]);
 
-    let info = handler_without_snapshots().get_info();
+    let info = handler().get_info();
     assert_eq!(info.server_info.name, "capsem-local");
     assert!(!info.server_info.version.is_empty());
 }
 
 #[tokio::test]
 async fn echo_handler_returns_input_without_touching_io() {
-    let handler = handler_without_snapshots();
+    let handler = handler();
     let value = handler
         .echo(Parameters(EchoParams {
             text: "transport fixture".to_string(),
@@ -99,92 +56,6 @@ async fn echo_handler_returns_input_without_touching_io() {
         .await
         .unwrap();
     assert_eq!(value, "transport fixture");
-}
-
-#[tokio::test]
-async fn snapshot_handlers_operate_on_real_scheduler_state() {
-    let root = tempfile::tempdir().unwrap();
-    let handler = handler_with_snapshots(root.path());
-    let pagination = || SnapshotPaginationParams {
-        start_index: None,
-        max_length: None,
-        format: Some("json".to_string()),
-        include_changes: Some(true),
-    };
-
-    assert!(!handler
-        .snapshots_changes(Parameters(pagination()))
-        .await
-        .unwrap()
-        .is_empty());
-    assert!(!handler
-        .snapshots_list(Parameters(pagination()))
-        .await
-        .unwrap()
-        .is_empty());
-    assert!(handler
-        .snapshots_history(Parameters(SnapshotHistoryParams {
-            path: "missing.txt".to_string(),
-            start_index: None,
-            max_length: None,
-            format: Some("json".to_string()),
-        }))
-        .await
-        .is_ok());
-
-    let created = handler
-        .snapshots_create(Parameters(SnapshotNameParams {
-            name: "fixture".to_string(),
-        }))
-        .await;
-    assert!(created.is_ok(), "manual snapshot failed: {created:?}");
-    let missing = handler
-        .snapshots_revert(Parameters(SnapshotRevertParams {
-            path: "missing.txt".to_string(),
-            checkpoint: None,
-        }))
-        .await;
-    assert_eq!(missing.is_error, Some(true), "{missing:?}");
-    assert!(missing.meta.is_none(), "a revert that did nothing records nothing");
-    assert!(handler
-        .snapshots_delete(Parameters(SnapshotDeleteParams {
-            checkpoint: "cp-missing".to_string(),
-        }))
-        .await
-        .is_err());
-    assert!(handler
-        .snapshots_compact(Parameters(SnapshotCompactParams {
-            checkpoints: vec!["cp-missing".to_string()],
-            name: Some("compacted".to_string()),
-        }))
-        .await
-        .is_err());
-}
-
-#[test]
-fn snapshot_tools_fail_closed_when_session_state_is_absent() {
-    let handler = handler_without_snapshots();
-    let error = match handler.snapshot_state() {
-        Ok(_) => panic!("snapshot state unexpectedly available"),
-        Err(error) => error,
-    };
-    assert!(error.contains("no session directory"));
-
-    let session = tempfile::tempdir().unwrap();
-    let handler = BuiltinHandler {
-        scheduler: Some(Arc::new(Mutex::new(AutoSnapshotScheduler::new(
-            session.path().to_path_buf(),
-            1,
-            1,
-            Duration::from_secs(60),
-        )))),
-        ..handler_without_snapshots()
-    };
-    let error = match handler.snapshot_state() {
-        Ok(_) => panic!("snapshot state unexpectedly available"),
-        Err(error) => error,
-    };
-    assert!(error.contains("no workspace directory"));
 }
 
 async fn spawn_one_response_http_server() -> String {
@@ -280,7 +151,7 @@ fn text_of(result: &CallToolResult) -> String {
 async fn an_http_tool_hands_its_request_back_on_the_result() {
     let handler = BuiltinHandler {
         security_rules: Arc::new(loopback_allowed_rules()),
-        ..handler_without_snapshots()
+        ..handler()
     };
     let url = spawn_one_response_http_server().await;
 
@@ -307,7 +178,7 @@ async fn an_http_tool_hands_its_request_back_on_the_result() {
 /// result exactly as a success rides on a success.
 #[tokio::test]
 async fn a_refused_request_is_recorded_on_the_error_result() {
-    let result = handler_without_snapshots()
+    let result = handler()
         .fetch_http(Parameters(FetchHttpParams {
             url: "http://127.0.0.1:1/".to_string(),
             format: None,
@@ -323,45 +194,6 @@ async fn a_refused_request_is_recorded_on_the_error_result() {
     };
     assert_eq!(request.decision, builtin_ledger::HttpDecision::Denied);
     assert_eq!(request.policy_action, "block");
-}
-
-/// A revert that changed the workspace hands back what it did, with the
-/// checkpoint it came from.
-#[tokio::test]
-async fn a_revert_hands_its_file_record_back_on_the_result() {
-    let root = tempfile::tempdir().unwrap();
-    let handler = handler_with_snapshots(root.path());
-    let workspace = root.path().join("workspace");
-    std::fs::write(workspace.join("notes.txt"), "baseline").unwrap();
-    handler
-        .scheduler
-        .as_ref()
-        .unwrap()
-        .lock()
-        .unwrap()
-        .take_snapshot()
-        .unwrap();
-    std::fs::write(workspace.join("notes.txt"), "changed").unwrap();
-
-    let result = handler
-        .snapshots_revert(Parameters(SnapshotRevertParams {
-            path: "notes.txt".to_string(),
-            checkpoint: Some("cp-0".to_string()),
-        }))
-        .await;
-    assert_eq!(result.is_error, Some(false), "{result:?}");
-
-    let records = ledger_records(&result);
-    let [BuiltinLedgerRecord::FileReverted(revert)] = records.as_slice() else {
-        panic!("one revert, one record: {result:?}");
-    };
-    assert_eq!(revert.path, "notes.txt");
-    assert_eq!(revert.checkpoint, "cp-0");
-    assert_eq!(revert.action, builtin_ledger::RevertAction::Restored);
-    assert_eq!(
-        std::fs::read_to_string(workspace.join("notes.txt")).unwrap(),
-        "baseline"
-    );
 }
 
 // ── Tool-failure propagation ───────────────────────────────────────

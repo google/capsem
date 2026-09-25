@@ -247,6 +247,8 @@ def test_a_wait_that_runs_out_is_not_mistaken_for_the_commands_own_failure(
     )
     monkeypatch.setattr(boundedlease.gate_config, "load", lambda _root: impatient)
     monkeypatch.setattr(run_bounded_command, "_repository_root", lambda: ROOT)
+    # A gate run exports its marker; setenv alone would leave it set.
+    monkeypatch.delenv(LOCK.run_marker, raising=False)
     for name, value in _environment(tmp_path).items():
         monkeypatch.setenv(name, value)
     with _gate_holds_the_machine(tmp_path):

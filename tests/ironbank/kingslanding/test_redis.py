@@ -7,11 +7,11 @@ Loopback-only Redis traffic never enters Capsem's host network ledger.
 import contextlib
 import hashlib
 import json
-import sqlite3
 from pathlib import Path
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import vm_name, vm_session_db_path, wait_exec_ready
+from helpers.session_ledger import open_session_ledger
 
 from tests.fixtures.oci.prepare_redis import native_pin
 from tests.ironbank.kingslanding.test_oci_container import FIXTURES, oci_vm
@@ -111,7 +111,7 @@ def test_real_redis_persistence_limits_and_fresh_vm(oci_vm, tmp_path):
         client.delete(f"/vms/{second}/delete")
     db_path = vm_session_db_path(service.tmp_dir, client, first)
     service.stop(cleanup=False)
-    with contextlib.closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as db:
+    with contextlib.closing(open_session_ledger(db_path)) as db:
         rows = db.execute(
             "SELECT exit_code, source, stdout_bytes, stderr_bytes, credential_ref "
             "FROM exec_events WHERE command = ?",

@@ -108,8 +108,8 @@ def test_every_input_that_defines_the_base_image_changes_its_tag(tmp_path: Path)
     The old version of this test only checked the configured lockfiles were
     present on disk, which is true of an incomplete key as well as a complete
     one. This mutates each defining input in turn and requires the tag to move
-    -- including the two that were missing: the Dockerfile, which carries the
-    ONNX Runtime version and every build argument's default, and the mutable
+    -- including the two that were missing: the Dockerfile, which carries
+    every build argument's default, and the mutable
     `capsem-host-builder:latest` the image is `FROM`.
     """
     from capsem_builder.gate import linuxrust

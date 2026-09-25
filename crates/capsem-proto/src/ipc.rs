@@ -66,16 +66,19 @@ pub enum ServiceToProcess {
     /// longer reading -- prevents late writes from leaking into the
     /// user's parent shell after raw mode is restored.
     StopTerminalStream,
-    /// Quiescence: tell process to prepare guest for snapshot.
-    PrepareSnapshot,
-    /// Resume guest filesystem I/O after snapshot.
-    Unfreeze,
     /// Suspend VM and save checkpoint to disk.
     Suspend {
         checkpoint_path: String,
     },
-    /// Resume VM from checkpoint (warm restore).
-    Resume,
+    /// Clone this sandbox's state into `destination`, an empty session
+    /// directory the service created. The owner freezes the guest's system
+    /// filesystem for the copy and always thaws it, so the fork's overlay
+    /// image is consistent and a service that disappears mid-fork cannot
+    /// leave the guest frozen.
+    CloneState {
+        id: u64,
+        destination: String,
+    },
     /// Query MCP aggregator for server list with connection status.
     McpListServers {
         id: u64,
@@ -86,10 +89,6 @@ pub enum ServiceToProcess {
     },
     /// Tell MCP aggregator to reconnect all servers with fresh config.
     McpRefreshTools {
-        id: u64,
-    },
-    /// Query process-owned, in-memory VM snapshot state.
-    SnapshotStatus {
         id: u64,
     },
     /// Call an MCP tool via the aggregator subprocess.
@@ -278,8 +277,14 @@ pub enum ProcessToService {
     ShutdownRequested { id: String },
     /// Guest requested suspend (forwarded from capsem-sysutil via vsock:5004).
     SuspendRequested { id: String },
-    /// Guest quiescence complete: filesystem frozen, safe to snapshot.
-    SnapshotReady { id: String },
+    /// Result of CloneState: the clone's disk usage, or why it failed.
+    CloneStateResult {
+        id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size_bytes: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     /// Response to McpListServers.
     McpServersResult { id: u64, servers: Vec<McpServerStatus> },
     /// Response to McpListTools.
@@ -291,8 +296,6 @@ pub enum ProcessToService {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
-    /// Response to SnapshotStatus.
-    SnapshotStatusResult { id: u64, status: SnapshotStatus },
     /// Response to McpCallTool. `result_json` preserves the MCP JSON value.
     McpCallToolResult {
         id: u64,
@@ -419,10 +422,10 @@ impl ServiceToProcess {
             | Self::WriteFile { id, .. }
             | Self::ReadFile { id, .. }
             | Self::LogFileBoundary { id, .. }
+            | Self::CloneState { id, .. }
             | Self::McpListServers { id }
             | Self::McpListTools { id }
             | Self::McpRefreshTools { id }
-            | Self::SnapshotStatus { id }
             | Self::McpCallTool { id, .. }
             | Self::PublishPort { id, .. }
             | Self::DeclarePreview { id, .. }
@@ -453,10 +456,10 @@ impl ProcessToService {
             | Self::WriteFileResult { id, .. }
             | Self::ReadFileResult { id, .. }
             | Self::LogFileBoundaryResult { id, .. }
+            | Self::CloneStateResult { id, .. }
             | Self::McpServersResult { id, .. }
             | Self::McpToolsResult { id, .. }
             | Self::McpRefreshResult { id, .. }
-            | Self::SnapshotStatusResult { id, .. }
             | Self::McpCallToolResult { id, .. }
             | Self::PortPublished { id, .. }
             | Self::ExposureRevoked { id, .. }
@@ -509,30 +512,6 @@ pub struct McpToolStatus {
     /// Typed so SDK and UI consumers get one stable annotation contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotations: Option<crate::mcp_contracts::ToolAnnotations>,
-}
-
-/// Host-side VM recovery snapshot status. This is not session.db/security
-/// activity; running VMs report it from capsem-process memory and stopped VMs
-/// may reconstruct it from the session snapshot metadata.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct SnapshotStatus {
-    pub total: usize,
-    pub auto_count: usize,
-    pub manual_count: usize,
-    pub manual_available: usize,
-    pub snapshots: Vec<SnapshotSlotStatus>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct SnapshotSlotStatus {
-    pub checkpoint: String,
-    pub slot: usize,
-    pub origin: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    pub timestamp: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hash: Option<String>,
 }
 
 #[cfg(test)]

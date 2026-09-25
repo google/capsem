@@ -19,11 +19,14 @@ mod container_pull;
 mod exec;
 mod private;
 mod publication;
-mod snapshot;
-use snapshot::snapshot_status_from_scheduler;
 
-type SharedSnapshotScheduler = Arc<tokio::sync::Mutex<capsem_core::auto_snapshot::AutoSnapshotScheduler>>;
 type ProcessIpcChannel = (Sender<ProcessToService>, Receiver<ServiceToProcess>);
+
+/// How long the service is kept waiting for a fork's clone. Copying a
+/// multi-GiB overlay on a filesystem without reflinks takes minutes. The
+/// guest is thawed when the copy ends, not when this expires: a blocking copy
+/// cannot be cut short, and thawing under it would tear the image.
+const CLONE_STATE_TIMEOUT: Duration = Duration::from_secs(900);
 
 /// Timeout before the host watchdog re-sends a quick HostToGuest payload.
 ///
@@ -126,7 +129,6 @@ pub(crate) async fn handle_ipc_connection(
     runtime_source: RuntimeProfileSource,
     mcp_builtin_binary: Option<PathBuf>,
     mcp_builtin_env: HashMap<String, String>,
-    snapshot_scheduler: SharedSnapshotScheduler,
     vm_ready: Arc<AtomicBool>,
 ) -> Result<()> {
     // First frame on every IPC connection is a Hello -- detect cross-version
@@ -416,7 +418,7 @@ pub(crate) async fn handle_ipc_connection(
                 let net_state = net_state.clone();
                 let mcp_runtime = mcp_runtime.clone();
                 tokio::spawn(async move {
-                    info!(id, path, len = data.len(), "Received WriteFile command via IPC");
+                    debug!(id, path, len = data.len(), "Received WriteFile command via IPC");
                     // Recorded before dispatch, as an export is recorded
                     // before release: a write the session cannot account for
                     // does not happen.
@@ -486,7 +488,7 @@ pub(crate) async fn handle_ipc_connection(
                     };
                     match result {
                         Ok(Ok(JobResult::WriteFile { success, error })) => {
-                            info!(id, success, "Sending WriteFileResult back via IPC");
+                            debug!(id, success, "Sending WriteFileResult back via IPC");
                             capsem_core::try_send!(
                                 "ipc_write_file_result",
                                 ipc_tx_out
@@ -539,7 +541,7 @@ pub(crate) async fn handle_ipc_connection(
                 let ctrl_tx = ctrl_tx.clone();
                 let ipc_tx_out = ipc_tx_out.clone();
                 tokio::spawn(async move {
-                    info!(id, path, "Received ReadFile command via IPC");
+                    debug!(id, path, "Received ReadFile command via IPC");
                     let (j_tx, mut j_rx) = oneshot::channel();
                     job_store.jobs.lock().unwrap().insert(id, j_tx);
                     capsem_core::try_send!(
@@ -573,7 +575,7 @@ pub(crate) async fn handle_ipc_connection(
                     };
                     match result {
                         Ok(Ok(JobResult::ReadFile { data, error })) => {
-                            info!(id, success = data.is_some(), "Sending ReadFileResult back via IPC");
+                            debug!(id, success = data.is_some(), "Sending ReadFileResult back via IPC");
                             capsem_core::try_send!(
                                 "ipc_read_file_result",
                                 ipc_tx_out
@@ -631,7 +633,7 @@ pub(crate) async fn handle_ipc_connection(
                 let ipc_tx_out = ipc_tx_out.clone();
                 let db = Arc::clone(&net_state.db);
                 tokio::spawn(async move {
-                    info!(id, ?action, path, size, "Received LogFileBoundary command via IPC");
+                    debug!(id, ?action, path, size, "Received LogFileBoundary command via IPC");
                     let (j_tx, j_rx) = oneshot::channel();
                     job_store.jobs.lock().unwrap().insert(id, j_tx);
                     capsem_core::try_send!(
@@ -718,6 +720,38 @@ pub(crate) async fn handle_ipc_connection(
                             );
                         }
                     }
+                });
+            }
+            ServiceToProcess::CloneState { id, destination } => {
+                let job_store = job_store.clone();
+                let ctrl_tx = ctrl_tx.clone();
+                let ipc_tx_out = ipc_tx_out.clone();
+                tokio::spawn(async move {
+                    let (j_tx, j_rx) = oneshot::channel();
+                    job_store.jobs.lock().unwrap().insert(id, j_tx);
+                    capsem_core::try_send!(
+                        "ctrl_clone_state",
+                        ctrl_tx.send(ServiceToProcess::CloneState { id, destination }).await
+                    );
+                    let result = match tokio::time::timeout(CLONE_STATE_TIMEOUT, j_rx).await {
+                        Ok(Ok(JobResult::CloneState { result })) => result,
+                        Ok(Ok(other)) => Err(format!("unexpected clone result: {other:?}")),
+                        Ok(Err(_)) => Err("clone result channel closed".into()),
+                        Err(_) => Err("clone timed out".into()),
+                    };
+                    if result.is_err() {
+                        let _ = job_store.jobs.lock().unwrap().remove(&id);
+                    }
+                    let (size_bytes, error) = match result {
+                        Ok(size) => (Some(size), None),
+                        Err(error) => (None, Some(error)),
+                    };
+                    capsem_core::try_send!(
+                        "ipc_clone_state_result",
+                        ipc_tx_out
+                            .send(ProcessToService::CloneStateResult { id, size_bytes, error })
+                            .await
+                    );
                 });
             }
             ServiceToProcess::ReloadConfig { id } => {
@@ -887,22 +921,6 @@ pub(crate) async fn handle_ipc_connection(
                     }
                 });
             }
-            ServiceToProcess::SnapshotStatus { id } => {
-                let scheduler = Arc::clone(&snapshot_scheduler);
-                let ipc_tx_out = ipc_tx_out.clone();
-                tokio::spawn(async move {
-                    let status = {
-                        let scheduler = scheduler.lock().await;
-                        snapshot_status_from_scheduler(&scheduler)
-                    };
-                    capsem_core::try_send!(
-                        "ipc_snapshot_status",
-                        ipc_tx_out
-                            .send(ProcessToService::SnapshotStatusResult { id, status })
-                            .await
-                    );
-                });
-            }
             ServiceToProcess::McpCallTool {
                 id,
                 namespaced_name,
@@ -959,11 +977,6 @@ pub(crate) async fn handle_ipc_connection(
                             .await
                     );
                 });
-            }
-            ServiceToProcess::PrepareSnapshot | ServiceToProcess::Unfreeze | ServiceToProcess::Resume => {
-                // These are sent directly by process internals (quiescence helper),
-                // not expected over IPC from service.
-                warn!("unexpected lifecycle IPC command received");
             }
         }
     }

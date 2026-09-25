@@ -13,7 +13,6 @@ Nextest and doctests is held by
 
 from __future__ import annotations
 
-from . import toolchain
 from .actions import Run, Script
 from .config import GateConfig
 from .execution import SATURATES, Kind, Needs, Speed, Step, step
@@ -28,7 +27,6 @@ def environment(config: GateConfig) -> dict[str, str]:
     apply the `slow-timeout` that is the point of using Nextest at all.
     """
     return {
-        **toolchain.ort_environment(config, toolchain.OrtConsumer.STATIC),
         config.modules.rust_test_profile_variable: config.modules.rust_test_profile,
     }
 

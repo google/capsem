@@ -36,6 +36,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.session_ledger import ledger_totals, open_session_ledger
 from ironbank.model_client_config import (
     HERMETIC_ANTHROPIC_MODEL,
     HERMETIC_OPENAI_COMPAT_MODEL,
@@ -81,7 +82,7 @@ EXPECTED_SECURITY_LATEST_FIELDS = {
 
 def _connect_session_db(service: ServiceInstance, session_id: str) -> sqlite3.Connection:
     db_path = vm_session_db_path(service.tmp_dir, service.client(), session_id)
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = open_session_ledger(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -100,6 +101,18 @@ def _eventually(fetch, predicate, *, timeout_s: float = 20.0, interval_s: float 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _archived_request(conn: sqlite3.Connection, row: sqlite3.Row, table: str) -> str:
+    """The full request a row recorded.
+
+    `request_body_preview` is a 2 KB excerpt, and an agent client's system
+    prompt fills it before the tools or the conversation start.
+    """
+    with session_archive(conn) as archive:
+        body = archive.read(row["event_id"], table, "request")
+    assert body is not None, f"{table} {row['event_id']} has no archived request"
+    return body.decode("utf-8", "replace")
 
 
 def _assert_event_id(value: object) -> None:
@@ -1478,8 +1491,11 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 timeout_s=20,
             )
             assert info["profile_id"] == CODE_PROFILE_ID
-            assert info.get("model_call_count") is None
-            assert info.get("total_tool_calls") is None
+            # The session's totals are the writer's counter snapshot (#223),
+            # written with the rows it counts.
+            totals = ledger_totals(conn)
+            assert info["model_call_count"] == totals["model_call_count"] > 0
+            assert info["total_tool_calls"] == totals["total_tool_calls"]
             stats_detail = client.get(f"/vms/{vm_id}/stats/detail", timeout=30)
             assert isinstance(stats_detail, dict)
             stats_model_event_ids = {
@@ -2174,10 +2190,9 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert tool_model["response_bytes"] > 0
             _assert_credential_ref(tool_model["credential_ref"])
             codex_credential_ref = tool_model["credential_ref"]
-            assert '"name":"exec_command"' in (tool_model["request_body_preview"] or "")
-            assert "capsem_test_codex_cli_key" not in (
-                tool_model["request_body_preview"] or ""
-            )
+            tool_model_request = _archived_request(conn, tool_model, "model_calls")
+            assert '"name":"exec_command"' in tool_model_request
+            assert "capsem_test_codex_cli_key" not in tool_model_request
             _assert_event_id(codex_model["event_id"])
             assert codex_model["provider"] == "unknown"
             assert codex_model["protocol"] == "openai"
@@ -2196,10 +2211,9 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert codex_model["credential_ref"] == codex_credential_ref
             usage_details = json.loads(codex_model["usage_details"])
             assert usage_details["thinking"] == 2
-            assert expected_call_id in (codex_model["request_body_preview"] or "")
-            assert "capsem_test_codex_cli_key" not in (
-                codex_model["request_body_preview"] or ""
-            )
+            codex_model_request = _archived_request(conn, codex_model, "model_calls")
+            assert expected_call_id in codex_model_request
+            assert "capsem_test_codex_cli_key" not in codex_model_request
 
             tool_rows = _eventually(
                 lambda: conn.execute(
@@ -2283,7 +2297,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert "content-type: text/event-stream" in (
                 tool_net["response_headers"] or ""
             )
-            assert '"name":"exec_command"' in (tool_net["request_body_preview"] or "")
+            assert '"name":"exec_command"' in _archived_request(conn, tool_net, "net_events")
             assert expected_call_id in (tool_net["response_body_preview"] or "")
             assert "response.function_call_arguments.delta" in (
                 tool_net["response_body_preview"] or ""
@@ -2302,10 +2316,9 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert "content-type: application/json" in (codex_net["request_headers"] or "")
             assert "user-agent:" in (codex_net["request_headers"] or "")
             assert "capsem_test_codex_cli_key" not in (codex_net["request_headers"] or "")
-            assert "capsem_test_codex_cli_key" not in (
-                codex_net["request_body_preview"] or ""
-            )
-            assert expected_call_id in (codex_net["request_body_preview"] or "")
+            codex_net_request = _archived_request(conn, codex_net, "net_events")
+            assert "capsem_test_codex_cli_key" not in codex_net_request
+            assert expected_call_id in codex_net_request
             assert "response.reasoning_summary_text.delta" in (
                 codex_net["response_body_preview"] or ""
             )

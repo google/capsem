@@ -39,7 +39,7 @@ duplicate `capsem_service_logs` names are not exposed.
 
 The host tools cover:
 
-- VM lifecycle, one-shot execution, persistence, files, snapshots, statistics,
+- VM lifecycle, one-shot execution, persistence, files, statistics,
   logs, timelines, panic extraction, and triage.
 - Private network lifecycle, membership, and cursor-based audit logs.
 - Typed profile MCP discovery, refresh, permission inspection, and invocation
@@ -104,7 +104,7 @@ The guest MCP path is not a single process. `capsem-process` (the per-VM host pr
 | Crate | Role | Privileges |
 |-------|------|-----------|
 | `capsem-mcp-aggregator` | Manages connections to **external** MCP servers (GitHub, Slack, custom HTTP/stdio servers). Receives msgpack frames from `capsem-process` on stdin, routes tool calls. | Network only; no access to the VM, session DB, filesystem, or service socket. |
-| `capsem-mcp-builtin` | Stdio MCP server that implements **built-in** tools: HTTP (`fetch_http`, `grep_http`, `http_headers`) and file/snapshot tools (when `CAPSEM_SESSION_DIR` is set). Managed by the aggregator as just another MCP server. | Scoped by environment variables: `CAPSEM_SESSION_DIR`, `CAPSEM_ACTIVE_PROFILE`. Holds no ledger writer: what it did goes back to `capsem-process` as records under the reserved `_meta` key `dev.capsem/ledger` (see `capsem_proto::mcp_contracts::builtin_ledger`). |
+| `capsem-mcp-builtin` | Stdio MCP server that implements **built-in** tools: HTTP (`fetch_http`, `grep_http`, `http_headers`) plus the `echo` transport probe. Managed by the aggregator as just another MCP server. | Scoped by environment variables: `CAPSEM_SESSION_DIR`, `CAPSEM_ACTIVE_PROFILE`. Holds no ledger writer: what it did goes back to `capsem-process` as records under the reserved `_meta` key `dev.capsem/ledger` (see `capsem_proto::mcp_contracts::builtin_ledger`). |
 
 Rationale: isolating external-server connections in a low-privilege subprocess means a compromised third-party MCP server cannot reach the host filesystem or the session DB. The built-in tool server runs in its own process for the same reason.
 
@@ -191,13 +191,10 @@ the tool.
 
 ### Built-in tools
 
-#### Snapshot tools (VirtioFS mode only)
-`snapshots_list`, `snapshots_changes`, `snapshots_create`, `snapshots_delete`, `snapshots_revert`, `snapshots_history`, `snapshots_compact`
-
-#### HTTP tools (always available)
-`http_get`, `http_post`, `http_put`, `http_patch`, `http_delete`, `http_head`
-
-All use namespace prefix `builtin` (e.g., `builtin__http_get`).
+`capsem-mcp-builtin` exposes the HTTP tools `fetch_http`, `grep_http`, and
+`http_headers`, plus `echo`, a zero-I/O probe for benchmarking MCP transport
+overhead. Guests see them under the `local__` namespace (e.g.,
+`local__fetch_http`).
 
 ### Endpoint key source files
 
@@ -253,4 +250,4 @@ just exec "capsem-doctor -k mcp"
 
 ## Lessons learned
 
-1. **Never prepend headers to JSON output.** MCP tool responses with `format=json` must return raw, parseable JSON. Do not wrap JSON in pagination headers, content-length prefixes, or any other text. The `snapshots_changes` tool broke because `paginated_response()` prepended `"Content length: ...\nShowing: ...\n"` to the JSON array, making `json.loads()` fail. Rule: if a tool offers both text and JSON formats, branch early and return JSON directly without passing through text-oriented helpers like `paginated_response()`.
+1. **Never prepend headers to JSON output.** MCP tool responses with `format=json` must return raw, parseable JSON. Do not wrap JSON in pagination headers, content-length prefixes, or any other text. A JSON-format tool once broke because `paginated_response()` prepended `"Content length: ...\nShowing: ...\n"` to the JSON array, making `json.loads()` fail. Rule: if a tool offers both text and JSON formats, branch early and return JSON directly without passing through text-oriented helpers like `paginated_response()`.

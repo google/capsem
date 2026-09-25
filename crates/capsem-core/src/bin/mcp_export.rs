@@ -4,7 +4,6 @@
 //! which the frontend mock-data generator reads to create sample payloads.
 
 fn main() {
-    let mut tools = capsem_core::mcp::builtin_tools::builtin_tool_defs();
-    tools.extend(capsem_core::mcp::file_tools::file_tool_defs());
+    let tools = capsem_core::mcp::builtin_tools::builtin_tool_defs();
     println!("{}", serde_json::to_string_pretty(&tools).unwrap());
 }
