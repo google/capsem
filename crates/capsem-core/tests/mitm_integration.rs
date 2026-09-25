@@ -16,7 +16,7 @@ use capsem_logger::{DbWriter, Decision};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
-use rustls::pki_types::ServerName;
+use rustls::pki_types::{pem::PemObject, CertificateDer, ServerName};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_rustls::TlsConnector;
 
@@ -212,7 +212,7 @@ fn security_rules_from_toml(toml: &str) -> capsem_core::net::policy_config::Secu
 /// Build a rustls ClientConfig that trusts the Capsem MITM CA.
 fn make_tls_client_config() -> rustls::ClientConfig {
     let mut root_store = rustls::RootCertStore::empty();
-    let certs: Vec<_> = rustls_pemfile::certs(&mut CA_CERT.as_bytes())
+    let certs: Vec<_> = CertificateDer::pem_slice_iter(CA_CERT.as_bytes())
         .collect::<Result<_, _>>()
         .unwrap();
     for cert in certs {

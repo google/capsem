@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The dependency audit accepts far fewer exceptions and re-checks the ones it
+  keeps. Three accepted advisories turned out to be ours to fix and are gone:
+  `rand` was already on patched versions, `rustls-pemfile` was used by one
+  test, and `bincode` 1 by one benchmark of a retired encoding. The rest,
+  all in the GTK/Tauri stack we cannot upgrade ourselves, now carry a review
+  date at most 92 days out, after which the scan fails again; an exception
+  that no longer matches any finding fails the scan too. The scheduled
+  audit runs daily instead of weekly, over the committed lockfiles rather
+  than a freshly resolved `Cargo.lock`.
+
 - The MCP host components now use rmcp 2.2, fixing three advisories in rmcp
   1.x: an unauthenticated session-table leak in the Streamable HTTP server
   transport that allowed remote denial of service (GHSA-9pj6-vhgr-3mwh),
