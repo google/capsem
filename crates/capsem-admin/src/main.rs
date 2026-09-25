@@ -4,7 +4,6 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    thread,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -26,6 +25,7 @@ mod channel_bootstrap;
 mod manifest_generation;
 mod package_inspection;
 mod profile_images;
+mod release_github;
 #[allow(dead_code)]
 mod release_graph;
 mod source_commit;
@@ -37,6 +37,7 @@ use manifest_generation::*;
 use profile_images::*;
 
 use package_inspection::binary_files_from_artifacts;
+use release_github::{ensure_publication_identity_is_free, GhProfileWorkflowRunner, ProfileWorkflowRunner};
 use source_commit::SourceCommit;
 
 #[derive(Debug, Parser)]
@@ -627,47 +628,6 @@ struct ProfileWorkflowRun {
     head_branch: String,
     status: String,
     conclusion: String,
-}
-
-trait ProfileWorkflowRunner {
-    fn run(&mut self, args: &[String]) -> Result<()>;
-    fn output(&mut self, args: &[String]) -> Result<String>;
-    fn wait_before_poll(&mut self);
-}
-
-struct GhProfileWorkflowRunner;
-
-impl ProfileWorkflowRunner for GhProfileWorkflowRunner {
-    fn run(&mut self, args: &[String]) -> Result<()> {
-        let status = Command::new("gh")
-            .args(args)
-            .status()
-            .with_context(|| format!("run gh {}", args.join(" ")))?;
-        if !status.success() {
-            return Err(anyhow!("gh {} failed with {}", args.join(" "), status));
-        }
-        Ok(())
-    }
-
-    fn output(&mut self, args: &[String]) -> Result<String> {
-        let output = Command::new("gh")
-            .args(args)
-            .output()
-            .with_context(|| format!("run gh {}", args.join(" ")))?;
-        if !output.status.success() {
-            return Err(anyhow!(
-                "gh {} failed with {}: {}",
-                args.join(" "),
-                output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        String::from_utf8(output.stdout).context("gh workflow listing was not UTF-8")
-    }
-
-    fn wait_before_poll(&mut self) {
-        thread::sleep(std::time::Duration::from_secs(2));
-    }
 }
 
 fn dispatch_profile_workflow<R: ProfileWorkflowRunner>(
@@ -1376,6 +1336,8 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
     let run_id = if args.dry_run {
         None
     } else {
+        let identity = &selection.publication_identity;
+        ensure_publication_identity_is_free(&mut GhProfileWorkflowRunner, identity, &args.source_commit)?;
         let dispatch_id = format!(
             "capsem-admin-{}-{}",
             std::process::id(),
