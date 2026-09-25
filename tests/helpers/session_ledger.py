@@ -64,3 +64,38 @@ def open_session_ledger(db_path: Path | str) -> sqlite3.Connection:
     except BaseException:
         conn.close()
         raise
+
+
+#: `capsem_logger::counters::COUNTED_TOOL_ORIGINS`: the origins every surface
+#: counts as a tool call. `mcp_proxy` is a model naming an MCP tool that is
+#: recorded again as `mcp`, so it is not one. Held equal to the Rust constant
+#: by tests/test_session_ledger_helper.py.
+COUNTED_TOOL_ORIGINS = ("native", "mcp", "builtin", "local")
+
+
+def ledger_counters(conn: sqlite3.Connection) -> dict:
+    """The writer's counter snapshot, decoded (`capsem_proto::ledger_counters`).
+
+    Sparse, named MessagePack: an absent section or field is its default.
+    """
+    from helpers.messagepack import decode
+
+    (blob,) = conn.execute("SELECT counters FROM main.ledger_counters WHERE singleton = 1").fetchone()
+    counters = decode(blob)
+    assert isinstance(counters, dict), f"ledger_counters is not a map: {type(counters).__name__}"
+    return counters
+
+
+def ledger_totals(conn: sqlite3.Connection) -> dict[str, int]:
+    """The totals the writer's counters must report, counted from the rows.
+
+    The oracle for a route that serves the counter snapshot: the snapshot is
+    written with the rows it counts, so the two agree on a quiesced ledger.
+    """
+    marks = ", ".join("?" for _ in COUNTED_TOOL_ORIGINS)
+    return {
+        "model_call_count": conn.execute("SELECT COUNT(*) FROM model_calls").fetchone()[0],
+        "total_tool_calls": conn.execute(
+            f"SELECT COUNT(*) FROM tool_calls WHERE origin IN ({marks})", COUNTED_TOOL_ORIGINS
+        ).fetchone()[0],
+    }

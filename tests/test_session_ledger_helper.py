@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 
 import pytest
-from helpers.session_ledger import open_session_ledger
+from helpers.session_ledger import COUNTED_TOOL_ORIGINS, open_session_ledger
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -76,3 +77,11 @@ def test_ironbank_opens_ledgers_only_through_the_helper() -> None:
         if "?mode=ro" in line and "sqlite3.connect" in line
     ]
     assert not raw, "open session ledgers with helpers.session_ledger.open_session_ledger:\n" + "\n".join(raw)
+
+
+def test_counted_tool_origins_match_the_logger() -> None:
+    """The oracle counts what the counters count, or it proves nothing."""
+    source = (ROOT / "crates/capsem-logger/src/counters.rs").read_text(encoding="utf-8")
+    declared = re.search(r"pub const COUNTED_TOOL_ORIGINS: \[&str; \d+\] = \[([^\]]*)\];", source)
+    assert declared is not None, "COUNTED_TOOL_ORIGINS moved; point this test at it"
+    assert tuple(re.findall(r'"([^"]+)"', declared.group(1))) == COUNTED_TOOL_ORIGINS

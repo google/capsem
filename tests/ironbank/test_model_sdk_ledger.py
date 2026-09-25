@@ -36,7 +36,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
-from helpers.session_ledger import open_session_ledger
+from helpers.session_ledger import ledger_totals, open_session_ledger
 from ironbank.model_client_config import (
     HERMETIC_ANTHROPIC_MODEL,
     HERMETIC_OPENAI_COMPAT_MODEL,
@@ -1491,8 +1491,11 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 timeout_s=20,
             )
             assert info["profile_id"] == CODE_PROFILE_ID
-            assert info.get("model_call_count") is None
-            assert info.get("total_tool_calls") is None
+            # The session's totals are the writer's counter snapshot (#223),
+            # written with the rows it counts.
+            totals = ledger_totals(conn)
+            assert info["model_call_count"] == totals["model_call_count"] > 0
+            assert info["total_tool_calls"] == totals["total_tool_calls"]
             stats_detail = client.get(f"/vms/{vm_id}/stats/detail", timeout=30)
             assert isinstance(stats_detail, dict)
             stats_model_event_ids = {

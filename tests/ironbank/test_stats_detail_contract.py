@@ -28,7 +28,7 @@ import pytest
 from helpers.body_archive import archived_bodies
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, materialize_test_profiles
-from helpers.session_ledger import open_session_ledger
+from helpers.session_ledger import ledger_counters, open_session_ledger
 
 pytestmark = pytest.mark.integration
 
@@ -397,20 +397,20 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         assert json.loads(latest[1]["rule_json"])["name"] == "stats_detail_google_detect"
         assert "event_json" not in latest[1]
 
+        # Status is the writer's counter snapshot, read whole, never a scan of
+        # the rows (#223). The two matches above were inserted behind the
+        # writer's back, so they are listed but were never counted: the route
+        # must report the snapshot, not recount the table to agree with it.
         security = client.get(f"/vms/{SESSION_ID}/security/status", timeout=30)
-        assert security["total"] == 2
-        assert {row["rule_action"]: row["count"] for row in security["by_action"]} == {
-            "allow": 1,
-            "ask": 1,
-        }
-        assert {row["detection_level"]: row["count"] for row in security["by_level"]} == {
-            "informational": 1,
-            "none": 1,
-        }
-        assert {row["event_type"]: row["count"] for row in security["by_event_type"]} == {
-            "http.request": 1,
-            "mcp.tool_call": 1,
-        }
+        with closing(open_session_ledger(db_path)) as conn:
+            counted = ledger_counters(conn).get("security", {})
+        assert security["total"] == counted.get("matches", 0) < len(latest)
+        for field, key in (
+            ("by_action", "rule_action"),
+            ("by_level", "detection_level"),
+            ("by_event_type", "event_type"),
+        ):
+            assert {row[key]: row["count"] for row in security[field]} == counted.get(field, {}), field
 
         detection_latest = client.get(f"/vms/{SESSION_ID}/detection/latest?limit=10", timeout=30)
         enforcement_latest = client.get(

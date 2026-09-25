@@ -31,7 +31,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
-from helpers.session_ledger import open_session_ledger
+from helpers.session_ledger import ledger_totals, open_session_ledger
 from log_streams import assert_service_log_evidence
 
 pytestmark = pytest.mark.integration
@@ -474,7 +474,11 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             timeout_s=20,
         )
         assert info["profile_id"] == CODE_PROFILE_ID
-        assert info.get("total_tool_calls") is None
+        # The session's totals are the writer's counter snapshot (#223),
+        # written with the rows it counts.
+        with closing(_connect_session_db(service, vm_id)) as conn:
+            totals = ledger_totals(conn)
+        assert info["total_tool_calls"] == totals["total_tool_calls"] > 0
         stats_detail = client.get(f"/vms/{vm_id}/stats/detail", timeout=30)
         assert isinstance(stats_detail, dict)
         mcp_tool_events = [
