@@ -7,6 +7,17 @@ use capsem_logger::{BodyDirection, StoredBody};
 
 const MIB: usize = 1024 * 1024;
 
+/// A reported tool response is archived under its own event id (#245): the
+/// tool row must carry that id and the stats body index must list the body,
+/// or a response past its preview has no key to fetch it by.
+pub(super) fn assert_tool_response_is_indexed(detail: &serde_json::Value, event_id: &str, body: &str) {
+    assert_eq!(detail["tool_events"][0]["response_event_id"], event_id, "{detail}");
+    let indexed = &detail["body_blobs"][event_id][0];
+    assert_eq!(indexed["source_table"], "tool_responses", "{detail}");
+    assert_eq!(indexed["direction"], "response", "{detail}");
+    assert_eq!(indexed["stored_bytes"], body.len(), "{detail}");
+}
+
 fn stored(bytes: Vec<u8>, truncated: bool) -> StoredBody {
     let original_bytes = bytes.len() as u64;
     StoredBody {

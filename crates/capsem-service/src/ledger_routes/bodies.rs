@@ -32,6 +32,11 @@ use super::*;
 /// the process list is bound to, so the two cannot drift into metadata for
 /// rows the response does not carry or rows with none.
 ///
+/// A response a model reported for a tool call is archived under the
+/// `tool_responses` row's own event id, which the tool list carries as
+/// `response_event_id`; its window follows the same tool calls, so a response
+/// longer than its preview is reachable from the row that shows it (#245).
+///
 /// Decisions and asks archive a payload under the same event id as the rule
 /// match they came from, and no list here carries a decision or an ask row, so
 /// their index rows annotate nothing -- and left in, three `payload` rows for
@@ -48,6 +53,11 @@ OR event_id IN (
 )
 OR event_id IN (
     SELECT event_id FROM tool_calls WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
+)
+OR event_id IN (
+    SELECT event_id FROM tool_responses WHERE call_id IN (
+        SELECT call_id FROM tool_calls WHERE event_id IS NOT NULL ORDER BY id DESC LIMIT 200
+    )
 )
 OR event_id IN (
     SELECT event_id FROM exec_events ORDER BY id DESC LIMIT ?1

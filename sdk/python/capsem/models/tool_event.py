@@ -24,6 +24,7 @@ class ToolEvent(Model):
     model_call_id: StrictInt | None = None
     model_parent_missing: StrictBool
     process_name: StrictStr | None = None
+    response_event_id: StrictStr | None = None
     response_preview: StrictStr | None = None
     server_name: StrictStr
     source: ToolOrigin

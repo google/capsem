@@ -59,6 +59,10 @@ pub struct ToolEvent {
     pub bytes: u64,
     pub arguments: Option<String>,
     pub response_preview: Option<String>,
+    /// The event id the reported response is archived under. It is not
+    /// `event_id`: the response is its own ledger row, so its full text past
+    /// `response_preview` is fetched from `/vms/{id}/bodies/{response_event_id}`.
+    pub response_event_id: Option<String>,
     pub error_message: Option<String>,
     pub source: ToolOrigin,
     pub credential_ref: Option<String>,

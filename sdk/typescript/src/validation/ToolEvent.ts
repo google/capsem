@@ -18,6 +18,7 @@ export const ToolEventSchema: z.ZodType<ToolEvent> = z.object({
   "model_call_id": z.int().nullable().exactOptional(),
   "model_parent_missing": z.boolean(),
   "process_name": z.string().nullable().exactOptional(),
+  "response_event_id": z.string().nullable().exactOptional(),
   "response_preview": z.string().nullable().exactOptional(),
   "server_name": z.string(),
   "source": z.lazy(() => ToolOriginSchema),

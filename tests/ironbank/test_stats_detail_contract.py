@@ -353,21 +353,33 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
         # Newest first, as every detail list is.
         assert [row["verb"] for row in detail["credential_events"]] == ["injected", "captured"]
 
+        # A tool row names the response it got back by that response's own
+        # event id, which is where the archive keeps its full text (#245).
+        responses = {
+            row["response_event_id"] for row in detail["tool_events"] if row["response_event_id"]
+        }
+        assert responses, "the fixture ledger has tool calls with reported responses"
+        assert responses <= _ledger_event_ids(db_path, "tool_responses")
+
         # Body metadata is the archive index for exactly the events the lists
         # carry: every archived body of a listed event, nothing for an event
         # no list names.
-        listed = {
-            row["event_id"]
-            for field in ("http_events", "model_events", "tool_events", "process_events")
-            for row in detail[field]
-        } | _ledger_event_ids(db_path, "security_rule_events")
+        listed = (
+            {
+                row["event_id"]
+                for field in ("http_events", "model_events", "tool_events", "process_events")
+                for row in detail[field]
+            }
+            | responses
+            | _ledger_event_ids(db_path, "security_rule_events")
+        )
         route_index = {
             (row["source_table"], event_id, row["direction"]): row
             for event_id, rows in detail["body_blobs"].items()
             for row in rows
         }
         assert set(route_index) == {key for key in archived if key[1] in listed}
-        assert {key[0] for key in route_index} >= {"net_events", "model_calls", "tool_calls"}
+        assert {key[0] for key in route_index} >= {"net_events", "model_calls", "tool_calls", "tool_responses"}
         for key, row in route_index.items():
             assert row["original_bytes"] == len(archived[key]), key
             assert row["truncated"] is False, key

@@ -42,6 +42,7 @@ SELECT tc.event_id,
        COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) AS bytes,
        tc.arguments,
        COALESCE(tc.response_preview, tr.content_preview) AS response_preview,
+       tr.event_id AS response_event_id,
        tc.error_message,
        tc.origin AS source,
        COALESCE(tc.credential_ref, tr.credential_ref) AS credential_ref
