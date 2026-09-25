@@ -19,6 +19,7 @@ view receipts filed under its digest.
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -32,6 +33,26 @@ VIEWS = Path("receipts/views")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 
+def _read_unused(path: Path) -> str:
+    """Read `path` without it counting as a use.
+
+    Retention dates a generation by its files' access times, so the read that
+    sizes a generation must not refresh them. On Linux a `relatime` mount
+    refreshes any access time older than a day on read, which made every
+    scan report every generation as just used and evicted by accident (the
+    stable co-work release lane failed on it). O_NOATIME needs file
+    ownership; a receipt someone else owns is read the ordinary way.
+    """
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    noatime = getattr(os, "O_NOATIME", 0)
+    try:
+        descriptor = os.open(path, flags | noatime)
+    except PermissionError:
+        descriptor = os.open(path, flags)
+    with os.fdopen(descriptor, encoding="utf-8") as handle:
+        return handle.read()
+
+
 def _named_objects(receipt: Path) -> frozenset[str]:
     """Digests a component receipt names; an unreadable receipt names none.
 
@@ -40,7 +61,7 @@ def _named_objects(receipt: Path) -> frozenset[str]:
     malformed receipt protects nothing, so it can be collected like any other.
     """
     try:
-        files = json.loads(receipt.read_text(encoding="utf-8")).get("files")
+        files = json.loads(_read_unused(receipt)).get("files")
     except (OSError, ValueError, AttributeError):
         return frozenset()
     if not isinstance(files, dict):

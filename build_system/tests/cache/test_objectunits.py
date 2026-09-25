@@ -9,6 +9,7 @@ miss. It grew past its cap and failed every prune on the machine instead.
 
 import json
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -128,6 +129,50 @@ def test_pressure_evicts_the_least_recently_used_generation_and_keeps_the_rest_w
         verify(paths, reference)  # the surviving generation is complete
     assert plan.violations == ()
     assert object_path(paths, orphan).exists(), "warm size was reached before the orphan"
+
+
+def _relatime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Behave like a Linux `relatime` mount: a read refreshes an access time
+    that is more than a day old, unless the reader asked for O_NOATIME.
+
+    The test above failed on the hosted Linux release lane and passed on
+    macOS: the scan read each receipt to learn what it owns, the read marked
+    it used, and the oldest generation came back looking newest.
+    """
+    noatime = getattr(os, "O_NOATIME", 0o1000000)
+    monkeypatch.setattr(os, "O_NOATIME", noatime, raising=False)
+
+    def touch(path: str | Path) -> None:
+        mtime = os.stat(path).st_mtime_ns
+        os.utime(path, ns=(time.time_ns(), mtime))
+
+    real_open, real_read_text = os.open, Path.read_text
+
+    def open_(path, flags, *args, **kwargs):
+        descriptor = real_open(path, flags & ~noatime, *args, **kwargs)
+        if not flags & noatime:
+            touch(path)
+        return descriptor
+
+    def read_text(self, *args, **kwargs):
+        touch(self)
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", open_)
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+
+def test_scanning_the_store_is_not_a_use_of_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reading a receipt to size its generation must not make it recent."""
+    paths = cache(tmp_path, max_size=12_000, warm_size=10_000)
+    now, (old_kernel, _, _, orphan), (old, new) = store_with_three_generations(tmp_path, paths)
+    _relatime(monkeypatch)
+
+    plan = plan_prune(scan_retention_inventory(paths, paths.policy, now_ns=now), paths.policy)
+    apply_prune(paths, plan, reason="recover to warm")
+
+    assert not old.exists() and not object_path(paths, old_kernel).exists(), "the oldest goes first"
+    assert new.exists() and object_path(paths, orphan).exists()
 
 
 def test_an_object_orphaned_by_eviction_is_collected_on_the_next_prune(tmp_path: Path) -> None:
