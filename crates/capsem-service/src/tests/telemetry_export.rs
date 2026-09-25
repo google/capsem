@@ -4,7 +4,7 @@ use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
 
 use super::*;
-use crate::service_runtime::telemetry_export::{collect, register, SessionTable};
+use crate::service_runtime::telemetry_export::{collect, grant_metric_endpoint, register, SessionTable};
 
 fn net(decision: capsem_logger::Decision, bytes_sent: u64) -> capsem_logger::WriteOp {
     capsem_logger::WriteOp::NetEvent(
@@ -139,4 +139,27 @@ async fn exported_session_metrics_equal_the_api_totals() {
         value(capsem_telemetry::session::SESSION_TOKENS_TOTAL, "export-b", "input"),
         8.0
     );
+}
+
+fn granted(open_telemetry: Option<&str>) -> Vec<String> {
+    let mut corp = capsem_core::net::policy_config::SettingsFile::default();
+    corp.corp_rule_files.open_telemetry = open_telemetry.map(str::to_string);
+    let mut command = tokio::process::Command::new("capsem-process");
+    grant_metric_endpoint(&mut command, &corp);
+    command
+        .as_std()
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect()
+}
+
+/// A VM process learns its export endpoint only from its launch arguments.
+#[test]
+fn a_vm_process_is_granted_the_corp_metric_endpoint_at_launch() {
+    assert_eq!(
+        granted(Some("https://otel.example/")),
+        ["--metric-endpoint", "https://otel.example"]
+    );
+    assert!(granted(None).is_empty(), "no corp endpoint, no export");
+    assert!(granted(Some("  ")).is_empty(), "a blank endpoint is no endpoint");
 }
