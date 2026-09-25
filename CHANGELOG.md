@@ -167,6 +167,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The guest rootfs OBOM (`obom.cdx.json`) now describes the rootfs exactly
+  and builds about ten times faster. The build unpacked the rootfs on the
+  build host before scanning it: on macOS the case-insensitive filesystem
+  folded distinct files such as iptables' `libxt_TOS.so` and `libxt_tos.so`
+  into one, so their hashes were wrong, and the unprivileged extraction
+  dropped setuid and setgid bits, so the OBOM could not report them. The
+  rootfs is now unpacked as root inside the scanner container, which also
+  takes the scan from 200-330 s to about 23 s per profile and architecture.
+  Rootfs components cached with the old OBOM are rebuilt once
+  (google/capsem#241).
+
 - `GET /vms/{id}/timeline?since=...` returns recent events on long sessions.
   It used to read only the oldest 10,000 events of the whole ledger and
   filter them afterwards, so a recent `since` on a busy session came back

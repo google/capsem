@@ -32,6 +32,7 @@ from capsem_builder.image.docker import (
     _directory_tree_hash,
     _file_ledger_entry,
     _normalize_cyclonedx_obom,
+    _rootfs_component_identity,
     _rootfs_config_input_record,
     _scanner_output_command,
     _validate_cyclonedx_obom,
@@ -1749,12 +1750,14 @@ class TestBuildLedger:
         )
 
         assert result == output
-        tar_cmd = mock_run.call_args_list[0][0][0]
-        assert tar_cmd[0] == "tar"
-        assert "--exclude=dev/*" in tar_cmd
-        assert "-xf" in tar_cmd
-        assert str(rootfs_tar) in tar_cmd
-        cdxgen_cmd = mock_run.call_args_list[1][0][0]
+        # The rootfs is never unpacked on the host (#241). A macOS checkout is
+        # case-insensitive and folds libxt_TOS.so and libxt_tos.so into one
+        # file, an unprivileged extraction drops every setuid bit, and the scan
+        # then crawled the unpacked tree across the VM share: a wrong OBOM ten
+        # times slower. Only the tar crosses the mount, read-only, and root
+        # unpacks it on the container's own Linux filesystem.
+        assert len(mock_run.call_args_list) == 2
+        cdxgen_cmd = mock_run.call_args_list[0][0][0]
         assert cdxgen_cmd[:7] == [
             "docker",
             "run",
@@ -1764,15 +1767,24 @@ class TestBuildLedger:
             "--network",
             "none",
         ]
-        cdxgen_at = cdxgen_cmd.index("cdxgen")
-        handoff = cdxgen_cmd[cdxgen_cmd.index(EXACT_EROFS_BASE) + 1 : cdxgen_at]
-        assert handoff[:3] == ["sh", "-eu", "-c"]
-        assert 'chown "$uid:$gid" "$output"' in handoff[3]
-        assert handoff[5:] == [
+        assert f"{rootfs_tar.parent.resolve()}:/input:ro" in cdxgen_cmd
+        assert not any(arg.endswith(":/rootfs:ro") for arg in cdxgen_cmd)
+        image_at = cdxgen_cmd.index(EXACT_EROFS_BASE)
+        assert cdxgen_cmd[image_at + 1 : image_at + 4] == ["sh", "-eu", "-c"]
+        assert 'chown "$uid:$gid" "$output"' in cdxgen_cmd[image_at + 4]
+        assert cdxgen_cmd[image_at + 6 : image_at + 9] == [
             f"/output/{output.name}",
             str(os.getuid()),
             str(os.getgid()),
         ]
+        extract_at = cdxgen_cmd.index("capsem-rootfs-extract")
+        extract_script = cdxgen_cmd[extract_at - 1]
+        for excluded in ("dev/*", "proc/*", "sys/*"):
+            assert f"--exclude='{excluded}'" in extract_script
+        assert '-xf "$1" -C /rootfs' in extract_script
+        assert cdxgen_cmd[extract_at + 1] == f"/input/{rootfs_tar.name}"
+        cdxgen_at = cdxgen_cmd.index("cdxgen")
+        assert cdxgen_at == extract_at + 2
         assert cdxgen_cmd[cdxgen_at + 1 :] == [
             "/rootfs",
             "-t",
@@ -1781,8 +1793,8 @@ class TestBuildLedger:
             "-o",
             f"/output/{output.name}",
         ]
-        assert mock_run.call_args_list[1].kwargs["capture"] is True
-        validate_cmd = mock_run.call_args_list[2][0][0]
+        assert mock_run.call_args_list[0].kwargs["capture"] is True
+        validate_cmd = mock_run.call_args_list[1][0][0]
         validate_at = validate_cmd.index("cdx-validate")
         assert validate_cmd[:7] == cdxgen_cmd[:7]
         assert validate_cmd[validate_at:] == [
@@ -1795,7 +1807,7 @@ class TestBuildLedger:
             "-i",
             f"/output/{output.name}",
         ]
-        assert mock_run.call_args_list[2].kwargs["capture"] is True
+        assert mock_run.call_args_list[1].kwargs["capture"] is True
 
         document = json.loads(output.read_text())
         assert "timestamp" not in document["metadata"]
@@ -1849,8 +1861,26 @@ class TestBuildLedger:
         with pytest.raises(RuntimeError, match="live-host inventory"):
             _validate_cyclonedx_obom(output)
 
+    def test_rootfs_component_identity_covers_how_outputs_are_made(self):
+        """A cached rootfs component carries its OBOM and EROFS, so the key
+        must move when the tools or the recipe that produce them move --
+        otherwise a fixed OBOM (#241) never replaces a cached broken one."""
+        build_inputs = {
+            "arch": "arm64",
+            "template": "rootfs",
+            "docker_platform": "linux/arm64",
+            "dockerfile": {"hash": "d"},
+            "build_context": {"hash": "c"},
+            "dependency_image": {"reference": "deps", "image_id": "sha256:1"},
+        }
+        rootfs_config = {"stage": "rootfs.config_inputs", "arch": "arm64"}
+        base = _rootfs_component_identity(build_inputs, rootfs_config, "tools:a")
+        assert base == _rootfs_component_identity(build_inputs, rootfs_config, "tools:a")
+        assert base != _rootfs_component_identity(build_inputs, rootfs_config, "tools:b")
+        with patch("capsem_builder.image.docker.ROOTFS_OUTPUT_RECIPE", "next-recipe"):
+            assert base != _rootfs_component_identity(build_inputs, rootfs_config, "tools:a")
+
     def test_normalize_cyclonedx_obom_removes_nondeterministic_host_context(self, tmp_path):
-        rootfs = tmp_path / "random-rootfs"
         output = tmp_path / "obom.cdx.json"
         output.write_text(
             json.dumps(
@@ -1882,7 +1912,7 @@ class TestBuildLedger:
                         {
                             "name": "file",
                             "bom-ref": "pkg:generic/file",
-                            "properties": [{"name": "path", "value": f"{rootfs}/etc/os-release"}],
+                            "properties": [{"name": "path", "value": "/rootfs/etc/os-release"}],
                         },
                         {
                             "type": "cryptographic-asset",
@@ -1901,7 +1931,7 @@ class TestBuildLedger:
             )
         )
 
-        _normalize_cyclonedx_obom(output, rootfs, architecture="x86_64")
+        _normalize_cyclonedx_obom(output, architecture="x86_64")
 
         document = json.loads(output.read_text())
         assert "serialNumber" not in document
@@ -1915,7 +1945,6 @@ class TestBuildLedger:
         assert document["dependencies"] == [{"dependsOn": [], "ref": "pkg:generic/file"}]
 
     def test_normalize_cyclonedx_obom_is_byte_deterministic_for_set_arrays(self, tmp_path):
-        rootfs = tmp_path / "rootfs"
         first = tmp_path / "first.json"
         second = tmp_path / "second.json"
         components = [
@@ -1933,8 +1962,8 @@ class TestBuildLedger:
         first.write_text(json.dumps(document(components)))
         second.write_text(json.dumps(document(list(reversed(components)))))
 
-        _normalize_cyclonedx_obom(first, rootfs, architecture="arm64")
-        _normalize_cyclonedx_obom(second, rootfs, architecture="arm64")
+        _normalize_cyclonedx_obom(first, architecture="arm64")
+        _normalize_cyclonedx_obom(second, architecture="arm64")
 
         assert first.read_bytes() == second.read_bytes()
 

@@ -91,7 +91,7 @@ def test_obom_subprocesses_are_all_bounded(
         runtime_network=ContainerNetwork.NONE,
     )
 
-    assert len(mock_run.call_args_list) == 3
+    assert len(mock_run.call_args_list) == 2
     assert {call.kwargs.get("timeout") for call in mock_run.call_args_list} == {
         OBOM_COMMAND_TIMEOUT_SECONDS
     }
