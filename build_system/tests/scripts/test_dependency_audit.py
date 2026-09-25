@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -44,6 +45,21 @@ def _tool(tmp_path: Path) -> MaterializedTool:
     return MaterializedTool(path=executable, sha256="0" * 64, cache_hit=True)
 
 
+def _scanner(commands: list[list[str]], unfiltered: set[str]):
+    """A scanner that is clean with the policy's exceptions and, with none
+    applied, reports exactly `unfiltered`."""
+
+    def runner(command, **_kwargs):
+        commands.append(command)
+        if command[command.index("--config") + 1] == POLICY.config:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        groups = [{"ids": [advisory], "aliases": []} for advisory in sorted(unfiltered)]
+        report = {"results": [{"packages": [{"groups": groups}]}]}
+        return subprocess.CompletedProcess(command, 1, stdout=json.dumps(report), stderr="")
+
+    return runner
+
+
 def test_clean_scan_covers_every_configured_lockfile_then_reuses_exact_verdict(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -57,15 +73,12 @@ def test_clean_scan_covers_every_configured_lockfile_then_reuses_exact_verdict(
         resolutions += 1
         return _tool(tmp_path)
 
-    def runner(command, **_kwargs):
-        commands.append(command)
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
+    runner = _scanner(commands, set(_osv_ignored()))
     assert audit.audit_dependencies(PROJECT_ROOT, POLICY, runner=runner, resolve=resolve) == 0
     assert audit.audit_dependencies(PROJECT_ROOT, POLICY, runner=runner, resolve=resolve) == 0
 
     assert resolutions == 1
-    assert len(commands) == 1
+    assert len(commands) == 2, "one policy scan and one exception check, then the cached verdict"
     command = commands[0]
     assert command[1 : 1 + len(POLICY.scanner_args)] == list(POLICY.scanner_args)
     assert [command[index + 1] for index, value in enumerate(command) if value == "--lockfile"] == list(
@@ -107,11 +120,49 @@ def test_every_shipped_lockfile_is_scanned() -> None:
     assert not unscanned, f"lockfiles no dependency audit scans: {sorted(unscanned)}"
 
 
-def _osv_ignored() -> dict[str, str]:
+def _osv_entries() -> list[dict]:
     import tomllib
 
     document = tomllib.loads((PROJECT_ROOT / POLICY.config).read_text(encoding="utf-8"))
-    return {entry["id"]: entry.get("reason", "") for entry in document.get("IgnoredVulns", [])}
+    return list(document.get("IgnoredVulns", []))
+
+
+def _osv_ignored() -> dict[str, str]:
+    return {entry["id"]: entry.get("reason", "") for entry in _osv_entries()}
+
+
+#: An exception is re-checked against upstream at least this often: past its
+#: date the scan fails again instead of accepting it forever.
+MAX_EXCEPTION_DAYS = 92
+
+
+def test_every_osv_exception_expires_for_review() -> None:
+    import datetime
+
+    now = datetime.datetime.now(datetime.UTC)
+    horizon = now + datetime.timedelta(days=MAX_EXCEPTION_DAYS)
+    undated = [entry["id"] for entry in _osv_entries() if "ignoreUntil" not in entry]
+    assert not undated, f"OSV exceptions without an ignoreUntil review date: {undated}"
+    too_far = [entry["id"] for entry in _osv_entries() if entry["ignoreUntil"] > horizon]
+    assert not too_far, f"OSV exceptions dated past {MAX_EXCEPTION_DAYS} days: {too_far}"
+
+
+def test_every_rust_exception_names_a_crate_still_in_the_lock() -> None:
+    """A stale exception hides nothing today and whatever lands tomorrow.
+
+    rand's entry outlived the upgrade that fixed it: every rand in the lock
+    was already patched, and the ignore stood ready to swallow the next rand
+    advisory unreviewed.
+    """
+    import tomllib
+
+    locked = {package["name"] for package in tomllib.loads((PROJECT_ROOT / "Cargo.lock").read_text())["package"]}
+    stale = [
+        f"{advisory} ({reason.split()[0]})"
+        for advisory, reason in _osv_ignored().items()
+        if advisory.startswith("RUSTSEC-") and reason.split()[0] not in locked
+    ]
+    assert not stale, f"exceptions for crates no longer in Cargo.lock: {stale}"
 
 
 def test_osv_and_cargo_audit_ignore_the_same_reviewed_advisories() -> None:
@@ -147,6 +198,21 @@ def test_the_ignore_list_is_part_of_the_cached_verdict(tmp_path: Path) -> None:
     )
     after = audit._digest(moved, POLICY, audit._lockfiles(moved, POLICY))
     assert before != after
+
+
+def test_an_exception_that_matches_nothing_fails_the_audit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(audit, "load_paths", lambda _root: _paths(tmp_path))
+    stale = sorted(_osv_ignored())[0]
+    commands: list[list[str]] = []
+    runner = _scanner(commands, set(_osv_ignored()) - {stale})
+
+    def resolve(_paths, _policy):
+        return _tool(tmp_path)
+
+    assert audit.audit_dependencies(PROJECT_ROOT, POLICY, runner=runner, resolve=resolve) == 1
+    # Not cached: the next run checks again.
+    assert audit.audit_dependencies(PROJECT_ROOT, POLICY, runner=runner, resolve=resolve) == 1
+    assert len(commands) == 4
 
 
 def test_failed_scan_is_never_cached(monkeypatch, tmp_path: Path) -> None:

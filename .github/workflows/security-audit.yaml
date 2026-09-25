@@ -1,7 +1,9 @@
 name: Security Audit
 on:
   schedule:
-    - cron: "17 9 * * 1"
+    # Daily: a new advisory against an unchanged lockfile is exactly what
+    # no pull request will ever trigger.
+    - cron: "17 9 * * *"
   workflow_dispatch:
 
 permissions:
@@ -32,10 +34,8 @@ jobs:
         with:
           tool: ${{ steps.gate_tools.outputs.list }}
 
-      - name: Resolve the current Rust dependency graph
-        run: cargo generate-lockfile
-
-      - name: Locked Python and Node OSV audit (blocking security signal)
+      # The committed lockfiles, exactly as they ship: Rust, Python and Node.
+      - name: OSV audit of every shipped lockfile (blocking security signal)
         run: uv run --project build_system --frozen python build_system/scripts/audit/audit-dependencies.py
 
       - name: Strict RustSec audit (runs only after OSV is clean)

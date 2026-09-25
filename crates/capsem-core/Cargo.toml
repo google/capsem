@@ -76,7 +76,6 @@ workspace = true
 
 [dev-dependencies]
 sse-stream = { workspace = true }
-rustls-pemfile = { workspace = true }
 rusqlite = { workspace = true }
 nix = { version = "0.29", features = ["fs"] }
 tracing-subscriber = { workspace = true }

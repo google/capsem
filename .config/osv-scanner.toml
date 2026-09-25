@@ -1,46 +1,44 @@
 # OSV-Scanner exceptions for every lockfile the dependency audit scans.
 #
-# The Rust entries mirror .cargo/audit.toml, which holds the full reasoning;
-# build_system/tests/scripts/test_dependency_audit.py fails when the two
-# lists differ. The same rule applies: only an advisory whose fix lives in an
-# upstream dependency we do not control may be ignored here.
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2026-0097"
-reason = "rand unsoundness only with a custom logger calling rand::rng(); reached via Tauri and reqwest, and we register none"
+# Only an advisory whose fix lives in an upstream dependency we do not control
+# may be listed; anything in our own dependency choices gets fixed instead.
+# The Rust entries mirror .cargo/audit.toml, which holds the reasoning, and
+# every entry carries an ignoreUntil at most 90 days out: past it the scan
+# fails again, so each exception is re-checked against upstream rather than
+# accepted forever. build_system/tests/scripts/test_dependency_audit.py holds
+# all of this.
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0429"
-reason = "glib 0.18 VariantStrIter unsoundness via the GTK stack Tauri, wry and tray-icon pin on Linux; we never use VariantStrIter"
+ignoreUntil = 2026-12-15T00:00:00Z
+reason = "glib 0.18 VariantStrIter unsoundness via the gtk-rs 0.18 stack Tauri, wry and tray-icon pin on Linux; we never use VariantStrIter"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0370"
+ignoreUntil = 2026-12-15T00:00:00Z
+reason = "proc-macro-error unmaintained, a build-time macro of glib-macros 0.18 in the same pinned GTK stack; nothing shipped links it"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0081"
+ignoreUntil = 2026-12-15T00:00:00Z
 reason = "unic-char-property unmaintained, via urlpattern in tauri-utils; no replacement until Tauri moves"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0075"
+ignoreUntil = 2026-12-15T00:00:00Z
 reason = "unic-char-range unmaintained, via urlpattern in tauri-utils; no replacement until Tauri moves"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0080"
+ignoreUntil = 2026-12-15T00:00:00Z
 reason = "unic-common unmaintained, via urlpattern in tauri-utils; no replacement until Tauri moves"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0100"
+ignoreUntil = 2026-12-15T00:00:00Z
 reason = "unic-ucd-ident unmaintained, via urlpattern in tauri-utils; no replacement until Tauri moves"
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0098"
+ignoreUntil = 2026-12-15T00:00:00Z
 reason = "unic-ucd-version unmaintained, via urlpattern in tauri-utils; no replacement until Tauri moves"
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2025-0134"
-reason = "rustls-pemfile unmaintained (archived); stable API used only on trusted PEM input in capsem-core"
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2024-0370"
-reason = "proc-macro-error unmaintained, a build-time macro of glib-macros 0.18 in the pinned GTK stack; nothing shipped links it"
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2025-0141"
-reason = "bincode 1 unmaintained, a dev-dependency of the capsem-foundation IPC framing bench only; nothing built for release links it"

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tempfile
+import tomllib
 from collections.abc import Callable
 from pathlib import Path
 
@@ -41,6 +43,44 @@ def _digest(root: Path, policy: DependencyAuditConfig, lockfiles: tuple[Path, ..
     return subject_digest(
         json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     )
+
+
+def _exception_ids(root: Path, policy: DependencyAuditConfig) -> set[str]:
+    document = tomllib.loads((root / policy.config).read_text(encoding="utf-8"))
+    return {entry["id"] for entry in document.get("IgnoredVulns", [])}
+
+
+def _stale_exceptions(
+    root: Path, policy: DependencyAuditConfig, configured: list[str], runner: Run
+) -> list[str]:
+    """Exceptions that no finding matches: scan again with none applied.
+
+    osv-scanner does not report an ignore that matched nothing, and such an
+    entry is worse than useless. rand's outlived the upgrade that fixed it and
+    stood ready to accept the next rand advisory without review.
+    """
+    exceptions = _exception_ids(root, policy)
+    if not exceptions:
+        return []
+    with tempfile.TemporaryDirectory() as scratch:
+        empty = Path(scratch) / "no-exceptions.toml"
+        empty.write_text("", encoding="utf-8")
+        at = configured.index("--config")
+        command = [*configured[: at + 1], str(empty), *configured[at + 2 :]]
+        result = runner(
+            command,
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=policy.timeout_seconds,
+        )
+    found: set[str] = set()
+    for source in json.loads(result.stdout or "{}").get("results", []):
+        for package in source.get("packages", []):
+            for group in package.get("groups", []):
+                found.update(group.get("ids", []), group.get("aliases", []))
+    return sorted(exceptions - found)
 
 
 def audit_dependencies(
@@ -82,6 +122,15 @@ def audit_dependencies(
         sys.stderr.write(result.stderr or "")
         print(f"OSV-Scanner failed with exit code {result.returncode}", file=sys.stderr)
         return result.returncode
+
+    stale = _stale_exceptions(root, policy, command, runner)
+    if stale:
+        print(
+            "OSV exceptions that match no finding any more; delete them, or they "
+            f"will swallow the next advisory for that crate unreviewed: {', '.join(stale)}",
+            file=sys.stderr,
+        )
+        return 1
 
     origin = "tool cache" if tool.cache_hit else "verified download"
     message = f"OSV-Scanner {policy.tool.version} clean: {len(lockfiles)} lockfiles ({origin})"

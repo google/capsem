@@ -391,6 +391,10 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
     osv = security_audit.index("audit-dependencies.py")
     rustsec = security_audit.index("check-cargo-audit.py")
     assert osv < rustsec
+    # It audits the lockfiles that ship, not a fresh resolution of them, and
+    # it runs daily: a new advisory on unchanged dependencies opens no PR.
+    assert "generate-lockfile" not in security_audit
+    assert 'cron: "17 9 * * *"' in security_audit
 
 
 def test_host_builder_base_images_are_immutable() -> None:

@@ -41,7 +41,6 @@ tracing-subscriber = { workspace = true, optional = true }
 workspace = true
 
 [dev-dependencies]
-bincode = "1"
 tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }
 
