@@ -217,6 +217,7 @@ class DependencyAuditConfig(Strict):
 
     cache_stage: SafeToken
     lockfiles: tuple[str, ...]
+    config: str
     scanner_args: tuple[str, ...]
     timeout_seconds: PositiveInt
     tool: CachedToolPolicy
@@ -225,7 +226,7 @@ class DependencyAuditConfig(Strict):
     def lockfiles_are_explicit_source_inputs(self) -> DependencyAuditConfig:
         if not self.lockfiles or len(self.lockfiles) != len(set(self.lockfiles)):
             raise ValueError("dependency audit lockfiles must be non-empty and unique")
-        for configured in self.lockfiles:
+        for configured in (*self.lockfiles, self.config):
             path = PurePosixPath(configured)
             if path.is_absolute() or ".." in path.parts or path.name == "":
                 raise ValueError("dependency audit lockfiles must be repository-relative")

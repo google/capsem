@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The MCP host components now use rmcp 2.2, fixing three advisories in rmcp
+  1.x: an unauthenticated session-table leak in the Streamable HTTP server
+  transport that allowed remote denial of service (GHSA-9pj6-vhgr-3mwh),
+  missing resource validation in OAuth protected-resource discovery
+  (GHSA-33f5-2c5q-wgwj), and custom HTTP headers leaking to cross-origin
+  redirect targets (GHSA-9g45-5xwm-f3wc). The CLI's prompt library moves to
+  inquire 0.9, dropping the unmaintained `fxhash`.
+
+- The dependency audit now scans `Cargo.lock` and the npm MCP server's
+  lockfile with OSV-Scanner. The rmcp advisories above were published only to
+  GitHub's advisory database, so `cargo audit`, which reads RustSec, passed
+  while they were open. Reviewed exceptions live in `.config/osv-scanner.toml` and
+  must match `.cargo/audit.toml` exactly.
+
 - A short observed credential no longer rewrites stored bodies. Redaction
   replaced every occurrence of any observed key, so `ollama launch`'s literal
   key `ollama` turned each "ollama" in a prompt into a credential reference,

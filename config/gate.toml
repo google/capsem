@@ -1799,8 +1799,13 @@ max_skill_body_lines = 600
 
 [audits.dependency_policy]
 cache_stage = "audit-results"
+# Every shipped lockfile, Rust included: RustSec lags GitHub's advisory
+# database, and three rmcp advisories reached only the latter. `cargo audit`
+# stays beside this as the strict RustSec rail.
 lockfiles = [
+    "Cargo.lock",
     "build_system/uv.lock",
+    "mcp/typescript/pnpm-lock.yaml",
     "sdk/python/uv.lock",
     "sdk/typescript/pnpm-lock.yaml",
     "web/app/pnpm-lock.yaml",
@@ -1808,6 +1813,8 @@ lockfiles = [
     "web/marketing/pnpm-lock.yaml",
     "build_system/release_site/pnpm-lock.yaml",
 ]
+# Reviewed exceptions; the Rust ones mirror .cargo/audit.toml exactly.
+config = ".config/osv-scanner.toml"
 scanner_args = ["scan", "source", "--format=json", "--verbosity=error"]
 timeout_seconds = 120
 

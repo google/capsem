@@ -71,7 +71,82 @@ def test_clean_scan_covers_every_configured_lockfile_then_reuses_exact_verdict(
     assert [command[index + 1] for index, value in enumerate(command) if value == "--lockfile"] == list(
         POLICY.lockfiles
     )
-    assert "Cargo.lock" not in command
+    assert command[command.index("--config") + 1] == POLICY.config
+
+
+# RustSec is not the only source of Rust advisories. Three rmcp advisories,
+# two of them high, were published to GitHub's advisory database and never to
+# RustSec, so `cargo audit` stayed green on them while Dependabot flagged main.
+# OSV aggregates both, so it scans the Rust lockfile too; `cargo audit` stays
+# as the strict RustSec rail beside it.
+#: Every lockfile name the policy already scans, plus the package managers it
+#: does not use yet, so a lockfile from a new one cannot arrive unscanned.
+LOCKFILE_NAMES = {Path(path).name for path in POLICY.lockfiles} | {"package-lock.json", "yarn.lock"}
+#: Lockfiles that exist to exercise tooling, not to ship dependencies.
+FIXTURE_ROOT = "tests/fixtures/"
+
+
+def _tracked_lockfiles() -> set[str]:
+    listed = subprocess.run(
+        ["git", "ls-files"], cwd=PROJECT_ROOT, check=True, capture_output=True, text=True
+    ).stdout.splitlines()
+    return {
+        path
+        for path in listed
+        if Path(path).name in LOCKFILE_NAMES and not path.startswith(FIXTURE_ROOT)
+    }
+
+
+def test_every_shipped_lockfile_is_scanned() -> None:
+    """A lockfile left off the list is a dependency tree nothing audits.
+
+    `Cargo.lock` and the npm MCP server's lockfile were both missing, and
+    nothing noticed: the list was hand-kept and nothing compared it to the tree.
+    """
+    unscanned = _tracked_lockfiles() - set(POLICY.lockfiles)
+    assert not unscanned, f"lockfiles no dependency audit scans: {sorted(unscanned)}"
+
+
+def _osv_ignored() -> dict[str, str]:
+    import tomllib
+
+    document = tomllib.loads((PROJECT_ROOT / POLICY.config).read_text(encoding="utf-8"))
+    return {entry["id"]: entry.get("reason", "") for entry in document.get("IgnoredVulns", [])}
+
+
+def test_osv_and_cargo_audit_ignore_the_same_reviewed_advisories() -> None:
+    """One reviewed exception list, enforced by both scanners.
+
+    Two lists that drift let an advisory be accepted by one scanner and fail
+    the other, or be silently accepted by both after one entry is widened.
+    """
+    import tomllib
+
+    cargo = tomllib.loads((PROJECT_ROOT / ".cargo/audit.toml").read_text(encoding="utf-8"))
+    rust_ignored = set(cargo["advisories"]["ignore"])
+    osv_rust_ignored = {advisory for advisory in _osv_ignored() if advisory.startswith("RUSTSEC-")}
+    assert osv_rust_ignored == rust_ignored
+
+
+def test_every_osv_ignore_says_why() -> None:
+    missing = [advisory for advisory, reason in _osv_ignored().items() if len(reason.strip()) < 20]
+    assert not missing, f"OSV ignores without a reason: {missing}"
+
+
+def test_the_ignore_list_is_part_of_the_cached_verdict(tmp_path: Path) -> None:
+    """Widening the ignore list must rescan, not replay yesterday's clean."""
+    lockfiles = audit._lockfiles(PROJECT_ROOT, POLICY)
+    before = audit._digest(PROJECT_ROOT, POLICY, lockfiles)
+    moved = tmp_path / "root"
+    (moved / Path(POLICY.config).parent).mkdir(parents=True)
+    for lockfile in POLICY.lockfiles:
+        (moved / lockfile).parent.mkdir(parents=True, exist_ok=True)
+        (moved / lockfile).write_bytes((PROJECT_ROOT / lockfile).read_bytes())
+    (moved / POLICY.config).write_text(
+        (PROJECT_ROOT / POLICY.config).read_text(encoding="utf-8") + "\n# widened\n", encoding="utf-8"
+    )
+    after = audit._digest(moved, POLICY, audit._lockfiles(moved, POLICY))
+    assert before != after
 
 
 def test_failed_scan_is_never_cached(monkeypatch, tmp_path: Path) -> None:
