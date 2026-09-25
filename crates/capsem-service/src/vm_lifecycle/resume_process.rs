@@ -87,6 +87,10 @@ impl ServiceState {
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", vm_id));
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", name));
         child_cmd.arg("--vm-name").arg(&name);
+        crate::service_runtime::telemetry_export::grant_metric_endpoint(
+            &mut child_cmd,
+            &capsem_core::net::policy_config::load_settings_and_corp_files().1,
+        );
 
         // Replay user-provided env vars so they survive stop/resume cycles.
         if let Some(ref env_vars) = entry.env {

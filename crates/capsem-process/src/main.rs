@@ -141,6 +141,11 @@ struct Args {
     service_socket: Option<PathBuf>,
     #[arg(long)]
     checkpoint_path: Option<PathBuf>,
+    /// The corp OTLP endpoint this process exports its metrics to, resolved
+    /// by the service from the corp config. Absent means export is off; the
+    /// process never reads settings or corp files for it.
+    #[arg(long)]
+    metric_endpoint: Option<String>,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
     #[arg(long = "env")]
     env: Vec<String>,
@@ -230,7 +235,7 @@ fn main() -> Result<()> {
 
     info!(id = %args.id, "capsem-sandbox-process starting");
     // Held until the process exits: dropping it flushes the last measurements.
-    let _metric_export = metric_export::install(&args.id);
+    let _metric_export = metric_export::install(&args.id, args.metric_endpoint.as_deref());
 
     std::fs::create_dir_all(&args.session_dir)?;
     let mut session_dir = args.session_dir.clone();

@@ -11,6 +11,7 @@
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use capsem_core::net::policy_config::SettingsFile;
 use capsem_logger::counters::{usd_from_micro, LedgerCounters};
 use capsem_telemetry::export::{Destination, Exporter, KeyValue, Meter};
 use capsem_telemetry::session as names;
@@ -38,6 +39,19 @@ pub(crate) fn install() -> Option<Exporter> {
             warn!(%error, ?destination, "metric export not installed");
             None
         }
+    }
+}
+
+/// Grant a VM process the endpoint it exports its metrics to.
+///
+/// The service resolves it, because a VM process takes its runtime config
+/// only from what it is launched with and may not read settings or corp
+/// files itself. It is the corp config's endpoint alone: the environment's
+/// `OTEL_EXPORTER_OTLP_*` can carry collector credentials, and the spawn
+/// allowlist keeps it out of the guest-facing process.
+pub(crate) fn grant_metric_endpoint(command: &mut tokio::process::Command, corp: &SettingsFile) {
+    if let Some(Destination::Corp(endpoint)) = Destination::corp(corp.corp_rule_files.open_telemetry.as_deref()) {
+        command.arg("--metric-endpoint").arg(endpoint);
     }
 }
 

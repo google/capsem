@@ -37,6 +37,45 @@ fn args_parses_all_required() {
     assert_eq!(args.uds_path, PathBuf::from("/tmp/vm.sock"));
 }
 
+/// The metric endpoint is granted by the service at launch; without the flag
+/// export is off. The process has no other way to learn it: it may not read
+/// settings or corp files (`test_process_profile_runtime_contract.py`).
+#[test]
+fn args_metric_endpoint_is_granted_at_launch_and_off_without_it() {
+    let required = [
+        "capsem-process",
+        "--id",
+        "test-vm",
+        "--assets-dir",
+        "/tmp/assets",
+        "--rootfs",
+        "/tmp/rootfs.img",
+        "--session-dir",
+        "/tmp/session",
+        "--active-profile",
+        "/tmp/config/profiles/code",
+        "--expected-kernel-hash",
+        "aa",
+        "--expected-initrd-hash",
+        "bb",
+        "--expected-rootfs-hash",
+        "cc",
+        "--uds-path",
+        "/tmp/vm.sock",
+    ];
+    let off = Args::try_parse_from(required).unwrap();
+    assert_eq!(off.metric_endpoint, None);
+    assert!(metric_export::install(&off.id, off.metric_endpoint.as_deref()).is_none());
+
+    let granted = Args::try_parse_from(
+        required
+            .into_iter()
+            .chain(["--metric-endpoint", "https://otel.example"]),
+    )
+    .unwrap();
+    assert_eq!(granted.metric_endpoint.as_deref(), Some("https://otel.example"));
+}
+
 #[test]
 fn args_default_cpus() {
     let args = Args::try_parse_from([
