@@ -64,6 +64,20 @@ RUN cd /src/web/app \
     && pnpm run build \
     && test -s /src/web/app/dist/index.html
 
+# The build-system Python environment, for the Rust tests that hand an export
+# to a reference reader (`warcio`) through `uv run --project build_system`.
+# Built here, with network, into /src/build_system/.venv; the lane's source
+# copy excludes `.venv`, so it survives, and `uv run --frozen` in the sealed
+# lane finds it complete. Without it those tests tried to download packages
+# inside a lane that has none and failed on DNS.
+#
+# The uv cache lives under /src too, handed to the lane user below: the lane
+# copies a newer build_system/pyproject.toml over this one, and a rebuild of the editable
+# project needs its build backend (setuptools) from a cache it can read.
+ENV UV_CACHE_DIR=/src/.uv-cache
+COPY build_system /src/build_system
+RUN cd /src && uv sync --project build_system --frozen
+
 # Ownership last, so it covers everything every step above created as root.
 # A non-root user is required: the suite chmods an asset to 0o000 and demands
 # the read fail, and root ignores permissions. `ubuntu:24.04` already ships a

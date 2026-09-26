@@ -1590,7 +1590,7 @@ lane_tag = "capsem-linux-rust:latest"
 # Not the workspace manifests: `cargo fetch --locked` fetches everything the
 # lock resolves regardless of features, so a manifest edit that leaves
 # `Cargo.lock` alone leaves the sealed lane with every source it needs.
-identity_inputs = ["Cargo.lock", "rust-toolchain.toml", "sdk/typescript/pnpm-lock.yaml", "web/app/pnpm-lock.yaml"]
+identity_inputs = ["Cargo.lock", "rust-toolchain.toml", "sdk/typescript/pnpm-lock.yaml", "web/app/pnpm-lock.yaml", "build_system/pyproject.toml", "build_system/uv.lock"]
 # Named here so the lane's refusal and the recipe that answers it cannot drift
 # apart. `test_every_recipe_the_gate_tells_an_operator_to_run_exists` checks
 # this resolves to a real recipe -- the last time a message named one that did
