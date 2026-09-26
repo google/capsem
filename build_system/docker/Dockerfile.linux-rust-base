@@ -19,6 +19,9 @@ FROM ${BASE}
 # exists for.
 COPY Cargo.toml Cargo.lock rust-toolchain.toml /src/
 COPY crates /src/crates
+# Every workspace member, or `cargo fetch --locked` cannot load the workspace;
+# tests/citadel/test_linux_rust_base_copies_the_workspace.py holds the list.
+COPY sdk/rust /src/sdk/rust
 
 WORKDIR /src
 
