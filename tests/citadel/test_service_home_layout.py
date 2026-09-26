@@ -1,12 +1,13 @@
-"""Citadel guard: a test service owns its session ledger.
+"""Citadel guard: a test service runs in the installed home/run layout.
 
-The service keeps the main session ledger at `run_dir.parent/sessions/main.db`
-(`main_db_path_for_run_dir`), matching the installed layout where CAPSEM_HOME
-owns a `run/` directory. A harness that sets CAPSEM_RUN_DIR and CAPSEM_HOME to
-the same temporary directory moves that ledger up into the run-wide temporary
-parent, so every service started that way in one pytest run shares a single
-main.db. The e2e harness did, and its exec tests failed only when other
-workers ran beside it, never alone.
+The service used to keep the main session ledger at
+`run_dir.parent/sessions/main.db`, so a harness that set CAPSEM_RUN_DIR and
+CAPSEM_HOME to one temporary directory moved that ledger into the run-wide
+temporary parent, and every service started that way shared one main.db. The
+e2e harness did, and its exec tests failed only when other workers ran beside
+it. The service now roots main.db in CAPSEM_HOME itself; this guard still keeps
+harnesses in the installed layout, where CAPSEM_HOME owns a `run/` directory,
+so what they test is what ships.
 """
 
 from __future__ import annotations
@@ -21,9 +22,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SERVICE_HOME_LAYOUT_RATIONALE = """\
 A test service must use the installed home/run layout: CAPSEM_HOME owns a
 run/ directory, and CAPSEM_RUN_DIR is that run/ directory
-(helpers.service.make_service_home_run_dirs). Pointing both at one directory
-puts sessions/main.db in the run-wide temporary parent, shared by every
-parallel worker's service.
+(helpers.service.make_service_home_run_dirs). A collapsed layout tests a shape
+no installation has.
 """
 
 
