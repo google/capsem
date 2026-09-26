@@ -136,6 +136,26 @@ def resolve_source_manifest(
     return payload, source
 
 
+def github_token() -> str | None:
+    """`GITHUB_TOKEN` if exported, otherwise the operator's `gh` login.
+
+    The release dispatches its hosted lane through `gh`, so that login is
+    already required; demanding a second export found its absence only after
+    the release's local suites had spent eight minutes passing.
+    """
+    exported = os.environ.get("GITHUB_TOKEN", "")
+    if exported:
+        return exported
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "token"], capture_output=True, text=True, check=False, timeout=30
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    token = result.stdout.strip() if result.returncode == 0 else ""
+    return token or None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--channel", required=True)
@@ -168,9 +188,13 @@ def main() -> int:
     fallback_url = args.fallback_url or (
         f"https://release.capsem.org/assets/{args.channel}/manifest.json"
     )
-    token = os.environ.get("GITHUB_TOKEN", "")
+    token = github_token()
     if not token:
-        print("GITHUB_TOKEN is required to resolve source manifests", file=sys.stderr)
+        print(
+            "resolving source manifests needs GitHub credentials: export GITHUB_TOKEN "
+            "or log in with `gh auth login`",
+            file=sys.stderr,
+        )
         return 1
     try:
         retired_graph: retirement.RetiredPublicGraph | None = None
