@@ -860,14 +860,14 @@ impl ServiceState {
         Ok(path)
     }
 
-    /// Path to main.db (global session index).
-    /// Layout: run_dir = ~/.capsem/run, main.db lives at ~/.capsem/sessions/main.db.
+    /// Path to main.db (global session index): the file the service opened.
+    /// It lives in the home's sessions directory, never beside the run directory.
     fn main_db_path(&self) -> PathBuf {
-        main_db_path_for_run_dir(&self.run_dir)
+        self.profile_mutation_db.path().to_path_buf()
     }
 
-    fn open_profile_mutation_db_handle(run_dir: &StdPath) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
-        let db_path = main_db_path_for_run_dir(run_dir);
+    fn open_profile_mutation_db_handle(sessions_dir: &StdPath) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
+        let db_path = main_db_path_in(sessions_dir);
         capsem_logger::ensure_session_index_schema(&db_path)
             .with_context(|| format!("failed to initialize session index in main.db: {}", db_path.display()))?;
         let started = std::time::Instant::now();

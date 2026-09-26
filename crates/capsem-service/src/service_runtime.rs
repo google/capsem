@@ -246,7 +246,12 @@ pub(super) async fn run_service() -> Result<()> {
         .map_err(|AppError(_, message)| anyhow!("failed to build profile MCP default cache: {message}"))?;
     let profile_plugin_policy_cache = build_profile_plugin_policy_cache(None)
         .map_err(|AppError(_, message)| anyhow!("failed to build profile plugin cache: {message}"))?;
-    let profile_mutation_db = ServiceState::open_profile_mutation_db_handle(&run_dir)?;
+    // The home's sessions directory, not the run directory's parent: a run
+    // directory placed elsewhere (a short socket path under /tmp) once put
+    // every such service on one shared main.db, where a stale ledger format
+    // stopped each new service before it could listen.
+    let profile_mutation_db =
+        ServiceState::open_profile_mutation_db_handle(&capsem_foundation::paths::capsem_sessions_dir())?;
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),

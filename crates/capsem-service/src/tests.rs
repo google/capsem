@@ -69,8 +69,10 @@ fn test_profile_plugin_policy_cache() -> Mutex<BTreeMap<String, BTreeMap<String,
     Mutex::new(build_profile_plugin_policy_cache(None).expect("test profile plugin policy cache should build"))
 }
 
+/// A test state's home is its run directory's parent, so its main.db stays in
+/// the test's own temporary directory.
 fn test_profile_mutation_db(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
-    ServiceState::open_profile_mutation_db_handle(run_dir).unwrap()
+    ServiceState::open_profile_mutation_db_handle(&run_dir.parent().unwrap().join("sessions")).unwrap()
 }
 
 pub(crate) fn make_test_state() -> Arc<ServiceState> {

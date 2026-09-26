@@ -15,8 +15,8 @@ pub(crate) use diagnostics::{session_db_triage, session_triage_statements};
 pub(crate) use fork::{clone_session_state, handle_fork};
 pub(super) use ipc_command::send_ipc_command;
 
-pub(super) fn main_db_path_for_run_dir(run_dir: &StdPath) -> PathBuf {
-    run_dir.parent().unwrap_or(run_dir).join("sessions").join("main.db")
+pub(super) fn main_db_path_in(sessions_dir: &StdPath) -> PathBuf {
+    sessions_dir.join("main.db")
 }
 
 pub(super) fn gib(bytes: u64) -> u64 {

@@ -857,23 +857,23 @@ fn clear_resume_checkpoint_removes_completion_marker() {
 // main_db_path
 
 #[test]
-fn main_db_path_resolves_to_sessions_dir() {
+fn main_db_path_is_the_file_the_service_opened() {
     let state = make_test_state();
-    // run_dir = /tmp/capsem-test-svc => parent = /tmp => main.db = /tmp/sessions/main.db
-    let path = state.main_db_path();
-    assert!(path.ends_with("sessions/main.db"), "got: {}", path.display());
+    assert_eq!(state.main_db_path(), state.profile_mutation_db.path());
+    assert!(state.main_db_path().ends_with("sessions/main.db"));
 }
 
+/// main.db is in the home's sessions dir, wherever the run dir is: taken from the
+/// run dir's parent, every service run under /tmp shared /tmp/sessions/main.db,
+/// and a stale ledger format there stopped each new service before it listened.
 #[test]
 fn profile_mutation_db_startup_initializes_session_index_schema() {
     let dir = tempfile::tempdir().unwrap();
-    let run_dir = dir.path().join("run");
-    std::fs::create_dir_all(&run_dir).unwrap();
-
-    let handle = ServiceState::open_profile_mutation_db_handle(&run_dir).unwrap();
+    let sessions = dir.path().join("home").join("sessions");
+    let handle = ServiceState::open_profile_mutation_db_handle(&sessions).unwrap();
+    let db_path = handle.path().to_path_buf();
     drop(handle);
-
-    let db_path = main_db_path_for_run_dir(&run_dir);
+    assert_eq!(db_path, sessions.join("main.db"));
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     let session_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))

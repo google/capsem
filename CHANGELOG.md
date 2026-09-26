@@ -191,6 +191,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The global session index (`main.db`) now always lives in the Capsem home's
+  `sessions/` directory. The service derived it from the run directory's
+  parent, so a service started with `CAPSEM_RUN_DIR` outside the home put it
+  somewhere else -- every such service under `/tmp` shared
+  `/tmp/sessions/main.db`, and a copy left in an older ledger format stopped
+  each new service at startup. The default layout is unchanged.
+
 - Forking a running sandbox now carries everything its session ledger
   recorded up to the fork. The ledger writer keeps accepted rows in memory
   until its next disk flush, up to five seconds away, and the fork copied the
