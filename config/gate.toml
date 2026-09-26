@@ -1590,7 +1590,7 @@ lane_tag = "capsem-linux-rust:latest"
 # Not the workspace manifests: `cargo fetch --locked` fetches everything the
 # lock resolves regardless of features, so a manifest edit that leaves
 # `Cargo.lock` alone leaves the sealed lane with every source it needs.
-identity_inputs = ["Cargo.lock", "rust-toolchain.toml", "sdk/typescript/pnpm-lock.yaml", "web/app/pnpm-lock.yaml"]
+identity_inputs = ["Cargo.lock", "rust-toolchain.toml", "sdk/typescript/pnpm-lock.yaml", "web/app/pnpm-lock.yaml", "build_system/pyproject.toml", "build_system/uv.lock"]
 # Named here so the lane's refusal and the recipe that answers it cannot drift
 # apart. `test_every_recipe_the_gate_tells_an_operator_to_run_exists` checks
 # this resolves to a real recipe -- the last time a message named one that did
@@ -2368,7 +2368,7 @@ rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent 
 # macOS compiles a different cfg-selected line inventory. Its stronger floors
 # must not raise Linux thresholds using code that Linux cannot compile or test.
 # Overrides may only increase the shared floors; no platform gets an exemption.
-rust_coverage_platform_crate_floors = { Linux = {}, Darwin = { capsem-agent = 50.29, capsem-assets = 90.3, capsem-bench = 50.56, capsem-core = 81.0, capsem-foundation = 81.0, capsem-mock-server = 58.6, capsem-network = 96.62, capsem-process = 45.18, capsem-proto = 91.54, capsem-router = 73.73, capsem-service = 69.51 } }
+rust_coverage_platform_crate_floors = { Linux = {}, Darwin = { capsem = 51.27, capsem-agent = 53.13, capsem-api = 95.34, capsem-assets = 90.3, capsem-bench = 50.56, capsem-config = 89.69, capsem-core = 81.0, capsem-foundation = 83.8, capsem-logger = 91.88, capsem-mcp-builtin = 56.56, capsem-mock-server = 58.6, capsem-network = 97.5, capsem-process = 48.12, capsem-proto = 91.54, capsem-router = 79.8, capsem-service = 74.73 } }
 # Nextest reads its profile from the environment; `--profile` on the command
 # line belongs to cargo-llvm-cov and would select a build profile instead.
 rust_test_profile_variable = "NEXTEST_PROFILE"

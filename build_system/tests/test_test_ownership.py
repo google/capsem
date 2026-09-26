@@ -91,6 +91,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/packaging/test_macos_packaging_boundary.py",
         "build_system/tests/packaging/test_shared_packaging_boundary.py",
         "build_system/tests/policy/test_policy_modules.py",
+        "build_system/tests/release/test_channel_source_credentials.py",
         "build_system/tests/release/test_deb_package_portability.py",
         "build_system/tests/release/test_release_module_boundary.py",
         "build_system/tests/release/test_release_foundation_tool_boundary.py",

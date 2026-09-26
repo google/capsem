@@ -237,3 +237,13 @@ fn drop_reasons_index_their_own_counter_slot() {
     names.dedup();
     assert_eq!(names.len(), DropReason::ALL.len());
 }
+
+#[test]
+fn a_table_is_empty_until_a_port_is_plugged_and_after_the_last_leaves() {
+    let mut table = Table::default();
+    assert!(table.is_empty());
+    table.plug(A.mac, "a");
+    assert!(!table.is_empty());
+    table.unplug(&A.mac);
+    assert!(table.is_empty());
+}

@@ -86,7 +86,8 @@ RESET = "\033[0m"
 
 CAPSEM_HOME = INTEGRATION_HOME
 PERSISTENT_DIR = INTEGRATION_RUN_DIR / "persistent"
-MAIN_DB = INTEGRATION_RUNTIME_ROOT / "sessions" / "main.db"
+# The service keeps main.db in its home, never beside the run directory.
+MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
 SERVICE_SOCKET = INTEGRATION_RUN_DIR / "service.sock"
 SERVICE_PIDFILE = INTEGRATION_RUN_DIR / "service.pid"
 

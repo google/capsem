@@ -18,21 +18,42 @@ use crate::job_store::{with_quiescence, JobResult, JobStore};
 /// How long a fork waits for the guest to freeze, as suspend does.
 const CLONE_FREEZE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// Copy the session, with every ledger row accepted so far on disk first.
+///
+/// The writer holds accepted rows in memory until its next disk flush, up to
+/// five seconds away, and the clone copies the file: without this barrier a
+/// fork left out whatever the source recorded in its last seconds (#243). Run
+/// under the guest freeze, so nothing the guest does can land between the
+/// flush and the copy. A flush that fails fails the fork rather than
+/// producing a quietly incomplete one.
+async fn flush_then_clone(db: &capsem_logger::DbWriter, source: PathBuf, destination: PathBuf) -> anyhow::Result<u64> {
+    db.flush_checked()
+        .await
+        .map_err(|error| anyhow::anyhow!("flush the session ledger before cloning: {error}"))?;
+    tokio::task::spawn_blocking(move || capsem_core::session::clone_sandbox_state(&source, &destination))
+        .await
+        .map_err(|error| anyhow::anyhow!("clone task failed: {error}"))?
+}
+
 /// Clone `source` into `destination` and answer job `id` with its size.
 pub(super) fn spawn(
     hub_tx: &mpsc::Sender<HostToGuest>,
     job_store: &Arc<JobStore>,
+    db: &Arc<capsem_logger::DbWriter>,
     source: &std::path::Path,
     id: u64,
     destination: String,
 ) {
-    let (hub_tx, job_store, source) = (hub_tx.clone(), Arc::clone(job_store), source.to_path_buf());
+    let (hub_tx, job_store, db, source) = (
+        hub_tx.clone(),
+        Arc::clone(job_store),
+        Arc::clone(db),
+        source.to_path_buf(),
+    );
     tokio::spawn(async move {
         let destination = PathBuf::from(destination);
-        let result = with_quiescence(&hub_tx, &job_store, CLONE_FREEZE_TIMEOUT, || async {
-            tokio::task::spawn_blocking(move || capsem_core::session::clone_sandbox_state(&source, &destination))
-                .await
-                .map_err(|error| anyhow::anyhow!("clone task failed: {error}"))?
+        let result = with_quiescence(&hub_tx, &job_store, CLONE_FREEZE_TIMEOUT, || {
+            flush_then_clone(&db, source, destination)
         })
         .await
         .map_err(|error| format!("{error:#}"));
@@ -41,3 +62,6 @@ pub(super) fn spawn(
         }
     });
 }
+
+#[cfg(test)]
+mod tests;

@@ -170,3 +170,27 @@ def test_a_failure_preserves_evidence_before_anything_is_released(
         raise GateError("boom")
 
     assert order.index("preserve") < order.index("release")
+
+
+def test_a_service_that_exits_before_listening_is_reported_at_once(tmp_path: Path) -> None:
+    """A daemon that died is not a slow daemon.
+
+    capsem-service refused a stale main.db and exited within a second, and the
+    wait spent the whole readiness budget before calling it "did not accept a
+    connection" -- which sent the diagnosis looking for a hang.
+    """
+    import subprocess
+    import time
+
+    from capsem_builder.gate.context import Context
+    from capsem_builder.gate.service import WaitForSocket
+
+    exited = subprocess.Popen(["true"])
+    exited.wait()
+    (tmp_path / CONFIG.service.pidfile).write_text(str(exited.pid), encoding="utf-8")
+
+    started = time.monotonic()
+    with pytest.raises(GateError, match="exited before it listened"):
+        WaitForSocket(tmp_path).perform(Context(RecordingRunner(PROJECT_ROOT), CONFIG))
+    budget = CONFIG.service.ready_attempts * CONFIG.service.ready_interval_seconds
+    assert time.monotonic() - started < budget / 2, "it waited out the readiness budget"

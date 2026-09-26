@@ -182,7 +182,7 @@ def test_integration_script_service_paths_use_process_scoped_isolated_home():
     assert module.INTEGRATION_RUN_DIR == module.INTEGRATION_RUNTIME_ROOT / "run"
     assert module.SERVICE_SOCKET == module.INTEGRATION_RUN_DIR / "service.sock"
     assert module.PERSISTENT_DIR == module.INTEGRATION_RUN_DIR / "persistent"
-    assert module.MAIN_DB == module.INTEGRATION_RUNTIME_ROOT / "sessions" / "main.db"
+    assert module.MAIN_DB == module.CAPSEM_HOME / "sessions" / "main.db"
     assert len(os.fsencode(module.SERVICE_SOCKET)) < 108
 
 

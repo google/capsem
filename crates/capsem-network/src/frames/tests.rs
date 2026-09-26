@@ -50,3 +50,20 @@ async fn the_largest_frame_fits_and_one_more_byte_does_not() {
         .await
         .is_err());
 }
+
+/// A broken connection is an error, never mistaken for a clean end of stream.
+#[tokio::test]
+async fn a_read_error_other_than_end_of_stream_is_reported() {
+    struct Broken;
+    impl AsyncRead for Broken {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            std::task::Poll::Ready(Err(io::Error::new(io::ErrorKind::ConnectionReset, "reset")))
+        }
+    }
+    let error = read_frame(&mut Broken, &mut Vec::new()).await.unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::ConnectionReset);
+}

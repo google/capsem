@@ -655,7 +655,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     }
                 }
                 ServiceToProcess::CloneState { id, destination } => {
-                    clone_state::spawn(&hub_tx, &js_for_cmd, &session_dir, id, destination);
+                    clone_state::spawn(&hub_tx, &js_for_cmd, &db_for_cmd, &session_dir, id, destination);
                 }
                 ServiceToProcess::Suspend { checkpoint_path } => {
                     let full_path = session_dir.join(checkpoint_path);
