@@ -191,6 +191,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Forking a running sandbox now carries everything its session ledger
+  recorded up to the fork. The ledger writer keeps accepted rows in memory
+  until its next disk flush, up to five seconds away, and the fork copied the
+  file without asking it to flush, so a fork left out the source's last few
+  seconds of network, tool, exec and security events. The fork now flushes
+  the writer while the guest is frozen, and fails rather than producing an
+  incomplete ledger if that flush fails (google/capsem#243).
+
 - The guest rootfs OBOM (`obom.cdx.json`) now describes the rootfs exactly
   and builds about ten times faster. The build unpacked the rootfs on the
   build host before scanning it: on macOS the case-insensitive filesystem
