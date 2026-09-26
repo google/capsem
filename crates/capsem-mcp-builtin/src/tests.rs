@@ -375,3 +375,61 @@ async fn builtin_http_client_does_not_follow_redirects() {
         "redirects must not be followed -- a 3xx to another host would bypass the domain policy check"
     );
 }
+
+/// Every HTTP tool refuses a blocked URL the same way, with its ledger record
+/// on the error result -- not only `fetch_http`.
+#[tokio::test]
+async fn grep_and_header_tools_refuse_a_blocked_url_with_a_ledger_record() {
+    let grep = handler()
+        .grep_http(Parameters(GrepHttpParams {
+            url: "http://127.0.0.1:1/".to_string(),
+            pattern: "anything".to_string(),
+            context_lines: None,
+            max_matches: None,
+            start_index: None,
+            max_length: None,
+        }))
+        .await;
+    let headers = handler()
+        .http_headers(Parameters(HttpHeadersParams {
+            url: "http://127.0.0.1:1/".to_string(),
+            method: None,
+        }))
+        .await;
+    for result in [grep, headers] {
+        assert_eq!(result.is_error, Some(true), "{result:?}");
+        let records = ledger_records(&result);
+        let [BuiltinLedgerRecord::HttpRequest(request)] = records.as_slice() else {
+            panic!("one refusal, one record: {result:?}");
+        };
+        assert_eq!(request.decision, builtin_ledger::HttpDecision::Denied);
+    }
+}
+
+#[test]
+fn pooled_peers_each_get_their_own_singleton_lock() {
+    assert_eq!(lock_file_name(0), "mcp-builtin.lock");
+    assert_eq!(lock_file_name(3), "mcp-builtin-3.lock");
+    assert_eq!(peer_index(None), 0);
+    assert_eq!(peer_index(Some("2".into())), 2);
+    assert_eq!(
+        peer_index(Some("not-a-number".into())),
+        0,
+        "a malformed index is the singleton"
+    );
+}
+
+#[test]
+fn a_missing_or_malformed_active_profile_names_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("absent.toml");
+    let missing = missing.to_str().unwrap();
+    let error = format!("{:#}", load_active_profile(missing).unwrap_err());
+    assert!(error.contains(&format!("read active profile {missing}")), "{error}");
+
+    let malformed = dir.path().join("malformed.toml");
+    std::fs::write(&malformed, "this is = = not toml").unwrap();
+    let malformed = malformed.to_str().unwrap();
+    let error = format!("{:#}", load_active_profile(malformed).unwrap_err());
+    assert!(error.contains(&format!("parse active profile {malformed}")), "{error}");
+}

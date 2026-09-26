@@ -237,6 +237,37 @@ fn extract_text(resp: JsonRpcResponse) -> Result<String, String> {
     }
 }
 
+// -- Startup --
+
+/// Which member of a pooled server this process is; peer 0 is the singleton.
+fn peer_index(raw: Option<String>) -> u32 {
+    raw.and_then(|value| value.parse().ok()).unwrap_or(0)
+}
+
+/// The per-peer singleton lock, so pool members do not fight over one file.
+fn lock_file_name(peer_index: u32) -> String {
+    if peer_index == 0 {
+        "mcp-builtin.lock".to_string()
+    } else {
+        format!("mcp-builtin-{peer_index}.lock")
+    }
+}
+
+/// Read, parse and validate the active profile, naming the file in any error.
+fn load_active_profile(path: &str) -> Result<ActiveProfileFile> {
+    let text = std::fs::read_to_string(path)
+        .map_err(anyhow::Error::new)
+        .with_context(|| format!("read active profile {path}"))?;
+    let profile: ActiveProfileFile = toml::from_str(&text)
+        .map_err(anyhow::Error::new)
+        .with_context(|| format!("parse active profile {path}"))?;
+    profile
+        .validate()
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("validate active profile {path}"))?;
+    Ok(profile)
+}
+
 // -- Main --
 
 #[tokio::main]
@@ -262,18 +293,10 @@ async fn main() -> Result<()> {
     // Per-peer index for pool members (set by the aggregator's
     // connect_stdio when spawning peer 1..N of a pooled server). Each
     // peer gets its own lockfile so they don't fight over the singleton.
-    let peer_index: u32 = std::env::var("CAPSEM_BUILTIN_PEER_INDEX")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let peer_index = peer_index(std::env::var("CAPSEM_BUILTIN_PEER_INDEX").ok());
 
     if let (Some(pid), Some(dir)) = (parent_pid, session_dir) {
-        let lock_name = if peer_index == 0 {
-            "mcp-builtin.lock".to_string()
-        } else {
-            format!("mcp-builtin-{peer_index}.lock")
-        };
-        let lock_path = std::path::PathBuf::from(dir).join(&lock_name);
+        let lock_path = std::path::PathBuf::from(dir).join(lock_file_name(peer_index));
         match capsem_guard::install(Some(pid), &lock_path) {
             Ok(Some(guards)) => {
                 // Keep the guards alive for the process's lifetime.
@@ -292,16 +315,7 @@ async fn main() -> Result<()> {
 
     let active_profile_path =
         std::env::var("CAPSEM_ACTIVE_PROFILE").map_err(|_| anyhow::anyhow!("CAPSEM_ACTIVE_PROFILE is required"))?;
-    let active_profile_text = std::fs::read_to_string(&active_profile_path)
-        .map_err(anyhow::Error::new)
-        .with_context(|| format!("read active profile {active_profile_path}"))?;
-    let active_profile: ActiveProfileFile = toml::from_str(&active_profile_text)
-        .map_err(anyhow::Error::new)
-        .with_context(|| format!("parse active profile {active_profile_path}"))?;
-    active_profile
-        .validate()
-        .map_err(anyhow::Error::msg)
-        .with_context(|| format!("validate active profile {active_profile_path}"))?;
+    let active_profile = load_active_profile(&active_profile_path)?;
     let security_rules = Arc::new(active_profile.compile_security_rule_set().map_err(anyhow::Error::msg)?);
     let plugin_policy = Arc::new(active_profile.plugins.clone());
 
