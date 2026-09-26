@@ -123,7 +123,7 @@ def stop(pidfile: Path, settings: gate_config.PidfileConfig) -> None:
     but a *named* process that survives both signals is.
     """
     pidfile = Path(pidfile)
-    recorded = _recorded_pid(pidfile)
+    recorded = recorded_pid(pidfile)
 
     if recorded is not None and running(recorded, settings):
         os.kill(recorded, signal.SIGTERM)
@@ -137,7 +137,7 @@ def stop(pidfile: Path, settings: gate_config.PidfileConfig) -> None:
     pidfile.unlink(missing_ok=True)
 
 
-def _recorded_pid(pidfile: Path) -> int | None:
+def recorded_pid(pidfile: Path) -> int | None:
     try:
         recorded = pidfile.read_text(encoding="utf-8").strip()
     except (OSError, ValueError):

@@ -151,6 +151,7 @@ class WaitForSocket(Action, name="wait-for-socket"):
         directory = self._directory or run_dir(context.config)
         path = directory / settings.socket
 
+        pidfile = directory / settings.pidfile
         for _ in range(settings.ready_attempts):
             if path.exists():
                 probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -161,6 +162,14 @@ class WaitForSocket(Action, name="wait-for-socket"):
                     pass
                 finally:
                     probe.close()
+            # A daemon that died is not a slow one: say so now, rather than
+            # spend the budget and report a connection it could never accept.
+            pid = pidfiles.recorded_pid(pidfile)
+            if pid is not None and not pidfiles.running(pid, context.config.pidfiles):
+                raise GateError(
+                    f"capsem-service (pid {pid}) exited before it listened on {path}; "
+                    f"its log is in {directory}"
+                )
             time.sleep(settings.ready_interval_seconds)
 
         raise GateError(
