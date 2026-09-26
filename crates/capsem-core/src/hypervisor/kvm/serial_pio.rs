@@ -20,15 +20,27 @@
 //! MCR, MSR, FCR and the scratch register read 0 and ignore writes.
 
 use std::io::Write;
-use std::os::fd::OwnedFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use super::pio::PioDevice;
+use super::pio::{PioBus, PioDevice};
+use super::sys::VmFd;
 
-/// The legacy ISA interrupt line of COM1.
-pub(super) const COM1_IRQ: u32 = 4;
+/// COM1's legacy ISA I/O base, register window and interrupt line.
+const COM1_BASE: u16 = 0x3F8;
+const COM1_PORTS: u16 = 8;
+const COM1_IRQ: u32 = 4;
+
+/// Put a UART on COM1, its interrupt wired to the guest through an irqfd.
+pub(super) fn attach_com1(vm: &VmFd, bus: &PioBus, tx_fd: RawFd, rx_fd: RawFd) -> anyhow::Result<Arc<Serial16550>> {
+    let interrupt = super::create_irq_eventfd()?;
+    vm.irqfd(interrupt.as_raw_fd(), COM1_IRQ)?;
+    let uart = Arc::new(Serial16550::new(tx_fd, rx_fd, interrupt));
+    bus.register(COM1_BASE, COM1_PORTS, Arc::clone(&uart) as Arc<dyn PioDevice>)?;
+    Ok(uart)
+}
 
 /// 16550 UART register offsets within the 8-byte I/O port range.
 const THR: u16 = 0; // Transmit Holding Register (write)
@@ -72,7 +84,7 @@ impl Serial16550 {
     /// Create a new 16550 UART.
     /// - `tx_fd`: write end of the output pipe (guest -> host serial output)
     /// - `rx_fd`: read end of the input pipe (host -> guest serial input)
-    /// - `interrupt`: eventfd registered as an irqfd for [`COM1_IRQ`]
+    /// - `interrupt`: eventfd registered as an irqfd for the UART's line
     pub fn new(tx_fd: RawFd, rx_fd: RawFd, interrupt: OwnedFd) -> Self {
         Self {
             // Safety: tx_fd is a valid pipe fd provided by the caller.

@@ -79,7 +79,7 @@ COPY build_system /src/build_system
 RUN cd /src && uv sync --project build_system --frozen
 # Offline from here on: the cache holds setuptools, but uv still asks the
 # index before using it, and the lane has no network. The lane's copy gives
-# pyproject.toml a new mtime, which is what uv keys the editable rebuild on,
+# the project manifest a new mtime, which uv keys the editable rebuild on,
 # so the rebuild happened on every run whose base image was freshly built.
 ENV UV_OFFLINE=1
 

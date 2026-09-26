@@ -90,7 +90,11 @@ fn rbr_returns_zero_when_empty() {
 #[test]
 fn lsr_no_input_data_ready() {
     let (uart, rx, _) = make_uart();
-    assert_eq!(read_register(&uart, LSR) & LSR_DR, 0, "DR should NOT be set when no input");
+    assert_eq!(
+        read_register(&uart, LSR) & LSR_DR,
+        0,
+        "DR should NOT be set when no input"
+    );
     unsafe { libc::close(rx) };
 }
 

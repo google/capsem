@@ -45,7 +45,7 @@ def test_every_workspace_member_is_copied_before_the_fetch() -> None:
 
 UV_OFFLINE_RATIONALE = """\
 The Linux Rust lane runs with --network none, and copying build_system over
-the image's copy gives pyproject.toml a new mtime, so `uv run` rebuilds the
+the image's copy gives the project manifest a new mtime, so `uv run` rebuilds the
 editable project. That rebuild resolves setuptools from the cache only when
 uv is offline; otherwise it asks the index, fails on DNS, and the warcio tests
 fail inside the lane.

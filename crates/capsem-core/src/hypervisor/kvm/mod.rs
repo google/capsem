@@ -412,21 +412,10 @@ impl Hypervisor for KvmHypervisor {
         mmio_bus.register(memory::virtio_mmio_addr(0), memory::VIRTIO_MMIO_SIZE, console_mmio)?;
 
         // -- x86_64: PIO bus + 16550 UART ---------------------------------
-        // The UART interrupts on COM1's line: without it, userspace writes to
-        // ttyS0 never left the guest's tty buffer.
         #[cfg(target_arch = "x86_64")]
-        let (pio_bus, uart) = {
-            let bus = Arc::new(pio::PioBus::new());
-            let uart_irq_fd = create_irq_eventfd()?;
-            vm.irqfd(uart_irq_fd.as_raw_fd(), serial_pio::COM1_IRQ)?;
-            let uart = Arc::new(serial_pio::Serial16550::new(
-                uart_output_write,
-                uart_input_read,
-                uart_irq_fd,
-            ));
-            bus.register(0x3F8, 8, Arc::clone(&uart) as Arc<dyn pio::PioDevice>)?;
-            (bus, uart)
-        };
+        let pio_bus = Arc::new(pio::PioBus::new());
+        #[cfg(target_arch = "x86_64")]
+        let uart = serial_pio::attach_com1(&vm, &pio_bus, uart_output_write, uart_input_read)?;
 
         // -- Shared: block devices ----------------------------------------
         if let Some(ref disk_path) = config.disk_path {
