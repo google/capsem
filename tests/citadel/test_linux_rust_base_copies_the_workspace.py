@@ -41,3 +41,18 @@ def test_every_workspace_member_is_copied_before_the_fetch() -> None:
         if not any(member == root or member.startswith(f"{root}/") for root in copied)
     ]
     assert not missing, RATIONALE + f"\nnot copied: {missing}"
+
+
+UV_OFFLINE_RATIONALE = """\
+The Linux Rust lane runs with --network none, and copying build_system over
+the image's copy gives pyproject.toml a new mtime, so `uv run` rebuilds the
+editable project. That rebuild resolves setuptools from the cache only when
+uv is offline; otherwise it asks the index, fails on DNS, and the warcio tests
+fail inside the lane.
+"""
+
+
+def test_the_lane_runs_uv_offline_after_the_environment_is_built() -> None:
+    lines = [line.strip() for line in DOCKERFILE.read_text(encoding="utf-8").splitlines()]
+    sync = lines.index("RUN cd /src && uv sync --project build_system --frozen")
+    assert "ENV UV_OFFLINE=1" in lines[sync + 1 :], UV_OFFLINE_RATIONALE
