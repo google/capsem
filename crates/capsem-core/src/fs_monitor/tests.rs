@@ -714,8 +714,20 @@ fn pin_mtime(path: &Path) {
     assert_eq!(rc, 0, "utimensat: {}", std::io::Error::last_os_error());
 }
 
+fn ctime(path: &Path) -> (i64, i64) {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::metadata(path).unwrap();
+    (metadata.ctime(), metadata.ctime_nsec())
+}
+
 /// The forgery this guards: rewrite a file in place to the same length, then
 /// put its mtime back. Size and mtime say nothing happened; ctime does.
+///
+/// ctime is only as fine as the kernel's timestamp clock. Linux stamps inodes
+/// from a coarse clock that advances every few milliseconds, so two writes in
+/// one tick share a ctime and no metadata can tell them apart. The rewrite is
+/// repeated until the kernel records a new ctime -- the precondition this test
+/// is about -- rather than assuming a later write always gets one.
 #[test]
 fn an_in_place_rewrite_with_a_restored_mtime_is_still_a_modification() {
     let root = tempfile::tempdir().unwrap();
@@ -723,9 +735,19 @@ fn an_in_place_rewrite_with_a_restored_mtime_is_still_a_modification() {
     std::fs::write(&path, b"aaaaa").unwrap();
     pin_mtime(&path);
     let before = workspace_snapshot(&ContainedDir::open_root(root.path()).unwrap());
+    let first = ctime(&path);
 
-    std::fs::write(&path, b"bbbbb").unwrap();
-    pin_mtime(&path);
+    let mut attempts = 0;
+    loop {
+        std::fs::write(&path, b"bbbbb").unwrap();
+        pin_mtime(&path);
+        if ctime(&path) != first {
+            break;
+        }
+        attempts += 1;
+        assert!(attempts < 1_000, "the kernel never advanced ctime");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
     let after = workspace_snapshot(&ContainedDir::open_root(root.path()).unwrap());
 
     assert_eq!(
