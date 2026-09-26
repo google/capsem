@@ -6576,7 +6576,11 @@ def test_fork_clones_inside_the_owner_under_a_guest_freeze() -> None:
     assert "ServiceToProcess::CloneState {" in fork
     assert "sync; true" not in fork
     assert "with_quiescence(" in owner
-    assert "clone_sandbox_state(" in owner.split("with_quiescence(", 1)[1]
+    # The clone runs under the freeze, after the ledger flush (#243): a fork
+    # copies every row the source accepted, and a failed flush fails the fork.
+    assert "flush_then_clone(" in owner.split("with_quiescence(", 1)[1]
+    flush_then_clone = owner.split("async fn flush_then_clone(", 1)[1].split("\n}\n", 1)[0]
+    assert flush_then_clone.index("flush_checked()") < flush_then_clone.index("clone_sandbox_state(")
 
 
 def test_linux_vm_launch_preformats_system_overlay_before_boot() -> None:
