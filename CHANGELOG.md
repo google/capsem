@@ -191,6 +191,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On Linux x86_64 hosts, anything a process in the VM wrote to the console
+  now reaches `capsem logs`. The emulated serial port never raised its
+  transmit interrupt, so only kernel messages got out: a container started
+  with `capsem create --image` showed no output at all, and the guest's tty
+  held it forever. The port now interrupts as a 16550 does, and re-arms
+  after a checkpoint restore so a restored VM's console does not stall.
+
 - The global session index (`main.db`) now always lives in the Capsem home's
   `sessions/` directory. The service derived it from the run directory's
   parent, so a service started with `CAPSEM_RUN_DIR` outside the home put it

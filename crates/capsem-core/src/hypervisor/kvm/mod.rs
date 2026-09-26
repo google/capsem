@@ -412,12 +412,20 @@ impl Hypervisor for KvmHypervisor {
         mmio_bus.register(memory::virtio_mmio_addr(0), memory::VIRTIO_MMIO_SIZE, console_mmio)?;
 
         // -- x86_64: PIO bus + 16550 UART ---------------------------------
+        // The UART interrupts on COM1's line: without it, userspace writes to
+        // ttyS0 never left the guest's tty buffer.
         #[cfg(target_arch = "x86_64")]
-        let pio_bus = {
+        let (pio_bus, uart) = {
             let bus = Arc::new(pio::PioBus::new());
-            let uart = serial_pio::Serial16550::new(uart_output_write, uart_input_read);
-            bus.register(0x3F8, 8, Arc::new(uart))?;
-            bus
+            let uart_irq_fd = create_irq_eventfd()?;
+            vm.irqfd(uart_irq_fd.as_raw_fd(), serial_pio::COM1_IRQ)?;
+            let uart = Arc::new(serial_pio::Serial16550::new(
+                uart_output_write,
+                uart_input_read,
+                uart_irq_fd,
+            ));
+            bus.register(0x3F8, 8, Arc::clone(&uart) as Arc<dyn pio::PioDevice>)?;
+            (bus, uart)
         };
 
         // -- Shared: block devices ----------------------------------------
@@ -572,6 +580,7 @@ impl Hypervisor for KvmHypervisor {
         #[cfg(target_arch = "x86_64")]
         if let Some(restored) = restored_checkpoint.as_ref() {
             restore_mmio_device_graph(&mmio_transports, &restored.mmio_devices)?;
+            uart.resume_after_restore();
         }
 
         // Listener and IRQ bridge threads retain shutdown/device resources.
