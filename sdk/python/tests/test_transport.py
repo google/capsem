@@ -25,7 +25,7 @@ async def gateway(response: bytes | None = None) -> AsyncIterator[tuple[str, lis
             await asyncio.sleep(0.1)
         return web.Response(body=response if response is not None else payload or b'{"success":true}', content_type="application/octet-stream")
 
-    app = web.Application()
+    app = web.Application(client_max_size=10 * 1024 * 1024)
     app.router.add_route("*", "/{tail:.*}", handle)
     runner = web.AppRunner(app, shutdown_timeout=0.2)
     await runner.setup()
@@ -70,6 +70,18 @@ def test_wire_encoding_auth_json_and_binary() -> None:
         await client.close()
         with pytest.raises(RuntimeError, match="closed"):
             await client.request(Method.GET, "/status")
+
+    asyncio.run(run())
+
+
+def test_large_binary_bodies_stream_without_resource_warnings() -> None:
+    """Files API uploads send multi-MiB parts; aiohttp warns above 1 MiB of raw bytes."""
+    async def run() -> None:
+        async with gateway() as (url, received), Transport(url, "test-token") as client:
+            binary = bytes(range(256)) * (3 * 4096)
+            assert await client.request(Method.POST, "/file", body=binary, accept=MediaType.BINARY) == binary
+            assert received[0][2] == binary
+            assert received[0][3]["Content-Length"] == str(len(binary))
 
     asyncio.run(run())
 

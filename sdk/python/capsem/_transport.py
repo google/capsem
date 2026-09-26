@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import math
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
@@ -108,13 +109,14 @@ class Transport:
                 pairs.append((key, _query_value(value)))
         target = self._url + path + ("?" + urlencode(pairs) if pairs else "")
         headers = {"Authorization": f"Bearer {self._token}", "Accept": accept.value}
-        data: str | bytes | None = None
+        data: str | bytes | io.BytesIO | None = None
         if json_body or isinstance(body, BaseModel):
             data = (body.model_dump_json(by_alias=True, exclude_unset=True)
                     if isinstance(body, BaseModel) else TypeAdapter(JsonValue).dump_json(body))
             headers["Content-Type"] = MediaType.JSON.value
         elif isinstance(body, bytes):
-            data = body
+            # A sized stream: aiohttp warns on raw bytes over 1 MiB (file parts are larger).
+            data = io.BytesIO(body)
             headers["Content-Type"] = MediaType.BINARY.value
         elif body is not None:
             raise TypeError("non-model JSON bodies require json_body=True")
