@@ -17,30 +17,57 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = PROJECT_ROOT / "build_system" / "docker" / "Dockerfile.linux-rust-base"
 
 RATIONALE = """\
-Dockerfile.linux-rust-base must COPY every Cargo workspace member into /src.
-A member left out makes `cargo fetch --locked` fail to load the workspace, and
-the failure hides until the cached image is next rebuilt.
+Dockerfile.linux-rust-base must COPY every Cargo workspace member into /src
+before `cargo fetch --locked`. A member left out, or copied after the fetch,
+makes the fetch fail to load the workspace, and the failure hides until the
+cached image is next rebuilt.
 """
 
 
-def _copied_roots() -> set[str]:
+FETCH = "RUN cargo fetch --locked"
+
+
+def _copied_before_the_fetch(dockerfile: str) -> set[str]:
+    """Roots copied into the build context before `cargo fetch` runs.
+
+    A COPY after the fetch is invisible to it, so it cannot count: scanning
+    the whole file let a member copied too late pass the guard and fail the
+    image build.
+    """
     roots: set[str] = set()
-    for line in DOCKERFILE.read_text(encoding="utf-8").splitlines():
+    for line in dockerfile.splitlines():
+        if line.strip() == FETCH:
+            return roots
         words = line.split()
         if words[:1] == ["COPY"] and not any(word.startswith("--from") for word in words):
             roots.update(word.rstrip("/") for word in words[1:-1])
-    return roots
+    raise AssertionError(f"{DOCKERFILE.name} no longer runs `{FETCH}`; update this guard")
 
 
-def test_every_workspace_member_is_copied_before_the_fetch() -> None:
+def _members_missing_before_the_fetch(dockerfile: str) -> list[str]:
     manifest = tomllib.loads((PROJECT_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
-    copied = _copied_roots()
-    missing = [
+    copied = _copied_before_the_fetch(dockerfile)
+    return [
         member
         for member in manifest["workspace"]["members"]
         if not any(member == root or member.startswith(f"{root}/") for root in copied)
     ]
-    assert not missing, RATIONALE + f"\nnot copied: {missing}"
+
+
+def test_every_workspace_member_is_copied_before_the_fetch() -> None:
+    missing = _members_missing_before_the_fetch(DOCKERFILE.read_text(encoding="utf-8"))
+    assert not missing, RATIONALE + f"\nnot copied before the fetch: {missing}"
+
+
+def test_a_member_copied_after_the_fetch_is_caught() -> None:
+    """The mistake the whole-file scan let through: the COPY exists, too late."""
+    sdk_copy = "COPY sdk/rust /src/sdk/rust"
+    lines = DOCKERFILE.read_text(encoding="utf-8").splitlines()
+    assert sdk_copy in lines, f"the fixture expects `{sdk_copy}` in {DOCKERFILE.name}"
+    lines.remove(sdk_copy)
+    lines.insert(lines.index(FETCH) + 1, sdk_copy)
+
+    assert _members_missing_before_the_fetch("\n".join(lines)) == ["sdk/rust"]
 
 
 UV_OFFLINE_RATIONALE = """\
