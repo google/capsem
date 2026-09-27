@@ -413,12 +413,9 @@ impl Hypervisor for KvmHypervisor {
 
         // -- x86_64: PIO bus + 16550 UART ---------------------------------
         #[cfg(target_arch = "x86_64")]
-        let pio_bus = {
-            let bus = Arc::new(pio::PioBus::new());
-            let uart = serial_pio::Serial16550::new(uart_output_write, uart_input_read);
-            bus.register(0x3F8, 8, Arc::new(uart))?;
-            bus
-        };
+        let pio_bus = Arc::new(pio::PioBus::new());
+        #[cfg(target_arch = "x86_64")]
+        let uart = serial_pio::attach_com1(&vm, &pio_bus, uart_output_write, uart_input_read)?;
 
         // -- Shared: block devices ----------------------------------------
         if let Some(ref disk_path) = config.disk_path {
@@ -572,6 +569,7 @@ impl Hypervisor for KvmHypervisor {
         #[cfg(target_arch = "x86_64")]
         if let Some(restored) = restored_checkpoint.as_ref() {
             restore_mmio_device_graph(&mmio_transports, &restored.mmio_devices)?;
+            uart.resume_after_restore();
         }
 
         // Listener and IRQ bridge threads retain shutdown/device resources.
