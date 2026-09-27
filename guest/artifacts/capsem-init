@@ -50,17 +50,49 @@ if [ -n "$CONSOLE_DEV" ]; then
 fi
 
 # Boot timing: record stage durations as JSONL for the PTY agent to send via vsock.
+#
+# Each stage also records steal_ms: time the host kept a runnable vCPU off a
+# physical CPU during the stage (/proc/stat steal, USER_HZ = 100 ticks/s on
+# every Linux architecture). On a shared runner one long deschedule can land
+# inside a single stage; the doctor budgets wall time minus steal so it
+# measures guest work, not host scheduling. The value is the largest per-vCPU
+# delta rather than the sum, so vCPUs waiting in parallel cannot add up to
+# more than one vCPU's wall time. A hypervisor that reports no steal (Apple
+# VZ) records 0, which leaves the budget on wall time.
 TIMING_FILE=/tmp/capsem-boot-timing
-boot_ms() { awk '{printf "%d", $1 * 1000}' /proc/uptime; }
-# Everything before this script's first mark is the kernel and early
-# userspace; without this line it was the one boot cost nobody could see.
-printf '{"name":"kernel","duration_ms":%d}\n' "$(boot_ms)" >> "$TIMING_FILE"
-_LAST_MARK=$(boot_ms)
+_LAST_STEAL=""
+# Prints "<uptime_ms> <max per-vCPU steal delta ms> <per-vCPU steal ticks...>";
+# one awk process per mark reads both files.
+boot_clock() {
+    awk -v prev="$_LAST_STEAL" '
+        FILENAME == "/proc/uptime" { up = $1; next }
+        $1 ~ /^cpu[0-9]+$/ { n++; cur[n] = $9; next }
+        $1 !~ /^cpu/ { exit }
+        END {
+            split(prev, p, " ")
+            max = 0
+            for (i = 1; i <= n; i++) {
+                d = (cur[i] - p[i]) * 10
+                if (d > max) max = d
+                list = list " " cur[i]
+            }
+            printf "%d %d%s", up * 1000, max, list
+        }' /proc/uptime /proc/stat
+}
 boot_mark() {
-    local now=$(boot_ms)
-    printf '{"name":"%s","duration_ms":%d}\n' "$1" "$(( now - _LAST_MARK ))" >> "$TIMING_FILE"
+    local clock now rest steal
+    clock=$(boot_clock)
+    now=${clock%% *}
+    rest=${clock#* }
+    steal=${rest%% *}
+    _LAST_STEAL=${rest#"$steal"}
+    printf '{"name":"%s","duration_ms":%d,"steal_ms":%d}\n' \
+        "$1" "$(( now - ${_LAST_MARK:-0} ))" "$steal" >> "$TIMING_FILE"
     _LAST_MARK=$now
 }
+# Everything before this script's first mark is the kernel and early
+# userspace; without this line it was the one boot cost nobody could see.
+boot_mark "kernel"
 
 # Boot and agent diagnostics survive on the host-preserved VirtioFS share, in
 # its own logs/ directory beside workspace/ -- never inside workspace/. The

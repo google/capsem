@@ -6510,6 +6510,66 @@ def test_boot_timing_gate_attributes_regressions_to_one_stage() -> None:
     assert "total <= 1000" not in doctor_source
 
 
+def test_boot_timing_budget_excludes_host_steal() -> None:
+    """A stage is budgeted on guest work: host steal during it is not its cost.
+
+    Release run 36351667646 failed profile_root_seed at 510ms on a shared
+    nested-virt runner; the stage copies sixteen small files and measured 40ms
+    on the previous run. The vCPU was descheduled, and the guest's steal
+    counter is the record of that.
+    """
+    module = _boot_timing_module()
+    budget = module.MAX_BOOT_STAGE_MS
+
+    descheduled = {"name": "profile_root_seed", "duration_ms": 510, "steal_ms": 470}
+    assessment = module.assess_boot_timing([descheduled])
+    assert assessment.slow_stages == (), "wall time over budget only through steal"
+    assert assessment.total_ms == 510, "the aggregate still reports wall time"
+
+    slow_work = {"name": "network", "duration_ms": budget + 400, "steal_ms": 300}
+    assert module.assess_boot_timing([slow_work]).slow_stages == (slow_work,), (
+        "guest work over budget fails even when some of the stage was stolen"
+    )
+
+    # Old guests write no steal_ms: the stage is budgeted on wall time.
+    legacy = {"name": "network", "duration_ms": budget + 1}
+    assert module.assess_boot_timing([legacy]).slow_stages == (legacy,)
+    assert module.assess_boot_timing([{"name": "network", "duration_ms": budget}]).slow_stages == ()
+
+
+@pytest.mark.parametrize(
+    "steal",
+    [-10_000, "garbage", None, [470], {"ms": 470}, True, float("nan"), float("inf"), "470ms"],
+)
+def test_boot_timing_hostile_steal_never_hides_a_regression(steal: object) -> None:
+    """Steal that is not a sane non-negative integer discounts nothing."""
+    module = _boot_timing_module()
+    stage = {"name": "network", "duration_ms": module.MAX_BOOT_STAGE_MS + 10, "steal_ms": steal}
+    assert module.assess_boot_timing([stage]).slow_stages == (stage,)
+
+
+def test_boot_timing_steal_is_capped_at_the_stage_duration() -> None:
+    """Steal larger than the stage (a corrupt counter) cannot make work negative."""
+    module = _boot_timing_module()
+    budget = module.MAX_BOOT_STAGE_MS
+    over = {"name": "network", "duration_ms": budget * 3, "steal_ms": budget * 100}
+    assessment = module.assess_boot_timing([over])
+    assert assessment.slow_stages == ()
+    assert assessment.total_ms == budget * 3
+    # A numeric string is what a hand-edited or re-encoded line would carry.
+    assert module.assess_boot_timing(
+        [{"name": "network", "duration_ms": budget + 10, "steal_ms": "20"}]
+    ).slow_stages == ()
+
+
+def test_capsem_init_records_steal_per_boot_stage() -> None:
+    """Every boot mark carries the steal the doctor budget subtracts."""
+    init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+    assert "/proc/stat" in init
+    assert init.count('"duration_ms":%d') == init.count('"steal_ms":%d') == 1
+    assert 'boot_mark "kernel"' in init, "the kernel line goes through the same mark"
+
+
 def test_capsem_agent_repairs_missing_default_venv() -> None:
     """The guest agent must not leave VIRTUAL_ENV unset if init venv races."""
     source = (PROJECT_ROOT / "crates" / "capsem-agent" / "src" / "venv.rs").read_text()
