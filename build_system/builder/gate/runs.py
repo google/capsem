@@ -21,7 +21,7 @@ from .errors import GateError
 from .execution import Kind, Needs, Speed, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
-from .runhistory import read, runs
+from .runhistory import read, recover, runs
 from .runledger import comparable_to, containing, rows
 from .timing import clock, measure, report
 
@@ -123,8 +123,11 @@ def _list(context: Context) -> None:
         return
 
     for directory in recorded:
-        timing = measure(read(directory, context.config.runlog))
+        recovered = recover(directory, context.config.runlog)
+        timing = measure(recovered.events)
         state = "FAILED" if timing.outcome == "failed" else "ok"
+        if recovered.torn:
+            state += " DAMAGED"
         context.runner.note(f"{directory.name:<34}  {timing.total_ms / 1000:>8.0f}s  {state}")
 
 
@@ -255,15 +258,20 @@ def _trend(context: Context, label: str) -> None:
 
 
 def _explain(context: Context, directory: Path) -> None:
-    events = read(directory, context.config.runlog)
+    events, torn = recover(directory, context.config.runlog)
     if not events:
         raise GateError(f"{directory} has no recorded events")
 
-    context.runner.note(
-        report(
-            measure(events),
-            command=directory.name,
-            settings=context.config.runlog,
-            run_id=directory.name,
-        )
+    rendered = report(
+        measure(events),
+        command=directory.name,
+        settings=context.config.runlog,
+        run_id=directory.name,
     )
+    if torn:
+        # Said first, because everything after it is short by what was lost.
+        rendered = (
+            f"DAMAGED: {torn} line(s) of this run's log could not be read back; "
+            f"what follows is only what survived.\n{rendered}"
+        )
+    context.runner.note(rendered)
