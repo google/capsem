@@ -402,7 +402,8 @@ pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionL
                             source: router_stream::Framing::Raw,
                             destination: router_stream::Framing::Framed,
                         };
-                        jobs.spawn(async move {
+                        let span = tracing::warn_span!("router_stream", connection_id = id);
+                        jobs.spawn(tracing::Instrument::instrument(async move {
                             let _permit = permit;
                             let result = if let Some(admission) = preview {
                                 preview::relay(&mut source.socket, &mut destination.socket, admission, async {
@@ -428,7 +429,7 @@ pub async fn relay(grants: Receiver, mut events: UnixStream, limits: ConnectionL
                             tracing::debug!(connection_id = id, reason = ?result.reason, from_source = result.from_source,
                                 to_source = result.to_source, error = ?result.error, "router stream ended");
                             (id, result.report())
-                        });
+                        }, span));
                         active.insert(id, stop);
                     }
                     Grant::Abort { id } => {
