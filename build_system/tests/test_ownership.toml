@@ -893,3 +893,8 @@ target = "build_system/tests/packaging/test_router_signing.py"
 owner = "gate"
 source = "tests/test_pytest_excerpt.py"
 target = "build_system/tests/gate/test_pytest_excerpt.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_cargo_cache_bound.py"
+target = "build_system/tests/gate/test_cargo_cache_bound.py"
