@@ -49,6 +49,14 @@ else
     fixable llvm-tools "component: llvm-tools missing"
 fi
 
+# Offline, so it reports rather than repairs: `just doctor fix` fetches, and the
+# gate refuses to drop its network until this passes.
+if cargo fetch --locked --offline </dev/null >/dev/null 2>&1; then
+    pass "crates: Cargo.lock satisfied from the local registry"
+else
+    fixable cargo-fetch "crates: Cargo.lock names crates missing from the local registry"
+fi
+
 if declare -F check_linux_musl_toolchain >/dev/null; then
     check_linux_musl_toolchain
 fi
@@ -225,7 +233,7 @@ if [[ "$_needed_count" -gt 0 ]]; then
         exec "$0"
     else
         echo ""
-        echo -e "Run ${BOLD}just doctor-fix${NC} to auto-fix these issues."
+        echo -e "Run ${BOLD}just doctor fix${NC} to auto-fix these issues."
     fi
 fi
 

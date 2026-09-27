@@ -160,8 +160,9 @@ else
     printf "  [SKIP] Python deps (uv not installed -- some just recipes will fail)\n"
 fi
 
-printf "  Rust workspace deps (cargo fetch --locked)...\n"
-cargo fetch --locked
+# Rust workspace crates are fetched by doctor's fix below (`cargo-fetch`), the
+# one owner of that check: a Cargo.lock that gains a crate after bootstrap is
+# caught by `just doctor` and repaired by `just doctor fix` the same way.
 
 # The production host-SBOM generator reads the exact Debian packages emitted
 # by the Linux release rail. Ubuntu dpkg currently writes data.tar.zst, while

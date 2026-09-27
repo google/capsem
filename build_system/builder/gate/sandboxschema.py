@@ -38,6 +38,7 @@ class SandboxConfig(Strict):
     egress_stop_timeout: float
     egress_max_message_bytes: int
     network_reason: str
+    cargo_offline_probe: tuple[str, ...]
     socket_reason: str
     self_confinement_reason: str
     self_confined_executables: tuple[SafeToken, ...]
@@ -92,4 +93,6 @@ class SandboxConfig(Strict):
             or self.linux_hosted_userns_repair_value != 0
         ):
             raise ValueError("the hosted repair may only lift Ubuntu's userns AppArmor switch")
+        if not {"--locked", "--offline"} <= set(self.cargo_offline_probe):
+            raise ValueError("cargo_offline_probe must stay --locked and --offline")
         return self

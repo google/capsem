@@ -91,6 +91,18 @@ _doctor_install_node_workspaces() {
     uv run --project build_system --frozen capsem-gate install-node
 }
 
+_doctor_fetch_cargo_sources() {
+    # The gate drops the network before its first cargo, so the fetch belongs
+    # on the host. Inside a run it would be the same DNS wall it exists to fix.
+    if [ -n "${CAPSEM_GATE_RUN:-}" ]; then
+        printf "  [FAIL] Cargo.lock crates must be fetched before entering %s\n" \
+            "$CAPSEM_GATE_RUN" >&2
+        printf "         Run just doctor fix on the host, then retry the gate.\n" >&2
+        return 1
+    fi
+    cargo fetch --locked
+}
+
 _doctor_install_gate_tools() {
     if [ -n "${CAPSEM_GATE_RUN:-}" ]; then
         printf "  [FAIL] Cargo gate tools must be installed before entering %s\n" \
@@ -116,6 +128,8 @@ _reg llvm-tools       "rustup component add --toolchain $CAPSEM_RUST_TOOLCHAIN l
                       "Install llvm-tools (provides rust-lld)"
 _reg linux-musl-tools "_doctor_install_linux_musl_tools" \
                       "Install Linux musl C compiler/linker (musl-tools)"
+_reg cargo-fetch      "_doctor_fetch_cargo_sources" \
+                      "Fetch every crate Cargo.lock names (the gate has no network)"
 _reg gate-cargo-tools "_doctor_install_gate_tools" \
                       "Install every config-owned Cargo gate tool"
 _reg entitlements     "git checkout build_system/packaging/macos/entitlements.plist" \

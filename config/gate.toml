@@ -2037,6 +2037,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_qualification_flow.py",
     "build_system/tests/gate/test_gate_qualification_reuse.py",
     "build_system/tests/gate/test_gate_sandbox.py",
+    "build_system/tests/gate/test_gate_offline_cargo_sources.py",
     "build_system/tests/gate/test_gate_sandbox_report.py",
     "build_system/tests/gate/test_gate_git_worktree_mount.py",
     "tests/test_rust_filesystem_chokepoint.py",
@@ -2654,6 +2655,12 @@ egress_stop_timeout = 5.0
 egress_max_message_bytes = 8388608
 
 network_reason = "No mid-run fetch. This is the rule the whole profile exists for."
+# No mid-run fetch means every crate Cargo.lock names is already local before
+# the gate drops its network. Asked offline, at the last moment the network is
+# still there, so a lock that gained a crate since bootstrap is refused up front
+# with `just doctor fix` -- not minutes later as a DNS wall from the first
+# sandboxed cargo. `just doctor` runs the same probe and owns the fetch.
+cargo_offline_probe = ["cargo", "fetch", "--locked", "--offline"]
 socket_reason = "`(deny network*)` covers AF_UNIX too, so these come back explicitly."
 self_confinement_reason = "Seatbelt cannot be nested. These trusted children replace the inherited gate profile with their stricter router profile before handling data; ordinary test children retain the gate network denial."
 self_confined_executables = ["capsem-router", "capsem-router-confinement-test"]

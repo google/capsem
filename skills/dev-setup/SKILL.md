@@ -149,7 +149,6 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 1 | `just` | `just.systems` -> `~/.local/bin` |
 | 2 | `uv` | `astral.sh/uv` -> `~/.local/bin` |
 | 2 | Python lock metadata + deps | `uv lock --project build_system --locked` then `uv sync --project build_system --frozen` |
-| 2 | Rust workspace deps | `cargo fetch --locked` before sandboxed qualification |
 | 2 (Linux) | native compiler/Tauri libs, `cpio`, Docker/Buildx, Bubblewrap | apt or dnf |
 | 2 (Linux) | configured Node major + pnpm 10 | SHA256-verified official Node archive + npm |
 | 2 (Linux) | Docker/KVM/vhost-vsock current-session access | groups + checked-in udev policy and narrow socket/vhost ACL |
@@ -158,7 +157,7 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` (+ symlink into `~/.docker/cli-plugins`) |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` |
 | 2 | Frontend, docs, site, and release-site deps | config-driven `capsem-gate install-node` with frozen lockfiles |
-| 3 | Doctor `--fix` | `build_system/scripts/doctor/doctor-common.sh --fix` -- Rust targets, exact config-owned Cargo tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, `cargo-sbom`), build VM assets, pack initrd |
+| 3 | Doctor `--fix` | `build_system/scripts/doctor/doctor-common.sh --fix` -- Rust targets, locked workspace crates (`cargo fetch --locked`), exact config-owned Cargo tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, `cargo-sbom`), build VM assets, pack initrd |
 
 The VM asset rail materializes its digest-pinned OBOM tools inside its own
 architecture-matched helper; do not install a parallel global cdxgen.
@@ -353,11 +352,17 @@ All fixable issues use an **ordered fix registry** defined at the top of `doctor
 Registry order (each depends on the ones above it):
 1. `rustup-targets` -- cross-compile targets
 2. `llvm-tools` -- rust-lld linker
-3. `cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, `cargo-sbom` -- exact config-owned Cargo tools
-4. `entitlements`, `cargo-config`, `run-signed` -- git checkout config files
-5. `pnpm-install` -- every locked Node workspace, through `capsem-gate install-node`
-6. `build-assets` -- VM kernel + rootfs (needs docker)
-7. `pack-initrd` -- guest binaries (needs assets)
+3. `cargo-fetch` -- every crate `Cargo.lock` names. Checked offline
+   (`cargo fetch --locked --offline`); every gate that drops its network runs
+   the same probe first (`[sandbox].cargo_offline_probe`) and refuses with
+   `just doctor fix` instead of failing minutes later on
+   `Could not resolve host: index.crates.io`. Pulled a `Cargo.lock` that
+   gained a crate? Run `just doctor fix`.
+4. `cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, `cargo-sbom` -- exact config-owned Cargo tools
+5. `entitlements`, `cargo-config`, `run-signed` -- git checkout config files
+6. `pnpm-install` -- every locked Node workspace, through `capsem-gate install-node`
+7. `build-assets` -- VM kernel + rootfs (needs docker)
+8. `pack-initrd` -- guest binaries (needs assets)
 
 ### Design rules
 
