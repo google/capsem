@@ -87,7 +87,13 @@ def store_with_three_generations(tmp_path: Path, paths: CachePaths):
     new = receipt(paths, "b", {"vmlinuz": new_kernel, "initrd": shared}, now)
     views = paths.stage("objects") / "receipts" / "views" / orphan.digest
     views.mkdir(parents=True)
-    (views / "package.deb.json").write_text("{}", encoding="utf-8")
+    filed = views / "package.deb.json"
+    filed.write_text("{}", encoding="utf-8")
+    # Every file in the store lives on the test's clock. A view left at wall-clock
+    # time made the orphan newer than any refreshed receipt only when the
+    # refresh landed in a later clock tick, which hid real atime refreshes
+    # behind a race instead of failing every time.
+    os.utime(filed, ns=(now - DAY_NS, now - DAY_NS))
     return now, (old_kernel, new_kernel, shared, orphan), (old, new)
 
 
@@ -138,8 +144,16 @@ def _relatime(monkeypatch: pytest.MonkeyPatch) -> None:
     The test above failed on the hosted Linux release lane and passed on
     macOS: the scan read each receipt to learn what it owns, the read marked
     it used, and the oldest generation came back looking newest.
+
+    Where the platform has a real O_NOATIME the flag reaches the kernel
+    untouched. Stripping it there turned the emulation into a real read on a
+    real relatime mount: the kernel refreshed the receipt it had been asked
+    not to, to wall-clock time, and the test failed whenever that refresh
+    landed in a later clock tick than the fixture's last write.
     """
+    native = hasattr(os, "O_NOATIME")
     noatime = getattr(os, "O_NOATIME", 0o1000000)
+    unknown_to_kernel = 0 if native else noatime
     monkeypatch.setattr(os, "O_NOATIME", noatime, raising=False)
 
     def touch(path: str | Path) -> None:
@@ -149,7 +163,7 @@ def _relatime(monkeypatch: pytest.MonkeyPatch) -> None:
     real_open, real_read_text = os.open, Path.read_text
 
     def open_(path, flags, *args, **kwargs):
-        descriptor = real_open(path, flags & ~noatime, *args, **kwargs)
+        descriptor = real_open(path, flags & ~unknown_to_kernel, *args, **kwargs)
         if not flags & noatime:
             touch(path)
         return descriptor

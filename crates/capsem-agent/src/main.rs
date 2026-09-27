@@ -202,7 +202,8 @@ fn main() {
     let _telemetry = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-pty-agent",
         sink: capsem_foundation::telemetry::LogSink::Stderr,
-        default_filter: "capsem_pty_agent=info",
+        // capsem-foundation owns the publication copy loop and its stall reports.
+        default_filter: "capsem_pty_agent=info,capsem_foundation=warn",
     })
     .expect("initialize guest telemetry");
     eprintln!("[capsem-agent] starting (pid {})", process::id());

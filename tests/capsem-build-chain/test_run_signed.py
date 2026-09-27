@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -14,7 +15,12 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_run_signed_reuses_only_verified_matching_entitlements(tmp_path: Path) -> None:
+def _mocked_runner(tmp_path: Path) -> tuple[list[str], dict[str, str], Path, Path]:
+    """run_signed.sh in a scratch root, with macOS tools faked for any host.
+
+    Returns the command, its environment, the program it launches and the
+    directory of fake tools.
+    """
     package = tmp_path / "build_system" / "packaging" / "macos"
     package.mkdir(parents=True)
     shutil.copy(PROJECT_ROOT / "build_system/packaging/macos/run_signed.sh", package)
@@ -128,6 +134,16 @@ for path in sys.argv[3:]:
         "TEST_PYTHON": sys.executable,
     }
     command = ["bash", str(package / "run_signed.sh"), str(binary)]
+    return command, env, binary, commands
+
+
+def test_run_signed_reuses_only_verified_matching_entitlements(tmp_path: Path) -> None:
+    command, env, binary, _ = _mocked_runner(tmp_path)
+    package = tmp_path / "build_system" / "packaging" / "macos"
+    entitlements = tmp_path / "build_system/packaging/macos/entitlements.plist"
+    calls = tmp_path / "sign-calls"
+    verifies = tmp_path / "verify-calls"
+    state = tmp_path / "sign-state"
 
     # Simultaneous cold launches must publish one signature, then every warm
     # launch must leave the executable untouched (nextest runs one per test).
@@ -159,7 +175,7 @@ for path in sys.argv[3:]:
     assert failed.returncode == 1
     assert b"codesign failed" in failed.stderr
     assert b"must-not-launch" not in failed.stdout
-    assert not (tmp_path / "cache/target/.run_signed_codesign.lock").exists()
+    assert _sign_lock_is_free(tmp_path)
 
     failed = subprocess.run(command, env={**env, "FAIL_VERIFY": "1"}, capture_output=True)
     assert failed.returncode == 1
@@ -204,7 +220,7 @@ for path in sys.argv[3:]:
     assert missing.returncode == 0, missing.stderr
     assert missing.stdout == b"survived-unlink\n"
     assert not list(tmp_path.glob(".run-signed-*.tmp.*"))
-    assert not (tmp_path / "cache/target/.run_signed_codesign.lock").exists()
+    assert _sign_lock_is_free(tmp_path)
 
     binary.write_text("#!/bin/sh\necho must-not-copy\n")
     failed = subprocess.run(command, env={**env, "FAIL_COPY": "1"}, capture_output=True)
@@ -223,24 +239,29 @@ for path in sys.argv[3:]:
     relinked = subprocess.run(
         command,
         env={
-            **env, "MISSING_RECHECK": "1", "PERMANENT_MISSING": "1",
+            **env,
+            "MISSING_RECHECK": "1",
+            "PERMANENT_MISSING": "1",
             "RELINK_AFTER_FAILED_STAT": "1",
         },
-        capture_output=True, timeout=5,
+        capture_output=True,
+        timeout=5,
     )
     assert relinked.returncode == 0, relinked.stderr
     assert relinked.stdout == b"survived-relink\n"
     (state / "recheck").unlink()
     binary.write_text("#!/bin/sh\necho must-not-retry-forever\n")
     missing = subprocess.run(
-        command, env={**env, "MISSING_RECHECK": "1", "PERMANENT_MISSING": "1"},
-        capture_output=True, timeout=5,
+        command,
+        env={**env, "MISSING_RECHECK": "1", "PERMANENT_MISSING": "1"},
+        capture_output=True,
+        timeout=5,
     )
     assert missing.returncode == 1
     assert b"Cargo kept replacing" in missing.stderr
     assert not missing.stdout
     assert not list(tmp_path.glob(".run-signed-*.tmp.*"))
-    assert not (tmp_path / "cache/target/.run_signed_codesign.lock").exists()
+    assert _sign_lock_is_free(tmp_path)
     Path(str(binary) + ".next").rename(binary)
 
     alias = tmp_path / "program-alias"
@@ -253,30 +274,30 @@ for path in sys.argv[3:]:
         subprocess.run(invocation, env=env, check=True, capture_output=True)
     assert verifies.read_text() == verified, "hardlinked names must retain independent receipts"
 
-    # The codesign lock belongs to a living runner. One killed while holding
-    # it -- or before it could say who it is -- must not wedge every later
-    # launch, and a live holder is waited for rather than timed out on.
-    lock = tmp_path / "cache/target/.run_signed_codesign.lock"
-    reaped = subprocess.Popen(["true"])
-    reaped.wait()
-    for label, owner, age in (("dead-holder", str(reaped.pid), 0), ("ownerless", None, 60)):
-        binary.write_text(f"#!/bin/sh\necho {label}\n")
-        lock.mkdir()
-        if owner is not None:
-            (lock / "owner").write_text(owner)
-        if age:
-            past = time.time() - age
-            os.utime(lock, (past, past))
-        reclaimed = subprocess.run(command, env=env, capture_output=True, timeout=10, check=False)
-        assert reclaimed.returncode == 0, (label, reclaimed.stderr)
-        assert reclaimed.stdout == f"{label}\n".encode()
-        assert not lock.exists(), label
-    binary.write_text("#!/bin/sh\necho after-live-holder\n")
-    lock.mkdir()
-    holder = subprocess.Popen(
-        [sys.executable, "-c", f"import shutil, time; time.sleep(1.5); shutil.rmtree({str(lock)!r})"]
+    # The kernel holds the codesign lock for its holder. One killed while
+    # holding it must not wedge every later launch, and a live holder is
+    # waited for rather than timed out on or taken from.
+    lock = tmp_path / "cache/target/.run_signed_codesign.lockfile"
+    hold = "import fcntl, sys, time; f = open(sys.argv[1], 'a'); fcntl.flock(f, fcntl.LOCK_EX); print(flush=True); time.sleep(float(sys.argv[2]))"
+    binary.write_text("#!/bin/sh\necho after-killed-holder\n")
+    killed = subprocess.Popen(
+        [sys.executable, "-c", hold, str(lock), "600"], stdout=subprocess.PIPE
     )
-    (lock / "owner").write_text(str(holder.pid))
+    assert killed.stdout is not None
+    with killed.stdout:
+        killed.stdout.readline()
+    killed.kill()
+    killed.wait()
+    reclaimed = subprocess.run(command, env=env, capture_output=True, timeout=10, check=False)
+    assert reclaimed.returncode == 0, reclaimed.stderr
+    assert reclaimed.stdout == b"after-killed-holder\n"
+    binary.write_text("#!/bin/sh\necho after-live-holder\n")
+    holder = subprocess.Popen(
+        [sys.executable, "-c", hold, str(lock), "1.5"], stdout=subprocess.PIPE
+    )
+    assert holder.stdout is not None
+    with holder.stdout:
+        holder.stdout.readline()
     started = time.monotonic()
     waited = subprocess.run(command, env=env, capture_output=True, timeout=20, check=False)
     holder.wait()
@@ -303,14 +324,21 @@ for path in sys.argv[3:]:
         os.close(write_fd)
 
 
-def test_run_signed_serializes_codesign_without_flock() -> None:
+def test_run_signed_serializes_codesign_on_a_kernel_lock() -> None:
+    """macOS ships no flock(1); the lock is Perl's builtin on a held descriptor.
+
+    A lock the kernel releases needs no guess at whether its holder is gone.
+    The mkdir lock it replaced guessed from a stored PID, and a holder that
+    released and exited between the guess and the reclaim let two runners in.
+    """
     script = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "run_signed.sh").read_text()
 
-    assert "SIGN_LOCK_DIR=" in script
+    assert "SIGN_LOCK_FILE=" in script
     assert "acquire_sign_lock" in script
     assert "release_sign_lock" in script
-    assert 'mkdir "$SIGN_LOCK_DIR"' in script
-    assert "flock" not in script
+    assert "flock($lock, LOCK_EX)" in script
+    assert not re.search(r"(^|[;&|(]\s*)flock\s", script, re.MULTILINE), "flock(1) is not on macOS"
+    assert "SIGN_LOCK_DIR" not in script and "owner" not in script, "no PID-guessing reclaim"
 
 
 @pytest.mark.parametrize("platform", ["Linux", "Darwin"])
@@ -342,3 +370,44 @@ def test_run_signed_materializes_its_cache_leaves(tmp_path: Path, platform: str)
     assert expected in result.stderr
     assert (tmp_path / "cache" / "target").is_dir()
     assert expected in (tmp_path / "cache" / "containers" / "logs" / "build.log").read_text()
+
+
+def test_a_cold_burst_signs_each_executable_once(tmp_path: Path) -> None:
+    """Nextest's listing starts a runner per test binary at once, cold.
+
+    Each round, a dozen runners race to sign one fresh executable: exactly one
+    signs, and all launch it. With the mkdir lock, a holder that released and
+    exited before a waiter's reclaim let a second runner in -- it signed again,
+    and on macOS CI one renamed away the receipt the other was publishing.
+    """
+    command, env, binary, _ = _mocked_runner(tmp_path)
+    calls = tmp_path / "sign-calls"
+    for round_number in range(5):
+        calls.write_text("")
+        binary.write_text(f"#!/bin/sh\necho round-{round_number}\n")
+        runners = [
+            subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            for _ in range(12)
+        ]
+        results = [(runner.wait(timeout=60), *runner.communicate()) for runner in runners]
+        failures = [err.decode() for code, _, err in results if code != 0]
+        assert not failures, failures
+        assert {out for _, out, _ in results} == {f"round-{round_number}\n".encode()}
+        assert calls.read_text().split() == ["signed"], f"round {round_number}"
+    assert _sign_lock_is_free(tmp_path)
+
+
+def _sign_lock_is_free(root: Path) -> bool:
+    """No runner holds the codesign lock once they have all launched."""
+    import fcntl
+
+    lock = root / "cache/target/.run_signed_codesign.lockfile"
+    if not lock.exists():
+        return True
+    with lock.open("a") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    return True

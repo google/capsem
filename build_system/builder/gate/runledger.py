@@ -28,7 +28,7 @@ from .config import GateConfig
 from .digestschema import LedgerConfig
 from .filesystem import write_text
 from .harnessschema import RunLogConfig
-from .runhistory import history_locked, read, runs
+from .runhistory import history_locked, recover, runs
 from .runledgerschema import LedgerRow, StepRow
 from .runlogschema import OK, PlanShape, RunEnd, RunStart
 from .timing import measure
@@ -141,7 +141,7 @@ def rows(config: GateConfig) -> list[LedgerRow]:
     if not source.is_file():
         return []
     kept: list[LedgerRow] = []
-    for line in source.read_text(encoding="utf-8").splitlines():
+    for line in _lines(source):
         if not line.strip():
             continue
         try:
@@ -171,8 +171,16 @@ def append(config: GateConfig, directory: Path, settings: RunLogConfig) -> Ledge
     twice. Every statistic here is a median over runs, and a duplicate is the
     one kind of corruption that makes the numbers *more* confident rather than
     obviously broken.
+
+    A run whose log has torn lines gets no row, even when its `run.end`
+    survived: the events lost are step durations, and a row built from the
+    rest is a truncated measurement in a median -- the same reason a run that
+    never reached `close` gets none. Its directory stays the artifact.
     """
-    row = distill(read(directory, settings), settings.ledger)
+    recovered = recover(directory, settings)
+    if recovered.torn:
+        return None
+    row = distill(recovered.events, settings.ledger)
     if row is None:
         return None
 
@@ -180,13 +188,23 @@ def append(config: GateConfig, directory: Path, settings: RunLogConfig) -> Ledge
     with history_locked(config):
         if _already_recorded(target, row.run_id, settings.ledger.row_schema):
             return None
-        existing = target.read_text(encoding="utf-8").splitlines() if target.is_file() else []
+        existing = _lines(target) if target.is_file() else []
         kept = [line for line in existing if line.strip() and _raw_run_id(line) != row.run_id]
         kept.append(row.model_dump_json())
         kept.sort(key=lambda line: _raw_run_id(line) or "")
         kept = kept[-settings.ledger.keep_rows :]
         write_text(target, "\n".join(kept) + "\n")
     return row
+
+
+def _lines(ledger: Path) -> list[str]:
+    """The ledger's lines, with any byte that is not UTF-8 replaced.
+
+    Replaced, not raised on: a row is validated one line at a time precisely
+    so one bad line cannot blank the history, and a strict decode of the whole
+    file undid that for the one kind of damage a failing disk actually leaves.
+    """
+    return ledger.read_text(encoding="utf-8", errors="replace").splitlines()
 
 
 def _raw_run_id(line: str) -> str | None:
@@ -202,7 +220,7 @@ def _already_recorded(target: Path, run_id: str, row_schema: str) -> bool:
     """Whether a current, valid row for this run exists under the lock."""
     if not target.is_file():
         return False
-    for line in target.read_text(encoding="utf-8").splitlines():
+    for line in _lines(target):
         if not line.strip():
             continue
         try:

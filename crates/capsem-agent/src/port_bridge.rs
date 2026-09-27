@@ -135,7 +135,8 @@ impl Bridge {
                     tcp.set_nodelay(true)?;
                     let mut tcp = tokio::net::TcpStream::from_std(tcp)?;
                     let vsock = transport.insert(AsyncVsock::new(vsock.into_raw_fd())?);
-                    let outcome = capsem_foundation::unix::router_stream::copy_until(
+                    let span = tracing::warn_span!("guest_router_stream", connection_id = flow.id, generation = flow.generation);
+                    let outcome = tracing::Instrument::instrument(capsem_foundation::unix::router_stream::copy_until(
                         &mut tcp,
                         vsock,
                         capsem_foundation::unix::router_stream::Framings {
@@ -149,7 +150,7 @@ impl Bridge {
                                 _ = cancelled.changed() => {},
                             }
                         },
-                    )
+                    ), span)
                     .await;
                     // Host source is the client; this hop's copier source is
                     // the destination TCP server, so its counters are reversed.
