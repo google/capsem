@@ -29,3 +29,24 @@ print((failed / "process.log").read_text(), end="")
 
     sessions = capsem_home / "run" / "sessions"
     assert list(sessions.iterdir()) == []
+
+
+def test_help_needs_no_home_directory(monkeypatch, capsys) -> None:
+    """The verifier runs staged in a bare guest and under service managers.
+
+    An OS Login account has no /etc/passwd entry, so with HOME unset
+    Path.home() raises; the parser used it for a default and failed on
+    `--help` before any option was even read.
+    """
+    import pytest
+    from capsem_builder.release.tools import verify_installed_release
+
+    def unresolvable() -> Path:
+        raise RuntimeError("Could not determine home directory.")
+
+    monkeypatch.setattr(Path, "home", staticmethod(unresolvable))
+    monkeypatch.setattr("sys.argv", ["verify-installed-release.py", "--help"])
+    with pytest.raises(SystemExit) as exited:
+        verify_installed_release.main()
+    assert exited.value.code == 0
+    assert "--capsem-home" in capsys.readouterr().out

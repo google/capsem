@@ -81,7 +81,8 @@ def verify_failed_session_logs(capsem: Path, capsem_home: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--capsem", required=True, type=Path)
-    parser.add_argument("--capsem-home", default=Path.home() / ".capsem", type=Path)
+    # Resolved after parsing: `--help` and an explicit home must not need one.
+    parser.add_argument("--capsem-home", type=Path)
     parser.add_argument("--manifest-url", required=True)
     parser.add_argument("--metadata-manifest-url")
     parser.add_argument("--channel", required=True)
@@ -91,6 +92,7 @@ def main() -> int:
     parser.add_argument("--architecture")
     parser.add_argument("--evidence-out", type=Path)
     args = parser.parse_args()
+    args.capsem_home = args.capsem_home or Path.home() / ".capsem"
     metadata_manifest_url = args.metadata_manifest_url or args.manifest_url
     artifact_options = (args.artifact, args.platform, args.architecture)
     if any(value is not None for value in artifact_options) and not all(

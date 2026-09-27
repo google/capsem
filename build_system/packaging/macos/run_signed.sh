@@ -24,10 +24,10 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 ENTITLEMENTS="$SCRIPT_DIR/entitlements.plist"
 BUILD_LOG="$ROOT_DIR/cache/containers/logs/build.log"
-SIGN_LOCK_DIR="$ROOT_DIR/cache/target/.run_signed_codesign.lock"
+SIGN_LOCK_FILE="$ROOT_DIR/cache/target/.run_signed_codesign.lockfile"
 
 # The runner owns these two cache leaves and must work in a fresh checkout.
-mkdir -p "$(dirname "$BUILD_LOG")" "$(dirname "$SIGN_LOCK_DIR")"
+mkdir -p "$(dirname "$BUILD_LOG")" "$(dirname "$SIGN_LOCK_FILE")"
 
 log() {
     echo "[runner] $(date +%H:%M:%S) $*" >> "$BUILD_LOG"
@@ -39,34 +39,28 @@ die() {
     exit 1
 }
 
-# The lock names its holder. A runner killed while holding it cannot release
-# it, so a waiter takes it back from a dead holder, or from one that died
-# before naming itself; a living holder is waited for, since a cold nextest
-# listing serializes dozens of signatures behind it. Two waiters reclaiming
-# the same dead lock at once can sign twice, which publishes the same bytes.
+# One runner signs at a time: a cold nextest listing starts dozens at once,
+# and they must sign each executable once. The kernel owns the lock -- a BSD
+# lock on an open file, which Perl's builtin takes because macOS ships no
+# flock(1) -- so a holder that is killed releases it with its descriptors.
+# The mkdir lock this replaces had to guess from a stored PID whether its
+# holder was gone, and guessed wrong whenever a holder released and exited
+# between the guess and the reclaim: nextest's listing does that dozens of
+# times a second, so two runners signed at once and one renamed away the
+# receipt the other was publishing. fd 9 because /bin/bash is 3.2.
 acquire_sign_lock() {
-    local attempts=0 owner stale
-    while ! mkdir "$SIGN_LOCK_DIR" 2>/dev/null; do
-        owner=$(cat "$SIGN_LOCK_DIR/owner" 2>/dev/null)
-        if [[ -n "$owner" ]] && ! kill -0 "$owner" 2>/dev/null ||
-            [[ -z "$owner" && -n "$(find "$SIGN_LOCK_DIR" -maxdepth 0 -mtime +5s 2>/dev/null)" ]]; then
-            log "reclaiming codesign lock held by ${owner:-an unnamed runner} that is gone"
-            stale="$SIGN_LOCK_DIR.stale.$$"
-            mv "$SIGN_LOCK_DIR" "$stale" 2>/dev/null && rm -rf "$stale"
-            continue
-        fi
-        attempts=$((attempts + 1))
-        if [ "$attempts" -ge 12000 ]; then
-            die "timed out after 10 minutes waiting for codesign lock at $SIGN_LOCK_DIR"
-        fi
-        sleep 0.05
-    done
-    echo "$$" > "$SIGN_LOCK_DIR/owner"
-    trap 'if [[ -n "$staging" ]]; then rm -f "$staging"; fi; rm -rf "$SIGN_LOCK_DIR"' EXIT
+    exec 9>>"$SIGN_LOCK_FILE" || die "cannot open codesign lock at $SIGN_LOCK_FILE"
+    perl -MFcntl=:flock -e 'open(my $lock, ">&=", 9) or die "$!\n"; $SIG{ALRM} = sub { exit 2 }; alarm 600; flock($lock, LOCK_EX) or die "$!\n"' 2>> "$BUILD_LOG"
+    case $? in
+        0) ;;
+        2) die "timed out after 10 minutes waiting for codesign lock at $SIGN_LOCK_FILE" ;;
+        *) die "cannot take codesign lock at $SIGN_LOCK_FILE (see $BUILD_LOG)" ;;
+    esac
+    trap 'if [[ -n "$staging" ]]; then rm -f "$staging"; fi' EXIT
 }
 
 release_sign_lock() {
-    rm -rf "$SIGN_LOCK_DIR"
+    exec 9>&-
     trap - EXIT
 }
 
