@@ -303,3 +303,123 @@ async fn cancelling_copy_releases_both_endpoints() {
     assert_eq!(client.read(&mut [0]).await.unwrap(), 0);
     assert_eq!(server.read(&mut [0]).await.unwrap(), 0);
 }
+
+/// Every event the copy logs while `body` runs, one JSON object per line.
+async fn logged<T>(body: impl std::future::Future<Output = T>) -> (T, Vec<serde_json::Value>) {
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::layer::SubscriberExt;
+    #[derive(Clone, Default)]
+    struct Lines(Arc<Mutex<Vec<u8>>>);
+    impl io::Write for Lines {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let lines = Lines::default();
+    let writer = lines.clone();
+    let subscriber = tracing_subscriber::registry().with(
+        tracing_subscriber::fmt::layer()
+            .json()
+            .with_writer(move || writer.clone()),
+    );
+    // A current-thread test runtime polls every spawned task on this thread.
+    let result = {
+        let _default = tracing::subscriber::set_default(subscriber);
+        body.await
+    };
+    let text = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
+    let events = text.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    (result, events)
+}
+
+fn stalls(events: &[serde_json::Value]) -> Vec<&serde_json::Value> {
+    events
+        .iter()
+        .filter(|event| event["fields"]["message"] == "stream write made no progress")
+        .map(|event| &event["fields"])
+        .collect()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_write_that_makes_no_progress_is_reported_while_it_waits() {
+    let ((), events) = logged(async {
+        let (mut client, mut source) = duplex(64);
+        // The server never reads: the forward write blocks once 16 bytes fill it.
+        let (_server, mut destination) = duplex(16);
+        let relay =
+            tokio::spawn(async move { copy(&mut source, &mut destination, Framings::RAW, Limits::default()).await });
+        client.write_all(&[7; 64]).await.unwrap();
+        sleep(Duration::from_secs(30)).await;
+        assert!(!relay.is_finished(), "the stall limit, not the report, ends the copy");
+        let result = relay.await.unwrap();
+        assert_eq!(result.reason, CloseReason::WriteStall);
+    })
+    .await;
+    let stalls = stalls(&events);
+    assert_eq!(
+        stalls.len(),
+        1,
+        "one report per stalled episode, not one per interval: {events:?}"
+    );
+    let stall = stalls[0];
+    assert_eq!(stall["stalled"], "forward");
+    assert_eq!(stall["forward_phase"], "write");
+    assert_eq!(stall["reverse_phase"], "read");
+    assert_eq!(stall["forward_bytes"], 0);
+    assert_eq!(stall["reverse_bytes"], 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_quiet_connection_is_not_a_stall() {
+    let ((), events) = logged(async {
+        let (mut client, mut source) = duplex(32);
+        let (mut server, mut destination) = duplex(32);
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let relay = tokio::spawn(async move {
+            copy_until(&mut source, &mut destination, Framings::RAW, Limits::default(), async {
+                let _ = stopped.await;
+            })
+            .await
+        });
+        client.write_all(b"request").await.unwrap();
+        server.read_exact(&mut [0; 7]).await.unwrap();
+        // Both directions wait on reads for far longer than the report interval.
+        sleep(Duration::from_secs(120)).await;
+        stop.send(()).unwrap();
+        let outcome = relay.await.unwrap();
+        assert_eq!((outcome.reason, outcome.from_source), (CloseReason::Cancelled, 7));
+    })
+    .await;
+    assert!(stalls(&events).is_empty(), "{events:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_stall_that_clears_and_returns_is_reported_again() {
+    let ((), events) = logged(async {
+        let (mut client, mut source) = duplex(64);
+        let (mut server, mut destination) = duplex(16);
+        let relay =
+            tokio::spawn(async move { copy(&mut source, &mut destination, Framings::RAW, Limits::default()).await });
+        client.write_all(&[7; 32]).await.unwrap();
+        sleep(Duration::from_secs(12)).await;
+        // Drain it: the write completes and the counter moves on.
+        server.read_exact(&mut [0; 32]).await.unwrap();
+        sleep(Duration::from_secs(6)).await;
+        client.write_all(&[7; 64]).await.unwrap();
+        sleep(Duration::from_secs(12)).await;
+        drop(client);
+        drop(server);
+        let _ = relay.await.unwrap();
+    })
+    .await;
+    let stalls = stalls(&events);
+    assert_eq!(stalls.len(), 2, "{events:?}");
+    assert_eq!(
+        stalls[1]["forward_bytes"], 32,
+        "the second report counts what the first stall let through"
+    );
+}
