@@ -23,3 +23,6 @@ pub(crate) fn parse_boot_timing(path: &str) -> Vec<BootStage> {
         .take(32)
         .collect()
 }
+
+#[cfg(test)]
+mod tests;
