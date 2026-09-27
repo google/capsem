@@ -46,15 +46,13 @@ def _working_tree_history(config: GateConfig) -> tuple[bool, str | None]:
     for directory in runhistory.runs(config):
         if directory.name in running:
             continue
-        try:
-            events = runhistory.read(directory, config.runlog)
-        except ValueError:
-            events = []
+        events, torn = runhistory.recover(directory, config.runlog)
         start = next((event for event in events if event.get("event") == "run.start"), None)
         if start is None or start.get("command") != "candidate" or start.get("source_commit"):
             continue
         end = next((event for event in reversed(events) if event.get("event") == "run.end"), None)
-        green = end is not None and end.get("status") == OK
+        # A damaged log cannot vouch for a run: whatever it lost may be the failure.
+        green = not torn and end is not None and end.get("status") == OK
         if failed is None:
             failed = not green
         if green:

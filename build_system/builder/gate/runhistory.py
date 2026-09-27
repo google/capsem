@@ -21,6 +21,7 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import NamedTuple
 
 from .config import GateConfig
 from .fileactions import remove
@@ -29,14 +30,48 @@ from .harnessschema import RunLogConfig
 _GB = 1024**3
 
 
-def read(directory: Path, settings: RunLogConfig) -> list[dict]:
-    """Every event in a run, in order."""
+class Recovered(NamedTuple):
+    """What a run log still says, and how many of its lines no longer say anything."""
+
+    events: list[dict]
+    torn: int
+
+
+def recover(directory: Path, settings: RunLogConfig) -> Recovered:
+    """Every event that survived being written, in order, and a count of the rest.
+
+    A run log is appended to by a process that can be killed, or run out of
+    disk, between any two bytes. One run that hit ENOSPC left a step event cut
+    off with its `run.end` glued onto the stump, and while this raised on that
+    line every later gate on the checkout died syncing the ledger. So a line
+    that is not a whole event -- torn, not UTF-8, JSON that is not an object --
+    is counted rather than raised on, and the count travels with the events:
+    a damaged run is still worth reading, but it is not a clean measurement,
+    and a reader that only saw the survivors could not tell the difference.
+    """
     source = directory / settings.events
     if not source.is_file():
-        return []
-    return [
-        json.loads(line) for line in source.read_text(encoding="utf-8").splitlines() if line.strip()
-    ]
+        return Recovered([], 0)
+    events: list[dict] = []
+    torn = 0
+    for line in source.read_bytes().splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line.decode("utf-8"))
+        except ValueError:
+            torn += 1
+            continue
+        if isinstance(event, dict) and isinstance(event.get("event"), str):
+            events.append(event)
+        else:
+            torn += 1
+    return Recovered(events, torn)
+
+
+def read(directory: Path, settings: RunLogConfig) -> list[dict]:
+    """Every event that survived in a run, in order. See `recover` for the rest."""
+    return recover(directory, settings).events
 
 
 def runs(config: GateConfig) -> list[Path]:
@@ -183,7 +218,9 @@ def finished(directory: Path, settings: RunLogConfig) -> bool:
     events = directory / settings.events
     if not events.is_file():
         return False
-    return '"run.end"' in events.read_text(encoding="utf-8")
+    # Replaced, not strict: this runs as every gate opens, and one byte a
+    # dying writer left behind must not stop the next run from starting.
+    return '"run.end"' in events.read_text(encoding="utf-8", errors="replace")
 
 
 def free_gb(path: Path) -> float:

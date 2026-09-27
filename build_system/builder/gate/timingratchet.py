@@ -16,7 +16,7 @@ from .config import GateConfig
 from .context import Context
 from .errors import GateError
 from .harnessschema import TimingRegressionConfig
-from .runhistory import read, runs
+from .runhistory import read, recover, runs
 from .runledger import identity, one_event
 from .runlog import RunLog
 from .runlogschema import OK, PlanShape, RunEnd, RunStart
@@ -167,7 +167,10 @@ def enforce_current(
     for directory in runs(config):
         if directory == current_directory:
             continue
-        events = read(directory, config.runlog)
+        # A damaged log has lost step durations, so it cannot be a baseline.
+        events, torn = recover(directory, config.runlog)
+        if torn:
+            continue
         prior_start = one_event(events, RunStart)
         prior_shape = one_event(events, PlanShape)
         prior_end = one_event(events, RunEnd)
