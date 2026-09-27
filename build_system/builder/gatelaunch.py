@@ -31,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO, NoReturn
 
@@ -239,11 +240,17 @@ def contained_environment(root: Path | None = None) -> dict[str, str]:
     return environment
 
 
-def hold_environment(root: Path | None = None) -> None:
-    """Lease both exact Python generations for the lifetime of this process."""
+def hold_environment(environment: Mapping[str, str], root: Path | None = None) -> None:
+    """Lease the exact Python generations `environment` selected, for this process.
+
+    It takes the selection rather than making it again: selecting hashes every
+    Python source in the checkout, and a second hash both doubled the start-up
+    of every bounded command and could lease a different generation than the
+    one the child was given, had a source changed in between.
+    """
     source = (root or checkout()).resolve()
     authority = _cache_authority(source)
-    generation = Path(isolated_environment(source, authority=authority)[PYCACHE])
+    generation = Path(environment[PYCACHE])
     if not (source / CACHE_POLICY).is_file():
         _hold_generation(generation)
         return
@@ -271,7 +278,7 @@ def _launch(implementation: str, reexec_module: str) -> int:
     )
     if isolated:
         os.environ.update(environment)
-        hold_environment()
+        hold_environment(environment)
         entrypoint = importlib.import_module(implementation).main
         return entrypoint()
 

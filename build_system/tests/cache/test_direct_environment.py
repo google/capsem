@@ -149,3 +149,43 @@ def test_node_compile_cache_is_shared_not_rewritten_per_run(tmp_path: Path) -> N
     shared = Path(environment["NODE_COMPILE_CACHE"])
     assert shared.is_relative_to(Path(environment[CACHE_POLICY.authority_environment]) / "cache")
     assert any(shared.rglob("*")), "Node wrote no compile cache where it was pointed"
+
+
+def test_a_bounded_command_hashes_the_checkout_once_and_holds_what_it_selected(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Selecting the cache generation hashes every Python source in the
+    checkout. The wrapper selected it, then held it by selecting it again, so
+    every bounded command read the tree twice before its child existed -- the
+    difference between starting inside and outside a test's readiness window
+    under CI load. Holding what was selected is also the only way the lease can
+    name the generation the child was actually given."""
+    from capsem_builder.gate.tools.ci import run_bounded_command
+
+    source = tmp_path / "checkout"
+    (source / "config").mkdir(parents=True)
+    for name in ("cache.toml", "gate.toml"):
+        (source / "config" / name).write_bytes((ROOT / "config" / name).read_bytes())
+    module = source / "probe.py"
+    module.write_text("value = 1\n", encoding="utf-8")
+    hashed: list[Path] = []
+    key = gatelaunch._source_key
+
+    def counted(root: Path) -> str:
+        hashed.append(root)
+        selected = key(root)
+        module.write_text(f"value = {len(hashed) + 1}\n", encoding="utf-8")
+        return selected
+
+    held: list[Path] = []
+    monkeypatch.setattr(gatelaunch, "_source_key", counted)
+    monkeypatch.setattr(gatelaunch, "_hold_generation", held.append)
+    monkeypatch.setenv("CAPSEM_REPOSITORY_ROOT", str(source))
+
+    environment = run_bounded_command._contained_environment()
+
+    assert hashed == [source.resolve()]
+    generation = Path(environment[gatelaunch.PYCACHE])
+    assert held[0] == generation, "the lease must cover the generation the child was given"
+    assert {path.name for path in held[1:]} >= {generation.name}
+    assert Path(environment["TMPDIR"]) in held

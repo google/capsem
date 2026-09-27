@@ -176,15 +176,26 @@ def test_direct_development_wrapper_reaps_a_helper_after_its_leader_exits(
     reason="Seatbelt denies ps process inspection; Linux CI executes this proof",
 )
 def test_interrupting_the_wrapper_reaps_its_complete_process_group(tmp_path: Path) -> None:
+    """Interrupt the wrapper once its child group is running; nothing survives.
+
+    Readiness is an event the child publishes, not a guess at how long start-up
+    takes: this waited two seconds, and a wrapper that hashes the checkout
+    before spawning its child missed that window on a loaded CI runner. The
+    wait's only bound is the wrapper's own timeout, which is the contract under
+    test -- past it the wrapper reaps the group and exits, and `poll()` says so.
+    The pipes are closed by the `with`, so a failure here stays in this test
+    instead of surfacing in the next one as an unclosed-file warning.
+    """
     pids = tmp_path / "interrupted-pids"
     child = (
         "import os,signal,subprocess,sys,time; "
         "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(300)']); "
-        f"open({str(pids)!r},'w').write(f'{{os.getpid()}} {{p.pid}}'); "
         "signal.signal(signal.SIGTERM,lambda *_:(p.wait(),sys.exit(0))); "
+        f"open({str(pids)!r}+'.tmp','w').write(f'{{os.getpid()}} {{p.pid}}'); "
+        f"os.replace({str(pids)!r}+'.tmp',{str(pids)!r}); "
         "time.sleep(300)"
     )
-    wrapper = subprocess.Popen(
+    with subprocess.Popen(
         [
             sys.executable,
             str(BOUNDED),
@@ -200,23 +211,27 @@ def test_interrupting_the_wrapper_reaps_its_complete_process_group(tmp_path: Pat
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-    )
-    try:
-        deadline = time.monotonic() + 2
-        while not pids.exists() and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert pids.exists(), "the fixture process group never started"
+    ) as wrapper:
+        try:
+            while not pids.exists():
+                if wrapper.poll() is not None:
+                    _stdout, stderr = wrapper.communicate()
+                    pytest.fail(
+                        f"the wrapper exited ({wrapper.returncode}) before its child "
+                        f"group started: {stderr}"
+                    )
+                time.sleep(0.01)
 
-        wrapper.terminate()
-        _stdout, stderr = wrapper.communicate(timeout=5)
-        assert wrapper.returncode == 128 + signal.SIGTERM, stderr
-        parent_pid, child_pid = (int(value) for value in pids.read_text().split())
-        assert not _pid_is_alive(parent_pid)
-        assert not _pid_is_alive(child_pid)
-    finally:
-        if wrapper.poll() is None:
-            wrapper.kill()
-            wrapper.wait()
+            wrapper.terminate()
+            _stdout, stderr = wrapper.communicate(timeout=5)
+            assert wrapper.returncode == 128 + signal.SIGTERM, stderr
+            parent_pid, child_pid = (int(value) for value in pids.read_text().split())
+            assert not _pid_is_alive(parent_pid)
+            assert not _pid_is_alive(child_pid)
+        finally:
+            if wrapper.poll() is None:
+                wrapper.kill()
+                wrapper.communicate()
 
 
 def _gate_issues(name: str | None = None) -> str:

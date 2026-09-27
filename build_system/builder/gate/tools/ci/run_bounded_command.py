@@ -40,7 +40,7 @@ def _contained_environment() -> dict[str, str]:
     from capsem_builder import gatelaunch
 
     selected = gatelaunch.contained_environment(root)
-    gatelaunch.hold_environment(root)
+    gatelaunch.hold_environment(selected, root)
     return {**inherited, **selected}
 
 
