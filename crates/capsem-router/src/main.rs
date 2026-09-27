@@ -25,7 +25,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _telemetry = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-router",
         sink: capsem_foundation::telemetry::LogSink::Stderr,
-        default_filter: "capsem_router=info",
+        // The copy loop lives in capsem-foundation; its stall reports are
+        // the only witness of a leg that stopped moving.
+        default_filter: "capsem_router=info,capsem_foundation=warn",
     })?;
     let args = Args::parse();
     let limits = capsem_router::ConnectionLimits::new(args.expose_limit)?;
