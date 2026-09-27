@@ -431,8 +431,7 @@ def test_runtime_recipes_materialize_generated_config_before_service() -> None:
     # that exact signed runtime exists.
     for command in ("ensure-service", "shell", "exec"):
         plan = _command(command, guest_command="true")._describe()
-        assert plan.after_of("prepare.cargo-cache-enforcement") == {"prepare.materialize-config"}
-        assert plan.after_of("prepare.build-binaries") == {"prepare.cargo-cache-enforcement"}
+        assert plan.after_of("prepare.build-binaries") == {"prepare.materialize-config"}
         assert plan.after_of("prepare.sign") == {"prepare.build-binaries"}
         assert plan.after_of("prepare") == {"prepare.sign"}
 

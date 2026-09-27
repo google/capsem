@@ -29,7 +29,6 @@ def prepare(
     permission: RebuildPermission = DEFAULT_PERMISSION,
     build_label: str = "build-binaries",
     sign_label: str = "sign",
-    cache_already_enforced: bool = False,
 ) -> Preparation:
     """Build one self-contained runtime, optionally including VM inputs."""
     phase = plan.phase("prepare")
@@ -46,13 +45,7 @@ def prepare(
         previous = (packed,)
 
     materialized = phase.add(materialize_config_step(config), after=previous)
-    built = hostbuild.add(
-        phase,
-        config,
-        after=(materialized,),
-        label=build_label,
-        cache_already_enforced=cache_already_enforced,
-    )
+    built = hostbuild.add(phase, config, after=(materialized,), label=build_label)
     ready = phase.add(hostpackage.sign_step(config, label=sign_label), after=(built,))
     return Preparation(ready=ready, profile_content=materialized)
 

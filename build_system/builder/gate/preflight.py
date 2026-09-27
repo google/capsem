@@ -15,8 +15,10 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
 from . import snapshot
+from .cachecontrol import CargoCacheBound
 from .cachetooling import CompilerCache
 from .cargotarget import CheckoutBuildRoot
 from .config import GateConfig
@@ -25,6 +27,9 @@ from .lifecycle import Resource, held
 from .locks import ExclusiveLock
 from .proc import Runner
 from .reaper import StaleProcesses
+
+if TYPE_CHECKING:  # pragma: no cover - imported for typing only
+    from .plan import Plan
 
 
 def refuse_inside_a_run(config: GateConfig, name: str, *, exclusive: bool) -> None:
@@ -78,16 +83,33 @@ def holdings(
     *,
     exclusive: bool,
     declared: tuple[Resource, ...],
+    plan: Plan,
 ) -> tuple[Resource, ...]:
-    """Tooling and declared resources, inside the machine lock's outer scope."""
+    """Tooling and declared resources, inside the machine lock's outer scope.
+
+    The Cargo bound sits outside every declared resource, so its release
+    enforces after the last step and after whatever those resources tear down.
+    """
     if not exclusive:
         return declared
+    bound = (CargoCacheBound(runner),) if compiles(plan, config) else ()
     return (
         StaleProcesses(config, runner),
         CheckoutBuildRoot(config, runner),
         CompilerCache(config, runner),
+        *bound,
         *declared,
     )
+
+
+def compiles(plan: Plan, config: GateConfig) -> bool:
+    """Whether any step drives Cargo, by the claim every such step must take.
+
+    `tests/citadel/test_step_actions_are_atomic.py` holds that claim: a step
+    that reaches Cargo without `workspace_binaries` fails there.
+    """
+    claim = config.exclusive("workspace_binaries").name
+    return any(held.name == claim for step in plan.steps for held in step.contends)
 
 
 def purpose(name: str) -> str:

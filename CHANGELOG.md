@@ -191,6 +191,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Every gate command that compiles now enforces the shared Cargo target's
+  maximum before its first step and again after its last, including after a
+  failed run, and bounded direct Cargo commands enforce it after the command
+  as well as before. Only the host-build fragment enforced it, and only before
+  building, so clippy in `fast-test`, the static coverage build, `smoke`,
+  `pack-initrd` and other compiling commands grew the target unchecked; it
+  reached 237 GB against its 180 GiB maximum and a focused test run died with
+  ENOSPC.
+
 - On Linux x86_64 hosts, anything a process in the VM wrote to the console
   now reaches `capsem logs`. The emulated serial port never raised its
   transmit interrupt, so only kernel messages got out: a container started

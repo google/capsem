@@ -69,15 +69,23 @@ def leased(
     )
     with held(lock):
         _enforce_cargo_cache(root, command)
-        yield lock.environment()
+        try:
+            yield lock.environment()
+        finally:
+            _enforce_cargo_cache(root, command, refuse=False)
 
 
-def _enforce_cargo_cache(root: Path, command: Sequence[str]) -> None:
-    """Apply the shared Cargo target contract before direct machine work.
+def _enforce_cargo_cache(root: Path, command: Sequence[str], *, refuse: bool = True) -> None:
+    """Apply the shared Cargo target contract around direct machine work.
 
-    Gate plans expose the same operation as a timed prerequisite. Direct Cargo
-    has no plan, so the mandatory bounded-command choke point owns this half of
-    the invariant while it holds the same machine lock as a gate.
+    Gate commands hold the same bound as `CargoCacheBound`. Direct Cargo has no
+    plan, so the mandatory bounded-command choke point owns this half of the
+    invariant while it holds the same machine lock as a gate: before, and again
+    after, because the compile itself is what grows the target.
+
+    Only the check before refuses. Afterwards the command has run and its exit
+    status is the answer the caller asked for; a bound that cannot be restored
+    is reported, and the next compile's check refuses it.
     """
     policy = load_policy(root)
     paths = load_paths(root)
@@ -87,8 +95,10 @@ def _enforce_cargo_cache(root: Path, command: Sequence[str]) -> None:
         "cargo",
         reason=f"bounded direct command: {shlex.join(command)}",
     )
-    if result.violations:
+    if result.violations and refuse:
         raise GateError("; ".join(result.violations))
+    if result.violations:
+        _to_stderr("Cargo cache above its contract after the command: " + "; ".join(result.violations))
     if result.pruned:
         _to_stderr(_maintenance_notice(result))
 

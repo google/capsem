@@ -260,6 +260,7 @@ class GateCommand(CommandHooks, Recorded, ABC):
                 self._config, runner, self.name,
                 exclusive=self.exclusive,
                 declared=egress.for_command(self, runner),
+                plan=plan,
             )
             with held(*acquiring) as acquired:
                 from .egress import guarded_runner_of
