@@ -2,6 +2,7 @@
 pub use capsem_proto::router::{CloseReason, CloseReport};
 use std::future::Future;
 use std::io;
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering::Relaxed};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::timeout;
@@ -13,12 +14,17 @@ pub const SOCKET_BUFFER_SIZE: usize = 64 * 1024;
 pub struct Limits {
     pub write_stall: Duration,
     pub half_close: Duration,
+    /// How long a write may make no progress before the copy says so. The
+    /// stall limit still decides when it gives up; this only makes the wait
+    /// visible while it is happening, which the close report never can.
+    pub stall_report: Duration,
 }
 impl Default for Limits {
     fn default() -> Self {
         Self {
             write_stall: Duration::from_secs(60),
             half_close: Duration::from_secs(60),
+            stall_report: Duration::from_secs(5),
         }
     }
 }
@@ -89,21 +95,21 @@ pub async fn copy_until(
 ) -> Outcome {
     let (source_read, source_write) = tokio::io::split(source);
     let (destination_read, destination_write) = tokio::io::split(destination);
-    let (mut from_source, mut to_source) = (0, 0);
+    let progress = Progress::default();
     let result = {
         let forward = direction(
             source_read,
             destination_write,
             (framings.source, framings.destination),
             limits,
-            &mut from_source,
+            &progress.sides[FORWARD],
         );
         let reverse = direction(
             destination_read,
             source_write,
             (framings.destination, framings.source),
             limits,
-            &mut to_source,
+            &progress.sides[REVERSE],
         );
         tokio::pin!(forward, reverse);
         let forwarding = async {
@@ -116,6 +122,7 @@ pub async fn copy_until(
             biased;
             _ = stop => None,
             result = forwarding => Some(result),
+            never = watch(&progress, limits.stall_report) => match never {},
         }
     };
     let (reason, error) = match result {
@@ -124,10 +131,75 @@ pub async fn copy_until(
         Some(Err((reason, error))) => (reason, Some(error)),
     };
     Outcome {
-        from_source,
-        to_source,
+        from_source: progress.sides[FORWARD].copied.load(Relaxed),
+        to_source: progress.sides[REVERSE].copied.load(Relaxed),
         reason,
         error,
+    }
+}
+
+const FORWARD: usize = 0;
+const REVERSE: usize = 1;
+const READING: u8 = 0;
+const WRITING: u8 = 1;
+const DONE: u8 = 2;
+
+/// What each direction is doing, published for the stall watch alone.
+/// Relaxed is enough: the watch only reports, and a stale read of a moving
+/// counter is a direction that is not stalled.
+#[derive(Default)]
+struct Progress {
+    sides: [Side; 2],
+}
+
+#[derive(Default)]
+struct Side {
+    phase: AtomicU8,
+    copied: AtomicU64,
+}
+
+impl Side {
+    fn phase(&self) -> &'static str {
+        match self.phase.load(Relaxed) {
+            READING => "read",
+            WRITING => "write",
+            _ => "done",
+        }
+    }
+}
+
+/// Report, once per episode, a direction that sat in one write across a
+/// whole interval. A peer that never drains ends at the stall limit either
+/// way; before that, only this says which leg stopped and what the other
+/// was doing, both of which the close report loses.
+async fn watch(progress: &Progress, every: Duration) -> std::convert::Infallible {
+    let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut last = [(DONE, 0); 2];
+    let mut reported = [false; 2];
+    loop {
+        interval.tick().await;
+        for side in [FORWARD, REVERSE] {
+            let now = (
+                progress.sides[side].phase.load(Relaxed),
+                progress.sides[side].copied.load(Relaxed),
+            );
+            let stalled = now.0 == WRITING && now == last[side];
+            if stalled && !reported[side] {
+                let [forward, reverse] = &progress.sides;
+                tracing::warn!(
+                    stalled = if side == FORWARD { "forward" } else { "reverse" },
+                    stalled_for_ms = every.as_millis() as u64,
+                    forward_phase = forward.phase(),
+                    forward_bytes = forward.copied.load(Relaxed),
+                    reverse_phase = reverse.phase(),
+                    reverse_bytes = reverse.copied.load(Relaxed),
+                    "stream write made no progress"
+                );
+            }
+            reported[side] = stalled;
+            last[side] = now;
+        }
     }
 }
 
@@ -150,11 +222,23 @@ async fn finish(
 // A framed reader is decoded in place and a framed writer gets its header in
 // the slot ahead of the bytes read, so neither framing copies a payload.
 async fn direction(
+    reader: impl AsyncRead + Unpin,
+    writer: impl AsyncWrite + Unpin,
+    (read_framing, write_framing): (Framing, Framing),
+    limits: Limits,
+    side: &Side,
+) -> Result<(), (CloseReason, io::Error)> {
+    let result = copy_direction(reader, writer, (read_framing, write_framing), limits, side).await;
+    side.phase.store(DONE, Relaxed);
+    result
+}
+
+async fn copy_direction(
     mut reader: impl AsyncRead + Unpin,
     mut writer: impl AsyncWrite + Unpin,
     (read_framing, write_framing): (Framing, Framing),
     limits: Limits,
-    copied: &mut u64,
+    side: &Side,
 ) -> Result<(), (CloseReason, io::Error)> {
     let header = if write_framing == Framing::Framed {
         FRAME_HEADER
@@ -164,7 +248,9 @@ async fn direction(
     let mut buffer = vec![0; header + BUFFER_SIZE].into_boxed_slice();
     let mut frames = FrameDecoder::default();
     loop {
+        side.phase.store(READING, Relaxed);
         let count = reader.read(&mut buffer[header..]).await.map_err(io_failure)?;
+        side.phase.store(WRITING, Relaxed);
         if count == 0 {
             if read_framing == Framing::Framed {
                 return Err(io_failure(io::Error::new(
@@ -177,7 +263,7 @@ async fn direction(
         let read = header..header + count;
         if read_framing == Framing::Raw {
             send(&mut writer, &mut buffer, read, write_framing, limits).await?;
-            *copied += count as u64;
+            side.copied.fetch_add(count as u64, Relaxed);
             continue;
         }
         let mut at = read.start;
@@ -187,7 +273,7 @@ async fn direction(
                 Decoded::Payload(length) => {
                     let payload = at..at + length;
                     send(&mut writer, &mut buffer, payload, write_framing, limits).await?;
-                    *copied += length as u64;
+                    side.copied.fetch_add(length as u64, Relaxed);
                     at += length;
                 }
                 Decoded::End(used) => {
