@@ -2128,6 +2128,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_test_admission.py",
     "build_system/tests/gate/test_gate_timing.py",
     "build_system/tests/gate/test_gate_toolchain.py",
+    "build_system/tests/gate/test_gate_torn_run_log.py",
     "build_system/tests/gate/test_gate_versions.py",
     "build_system/tests/gate/test_gate_vm_cache.py",
     "build_system/tests/gate/test_gate_workspace.py",
