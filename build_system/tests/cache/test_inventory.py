@@ -135,7 +135,10 @@ def test_inventory_separates_metadata_and_protects_active_leases(tmp_path: Path)
 
     entries = {entry.key: entry for entry in report.stages[0].entries}
     assert entries["generation"].managed and entries["generation"].protected
-    assert not entries[".generation.lock"].managed
+    assert entries["generation"].member_paths == (Path(".generation.lock"),), (
+        "a generation's lease leaves with it, or every finished run strands a lock file"
+    )
+    assert ".generation.lock" not in entries
 
 
 def test_retention_inventory_skips_policy_protected_stages(tmp_path: Path) -> None:

@@ -122,6 +122,19 @@ reader and publisher holds `leases.shared_use(paths, "objects")`, so a prune
 never removes bytes in use. Before this the stage was `none`, grew past its
 cap, and failed every prune on the machine.
 
+A leased `ephemeral` stage (`test-temp`) is scratch, not retention: a
+generation lives exactly as long as a process holds its lease. The owner
+leases `run-<pid>` before creating it and, at exit, releases the lease and
+removes the run and its lease through `operations.reclaim_generation`, the same
+guarded, journaled path a prune takes. A run no process leases (its owner was
+killed) has no live owner, and `prune` reclaims it whatever its age or size;
+a lease file whose generation is gone is collected too, and never counts
+toward `maximum_count`. Removal takes each lease exclusively, so a reused pid
+that leased after the plan keeps its directory (`ApplyResult.busy`). Before
+this, a dead run aged like a retained generation below a 200 GiB maximum:
+one ~7 GB run per release precheck and 1,900 lock files filled the disk while
+`prune` offered 21 MB.
+
 Retained cache lifetime ends only through these typed operations. Do not add
 consumer-boundary releases, post-test eviction hooks, or other subsystem
 lifecycle paths that bypass the owner's warm/max/age/count policy.

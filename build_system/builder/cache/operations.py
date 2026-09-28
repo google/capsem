@@ -8,12 +8,14 @@ import shutil
 import stat
 import time
 from collections.abc import Iterator
+from contextlib import ExitStack
 from pathlib import Path
 
 from pydantic import ValidationError
 
-from .leases import mutation_locks
-from .models import AdmissionEvent, ApplyResult, PrunePlan
+from .leases import exclusive_path, mutation_locks, release_path
+from .measure import measure
+from .models import AdmissionEvent, ApplyResult, PruneAction, PrunePlan
 from .paths import CachePaths
 
 JOURNAL_PATH = Path("state/events/cache.jsonl")
@@ -72,16 +74,28 @@ def apply_prune(paths: CachePaths, plan: PrunePlan, *, reason: str) -> ApplyResu
     if not reason.strip():
         raise ValueError("cache mutation reason must be non-empty")
     targets = tuple(paths.contained_entry(action.stage_id, action.path) for action in plan.actions)
+    generations: dict[tuple[str, str], list[Path]] = {}
+    for action, target in zip(plan.actions, targets, strict=True):
+        generations.setdefault((action.stage_id, action.key), []).append(target)
     removed: list[Path] = []
     missing: list[Path] = []
+    busy: list[Path] = []
     with mutation_locks(paths, (action.stage_id for action in plan.actions)) as locks:
-        for selected in targets:
-            for target in _unlocked_targets(selected, locks):
-                if target.exists() or target.is_symlink():
-                    _remove(target)
-                    removed.append(target)
-                else:
-                    missing.append(target)
+        for (stage_id, key), selected in generations.items():
+            template = paths.policy.stages[stage_id].lease_template
+            root = paths.stage(stage_id)
+            lease = None if template is None or not root.is_dir() else root / template.format(key=key)
+            with ExitStack() as stack:
+                if lease is not None and not stack.enter_context(exclusive_path(lease)):
+                    busy.extend(selected)
+                    continue
+                for target in (*selected, *(() if lease is None else (lease,))):
+                    for unlocked in _unlocked_targets(target, locks):
+                        if unlocked.exists() or unlocked.is_symlink():
+                            _remove(unlocked)
+                            removed.append(unlocked)
+                        elif unlocked != lease:
+                            missing.append(unlocked)
     journal = paths.root / JOURNAL_PATH
     journal.parent.mkdir(parents=True, exist_ok=True)
     event = {
@@ -91,11 +105,37 @@ def apply_prune(paths: CachePaths, plan: PrunePlan, *, reason: str) -> ApplyResu
         "reason": reason,
         "removed": [str(path) for path in removed],
         "missing": [str(path) for path in missing],
+        "busy": [str(path) for path in busy],
         "reclaim_bytes": plan.reclaim_bytes,
     }
     with journal.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(event, sort_keys=True) + "\n")
-    return ApplyResult(removed=tuple(removed), missing=tuple(missing), journal=journal)
+    return ApplyResult(
+        removed=tuple(removed), missing=tuple(missing), busy=tuple(busy), journal=journal
+    )
+
+
+def reclaim_generation(paths: CachePaths, stage_id: str, key: str, *, reason: str) -> ApplyResult:
+    """End one generation this process leased: release the lease, then remove
+    the generation and its lease through the same guarded, journaled path a
+    prune takes. A concurrent prune that wins the lease first does the same
+    removal; whichever loses sees it busy or already gone."""
+    stage = paths.policy.stages[stage_id]
+    if stage.lease_template is None:
+        raise ValueError(f"cache stage {stage_id!r} has no generation lease")
+    root = paths.stage(stage_id)
+    generation = root / key
+    release_path(root / stage.lease_template.format(key=key))
+    logical = measure(generation, set()).logical_bytes if generation.exists() else 0
+    plan = PrunePlan(
+        generated_ns=time.time_ns(),
+        reclaim_bytes=logical,
+        actions=(PruneAction(
+            stage_id=stage_id, key=key, path=generation, logical_bytes=logical, reason=reason,
+        ),),
+        violations=(),
+    )
+    return apply_prune(paths, plan, reason=reason)
 
 
 def record_admission_event(root: Path, state_path: Path, event: AdmissionEvent) -> Path:

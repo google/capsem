@@ -160,6 +160,8 @@ class CacheEntry(BaseModel):
     last_used_ns: Annotated[StrictInt, Field(ge=0)]
     managed: StrictBool = True
     protected: StrictBool = False
+    #: A lease file whose generation is gone: collected, never counted.
+    lease_only: StrictBool = False
 
 
 class StageInventory(BaseModel):
@@ -223,6 +225,8 @@ class ApplyResult(BaseModel):
 
     removed: tuple[Path, ...]
     missing: tuple[Path, ...]
+    #: Planned paths kept because an owner leased their generation meanwhile.
+    busy: tuple[Path, ...] = ()
     journal: Path
 
 

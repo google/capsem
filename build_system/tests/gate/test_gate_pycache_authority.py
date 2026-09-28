@@ -181,4 +181,5 @@ def test_live_gate_generation_holds_a_prune_lease(tmp_path: Path) -> None:
 
     entries = {entry.key: entry for entry in inventory.stages[0].entries}
     assert entries[generation.name].protected
-    assert not entries[f".{generation.name}.lock"].managed
+    assert entries[generation.name].member_paths == (Path(f".{generation.name}.lock"),)
+    assert f".{generation.name}.lock" not in entries
