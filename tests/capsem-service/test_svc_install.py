@@ -73,21 +73,30 @@ class TestAssets:
                 assert asset["status"] in ("present", "missing")
 
     def test_assets_reports_ready_when_all_present(self, client):
-        """ready=true iff every listed asset has status=present.
+        """ready=true iff every asset and profile file is present and no
+        reconcile is repairing them.
 
         Test binaries are spawned with --assets-dir pointing at the real
         repo assets, so in a dev environment this should be ready=true.
         If assets haven't been built yet, we accept ready=false but still
-        verify the invariant.
+        verify the invariant. The service's startup reconcile may still be
+        fetching a profile file (software-inventory.json) when this asks;
+        while it runs, ready is deliberately false. The invariant used to
+        read only `assets`, and failed a release run on exactly that.
         """
         resp = client.get("/profiles/code/assets/status")
         assert resp is not None
         if resp.get("error"):
             # No asset manifest -- skip the invariant but keep shape assertion.
             return
-        all_present = all(a["status"] == "present" for a in resp["assets"])
-        assert resp["ready"] == all_present, (
-            f"ready={resp['ready']} but all_present={all_present}: {resp}"
+        all_present = all(
+            entry["status"] == "present"
+            for entry in [*resp["assets"], *resp.get("files", [])]
+        )
+        expected = all_present and not resp["downloading"]
+        assert resp["ready"] == expected, (
+            f"ready={resp['ready']} but all_present={all_present} "
+            f"downloading={resp['downloading']}: {resp}"
         )
 
     def test_assets_ensure_returns_status_shape(self, client):
