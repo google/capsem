@@ -191,6 +191,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem doctor` no longer fails a boot stage because the host was busy. Each
+  capsem-init stage now records the steal time accrued during it (time the
+  host kept a runnable vCPU off a physical CPU), and the 500 ms per-stage
+  budget applies to wall time minus steal. A shared CI runner descheduled the
+  guest for most of a stage that copies sixteen small files, and the doctor
+  reported it as a 510 ms boot regression. Failures still show raw duration
+  and steal; hosts that report no steal are budgeted on wall time as before.
+
 - On Linux x86_64 hosts, anything a process in the VM wrote to the console
   now reaches `capsem logs`. The emulated serial port never raised its
   transmit interrupt, so only kernel messages got out: a container started

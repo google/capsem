@@ -221,6 +221,36 @@ fn cpuid_topology_uses_guest_vcpu_ids() {
     assert_eq!(entries[2].ebx, 4);
 }
 
+/// The guest's per-stage boot budget subtracts steal time, which the guest
+/// kernel only accounts when KVM advertises KVM_FEATURE_STEAL_TIME (bit 5 of
+/// CPUID 0x40000001 EAX). The host's supported leaves pass through untouched.
+#[test]
+fn cpuid_topology_keeps_kvm_paravirt_steal_time_feature() {
+    const KVM_FEATURE_STEAL_TIME: u32 = 1 << 5;
+    let features = sys::KvmCpuidEntry2 {
+        function: 0x4000_0001,
+        eax: 0x0100_7efb,
+        ..Default::default()
+    };
+    let mut entries = vec![
+        sys::KvmCpuidEntry2 {
+            function: 0x4000_0000,
+            eax: 0x4000_0001,
+            ebx: u32::from_le_bytes(*b"KVMK"),
+            ecx: u32::from_le_bytes(*b"VMKV"),
+            edx: u32::from_le_bytes(*b"M\0\0\0"),
+            ..Default::default()
+        },
+        features,
+    ];
+
+    configure_cpuid_topology(&mut entries, 3, 4);
+
+    let regs = |e: &sys::KvmCpuidEntry2| (e.function, e.index, e.flags, e.eax, e.ebx, e.ecx, e.edx);
+    assert_eq!(regs(&entries[1]), regs(&features));
+    assert_ne!(entries[1].eax & KVM_FEATURE_STEAL_TIME, 0);
+}
+
 fn checksum(bytes: &[u8]) -> u8 {
     bytes.iter().fold(0u8, |acc, b| acc.wrapping_add(*b))
 }
