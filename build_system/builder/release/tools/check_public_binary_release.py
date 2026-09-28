@@ -731,7 +731,11 @@ printf '%s\n' 'capsemtest ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/capsemtest
 chmod 0440 /etc/sudoers.d/capsemtest
 check_binary_versions() {{
   expected="$1"
+  # Each installed package is held to the binaries it owns: the older one
+  # predates capsem-router (it shipped capsem-port-router).
+  owned=$(dpkg -L capsem)
   for bin in {helpers}; do
+    printf '%s\n' "$owned" | grep -Fqx "/usr/bin/$bin" || continue
     su capsemtest -c "test -x \"\\$HOME/.capsem/bin/$bin\""
     su capsemtest -c "\"\\$HOME/.capsem/bin/$bin\" --version" | grep -F "$expected"
   done
