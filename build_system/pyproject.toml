@@ -58,6 +58,9 @@ default = true
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 filterwarnings = ["error"]
+# A passing test's tmp_path is removed at its teardown, so a run's scratch
+# peaks at what the failing and in-flight tests hold, not the whole suite.
+tmp_path_retention_policy = "failed"
 pythonpath = ["..", "../tests", "tests/gate", "tests/release", "tests/release_site"]
 markers = [
     "mcp: MCP black-box integration tests (require capsem-service + VM assets)",
