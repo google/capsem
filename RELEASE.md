@@ -483,7 +483,9 @@ exact commit and the release command runs on it. The hosted lane still performs
 its own qualification, but it is the second proof, never the way defects are
 found: each hosted attempt takes hours and stops at its first failure, and the
 0.6.4 stable release spent four attempts on four defects a local run finds in
-minutes. A merge commit is a different commit and needs its own proof.
+minutes. A proof covers the exact tested commit and any commit with the
+identical Git tree: fast-forward `main` to the tested commit, or merge only when
+the merge commit's tree equals it; any other merge needs its own proof.
 
 ### 8.2 Required scope
 
@@ -521,11 +523,14 @@ source. Hosted release qualification cannot consume local proof and MUST run
 its own complete artifact-family pairing.
 
 `just test <source-commit>` selects one canonical full lowercase commit that is
-already prepared, committed, and reachable from local `main`. It MUST
+already prepared and committed on a local branch (the release branch, or
+`main`). It MUST
 materialize and diagnose an independent detached repository at a prefix named
 by that full commit. The mutable outer checkout and branch are not
-diagnostic inputs and MAY advance while it runs. Release commands MUST NOT
-consume that machine-local journal. They MUST validate and freeze the supplied
+diagnostic inputs and MAY advance while it runs. Release commands MUST
+refuse unless that machine-local journal holds a complete successful run for
+the release commit, or for a tested commit with the identical Git tree (unattended
+channels named in `[release].unattended_channels` are exempt). They MUST validate and freeze the supplied
 commit, dispatch the hosted artifact lane, and allow publication only after
 that lane's qualification succeeds. They MUST NOT repeat the local candidate,
 edit tracked source, create a preparation commit, or push `main`. They MUST
@@ -1669,8 +1674,9 @@ An implementation conforming to this specification MUST demonstrate:
       on local `main`, diagnoses its detached full-SHA prefix once, reuses or
       structurally resumes its journal, and remains valid while the outer
       checkout advances.
-- [ ] Both release commands ignore machine-local candidate journals, dispatch
-      hosted qualification, and never repeat the local candidate.
+- [ ] Both release commands refuse without a passing local `just test` journal
+      for the release commit or an identical tree, dispatch hosted
+      qualification, and never repeat the local candidate.
 - [ ] Binary release accepts exactly one channel and one source commit.
 - [ ] Profile release accepts exactly one channel, profile, and source commit and derives its
       immutable publication identity.

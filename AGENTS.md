@@ -282,10 +282,10 @@ and stops at the first failure, so it finds one bug per attempt. The 0.6.4
 stable release spent four dispatches, one per bug, that a local run catches in
 minutes. Nothing runs in CI that `just test` has not run locally first.
 
-A proof is for one exact commit. A PR merge commit is a new commit, so do not
-merge a tested branch through the merge button and release the merge: fast-
-forward `main` to the tested commit, or re-run `just test` on the merge. Do not
-merge anything else into `main` while its proof runs. Low-impact repeats are refused before expensive work and routed
+A proof covers the tested commit and any commit with the identical Git tree.
+Fast-forward `main` to the tested commit (or merge only when the merge commit's
+tree equals it); anything else merged in needs its own proof, so do not merge
+anything else into `main` while its proof runs. Low-impact repeats are refused before expensive work and routed
 to focused owners; `just test <source-commit> force "<reason>"` is the audited
 exception and cannot be used twice consecutively. Direct release commands and `just test` own their timeouts,
 journal, teardown, and network boundary; do not wrap or nest them.
