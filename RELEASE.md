@@ -475,10 +475,15 @@ Local `just test` is the reusable comprehensive construction and integration
 proof. It exists to catch incompatibilities throughout the complete pipeline
 when focused proof is insufficient; it is not the routine edit loop.
 
-Running `just test` before a release is optional. Each public release command
-is sufficient on its own because its hosted lane performs the required release
-qualification. Release dispatch MUST NOT require or consume a developer-machine
-`just test` journal.
+A passing `just test <source-commit>` for the exact release commit is REQUIRED
+before either public release command runs. The release is prepared on one
+branch -- every fix a commit, the CHANGELOG updated with them -- and the branch
+is fixed until its local proof passes; `main` is then fast-forwarded to that
+exact commit and the release command runs on it. The hosted lane still performs
+its own qualification, but it is the second proof, never the way defects are
+found: each hosted attempt takes hours and stops at its first failure, and the
+0.6.4 stable release spent four attempts on four defects a local run finds in
+minutes. A merge commit is a different commit and needs its own proof.
 
 ### 8.2 Required scope
 
@@ -552,7 +557,7 @@ The exceptional spelling is
 recorded before work starts. After a failed or interrupted full attempt,
 automatic full runs MUST be refused regardless of changed paths or commit
 count; agents MUST obtain explicit approval for each reasoned retry. Focused
-checks and the self-qualifying release commands remain available. An approved
+checks remain available; release commands still require a passing proof. An approved
 retry after failure MUST remain possible even if the failed attempt was forced.
 Otherwise a second consecutive forced attempt MUST be refused; only successful
 non-forced complete proof resets that rail. Failed attempts are spending
@@ -1725,8 +1730,8 @@ their assets. The same profile name may exist independently in multiple
 channels, and a profile need not exist in every channel.
 
 Local `just test` verifies the complete world and reuses exact validated build
-products. It is optional before publication. CI release lanes self-qualify and
-are selective:
+products. It is required before publication (section 8.1). CI release lanes
+also qualify what they build, and are selective:
 the binary lane builds binaries and packages and tests them against existing
 profiles; the profile lane rebuilds exactly one channel/profile and tests it
 against the channel's existing selected binary. When both must move, CI builds

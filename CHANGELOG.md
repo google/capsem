@@ -797,6 +797,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Releases are prepared on one branch and proven locally first. Every fix
+  goes on the release branch with its CHANGELOG entry, `just test` must pass
+  on that exact commit on the build machine, and only then is `main`
+  fast-forwarded to it and the release command run. Hosted release runs are
+  the second proof, not the way defects are found: 0.6.4 stable spent four
+  multi-hour dispatches on four defects a local run finds in minutes.
+
 - Session ledgers are now format v4: each one carries its own running totals
   (requests, tokens, cost, tool calls, rule matches, plugin and credential
   activity), written in the same transaction as the rows they count, so stats

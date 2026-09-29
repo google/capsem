@@ -19,12 +19,12 @@ just shell         # Build + boot VM (~10s)
 just fast-test     # Incomplete source feedback; prints the next supported rails
 just focus-test functional # Rerun one named functional owner
 source_commit=$(git rev-parse HEAD)
-just test "$source_commit" # Optional complete local proof; exact repeats reuse its journal.
+just test "$source_commit" # Required before merge and release; exact repeats reuse its journal.
 
-# Optional hands-on local testing; never a release prerequisite
+# Optional hands-on local testing
 just install
 
-# Release dispatchers are sufficient on their own; hosted lanes self-qualify
+# Release only the exact commit whose `just test` passed (see Releases below)
 just release-binaries nightly "$source_commit"
 just release-profile nightly code "$source_commit"
 ```
@@ -270,10 +270,22 @@ just release-profile <channel> <profile> <source-commit>
 ```
 
 Agents use these entrypoints rather than dispatching release workflows or
-authoring manifests directly. Each release command is sufficient on its own:
-its hosted lane performs release qualification, so `just test` is not a
-prerequisite. `just test <source-commit>` is optional reusable complete local
-verification. Low-impact repeats are refused before expensive work and routed
+authoring manifests directly.
+
+**A release is one branch, proven locally, then shipped.** Every fix for a
+release goes on one branch (`release/<version>`) as its own commit, with the
+CHANGELOG updated in those commits. Run `just test <branch-head>` on this
+machine and keep fixing on the branch until it passes. Only then fast-forward
+`main` to that exact commit and run the release command on it. Never dispatch
+a release to find out what is broken: the hosted lane takes hours per attempt
+and stops at the first failure, so it finds one bug per attempt. The 0.6.4
+stable release spent four dispatches, one per bug, that a local run catches in
+minutes. Nothing runs in CI that `just test` has not run locally first.
+
+A proof is for one exact commit. A PR merge commit is a new commit, so do not
+merge a tested branch through the merge button and release the merge: fast-
+forward `main` to the tested commit, or re-run `just test` on the merge. Do not
+merge anything else into `main` while its proof runs. Low-impact repeats are refused before expensive work and routed
 to focused owners; `just test <source-commit> force "<reason>"` is the audited
 exception and cannot be used twice consecutively. Direct release commands and `just test` own their timeouts,
 journal, teardown, and network boundary; do not wrap or nest them.
@@ -346,8 +358,8 @@ rule.
 
 `just test` is **one process, one machine lock, one workspace, one plan**.
 Its dry run reports the current totals; conditional asset staging makes a
-checked-in count depend on machine state. It is diagnostic evidence, not a
-prerequisite consumed by either release dispatcher.
+checked-in count depend on machine state. A passing run for the exact commit
+is required before that commit is released.
 
 Six rules, each with a guard:
 
