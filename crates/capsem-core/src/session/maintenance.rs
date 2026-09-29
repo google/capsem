@@ -23,8 +23,11 @@ fn usage(dir: &ContainedDir, depth: usize) -> u64 {
     let mut children = Vec::new();
     // An unreadable directory counts what was read of it; usage is advisory.
     let _ = dir.visit_entries(|entry| {
-        total = total.saturating_add(entry.allocated);
-        if entry.kind == EntryKind::Directory && depth < MAX_DEPTH {
+        // What a session stores is its files; a directory's own blocks are
+        // bookkeeping, and an empty session measures zero.
+        if entry.kind != EntryKind::Directory {
+            total = total.saturating_add(entry.allocated);
+        } else if depth < MAX_DEPTH {
             children.push(entry.name);
         }
         Ok(true)
