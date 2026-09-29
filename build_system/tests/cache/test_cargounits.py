@@ -111,7 +111,29 @@ def test_a_building_cargo_keeps_every_unit(tmp_path: Path) -> None:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         inventory = scan_retention_inventory(paths, policy, now_ns=now)
     assert all(entry.protected for entry in inventory.stages[0].entries)
-    assert not plan_prune(inventory, policy).actions
+    plan = plan_prune(inventory, policy)
+    assert not plan.actions
+    # Enforcement refused a release run with only "cargo remains N bytes above
+    # max size M": nothing said a live Cargo lock pinned every unit, or whose.
+    [violation] = plan.violations
+    assert "50 bytes are protected" in violation
+    assert "debug/.cargo-lock" in violation
+    if Path("/proc/locks").is_file():
+        assert f"pid {os.getpid()}" in violation, "the holder is named, not just the lock"
+
+
+def test_an_unpinned_stage_above_max_says_nothing_is_held(tmp_path: Path) -> None:
+    now = 1_000 * HOUR_NS
+    policy = configured(max_size=10, warm_size=5)
+    paths = CachePaths(repository_root=tmp_path, policy=policy)
+    root = paths.stage("cargo")
+    (root / "debug").mkdir(parents=True)
+    (root / "debug/capsem").write_bytes(b"x" * 40)  # uplifted: counted, never selected
+
+    [violation] = plan_prune(scan_retention_inventory(paths, policy, now_ns=now), policy).violations
+
+    assert violation.startswith("cargo remains 40 bytes above max size 10")
+    assert "0 bytes are protected" in violation and "no lock is held" in violation
 
 
 def test_unaccounted_walk_does_not_search_every_unit_for_each_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

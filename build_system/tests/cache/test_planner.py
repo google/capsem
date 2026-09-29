@@ -113,7 +113,10 @@ def test_protected_entries_are_never_selected_and_report_violations() -> None:
     plan = plan_prune(report, policy())
 
     assert [action.key for action in plan.actions] == ["old"]
-    assert plan.violations == ("objects remains 40 bytes above max size 30",)
+    assert plan.violations == (
+        "objects remains 40 bytes above max size 30: "
+        "40 bytes are protected (no lock is held)",
+    )
 
 
 def test_none_policy_reports_pressure_without_deleting_tool_internals() -> None:

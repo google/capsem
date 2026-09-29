@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .contract import PruneStrategy
 from .inventorymodels import RetentionInventory
-from .models import CacheEntry, CacheInventory, CachePolicy, PruneAction, PrunePlan
+from .models import CacheEntry, CacheInventory, CachePolicy, PruneAction, PrunePlan, StageInventory
 
 NANOSECONDS_PER_HOUR = 3_600_000_000_000
 
@@ -33,6 +33,12 @@ def _actions(stage, entry: CacheEntry, reason: str) -> tuple[PruneAction, ...]:
         )
         for index, relative in enumerate((entry.relative_path, *entry.member_paths))
     )
+
+
+def _pinned(stage: StageInventory) -> str:
+    """Why retention stopped short: protected bytes, and the locks that pin them."""
+    held = "; ".join(stage.held_locks) or "no lock is held"
+    return f"{stage.protected_bytes} bytes are protected ({held})"
 
 
 def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePolicy) -> PrunePlan:
@@ -108,7 +114,7 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
         if remaining > stage_policy.max_size_bytes:
             violations.append(
                 f"{stage.stage_id} remains {remaining} bytes above max size "
-                f"{stage_policy.max_size_bytes}"
+                f"{stage_policy.max_size_bytes}: {_pinned(stage)}"
             )
         if stage_policy.maximum_count is not None and remaining_count > stage_policy.maximum_count:
             violations.append(

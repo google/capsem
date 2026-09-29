@@ -175,6 +175,8 @@ class StageInventory(BaseModel):
     allocated_bytes: Annotated[StrictInt, Field(ge=0)]
     protected_bytes: Annotated[StrictInt, Field(ge=0)]
     entries: tuple[CacheEntry, ...]
+    #: Native producer locks held while this inventory was taken, with holders.
+    held_locks: tuple[str, ...] = ()
 
     @property
     def entry_count(self) -> int:
