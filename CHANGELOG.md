@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The web dashboard and marketing site no longer resolve `fast-uri` 3.1.6,
+  which GHSA-qw65-cvwx-89v3 and GHSA-58mr-gqgx-xq4g (authority injection
+  through an unvalidated port) affect. Both now require 3.1.7 or later; the
+  marketing site had no floor at all.
+
 - The dependency audit accepts far fewer exceptions and re-checks the ones it
   keeps. Three accepted advisories turned out to be ours to fix and are gone:
   `rand` was already on patched versions, `rustls-pemfile` was used by one
