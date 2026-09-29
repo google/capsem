@@ -31,7 +31,7 @@ SOURCE_COMMIT = SourceCommit("0" * 40)
 COMPLETE_GATE = {
     "candidate": {},
 }
-#: Both release commands dispatch self-qualifying hosted lanes.
+#: Both release commands consume a local `just test` journal, then dispatch.
 RELEASES = {
     "release-binaries": {"channel": "stable", "source_commit": SOURCE_COMMIT},
     "release-profile": {
@@ -82,7 +82,7 @@ def test_every_release_dispatches_qualification_under_enforcement(name: str) -> 
 
     assert not issubclass(command, candidate.CompleteGate)
     assert command.complete_qualification is False
-    assert command.qualification_policy is QualificationPolicy.NONE
+    assert command.qualification_policy is QualificationPolicy.REQUIRE
     assert command.sandboxed is sandbox.ENFORCE
 
 
@@ -167,7 +167,7 @@ def test_release_dispatches_lanes_instead_of_composing_a_local_gate(name: str) -
     assert ordered[0] == "source.worktree-clean"
     assert "source.record" not in ordered
     assert TimingBoundary.QUALIFICATION.value not in ordered
-    assert "qualification.accept" not in ordered
+    assert ordered.index("qualification.accept") == 1
     assert ordered.index("source.publish-ref") < ordered.index("release")
 
 

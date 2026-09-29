@@ -908,3 +908,8 @@ target = "build_system/tests/gate/test_gate_torn_run_log.py"
 owner = "gate"
 source = "tests/test_cargo_cache_bound.py"
 target = "build_system/tests/gate/test_cargo_cache_bound.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_release_requires_local_proof.py"
+target = "build_system/tests/gate/test_gate_release_requires_local_proof.py"

@@ -71,6 +71,13 @@ class RetiredPublicGraphConfig(Strict):
 
 class ReleaseConfig(Strict):
     line: Annotated[str, StringConstraints(pattern=r"^\d+\.\d+$")]
+    unattended_channels: tuple[str, ...]
+    """Channels a scheduler releases with nobody at a keyboard.
+
+    Every other channel is released only from a commit whose exact local
+    `just test` journal passed. The list names the exemption rather than the
+    requirement so a new channel starts out requiring proof.
+    """
     clean_worktree: str
     source: str
     source_ref_template: str

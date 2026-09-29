@@ -149,11 +149,11 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
 def test_nothing_is_published_before_release_preflight_passes(
     command: str, arguments: tuple[str, ...], publication: str
 ) -> None:
-    """The dispatcher validates source before self-qualifying hosted lanes run."""
+    """The dispatcher consumes local proof and validates source before any lane runs."""
     order = _release_order(command, *arguments)
 
     assert order[0] == "source.worktree-clean"
-    assert "qualification.accept" not in order
+    assert order[1] == "qualification.accept"
     assert order.index("source.worktree-clean") < order.index("source.remote-main")
     if command == "release-binaries":
         assert order.index("source.remote-main") < order.index("precheck")
@@ -204,7 +204,7 @@ def test_public_release_command_runs_preflight_before_dispatching_qualification(
     order = list(plan.labels)
 
     rendered = plan.describe()
-    assert "require complete qualification journal" not in rendered
+    assert f"require complete qualification journal for {'0' * 40}" in rendered
     assert "publish-release-source.py" in rendered
     assert "--check" in rendered
     if recipe == "release-binaries":
@@ -214,7 +214,7 @@ def test_public_release_command_runs_preflight_before_dispatching_qualification(
     assert order[0] == "source.worktree-clean"
     if recipe == "release-binaries":
         assert order.index("source.remote-main") < order.index("precheck")
-    assert "qualification.accept" not in order
+    assert order.index("qualification.accept") < order.index("source.remote-main")
     assert order.index("source.publish-ref") < order.index("release")
 
     # And the publishing step is the one the trace names.
@@ -230,15 +230,15 @@ def test_public_release_command_runs_preflight_before_dispatching_qualification(
         ("release-profile", ("stable", "code")),
     ),
 )
-def test_release_dispatch_plan_has_no_machine_local_qualification_action(
+def test_release_dispatch_plan_only_revalidates_the_local_journal(
     tmp_path: Path,
     recipe: str,
     arguments: tuple[str, ...],
 ) -> None:
-    """A hosted lane, not a developer-machine journal, qualifies publication."""
+    """The dispatcher only revalidates the local journal; it runs no local suite."""
     del tmp_path
     plan = _release_plan(recipe, *arguments)
-    assert "qualification.accept" not in plan.labels
+    assert plan.labels[1] == "qualification.accept"
     assert "qualification.waived" not in plan.labels
     assert next(iter(plan.labels)) == "source.worktree-clean"
     assert list(plan.labels).index("source.publish-ref") < list(plan.labels).index("release")
@@ -286,9 +286,9 @@ def test_daily_scheduler_runs_unattended_with_no_local_qualification() -> None:
     qualifies anything -- the lanes it dispatches prove themselves, publishing
     only when their pairing job succeeded.
 
-    Both channels use the same model: the dispatcher freezes source and the
-    hosted artifact lanes qualify before publishing. No machine-local journal
-    or human keyboard is part of that authority.
+    Nightly is the one channel that consumes no machine-local journal: this
+    runner is fresh and unattended and cannot run `just test`. Every channel
+    an operator releases requires one (`[release].unattended_channels`).
     """
     workflow = _workflow("release-nightly.yaml")
     release = _job_block(workflow, "nightly-release")
@@ -438,16 +438,18 @@ def test_the_scheduler_meets_every_precondition_its_release_commands_check() -> 
     assert credentials < first_release, "authenticate before releasing"
 
 
-def test_every_channel_dispatches_without_a_machine_local_journal() -> None:
-    for command, arguments in (
-        ("release-binaries", ("stable",)),
-        ("release-profile", ("stable", "code")),
-        ("release-binaries", ("nightly",)),
-        ("release-profile", ("nightly", "code")),
+def test_only_the_unattended_channel_dispatches_without_a_local_journal() -> None:
+    for command, arguments, journal in (
+        ("release-binaries", ("stable",), True),
+        ("release-profile", ("stable", "code"), True),
+        ("release-binaries", ("corp",), True),
+        ("release-binaries", ("nightly",), False),
+        ("release-profile", ("nightly", "code"), False),
     ):
         order = _release_order(command, *arguments)
-        assert "qualification.accept" not in order, (
-            f"{command} plans a machine-local journal instead of its hosted qualification"
+        assert ("qualification.accept" in order) is journal, (
+            f"{command} {arguments[0]}: an operator release consumes the exact "
+            "`just test` journal; only the unattended nightly scheduler does not"
         )
         assert "source.remote-main" in order
         assert order.index("source.publish-ref") < order.index("release")

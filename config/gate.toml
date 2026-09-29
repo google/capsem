@@ -1430,8 +1430,13 @@ install = ["cargo", "install", "sccache", "--version", "0.17.0", "--locked"]
 # The selected commit is prepared and committed before release. Qualification
 # may create immutable Git refs afterward; it may never edit tracked source.
 line = "0.6"
-# Release lanes qualify the artifact family they publish. There is no separate
-# machine-local candidate-journal prerequisite to invalidate after each fix.
+# A release dispatches only a commit whose exact `just test <commit>` journal
+# passed on this machine: four stable attempts once each burned a 2.5 h hosted
+# lane on a defect the local glow-up catches in minutes (RELEASE.md 8.1).
+# Nightly is the one exemption: its scheduler runs unattended on a fresh hosted
+# runner that has no journal and cannot make one, and the lanes it dispatches
+# still qualify themselves before publishing.
+unattended_channels = ["nightly"]
 # A release publishes a commit, not the working tree, so uncommitted edits are
 # silently excluded. Refuse before anything is accepted or published.
 clean_worktree = "build_system/scripts/ci/require-clean-worktree.py"
@@ -2032,6 +2037,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_release_isolation.py",
     "build_system/tests/gate/test_gate_release_profile_all.py",
     "build_system/tests/gate/test_gate_release_source_commit.py",
+    "build_system/tests/gate/test_gate_release_requires_local_proof.py",
     "build_system/tests/gate/test_gate_run_transfer.py",
     "build_system/tests/gate/test_gate_qualification_evidence.py",
     "build_system/tests/gate/test_gate_qualification_flow.py",

@@ -42,7 +42,7 @@ def decide_admission(
     elif failed_attempt:
         allowed, explanation = False, "the last full attempt failed or was interrupted; use focused checks or an explicitly approved retry"
     elif baseline is None:
-        allowed, explanation = True, "no complete baseline exists; initial local proof is optional"
+        allowed, explanation = True, "no complete baseline exists; admitting the initial local proof"
     elif high_impact:
         allowed, explanation = True, "changed paths are high-impact or unknown"
     elif commits_since_success >= policy.minimum_commits:

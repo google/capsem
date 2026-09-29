@@ -20,7 +20,7 @@ from .runlogschema import (
     PlanShape,
     QualificationRun,
 )
-from .sourcecommit import SourceCommit
+from .sourcecommit import SourceCommit, tree_of
 
 
 class QualificationPolicy(StrEnum):
@@ -220,13 +220,56 @@ def find_resume(config: GateConfig, commit: SourceCommit, plan: Plan) -> ResumeE
     return None if best is None else best[1]
 
 
+def find_release_proof(config: GateConfig, commit: SourceCommit) -> QualificationEvidence | None:
+    """A passing `just test` for this commit, or for any commit with its tree.
+
+    The exact commit first. Otherwise the tree decides: a pull request's merge
+    commit is a new commit, but when its tree equals the branch head's the two
+    are the same bytes to build and test, and the branch head's proof is the
+    proof. The tree names every tracked byte, lockfile, and submodule pin, so a
+    merge that changed anything has a different tree and is refused. Newest
+    run wins; an archived commit Git no longer has cannot be matched.
+    """
+    exact = find_complete(config, commit)
+    if exact is not None:
+        return exact
+    tree = tree_of(config.root, commit)
+    archive = config.path(config.runlog.root) / config.runlog.source_archive_dir
+    if tree is None or not archive.is_dir() or archive.is_symlink():
+        return None
+    best: QualificationEvidence | None = None
+    for directory in archive.iterdir():
+        if not directory.is_dir() or directory.is_symlink():
+            continue
+        try:
+            tested = SourceCommit(directory.name)
+        except ValueError:
+            continue
+        if tree_of(config.root, tested) != tree:
+            continue
+        found = find_complete(config, tested)
+        if found is not None and (best is None or found.reference.run_id > best.reference.run_id):
+            best = found
+    return best
+
+
+def missing(commit: SourceCommit) -> GateError:
+    """The one refusal for a release whose commit has no passing local proof."""
+    return GateError(
+        f"source commit {commit} has no passing local qualification on this machine; "
+        f"run `just test {commit}` first. A release needs a complete, successful "
+        "`just test` for the commit, or for one with the identical Git tree (the "
+        "branch head a pull request merged), because the hosted lane takes hours to "
+        "find what the local glow-up and functional lanes find in minutes. Failed or "
+        f'interrupted attempts do not count; an approved `just test {commit} force "<reason>"` '
+        "retry that passes does."
+    )
+
+
 def require_complete(config: GateConfig, commit: SourceCommit) -> QualificationEvidence:
-    found = find_complete(authority(config), commit)
+    found = find_release_proof(authority(config), commit)
     if found is None:
-        raise GateError(
-            f"source commit {commit} has no complete exact qualification run log; "
-            f"run `just test {commit}` first"
-        )
+        raise missing(commit)
     return found
 
 
@@ -244,38 +287,4 @@ class AcceptQualification(Action, name="accept-exact-qualification"):
         context.journal.note(
             f"accepted qualification {found.reference.run_id} at {found.reference.run_log} "
             f"({found.reference.digest})"
-        )
-
-
-class WaiveQualification(Action, name="waive-exact-qualification"):
-    """Record that an operator released a commit without its own journal.
-
-    `--force` exists because the qualification proves the *product*, and not
-    every commit changes the product. A gate or CI policy change costs two and
-    a half hours to re-prove artifacts that are byte-identical to ones already
-    proven, and paying that repeatedly is how a release stops happening at all.
-
-    It stays a step rather than becoming an absence, so the run log still says
-    what happened. A release that skipped its proof and left no trace of having
-    skipped it is indistinguishable afterwards from one that never needed it,
-    and the journal is the evidence this contract runs on.
-    """
-
-    def __init__(self, commit: SourceCommit) -> None:
-        self._commit = commit
-
-    def render(self) -> str:
-        return f"record that {self._commit} is released without an exact journal"
-
-    def perform(self, context: Context) -> None:
-        found = find_complete(authority(context.config), self._commit)
-        if found is not None:
-            context.journal.note(
-                f"forced release, though {self._commit} does have a complete "
-                f"qualification: {found.reference.run_id}"
-            )
-            return
-        context.journal.note(
-            f"FORCED: {self._commit} has no complete qualification journal and was "
-            "released anyway by --force"
         )

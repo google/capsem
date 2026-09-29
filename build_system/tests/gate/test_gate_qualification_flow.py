@@ -113,7 +113,7 @@ def test_exact_candidate_reuses_completed_journal(config, monkeypatch, capsys) -
     monkeypatch.delenv(config.locks.gate.run_marker, raising=False)
     command = _candidate(config)
     monkeypatch.setattr(command, "_describe", _plan)
-    monkeypatch.setattr(qualificationflow, "require_local_main", lambda *_args: None)
+    monkeypatch.setattr(qualificationflow, "require_local_branch", lambda *_args: None)
     monkeypatch.setattr(command, "reexec", lambda *_args: pytest.fail("re-exec reached"))
     monkeypatch.setattr(command, "resources", lambda *_args: pytest.fail("resources reached"))
     monkeypatch.setattr("capsem_builder.gate.command.prefix.active", lambda *_args: pytest.fail("prefix"))
@@ -202,7 +202,7 @@ def test_partial_exact_evidence_selects_the_retained_prefix_and_frontier(
         update={"prefix": config.prefix.model_copy(update={"parent": str(parent)})}
     )
     monkeypatch.setattr(qualificationflow, "require_detached_checkout", lambda *_args: None)
-    monkeypatch.setattr(qualificationflow, "require_local_main", lambda *_args: None)
+    monkeypatch.setattr(qualificationflow, "require_local_branch", lambda *_args: None)
 
     decision = qualificationflow.decide(
         config,
@@ -246,15 +246,15 @@ def test_qualification_references_reject_path_shaped_run_ids() -> None:
         QualificationRun(run_id="../other", run_log="/tmp/run.jsonl", digest="a" * 64)
 
 
-def test_evidence_is_not_consulted_until_the_commit_is_on_main(
+def test_evidence_is_not_consulted_until_the_commit_is_on_a_branch(
     config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
         qualificationflow,
-        "require_local_main",
-        lambda *_args: (_ for _ in ()).throw(RuntimeError("not on main")),
+        "require_local_branch",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("not on a branch")),
     )
-    with pytest.raises(RuntimeError, match="not on main"):
+    with pytest.raises(RuntimeError, match="not on a branch"):
         qualificationflow.decide(
             config,
             policy=QualificationPolicy.REUSE_OR_RUN,
@@ -302,7 +302,7 @@ def test_manual_exact_continuation_cannot_override_the_journal(
     config = config.model_copy(
         update={"prefix": config.prefix.model_copy(update={"parent": str(parent)})}
     )
-    monkeypatch.setattr(qualificationflow, "require_local_main", lambda *_args: None)
+    monkeypatch.setattr(qualificationflow, "require_local_branch", lambda *_args: None)
     monkeypatch.setattr(qualificationflow, "require_detached_checkout", lambda *_args: None)
 
     for frontier, carried, reuse in (
