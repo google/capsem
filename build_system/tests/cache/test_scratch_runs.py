@@ -169,7 +169,7 @@ from capsem_builder import gatelaunch
 source = Path({str(source)!r})
 environment = gatelaunch.contained_environment(source)
 os.environ.update(environment)
-gatelaunch.hold_environment(source)
+gatelaunch.hold_environment(environment, source)
 run = Path(environment["TMPDIR"])
 assert run.is_dir(), "the run directory exists once its lease is held"
 (run / "pytest").mkdir()
