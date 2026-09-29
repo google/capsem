@@ -104,6 +104,8 @@ pub struct ContainedEntry {
     /// device. Reported, never followed.
     pub is_symlink: bool,
     pub size: u64,
+    /// Bytes allocated on disk (`st_blocks * 512`): a sparse file's true cost.
+    pub allocated: u64,
     pub mtime_secs: u64,
     pub identity: EntryIdentity,
 }
@@ -447,6 +449,7 @@ impl ContainedDir {
                 kind: kind_of(stat.st_mode),
                 is_symlink: SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT == SFlag::S_IFLNK,
                 size: u64::try_from(stat.st_size).unwrap_or(0),
+                allocated: u64::try_from(stat.st_blocks).unwrap_or(0).saturating_mul(512),
                 mtime_secs: u64::try_from(stat.st_mtime).unwrap_or(0),
                 identity: identity_of(&stat),
             })? {
