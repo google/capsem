@@ -22,9 +22,9 @@ from helpers.benchmark_ratchet import (
     BenchmarkMetric,
     assert_within_evidence,
     latest_checked_in_benchmark,
-    vm_lifecycle_factor,
     measuring_profile,
     metric_value,
+    vm_lifecycle_factor,
 )
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.package_probe import (
