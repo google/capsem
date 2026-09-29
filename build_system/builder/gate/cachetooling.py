@@ -82,13 +82,17 @@ def environment(config: GateConfig, *, key: str, source_root: Path | None = None
 
 
 def compiler_environment(config: GateConfig) -> dict[str, str]:
-    """Enable the pinned compiler cache only after its executable exists."""
+    """Gate compilation policy; the pinned cache only after its executable exists."""
+    incremental = {
+        config.environment.cargo_incremental: "1" if config.toolchain.cargo_incremental else "0"
+    }
     command = config.toolchain.compiler_cache_command
     if shutil.which(command) is None:
-        return {}
+        return incremental
     paths = cachelayout.cache_paths(config)
     stage = paths.policy.stages["rust-sccache"]
     return {
+        **incremental,
         config.environment.rustc_wrapper: command,
         config.environment.sccache_dir: str(paths.stage("rust-sccache")),
         config.environment.sccache_cache_size: f"{stage.max_size_bytes // 1024**3}G",

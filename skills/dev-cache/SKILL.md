@@ -184,8 +184,19 @@ digest. Do not replace it with a random run ID: Cargo fingerprints contain
 absolute source paths, so random prefixes turn an unchanged repeat into a
 rebuild. The gate owns sccache as a scoped `CompilerCache` resource, exports
 `SCCACHE_BASEDIRS` (plural), uses client-side mode, and stops the server during
-resource teardown. Do not manage its daemon in shell or disable Cargo
-incremental compilation without a measured workload-specific reason.
+resource teardown. Do not manage its daemon in shell.
+
+Gate commands and bounded builds compile with `CARGO_INCREMENTAL=0`
+(`[toolchain] cargo_incremental` in `config/gate.toml`, exported by
+`gatelaunch.contained_environment` and `cachetooling.compiler_environment`).
+That is the measured workload-specific reason: a prefix is named by its source
+digest and workspace units are salted by its path, so an incremental session is
+never read back, an agent worktree lives one session, and on 2026-09-29 the
+sessions were 75-83 GB of a 171-208 GB target. sccache also refuses
+incremental output. Keep
+the dev profile at `debug = "line-tables-only"` for the same reason: full
+DWARF was 77% of every test executable
+(`tests/citadel/test_hot_build_contract.py`).
 
 Keep the checkout-local `build.rustc-workspace-wrapper` configured in Cargo.
 Cargo includes its resolved path in workspace artifact keys, separating source
