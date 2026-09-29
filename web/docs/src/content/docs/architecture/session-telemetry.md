@@ -892,8 +892,12 @@ Session totals are not computed by scanning the ledger. The writer keeps a
 counter snapshot (`capsem_logger::counters::LedgerCounters`) and commits it in
 the same transaction as the rows it counts, so a count can never include a row
 that was rolled back or refused. Readers take it whole with
-`DbHandle::ledger_counters()`, one primary-key lookup answered from the
-handle's cache while the ledger is idle.
+`DbHandle::ledger_counters()`, from the handle's memory: the handle's reader
+thread reads the snapshot when SQLite's `data_version` says the writer
+committed -- on `ready()`, and on its own every 250 ms -- so a polled route
+(`/vms/list`, `/info`, `stats/summary`, the security status routes) never
+touches the file or the reader thread. `ready()` is the read-after-write
+barrier.
 
 | Counter group | Holds |
 |---------------|-------|
