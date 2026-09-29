@@ -52,25 +52,29 @@ def _docker_actions(
     build = next(
         (item for item in inventory.resources if item.kind is ResourceKind.BUILD_CACHE), None
     )
-    if inventory.owned_bytes > policy.max_size_bytes and projected > policy.warm_size_bytes:
-        if build is not None and build.identity not in selected:
-            reclaim = min(build.logical_bytes, projected - policy.warm_size_bytes)
-            actions.append(
-                RuntimePruneAction(
-                    runtime_id=inventory.runtime_id,
-                    operation=RuntimeOperation.PRUNE_BUILD_CACHE,
-                    target=build.identity,
-                    logical_bytes=reclaim,
-                    reason=(
-                        f"Docker cache exceeded max size {policy.max_size_bytes}; "
-                        f"recover to warm size {policy.warm_size_bytes}"
-                    ),
-                    keep_bytes=max(0, build.logical_bytes - reclaim),
-                    all_unused=True,
-                )
+    if (
+        inventory.owned_bytes > policy.max_size_bytes
+        and projected > policy.warm_size_bytes
+        and build is not None
+        and build.identity not in selected
+    ):
+        reclaim = min(build.logical_bytes, projected - policy.warm_size_bytes)
+        actions.append(
+            RuntimePruneAction(
+                runtime_id=inventory.runtime_id,
+                operation=RuntimeOperation.PRUNE_BUILD_CACHE,
+                target=build.identity,
+                logical_bytes=reclaim,
+                reason=(
+                    f"Docker cache exceeded max size {policy.max_size_bytes}; "
+                    f"recover to warm size {policy.warm_size_bytes}"
+                ),
+                keep_bytes=max(0, build.logical_bytes - reclaim),
+                all_unused=True,
             )
-            projected -= reclaim
-            selected.add(build.identity)
+        )
+        projected -= reclaim
+        selected.add(build.identity)
     if build is not None and build.logical_bytes and build.identity not in selected:
         # The age refinement applies below the maximum too. Only pressure
         # reached BuildKit before, so three-week-old records sat under a

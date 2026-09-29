@@ -122,7 +122,7 @@ def test_bounded_builds_share_the_gate_incremental_policy(monkeypatch) -> None:
     bootstrap = gatelaunch.contained_environment(ROOT)
 
     assert bootstrap[gatelaunch.CARGO_INCREMENTAL] == "0"
-    assert gatelaunch.CARGO_INCREMENTAL == CONFIG.environment.cargo_incremental
+    assert CONFIG.environment.cargo_incremental == gatelaunch.CARGO_INCREMENTAL
 
 
 def test_dependency_free_bootstrap_matches_the_typed_tool_selection(monkeypatch) -> None:
