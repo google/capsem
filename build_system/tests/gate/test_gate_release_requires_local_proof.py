@@ -17,8 +17,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from capsem_builder.gate import qualificationevidence, qualificationflow, sourcecommit
 from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import qualificationevidence, qualificationflow, sourcecommit
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.execution import ResumePolicy, step
 from capsem_builder.gate.plan import Plan
