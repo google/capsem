@@ -22,7 +22,7 @@ from helpers.benchmark_ratchet import (
     BenchmarkMetric,
     assert_within_evidence,
     latest_checked_in_benchmark,
-    maximum_factor,
+    vm_lifecycle_factor,
     measuring_profile,
     metric_value,
 )
@@ -260,7 +260,7 @@ def test_lifecycle_benchmark():
     baseline = latest_checked_in_benchmark(
         PROJECT_ROOT, BenchmarkCategory.LIFECYCLE, measuring_profile(PROJECT_ROOT)
     )
-    factor = maximum_factor(PROJECT_ROOT)
+    factor = vm_lifecycle_factor(PROJECT_ROOT)
 
     # Rich table
     print()
@@ -351,7 +351,7 @@ def test_fork_benchmark():
     baseline = latest_checked_in_benchmark(
         PROJECT_ROOT, BenchmarkCategory.FORK, measuring_profile(PROJECT_ROOT)
     )
-    factor = maximum_factor(PROJECT_ROOT)
+    factor = vm_lifecycle_factor(PROJECT_ROOT)
 
     # Rich table
     print()

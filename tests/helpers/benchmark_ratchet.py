@@ -154,6 +154,10 @@ def maximum_factor(project_root: Path) -> float:
     return _regression(project_root, "maximum_factor")
 
 
+def vm_lifecycle_factor(project_root: Path) -> float:
+    return _regression(project_root, "vm_lifecycle_factor")
+
+
 def _regression(project_root: Path, key: str) -> float:
     config = tomllib.loads((project_root / "config" / "gate.toml").read_text(encoding="utf-8"))
     return float(config["benchmark_regression"][key])

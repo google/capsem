@@ -3316,6 +3316,10 @@ quick_timeout_secs = 60
 # fails when a measured duration or allocated-byte metric grows by more than
 # this ratio and clears its observed variance.
 maximum_factor = 1.1
+# The VM lifecycle and fork benchmarks measure whole boots. On one idle host
+# exec-ready ranged 969-1108 ms run to run, wider than the 10% envelope, so a
+# baseline recorded at one end failed at the other. They keep a 20% margin.
+vm_lifecycle_factor = 1.2
 # A percentage attached to nanoseconds is not product performance. Time
 # changes remain visible below this resolution but have no release authority.
 minimum_time_resolution_ms = 1.0

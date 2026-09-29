@@ -120,4 +120,7 @@ class BenchmarkRegressionConfig(Strict):
     """
 
     maximum_factor: PositiveFloat
+    # Full VM lifecycle and fork timings: whole boots, whose run-to-run spread
+    # (~14% for exec-ready on one idle host) exceeds the 10% product envelope.
+    vm_lifecycle_factor: PositiveFloat
     minimum_time_resolution_ms: PositiveFloat
