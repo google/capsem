@@ -21,7 +21,7 @@ just focus-test functional # Rerun one named functional owner
 source_commit=$(git rev-parse HEAD)
 just test "$source_commit" # Required before merge and release; exact repeats reuse its journal.
 
-# Optional hands-on local testing
+# Optional hands-on local testing; never a release prerequisite
 just install
 
 # Release only the exact commit whose `just test` passed (see Releases below)
