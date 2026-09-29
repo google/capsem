@@ -3,5 +3,5 @@
 # every workspace artifact so checkouts sharing a target keep their clippy
 # output apart. `cargo clippy` would force one shared clippy-driver path and
 # lose that key; build_system/builder/gate/clippyrun.py runs clippy through
-# this script instead.
-exec clippy-driver "$@"
+# this script instead. The rustc wrapper records the unit's checkout.
+exec "$(dirname "${BASH_SOURCE[0]}")/rustc-workspace-wrapper.sh" clippy-driver "$@"

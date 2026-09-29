@@ -107,6 +107,7 @@ def enforce(context, cache_id, reason) -> None:
         cache_id=cache_id,
         apply=True,
         reason=reason,
+        checkout=context.obj["policy_repository"],
     )
     try:
         decisions = CacheRegistry(paths, policy).mutate(request)

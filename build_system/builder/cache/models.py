@@ -170,6 +170,10 @@ class CacheEntry(BaseModel):
     protected: StrictBool = False
     #: A lease file whose generation is gone: collected, never counted.
     lease_only: StrictBool = False
+    #: Its owner no longer exists, so nothing can read it again: collected.
+    orphaned: StrictBool = False
+    #: Eviction tier under pressure, lowest first (`cargounits.WorkingSet`).
+    retain_rank: StrictInt = 0
 
 
 class StageInventory(BaseModel):

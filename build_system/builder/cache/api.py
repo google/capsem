@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from pathlib import Path
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr, model_validator
@@ -28,6 +29,9 @@ class CacheRequest(BaseModel):
     cache_id: StrictStr
     apply: StrictBool
     reason: StrictStr
+    #: The checkout asking. With the cache authority it is the working set
+    #: whose Cargo units retention takes last.
+    checkout: Path | None = None
 
     @model_validator(mode="after")
     def values_are_explicit(self) -> CacheRequest:

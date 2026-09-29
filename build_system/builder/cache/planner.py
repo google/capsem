@@ -72,7 +72,10 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
             continue
         ordered = sorted(
             (entry for entry in stage.entries if entry.managed),
-            key=lambda entry: _retention_key(stage_policy.prune_strategy, entry),
+            key=lambda entry: (
+                entry.retain_rank,
+                *_retention_key(stage_policy.prune_strategy, entry),
+            ),
         )
         maximum_age = stage_policy.maximum_age_hours * NANOSECONDS_PER_HOUR
         over_max = remaining > stage_policy.max_size_bytes
@@ -85,8 +88,15 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
         for entry in ordered:
             if entry.protected:
                 continue
-            if entry.lease_only or ownerless:
-                choose(stage, entry, "orphaned lease" if entry.lease_only else "no live owner")
+            if entry.lease_only or ownerless or entry.orphaned:
+                reason = (
+                    "orphaned lease"
+                    if entry.lease_only
+                    else "owner checkout is gone"
+                    if entry.orphaned
+                    else "no live owner"
+                )
+                choose(stage, entry, reason)
                 remaining -= entry.logical_bytes
                 remaining_count -= not entry.lease_only
                 continue

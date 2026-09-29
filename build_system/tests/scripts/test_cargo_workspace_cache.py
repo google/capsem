@@ -100,3 +100,15 @@ def test_shared_target_isolates_workspace_source_and_keeps_dependencies_warm(
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == f"{root.name} warm", build.stderr
+    if wrapper:
+        # Each checkout's workspace units name their checkout, so retention can
+        # keep the working set and reclaim a removed checkout's copies; the
+        # shared dependency names none.
+        fingerprints = target / "debug/.fingerprint"
+        owners = {
+            Path(os.readlink(path / "capsem-owner"))
+            for path in fingerprints.glob("cache-repro-*")
+            if (path / "capsem-owner").is_symlink()
+        }
+        assert owners == {root.resolve() for root in roots}
+        assert not list(fingerprints.glob("external-dependency-*/capsem-owner"))

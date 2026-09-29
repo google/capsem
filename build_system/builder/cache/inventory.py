@@ -52,12 +52,14 @@ def _stage_inventory(
     paths: CachePaths,
     policy: CachePolicy,
     allocated_seen: set[tuple[int, int]],
-    *, retention: bool = False,
+    *, retention: bool = False, checkout: Path | None = None,
 ) -> StageInventory:
     stage_policy = policy.stages[stage_id]
     stage_root = paths.stage(stage_id)
     if retention and stage_policy.cargo_target_roots:
-        return _cargo_inventory(stage_id, stage_root, stage_policy, allocated_seen)
+        # The working set: the calling checkout and the cache authority.
+        working_set = frozenset(root for root in (paths.repository_root, checkout) if root)
+        return _cargo_inventory(stage_id, stage_root, stage_policy, allocated_seen, working_set)
     if stage_policy.object_store:
         return _object_inventory(stage_id, stage_root, stage_policy, allocated_seen)
     entry_root = (stage_policy.retention_root if retention and stage_policy.retention_root
@@ -136,7 +138,9 @@ def _stage_inventory(
     )
 
 
-def _cargo_inventory(stage_id, stage_root: Path, stage_policy, allocated_seen) -> StageInventory:
+def _cargo_inventory(
+    stage_id, stage_root: Path, stage_policy, allocated_seen, working_set: frozenset[Path]
+) -> StageInventory:
     """A Cargo stage as its compilation units, everything else accounted beside them."""
     for target_root in stage_policy.cargo_target_roots:
         resolved = (stage_root / target_root).resolve()
@@ -146,6 +150,7 @@ def _cargo_inventory(stage_id, stage_root: Path, stage_policy, allocated_seen) -
     busy = bool(held)
     entries, accounted = unit_entries(
         stage_root, stage_policy.cargo_target_roots, allocated_seen, protected=busy,
+        working_set=working_set,
     )
     other_logical, other_allocated = unaccounted_size(stage_root, accounted, allocated_seen)
     return StageInventory(
@@ -234,6 +239,7 @@ def scan_inventory(
     paths: CachePaths, policy: CachePolicy, *, now_ns: int | None = None,
     retention: bool = False,
     stage_ids: frozenset[str] | None = None,
+    checkout: Path | None = None,
 ) -> CacheInventory:
     """Scan configured leaves, or only named owners for a focused enforcement."""
     if stage_ids is not None:
@@ -246,7 +252,9 @@ def scan_inventory(
         key=lambda stage_id: (stage_id != "objects", stage_id),
     )
     by_id = {
-        stage_id: _stage_inventory(stage_id, paths, policy, allocated_seen, retention=retention)
+        stage_id: _stage_inventory(
+            stage_id, paths, policy, allocated_seen, retention=retention, checkout=checkout
+        )
         for stage_id in scan_order
     }
     unclassified = _unclassified_inventory(paths, policy, allocated_seen) if stage_ids is None else ()
@@ -281,7 +289,11 @@ def select_inventory(inventory: CacheInventory, stage_id: str) -> CacheInventory
 
 
 def scan_retention_inventory(
-    paths: CachePaths, policy: CachePolicy, *, now_ns: int | None = None
+    paths: CachePaths,
+    policy: CachePolicy,
+    *,
+    now_ns: int | None = None,
+    checkout: Path | None = None,
 ) -> RetentionInventory:
     """Scan only stages whose configured retention policy permits deletion."""
     allocated_seen: set[tuple[int, int]] = set()
@@ -292,7 +304,7 @@ def scan_retention_inventory(
     )
 
     stages = tuple(
-        _stage_inventory(stage_id, paths, policy, allocated_seen, retention=True)
+        _stage_inventory(stage_id, paths, policy, allocated_seen, retention=True, checkout=checkout)
         for stage_id in stage_ids
     )
     return RetentionInventory(

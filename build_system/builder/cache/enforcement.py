@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr
 
 from .inventory import scan_inventory, select_inventory
@@ -28,15 +30,31 @@ class EnforcementResult(BaseModel):
 
 
 def enforce_repository(
-    paths: CachePaths, policy: CachePolicy, cache_id: str, *, reason: str
+    paths: CachePaths,
+    policy: CachePolicy,
+    cache_id: str,
+    *,
+    reason: str,
+    checkout: Path | None = None,
 ) -> EnforcementResult:
-    """Prune one repository owner, or all owners, when a maximum is crossed."""
+    """Prune one repository owner, or all owners, when a maximum is crossed.
+
+    `checkout` is the calling checkout: with the cache authority it is the
+    working set whose Cargo units go last.
+    """
     stage_ids = None if cache_id == "all" else frozenset({cache_id})
-    inventory = select_inventory(scan_inventory(paths, policy, retention=True, stage_ids=stage_ids), cache_id)
+
+    def scan():
+        return select_inventory(
+            scan_inventory(paths, policy, retention=True, stage_ids=stage_ids, checkout=checkout),
+            cache_id,
+        )
+
+    inventory = scan()
     plan = plan_prune(inventory, policy)
     if plan.actions:
         apply_prune(paths, plan, reason=reason)
-        after = select_inventory(scan_inventory(paths, policy, retention=True, stage_ids=stage_ids), cache_id)
+        after = scan()
     else:
         after = inventory
     violations = plan_prune(after, policy).violations

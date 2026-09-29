@@ -94,6 +94,7 @@ def _enforce_cargo_cache(root: Path, command: Sequence[str], *, refuse: bool = T
         policy,
         "cargo",
         reason=f"bounded direct command: {shlex.join(command)}",
+        checkout=root,
     )
     if result.violations and refuse:
         raise GateError("; ".join(result.violations))

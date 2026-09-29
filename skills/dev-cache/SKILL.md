@@ -107,7 +107,20 @@ are removed together, fingerprint first, least recently used first. Every gate
 prefix salts workspace units with its checkout path, so incremental-only
 retention let stale prefixes fill the stage until enforcement refused every
 run (issue #205). Paths Cargo does not name by unit, such as uplifted
-binaries, count toward capacity but are never selected. Native Cargo output locks protect the whole stage and are acquired again
+binaries, count toward capacity but are never selected.
+
+Retention is ordered by owner, not only by clock (issue #276). The workspace
+wrapper links each unit's fingerprint directory to the checkout that compiled
+it (`capsem-owner`, a symlink, so reading it moves no atime and measuring
+never counts it). A unit whose checkout is gone is reclaimed on every prune,
+whatever its age. Under pressure other checkouts' units go first, then shared
+or unrecorded ones (third-party crates, sccache hits, units from before the
+link existed), and the working set -- the calling checkout (`--policy-repository`,
+the bounded command's root) and the cache authority -- last. Plain LRU made
+the next build of the current head cold whenever other checkouts had compiled
+since. The copies themselves stay: the salt cannot go until Cargo freshness is
+content-based, and `-Zchecksum-freshness` is still unstable on the pinned
+toolchain. Native Cargo output locks protect the whole stage and are acquired again
 through deletion; even an explicit cold clean preserves their lock inodes.
 
 The Cargo maximum is held around compilation, not by any one step. Every
