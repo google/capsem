@@ -78,3 +78,83 @@ def test_manifest_metadata_requires_one_package_owned_member(package: Path, coun
     _write_synthetic_deb(tree, package)
     with pytest.raises(SystemExit, match=f"exactly one manifest metadata, found {count}"):
         release_installed_probe.packaged_manifest_metadata(package)
+
+
+def test_installed_probe_checks_the_binaries_the_package_ships(package: Path) -> None:
+    """A transition installs an older package whose binary set differs.
+
+    0.6.3 shipped capsem-port-router (and no capsem-router); the probe checked
+    every current binary name against it and failed the release glow-up on a
+    binary that package never had. It checks what the package ships.
+    """
+    tree = package.parent / "tree"
+    for name in ("capsem-service", "capsem-port-router", "capsem-app"):
+        (tree / "usr/bin" / name).write_bytes(b"old package binary")
+    package.unlink()
+    _write_synthetic_deb(tree, package)
+
+    assert release_installed_probe.packaged_host_binaries(package) == ("capsem", "capsem-service")
+
+
+def test_installed_probe_shell_checks_each_artifact_payload(tmp_path: Path) -> None:
+    shell = release_installed_probe.exact_installed_probe_shell(tmp_path)
+    assert 'check_binary_versions "$package_version" "$artifact"' in shell
+    assert "packaged_host_binaries" in shell
+
+
+def _public_transition_version_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """The rendered public transition script's binary check, as bash."""
+    import re
+
+    from capsem_builder.release.tools import check_public_binary_release as public
+
+    scripts: list[str] = []
+    monkeypatch.setattr(public.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(
+        public, "linux_amd64_current_package", lambda manifest: {"version": manifest["version"]}
+    )
+    monkeypatch.setattr(public.subprocess, "run", lambda argv, **_: scripts.append(argv[-1]))
+    public.run_docker_binary_transition_smoke(
+        older_manifest={"version": "0.6.3"},
+        newer_manifest={"version": "0.6.4"},
+        install_script_url="http://127.0.0.1:1/install.sh",
+        docker_image="unused",
+        work_dir=tmp_path / "work",
+    )
+    monkeypatch.undo()  # the stubs patched the shared subprocess module
+    match = re.search(r"^check_binary_versions\(\) \{\n.*?^\}\n", scripts[0], re.S | re.M)
+    assert match, scripts[0]
+    return match.group(0)
+
+
+@pytest.mark.parametrize("owned_router", [False, True])
+def test_public_transition_checks_the_binaries_the_installed_package_owns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, owned_router: bool
+) -> None:
+    """The older public package predates capsem-router; checking the current
+    binary names against it failed a release on a binary it never shipped.
+    A binary the installed package does own must still be present."""
+    import subprocess
+
+    function = _public_transition_version_check(tmp_path, monkeypatch)
+    home = tmp_path / "home"
+    (home / ".capsem/bin").mkdir(parents=True)
+    for name in ("capsem", "capsem-service"):
+        tool = home / ".capsem/bin" / name
+        tool.write_text("#!/bin/sh\necho " + name + " 0.6.3\n")
+        tool.chmod(0o755)
+    owned = ["/usr/bin/capsem", "/usr/bin/capsem-service"] + (["/usr/bin/capsem-router"] if owned_router else [])
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    (stubs / "dpkg").write_text("#!/bin/sh\nprintf '%s\\n' " + " ".join(owned) + "\n")
+    (stubs / "su").write_text('#!/bin/sh\nshift; exec sh -c "$2"\n')
+    for stub in stubs.iterdir():
+        stub.chmod(0o755)
+    result = subprocess.run(
+        ["bash", "-c", "set -euo pipefail\n" + function + "\ncheck_binary_versions 0.6.3\n"],
+        env={"PATH": f"{stubs}:/usr/bin:/bin", "HOME": str(home)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) is (not owned_router), result.stderr

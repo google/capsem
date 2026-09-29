@@ -1659,7 +1659,7 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
         assert "build_system/scripts/release/verify-installed-release.py" in script
         assert '"$CAPSEM_BIN" doctor' in script
         assert "build_system/scripts/build/run-installed-winterfell.py" in script
-        assert "capsem-mock-server" in script
+        assert "packaged_host_binaries" in script  # each package holds itself to its own payload
         assert "update --yes" not in script
     assert "update --yes" not in tamper_script
     assert "update --yes" not in incompatible_script

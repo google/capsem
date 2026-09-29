@@ -27,6 +27,21 @@ HOST_BINARIES = (
 )
 
 
+def packaged_host_binaries(deb: Path) -> tuple[str, ...]:
+    """The host binaries an exact package ships, in HOST_BINARIES order.
+
+    A transition installs an older package first, and binary sets change
+    between releases: 0.6.3 shipped capsem-port-router, not capsem-router.
+    Checking the current names against it failed on a binary that package
+    never had, so each installed package is held to its own payload.
+    """
+    shipped = {
+        Path(name).name
+        for name in deb_payload_files(deb, select=lambda name: Path(name).parent.as_posix().endswith("usr/bin"))
+    }
+    return tuple(binary for binary in HOST_BINARIES if binary in shipped)
+
+
 def packaged_manifest_metadata(deb: Path) -> dict[str, str]:
     """Return the future polling identity declared by an exact package.
 
@@ -114,7 +129,10 @@ PY
 }}
 check_binary_versions() {{
   expected="$1"
-  for binary in {" ".join(HOST_BINARIES)}; do
+  artifact="$2"
+  binaries=$({shlex.quote(sys.executable)} -c 'import sys; from pathlib import Path; from capsem_builder.release.tools.release_installed_probe import packaged_host_binaries; print(" ".join(packaged_host_binaries(Path(sys.argv[1]))))' "$artifact")
+  test -n "$binaries"
+  for binary in $binaries; do
     test -x "$CAPSEM_HOME_DIR/bin/$binary"
     if [ "$binary" = capsem ]; then
       "$CAPSEM_HOME_DIR/bin/$binary" version
@@ -134,7 +152,7 @@ probe_installed_transition() {{
   architecture="$7"
   metadata_manifest_url="${{8:-$manifest_url}}"
   wait_for_service
-  check_binary_versions "$package_version"
+  check_binary_versions "$package_version" "$artifact"
   dpkg-query -W -f='${{Version}}' capsem | grep -Fx "$package_version"
   {shlex.quote(sys.executable)} build_system/scripts/release/verify-installed-release.py \
     --capsem "$CAPSEM_BIN" \
