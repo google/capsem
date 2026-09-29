@@ -4,9 +4,10 @@
 //! the worker answers; how the ledger is opened, how its freshness is decided
 //! and how the SQL is executed all stay here.
 
+use super::hot_counters::HOT_REFRESH_INTERVAL;
 use super::*;
 
-pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
+pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, hot: Arc<HotCounters>) {
     let started = Instant::now();
     // WAL makes the file readable while its writer commits, so this reader
     // queries `main` and holds no copy of it, whichever process writes.
@@ -29,14 +30,33 @@ pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
         "session db reader worker opened"
     );
 
-    while let Ok(request) = rx.recv() {
+    // Polled routes read the counter snapshot from `hot`; it is kept current
+    // here, off every request path. See `hot_counters`.
+    hot.refresh(&reader);
+    let mut refreshed = Instant::now();
+    loop {
+        let request = match rx.recv_timeout(HOT_REFRESH_INTERVAL.saturating_sub(refreshed.elapsed())) {
+            Ok(request) => request,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                hot.refresh(&reader);
+                refreshed = Instant::now();
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         match request {
             ReadRequest::Ready { reply } => {
                 let started = Instant::now();
                 let result =
                     observe_change(&reader).and_then(|observed| reader.ready().map(|()| commit(&reader, observed)));
+                // `ready()` is the read-after-write barrier for the snapshot too.
+                hot.refresh(&reader);
+                refreshed = Instant::now();
                 match &result {
-                    Ok(_) => tracing::debug!(
+                    // An idle poll observed nothing and did nothing; only a sync
+                    // is worth a line. The handle logs every call either way.
+                    Ok(false) => {}
+                    Ok(true) => tracing::debug!(
                         db_path = %path.display(),
                         operation = "ready_execute",
                         duration_ms = elapsed_ms(started),
@@ -103,13 +123,28 @@ pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
                         // already holds this answer and the ledger has not moved.
                         return Ok(QueryManyReply::CacheStillValid);
                     }
+                    // A batch is its own readiness check, so a route that
+                    // reads rows needs no separate `ready()` round trip. Only
+                    // a commit can change the schema, and a first look counts
+                    // as one; a failed check commits nothing and runs again.
+                    if observed.is_some() {
+                        reader.ready()?;
+                    }
                     execute_query_many(&reader, queries).map(|results| QueryManyReply::Executed {
                         changed: commit(&reader, observed),
                         results,
                     })
                 });
+                if matches!(result, Ok(QueryManyReply::Executed { changed: true, .. })) {
+                    // The rows just read and the totals polled beside them
+                    // describe the same commit.
+                    hot.refresh(&reader);
+                    refreshed = Instant::now();
+                }
                 match &result {
-                    Ok(_) => tracing::debug!(
+                    // A batch answered from the caller's cache executed nothing.
+                    Ok(QueryManyReply::CacheStillValid) => {}
+                    Ok(QueryManyReply::Executed { .. }) => tracing::debug!(
                         db_path = %path.display(),
                         operation = "query_many_execute",
                         query_count,
@@ -176,6 +211,10 @@ pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>) {
                 );
                 break;
             }
+        }
+        if refreshed.elapsed() >= HOT_REFRESH_INTERVAL {
+            hot.refresh(&reader);
+            refreshed = Instant::now();
         }
     }
 }

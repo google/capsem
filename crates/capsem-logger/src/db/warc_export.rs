@@ -666,9 +666,7 @@ impl DbHandle {
 
     async fn capture_warc(&self) -> DbResult<CapturedWarc> {
         let (reply, rx) = tokio::sync::oneshot::channel();
-        self.inner
-            .reader_tx
-            .send(super::ReadRequest::CaptureWarc { reply })
+        self.send_reader(super::ReadRequest::CaptureWarc { reply })
             .map_err(|error| format!("db reader worker closed: {error}"))?;
         rx.await
             .map_err(|error| format!("db reader worker dropped WARC capture reply: {error}"))?

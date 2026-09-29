@@ -38,6 +38,10 @@ impl DbReader {
     }
 
     fn with_connection(conn: Connection) -> Self {
+        // Route SQL is a fixed set of statements polled on a timer; compiling
+        // each one again on every poll was a measurable share of a route's
+        // CPU. Room for every polled route's statements, as the writer has.
+        conn.set_prepared_statement_cache_capacity(64);
         Self {
             conn,
             sync: Default::default(),

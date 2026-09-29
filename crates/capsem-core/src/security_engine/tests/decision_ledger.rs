@@ -962,7 +962,8 @@ match = 'http.host == "api.openai.com"'
         .ledger_counters()
         .await
         .unwrap()
-        .security;
+        .security
+        .clone();
     assert_eq!(security.matches, 4);
     assert_eq!(security.by_action.get("block"), Some(&1));
     assert_eq!(security.by_action.get("postprocess"), Some(&1));

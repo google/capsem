@@ -329,14 +329,12 @@ impl DbHandle {
         requested_ids: usize,
     ) -> DbResult<CapturedBodies> {
         let (reply, rx) = tokio::sync::oneshot::channel();
-        self.inner
-            .reader_tx
-            .send(super::ReadRequest::CaptureBodies {
-                queries,
-                requested_ids,
-                reply,
-            })
-            .map_err(|error| format!("db reader worker closed: {error}"))?;
+        self.send_reader(super::ReadRequest::CaptureBodies {
+            queries,
+            requested_ids,
+            reply,
+        })
+        .map_err(|error| format!("db reader worker closed: {error}"))?;
         rx.await
             .map_err(|error| format!("db reader worker dropped archive capture reply: {error}"))?
             .map(|observed| self.take_observed(observed))

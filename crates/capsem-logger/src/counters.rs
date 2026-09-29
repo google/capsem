@@ -279,39 +279,6 @@ pub fn decode(encoded: &[u8]) -> rusqlite::Result<LedgerCounters> {
     })
 }
 
-/// How a reader takes the snapshot: one primary-key lookup.
-///
-/// Hex, because the raw query rail renders a BLOB as a placeholder string.
-/// Going down that rail rather than a request of its own is what lets a polled
-/// route be answered from the handle's cache while the ledger has not moved.
-pub(crate) const SNAPSHOT_SQL: &str = "SELECT hex(counters) FROM main.ledger_counters WHERE singleton = 1";
-
-/// The snapshot out of a `SNAPSHOT_SQL` result
-/// (`{"columns":[...],"rows":[["<hex>"]]}`).
-pub(crate) fn from_snapshot_result(raw: &str) -> Result<LedgerCounters, String> {
-    let parsed: Value =
-        serde_json::from_str(raw).map_err(|error| format!("ledger counters returned invalid json: {error}"))?;
-    let hex = parsed
-        .get("rows")
-        .and_then(Value::as_array)
-        .and_then(|rows| rows.first())
-        .and_then(|row| row.get(0))
-        .and_then(Value::as_str)
-        .ok_or_else(|| missing_counters_row().to_string())?;
-    let bytes = decode_hex(hex).ok_or_else(|| "ledger_counters row is not hex".to_string())?;
-    decode(&bytes).map_err(|error| error.to_string())
-}
-
-fn decode_hex(hex: &str) -> Option<Vec<u8>> {
-    if !hex.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..hex.len())
-        .step_by(2)
-        .map(|index| u8::from_str_radix(hex.get(index..index + 2)?, 16).ok())
-        .collect()
-}
-
 fn missing_counters_row() -> rusqlite::Error {
     rusqlite::Error::InvalidParameterName("ledger_counters has no snapshot row: the ledger is broken".to_string())
 }

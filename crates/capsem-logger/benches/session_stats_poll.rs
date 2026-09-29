@@ -2,11 +2,12 @@
 //!
 //! `stats/summary`, `/info`, `/vms/list` and the status routes read a
 //! session's totals on a timer. They used to aggregate the ledger's tables
-//! on every poll after a commit; they now read the writer's counter snapshot
-//! by primary key (#223). Measured at 20k and 1M rows of network, model and
-//! tool-call traffic, idle (nothing committed since the last poll) and right
-//! after a commit (the handle's cache has to go back to the file). A flat
-//! line across sizes is the claim.
+//! on every poll after a commit; then they read the writer's counter snapshot
+//! by primary key (#223); now they read it from the handle's memory, which
+//! its reader thread keeps current. Measured at 20k and 1M rows of network,
+//! model and tool-call traffic, idle (nothing committed since the last poll:
+//! a memory read) and right after a commit (the `ready()` barrier reads the
+//! new snapshot from the file). A flat line across sizes is the claim.
 //!
 //! The same file measures the pre-#223 aggregate when its one poll call is
 //! switched to `session_stats()` on a commit that still has it.
@@ -101,6 +102,12 @@ fn session_stats_poll(c: &mut Criterion) {
         rt.block_on(reader.ready()).expect("ready");
         let mut next = rows;
         let poll = || rt.block_on(reader.ledger_counters()).expect("stats");
+        // After a commit, what a reader pays to catch up: the `ready()` barrier,
+        // which reads the new snapshot, then the poll.
+        let catch_up = || {
+            rt.block_on(reader.ready()).expect("ready");
+            poll()
+        };
 
         group.bench_function(format!("idle_{label}"), |b| b.iter(poll));
         group.bench_function(format!("after_write_{label}"), |b| {
@@ -112,7 +119,7 @@ fn session_stats_poll(c: &mut Criterion) {
                         writer.flush().await;
                     });
                 },
-                |()| poll(),
+                |()| catch_up(),
                 BatchSize::PerIteration,
             );
         });

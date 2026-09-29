@@ -232,6 +232,8 @@ async fn ledger_counters(path: &std::path::Path) -> capsem_logger::counters::Led
         .ledger_counters()
         .await
         .unwrap()
+        .as_ref()
+        .clone()
 }
 
 /// The single integer a `SELECT COUNT(*) ...` returns, read back through the

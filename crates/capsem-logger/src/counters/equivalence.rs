@@ -129,7 +129,7 @@ async fn write_session(db: &DbHandle, seed: u64, steps: u64, first_step: u64) {
 
 async fn assert_snapshot_matches_rows(path: &Path, context: &str) -> LedgerCounters {
     let reader = DbHandle::open_external_reader(path).unwrap();
-    let snapshot = reader.ledger_counters().await.unwrap();
+    let snapshot = LedgerCounters::clone(&reader.ledger_counters().await.unwrap());
     let oracle = counters_from_rows(&reader).await;
     assert_eq!(snapshot, oracle, "{context}: snapshot and rows disagree");
     snapshot

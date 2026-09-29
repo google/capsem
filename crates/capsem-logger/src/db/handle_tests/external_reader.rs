@@ -310,15 +310,15 @@ async fn two_polled_batches_are_cached_side_by_side() {
     );
 }
 
-/// The counter snapshot behind `stats/summary` and `/info` is a poll like any
-/// other, so it is answered from the cache like any other.
+/// The counter snapshot behind `/info`, `stats/summary`, `security/status`
+/// and the list is polled per VM on a timer, so a poll is answered from the
+/// DB object's memory: no request to the reader worker, no SQLite read.
 ///
-/// The summary used to be a worker request of its own, which meant every poll
-/// of every running session re-ran its aggregates over the file no matter how
-/// long the ledger had stood still.
+/// It used to be a worker round trip and a primary-key read on every poll --
+/// and before that, aggregates over the whole ledger.
 #[tokio::test]
-async fn ledger_counters_are_served_from_the_batch_cache() {
-    let p = temp_db_path("external-ledger-counters-cached");
+async fn a_counters_poll_touches_neither_the_worker_nor_the_file() {
+    let p = temp_db_path("external-ledger-counters-in-memory");
     let writer = DbHandle::open(&p).expect("open owning writer handle");
     writer
         .write(WriteOp::NetEvent(make_net_event("stats.example", Decision::Allowed)))
@@ -328,43 +328,107 @@ async fn ledger_counters_are_served_from_the_batch_cache() {
 
     let reader = DbHandle::open_external_reader(&p).expect("open service external reader");
     reader.ready().await.expect("external reader ready");
-
-    // The counter has to move on the first call, or "it did not move on the
-    // second" proves nothing: a private request that ran its query without
-    // counting it would pass the cache assertion below while re-reading the
-    // file on every poll.
-    let before_first = reader.queries_executed_for_tests().await.expect("read counter");
     let first = reader.ledger_counters().await.expect("first counters");
     assert_eq!(first.net.total, 1);
     assert_eq!(first.net.allowed, 1);
-    let executed = reader.queries_executed_for_tests().await.expect("read counter");
-    assert!(
-        executed > before_first,
-        "the first counters poll must execute and count its query. {DB_BOUNDARY_RATIONALE}"
-    );
 
-    let second = reader.ledger_counters().await.expect("second counters");
-    assert_eq!(second, first);
+    let requests = reader.reader_requests();
+    let executed = reader.queries_executed_for_tests().await.expect("read counter");
+    for _ in 0..16 {
+        let polled = reader.ledger_counters().await.expect("polled counters");
+        assert!(
+            Arc::ptr_eq(&first, &polled),
+            "an unchanged snapshot is served as the one published"
+        );
+    }
+    assert_eq!(
+        reader.reader_requests(),
+        requests,
+        "a counters poll must not ask the reader worker. {DB_BOUNDARY_RATIONALE}"
+    );
     assert_eq!(
         reader.queries_executed_for_tests().await.expect("read counter"),
         executed,
-        "an unchanged ledger must answer a counters poll without re-reading the file. \
-         {DB_BOUNDARY_RATIONALE}"
+        "a counters poll must not read the file. {DB_BOUNDARY_RATIONALE}"
     );
+}
+
+/// `ready()` is the read-after-write barrier: after it, the snapshot is the
+/// committed one, and the counters epoch says it moved.
+#[tokio::test]
+async fn ready_brings_the_counters_up_to_the_last_commit() {
+    let p = temp_db_path("external-ledger-counters-barrier");
+    let writer = DbHandle::open(&p).expect("open owning writer handle");
+    writer
+        .write(WriteOp::NetEvent(make_net_event("stats.example", Decision::Allowed)))
+        .await
+        .expect("first write");
+    writer.flush().await.expect("flush writer");
+    let reader = DbHandle::open_external_reader(&p).expect("open service external reader");
+    let before = reader.ledger_counters().await.expect("counters");
+    assert_eq!(before.net.total, 1);
+    let epoch = reader.read_cache_epoch(ReadCacheDomain::LedgerCounters);
 
     writer
         .write(WriteOp::NetEvent(make_net_event("stats.example", Decision::Denied)))
         .await
         .expect("second write");
     writer.flush().await.expect("flush writer");
+    reader.ready().await.expect("barrier");
+    let after = reader.ledger_counters().await.expect("counters after commit");
+    assert_eq!(after.net.total, 2, "a commit must be visible after the barrier");
+    assert_eq!(after.net.denied, 1);
+    assert_eq!(before.net.total, 1, "a handed-out snapshot is never mutated");
+    assert!(reader.read_cache_epoch(ReadCacheDomain::LedgerCounters) > epoch);
+}
 
-    let third = reader.ledger_counters().await.expect("counters after commit");
-    assert_eq!(third.net.total, 2, "a commit must be visible to the next poll");
-    assert_eq!(third.net.denied, 1);
-    assert!(
-        reader.queries_executed_for_tests().await.expect("read counter") > executed,
-        "a changed ledger must re-read the snapshot. {DB_BOUNDARY_RATIONALE}"
+/// Without anyone calling `ready()`, a commit still reaches the polls: the
+/// reader worker notices it on its own within `HOT_REFRESH_INTERVAL`.
+#[tokio::test]
+async fn an_unasked_commit_reaches_the_polls_within_the_refresh_interval() {
+    let p = temp_db_path("external-ledger-counters-refresh");
+    let writer = DbHandle::open(&p).expect("open owning writer handle");
+    writer.flush().await.expect("flush writer");
+    let reader = DbHandle::open_external_reader(&p).expect("open service external reader");
+    assert_eq!(reader.ledger_counters().await.expect("counters").net.total, 0);
+
+    writer
+        .write(WriteOp::NetEvent(make_net_event("stats.example", Decision::Allowed)))
+        .await
+        .expect("write");
+    writer.flush().await.expect("flush writer");
+    let requests = reader.reader_requests();
+    let seen = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if reader.ledger_counters().await.expect("counters").net.total == 1 {
+                return;
+            }
+            tokio::time::sleep(super::hot_counters::HOT_REFRESH_INTERVAL / 4).await;
+        }
+    })
+    .await;
+    assert!(seen.is_ok(), "the reader worker never published the commit");
+    assert_eq!(
+        reader.reader_requests(),
+        requests,
+        "the refresh is the worker's own; no poll asked for it"
     );
+}
+
+/// A ledger that is not ready says so to a counters poll, and never as zeros.
+#[tokio::test]
+async fn a_ledger_without_its_snapshot_row_is_an_error_not_zeros() {
+    let p = temp_db_path("external-ledger-counters-broken");
+    let writer = DbHandle::open(&p).expect("open owning writer handle");
+    writer.flush().await.expect("flush writer");
+    drop(writer);
+    rusqlite::Connection::open(&p)
+        .expect("open ledger")
+        .execute("DELETE FROM ledger_counters", [])
+        .expect("drop the snapshot row");
+    let reader = DbHandle::open_external_reader(&p).expect("open service external reader");
+    let error = reader.ledger_counters().await.expect_err("no snapshot is an error");
+    assert!(error.contains("ledger_counters"), "{error}");
 }
 
 /// A commit that lands between a poll's cache lookup and its reply costs at
@@ -429,4 +493,25 @@ async fn a_commit_between_lookup_and_reply_is_never_cached_as_current() {
          the epoch a result belongs to must be read with the lookup, before any \
          invalidation can land. {DB_BOUNDARY_RATIONALE}"
     );
+}
+
+/// A batch carries the readiness contract: routes that read rows no longer
+/// pay a `ready()` round trip first, so the batch itself must refuse a ledger
+/// whose shape is broken, even for a statement the damage does not touch.
+#[tokio::test]
+async fn a_batch_refuses_a_ledger_that_is_not_ready() {
+    let p = temp_db_path("external-batch-readiness");
+    let writer = DbHandle::open(&p).expect("open owning writer handle");
+    writer.flush().await.expect("flush writer");
+    drop(writer);
+    rusqlite::Connection::open(&p)
+        .expect("open ledger")
+        .execute_batch("DROP TABLE fs_events;")
+        .expect("break the ledger's shape");
+    let reader = DbHandle::open_external_reader(&p).expect("open service external reader");
+    let error = reader
+        .query_many(vec![("SELECT 1 AS one".to_string(), Vec::new())])
+        .await
+        .expect_err("a broken ledger is not ready for any batch");
+    assert!(error.contains("fs_events"), "{error}");
 }

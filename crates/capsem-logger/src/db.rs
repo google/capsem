@@ -70,13 +70,15 @@ type DbQueryManyCache = Vec<(Vec<DbQueryOwned>, Vec<DbQueryJson>)>;
 
 /// How many distinct batches one handle keeps answers for.
 ///
-/// Two polled routes read a session handle -- `stats/summary` and
-/// `security/status` -- so four leaves room for one more without anyone
-/// having to come back here. The bound is on memory as much as on lookups:
-/// an entry holds a whole JSON result set. Nothing in here outlives the
+/// The route lists that read a session handle through this rail -- the
+/// `stats/detail` batch, the timeline, history pages and the security window
+/// -- are fetched side by side when a user opens a session, so the bound
+/// leaves room for them without one evicting another. The bound is on memory
+/// as much as on lookups: an entry holds a whole JSON result set, and every
+/// batch that reaches here bounds its rows. Nothing in here outlives the
 /// ledger state it was read from; the whole cache is dropped when the read
 /// epoch moves.
-const QUERY_MANY_CACHE_ENTRIES: usize = 4;
+const QUERY_MANY_CACHE_ENTRIES: usize = 8;
 
 /// Typed invalidation domains for DB-owned data consumed by cached readers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +88,9 @@ pub enum ReadCacheDomain {
     /// Aggregates sourced from the main DB session/usage tables. Profile
     /// mutation ledger rows are orthogonal and must not evict this projection.
     SessionSummary,
+    /// The counter snapshot polled routes read. Moves when the reader worker
+    /// publishes a different one.
+    LedgerCounters,
 }
 
 fn elapsed_ms(started: Instant) -> u128 {
@@ -215,6 +220,12 @@ struct DbHandleInner {
     writer: Option<Arc<DbWriter>>,
     archive_blocks_inflated: AtomicU64,
     query_many_cache: Mutex<DbQueryManyCache>,
+    /// The counter snapshot the reader worker keeps current for polled
+    /// routes. See [`DbHandle::ledger_counters`].
+    hot: Arc<HotCounters>,
+    /// Requests this handle has sent its reader worker. See
+    /// [`DbHandle::reader_requests`].
+    reader_requests: AtomicU64,
     read_cache_epoch: AtomicU64,
     session_summary_cache_epoch: AtomicU64,
     /// Parks the next `query_many` right after its cache lookup, so a test can
@@ -286,9 +297,11 @@ impl DbHandle {
     fn open_reader(db_path: PathBuf) -> rusqlite::Result<Self> {
         let (reader_tx, reader_rx) = mpsc::channel();
         let reader_path = db_path.clone();
+        let hot = Arc::new(HotCounters::default());
+        let reader_hot = Arc::clone(&hot);
         let reader_join = std::thread::Builder::new()
             .name("capsem-db-reader".into())
-            .spawn(move || reader_loop(reader_path, reader_rx))
+            .spawn(move || reader_loop(reader_path, reader_rx, reader_hot))
             .expect("failed to spawn db reader thread");
 
         Ok(Self {
@@ -299,6 +312,8 @@ impl DbHandle {
                 writer: None,
                 archive_blocks_inflated: AtomicU64::new(0),
                 query_many_cache: Mutex::new(DbQueryManyCache::new()),
+                hot,
+                reader_requests: AtomicU64::new(0),
                 read_cache_epoch: AtomicU64::new(0),
                 session_summary_cache_epoch: AtomicU64::new(0),
                 #[cfg(test)]
@@ -342,19 +357,16 @@ impl DbHandle {
     pub async fn ready(&self) -> DbResult<()> {
         let started = Instant::now();
         let (reply, rx) = tokio::sync::oneshot::channel();
-        self.inner
-            .reader_tx
-            .send(ReadRequest::Ready { reply })
-            .map_err(|error| {
-                tracing::error!(
-                    db_path = %self.inner.path.display(),
-                    operation = "ready",
-                    duration_ms = elapsed_ms(started),
-                    error = %error,
-                    "session db handle operation failed"
-                );
-                format!("db reader worker closed: {error}")
-            })?;
+        self.send_reader(ReadRequest::Ready { reply }).map_err(|error| {
+            tracing::error!(
+                db_path = %self.inner.path.display(),
+                operation = "ready",
+                duration_ms = elapsed_ms(started),
+                error = %error,
+                "session db handle operation failed"
+            );
+            format!("db reader worker closed: {error}")
+        })?;
         let result = rx
             .await
             .map_err(|error| format!("db reader worker dropped ready reply: {error}"))?;
@@ -392,25 +404,23 @@ impl DbHandle {
         let sql_hash = sql_fingerprint(sql);
         let params_count = params.len();
         let (reply, rx) = tokio::sync::oneshot::channel();
-        self.inner
-            .reader_tx
-            .send(ReadRequest::Query {
-                sql: sql.to_string(),
-                params: params.to_vec(),
-                reply,
-            })
-            .map_err(|error| {
-                tracing::error!(
-                    db_path = %self.inner.path.display(),
-                    operation = "query",
-                    sql_hash,
-                    params_count,
-                    duration_ms = elapsed_ms(started),
-                    error = %error,
-                    "session db handle operation failed"
-                );
-                format!("db reader worker closed: {error}")
-            })?;
+        self.send_reader(ReadRequest::Query {
+            sql: sql.to_string(),
+            params: params.to_vec(),
+            reply,
+        })
+        .map_err(|error| {
+            tracing::error!(
+                db_path = %self.inner.path.display(),
+                operation = "query",
+                sql_hash,
+                params_count,
+                duration_ms = elapsed_ms(started),
+                error = %error,
+                "session db handle operation failed"
+            );
+            format!("db reader worker closed: {error}")
+        })?;
         let result = rx
             .await
             .map_err(|error| format!("db reader worker dropped query reply: {error}"))?
@@ -441,8 +451,13 @@ impl DbHandle {
     /// Execute several read-only queries through one DB-owned worker request.
     ///
     /// This is still caller-owned query intent and DB-owned execution. It exists
-    /// for hot routes that need several independent projections but must not pay
+    /// for routes that need several independent projections but must not pay
     /// one worker round trip per projection.
+    ///
+    /// A batch carries the readiness contract itself: the worker validates the
+    /// schema whenever the ledger moved, before executing, so a caller needs no
+    /// `ready()` round trip ahead of it. While the ledger has not moved, a
+    /// batch this handle already answered is served from its cache.
     pub async fn query_many(&self, queries: Vec<DbQueryOwned>) -> DbResult<Vec<DbQueryJson>> {
         let started = Instant::now();
         let query_count = queries.len();
@@ -462,25 +477,23 @@ impl DbHandle {
         let cache_valid = cached.is_some();
         let cache_key = queries.clone();
         let (reply, rx) = tokio::sync::oneshot::channel();
-        self.inner
-            .reader_tx
-            .send(ReadRequest::QueryMany {
-                queries,
-                cache_valid,
-                reply,
-            })
-            .map_err(|error| {
-                tracing::error!(
-                    db_path = %self.inner.path.display(),
-                    operation = "query_many",
-                    query_count,
-                    params_count,
-                    duration_ms = elapsed_ms(started),
-                    error = %error,
-                    "session db handle operation failed"
-                );
-                format!("db reader worker closed: {error}")
-            })?;
+        self.send_reader(ReadRequest::QueryMany {
+            queries,
+            cache_valid,
+            reply,
+        })
+        .map_err(|error| {
+            tracing::error!(
+                db_path = %self.inner.path.display(),
+                operation = "query_many",
+                query_count,
+                params_count,
+                duration_ms = elapsed_ms(started),
+                error = %error,
+                "session db handle operation failed"
+            );
+            format!("db reader worker closed: {error}")
+        })?;
         let reply = rx
             .await
             .map_err(|error| format!("db reader worker dropped query_many reply: {error}"))?;
@@ -530,18 +543,46 @@ impl DbHandle {
         result
     }
 
-    /// The session's counter snapshot, as its writer last committed it.
+    /// The session's counter snapshot, as its writer last committed it, from
+    /// this DB object's memory.
     ///
-    /// One primary-key lookup, down the same cached batch rail as every other
-    /// polled read: an idle poll is answered without touching the file.
-    pub async fn ledger_counters(&self) -> DbResult<crate::counters::LedgerCounters> {
-        let raw = self
-            .query_many(vec![(crate::counters::SNAPSHOT_SQL.to_string(), Vec::new())])
-            .await?;
-        let [snapshot] = raw.as_slice() else {
-            return Err(format!("ledger counters returned {} results, expected 1", raw.len()));
-        };
-        crate::counters::from_snapshot_result(snapshot)
+    /// Polled routes read this, so it neither asks the reader worker nor
+    /// touches SQLite: the worker publishes the snapshot whenever the ledger
+    /// moves (see `hot_counters`), and this takes the published one. It is at
+    /// most `HOT_REFRESH_INTERVAL` behind the file; after `ready()` it is
+    /// current. Only the first call on a handle whose worker has not looked
+    /// at the file yet waits for it, through one `ready()`.
+    ///
+    /// A ledger that is not ready, or whose snapshot row is not one, is an
+    /// error here, never zeros.
+    pub async fn ledger_counters(&self) -> DbResult<Arc<crate::counters::LedgerCounters>> {
+        if let Some(snapshot) = self.inner.hot.current() {
+            return snapshot;
+        }
+        let ready = self.ready().await;
+        match self.inner.hot.current() {
+            Some(snapshot) => snapshot,
+            None => Err(ready
+                .err()
+                .unwrap_or_else(|| "session db reader published no counter snapshot".to_string())),
+        }
+    }
+
+    /// How many requests this handle has sent its reader worker.
+    ///
+    /// Each one is a cross-thread round trip, and on a polled route that is
+    /// the cost that scales with how often clients ask rather than with what
+    /// the ledger holds. It is public so a route can be held to its count: a
+    /// counters poll needs none, and a list poll one readiness check and one
+    /// batch.
+    pub fn reader_requests(&self) -> u64 {
+        self.inner.reader_requests.load(Ordering::Relaxed)
+    }
+
+    /// Send one request to the reader worker, counting it.
+    fn send_reader(&self, request: ReadRequest) -> Result<(), mpsc::SendError<ReadRequest>> {
+        self.inner.reader_requests.fetch_add(1, Ordering::Relaxed);
+        self.inner.reader_tx.send(request)
     }
 
     /// Unwrap a worker reply, expiring this handle's read caches first when the
@@ -664,6 +705,7 @@ impl DbHandle {
         match domain {
             ReadCacheDomain::All => self.inner.read_cache_epoch.load(Ordering::Acquire),
             ReadCacheDomain::SessionSummary => self.inner.session_summary_cache_epoch.load(Ordering::Acquire),
+            ReadCacheDomain::LedgerCounters => self.inner.hot.epoch(),
         }
     }
 
@@ -792,11 +834,13 @@ impl SessionDb {
 }
 
 mod bodies;
+mod hot_counters;
 mod maintenance;
 mod reader_worker;
 mod warc_export;
 
 pub use bodies::{ArchivedBodies, BodyDirection, StoredBody};
+use hot_counters::HotCounters;
 pub use maintenance::snapshot_session_ledger;
 use reader_worker::reader_loop;
 pub use warc_export::{ExportSummary, SkipReason, SkippedBody};

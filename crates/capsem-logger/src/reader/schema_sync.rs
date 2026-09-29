@@ -67,11 +67,15 @@ impl DbReader {
     /// committed once that work has actually succeeded. See
     /// `commit_observed_version`.
     pub(crate) fn observe_data_version(&self) -> rusqlite::Result<Option<i64>> {
-        let data_version: i64 = self
-            .conn
-            .prepare_cached("PRAGMA main.data_version")?
-            .query_row([], |row| row.get(0))?;
+        let data_version = self.data_version()?;
         Ok((self.sync.synced_data_version.get() != Some(data_version)).then_some(data_version))
+    }
+
+    /// `PRAGMA main.data_version` as it stands, with nothing recorded.
+    pub(crate) fn data_version(&self) -> rusqlite::Result<i64> {
+        self.conn
+            .prepare_cached("PRAGMA main.data_version")?
+            .query_row([], |row| row.get(0))
     }
 
     /// Record an observation whose dependent work completed successfully.

@@ -71,7 +71,7 @@ impl DbReader {
     }
 
     fn query_rows(&self, sql: &str, params: &[Value], max_rows: usize) -> rusqlite::Result<Value> {
-        let mut stmt = self.conn.prepare(sql)?;
+        let mut stmt = self.conn.prepare_cached(sql)?;
 
         let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
         let col_count = columns.len();
