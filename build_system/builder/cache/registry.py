@@ -45,7 +45,11 @@ class DiskBackend:
             raise ValueError(f"unknown disk cache {request.cache_id!r}")
         if request.operation is CacheOperation.ENFORCE:
             result = enforce_repository(
-                self._paths, self._policy, request.cache_id, reason=request.reason
+                self._paths,
+                self._policy,
+                request.cache_id,
+                reason=request.reason,
+                checkout=request.checkout,
             )
             return CacheMutationResult(
                 cache_id=request.cache_id,
@@ -60,7 +64,14 @@ class DiskBackend:
         retention = request.operation is not CacheOperation.CLEAN
         stage_ids = None if request.cache_id == "all" else frozenset({request.cache_id})
         inventory = select_inventory(
-            scan_inventory(self._paths, self._policy, retention=retention, stage_ids=stage_ids), request.cache_id,
+            scan_inventory(
+                self._paths,
+                self._policy,
+                retention=retention,
+                stage_ids=stage_ids,
+                checkout=request.checkout,
+            ),
+            request.cache_id,
         )
         before = inventory.logical_bytes
         plan = (
@@ -135,6 +146,7 @@ class RuntimeBackend:
     def _snapshot(self):
         return scan_runtimes(
             self._policy,
+            paths=self._paths,
             runner=self._runner,
             runtime_ids=frozenset({self._runtime_id}),
         )
@@ -246,7 +258,7 @@ class CacheRegistry:
 
     def stats(self, *, offline: bool = False) -> CacheStats:
         inventory = scan_inventory(self._paths, self._policy)
-        snapshot = scan_runtimes(self._policy, offline=offline)
+        snapshot = scan_runtimes(self._policy, paths=self._paths, offline=offline)
         return build_stats(
             inventory.model_copy(update={"runtimes": snapshot.runtimes}),
             self._policy,

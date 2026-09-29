@@ -63,6 +63,8 @@ class DockerControlPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     runtime_id: StrictStr
+    #: The stage holding each checkout's current image generations.
+    current_stage: StrictStr
     images: dict[StrictStr, ImageCachePolicy]
 
     @model_validator(mode="after")

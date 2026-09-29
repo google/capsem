@@ -107,7 +107,20 @@ are removed together, fingerprint first, least recently used first. Every gate
 prefix salts workspace units with its checkout path, so incremental-only
 retention let stale prefixes fill the stage until enforcement refused every
 run (issue #205). Paths Cargo does not name by unit, such as uplifted
-binaries, count toward capacity but are never selected. Native Cargo output locks protect the whole stage and are acquired again
+binaries, count toward capacity but are never selected.
+
+Retention is ordered by owner, not only by clock (issue #276). The workspace
+wrapper links each unit's fingerprint directory to the checkout that compiled
+it (`capsem-owner`, a symlink, so reading it moves no atime and measuring
+never counts it). A unit whose checkout is gone is reclaimed on every prune,
+whatever its age. Under pressure other checkouts' units go first, then shared
+or unrecorded ones (third-party crates, sccache hits, units from before the
+link existed), and the working set -- the calling checkout (`--policy-repository`,
+the bounded command's root) and the cache authority -- last. Plain LRU made
+the next build of the current head cold whenever other checkouts had compiled
+since. The copies themselves stay: the salt cannot go until Cargo freshness is
+content-based, and `-Zchecksum-freshness` is still unstable on the pinned
+toolchain. Native Cargo output locks protect the whole stage and are acquired again
 through deletion; even an explicit cold clean preserves their lock inodes.
 
 The Cargo maximum is held around compilation, not by any one step. Every
@@ -144,6 +157,13 @@ this, a dead run aged like a retained generation below a 200 GiB maximum:
 one ~7 GB run per release precheck and 1,900 lock files filled the disk while
 `prune` offered 21 MB.
 
+The source-keyed Python stages (`python-pycache`, `python-pytest`) gain a
+generation for every Python-source state any checkout launches a gate or
+bounded command from, and nothing but a complete gate's package and install
+rails used to prune them: `python-pycache` reached 5.4 GB against 2 GiB. The
+launcher that creates a generation leases it and then enforces both stages
+(`pythonenv.bound_source_keyed`); a warm launch pays nothing.
+
 Retained cache lifetime ends only through these typed operations. Do not add
 consumer-boundary releases, post-test eviction hooks, or other subsystem
 lifecycle paths that bypass the owner's warm/max/age/count policy.
@@ -158,6 +178,22 @@ bulk image listing can briefly lag a completed BuildKit import, so the Docker
 adapter verifies that exact tag directly and supplies a protected typed
 resource to the planner. Never turn this into an unanchored retry or allow a
 missing exact inspection to prune older generations.
+
+Prune and enforcement never remove an image a checkout's gate uses. The gate
+declares it: `reclaim-image --apply` records its `--keep` tag for the calling
+checkout, the host builder's require step reclaims around `:latest`, and the
+image backend records each profile's dependency image
+(`capsem_builder.cache.dockercurrent`, stored in `[control.docker]
+current_stage`). A record is live while its checkout exists and it is younger
+than the Docker runtime's `maximum_age_hours`; a newer tag for the same
+checkout and slot supersedes it. Scanning a runtime requires `paths=` so every
+planner sees live records as `current`. Newest-by-creation is not current: a
+BuildKit cache hit keeps the old timestamp, one repository holds a tag per
+profile, and two checkouts each have their own. On 2026-09-29 guessing it made
+enforcement evict the release proof's current kernel-dependency image and the
+host builder; each rebuild re-ran the slowest network phase. Pressure on
+current images is reported as a violation, never resolved by evicting them.
+Only an explicit `clean` may remove a current image.
 
 ## Test efficiency
 

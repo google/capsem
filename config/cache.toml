@@ -507,6 +507,9 @@ home = "~/.tart"
 
 [control.docker]
 runtime_id = "docker"
+# Each checkout's gate records the image generations it uses here, and prune
+# and enforcement never remove one a live checkout names (`dockercurrent`).
+current_stage = "state"
 
 [control.docker.images.capsem-linux-rust-base]
 description = "Docker image generations for capsem-linux-rust-base."

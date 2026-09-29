@@ -84,7 +84,12 @@ def _bounded_actions(
         )
         pressure = over_max and projected > policy.warm_size_bytes
         over_count = position >= keep
-        if resource.protected or position == 0 or not (expired or pressure or over_count):
+        if (
+            resource.protected
+            or resource.current
+            or position == 0
+            or not (expired or pressure or over_count)
+        ):
             continue
         reason = (
             "expired Docker image generation"
@@ -138,7 +143,7 @@ def plan_docker_images(
                 reason=f"superseded owned image generation; retain newest {default_keep}",
             )
             for position, resource in enumerate(ordered)
-            if position >= default_keep and not resource.protected
+            if position >= default_keep and not (resource.protected or resource.current)
         )
     return tuple(actions), tuple(violations)
 
@@ -238,7 +243,7 @@ def plan_repository_reclaim(
     actions, previous = [], 0
     for item in resources:
         names = tuple(name for name in item.names if repository_name(name) == image.repository)
-        if any(name in pinned for name in names) or item.protected:
+        if any(name in pinned for name in names) or item.protected or item.current:
             continue
         if previous < image.keep_previous:
             previous += 1

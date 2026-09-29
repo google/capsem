@@ -195,7 +195,7 @@ def test_enforcement_diagnostics_preserve_primary_failure(tmp_path: Path, monkey
     payload.parent.mkdir(parents=True)
     payload.write_bytes(b"protected-over-max")
 
-    def unavailable(_policy):
+    def unavailable(_policy, **_arguments):
         raise error
 
     monkeypatch.setattr(controlcli, "scan_runtimes", unavailable)

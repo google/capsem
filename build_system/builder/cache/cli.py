@@ -131,6 +131,7 @@ def prune(context: click.Context, cache_id: str, apply: bool, reason: str, as_js
         cache_id=cache_id,
         apply=apply,
         reason=reason,
+        checkout=context.obj["policy_repository"],
     )
     try:
         results = _registry(context).mutate(request)

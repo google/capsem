@@ -124,6 +124,11 @@ class CachePolicy(BaseModel):
             docker_id = self.control.docker.runtime_id
             if docker_id not in self.runtimes:
                 raise ValueError(f"cache control references unknown runtime {docker_id!r}")
+            current_stage = self.control.docker.current_stage
+            if current_stage not in self.stages:
+                raise ValueError(
+                    f"cache control references unknown current-image stage {current_stage!r}"
+                )
             failure_stage = self.control.failure_artifacts.stage
             if failure_stage not in self.stages:
                 raise ValueError(
@@ -165,6 +170,10 @@ class CacheEntry(BaseModel):
     protected: StrictBool = False
     #: A lease file whose generation is gone: collected, never counted.
     lease_only: StrictBool = False
+    #: Its owner no longer exists, so nothing can read it again: collected.
+    orphaned: StrictBool = False
+    #: Eviction tier under pressure, lowest first (`cargounits.WorkingSet`).
+    retain_rank: StrictInt = 0
 
 
 class StageInventory(BaseModel):

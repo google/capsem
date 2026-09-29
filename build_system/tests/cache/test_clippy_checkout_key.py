@@ -21,6 +21,7 @@ from capsem_builder.gate.tools.ci import run_bounded_command
 
 ROOT = Path(__file__).resolve().parents[3]
 WRAPPER = tomllib.loads((ROOT / "config/gate.toml").read_text())["toolchain"]["clippy_workspace_wrapper"]
+RUSTC_WRAPPER = tomllib.loads((ROOT / ".cargo/config.toml").read_text())["build"]["rustc-workspace-wrapper"]
 LINTED = "pub fn size() -> usize { let values = vec![1]; values.len() }\n"
 CLEAN = "pub fn size() -> usize { 1 }\n"
 
@@ -32,6 +33,8 @@ def _tree(root: Path, source: str) -> Path:
     shutil.copy2(ROOT / "rust-toolchain.toml", root / "rust-toolchain.toml")
     (root / WRAPPER).parent.mkdir(parents=True)
     shutil.copy2(ROOT / WRAPPER, root / WRAPPER)
+    # The clippy wrapper runs clippy-driver through the rustc wrapper beside it.
+    shutil.copy2(ROOT / RUSTC_WRAPPER, root / RUSTC_WRAPPER)
     # One ancient mtime everywhere: nothing here can pass on timestamps.
     for path in root.rglob("*"):
         if path.is_file():
@@ -66,6 +69,12 @@ def test_each_checkout_gets_its_own_clippy_verdict_from_a_shared_target(tmp_path
     third = _clippy(clean, target)
     assert third.returncode == 0, third.stderr
     assert "Checking clippy-key" not in third.stderr, third.stderr
+    owners = {
+        Path(os.readlink(path / "capsem-owner"))
+        for path in (target / "debug/.fingerprint").glob("clippy-key-*")
+        if (path / "capsem-owner").is_symlink()
+    }
+    assert owners == {clean.resolve(), linted.resolve()}, "clippy units name their checkout"
 
 
 def test_cargo_clippy_commands_become_the_keyed_form() -> None:

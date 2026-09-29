@@ -145,6 +145,10 @@ class RuntimeResource(BaseModel):
     active: StrictBool
     owned: StrictBool
     protected: StrictBool
+    #: A checkout's gate declared this image its current generation
+    #: (`dockercurrent`). Prune and enforcement never select it; only an
+    #: explicit cold clean may.
+    current: StrictBool = False
 
 
 class RuntimeInventory(BaseModel):

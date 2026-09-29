@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from .paths import CachePaths
 
+#: Stages holding one generation per checkout Python-source state.
+SOURCE_KEYED_STAGES = ("python-pycache", "python-pytest")
 PYTHONPYCACHEPREFIX = "PYTHONPYCACHEPREFIX"
 PYTEST_ADDOPTS = "PYTEST_ADDOPTS"
 TMPDIR = "TMPDIR"
@@ -105,3 +107,29 @@ def select(
         pytest_basetemp=pytest_basetemp,
         pytest_addopts=options,
     )
+
+
+def bound_source_keyed(source: Path, authority: Path) -> tuple[str, ...]:
+    """Enforce the source-keyed stages after a new generation joined them.
+
+    Every gate launch and bounded command selects one, so every edit in any
+    worktree adds a generation (24-207 MB), while the only routine prune ran
+    in the package and install rails of a complete gate: `python-pycache`
+    reached 5.4 GB against a 2 GiB maximum. The caller leases its own
+    generation first, and enforcement never takes a leased one. Returns what
+    stayed out of contract; bounding is best effort and never fails a launch.
+    """
+    from .config import load_policy
+    from .enforcement import enforce_repository
+
+    try:
+        paths = CachePaths(repository_root=authority, policy=load_policy(source))
+        return tuple(
+            violation
+            for stage in SOURCE_KEYED_STAGES
+            for violation in enforce_repository(
+                paths, paths.policy, stage, reason="a new source generation joined the stage"
+            ).violations
+        )
+    except (OSError, ValueError) as error:
+        return (f"source-keyed caches left unbounded: {error}",)
