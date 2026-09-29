@@ -14,6 +14,7 @@ async fn an_observed_credential_is_redacted_from_every_stored_header_and_body() 
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
     let _guard = EnvGuard::install(
+        &_lock,
         &dir.path().join("capsem-home"),
         dir.path(),
         &dir.path().join("credential-store.json"),

@@ -12,7 +12,7 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
     let db_path = dir.path().join("session.db");
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(&_lock, &capsem_home, dir.path(), &test_store);
 
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
@@ -87,7 +87,7 @@ async fn hook_does_not_repay_capture_ledger_for_repeated_identical_credential() 
     let db_path = dir.path().join("session.db");
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(&_lock, &capsem_home, dir.path(), &test_store);
 
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
@@ -309,7 +309,7 @@ async fn hook_writes_injected_substitution_event_for_broker_ref_replay() {
     let db_path = dir.path().join("session.db");
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(&_lock, &capsem_home, dir.path(), &test_store);
 
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
@@ -379,7 +379,7 @@ async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
     let db_path = dir.path().join("session.db");
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(&_lock, &capsem_home, dir.path(), &test_store);
 
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
