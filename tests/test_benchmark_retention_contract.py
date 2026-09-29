@@ -409,4 +409,9 @@ def test_evidence_tolerance_and_route_budgets_are_separate_knobs() -> None:
     assert set(config["benchmark_regression"]) == {
         "maximum_factor",
         "minimum_time_resolution_ms",
+        "vm_lifecycle_factor",
     }
+    # Whole-boot timings get their own, wider envelope; it must never be the
+    # one the rest of the product is held to.
+    regression = config["benchmark_regression"]
+    assert 1 < regression["maximum_factor"] <= regression["vm_lifecycle_factor"]

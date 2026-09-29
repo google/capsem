@@ -43,7 +43,7 @@ class TestSerialLog:
 # path. Since the emulated 16550 raises its transmit interrupt (92295e59b),
 # userspace console writes block until each byte has left through a port-I/O
 # exit: about 95us a byte on nested KVM, so the 4.3 KiB this console carried
-# before the shell banner in 0.6.4 cost ~0.4s of every boot and pushed exec
+# before the shell banner at the time cost ~0.4s of every boot and pushed exec
 # latency past its 2s gate. Progress belongs in the host-preserved boot log;
 # the console keeps failures.
 BOOT_CONSOLE_BUDGET_BYTES = 1024
