@@ -53,7 +53,7 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
 
     for stage in inventory.stages:
         stage_policy = policy.stages[stage.stage_id]
-        remaining = stage.logical_bytes
+        remaining = stage.budget_bytes
         remaining_count = sum(entry.managed and not entry.lease_only for entry in stage.entries)
         if stage_policy.prune_strategy is PruneStrategy.NONE:
             if remaining > stage_policy.max_size_bytes:
@@ -97,7 +97,7 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
                     else "no live owner"
                 )
                 choose(stage, entry, reason)
-                remaining -= entry.logical_bytes
+                remaining -= entry.budget_bytes
                 remaining_count -= not entry.lease_only
                 continue
             expired = (
@@ -119,7 +119,7 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
                 else "over count cap"
             )
             choose(stage, entry, reason)
-            remaining -= entry.logical_bytes
+            remaining -= entry.budget_bytes
             remaining_count -= 1
         if remaining > stage_policy.max_size_bytes:
             violations.append(

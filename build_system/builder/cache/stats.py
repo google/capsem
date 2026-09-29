@@ -61,10 +61,10 @@ def build_stats(
     violations = []
     for stage in inventory.stages:
         contract = policy.stages[stage.stage_id]
-        state = _state(stage.logical_bytes, contract.warm_size_bytes, contract.max_size_bytes)
+        state = _state(stage.budget_bytes, contract.warm_size_bytes, contract.max_size_bytes)
         if state is UsageState.ABOVE_MAX:
             violations.append(
-                f"{stage.stage_id} uses {stage.logical_bytes} bytes above max size "
+                f"{stage.stage_id} uses {stage.budget_bytes} bytes above max size "
                 f"{contract.max_size_bytes}"
             )
         caches.append(
@@ -72,7 +72,7 @@ def build_stats(
                 cache_id=stage.stage_id,
                 description=contract.description,
                 scope=contract.scope,
-                current_size_bytes=stage.logical_bytes,
+                current_size_bytes=stage.budget_bytes,
                 warm_size_bytes=contract.warm_size_bytes,
                 max_size_bytes=contract.max_size_bytes,
                 prune_strategy=contract.prune_strategy,

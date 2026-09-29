@@ -175,6 +175,13 @@ class CacheEntry(BaseModel):
     #: Eviction tier under pressure, lowest first (`cargounits.WorkingSet`).
     retain_rank: StrictInt = 0
 
+    @property
+    def budget_bytes(self) -> int:
+        """Bytes counted against a size contract: what it occupies on disk, never
+        more than its content. A sparse VM image is 64 GiB logical and a few MiB
+        allocated; budgeting by logical size reported a 2.4 GB test-temp as 137 GB."""
+        return min(self.logical_bytes, self.allocated_bytes)
+
 
 class StageInventory(BaseModel):
     """Byte-accounted contents of one configured leaf stage."""
@@ -189,6 +196,11 @@ class StageInventory(BaseModel):
     entries: tuple[CacheEntry, ...]
     #: Native producer locks held while this inventory was taken, with holders.
     held_locks: tuple[str, ...] = ()
+
+    @property
+    def budget_bytes(self) -> int:
+        """The stage total counted against its size contract (`CacheEntry.budget_bytes`)."""
+        return min(self.logical_bytes, self.allocated_bytes)
 
     @property
     def entry_count(self) -> int:

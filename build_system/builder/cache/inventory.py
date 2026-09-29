@@ -132,7 +132,7 @@ def _stage_inventory(
         path=stage_path,
         logical_bytes=sum(entry.logical_bytes for entry in entries) + unmanaged_logical,
         allocated_bytes=sum(entry.allocated_bytes for entry in entries) + unmanaged_allocated,
-        protected_bytes=sum(entry.logical_bytes for entry in entries if entry.protected),
+        protected_bytes=sum(entry.budget_bytes for entry in entries if entry.protected),
         entries=tuple(entries),
         held_locks=held,
     )
@@ -158,7 +158,7 @@ def _cargo_inventory(
         path=stage_root,
         logical_bytes=sum(entry.logical_bytes for entry in entries) + other_logical,
         allocated_bytes=sum(entry.allocated_bytes for entry in entries) + other_allocated,
-        protected_bytes=sum(entry.logical_bytes for entry in entries if entry.protected),
+        protected_bytes=sum(entry.budget_bytes for entry in entries if entry.protected),
         entries=entries,
         held_locks=held,
     )
@@ -175,7 +175,7 @@ def _object_inventory(stage_id, stage_root: Path, stage_policy, allocated_seen) 
         path=stage_root,
         logical_bytes=sum(entry.logical_bytes for entry in entries) + other_logical,
         allocated_bytes=sum(entry.allocated_bytes for entry in entries) + other_allocated,
-        protected_bytes=sum(entry.logical_bytes for entry in entries if entry.protected),
+        protected_bytes=sum(entry.budget_bytes for entry in entries if entry.protected),
         entries=entries,
         held_locks=held,
     )
