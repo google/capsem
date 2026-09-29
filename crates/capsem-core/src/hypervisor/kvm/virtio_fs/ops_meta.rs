@@ -147,25 +147,11 @@ impl FuseProcessor {
                 return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e));
             }
         }
-        if attr_in.valid & (FATTR_UID | FATTR_GID) != 0 {
-            let uid = if attr_in.valid & FATTR_UID != 0 {
-                attr_in.uid
-            } else {
-                u32::MAX
-            };
-            let gid = if attr_in.valid & FATTR_GID != 0 {
-                attr_in.gid
-            } else {
-                u32::MAX
-            };
-            let c_path = match std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) {
-                Ok(c) => c,
-                Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
-            };
-            if unsafe { libc::lchown(c_path.as_ptr(), uid, gid) } != 0 {
-                return fuse::error_response(header.unique, -fuse::errno());
-            }
-        }
+        // Ownership is not part of the share: every entry reads back as 0:0,
+        // and the guest never changes host ownership. A chown is accepted
+        // without effect, as tools running as guest root (cp -a, tar -x, the
+        // profile seed copy) require; it used to reach an unprivileged host
+        // lchown and fail with EPERM.
         if attr_in.valid & (FATTR_ATIME | FATTR_MTIME) != 0 {
             let c_path = match std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) {
                 Ok(c) => c,

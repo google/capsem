@@ -196,6 +196,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On Linux hosts, `cp -a`, `tar -x` and `chown` work in the VM's `/root`
+  workspace again. The VirtioFS server numbered FSYNCDIR 21, the opcode the
+  kernel uses for SETXATTR, so every extended-attribute write failed with
+  EBADF ("preserving permissions ... Bad file descriptor"); and a guest chown
+  reached an unprivileged host lchown and failed with EPERM. Extended
+  attributes now report unsupported, and chown is accepted without changing
+  host ownership (the workspace already reports every entry as root's).
+
 - A Linux VM is ready for its first command about 0.3 s sooner. Once the
   emulated serial port began raising its transmit interrupt, every byte the
   guest's init wrote to the console held boot for a port-I/O exit (about

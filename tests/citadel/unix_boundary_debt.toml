@@ -33,7 +33,7 @@
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/mod.rs" = "68d881024c1366de0e1c95bf8f24dc63270a79efc7244fd0bb0349cb3232e421"
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_dir.rs" = "1c2723207e04d0be3594c7ba21fdc13d6ff761e6f6d4dbff85ab2fc06da3f4c4"
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_file.rs" = "b5f5c223d1f514cb692d8e6604227f687087f481b07ed84b42b1a20b7a693be4"
-"crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_meta.rs" = "2567f7fd272183d7fe5fc5b604fbf04b3dce4f2d67a03f0fdf02585ed337a59a"
+"crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_meta.rs" = "b6a5d6293aef393907f718dfb1416e44acdae879fed1b72a6b5f8ea9d1aa5160"
 "crates/capsem-core/src/hypervisor/kvm/virtio_mmio.rs" = "f9797a518c8d6273151bc775f9a176a72f3b0a62e09cd4cd4fb636477b58627b"
 "crates/capsem-core/src/hypervisor/kvm/virtio_vsock.rs" = "e8497a3dd53669d1e463c69a098214ece6257555c2a11d10a3d5642027e0a56a"
 "crates/capsem-core/src/hypervisor/kvm/virtio_vsock/lifecycle.rs" = "83c7ec268765e594bebe53715a3d148a37e0cd9ad3dd9bb58f1d15a4eaba093b"
