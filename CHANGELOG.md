@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- A guest could make the host walk arbitrary host directories on every
+  `/vms/<id>/info` for a stopped persistent VM. The session disk-usage walk
+  checked each entry without following links but then read directories by
+  path, so a directory the guest swapped for a symlink in between was
+  entered. The walk now goes through no-follow descriptors, never enters a
+  symlink, and stops at a fixed depth.
+
 - The web dashboard and marketing site no longer resolve `fast-uri` 3.1.6,
   which GHSA-qw65-cvwx-89v3 and GHSA-58mr-gqgx-xq4g (authority injection
   through an unvalidated port) affect. Both now require 3.1.7 or later; the

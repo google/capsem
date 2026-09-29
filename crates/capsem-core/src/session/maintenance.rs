@@ -1,64 +1,40 @@
 use std::path::Path;
 
-/// Calculate total actual disk usage in bytes for all entries under the given base path.
+use capsem_foundation::unix::contained::{ContainedDir, EntryKind};
+
+/// Directories deeper than this are not counted. A guest can nest its
+/// workspace without limit, and every level of the walk holds a descriptor.
+const MAX_DEPTH: usize = 64;
+
+/// Total bytes allocated on disk under a session directory.
 ///
-/// Uses `symlink_metadata` to avoid following symlinks (prevents infinite recursion
-/// from symlink loops). Reports actual allocated blocks (`blocks * 512`) instead of
-/// logical file size, so sparse files (e.g. a 2GB rootfs.img overlay with 9MB of
-/// actual changes) report their true disk footprint.
+/// The session directory holds the guest-writable workspace, so the walk goes
+/// through descriptors, never paths: it used to stat an entry without following
+/// it and then read it by path, and a guest that swapped a directory for a
+/// symlink in between made the host walk the link's target on every `/info`.
+/// `descend` refuses a symlink atomically, so a swapped entry is skipped. Sparse
+/// files count their allocated blocks, not their logical size.
 pub fn disk_usage_bytes(sessions_base: &Path) -> u64 {
-    let entries = match std::fs::read_dir(sessions_base) {
-        Ok(e) => e,
-        Err(_) => return 0,
-    };
+    ContainedDir::open_root(sessions_base).map_or(0, |root| usage(&root, 0))
+}
+
+fn usage(dir: &ContainedDir, depth: usize) -> u64 {
     let mut total = 0u64;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let meta = match std::fs::symlink_metadata(&path) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        if meta.is_dir() {
-            total += dir_size(&path);
-        } else {
-            total += file_disk_usage(&meta);
+    let mut children = Vec::new();
+    // An unreadable directory counts what was read of it; usage is advisory.
+    let _ = dir.visit_entries(|entry| {
+        total = total.saturating_add(entry.allocated);
+        if entry.kind == EntryKind::Directory && depth < MAX_DEPTH {
+            children.push(entry.name);
+        }
+        Ok(true)
+    });
+    for name in children {
+        if let Ok(child) = dir.descend(&name) {
+            total = total.saturating_add(usage(&child, depth + 1));
         }
     }
     total
-}
-
-fn dir_size(path: &Path) -> u64 {
-    let entries = match std::fs::read_dir(path) {
-        Ok(e) => e,
-        Err(_) => return 0,
-    };
-    let mut total = 0u64;
-    for entry in entries.flatten() {
-        let p = entry.path();
-        let meta = match std::fs::symlink_metadata(&p) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        if meta.is_dir() {
-            total += dir_size(&p);
-        } else {
-            total += file_disk_usage(&meta);
-        }
-    }
-    total
-}
-
-/// Actual disk usage for a file: allocated blocks * 512 bytes.
-/// Sparse files report only the blocks actually written to disk.
-#[cfg(unix)]
-fn file_disk_usage(meta: &std::fs::Metadata) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-    meta.blocks() * 512
-}
-
-#[cfg(not(unix))]
-fn file_disk_usage(meta: &std::fs::Metadata) -> u64 {
-    meta.len()
 }
 
 #[cfg(test)]
