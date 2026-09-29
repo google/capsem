@@ -5,7 +5,9 @@ from __future__ import annotations
 import time
 
 from . import dockeradapter, tartadapter
+from .dockercurrent import mark
 from .models import CachePolicy
+from .paths import CachePaths
 from .runtimeexec import CommandRunner, execute
 from .runtimemodels import (
     DockerRuntimePolicy,
@@ -19,6 +21,7 @@ from .runtimemodels import (
 def scan_runtimes(
     policy: CachePolicy,
     *,
+    paths: CachePaths | None,
     runner: CommandRunner = execute,
     now_ns: int | None = None,
     offline: bool = False,
@@ -56,9 +59,12 @@ def scan_runtimes(
         else:  # pragma: no cover - discriminated Pydantic union is exhaustive
             raise AssertionError(f"unsupported runtime policy: {runtime}")
     values = tuple(inventories)
-    return RuntimeSnapshot(
+    snapshot = RuntimeSnapshot(
         generated_ns=generated,
         native_bytes=sum(item.native_bytes for item in values),
         owned_bytes=sum(item.owned_bytes for item in values),
         runtimes=values,
     )
+    # Required rather than defaulted: a caller that plans retention without
+    # the checkouts' current generations evicts the images a gate is using.
+    return snapshot if paths is None else mark(snapshot, paths)

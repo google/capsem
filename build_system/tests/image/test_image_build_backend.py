@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache import dockercurrent
+from capsem_builder.cache.config import load_paths
 from capsem_builder.image import image_build_backend
 from capsem_builder.image.assetdependencies import AssetDependencyImage
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_private_backend_loads_guest_config_and_delegates_to_build_image(
@@ -97,6 +102,12 @@ def test_private_backend_materializes_dependencies_and_prints_exact_image(
         "materialize_asset_dependencies",
         fake_materialize,
     )
+    declared: list[tuple[object, str, Path]] = []
+    monkeypatch.setattr(
+        image_build_backend,
+        "declare_current",
+        lambda config, image, root: declared.append((config, image.reference, root)),
+    )
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -119,6 +130,7 @@ def test_private_backend_materializes_dependencies_and_prints_exact_image(
         "repo_root": tmp_path,
     }
     assert capsys.readouterr().out == "sha256:materialized\n"
+    assert declared == [(loaded_config, "capsem-kernel-dependencies-arm64:fixture", tmp_path)]
 
 
 def test_private_backend_requires_dependencies_through_detected_runtime(
@@ -154,6 +166,13 @@ def test_private_backend_requires_dependencies_through_detected_runtime(
         "require_asset_dependencies",
         fake_require,
     )
+    monkeypatch.chdir(tmp_path)
+    declared: list[tuple[object, str, Path]] = []
+    monkeypatch.setattr(
+        image_build_backend,
+        "declare_current",
+        lambda config, image, root: declared.append((config, image.reference, root)),
+    )
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -176,6 +195,40 @@ def test_private_backend_requires_dependencies_through_detected_runtime(
         "template": "rootfs",
     }
     assert capsys.readouterr().out == "sha256:required\n"
+    assert declared == [(loaded_config, "capsem-rootfs-dependencies-x86_64:fixture", tmp_path)]
+
+
+def test_each_profiles_dependency_image_is_declared_current(monkeypatch, tmp_path: Path) -> None:
+    """A dependency repository holds one current tag per profile.
+
+    Retention guessed "newest by creation" per repository, so the `code` and
+    `co-work` tags evicted each other and a release proof rebuilt its current
+    `capsem-kernel-dependencies-x86_64` minutes after enforcement removed it.
+    """
+    authority = tmp_path / "authority"
+    monkeypatch.setenv("CAPSEM_CACHE_AUTHORITY", str(authority))
+
+    class Manifest:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class Config:
+        def __init__(self, name: str) -> None:
+            self.manifest = Manifest(name)
+
+    for profile in ("code", "co-work"):
+        image_build_backend.declare_current(
+            Config(profile),
+            AssetDependencyImage(
+                reference=f"capsem-rootfs-dependencies-x86_64:{profile}", image_id="sha256:x"
+            ),
+            PROJECT_ROOT,
+        )
+
+    assert dockercurrent.live_tags(load_paths(PROJECT_ROOT), now_ns=time.time_ns()) == {
+        "capsem-rootfs-dependencies-x86_64:code",
+        "capsem-rootfs-dependencies-x86_64:co-work",
+    }
 
 
 def test_private_backend_refuses_ambiguous_dependency_operation(

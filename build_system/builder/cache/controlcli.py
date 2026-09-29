@@ -6,7 +6,7 @@ import json
 
 import click
 
-from . import dockeradapter
+from . import dockeradapter, dockercurrent
 from .api import CacheOperation, CacheRequest
 from .config import load_policy
 from .dockerimages import plan_repository_reclaim
@@ -32,7 +32,7 @@ def _state(
             raise click.ClickException("cache policy has no native control configuration")
         runtime_id = policy.control.docker.runtime_id
     selected = None if runtime_id is None else frozenset({runtime_id})
-    snapshot = scan_runtimes(policy, runtime_ids=selected)
+    snapshot = scan_runtimes(policy, paths=paths, runtime_ids=selected)
     return policy, paths, snapshot
 
 
@@ -57,7 +57,17 @@ def _apply(paths, policy, plan, *, apply: bool, reason: str) -> None:
 @click.option("--reason", default="superseded image generation")
 @click.pass_context
 def reclaim_image(context, resource_id, keep, protect, apply, reason) -> None:
-    """Retire superseded tags only around a present exact anchor."""
+    """Record the checkout's current tag, then retire tags no live checkout names."""
+    if apply:
+        # Before the inventory, so this checkout's previous tag in the slot is
+        # no longer current while every other checkout's stays protected.
+        root = context.obj["repository"]
+        policy = load_policy(context.obj["policy_repository"])
+        dockercurrent.record(
+            CachePaths(repository_root=root, policy=policy),
+            tag=keep,
+            checkout=context.obj["policy_repository"],
+        )
     policy, paths, snapshot = _state(context, docker_control=True)
     try:
         plan = plan_repository_reclaim(snapshot, policy, resource_id, keep=keep, protect=protect)
@@ -108,7 +118,7 @@ def enforce(context, cache_id, reason) -> None:
         # A caller may tear down its container immediately after this exits.
         # Preserve the live resource breakdown, not just an unexplained total.
         try:
-            click.echo(scan_runtimes(policy).model_dump_json(indent=2), err=True)
+            click.echo(scan_runtimes(policy, paths=paths).model_dump_json(indent=2), err=True)
         except (OSError, ValueError) as error:
             click.echo(f"Runtime inventory unavailable: {error}", err=True)
         raise click.ClickException("; ".join(violations))

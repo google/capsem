@@ -10,6 +10,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from ..cache import dockercurrent
+from ..cache.config import load_paths
+from .assetdependencies import AssetDependencyImage
 from .config import load_guest_config
 from .docker import (
     build_image,
@@ -17,6 +20,17 @@ from .docker import (
     materialize_asset_dependencies,
     require_asset_dependencies,
 )
+
+
+def declare_current(config, image: AssetDependencyImage, repo_root: Path) -> None:
+    """Declare the profile's dependency image this checkout's current one.
+
+    A dependency repository holds one current tag per profile, so retention
+    that kept the newest tag per repository removed a profile's image in use.
+    """
+    root = repo_root.absolute()
+    slot = config.manifest.name if config.manifest else "unscoped"
+    dockercurrent.record(load_paths(root), tag=image.reference, checkout=root, slot=slot)
 
 
 def main() -> None:
@@ -42,6 +56,7 @@ def main() -> None:
             template=args.template,
             repo_root=Path.cwd(),
         )
+        declare_current(config, resolved, Path.cwd())
         print(resolved.image_id)
     elif args.require_dependencies:
         resolved = require_asset_dependencies(
@@ -50,6 +65,7 @@ def main() -> None:
             args.arch,
             args.template,
         )
+        declare_current(config, resolved, Path.cwd())
         print(resolved.image_id)
     else:
         if args.output is None:

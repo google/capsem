@@ -102,7 +102,7 @@ def capture_failure(
     root = paths.stage(settings.stage)
     destination = root / f"{stamp}-cache-{safe_label}"
     destination.mkdir(parents=True, exist_ok=False)
-    snapshot = scan_runtimes(policy, runner=runner, now_ns=created_ns, offline=offline)
+    snapshot = scan_runtimes(policy, paths=paths, runner=runner, now_ns=created_ns, offline=offline)
     (destination / "runtime-snapshot.json").write_text(
         snapshot.model_dump_json(indent=2) + "\n", encoding="utf-8"
     )

@@ -328,3 +328,21 @@ def test_a_tool_that_is_absent_is_installed_rather_than_fatal(monkeypatch) -> No
 
     assert module.main([tool.name]) == 0
     assert installs == [tuple(tool.install)]
+
+
+def test_the_required_builder_is_declared_current_so_retention_keeps_it() -> None:
+    """On 2026-09-29 an early `cache enforce docker` evicted the current host
+    builder and its rebuild against a slow apt snapshot blocked the release
+    proof for hours. Requiring it -- built or carried -- declares it this
+    checkout's current generation, which prune and enforcement never remove.
+    """
+    identity = hostimage.input_key(CONFIG)
+    runner = RecordingRunner(PROJECT_ROOT, replies={"index .Config.Labels": identity})
+
+    for action in hostimage.image(CONFIG).carry_checks:
+        action.perform(_context(runner))
+
+    tag = CONFIG.hostimage.tag
+    assert runner.matching(
+        rf"reclaim-image {re.escape(tag.split(':')[0])} --keep {re.escape(tag)} .*--apply"
+    )

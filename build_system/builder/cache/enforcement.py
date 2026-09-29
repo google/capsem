@@ -62,14 +62,14 @@ def enforce_runtime(
     """Prune one native runtime cache and prove its owned bytes are bounded."""
     if runtime_id not in policy.runtimes:
         raise ValueError(f"unknown runtime cache {runtime_id!r}")
-    before_snapshot = scan_runtimes(policy, runner=runner, runtime_ids=frozenset({runtime_id}))
+    before_snapshot = scan_runtimes(policy, paths=paths, runner=runner, runtime_ids=frozenset({runtime_id}))
     before = before_snapshot.runtimes[0]
     plan = plan_runtime_prune(before_snapshot, policy)
     failures = []
     if plan.actions:
         applied = apply_runtime_prune(paths, policy, plan, reason=reason, runner=runner)
         failures.extend(item.output for item in applied.results if item.returncode != 0)
-    after_snapshot = scan_runtimes(policy, runner=runner, runtime_ids=frozenset({runtime_id}))
+    after_snapshot = scan_runtimes(policy, paths=paths, runner=runner, runtime_ids=frozenset({runtime_id}))
     after = after_snapshot.runtimes[0]
     contract = policy.runtimes[runtime_id]
     violations = list(failures)

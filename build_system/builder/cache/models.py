@@ -124,6 +124,11 @@ class CachePolicy(BaseModel):
             docker_id = self.control.docker.runtime_id
             if docker_id not in self.runtimes:
                 raise ValueError(f"cache control references unknown runtime {docker_id!r}")
+            current_stage = self.control.docker.current_stage
+            if current_stage not in self.stages:
+                raise ValueError(
+                    f"cache control references unknown current-image stage {current_stage!r}"
+                )
             failure_stage = self.control.failure_artifacts.stage
             if failure_stage not in self.stages:
                 raise ValueError(

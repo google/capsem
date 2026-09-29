@@ -159,6 +159,22 @@ adapter verifies that exact tag directly and supplies a protected typed
 resource to the planner. Never turn this into an unanchored retry or allow a
 missing exact inspection to prune older generations.
 
+Prune and enforcement never remove an image a checkout's gate uses. The gate
+declares it: `reclaim-image --apply` records its `--keep` tag for the calling
+checkout, the host builder's require step reclaims around `:latest`, and the
+image backend records each profile's dependency image
+(`capsem_builder.cache.dockercurrent`, stored in `[control.docker]
+current_stage`). A record is live while its checkout exists and it is younger
+than the Docker runtime's `maximum_age_hours`; a newer tag for the same
+checkout and slot supersedes it. Scanning a runtime requires `paths=` so every
+planner sees live records as `current`. Newest-by-creation is not current: a
+BuildKit cache hit keeps the old timestamp, one repository holds a tag per
+profile, and two checkouts each have their own. On 2026-09-29 guessing it made
+enforcement evict the release proof's current kernel-dependency image and the
+host builder; each rebuild re-ran the slowest network phase. Pressure on
+current images is reported as a violation, never resolved by evicting them.
+Only an explicit `clean` may remove a current image.
+
 ## Test efficiency
 
 Start with the cheapest evidence that owns the change:

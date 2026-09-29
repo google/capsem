@@ -18,7 +18,9 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from ..cache.dockerimages import repository_name
 from .actions import Action
+from .cachecontrol import CacheControl
 from .command import GateCommand
 from .config import GateConfig
 from .context import Context
@@ -223,6 +225,10 @@ class _Require(Action, name="host-image-require"):
                 f"host builder {settings.tag} carries input key {found!r}, expected {identity}"
             )
         _prove_tools(context, docker)
+        # Declared current on every path, carried or built: an early
+        # `cache enforce docker` once evicted this image and its rebuild
+        # against a slow apt snapshot blocked a release proof for hours.
+        CacheControl(context.runner).reclaim(repository_name(settings.tag), keep=settings.tag)
 
 
 def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:

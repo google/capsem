@@ -78,6 +78,7 @@ def controlled_policy() -> CachePolicy:
     control = CacheControlPolicy(
         docker=DockerControlPolicy(
             runtime_id="docker",
+            current_stage="logs",
             images={
                 "tool": ImageCachePolicy(
                     description="Tool image generations",
