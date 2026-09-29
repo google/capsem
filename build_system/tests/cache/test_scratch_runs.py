@@ -192,3 +192,38 @@ sys.exit({exit_code})
     assert not directory.exists(), "the run outlived its process"
     assert not (directory.parent / f".{directory.name}.lock").exists()
     assert result.stderr == ""
+
+
+def test_a_run_is_reclaimed_even_when_its_checkout_is_gone_first(tmp_path: Path) -> None:
+    """A checkout can go before its process does -- a pytest basetemp, a
+    removed agent worktree -- and the run then stayed behind with `capsem:
+    left ... No such file or directory: .../config/cache.toml`. The policy is
+    the authority's as much as the checkout's."""
+    source = _launch_source(tmp_path)
+    authority = tmp_path / "authority"
+    (authority / "config").mkdir(parents=True)
+    (authority / "config/cache.toml").write_bytes((source / "config/cache.toml").read_bytes())
+    probe = f"""
+import os, shutil
+from pathlib import Path
+from capsem_builder import gatelaunch
+source = Path({str(source)!r})
+environment = gatelaunch.contained_environment(source)
+gatelaunch.hold_environment(environment, source)
+print(environment["TMPDIR"])
+shutil.rmtree(source)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        env={**{k: v for k, v in os.environ.items() if k != AUTHORITY}, AUTHORITY: str(authority)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    directory = Path(result.stdout.strip().splitlines()[-1])
+    assert directory.is_relative_to(tmp_path / "scratch/capsem-tests")
+    assert not directory.exists(), result.stderr
+    assert result.stderr == ""

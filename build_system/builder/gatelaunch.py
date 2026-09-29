@@ -298,8 +298,11 @@ def _end_run(source: Path, authority: Path, run: Path, owner: int) -> None:
     from .cache.operations import reclaim_generation
     from .cache.paths import CachePaths
 
+    # The checkout can be gone before its process is (a pytest basetemp, a
+    # removed worktree); the authority carries the same policy.
+    policy_root = source if (source / CACHE_POLICY).is_file() else authority
     try:
-        paths = CachePaths(repository_root=authority, policy=load_policy(source))
+        paths = CachePaths(repository_root=authority, policy=load_policy(policy_root))
         if paths.stage("test-temp") / run.name != run:
             raise ValueError(f"{run} is not this authority's test-temp run")
         reclaim_generation(paths, "test-temp", run.name, reason="test run ended")
