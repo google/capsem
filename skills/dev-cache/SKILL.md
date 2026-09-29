@@ -228,8 +228,17 @@ failure unless cold-state behavior is itself the subject under test.
    plus measured generation needs. Validate the ratchet with an exact-repeat
    run so it proves reuse rather than merely fitting a cold build.
 
-Do not infer a cache limit from filesystem capacity. Machine provisioning and
-owned cache retention are separate concerns.
+Do not infer a cache limit from filesystem capacity: retention decisions stay
+on owned usage. The maxima do answer to the disk as a set, through `[budget]`
+in `config/cache.toml` (`capsem_builder.cache.budget`). Every stage and runtime
+maximum together, plus `headroom_bytes`, must fit `filesystem_fraction` of the
+declared `minimum_filesystem_bytes` (checked when the policy loads) and of the
+real cache filesystem (checked by every exclusive gate command before it waits
+for the machine lock; an optional runtime that is not installed, such as Tart
+on Linux, counts zero; a GitHub-hosted runner is exempt). On 2026-09-29 the
+maxima summed to 839 GiB on a 484 GiB disk: every cache honoured its contract
+and the disk filled four times in two days. Raising one maximum means lowering
+another or raising the declared floor, deliberately.
 
 ## Debugging
 

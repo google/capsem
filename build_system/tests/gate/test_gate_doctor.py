@@ -142,14 +142,12 @@ def test_this_checkout_is_ready() -> None:
 def test_an_invalid_cache_control_is_reported(tmp_path: Path) -> None:
     root = _checkout(tmp_path)
     policy = root / "config/cache.toml"
-    policy.write_text(
-        policy.read_text(encoding="utf-8").replace(
-            "max_size_bytes = 193273528320 # 180 GiB",
-            "max_size_bytes = 0 # invalid",
-            1,
-        ),
-        encoding="utf-8",
+    original = policy.read_text(encoding="utf-8")
+    broken = original.replace(
+        "max_size_bytes = 51539607552 # 48 GiB", "max_size_bytes = 0 # invalid", 1
     )
+    assert broken != original, "the fixture must actually break the cargo maximum"
+    policy.write_text(broken, encoding="utf-8")
 
     findings = doctor.check(RecordingRunner(root))
 

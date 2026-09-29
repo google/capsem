@@ -107,8 +107,8 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert policy.stages["test-temp"].warm_size_bytes == 8 * 1024**3
     assert policy.stages["test-temp"].max_size_bytes == 32 * 1024**3
     assert policy.stages["test-temp"].maximum_count is None
-    assert policy.stages["cargo"].warm_size_bytes == 150 * 1024**3
-    assert policy.stages["cargo"].max_size_bytes == 180 * 1024**3
+    assert policy.stages["cargo"].warm_size_bytes == 32 * 1024**3
+    assert policy.stages["cargo"].max_size_bytes == 48 * 1024**3
     assert policy.stages["cargo"].prune_strategy is PruneStrategy.LRU
     assert policy.stages["cargo"].retention_root is None
     assert policy.stages["cargo"].cargo_target_roots == (
@@ -118,8 +118,8 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert isinstance(policy.runtimes["docker"], DockerRuntimePolicy)
     assert isinstance(policy.runtimes["tart"], TartRuntimePolicy)
     assert policy.control is not None
-    assert policy.runtimes["docker"].warm_size_bytes == 72 * 1024**3
-    assert policy.runtimes["docker"].max_size_bytes == 96 * 1024**3
+    assert policy.runtimes["docker"].warm_size_bytes == 28 * 1024**3
+    assert policy.runtimes["docker"].max_size_bytes == 40 * 1024**3
     assert policy.runtimes["docker"].inventory_retry_attempts == 20
     assert policy.runtimes["docker"].inventory_retry_delay_milliseconds == 500
     assert all(stage.description.strip() for stage in policy.stages.values())

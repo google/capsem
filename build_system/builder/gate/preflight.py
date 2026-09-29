@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from . import snapshot
-from .cachecontrol import CargoCacheBound
+from .cachecontrol import CargoCacheBound, verify_disk_budget
 from .cachetooling import CompilerCache
 from .cargotarget import CheckoutBuildRoot
 from .config import GateConfig
@@ -69,6 +69,9 @@ def locked(config: GateConfig, runner: Runner, name: str, *, exclusive: bool) ->
     if not exclusive:
         yield ()
         return
+    if not runner.observing:
+        # Before the wait, so a disk the caches can fill costs seconds, not a run.
+        verify_disk_budget(config)
     before = None if runner.observing else snapshot.digest(config.root, config)
     with held(ExclusiveLock.for_gate(config, purpose=purpose(name))) as acquired:
         if before is not None and snapshot.digest(config.root, config) != before:

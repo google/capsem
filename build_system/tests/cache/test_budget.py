@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[3]
 GIB = 1024**3
 
 
-def _policy(*maxima: int, **limits: object) -> CachePolicy:
+def _policy(*maxima: int, fraction: float = 0.5, headroom: int = 10 * GIB, minimum: int = 100 * GIB) -> CachePolicy:
     stages = {
         f"stage-{index}": StagePolicy(
             path=Path(f"target/stage-{index}"),
@@ -40,9 +40,9 @@ def _policy(*maxima: int, **limits: object) -> CachePolicy:
         authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
         stages=stages,
         budget=BudgetPolicy(
-            filesystem_fraction=limits.get("fraction", 0.5),
-            headroom_bytes=limits.get("headroom", 10 * GIB),
-            minimum_filesystem_bytes=limits.get("minimum", 100 * GIB),
+            filesystem_fraction=fraction,
+            headroom_bytes=headroom,
+            minimum_filesystem_bytes=minimum,
             ephemeral_environment={"RUNNER_ENVIRONMENT": "github-hosted"},
         ),
     )
@@ -64,7 +64,7 @@ def test_the_checked_in_cargo_maximum_is_tens_of_gib() -> None:
 
 def test_maxima_beyond_the_budget_are_refused_at_load() -> None:
     _policy(20 * GIB, 20 * GIB)  # 40 + 10 <= 0.5 * 100
-    with pytest.raises(ValueError, match="cache maxima sum to 41.0 GiB"):
+    with pytest.raises(ValueError, match=r"cache maxima sum to 41\.0 GiB"):
         _policy(20 * GIB, 21 * GIB)
 
 

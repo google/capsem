@@ -43,9 +43,11 @@ def test_an_exclusive_command_refuses_a_disk_its_caches_can_fill(monkeypatch) ->
     monkeypatch.delenv("RUNNER_ENVIRONMENT", raising=False)
     monkeypatch.setattr(budget, "filesystem_bytes", lambda _path: 100 * GIB)
 
-    with pytest.raises(GateError, match="do not fit 0.8 of this 100.0 GiB filesystem"):
-        with preflight.locked(CONFIG, ActingRunner(ROOT), "test-fast", exclusive=True):
-            pytest.fail("the machine lock was taken on a disk the caches can fill")
+    with (
+        pytest.raises(GateError, match=r"do not fit 0\.8 of this 100\.0 GiB filesystem"),
+        preflight.locked(CONFIG, ActingRunner(ROOT), "test-fast", exclusive=True),
+    ):
+        pytest.fail("the machine lock was taken on a disk the caches can fill")
 
 
 def test_the_budget_holds_on_a_disk_that_fits(monkeypatch) -> None:
@@ -67,8 +69,10 @@ def test_observation_and_shared_commands_do_not_touch_the_disk(monkeypatch) -> N
         raise AssertionError("inspection read the filesystem")
 
     monkeypatch.setattr(budget, "filesystem_bytes", refuse)
-    with pytest.raises(AssertionError, match="machine lock was requested"):
-        with preflight.locked(CONFIG, RecordingRunner(ROOT), "test-fast", exclusive=True):
-            pass
+    with (
+        pytest.raises(AssertionError, match="machine lock was requested"),
+        preflight.locked(CONFIG, RecordingRunner(ROOT), "test-fast", exclusive=True),
+    ):
+        pass
     with preflight.locked(CONFIG, ActingRunner(ROOT), "runs", exclusive=False):
         pass
