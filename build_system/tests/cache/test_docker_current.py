@@ -19,6 +19,7 @@ from capsem_builder.cache.dockerimages import plan_repository_reclaim
 from capsem_builder.cache.enforcement import enforce_runtime
 from capsem_builder.cache.paths import CachePaths
 from capsem_builder.cache.runtimemodels import (
+    DockerRuntimePolicy,
     ResourceKind,
     RuntimeCommandResult,
     RuntimeInventory,
@@ -151,7 +152,9 @@ def test_reclaim_keeps_another_checkouts_current_and_retires_its_own_previous(
 def test_a_record_dies_with_its_checkout_or_its_age(paths, checkout, tmp_path) -> None:
     gone = tmp_path / "removed-worktree"
     dockercurrent.record(paths, tag="capsem-tool:gone", checkout=gone, now_ns=NOW)
-    age = controlled_policy().runtimes["docker"].maximum_age_hours * NANOSECONDS_PER_HOUR
+    runtime = controlled_policy().runtimes["docker"]
+    assert isinstance(runtime, DockerRuntimePolicy)
+    age = runtime.maximum_age_hours * NANOSECONDS_PER_HOUR
     dockercurrent.record(paths, tag="capsem-tool:stale", checkout=checkout, slot="a", now_ns=NOW - age - 1)
     dockercurrent.record(paths, tag="capsem-tool:live", checkout=checkout, slot="b", now_ns=NOW - age)
 
