@@ -40,6 +40,12 @@ homepage = "https://capsem.org"
 repository = "https://github.com/google/capsem"
 authors = ["Elie Bursztein <github@elie.net>"]
 
+# Backtraces keep file:line; variable DWARF is dropped. Every checkout builds a
+# full set of units into the one shared target, and full debuginfo was 77% of
+# each test executable there (tests/citadel/test_hot_build_contract.py).
+[profile.dev]
+debug = "line-tables-only"
+
 # Always optimize blake3 -- its SIMD assembly is 100x faster than
 # unoptimized Rust. Without this, debug-build hashing takes 24s for 2GB.
 [profile.dev.package.blake3]

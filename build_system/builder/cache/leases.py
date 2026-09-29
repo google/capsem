@@ -129,6 +129,45 @@ def active_path(path: Path) -> bool:
     return False
 
 
+def held_locks(root: Path, locks: Iterable[Path]) -> tuple[str, ...]:
+    """Each lock under `root` another process holds, said with its holders.
+
+    A held Cargo lock protects its whole stage, so an enforcement that cannot
+    get under its maximum has to say which lock and whose, or it reads as a
+    retention bug.
+    """
+    held = []
+    for relative in locks:
+        lock = root / relative
+        if active_path(lock):
+            holders = lock_holders(lock)
+            held.append(f"{relative} held by {', '.join(holders) if holders else 'another process'}")
+    return tuple(held)
+
+
+def lock_holders(path: Path) -> tuple[str, ...]:
+    """`pid N (command)` for every flock on `path`, where the kernel lists them."""
+    try:
+        inode = path.stat().st_ino
+        table = Path("/proc/locks").read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    pids = sorted({
+        int(fields[4])
+        for fields in (line.split() for line in table.splitlines())
+        if len(fields) > 5 and fields[4].isdigit() and fields[5].rsplit(":", 1)[-1] == str(inode)
+    })
+    return tuple(f"pid {pid} ({_command(pid)})" for pid in pids)
+
+
+def _command(pid: int) -> str:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return "exited"
+    return " ".join(raw.decode(errors="replace").split("\0")).strip()[:120] or "unknown"
+
+
 @contextmanager
 def mutation_locks(paths: CachePaths, stage_ids: Iterable[str]) -> Iterator[tuple[Path, ...]]:
     """Hold producer-owned locks through removal, including a late-starting build."""

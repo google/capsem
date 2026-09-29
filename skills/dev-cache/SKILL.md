@@ -184,8 +184,19 @@ digest. Do not replace it with a random run ID: Cargo fingerprints contain
 absolute source paths, so random prefixes turn an unchanged repeat into a
 rebuild. The gate owns sccache as a scoped `CompilerCache` resource, exports
 `SCCACHE_BASEDIRS` (plural), uses client-side mode, and stops the server during
-resource teardown. Do not manage its daemon in shell or disable Cargo
-incremental compilation without a measured workload-specific reason.
+resource teardown. Do not manage its daemon in shell.
+
+Gate commands and bounded builds compile with `CARGO_INCREMENTAL=0`
+(`[toolchain] cargo_incremental` in `config/gate.toml`, exported by
+`gatelaunch.contained_environment` and `cachetooling.compiler_environment`).
+That is the measured workload-specific reason: a prefix is named by its source
+digest and workspace units are salted by its path, so an incremental session is
+never read back, an agent worktree lives one session, and on 2026-09-29 the
+sessions were 75-83 GB of a 171-208 GB target. sccache also refuses
+incremental output. Keep
+the dev profile at `debug = "line-tables-only"` for the same reason: full
+DWARF was 77% of every test executable
+(`tests/citadel/test_hot_build_contract.py`).
 
 Keep the checkout-local `build.rustc-workspace-wrapper` configured in Cargo.
 Cargo includes its resolved path in workspace artifact keys, separating source
@@ -217,8 +228,17 @@ failure unless cold-state behavior is itself the subject under test.
    plus measured generation needs. Validate the ratchet with an exact-repeat
    run so it proves reuse rather than merely fitting a cold build.
 
-Do not infer a cache limit from filesystem capacity. Machine provisioning and
-owned cache retention are separate concerns.
+Do not infer a cache limit from filesystem capacity: retention decisions stay
+on owned usage. The maxima do answer to the disk as a set, through `[budget]`
+in `config/cache.toml` (`capsem_builder.cache.budget`). Every stage and runtime
+maximum together, plus `headroom_bytes`, must fit `filesystem_fraction` of the
+declared `minimum_filesystem_bytes` (checked when the policy loads) and of the
+real cache filesystem (checked by every exclusive gate command before it waits
+for the machine lock; an optional runtime that is not installed, such as Tart
+on Linux, counts zero; a GitHub-hosted runner is exempt). On 2026-09-29 the
+maxima summed to 839 GiB on a 484 GiB disk: every cache honoured its contract
+and the disk filled four times in two days. Raising one maximum means lowering
+another or raising the declared floor, deliberately.
 
 ## Debugging
 

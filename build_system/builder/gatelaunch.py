@@ -48,6 +48,7 @@ RUFF_CACHE = "RUFF_CACHE_DIR"
 PNPM_STORE = "npm_config_store_dir"
 NODE_COMPILE_CACHE = "NODE_COMPILE_CACHE"
 CARGO_TARGET = "CARGO_TARGET_DIR"
+CARGO_INCREMENTAL = "CARGO_INCREMENTAL"
 RUSTC_WRAPPER = "RUSTC_WRAPPER"
 SCCACHE_DIR = "SCCACHE_DIR"
 SCCACHE_CACHE_SIZE = "SCCACHE_CACHE_SIZE"
@@ -228,6 +229,7 @@ def contained_environment(root: Path | None = None) -> dict[str, str]:
         # write volume left fseventsd hours behind.
         NODE_COMPILE_CACHE: str(_policy_stage(source, authority, "node-compile-cache")),
         CARGO_TARGET: str(_policy_stage(source, authority, "cargo")),
+        CARGO_INCREMENTAL: "1" if toolchain["cargo_incremental"] else "0",
         SCCACHE_DIR: str(rust),
         SCCACHE_CACHE_SIZE: f"{cache['stages']['rust-sccache']['max_size_bytes'] // 1024**3}G",
         SCCACHE_BASEDIRS: str(source),

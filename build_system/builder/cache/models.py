@@ -17,6 +17,7 @@ from pydantic import (
     model_validator,
 )
 
+from .budget import BudgetPolicy, check_policy
 from .contract import CacheContract as CacheContract
 from .contract import CacheScope as CacheScope
 from .contract import PruneStrategy as PruneStrategy
@@ -100,6 +101,7 @@ class CachePolicy(BaseModel):
     stages: dict[str, StagePolicy]
     runtimes: dict[str, RuntimePolicy] = Field(default_factory=dict)
     control: CacheControlPolicy | None = None
+    budget: BudgetPolicy | None = None
 
     @model_validator(mode="after")
     def validate_policy(self) -> CachePolicy:
@@ -142,6 +144,7 @@ class CachePolicy(BaseModel):
                         f"cache stage paths overlap: {left_id}={left.path} and "
                         f"{right_id}={right.path}"
                     )
+        check_policy(self)
         return self
 
 
@@ -175,6 +178,8 @@ class StageInventory(BaseModel):
     allocated_bytes: Annotated[StrictInt, Field(ge=0)]
     protected_bytes: Annotated[StrictInt, Field(ge=0)]
     entries: tuple[CacheEntry, ...]
+    #: Native producer locks held while this inventory was taken, with holders.
+    held_locks: tuple[str, ...] = ()
 
     @property
     def entry_count(self) -> int:

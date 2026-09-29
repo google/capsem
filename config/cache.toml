@@ -55,12 +55,31 @@ groups = ["binaries", "release-system"]
 prefix = "config/data/"
 groups = ["binaries"]
 
+# Every maximum below, together, plus headroom, must fit this share of the
+# cache filesystem (capsem_builder.cache.budget). Each contract used to bound
+# only its own cache: on 2026-09-29 the maxima summed to 839 GiB on a 484 GB
+# build box, every cache honoured its contract, and the disk filled to 100% four
+# times in two days. Loading refuses maxima that do not fit the smallest machine
+# declared here, and every exclusive gate command refuses a filesystem that
+# cannot hold them. Raising one maximum means lowering another, or this floor.
+[budget]
+filesystem_fraction = 0.8
+headroom_bytes = 34359738368 # 32 GiB
+# A "512 GB" disk. The Tart maximum only counts where Tart is installed.
+minimum_filesystem_bytes = 511101108224 # 476 GiB
+# A GitHub-hosted runner's caches die with it; its disk is the image's concern.
+ephemeral_environment = { RUNNER_ENVIRONMENT = "github-hosted" }
+
 [stages.cargo]
 description = "Cargo build artifacts shared across source-isolated gate runs."
 scope = "disk"
 path = "target/cargo"
-warm_size_bytes = 161061273600 # 150 GiB
-max_size_bytes = 193273528320 # 180 GiB
+# Measured 2026-09-29 at 171-208 GB: 75-83 GB incremental sessions no gate
+# reads back, and test executables that were 77% DWARF. With line tables only
+# and CARGO_INCREMENTAL=0 a checkout's units are a few GiB, so 48 GiB keeps
+# several checkouts warm and a unit unused for a week is from a dead one.
+warm_size_bytes = 34359738368 # 32 GiB
+max_size_bytes = 51539607552 # 48 GiB
 prune_strategy = "lru"
 # Retention takes whole compilation units, least recently used first: each
 # gate prefix salts workspace units with its checkout path and leaves a full
@@ -69,14 +88,14 @@ prune_strategy = "lru"
 # survive both, and a held lock protects every unit.
 cargo_target_roots = ["debug", "release", "llvm-cov-target/debug"]
 mutation_locks = ["debug/.cargo-lock", "release/.cargo-lock", "llvm-cov-target/debug/.cargo-lock"]
-maximum_age_hours = 720
+maximum_age_hours = 168
 
 [stages.generated]
 description = "Generated schemas and source-derived build products."
 scope = "disk"
 path = "target/generated"
-warm_size_bytes = 2147483648 # 2 GiB
-max_size_bytes = 4294967296 # 4 GiB
+warm_size_bytes = 536870912 # 0.5 GiB
+max_size_bytes = 1073741824 # 1 GiB
 prune_strategy = "generational"
 maximum_age_hours = 336
 maximum_count = 5
@@ -85,8 +104,8 @@ maximum_count = 5
 description = "Reusable image and package build workspaces."
 scope = "disk"
 path = "target/build"
-warm_size_bytes = 12884901888 # 12 GiB
-max_size_bytes = 25769803776 # 24 GiB
+warm_size_bytes = 4294967296 # 4 GiB
+max_size_bytes = 8589934592 # 8 GiB
 prune_strategy = "generational"
 maximum_age_hours = 336
 maximum_count = 8
@@ -116,14 +135,17 @@ maximum_count = 8
 description = "Content-addressed immutable objects shared across build and release lanes."
 scope = "disk"
 path = "objects"
-warm_size_bytes = 34359738368 # 32 GiB
-max_size_bytes = 51539607552 # 48 GiB
+warm_size_bytes = 8589934592 # 8 GiB
+max_size_bytes = 12884901888 # 12 GiB
+# A generation is one rootfs per profile (~850 MB each) plus kernel and initrd.
+# At 48 GiB and 90 days the store held 37 GB: ~40 unreferenced rootfs objects
+# from 112 rootfs receipts, most three weeks old. 12 GiB keeps ~6 generations.
 # One receipt generation at a time, with the objects only it names; readers and
 # publishers hold the lock shared, so a prune never removes bytes in use.
 prune_strategy = "lru"
 object_store = true
 mutation_locks = [".object-store.lock"]
-maximum_age_hours = 2160
+maximum_age_hours = 336
 
 [stages.oci-images]
 description = "Verified OCI blobs reused across container runs; manifests are refreshed from the registry."
@@ -141,8 +163,8 @@ mutation_locks = ["cache.lock"]
 description = "Cargo outputs lent between source-isolated gate worktrees."
 scope = "disk"
 path = "target/prefix-products"
-warm_size_bytes = 8589934592 # 8 GiB
-max_size_bytes = 17179869184 # 16 GiB
+warm_size_bytes = 4294967296 # 4 GiB
+max_size_bytes = 8589934592 # 8 GiB
 prune_strategy = "generational"
 maximum_age_hours = 336
 maximum_count = 2
@@ -159,8 +181,8 @@ selector_globs = [
   "target/tests/ironbank/*/build-*",
   "worktrees/*/cache/target/tests/ironbank/*/build-*",
 ]
-warm_size_bytes = 8589934592 # 8 GiB
-max_size_bytes = 17179869184 # 16 GiB
+warm_size_bytes = 6442450944 # 6 GiB
+max_size_bytes = 12884901888 # 12 GiB
 prune_strategy = "generational"
 maximum_age_hours = 336
 maximum_count = 10
@@ -217,8 +239,8 @@ maximum_count = 40
 description = "Transient installed-package test assets and workspaces."
 scope = "disk"
 path = "target/tests/install"
-warm_size_bytes = 8589934592 # 8 GiB
-max_size_bytes = 17179869184 # 16 GiB
+warm_size_bytes = 4294967296 # 4 GiB
+max_size_bytes = 8589934592 # 8 GiB
 prune_strategy = "ephemeral"
 maximum_age_hours = 72
 maximum_count = 8
@@ -237,8 +259,8 @@ maximum_count = 4
 description = "Evidence from the macOS package release proofs: Tart install, physical VZ boot, candidate manifests and SBOM."
 scope = "disk"
 path = "target/tests/release-proofs"
-warm_size_bytes = 6442450944 # 6 GiB
-max_size_bytes = 12884901888 # 12 GiB
+warm_size_bytes = 4294967296 # 4 GiB
+max_size_bytes = 8589934592 # 8 GiB
 prune_strategy = "lru"
 maximum_age_hours = 336
 maximum_count = 12
@@ -274,8 +296,8 @@ lease_template = ".{key}.lock"
 description = "Built web surfaces retained for source-versus-package parity checks."
 scope = "disk"
 path = "target/tests/web-parity"
-warm_size_bytes = 2147483648 # 2 GiB
-max_size_bytes = 4294967296 # 4 GiB
+warm_size_bytes = 1073741824 # 1 GiB
+max_size_bytes = 2147483648 # 2 GiB
 prune_strategy = "ephemeral"
 maximum_age_hours = 72
 maximum_count = 8
@@ -284,8 +306,8 @@ maximum_count = 8
 description = "Transient release qualification and publication staging products."
 scope = "disk"
 path = "target/release/staging"
-warm_size_bytes = 4294967296 # 4 GiB
-max_size_bytes = 8589934592 # 8 GiB
+warm_size_bytes = 2147483648 # 2 GiB
+max_size_bytes = 4294967296 # 4 GiB
 prune_strategy = "ephemeral"
 maximum_age_hours = 72
 
@@ -303,8 +325,8 @@ maximum_count = 4
 description = "Pinned toolchain archives and extracted compiler dependencies."
 scope = "disk"
 path = "target/toolchain"
-warm_size_bytes = 4294967296 # 4 GiB
-max_size_bytes = 8589934592 # 8 GiB
+warm_size_bytes = 2147483648 # 2 GiB
+max_size_bytes = 4294967296 # 4 GiB
 prune_strategy = "lru"
 maximum_age_hours = 720
 maximum_count = 20
@@ -364,8 +386,8 @@ maximum_age_hours = 720
 description = "pnpm package store shared by frontend workspaces and release builds."
 scope = "disk"
 path = "tools/node/pnpm"
-warm_size_bytes = 2147483648 # 2 GiB
-max_size_bytes = 4294967296 # 4 GiB
+warm_size_bytes = 1073741824 # 1 GiB
+max_size_bytes = 2147483648 # 2 GiB
 prune_strategy = "lru"
 maximum_age_hours = 720
 
@@ -373,8 +395,8 @@ maximum_age_hours = 720
 description = "Compiler object cache shared across Cargo targets and worktrees."
 scope = "disk"
 path = "tools/rust/sccache"
-warm_size_bytes = 17179869184 # 16 GiB
-max_size_bytes = 25769803776 # 24 GiB
+warm_size_bytes = 8589934592 # 8 GiB
+max_size_bytes = 12884901888 # 12 GiB
 prune_strategy = "lru"
 maximum_age_hours = 336
 
@@ -386,8 +408,8 @@ scope = "disk"
 # cache instead of duplicating it on the same disk; the Docker runtime adapter
 # inventories and bounds that native cache separately below.
 path = "containers/buildkit"
-warm_size_bytes = 17179869184 # 16 GiB
-max_size_bytes = 34359738368 # 32 GiB
+warm_size_bytes = 4294967296 # 4 GiB
+max_size_bytes = 8589934592 # 8 GiB
 prune_strategy = "lru"
 maximum_age_hours = 72
 
@@ -404,8 +426,8 @@ maximum_age_hours = 720
 description = "Source-isolated gate worktrees retained for exact resume."
 scope = "disk"
 path = "worktrees"
-warm_size_bytes = 12884901888 # 12 GiB
-max_size_bytes = 21474836480 # 20 GiB
+warm_size_bytes = 8589934592 # 8 GiB
+max_size_bytes = 12884901888 # 12 GiB
 prune_strategy = "lru"
 maximum_age_hours = 168
 maximum_count = 2
@@ -444,8 +466,11 @@ maximum_count = 8
 [runtimes.docker]
 description = "Docker images, containers, and shared BuildKit layers owned by Capsem."
 scope = "docker"
-warm_size_bytes = 77309411328 # 72 GiB
-max_size_bytes = 103079215104 # 96 GiB
+# One generation of every Capsem image is ~20 GB on disk; the rest was BuildKit
+# records (54.5 GB, 48.6 GB reclaimable) that only pressure ever pruned. Records
+# unused for maximum_age_hours now go on every routine prune.
+warm_size_bytes = 30064771072 # 28 GiB
+max_size_bytes = 42949672960 # 40 GiB
 prune_strategy = "docker"
 kind = "docker"
 command = "docker"
@@ -461,7 +486,7 @@ image_prefixes = ["capsem-"]
 container_prefixes = ["capsem-"]
 volume_prefixes = ["capsem-package-target-"]
 build_cache_owned = true
-maximum_age_hours = 72
+maximum_age_hours = 168
 keep_image_generations = 1
 
 [runtimes.tart]

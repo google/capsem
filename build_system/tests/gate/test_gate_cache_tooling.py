@@ -93,6 +93,36 @@ def test_missing_compiler_cache_keeps_cargo_on_its_first_bootstrap(monkeypatch, 
     environment = cachetooling.compiler_environment(config)
 
     assert CONFIG.environment.rustc_wrapper not in environment
+    assert environment[CONFIG.environment.cargo_incremental] == "0"
+
+
+def test_gate_compiles_without_incremental_sessions(monkeypatch) -> None:
+    """A gate prefix is named by its source digest, and workspace units are
+    salted by that path, so an incremental session is never read back: a
+    changed source is a new prefix and an exact repeat is already fresh. The
+    sessions were 75-83 GB of a 171-208 GB shared target, retention could not
+    select them, and incremental output is the one kind sccache refuses."""
+    monkeypatch.setattr(cachetooling.shutil, "which", lambda _: "/usr/bin/sccache")
+
+    compiler = cachetooling.compiler_environment(CONFIG)
+
+    assert CONFIG.toolchain.cargo_incremental is False
+    assert compiler[CONFIG.environment.cargo_incremental] == "0"
+    enabled = CONFIG.model_copy(
+        update={"toolchain": CONFIG.toolchain.model_copy(update={"cargo_incremental": True})}
+    )
+    assert cachetooling.compiler_environment(enabled)[CONFIG.environment.cargo_incremental] == "1"
+
+
+def test_bounded_builds_share_the_gate_incremental_policy(monkeypatch) -> None:
+    """The bounded wrapper compiles into the same shared target. An agent
+    worktree lives for one session, and its sessions (about 6 GB per checkout)
+    were left behind for retention that never selected them."""
+    monkeypatch.delenv(CACHE_POLICY.authority_environment, raising=False)
+    bootstrap = gatelaunch.contained_environment(ROOT)
+
+    assert bootstrap[gatelaunch.CARGO_INCREMENTAL] == "0"
+    assert CONFIG.environment.cargo_incremental == gatelaunch.CARGO_INCREMENTAL
 
 
 def test_dependency_free_bootstrap_matches_the_typed_tool_selection(monkeypatch) -> None:

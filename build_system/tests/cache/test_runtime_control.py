@@ -353,3 +353,62 @@ def test_cold_clean_never_selects_active_or_foreign_resources() -> None:
         (RuntimeOperation.REMOVE_CONTAINER, "stopped"),
         (RuntimeOperation.REMOVE_VOLUME, "capsem-package-target-arm64"),
     }
+
+
+def test_buildkit_records_past_their_age_are_pruned_below_the_maximum(tmp_path: Path) -> None:
+    """`maximum_age_hours` reached containers and volumes but never BuildKit.
+    On 2026-09-29 the build box held 54.5 GB of build cache, 48.6 GB of it
+    reclaimable and most last used three weeks earlier, because the Docker
+    total (61.8 GiB) sat under its 96 GiB maximum and only pressure pruned."""
+    now = 1_000 * NANOSECONDS_PER_HOUR
+    inventory = RuntimeInventory(
+        runtime_id="docker",
+        kind=RuntimeKind.DOCKER,
+        available=True,
+        generated_ns=now,
+        native_bytes=60,
+        owned_bytes=60,
+        resources=(resource(ResourceKind.BUILD_CACHE, "buildkit", 0, size=60),),
+    )
+    snapshot = RuntimeSnapshot(generated_ns=now, native_bytes=60, owned_bytes=60, runtimes=(inventory,))
+
+    plan = plan_runtime_prune(snapshot, policy())
+
+    [action] = plan.actions
+    assert action.operation is RuntimeOperation.PRUNE_BUILD_CACHE
+    assert action.maximum_age_hours == 72 and action.keep_bytes == 0 and action.all_unused
+    assert plan.violations == ()
+    issued = []
+
+    def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
+        issued.append(argv)
+        return RuntimeCommandResult(argv=argv, returncode=0, stdout="", stderr="", duration_ms=1)
+
+    apply_runtime_prune(
+        CachePaths(repository_root=tmp_path, policy=policy()),
+        policy(),
+        plan,
+        reason="age",
+        runner=runner,
+    )
+    assert issued == [
+        ("docker", "builder", "prune", "--force", "--all", "--filter", "until=72h", "--reserved-space", "0B")
+    ]
+
+
+def test_an_empty_build_cache_plans_nothing() -> None:
+    inventory = RuntimeInventory(
+        runtime_id="docker",
+        kind=RuntimeKind.DOCKER,
+        available=True,
+        generated_ns=1,
+        native_bytes=0,
+        owned_bytes=0,
+        resources=(resource(ResourceKind.BUILD_CACHE, "buildkit", 0, size=0),),
+    )
+
+    plan = plan_runtime_prune(
+        RuntimeSnapshot(generated_ns=1, native_bytes=0, owned_bytes=0, runtimes=(inventory,)), policy()
+    )
+
+    assert plan.actions == ()

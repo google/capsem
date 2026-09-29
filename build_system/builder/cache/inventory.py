@@ -9,7 +9,7 @@ from pathlib import Path
 from .cargounits import unaccounted_size, unit_entries
 from .contract import PruneStrategy
 from .inventorymodels import RetentionInventory
-from .leases import active_path, lease_key
+from .leases import active_path, held_locks, lease_key
 from .measure import measure
 from .models import CacheEntry, CacheInventory, CachePolicy, StageInventory
 from .objectunits import object_entries
@@ -69,7 +69,8 @@ def _stage_inventory(
     entries: list[CacheEntry] = []
     unmanaged_logical = 0
     unmanaged_allocated = 0
-    busy = any(active_path(stage_root / lock) for lock in stage_policy.mutation_locks)
+    held = held_locks(stage_root, stage_policy.mutation_locks)
+    busy = bool(held)
     if stage_path.is_dir():
         children = sorted(stage_path.iterdir(), key=lambda item: item.name)
         names = {child.name for child in children}
@@ -131,6 +132,7 @@ def _stage_inventory(
         allocated_bytes=sum(entry.allocated_bytes for entry in entries) + unmanaged_allocated,
         protected_bytes=sum(entry.logical_bytes for entry in entries if entry.protected),
         entries=tuple(entries),
+        held_locks=held,
     )
 
 
@@ -140,7 +142,8 @@ def _cargo_inventory(stage_id, stage_root: Path, stage_policy, allocated_seen) -
         resolved = (stage_root / target_root).resolve()
         if stage_root.is_dir() and not resolved.is_relative_to(stage_root.resolve()):
             raise ValueError(f"cache entry root escapes its stage: {stage_root / target_root}")
-    busy = any(active_path(stage_root / lock) for lock in stage_policy.mutation_locks)
+    held = held_locks(stage_root, stage_policy.mutation_locks)
+    busy = bool(held)
     entries, accounted = unit_entries(
         stage_root, stage_policy.cargo_target_roots, allocated_seen, protected=busy,
     )
@@ -152,12 +155,14 @@ def _cargo_inventory(stage_id, stage_root: Path, stage_policy, allocated_seen) -
         allocated_bytes=sum(entry.allocated_bytes for entry in entries) + other_allocated,
         protected_bytes=sum(entry.logical_bytes for entry in entries if entry.protected),
         entries=entries,
+        held_locks=held,
     )
 
 
 def _object_inventory(stage_id, stage_root: Path, stage_policy, allocated_seen) -> StageInventory:
     """An object store as its receipt generations, shared objects accounted beside them."""
-    busy = any(active_path(stage_root / lock) for lock in stage_policy.mutation_locks)
+    held = held_locks(stage_root, stage_policy.mutation_locks)
+    busy = bool(held)
     entries, accounted = object_entries(stage_root, allocated_seen, protected=busy)
     other_logical, other_allocated = unaccounted_size(stage_root, accounted, allocated_seen)
     return StageInventory(
@@ -167,6 +172,7 @@ def _object_inventory(stage_id, stage_root: Path, stage_policy, allocated_seen) 
         allocated_bytes=sum(entry.allocated_bytes for entry in entries) + other_allocated,
         protected_bytes=sum(entry.logical_bytes for entry in entries if entry.protected),
         entries=entries,
+        held_locks=held,
     )
 
 

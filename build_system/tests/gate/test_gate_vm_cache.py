@@ -447,8 +447,8 @@ def test_vm_and_asset_cache_contracts_are_declared_through_common_api() -> None:
     policy = load_policy(PROJECT_ROOT)
     registry = CacheRegistry(CachePaths(repository_root=PROJECT_ROOT, policy=policy), policy)
     assets = registry.contract("assets")
-    assert assets.max_size_bytes == 16 * 1024**3
-    assert assets.warm_size_bytes == 8 * 1024**3
+    assert assets.max_size_bytes == 12 * 1024**3
+    assert assets.warm_size_bytes == 6 * 1024**3
     cache = CacheControl(RecordingRunner(PROJECT_ROOT))
     source_limits = cache.image_policy("capsem-install-test")
     helper_limits = cache.image_policy("capsem-install-builder")

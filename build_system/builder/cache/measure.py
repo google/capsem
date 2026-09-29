@@ -22,7 +22,13 @@ def measure(path: Path, allocated_seen: set[tuple[int, int]]) -> Measure:
     stack = [path]
     while stack:
         current = stack.pop()
-        metadata = current.lstat()
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            # A live producer shares these stages: rustc deletes its `.rcgu.o`
+            # temporaries mid-build. What is gone holds no bytes, and failing
+            # here failed the enforcement that runs before every compile.
+            continue
         mode = metadata.st_mode
         if stat.S_ISLNK(mode):
             continue
@@ -30,6 +36,8 @@ def measure(path: Path, allocated_seen: set[tuple[int, int]]) -> Measure:
             try:
                 with os.scandir(current) as children:
                     stack.extend(Path(child.path) for child in children)
+            except FileNotFoundError:
+                continue
             except PermissionError:
                 # A dead test can leave a directory unreadable. Measuring only
                 # reads, so it cannot take the directory back; it dates the

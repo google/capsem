@@ -167,6 +167,7 @@ class EnvironmentConfig(Strict):
     source_checkout: str
     repository_root: str
     cargo_target: str
+    cargo_incremental: str
     rustc_wrapper: str
     sccache_dir: str
     sccache_cache_size: str

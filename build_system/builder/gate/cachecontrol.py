@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import os
+
+from ..cache import budget
 from ..cache.config import load_policy
 from ..cache.controlmodels import ImageCachePolicy
 from . import cachelayout
-from .config import for_root
+from .config import GateConfig, for_root
 from .errors import GateError
 from .lifecycle import Resource
 from .proc import Runner
@@ -123,3 +126,20 @@ class CargoCacheBound(Resource, name="cargo-cache"):
 
     def release(self) -> None:
         self._enforce("after")
+
+
+def verify_disk_budget(config: GateConfig) -> None:
+    """Refuse a retained-cache machine whose disk every cache together can fill.
+
+    Each cache honoured its own maximum while the build box filled to 100% four
+    times in two days; the budget is the contract between them.
+    """
+    paths = cachelayout.cache_paths(config)
+    try:
+        budget.verify_machine(
+            paths.policy,
+            filesystem_bytes=budget.filesystem_bytes(cachelayout.authority(config)),
+            environment=os.environ,
+        )
+    except budget.BudgetError as refused:
+        raise GateError(str(refused)) from None

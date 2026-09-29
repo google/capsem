@@ -124,8 +124,17 @@ def source(tmp_path: Path) -> Path:
 # -- the budget --------------------------------------------------------------
 
 
+@pytest.fixture
+def no_disk_budget(monkeypatch) -> None:
+    """These checkouts carry no cache policy; the budget has its own suite
+    (test_gate_disk_budget.py) and is not what these lock tests measure."""
+    from capsem_builder.gate import preflight
+
+    monkeypatch.setattr(preflight, "verify_disk_budget", lambda _config: None)
+
+
 @pytest.mark.parametrize("queued", [False, True])
-def test_cargo_cannot_reuse_a_newer_binary_for_an_older_source_snapshot(tmp_path: Path, monkeypatch, queued) -> None:
+def test_cargo_cannot_reuse_a_newer_binary_for_an_older_source_snapshot(tmp_path: Path, monkeypatch, queued, no_disk_budget) -> None:
     """The checked-in workspace wrapper keys each tree's objects by its path.
 
     Every source keeps one ancient mtime, so nothing here can pass by
@@ -202,7 +211,7 @@ def test_cargo_cannot_reuse_a_newer_binary_for_an_older_source_snapshot(tmp_path
         assert run(copied) == "1", "a build while this snapshot queued must not supply its binary"
 
 
-def test_taking_the_machine_lock_leaves_compiler_input_timestamps_alone(tmp_path: Path, monkeypatch) -> None:
+def test_taking_the_machine_lock_leaves_compiler_input_timestamps_alone(tmp_path: Path, monkeypatch, no_disk_budget) -> None:
     """A gate run must not make unchanged source look edited.
 
     Touching every `.rs` under the lock made each Cargo invocation in every
@@ -237,7 +246,7 @@ def test_taking_the_machine_lock_leaves_compiler_input_timestamps_alone(tmp_path
     assert source.stat().st_mtime == 1, "the machine lock rewrote an unchanged compiler input's mtime"
 
 
-def test_source_changes_while_waiting_for_the_machine_are_refused(tmp_path: Path, monkeypatch) -> None:
+def test_source_changes_while_waiting_for_the_machine_are_refused(tmp_path: Path, monkeypatch, no_disk_budget) -> None:
     from capsem_builder.gate import preflight, snapshot
     from capsem_builder.gate.errors import GateError
     from capsem_builder.gate.lifecycle import Resource

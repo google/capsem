@@ -432,6 +432,8 @@ source_checkout = "CAPSEM_GATE_SOURCE_CHECKOUT"
 repository_root = "CAPSEM_REPOSITORY_ROOT"
 # Where cargo compiles, shared by every run; see `[prefix] cargo_target`.
 cargo_target = "CARGO_TARGET_DIR"
+# Cargo's own switch; set from `[toolchain] cargo_incremental` for gate commands.
+cargo_incremental = "CARGO_INCREMENTAL"
 rustc_wrapper = "RUSTC_WRAPPER"
 sccache_dir = "SCCACHE_DIR"
 sccache_cache_size = "SCCACHE_CACHE_SIZE"
@@ -1270,6 +1272,13 @@ compiler_cache_command = "sccache"
 compiler_cache_socket_name = "sccache.sock"
 compiler_cache_client_side = true
 compiler_cache_idle_timeout_seconds = 0
+# Gate commands and bounded builds compile without incremental sessions. A gate
+# prefix is named by its source digest and workspace units are salted by that
+# path, so a session is never read back: changed source is a new prefix and an
+# exact repeat is fresh. An agent worktree lives one session. The sessions were
+# 75-83 GB of a 171-208 GB shared target on 2026-09-29, retention could not
+# select them, and sccache refuses to cache incremental output.
+cargo_incremental = false
 # Clippy's workspace wrapper. Cargo keys workspace artifacts by the wrapper's
 # resolved path; `cargo clippy` forces one shared clippy-driver path, so clippy
 # output in the shared target was reused across checkouts. See clippyrun.py.
@@ -2067,6 +2076,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_candidate.py",
     "build_system/tests/gate/test_gate_cache_layout.py",
     "build_system/tests/gate/test_gate_cache_tooling.py",
+    "build_system/tests/gate/test_gate_disk_budget.py",
     "build_system/tests/gate/test_gate_cache_sandbox.py",
     "build_system/tests/gate/test_gate_snapshot_repository.py",
     "build_system/tests/gate/test_gate_pycache_authority.py",
