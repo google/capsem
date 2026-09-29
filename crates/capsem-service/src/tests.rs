@@ -780,6 +780,7 @@ mod lifecycle;
 mod logs_api;
 mod network_routes;
 mod persist_purge;
+mod polled_route_cost;
 mod profile_mutations;
 mod profile_routes;
 mod restart;

@@ -133,6 +133,10 @@ pub(crate) async fn read_stats_response_from_main_db_handle(state: &ServiceState
     db.ready()
         .await
         .map_err(|error| main_ledger_route_error("stats", "ready", &db_path, error))?;
+    // The epoch the answer belongs to is the one after `ready()`: the first
+    // look at the ledger moves it, and an answer stored under the epoch read
+    // before that could never be hit.
+    let db_epoch = db.read_cache_epoch(capsem_logger::ReadCacheDomain::SessionSummary);
 
     let mut raw = db
         .query_many(vec![(

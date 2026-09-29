@@ -45,7 +45,7 @@ pub(crate) async fn handle_timeline(
     let limit = params.limit.unwrap_or(200).min(2000);
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
-    let db = open_ready_session_db(&state, &id, "timeline", &db_path).await?;
+    let db = session_db(&state, &id, "timeline", &db_path).await?;
     let events = query_route_typed_rows::<api::TimelineEvent>(
         &id,
         "timeline",

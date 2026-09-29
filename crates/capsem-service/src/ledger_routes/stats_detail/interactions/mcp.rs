@@ -46,10 +46,14 @@ pub(super) fn tool_content(row: &ToolRow) -> InteractionToolCall {
         server_name: row.server_name.clone(),
         origin: row.origin,
         decision: row.decision,
-        arguments: row
-            .arguments
-            .clone()
-            .map(|raw| json_payload(raw, CaptureStatus::Unknown)),
+        arguments: row.arguments.clone().map(|raw| {
+            let status = if row.arguments_truncated {
+                CaptureStatus::Truncated
+            } else {
+                CaptureStatus::Unknown
+            };
+            json_payload(raw, status)
+        }),
         request: None,
         result: (row.response_preview.is_some() || row.error_message.is_some()).then(|| InteractionToolResult {
             kind: InteractionToolResultKind::ToolResult,

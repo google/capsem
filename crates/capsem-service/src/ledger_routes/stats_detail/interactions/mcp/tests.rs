@@ -6,7 +6,7 @@ fn row(arguments: &str, response: &str) -> ToolRow {
         "event_id":"abcdef000001", "timestamp":"now", "model_call_id":null, "model_event_id":null,
         "trace_id":"trace", "turn_id":null, "call_id":"call", "tool_name":"search", "server_name":"knowledge",
         "origin":"mcp", "decision":"allowed", "method":"tools/call", "arguments":arguments,
-        "response_preview":response, "error_message":null,
+        "arguments_truncated":false, "response_preview":response, "error_message":null,
     }))
     .unwrap()
 }

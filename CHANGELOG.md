@@ -204,6 +204,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attributes now report unsupported, and chown is accepted without changing
   host ownership (the workspace already reports every entry as root's).
 
+- Polled routes no longer touch the session database. Since session totals
+  moved to the ledger's counter snapshot, every `/info` poll readied the
+  session's ledger handle twice and read the snapshot back from SQLite, and
+  `/vms/list`, `stats/summary` and the security status routes paid a reader
+  round trip and a file read per VM per poll; the service-wide security and
+  detection status read every session's last 2000 rule matches to report six
+  counts. The ledger handle now keeps the snapshot in memory, refreshed by
+  its reader thread when the writer commits (at most 250 ms behind), and
+  those routes answer from it. `stats/detail`, the timeline and history,
+  which are fetched on demand rather than polled, read their lists in
+  batches the handle answers from its cache while the session is idle; that
+  took `stats/detail` from about 18 ms to about 7 ms of service CPU per
+  fetch on the seeded route health fixture.
+- `stats/detail` bounds each listed tool call's arguments and reasoning
+  block to 16,384 characters. The ledger keeps both whole, so a file-writing
+  agent's calls made every fetch carry megabytes, twice over. A cut
+  interaction payload reports `truncated`; a tool event's `bytes` still
+  measures the whole call.
+
 - A Linux VM is ready for its first command about 0.3 s sooner. Once the
   emulated serial port began raising its transmit interrupt, every byte the
   guest's init wrote to the console held boot for a port-I/O exit (about

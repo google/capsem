@@ -3,7 +3,9 @@ pub(crate) mod activity;
 pub(crate) mod bodies;
 pub(super) use bodies::{handle_bodies_warc_export, handle_event_bodies};
 mod response_cache;
+mod rows;
 pub(crate) use response_cache::{forget_session_responses, session_response_cache_lookup, SessionResponseCache};
+use rows::{query_route_objects, query_route_typed_rows, route_query_objects};
 pub(crate) mod stats_detail;
 pub(super) use stats_detail::read_stats_detail_payload_from_session_db;
 mod global_stats;
@@ -82,25 +84,13 @@ pub(super) async fn handle_detection_latest(
 }
 
 /// GET /vms/{id}/security/status -- security rule ledger aggregates.
+///
+/// Polled: answered from the ledger handle's counter snapshot, in memory.
 pub(super) async fn handle_security_info(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-) -> Result<axum::response::Response, AppError> {
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-    let slot = match session_response_cache_lookup(&state, &id, "security_status", "security", &db_path).await? {
-        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
-        SessionResponseCache::Miss(slot) => slot,
-    };
-    let stats = security_stats_for_vm(&state, &id).await?;
-    let body = serde_json::to_vec(&stats).map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize security status response: {error}"),
-        )
-    })?;
-    slot.store(&state, &body);
-    Ok(json_bytes_response(Bytes::from(body)))
+) -> Result<Json<capsem_logger::SecurityRuleStats>, AppError> {
+    Ok(Json(security_stats_for_vm(&state, &id).await?))
 }
 
 pub(super) fn service_session_dirs(state: &ServiceState) -> Vec<(String, PathBuf)> {
@@ -138,7 +128,8 @@ fn session_dirs_for_profile(state: &ServiceState, profile_id: Option<&str>) -> V
 
 pub(crate) mod security;
 pub(crate) use security::{
-    is_detection_rule_event, read_security_session_ledger, security_latest_for_vm, security_stats_for_vm,
+    is_detection_rule_event, read_security_session_ledger, security_latest_for_vm, security_stats_for_session,
+    security_stats_for_vm,
 };
 
 pub(super) fn ledger_route_error(
@@ -163,7 +154,25 @@ pub(super) fn ledger_route_error(
     )
 }
 
+/// The session's ready ledger handle, for a route that reads rows.
 pub(super) async fn open_ready_session_db(
+    state: &ServiceState,
+    vm_id: &str,
+    ledger: &str,
+    db_path: &StdPath,
+) -> Result<Arc<capsem_logger::DbHandle>, AppError> {
+    let db = session_db(state, vm_id, ledger, db_path).await?;
+    db.ready()
+        .await
+        .map_err(|error| ledger_route_error(vm_id, ledger, "ready", db_path, error))?;
+    Ok(db)
+}
+
+/// The session's registered ledger handle, opened once and reused.
+///
+/// A polled route that reads the counter snapshot takes it from here and asks
+/// the handle's memory, never the file: see `DbHandle::ledger_counters`.
+pub(super) async fn session_db(
     state: &ServiceState,
     vm_id: &str,
     ledger: &str,
@@ -217,132 +226,7 @@ pub(super) async fn open_ready_session_db(
             handle
         }
     };
-    db.ready()
-        .await
-        .map_err(|error| ledger_route_error(vm_id, ledger, "ready", db_path, error))?;
     Ok(db)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn query_route_db_json(
-    vm_id: &str,
-    ledger: &str,
-    operation: &str,
-    query_name: &str,
-    db_path: &StdPath,
-    db: &capsem_logger::DbHandle,
-    sql: &str,
-    params: &[serde_json::Value],
-) -> Result<serde_json::Value, AppError> {
-    let raw = db.query(sql, params).await.map_err(|error| {
-        error!(
-            vm_id,
-            ledger,
-            operation,
-            query_name,
-            db_path = %db_path.display(),
-            error = %error,
-            "session ledger route DB query failed"
-        );
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("{ledger} ledger query {query_name} failed for {vm_id}: {error}"),
-        )
-    })?;
-    serde_json::from_str(&raw).map_err(|error| {
-        error!(
-            vm_id,
-            ledger,
-            operation = "parse query json",
-            query_name,
-            db_path = %db_path.display(),
-            error = %error,
-            "session ledger route DB query returned invalid JSON"
-        );
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("{ledger} ledger query {query_name} returned invalid json for {vm_id}: {error}"),
-        )
-    })
-}
-
-pub(super) fn query_json_to_objects(raw: serde_json::Value) -> Vec<serde_json::Value> {
-    let columns: Vec<String> = raw
-        .get("columns")
-        .and_then(|value| value.as_array())
-        .map(|columns| {
-            columns
-                .iter()
-                .filter_map(|value| value.as_str().map(ToOwned::to_owned))
-                .collect()
-        })
-        .unwrap_or_default();
-    let rows = raw
-        .get("rows")
-        .and_then(|value| value.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let mut objects = Vec::with_capacity(rows.len());
-    for row in rows {
-        let values = row.as_array().cloned().unwrap_or_default();
-        let mut object = serde_json::Map::new();
-        for (index, column) in columns.iter().enumerate() {
-            object.insert(
-                column.clone(),
-                values.get(index).cloned().unwrap_or(serde_json::Value::Null),
-            );
-        }
-        objects.push(serde_json::Value::Object(object));
-    }
-    objects
-}
-
-pub(super) async fn query_route_objects(
-    vm_id: &str,
-    ledger: &str,
-    query_name: &str,
-    db_path: &StdPath,
-    db: &capsem_logger::DbHandle,
-    sql: &str,
-    params: &[serde_json::Value],
-) -> Result<Vec<serde_json::Value>, AppError> {
-    let raw = query_route_db_json(vm_id, ledger, "query", query_name, db_path, db, sql, params).await?;
-    Ok(query_json_to_objects(raw))
-}
-
-pub(super) async fn query_route_typed_rows<T>(
-    vm_id: &str,
-    ledger: &str,
-    query_name: &str,
-    db_path: &StdPath,
-    db: &capsem_logger::DbHandle,
-    sql: &str,
-    params: &[serde_json::Value],
-) -> Result<Vec<T>, AppError>
-where
-    T: DeserializeOwned,
-{
-    let objects = query_route_objects(vm_id, ledger, query_name, db_path, db, sql, params).await?;
-    objects
-        .into_iter()
-        .map(|object| {
-            serde_json::from_value::<T>(object).map_err(|error| {
-                error!(
-                    vm_id,
-                    ledger,
-                    operation = "decode query rows",
-                    query_name,
-                    db_path = %db_path.display(),
-                    error = %error,
-                    "session ledger route DB query mapping failed"
-                );
-                AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("{ledger} ledger query {query_name} mapping failed for {vm_id}: {error}"),
-                )
-            })
-        })
-        .collect()
 }
 
 pub(super) fn main_ledger_route_error(
@@ -435,10 +319,7 @@ pub(super) async fn handle_service_security_status(
     let mut total = 0_u64;
     let mut sessions = Vec::new();
     for (vm_id, session_dir) in service_session_dirs(&state) {
-        let Some(session) = read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await? else {
-            continue;
-        };
-        let stats = session.stats;
+        let stats = security_stats_for_session(&state, &vm_id, &session_dir.join("session.db")).await?;
         total += stats.total;
         sessions.push(json!({ "vm_id": vm_id, "stats": stats }));
     }
@@ -451,10 +332,8 @@ pub(super) async fn handle_service_detection_status(
     let mut total = 0_u64;
     let mut sessions = Vec::new();
     for (vm_id, session_dir) in service_session_dirs(&state) {
-        let Some(session) = read_security_session_ledger(&state, &vm_id, &session_dir.join("session.db")).await? else {
-            continue;
-        };
-        let count = security_detection_count(&session.stats);
+        let stats = security_stats_for_session(&state, &vm_id, &session_dir.join("session.db")).await?;
+        let count = security_detection_count(&stats);
         total += count;
         sessions.push(json!({ "vm_id": vm_id, "total": count }));
     }

@@ -59,7 +59,7 @@ pub(crate) fn grant_metric_endpoint(command: &mut tokio::process::Command, corp:
 #[derive(Clone, Debug)]
 pub(crate) struct SessionTotals {
     pub(crate) attributes: Vec<KeyValue>,
-    pub(crate) counters: LedgerCounters,
+    pub(crate) counters: Arc<LedgerCounters>,
 }
 
 /// The table the observable callbacks read.

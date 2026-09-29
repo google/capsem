@@ -28,6 +28,14 @@ pub(super) fn json_payload(raw: String, status: CaptureStatus) -> CapturedPayloa
     }
 }
 
+/// Mark a payload whose stored text the listing cut short.
+pub(super) fn cut(mut payload: CapturedPayload, truncated: bool) -> CapturedPayload {
+    if truncated {
+        payload.status = CaptureStatus::Truncated;
+    }
+    payload
+}
+
 pub(super) fn text_payload(text: String) -> CapturedPayload {
     CapturedPayload {
         status: CaptureStatus::Unknown,

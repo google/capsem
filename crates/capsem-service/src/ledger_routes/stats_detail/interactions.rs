@@ -3,11 +3,12 @@ use super::*;
 
 mod mcp;
 mod payload;
-use payload::{preview_payload, text_payload};
+use payload::{cut, preview_payload, text_payload};
 
 pub(crate) const MODEL_ITEMS_SQL: &str = r#"
 SELECT mi.event_id, mi.timestamp, mi.model_call_id, mc.event_id AS model_event_id,
-       mi.trace_id, mi.turn_id, mi.item_index, mi.kind, mi.call_id, mi.content,
+       mi.trace_id, mi.turn_id, mi.item_index, mi.kind, mi.call_id,
+       substr(mi.content, 1, ?1) AS content, COALESCE(length(mi.content) > ?1, 0) AS content_truncated,
        (SELECT CASE WHEN MAX(tr.is_error NOT IN (0, 1)) = 1 THEN 2
                     WHEN COUNT(DISTINCT tr.is_error) = 1 THEN MIN(tr.is_error) ELSE NULL END
         FROM tool_responses tr
@@ -22,7 +23,8 @@ pub(crate) const TOOL_CALLS_SQL: &str = r#"
 SELECT tc.event_id, COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp, '') AS timestamp,
        tc.model_call_id, mc.event_id AS model_event_id, tc.trace_id, tc.turn_id,
        tc.call_id, tc.tool_name, tc.server_name, tc.origin, tc.decision, tc.method,
-       tc.arguments, tc.response_preview, tc.error_message
+       substr(tc.arguments, 1, ?1) AS arguments, COALESCE(length(tc.arguments) > ?1, 0) AS arguments_truncated,
+       tc.response_preview, tc.error_message
 FROM tool_calls tc
 LEFT JOIN model_calls mc ON mc.id = tc.model_call_id
 ORDER BY tc.id DESC LIMIT 200
@@ -38,7 +40,7 @@ enum ModelItemKind {
 }
 
 #[derive(Deserialize)]
-struct ModelItemRow {
+pub(super) struct ModelItemRow {
     event_id: String,
     timestamp: String,
     model_call_id: i64,
@@ -49,11 +51,12 @@ struct ModelItemRow {
     kind: ModelItemKind,
     call_id: String,
     content: Option<String>,
+    content_truncated: bool,
     is_error: Option<u8>,
 }
 
 #[derive(Deserialize)]
-struct ToolRow {
+pub(super) struct ToolRow {
     event_id: String,
     timestamp: String,
     model_call_id: Option<i64>,
@@ -67,19 +70,20 @@ struct ToolRow {
     method: Option<String>,
     decision: ToolDecision,
     arguments: Option<String>,
+    arguments_truncated: bool,
     response_preview: Option<String>,
     error_message: Option<String>,
 }
 
-pub(super) async fn read_interactions(
+/// The interaction report over the rows [`MODEL_ITEMS_SQL`] and
+/// [`TOOL_CALLS_SQL`] read, which the stats detail batch fetched.
+pub(super) fn read_interactions(
     vm_id: &str,
     db_path: &StdPath,
-    db: &capsem_logger::DbHandle,
+    models: Vec<ModelItemRow>,
+    tools: Vec<ToolRow>,
     bodies: &std::collections::BTreeMap<String, Vec<EventBody>>,
 ) -> Result<InteractionReport, AppError> {
-    let models: Vec<ModelItemRow> =
-        super::query_rows(vm_id, db_path, db, "interaction_models", MODEL_ITEMS_SQL).await?;
-    let tools: Vec<ToolRow> = super::query_rows(vm_id, db_path, db, "interaction_tools", TOOL_CALLS_SQL).await?;
     let mut items = Vec::with_capacity(models.len() + tools.len());
     for row in models {
         let is_error = match row.is_error {
@@ -99,7 +103,7 @@ pub(super) async fn read_interactions(
         let content = match row.kind {
             ModelItemKind::Request => InteractionContent::Request(InteractionRequest {
                 kind: InteractionRequestKind::RequestPreview,
-                payload: row.content.map(preview_payload),
+                payload: row.content.map(|raw| cut(preview_payload(raw), row.content_truncated)),
             }),
             ModelItemKind::Reasoning | ModelItemKind::Response => {
                 let kind = match row.kind {
@@ -111,14 +115,14 @@ pub(super) async fn read_interactions(
                     role: InteractionRole::Assistant,
                     blocks: vec![InteractionBlock {
                         kind,
-                        payload: row.content.map(text_payload),
+                        payload: row.content.map(|text| cut(text_payload(text), row.content_truncated)),
                     }],
                 })
             }
             ModelItemKind::ToolResponse => InteractionContent::ToolResult(InteractionToolResult {
                 kind: InteractionToolResultKind::ToolResult,
                 call_id: row.call_id,
-                payload: row.content.map(preview_payload),
+                payload: row.content.map(|raw| cut(preview_payload(raw), row.content_truncated)),
                 response: None,
                 is_error,
                 error_message: None,

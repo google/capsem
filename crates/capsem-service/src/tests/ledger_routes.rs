@@ -80,11 +80,9 @@ async fn security_routes_read_security_ledger_from_session_db() {
         .unwrap()
         .contains(r#""provider":"ollama""#));
 
-    let response = handle_security_info(State(state), Path("vm-ledger".to_string()))
+    let Json(stats) = handle_security_info(State(state), Path("vm-ledger".to_string()))
         .await
         .expect("security status reads session ledger");
-    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let stats: capsem_logger::SecurityRuleStats = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(stats.total, 1);
     assert_eq!(stats.by_action[0].rule_action, "allow");
     assert_eq!(stats.by_action[0].count, 1);

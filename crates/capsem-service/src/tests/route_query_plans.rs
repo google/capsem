@@ -22,8 +22,8 @@ use crate::ledger_routes::security::{SECURITY_LATEST_LIMIT, SECURITY_LATEST_SQL}
 use crate::ledger_routes::stats_detail::interactions::{MODEL_ITEMS_SQL, TOOL_CALLS_SQL};
 use crate::ledger_routes::stats_detail::{
     STATS_DETAIL_AUDIT_EVENTS_SQL, STATS_DETAIL_CREDENTIAL_EVENTS_SQL, STATS_DETAIL_DNS_EVENTS_SQL,
-    STATS_DETAIL_FILE_EVENTS_SQL, STATS_DETAIL_HTTP_EVENTS_SQL, STATS_DETAIL_MODEL_EVENTS_SQL,
-    STATS_DETAIL_PROCESS_EVENTS_SQL, STATS_DETAIL_TOOL_EVENTS_SQL,
+    STATS_DETAIL_FIELD_CHARS, STATS_DETAIL_FILE_EVENTS_SQL, STATS_DETAIL_HTTP_EVENTS_SQL,
+    STATS_DETAIL_MODEL_EVENTS_SQL, STATS_DETAIL_PROCESS_EVENTS_SQL, STATS_DETAIL_TOOL_EVENTS_SQL,
 };
 use crate::ledger_routes::timeline::timeline_sql;
 use crate::session_triage_statements;
@@ -108,7 +108,12 @@ fn route_statements() -> Vec<RouteStatement> {
     use api::HistoryLayerFilter::{All, Audit, Exec};
     let mut statements = vec![
         RouteStatement::window("stats_detail.model_events", STATS_DETAIL_MODEL_EVENTS_SQL, vec![]),
-        RouteStatement::window("stats_detail.tool_events", STATS_DETAIL_TOOL_EVENTS_SQL, vec![]).probing(&[
+        RouteStatement::window(
+            "stats_detail.tool_events",
+            STATS_DETAIL_TOOL_EVENTS_SQL,
+            vec![json!(STATS_DETAIL_FIELD_CHARS)],
+        )
+        .probing(&[
             "SEARCH mc USING INTEGER PRIMARY KEY (rowid=?)",
             "idx_tool_responses_call_id (call_id=?)",
         ]),
@@ -132,10 +137,18 @@ fn route_statements() -> Vec<RouteStatement> {
             "idx_tool_responses_call_id (call_id=?)",
         ])
         .merging_windows(),
-        RouteStatement::window("interactions.model_items", MODEL_ITEMS_SQL, vec![])
-            .probing(&["SEARCH mc USING INTEGER PRIMARY KEY (rowid=?)"]),
-        RouteStatement::window("interactions.tool_calls", TOOL_CALLS_SQL, vec![])
-            .probing(&["SEARCH mc USING INTEGER PRIMARY KEY (rowid=?)"]),
+        RouteStatement::window(
+            "interactions.model_items",
+            MODEL_ITEMS_SQL,
+            vec![json!(STATS_DETAIL_FIELD_CHARS)],
+        )
+        .probing(&["SEARCH mc USING INTEGER PRIMARY KEY (rowid=?)"]),
+        RouteStatement::window(
+            "interactions.tool_calls",
+            TOOL_CALLS_SQL,
+            vec![json!(STATS_DETAIL_FIELD_CHARS)],
+        )
+        .probing(&["SEARCH mc USING INTEGER PRIMARY KEY (rowid=?)"]),
         RouteStatement::window(
             "security.latest",
             SECURITY_LATEST_SQL,

@@ -10,29 +10,11 @@ pub(crate) fn is_detection_rule_event(event: &capsem_logger::SecurityRuleMatch) 
     event.detection_level != capsem_logger::SecurityDetectionLevel::None
 }
 
-#[derive(Clone, Debug)]
+/// A session's recent rule matches, newest first. Its totals are not here:
+/// they are the counter snapshot's, through [`security_stats_for_vm`].
+#[derive(Clone, Debug, Default)]
 pub(crate) struct SecuritySessionLedger {
     pub(crate) latest: Vec<capsem_logger::SecurityRuleMatch>,
-    pub(crate) stats: capsem_logger::SecurityRuleStats,
-}
-
-impl Default for SecuritySessionLedger {
-    fn default() -> Self {
-        Self {
-            latest: Vec::new(),
-            stats: empty_security_rule_stats(),
-        }
-    }
-}
-
-pub(crate) fn empty_security_rule_stats() -> capsem_logger::SecurityRuleStats {
-    capsem_logger::SecurityRuleStats {
-        total: 0,
-        by_action: Vec::new(),
-        by_event_type: Vec::new(),
-        by_level: Vec::new(),
-        by_rule: Vec::new(),
-    }
 }
 
 // The matched event's payload is archive-backed: it is read by event id with
@@ -65,7 +47,7 @@ async fn read_security_ledger(
     vm_id: &str,
     db_path: &StdPath,
 ) -> Result<Option<SecuritySessionLedger>, AppError> {
-    let db = open_ready_session_db(state, vm_id, "security", db_path).await?;
+    let db = session_db(state, vm_id, "security", db_path).await?;
     let latest = query_route_typed_rows::<capsem_logger::SecurityRuleMatch>(
         vm_id,
         "security",
@@ -76,8 +58,7 @@ async fn read_security_ledger(
         &[json!(SECURITY_LATEST_LIMIT)],
     )
     .await?;
-    let stats = security_stats(vm_id, db_path, &db).await?;
-    Ok(Some(SecuritySessionLedger { latest, stats }))
+    Ok(Some(SecuritySessionLedger { latest }))
 }
 
 pub(crate) async fn security_latest_for_vm(
@@ -101,16 +82,24 @@ pub(crate) async fn security_latest_for_vm(
 
 /// The security ledger's aggregates alone.
 ///
-/// A primary-key read of the counter snapshot, not the ledger: the route is
-/// polled on a timer and reports six counts.
+/// The counter snapshot in the ledger handle's memory, not the ledger: the
+/// status routes are polled on a timer and report six counts.
 pub(crate) async fn security_stats_for_vm(
     state: &ServiceState,
     vm_id: &str,
 ) -> Result<capsem_logger::SecurityRuleStats, AppError> {
     let session_dir = resolve_session_dir(state, vm_id)?;
-    let db_path = session_dir.join("session.db");
-    let db = open_ready_session_db(state, vm_id, "security", &db_path).await?;
-    security_stats(vm_id, &db_path, &db).await
+    security_stats_for_session(state, vm_id, &session_dir.join("session.db")).await
+}
+
+/// [`security_stats_for_vm`] for a session whose ledger path is known.
+pub(crate) async fn security_stats_for_session(
+    state: &ServiceState,
+    vm_id: &str,
+    db_path: &StdPath,
+) -> Result<capsem_logger::SecurityRuleStats, AppError> {
+    let db = session_db(state, vm_id, "security", db_path).await?;
+    security_stats(vm_id, db_path, &db).await
 }
 
 /// The session's rule-match statistics, from its counter snapshot.

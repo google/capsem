@@ -95,8 +95,8 @@ pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum:
         Ok(listed) => listed,
         Err(error) => return error.into_response(),
     };
-    // Every VM's totals, read together: each is one primary-key lookup,
-    // answered from its handle's cache while that ledger has not moved.
+    // Every VM's totals, from each ledger handle's memory: no reader round
+    // trip and no SQLite read per poll.
     let counters = futures::future::join_all(
         response
             .sandboxes

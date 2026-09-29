@@ -9,14 +9,18 @@ use capsem_logger::counters::{usd_from_micro, LedgerCounters};
 
 use super::*;
 
-/// The session's counter snapshot, through its ready DB handle.
+/// The session's counter snapshot, from its ledger handle's memory.
+///
+/// Every polled total comes through here or [`counters_if_ready`], so none of
+/// them costs a worker round trip or a SQLite read: the handle's reader keeps
+/// the snapshot current on its own (see `DbHandle::ledger_counters`).
 pub(crate) async fn read_counters(
     state: &ServiceState,
     vm_id: &str,
     ledger: &str,
     db_path: &StdPath,
-) -> Result<LedgerCounters, AppError> {
-    let db = open_ready_session_db(state, vm_id, ledger, db_path).await?;
+) -> Result<Arc<LedgerCounters>, AppError> {
+    let db = session_db(state, vm_id, ledger, db_path).await?;
     db.ledger_counters()
         .await
         .map_err(|error| ledger_route_error(vm_id, ledger, "counters", db_path, error))
@@ -29,12 +33,12 @@ pub(crate) async fn counters_if_ready(
     state: &ServiceState,
     vm_id: &str,
     session_dir: &StdPath,
-) -> Option<LedgerCounters> {
+) -> Option<Arc<LedgerCounters>> {
     let db_path = session_db_path_for_session_dir(session_dir);
     if !db_path.exists() {
         return None;
     }
-    let db = open_ready_session_db(state, vm_id, "list", &db_path).await.ok()?;
+    let db = session_db(state, vm_id, "list", &db_path).await.ok()?;
     db.ledger_counters().await.ok()
 }
 
@@ -264,12 +268,24 @@ pub(crate) fn history_processes(counters: &LedgerCounters, limit: usize) -> Vec<
     processes
 }
 
-/// The counter snapshot of every session of a profile.
-pub(crate) async fn profile_counters(state: &ServiceState, profile_id: &str) -> Result<Vec<LedgerCounters>, AppError> {
+/// The counter snapshot of every session of a profile, as of now.
+///
+/// The plugin and credential runtime views are opened, and reloaded, on
+/// demand rather than polled, so each session's handle is readied first: its
+/// `ready()` is the barrier that brings the snapshot up to the last commit.
+pub(crate) async fn profile_counters(
+    state: &ServiceState,
+    profile_id: &str,
+) -> Result<Vec<Arc<LedgerCounters>>, AppError> {
     let mut snapshots = Vec::new();
     for (vm_id, session_dir) in profile_session_dirs(state, profile_id) {
         let db_path = session_db_path_for_session_dir(&session_dir);
-        snapshots.push(read_counters(state, &vm_id, "plugins", &db_path).await?);
+        let db = open_ready_session_db(state, &vm_id, "plugins", &db_path).await?;
+        snapshots.push(
+            db.ledger_counters()
+                .await
+                .map_err(|error| ledger_route_error(&vm_id, "plugins", "counters", &db_path, error))?,
+        );
     }
     Ok(snapshots)
 }

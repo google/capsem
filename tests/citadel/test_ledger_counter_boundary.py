@@ -59,7 +59,7 @@ AGGREGATE_DEBT: dict[str, str] = {
         "No snapshot can hold a count per search text and the ledger has no full-text index yet, so this is "
         "a scan bounded by the reader's 5-second interrupt; without a search the total is the counter snapshot"
     ),
-    "crates/capsem-service/src/ledger_routes/stats_detail/interactions.rs:817eea121bc9": (
+    "crates/capsem-service/src/ledger_routes/stats_detail/interactions.rs:b3cfe18c894d": (
         "stats detail rows: folds each model item's tool responses into one error flag per item; a detail "
         "view over a bounded page of rows, not a polled total"
     ),

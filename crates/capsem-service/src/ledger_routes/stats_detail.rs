@@ -24,6 +24,11 @@ LIMIT 200
 /// newest -- a cost that grows with the ledger on every stats poll.
 /// Insertion order is newest first; a timestamp is not, since a call recorded
 /// without one borrows its model call's.
+///
+/// `arguments` is cut to [`STATS_DETAIL_FIELD_CHARS`], bound as `?1`: a model's
+/// tool arguments are stored whole, and a file-writing agent's run to megabytes
+/// each, so the list carried up to 200 of them on every poll. `bytes` still
+/// measures the whole call, so a client can tell a cut argument from a short one.
 pub(crate) const STATS_DETAIL_TOOL_EVENTS_SQL: &str = r#"
 SELECT tc.event_id,
        COALESCE(NULLIF(tc.timestamp, ''), mc.timestamp) AS timestamp,
@@ -40,7 +45,7 @@ SELECT tc.event_id,
        tc.decision,
        COALESCE(tc.duration_ms, mc.duration_ms, 0) AS duration_ms,
        COALESCE(LENGTH(tc.arguments), 0) + COALESCE(LENGTH(COALESCE(tc.response_preview, tr.content_preview)), 0) AS bytes,
-       tc.arguments,
+       substr(tc.arguments, 1, ?1) AS arguments,
        COALESCE(tc.response_preview, tr.content_preview) AS response_preview,
        tr.event_id AS response_event_id,
        tc.error_message,
@@ -106,19 +111,38 @@ ORDER BY id DESC
 LIMIT 100
 "#;
 
-pub(super) async fn query_rows<T: DeserializeOwned>(
+/// How many characters of one free-text field a listed row carries: a tool
+/// call's arguments, or a reasoning block's text.
+///
+/// The ledger stores both whole -- they have no archived body of their own to
+/// point at -- so a file-writing agent's calls run to megabytes each, and the
+/// list carried 200 of them, twice, on every poll. A cut field says so: an
+/// interaction payload reports `truncated`, and a tool event keeps measuring
+/// the whole call in `bytes`.
+pub(crate) const STATS_DETAIL_FIELD_CHARS: usize = 16 * 1024;
+
+/// SQLite's integer flags, which the API types as booleans.
+const BOOLEAN_FLAGS: [&str; 4] = [
+    "model_parent_missing",
+    "truncated",
+    "arguments_truncated",
+    "content_truncated",
+];
+
+/// Decode one stats detail result into the rows the API types.
+///
+/// SQLite's integer flags are an implementation detail, not the JSON API.
+/// Corrupt flags are rejected rather than read as true for every nonzero.
+pub(super) fn decode_rows<T: DeserializeOwned>(
     vm_id: &str,
     db_path: &StdPath,
-    db: &capsem_logger::DbHandle,
     query_name: &str,
-    sql: &str,
+    raw: &str,
 ) -> Result<Vec<T>, AppError> {
-    let rows = query_route_objects(vm_id, "stats_detail", query_name, db_path, db, sql, &[]).await?;
-    rows.into_iter()
+    route_query_objects(vm_id, "stats_detail", query_name, db_path, raw)?
+        .into_iter()
         .map(|mut row| {
-            // SQLite's integer flags are an implementation detail, not the JSON API.
-            // Reject corrupt flags rather than silently turning every nonzero into true.
-            for name in ["model_parent_missing", "truncated"] {
+            for name in BOOLEAN_FLAGS {
                 if let Some(flag) = row.get_mut(name) {
                     *flag = match flag.as_i64() {
                         Some(0) => json!(false),
@@ -141,79 +165,91 @@ pub(super) async fn query_rows<T: DeserializeOwned>(
         .collect()
 }
 
-async fn query_rows_with_params<T: DeserializeOwned>(
-    vm_id: &str,
-    db_path: &StdPath,
-    db: &capsem_logger::DbHandle,
-    query_name: &str,
-    sql: &str,
-    params: &[serde_json::Value],
-) -> Result<Vec<T>, AppError> {
-    let rows = query_route_objects(vm_id, "stats_detail", query_name, db_path, db, sql, params).await?;
-    rows.into_iter()
-        .map(|mut row| {
-            if let Some(flag) = row.get_mut("truncated") {
-                *flag = match flag.as_i64() {
-                    Some(0) => json!(false),
-                    Some(1) => json!(true),
-                    _ => {
-                        return Err(ledger_route_error(
-                            vm_id,
-                            "stats_detail",
-                            query_name,
-                            db_path,
-                            "invalid boolean flag truncated",
-                        ))
-                    }
-                };
-            }
-            serde_json::from_value(row)
-                .map_err(|error| ledger_route_error(vm_id, "stats_detail", query_name, db_path, error))
-        })
-        .collect()
+/// Every statement one stats detail read runs, named, in the order the route
+/// decodes their results.
+pub(crate) fn stats_detail_statements() -> [(&'static str, &'static str, Vec<serde_json::Value>); 11] {
+    let field = || vec![json!(STATS_DETAIL_FIELD_CHARS)];
+    [
+        (
+            "body_blobs",
+            STATS_DETAIL_BODY_BLOBS_SQL,
+            vec![json!(STATS_DETAIL_PROCESS_EVENTS_LIMIT)],
+        ),
+        ("interaction_models", interactions::MODEL_ITEMS_SQL, field()),
+        ("interaction_tools", interactions::TOOL_CALLS_SQL, field()),
+        ("model_events", STATS_DETAIL_MODEL_EVENTS_SQL, Vec::new()),
+        ("tool_events", STATS_DETAIL_TOOL_EVENTS_SQL, field()),
+        ("http_events", STATS_DETAIL_HTTP_EVENTS_SQL, Vec::new()),
+        ("dns_events", STATS_DETAIL_DNS_EVENTS_SQL, Vec::new()),
+        ("file_events", STATS_DETAIL_FILE_EVENTS_SQL, Vec::new()),
+        ("process_events", STATS_DETAIL_PROCESS_EVENTS_SQL, Vec::new()),
+        ("audit_events", STATS_DETAIL_AUDIT_EVENTS_SQL, Vec::new()),
+        ("credential_events", STATS_DETAIL_CREDENTIAL_EVENTS_SQL, Vec::new()),
+    ]
 }
 
+/// The stats detail view, read as one batch.
+///
+/// The web app fetches the view when a user opens a session's stats, and on
+/// Refresh; nothing polls it. Its statements go to the DB handle together, so
+/// a fetch is one worker round trip -- the batch carries its own readiness
+/// check -- and a batch over a ledger that has not moved is answered from the
+/// handle's cache without executing anything. The model totals come from the
+/// handle's counter snapshot in memory. It used to be a worker round trip, a
+/// statement compile and an execution per list, on every fetch.
 pub(crate) async fn read_stats_detail_payload_from_session_db(
     state: &ServiceState,
     vm_id: &str,
     db_path: &StdPath,
 ) -> Result<api::VmStatsDetailResponse, AppError> {
-    let db = open_ready_session_db(state, vm_id, "stats_detail", db_path).await?;
-    let bodies: Vec<api::EventBody> = query_rows_with_params(
-        vm_id,
-        db_path,
-        &db,
-        "body_blobs",
-        STATS_DETAIL_BODY_BLOBS_SQL,
-        &[json!(STATS_DETAIL_PROCESS_EVENTS_LIMIT)],
-    )
-    .await?;
+    let db = session_db(state, vm_id, "stats_detail", db_path).await?;
+    let statements = stats_detail_statements();
+    let raw = db
+        .query_many(
+            statements
+                .iter()
+                .map(|(_, sql, params)| (sql.to_string(), params.clone()))
+                .collect(),
+        )
+        .await
+        .map_err(|error| ledger_route_error(vm_id, "stats_detail", "query", db_path, error))?;
+    let raw = <[String; 11]>::try_from(raw).map_err(|raw| {
+        ledger_route_error(
+            vm_id,
+            "stats_detail",
+            "query",
+            db_path,
+            format!("batch returned {} results, expected {}", raw.len(), statements.len()),
+        )
+    })?;
+    let [body_blobs, models, tools, model_events, tool_events, http, dns, files, processes, audit, credentials] = &raw;
+    let name = |index: usize| statements[index].0;
+    let bodies: Vec<api::EventBody> = decode_rows(vm_id, db_path, name(0), body_blobs)?;
     let mut body_blobs: BTreeMap<String, Vec<api::EventBody>> = BTreeMap::new();
     for body in bodies {
         body_blobs.entry(body.event_id.clone()).or_default().push(body);
     }
+    let counters = db
+        .ledger_counters()
+        .await
+        .map_err(|error| ledger_route_error(vm_id, "stats_detail", "counters", db_path, error))?;
     Ok(api::VmStatsDetailResponse {
-        interactions: interactions::read_interactions(vm_id, db_path, &db, &body_blobs).await?,
-        model_stats: super::activity::model_usage(
-            &db.ledger_counters()
-                .await
-                .map_err(|error| ledger_route_error(vm_id, "stats_detail", "counters", db_path, error))?,
-        ),
-        model_events: query_rows(vm_id, db_path, &db, "model_events", STATS_DETAIL_MODEL_EVENTS_SQL).await?,
-        tool_events: query_rows(vm_id, db_path, &db, "tool_events", STATS_DETAIL_TOOL_EVENTS_SQL).await?,
-        http_events: query_rows(vm_id, db_path, &db, "http_events", STATS_DETAIL_HTTP_EVENTS_SQL).await?,
-        dns_events: query_rows(vm_id, db_path, &db, "dns_events", STATS_DETAIL_DNS_EVENTS_SQL).await?,
-        file_events: query_rows(vm_id, db_path, &db, "file_events", STATS_DETAIL_FILE_EVENTS_SQL).await?,
-        process_events: query_rows(vm_id, db_path, &db, "process_events", STATS_DETAIL_PROCESS_EVENTS_SQL).await?,
-        audit_events: query_rows(vm_id, db_path, &db, "audit_events", STATS_DETAIL_AUDIT_EVENTS_SQL).await?,
-        credential_events: query_rows(
+        interactions: interactions::read_interactions(
             vm_id,
             db_path,
-            &db,
-            "credential_events",
-            STATS_DETAIL_CREDENTIAL_EVENTS_SQL,
-        )
-        .await?,
+            decode_rows(vm_id, db_path, name(1), models)?,
+            decode_rows(vm_id, db_path, name(2), tools)?,
+            &body_blobs,
+        )?,
+        model_stats: super::activity::model_usage(&counters),
+        model_events: decode_rows(vm_id, db_path, name(3), model_events)?,
+        tool_events: decode_rows(vm_id, db_path, name(4), tool_events)?,
+        http_events: decode_rows(vm_id, db_path, name(5), http)?,
+        dns_events: decode_rows(vm_id, db_path, name(6), dns)?,
+        file_events: decode_rows(vm_id, db_path, name(7), files)?,
+        process_events: decode_rows(vm_id, db_path, name(8), processes)?,
+        audit_events: decode_rows(vm_id, db_path, name(9), audit)?,
+        credential_events: decode_rows(vm_id, db_path, name(10), credentials)?,
         body_blobs,
     })
 }

@@ -1038,27 +1038,23 @@ pub(super) async fn handle_info(
     let persistent_entry = find_persistent_entry_by_route_id(&state, &id);
     if let Some(entry) = persistent_entry {
         let vm_id = persistent_entry_vm_id(&entry);
-        let resume_entry = entry.clone();
-        let (status, can_resume, blocked_reason) = state
-            .off_worker(move |state| state.persistent_entry_resume_state_cached(&resume_entry))
+        // The resume state, the disk usage walk of the session dir and the
+        // storage diagnostics are all blocking reads: one trip to the blocking
+        // pool, not one per read, since `/info` is polled.
+        let blocking_entry = entry.clone();
+        let ((status, can_resume, blocked_reason), size_bytes, storage) = state
+            .off_worker(move |state| {
+                (
+                    state.persistent_entry_resume_state_cached(&blocking_entry),
+                    capsem_core::session::disk_usage_bytes(&blocking_entry.session_dir),
+                    state.storage_diagnostics_cached(&blocking_entry.session_dir),
+                )
+            })
             .await?;
         let mut info = sandbox_info::inactive_sandbox_info(vm_id, &entry, status, can_resume, blocked_reason);
-        // Disk usage is a recursive walk of the session dir: off the async
-        // worker so it does not stall the axum runtime.
-        let session_dir = entry.session_dir.clone();
-        info.size_bytes =
-            match tokio::task::spawn_blocking(move || capsem_core::session::disk_usage_bytes(&session_dir)).await {
-                Ok(bytes) => Some(bytes),
-                Err(error) => {
-                    tracing::debug!(error = %error, "sandbox disk usage task failed");
-                    None
-                }
-            };
+        info.size_bytes = Some(size_bytes);
         populate_vm_info(&state, &mut info, &entry.session_dir).await?;
-        let session_dir = entry.session_dir.clone();
-        info.storage = state
-            .off_worker(move |state| state.storage_diagnostics_cached(&session_dir))
-            .await?;
+        info.storage = storage;
         return Ok(Json(info));
     }
 
