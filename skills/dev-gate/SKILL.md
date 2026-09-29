@@ -11,8 +11,9 @@ conventions.
 
 `just test` is **one process, one machine lock, one workspace, one plan**. Its
 dry run reports the current totals; conditional asset staging makes a literal
-step/action count depend on machine state. Release commands self-qualify in
-hosted lanes and never require this optional local journal.
+step/action count depend on machine state. Its exact-source journal is the
+proof both release commands require before they tag or dispatch
+(`qualificationflow.decide`, `qualificationevidence.find_release_proof`).
 
 ## The rule everything else follows from
 

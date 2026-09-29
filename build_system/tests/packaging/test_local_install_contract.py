@@ -80,8 +80,9 @@ def test_public_install_warns_then_only_dispatches_local_install() -> None:
     executable = [line.strip() for line in body if line.strip()]
     assert executable == [
         "@echo \"Agent: optional hands-on local testing only; 'just install' "
-        "does not qualify or unblock a release. Dispatch releases directly "
-        "with 'just release-binaries ...' or 'just release-profile ...'.\"",
+        "does not qualify or unblock a release. Releases need 'just test "
+        "<commit>' to pass first, then 'just release-binaries ...' or "
+        "'just release-profile ...'.\"",
         "uv run --project build_system --frozen capsem-gate local-install",
     ]
 

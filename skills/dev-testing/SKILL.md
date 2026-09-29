@@ -34,9 +34,10 @@ let five through; the rule is now a whitelist for that reason.
 | `just fast-test` | Incomplete source feedback only | No |
 | `just focus-test <group>` | One existing owner; `rust` selects changed crates and reverse dependents | Depends on group |
 | `just install` | Complete local macOS package build and native install for hands-on testing | Yes |
-| `just test` | Reusable complete local verification | Yes |
+| `just test` | Complete local verification; required, passing, before a release | Yes |
 
-Release lanes are the publication authority and self-qualify; `just test` is optional.
+A release requires a passing `just test` for its source first; hosted release
+lanes then qualify what they publish.
 `just fast-test` is incomplete feedback, and `just focus-test <group>` is the normal
 targeted regression path. During TDD use the smallest native test; run `just test`
 when complete local whole-system verification is useful.
@@ -45,8 +46,9 @@ The full gate is a construction boundary, not the edit loop. During TDD,
 reproduce the failure with the smallest focused test, run that test red/green,
 and batch adjacent parity fixes before paying for the complete gate. Run it
 only when explicitly requested. Later fixes use focused owners; a gate-policy
-edit is not permission for another full run. Release commands self-qualify and
-do not require a developer-machine complete run.
+edit is not permission for another full run. The one full run a change always
+needs is the passing `just test` a release of it requires; the release command
+refuses without it.
 
 `just test` deliberately accepts committed or uncommitted developer work. It
 records `HEAD` plus a digest of every tracked and untracked non-ignored source

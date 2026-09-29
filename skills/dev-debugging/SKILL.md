@@ -30,7 +30,7 @@ uv run --project build_system --frozen capsem-gate <command> --graph
 Use the smallest focused pytest, cargo, pnpm, or script command for red/green
 work. Use `just focus-test functional` for focused integration feedback, and
 `just fast-test` for the fast gate itself. Use `just test` when the forward fix
-is ready for optional complete local verification.
+is ready for the complete local verification a release requires.
 
 Direct diagnostics which may block, build, launch children, or wait on input
 must use the portable bounded-process wrapper rather than a bare shell command:

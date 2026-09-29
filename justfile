@@ -15,7 +15,7 @@
 #   fast-test              incomplete source feedback; never qualification
 #   focus-test             one named functional group, optionally cold
 #   install                build and install the complete local macOS product
-#   test                   reusable complete local verification
+#   test                   complete local proof; required before a release
 #   release-binaries       publish packages for one channel
 #   release-profile        publish one channel/profile, or `all` of them
 #
@@ -163,8 +163,8 @@ _bootstrap:
 # commit cost minutes rather than an hour; `buildcache` explains how. With no
 # argument, verify the current source state. With a full commit on local main,
 # reuse its complete journal, structurally resume its retained prefix, or
-# verify it once. This is optional before release: each release command owns
-# its hosted qualification. Cold reproduction remains an explicit gate CLI
+# verify it once. Both release commands refuse a commit without a passing
+# journal here (RELEASE.md 8.1). Cold reproduction remains an explicit gate CLI
 # diagnostic, never the public complete-test default.
 test source_commit="" mode="normal" reason="" slow="":
     @uv run --project build_system --frozen capsem-gate candidate {{quote(source_commit)}} {{quote(mode)}} {{quote(reason)}} {{ if slow != "" { "--slow" } else { "" } }}
@@ -271,7 +271,7 @@ _check-generated-settings:
 # runtime proof now belongs to `focus-test functional`; there is no second
 # public VM-smoke spelling for agents to stack beside it.
 fast-test:
-    @echo "Agent: incomplete feedback only; use 'just focus-test <group>' for targeted proof, or 'just release-profile ...' / 'just release-binaries ...' for qualification."
+    @echo "Agent: incomplete feedback only; use 'just focus-test <group>' for targeted proof, or 'just test <commit>', whose pass 'just release-profile ...' / 'just release-binaries ...' require."
     uv run --project build_system --frozen capsem-gate test-fast
 
 
@@ -283,7 +283,7 @@ focus-test group mode="reuse" slow="":
 # Optional hands-on testing: build the complete installable product and install
 # that exact local package on this Mac. Never a release prerequisite.
 install:
-    @echo "Agent: optional hands-on local testing only; 'just install' does not qualify or unblock a release. Dispatch releases directly with 'just release-binaries ...' or 'just release-profile ...'."
+    @echo "Agent: optional hands-on local testing only; 'just install' does not qualify or unblock a release. Releases need 'just test <commit>' to pass first, then 'just release-binaries ...' or 'just release-profile ...'."
     uv run --project build_system --frozen capsem-gate local-install
 
 
