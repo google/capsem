@@ -173,3 +173,64 @@ def test_explicit_clean_preserves_metadata_and_active_leases() -> None:
     plan = plan_clean(inventory(metadata, leased, entry("generation", 5, 2)), "all")
 
     assert [action.key for action in plan.actions] == ["generation"]
+
+
+def _leased_scratch() -> CachePolicy:
+    """The test-temp shape: ephemeral runs, each alive only while its lease is held."""
+    stage = policy().stages["objects"].model_copy(update={
+        "prune_strategy": PruneStrategy.EPHEMERAL,
+        "warm_size_bytes": 1000,
+        "max_size_bytes": 2000,
+        "maximum_age_hours": 24,
+        "maximum_count": 1,
+        "managed_globs": ("run-*",),
+        "lease_template": ".{key}.lock",
+    })
+    return policy().model_copy(update={"stages": {"objects": stage}})
+
+
+def test_ephemeral_prune_reclaims_a_run_nobody_leases_whatever_its_age_or_size() -> None:
+    """A finished run's 7 GiB directory is garbage the moment its owner exits.
+
+    Before, a leased ephemeral stage aged like any generation: a dead run sat
+    for `maximum_age_hours` below a 200 GiB maximum, and one run per release
+    precheck filled a 484 GB disk before prune saw anything to reclaim.
+    """
+    dead = entry("run-1", 7, 99).model_copy(
+        update={"member_paths": (Path(".run-1.lock"),)}
+    )
+    live = entry("run-2", 7, 99, protected=True)
+
+    plan = plan_prune(inventory(dead, live), _leased_scratch())
+
+    assert [(action.path.name, action.reason) for action in plan.actions] == [
+        ("run-1", "no live owner"),
+        (".run-1.lock", "no live owner"),
+    ]
+    assert plan.reclaim_bytes == 7
+
+
+def test_orphaned_leases_are_collected_but_never_counted_as_generations() -> None:
+    orphan = entry("run-3", 0, 99).model_copy(
+        update={"relative_path": Path(".run-3.lock"), "lease_only": True}
+    )
+    held = entry("run-4", 0, 99, protected=True).model_copy(
+        update={"relative_path": Path(".run-4.lock"), "lease_only": True}
+    )
+    live = entry("run-2", 7, 99, protected=True)
+
+    plan = plan_prune(inventory(orphan, held, live), _leased_scratch())
+
+    assert [(action.path.name, action.reason) for action in plan.actions] == [
+        (".run-3.lock", "orphaned lease"),
+    ]
+    assert plan.violations == (), "a lease file is not a generation for the count cap"
+
+
+def test_explicit_clean_removes_a_generation_with_its_members() -> None:
+    generation = entry("run-1", 5, 1).model_copy(update={"member_paths": (Path(".run-1.lock"),)})
+
+    plan = plan_clean(inventory(generation), "all")
+
+    assert [action.path.name for action in plan.actions] == ["run-1", ".run-1.lock"]
+    assert plan.reclaim_bytes == 5

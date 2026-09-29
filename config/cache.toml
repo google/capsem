@@ -259,7 +259,12 @@ scope = "disk"
 path = "/var/tmp/capsem-tests"
 external = true
 warm_size_bytes = 8589934592 # 8 GiB
-max_size_bytes = 214748364800 # 200 GiB
+# Only live runs count here: a run leaves with its owner and prune reclaims any
+# run nobody leases. 32 GiB is ~4x the largest run seen (a 7.2 GB release
+# precheck); more live scratch than that is a leak to surface, not to absorb.
+# It was 200 GiB, which on a 484 GB disk beside a 180 GiB Cargo target bounded
+# nothing.
+max_size_bytes = 34359738368 # 32 GiB
 prune_strategy = "ephemeral"
 maximum_age_hours = 24
 managed_globs = ["run-*"]

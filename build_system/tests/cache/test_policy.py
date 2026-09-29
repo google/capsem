@@ -105,7 +105,7 @@ def test_checked_in_policy_accounts_for_every_mechanism() -> None:
     assert policy.stages["test-temp"].external
     assert policy.stages["test-temp"].path == Path("/var/tmp/capsem-tests")
     assert policy.stages["test-temp"].warm_size_bytes == 8 * 1024**3
-    assert policy.stages["test-temp"].max_size_bytes == 200 * 1024**3
+    assert policy.stages["test-temp"].max_size_bytes == 32 * 1024**3
     assert policy.stages["test-temp"].maximum_count is None
     assert policy.stages["cargo"].warm_size_bytes == 150 * 1024**3
     assert policy.stages["cargo"].max_size_bytes == 180 * 1024**3

@@ -20,6 +20,21 @@ def _age_clock(strategy: PruneStrategy, entry: CacheEntry) -> int:
     return entry.last_used_ns if strategy is PruneStrategy.LRU else entry.created_ns
 
 
+def _actions(stage, entry: CacheEntry, reason: str) -> tuple[PruneAction, ...]:
+    """A generation with members is removed whole and in order; its bytes are
+    carried once, on the first path."""
+    return tuple(
+        PruneAction(
+            stage_id=stage.stage_id,
+            key=entry.key,
+            path=stage.path / relative,
+            logical_bytes=entry.logical_bytes if index == 0 else 0,
+            reason=reason,
+        )
+        for index, relative in enumerate((entry.relative_path, *entry.member_paths))
+    )
+
+
 def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePolicy) -> PrunePlan:
     """Select expired, surplus, and pressure candidates without touching pinned state."""
     actions: list[PruneAction] = []
@@ -27,24 +42,13 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
     selected: dict[str, set[str]] = {stage.stage_id: set() for stage in inventory.stages}
 
     def choose(stage, entry, reason: str) -> None:
-        # A generation with members is removed whole and in order; its bytes
-        # are carried once, on the first path.
-        for index, relative in enumerate((entry.relative_path, *entry.member_paths)):
-            actions.append(
-                PruneAction(
-                    stage_id=stage.stage_id,
-                    key=entry.key,
-                    path=stage.path / relative,
-                    logical_bytes=entry.logical_bytes if index == 0 else 0,
-                    reason=reason,
-                )
-            )
+        actions.extend(_actions(stage, entry, reason))
         selected[stage.stage_id].add(entry.key)
 
     for stage in inventory.stages:
         stage_policy = policy.stages[stage.stage_id]
         remaining = stage.logical_bytes
-        remaining_count = sum(entry.managed for entry in stage.entries)
+        remaining_count = sum(entry.managed and not entry.lease_only for entry in stage.entries)
         if stage_policy.prune_strategy is PruneStrategy.NONE:
             if remaining > stage_policy.max_size_bytes:
                 violations.append(
@@ -66,7 +70,20 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
         )
         maximum_age = stage_policy.maximum_age_hours * NANOSECONDS_PER_HOUR
         over_max = remaining > stage_policy.max_size_bytes
+        # A leased ephemeral generation lives exactly as long as its owner:
+        # once no process holds the lease, it is garbage whatever its age.
+        ownerless = (
+            stage_policy.prune_strategy is PruneStrategy.EPHEMERAL
+            and stage_policy.lease_template is not None
+        )
         for entry in ordered:
+            if entry.protected:
+                continue
+            if entry.lease_only or ownerless:
+                choose(stage, entry, "orphaned lease" if entry.lease_only else "no live owner")
+                remaining -= entry.logical_bytes
+                remaining_count -= not entry.lease_only
+                continue
             expired = (
                 inventory.generated_ns
                 >= _age_clock(stage_policy.prune_strategy, entry) + maximum_age
@@ -76,7 +93,7 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
                 stage_policy.maximum_count is not None
                 and remaining_count > stage_policy.maximum_count
             )
-            if entry.protected or not (expired or recover_to_warm or over_count):
+            if not (expired or recover_to_warm or over_count):
                 continue
             reason = (
                 "expired"
@@ -117,16 +134,11 @@ def plan_clean(inventory: CacheInventory, stage_id: str) -> PrunePlan:
         known = ", ".join(stage.stage_id for stage in inventory.stages)
         raise KeyError(f"unknown cache stage {stage_id!r}; expected one of: {known}, all")
     actions = tuple(
-        PruneAction(
-            stage_id=stage.stage_id,
-            key=entry.key,
-            path=stage.path / entry.relative_path,
-            logical_bytes=entry.logical_bytes,
-            reason="explicit clean",
-        )
+        action
         for stage in selected
         for entry in stage.entries
         if entry.managed and not entry.protected
+        for action in _actions(stage, entry, "explicit clean")
     )
     return PrunePlan(
         generated_ns=inventory.generated_ns,

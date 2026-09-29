@@ -23,6 +23,7 @@ that never changes.
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import importlib
 import os
@@ -207,7 +208,6 @@ def contained_environment(root: Path | None = None) -> dict[str, str]:
     generation = Path(python[PYCACHE])
     pytest = _policy_stage(source, authority, "python-pytest") / generation.name
     test_tmp = _test_tmp(source, authority)
-    test_tmp.mkdir(parents=True, exist_ok=True)
     gate = _gate_policy(source)
     toolchain = gate["toolchain"]
     uv = _policy_stage(source, authority, "python-uv")
@@ -258,7 +258,38 @@ def hold_environment(environment: Mapping[str, str], root: Path | None = None) -
     test_tmp = _test_tmp(source, authority)
     _hold_generation(generation)
     _hold_generation(pytest)
+    # Leased before it exists, so a prune never sees this run without an owner.
     _hold_generation(test_tmp)
+    test_tmp.mkdir(parents=True, exist_ok=True)
+    if test_tmp not in _RUNS:
+        _RUNS.add(test_tmp)
+        atexit.register(_end_run, source, authority, test_tmp, os.getpid())
+
+
+#: Run directories this process owns and removes when it exits.
+_RUNS: set[Path] = set()
+
+
+def _end_run(source: Path, authority: Path, run: Path, owner: int) -> None:
+    """Remove this process's scratch run, success or failure.
+
+    A run left behind was only ever reclaimed by a cold clean: one ~7 GB
+    directory per release precheck filled the disk. A process killed before
+    this runs leaves a run no lease holds, which `prune test-temp` reclaims.
+    """
+    if os.getpid() != owner:  # a forked child inherited the handler
+        return
+    from .cache.config import load_policy
+    from .cache.operations import reclaim_generation
+    from .cache.paths import CachePaths
+
+    try:
+        paths = CachePaths(repository_root=authority, policy=load_policy(source))
+        if paths.stage("test-temp") / run.name != run:
+            raise ValueError(f"{run} is not this authority's test-temp run")
+        reclaim_generation(paths, "test-temp", run.name, reason="test run ended")
+    except (OSError, ValueError) as error:
+        print(f"capsem: left {run} for `cache prune test-temp`: {error}", file=sys.stderr)
 
 
 def _hold_generation(generation: Path) -> BinaryIO:

@@ -26,20 +26,70 @@ CARGO_CACHEDIR_TAG = (
 
 
 def retain_path(path: Path) -> BinaryIO:
-    """Hold one shared lease until explicit release or process exit."""
+    """Hold one shared lease until explicit release or process exit.
+
+    The lock waits out an exclusive holder: a pruner holds one only while it
+    checks or removes a dead generation. A lease file the pruner unlinked
+    meanwhile is a lock nobody can see, so it is retaken on the live path.
+    """
     lease = path.absolute()
     existing = _HELD.get(lease)
     if existing is not None and not existing.closed:
         return existing
     lease.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.fdopen(os.open(lease, os.O_APPEND | os.O_CREAT | os.O_RDWR, 0o600), "a+b")
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
-    except BaseException:
+    while True:
+        descriptor = os.fdopen(
+            os.open(lease, os.O_APPEND | os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), "a+b"
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_SH)
+            if _same_file(descriptor, lease):
+                break
+        except BaseException:
+            descriptor.close()
+            raise
         descriptor.close()
-        raise
     _HELD[lease] = descriptor
     return descriptor
+
+
+def _same_file(descriptor: BinaryIO, path: Path) -> bool:
+    try:
+        current = path.lstat()
+    except FileNotFoundError:
+        return False
+    held = os.fstat(descriptor.fileno())
+    return (held.st_dev, held.st_ino) == (current.st_dev, current.st_ino)
+
+
+def lease_key(template: str, name: str) -> str | None:
+    """The generation key a lease file name encodes under `template`, if any."""
+    prefix, suffix = template.split("{key}")
+    if len(name) <= len(prefix) + len(suffix):
+        return None
+    if not (name.startswith(prefix) and name.endswith(suffix)):
+        return None
+    return name[len(prefix):len(name) - len(suffix)]
+
+
+@contextmanager
+def exclusive_path(path: Path) -> Iterator[bool]:
+    """Hold a lease exclusively while its generation is removed.
+
+    Yields False when an owner holds it. Creating the file when it is missing
+    is deliberate: an owner leases before it creates its generation, so a
+    concurrent owner then waits on this inode and retakes the live path.
+    """
+    descriptor = os.fdopen(
+        os.open(path, os.O_APPEND | os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), "a+b"
+    )
+    with descriptor:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        yield True
 
 
 def retain_generation(paths: CachePaths, stage_id: str, key: str) -> BinaryIO:
