@@ -195,8 +195,21 @@ def isolated_environment(
     source = (root or checkout()).resolve()
     abi = sys.implementation.cache_tag or "python"
     generation = _stage(source, authority) / f"{abi}-{_source_key(source)}"
-    generation.mkdir(parents=True, exist_ok=True)
+    if not generation.is_dir():
+        generation.mkdir(parents=True, exist_ok=True)
+        _bound_source_keyed(source, authority or _cache_authority(source), generation)
     return {MARKER: str(generation), PYCACHE: str(generation)}
+
+
+def _bound_source_keyed(source: Path, authority: Path, generation: Path) -> None:
+    """Lease a new generation, then hold its stages to their contracts."""
+    if not (source / CACHE_POLICY).is_file():
+        return
+    _hold_generation(generation)
+    from .cache.pythonenv import bound_source_keyed
+
+    for problem in bound_source_keyed(source, authority):
+        print(f"capsem: {problem}", file=sys.stderr)
 
 
 def contained_environment(root: Path | None = None) -> dict[str, str]:

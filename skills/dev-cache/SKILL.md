@@ -144,6 +144,13 @@ this, a dead run aged like a retained generation below a 200 GiB maximum:
 one ~7 GB run per release precheck and 1,900 lock files filled the disk while
 `prune` offered 21 MB.
 
+The source-keyed Python stages (`python-pycache`, `python-pytest`) gain a
+generation for every Python-source state any checkout launches a gate or
+bounded command from, and nothing but a complete gate's package and install
+rails used to prune them: `python-pycache` reached 5.4 GB against 2 GiB. The
+launcher that creates a generation leases it and then enforces both stages
+(`pythonenv.bound_source_keyed`); a warm launch pays nothing.
+
 Retained cache lifetime ends only through these typed operations. Do not add
 consumer-boundary releases, post-test eviction hooks, or other subsystem
 lifecycle paths that bypass the owner's warm/max/age/count policy.
