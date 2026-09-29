@@ -2,8 +2,8 @@
 
 The local install recipe sits near the release commands in the agent quick
 start. Without an explicit executable warning, an agent can mistake hands-on
-testing for a release prerequisite and delay a hosted qualification that owns
-its own exact-package install proof.
+testing for a release prerequisite. The prerequisite is `just test <commit>`,
+whose glow-up already installs the exact packages.
 """
 
 from __future__ import annotations
@@ -15,17 +15,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 INSTALL_WARNING = (
     "Agent: optional hands-on local testing only; 'just install' does not "
-    "qualify or unblock a release. Dispatch releases directly with "
-    "'just release-binaries ...' or 'just release-profile ...'."
+    "qualify or unblock a release. Releases need 'just test <commit>' to pass "
+    "first, then 'just release-binaries ...' or 'just release-profile ...'."
 )
 
 RATIONALE = """\
 Local install was presented as a release prerequisite.
 
-`just install` mutates one developer Mac for optional hands-on testing. Hosted
-release lanes build, install, qualify, and publish exact packages themselves.
-An agent that inserts local install before a release delays dispatch and adds
-machine-specific state without adding release authority.
+`just install` mutates one developer Mac for optional hands-on testing. The
+release prerequisite is a passing `just test <commit>`, whose glow-up installs
+the exact packages; hosted release lanes then build, install, qualify, and
+publish. An agent that inserts local install before a release delays dispatch
+and adds machine-specific state without adding release authority.
 """
 
 
@@ -57,6 +58,6 @@ def test_agent_contracts_forbid_install_as_release_prerequisite() -> None:
     for path in ("AGENTS.md", "skills/dev-just/SKILL.md"):
         contract = _normalized(path)
         assert "just install" in contract, RATIONALE
-        assert "never a release prerequisite" in contract, RATIONALE
+        assert "hands-on" in contract, RATIONALE
         assert "just release-binaries" in contract, RATIONALE
         assert "just release-profile" in contract, RATIONALE

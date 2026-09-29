@@ -36,8 +36,8 @@ def test_fast_feedback_is_explicitly_incomplete_and_release_owns_qualification()
         "the old bundled recipe is back; it named neither of the two jobs it ran"
     )
 
-    # Release CI owns qualification. The local dispatcher does not require a
-    # machine-specific journal from the developer feedback command.
+    # The local dispatcher consumes the exact `just test` journal before it
+    # tags or dispatches, and never re-runs a local qualification suite.
     import argparse
 
     from capsem_builder.gate import cli  # noqa: F401 - registers every command
@@ -62,7 +62,7 @@ def test_fast_feedback_is_explicitly_incomplete_and_release_owns_qualification()
         order = list(plan.labels)
 
         assert order[0] == "source.worktree-clean"
-        assert "qualification.accept" not in order
+        assert order[1] == "qualification.accept"
         assert order.index("source.publish-ref") < order.index("release")
         assert not [
             label

@@ -386,11 +386,11 @@ def test_hosted_macos_never_claims_the_local_apple_vz_proof() -> None:
     assert "Local Apple Silicon `just test` owns that VZ proof" in release_skill
     assert "_gate-assets" in local_gate
 
-    # Local Apple VZ remains a deliberate pre-release diagnostic; the hosted
-    # lane is the publication authority and never claims nested VZ support.
+    # Local Apple VZ is part of the `just test` proof a stable release
+    # consumes; the hosted lane never claims nested VZ support.
     order = list(_release_plan("release-profile", "stable", "code").labels)
     assert order[0] == "source.worktree-clean"
-    assert "qualification.accept" not in order
+    assert order[1] == "qualification.accept"
     assert order.index("source.publish-ref") < order.index("release")
 
     nightly = list(_release_plan("release-profile", "nightly", "code").labels)

@@ -9,7 +9,7 @@ from pathlib import Path
 from .config import GateConfig
 from .errors import GateError
 from .filesystem import copy_tree, remove
-from .sourcecommit import SourceCommit, require_local_main
+from .sourcecommit import SourceCommit, require_local_branch
 
 
 def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -51,7 +51,7 @@ def _copy_inputs(source: Path, target: Path, config: GateConfig) -> None:
 
 
 def _checkout(source: Path, target: Path, config: GateConfig, commit: SourceCommit) -> None:
-    require_local_main(source, commit)
+    require_local_branch(source, commit)
     _git(target, "checkout", "--detach", "--force", str(commit))
     _git(target, "clean", "-fdx")
     _copy_inputs(source, target, config)

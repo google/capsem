@@ -46,6 +46,39 @@ def require_local_main(root: Path, commit: SourceCommit) -> None:
         raise GateError(f"source commit {commit} is not already on local main")
 
 
+def require_local_branch(root: Path, commit: SourceCommit) -> None:
+    """Fail unless ``commit`` exists and some local branch already contains it.
+
+    What `just test <commit>` proves. A release still requires local `main`;
+    the proof may come first, from the branch a pull request merges, and is
+    matched to the released commit by tree (`tree_of`).
+    """
+    exists = _git(root, "cat-file", "-e", f"{commit}^{{commit}}", check=False)
+    if exists.returncode != 0:
+        raise GateError(f"source commit {commit} is not an existing local Git commit")
+    branches = _git(
+        root,
+        "branch",
+        "--contains",
+        str(commit),
+        "--format=%(refname)",
+        check=False,
+    )
+    if branches.returncode != 0 or not branches.stdout.strip():
+        raise GateError(f"source commit {commit} is not on any local branch")
+
+
+def tree_of(root: Path, commit: str) -> str | None:
+    """The tree a commit names: its whole source identity, submodule pins included.
+
+    Two commits with one tree are the same bytes to build and test, which is
+    what lets a pull request's merge commit reuse its branch head's proof.
+    """
+    tree = _git(root, "rev-parse", "--verify", "--quiet", f"{commit}^{{tree}}", check=False)
+    value = tree.stdout.strip()
+    return value if tree.returncode == 0 and value else None
+
+
 def require_detached_checkout(root: Path, commit: SourceCommit) -> None:
     """Prove a materialized source is detached at exactly ``commit``."""
     head = _git(root, "rev-parse", "HEAD", check=False)

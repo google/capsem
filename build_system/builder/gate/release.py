@@ -1,8 +1,9 @@
-"""Qualify one immutable source commit, then dispatch one release family.
+"""Dispatch one release family for a locally qualified immutable source commit.
 
-The selected commit is prepared on main before this command starts. The gate
-runs solely from its detached full-SHA prefix; after the complete proof it may
-create immutable transport/version refs, but it never edits tracked source.
+The selected commit is prepared on main and proved by a passing
+`just test <commit>` before this command starts. The gate runs solely from its
+detached full-SHA prefix; it may create immutable transport/version refs, but
+it never edits tracked source.
 """
 
 from __future__ import annotations
@@ -51,7 +52,7 @@ class ReleaseBinariesCommand(
     QualifiedRelease,
     GateCommand,
     name="release-binaries",
-    help="release exact previously-qualified packages for one channel",
+    help="release packages for one channel from a locally qualified commit",
 ):
     exclusive = True
     publishes = True
@@ -81,7 +82,8 @@ class ReleaseBinariesCommand(
         _require_channel(config, channel)
 
         clean = self._worktree_steps(plan, self.source_commit())
-        accepted = self._live_advisory_proof(plan, after=clean)
+        accepted = self._qualification_steps(plan, self.source_commit(), after=clean)
+        accepted = self._live_advisory_proof(plan, after=accepted)
         accepted = self._forced_source_proof(plan, after=accepted)
         checked = plan.add(
             step(
@@ -219,7 +221,8 @@ class ReleaseProfileCommand(
         profiles = _selected_profiles(config, self._args.profile)
 
         clean = self._worktree_steps(plan, self.source_commit())
-        accepted = self._live_advisory_proof(plan, after=clean)
+        accepted = self._qualification_steps(plan, self.source_commit(), after=clean)
+        accepted = self._live_advisory_proof(plan, after=accepted)
         accepted = self._forced_source_proof(plan, after=accepted)
         checked = plan.add(
             step(

@@ -145,7 +145,7 @@ def test_release_dispatches_qualification_without_rerunning_a_local_gate(
     # The clean-tree refusal is first: the hosted lane must receive exactly the
     # committed source the operator named.
     assert plan.labels[0] == "source.worktree-clean"
-    assert "qualification.accept" not in plan.labels
+    assert plan.labels[1] == "qualification.accept"
     for phase in ("fast.", "static.", "artifacts.", "functional.", "glowup."):
         assert not any(step.label.startswith(phase) for step in plan.steps), (
             f"the release runs local {phase} work owned by the hosted lane"
@@ -185,7 +185,7 @@ def test_only_networked_release_edges_cross_the_kernel_boundary(name, args) -> N
 
 
 def test_force_does_not_invent_a_local_qualification_waiver() -> None:
-    """`--force` adds source guards; hosted qualification remains mandatory."""
+    """`--force` adds source guards; the local journal remains mandatory."""
     from helpers.gate import built_command
 
     commit = "f" * 40
@@ -195,7 +195,7 @@ def test_force_does_not_invent_a_local_qualification_waiver() -> None:
         (("channel", "stable"), ("source_commit", commit), ("force", "true")),
         None,
     )._describe()
-    assert "qualification.accept" not in forced.labels
+    assert forced.labels[0] == "qualification.accept"
     assert "qualification.waived" not in forced.labels
     assert "source.worktree-clean" not in forced.labels
 
@@ -249,7 +249,7 @@ def test_a_forced_release_still_proves_its_source() -> None:
 
 
 def test_an_unforced_release_runs_no_local_qualification_suite() -> None:
-    """A real release leaves qualification to the hosted lane.
+    """A real release consumes local proof; it does not re-run a local suite.
 
     Adding the forced proof must not turn every release into a second gate --
     that is the reduced-versus-doubled gate the release contract refuses in
@@ -266,4 +266,4 @@ def test_an_unforced_release_runs_no_local_qualification_suite() -> None:
 
     assert "citadel" not in ordinary.labels
     assert "contracts.release" not in ordinary.labels
-    assert "qualification.accept" not in ordinary.labels
+    assert "qualification.accept" in ordinary.labels

@@ -49,6 +49,7 @@ the suite has one collector and its failures have one owner.
 | `test_step_attributes.py` | a step says what it is; nothing infers it from a label |
 | `test_work_graph_invariants.py` | the plan's graph properties, asked of the graph |
 | `test_workflow_script_checkout.py` | a workflow checks out its source before running a checked-in script |
+| `test_release_requires_local_proof.py` | no agent-facing text says a release can skip `just test` |
 
 ## Adding a guard
 

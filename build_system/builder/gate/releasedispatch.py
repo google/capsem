@@ -1,8 +1,9 @@
-"""What both self-qualifying release commands share.
+"""What both release commands share: a dispatcher that consumes local proof.
 
 Split out of `release`, which holds the two commands themselves. The seam is
 the one the boundary guard asks for: this is the lifecycle every release has in
-common -- how it is sandboxed, what it holds, and how it refuses dirty source.
+common -- how it is sandboxed, what it holds, how it refuses dirty source, and
+which proof it demands before it tags, pushes, or dispatches anything.
 """
 
 from __future__ import annotations
@@ -17,12 +18,13 @@ from .execution import Kind, Speed, step
 from .lifecycle import Resource
 from .plan import Plan
 from .proc import Runner
+from .qualificationevidence import AcceptQualification, QualificationPolicy
 from .sandboxreport import SandboxReport
 from .sourcecommit import SourceCommit
 
 
 class QualifiedRelease:
-    """A short dispatcher whose hosted lanes qualify what they publish."""
+    """A short dispatcher that consumes, but never repeats, local qualification."""
 
     _config: GateConfig
     _sandbox_mode: sandbox.SandboxMode
@@ -31,6 +33,41 @@ class QualifiedRelease:
     outside_egress = True
 
     _args: argparse.Namespace
+
+    qualification_policy: QualificationPolicy = QualificationPolicy.REQUIRE
+    """A release needs a passing `just test <commit>` for its exact commit.
+
+    Four stable attempts in one day each failed in the hosted lane after about
+    two and a half hours, on a defect the local glow-up catches in minutes.
+    `qualificationflow.decide` refuses a missing journal before the prefix, the
+    machine lock, or any tag, push, or dispatch.
+
+    The unattended nightly scheduler is the exception: it runs on a fresh
+    hosted runner with no journal and no way to make one. Declared as a class
+    default and narrowed per instance, because sandbox enforcement reads the
+    class before a command exists.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        if getattr(self._args, "channel", None) in self._config.release.unattended_channels:
+            self.qualification_policy = QualificationPolicy.NONE
+
+    def _qualification_steps(self, plan: Plan, commit: SourceCommit, *, after: tuple) -> tuple:
+        """Revalidate the exact journal at the graph edge, inside the prefix."""
+        if self.qualification_policy is not QualificationPolicy.REQUIRE:
+            return after
+        return (
+            plan.add(
+                step(
+                    "qualification.accept",
+                    AcceptQualification(commit),
+                    kind=Kind.STATIC_TEST,
+                    speed=Speed.FAST,
+                ),
+                after=after,
+            ),
+        )
 
     def _worktree_steps(self, plan: Plan, commit: SourceCommit) -> tuple:
         """Refuse a release from a dirty tree, before anything is accepted.
@@ -72,7 +109,8 @@ class QualifiedRelease:
         """The cheap proof a forced release still owes.
 
         `--force` bypasses the developer checkout's clean-tree refusal; it does
-        not waive the hosted lane's product qualification. It used to waive
+        not waive the local `just test` journal or the hosted lane's product
+        qualification. It used to waive
         *everything*, so a forced release could dispatch source that fails a
         six-second guard -- and did, three times in one afternoon, each costing
         a forty-minute lane to discover a line-count ratchet or stale contract.

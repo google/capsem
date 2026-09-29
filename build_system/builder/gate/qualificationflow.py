@@ -18,7 +18,12 @@ from .qualificationevidence import (
 )
 from .runlog import RunLog
 from .runlogschema import QualificationComplete, QualificationResume, QualificationReuse
-from .sourcecommit import SourceCommit, require_detached_checkout, require_local_main
+from .sourcecommit import (
+    SourceCommit,
+    require_detached_checkout,
+    require_local_branch,
+    require_local_main,
+)
 
 
 @dataclass(frozen=True)
@@ -78,23 +83,19 @@ def decide(
         return Decision(None, None, carried, reuse_path)
 
     history = qualificationevidence.authority(config)
-    require_local_main(history.root, commit)
-    complete = qualificationevidence.find_complete(history, commit)
     if policy is QualificationPolicy.REQUIRE:
+        # A release publishes main; its proof may have been made first on the
+        # branch a pull request merged, and is matched by tree.
+        require_local_main(history.root, commit)
+        complete = qualificationevidence.find_release_proof(history, commit)
         if complete is None:
-            if getattr(args, "force", "false") == "true":
-                # The second gate `--force` has to reach. The plan swaps its
-                # accept step for a recorded waiver, and this refuses before any
-                # plan runs, so relaxing only one of them leaves the flag
-                # looking broken. The policy itself is deliberately not
-                # downgraded here: it is what decides sandbox enforcement, and
-                # forcing a release must not quietly unseal the sandbox too.
-                return Decision(None, None, carried, reuse_path)
-            raise GateError(
-                f"source commit {commit} has no complete exact qualification run log; "
-                f"run `just test {commit}` first"
-            )
+            # No waiver: `--force` excuses a dirty outer checkout, never a
+            # missing proof. Refused here, before the prefix, the machine lock,
+            # and any tag, push, or dispatch.
+            raise qualificationevidence.missing(commit)
         return Decision(complete, None, carried, reuse_path)
+    require_local_branch(history.root, commit)
+    complete = qualificationevidence.find_complete(history, commit)
     if complete is not None:
         return Decision(complete, None, frozenset(), None)
 

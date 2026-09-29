@@ -23,14 +23,18 @@ Python under `src/capsem/gate/` owns the release graph:
 
 The release command does **not** launch or compose `just test`, Just, or
 another `capsem-gate`. `just test <commit>` owns its local verification plan
-under one process, lock, workspace, and run log. Release does not consume that
-journal; its hosted lane qualifies the selected artifact family. A nested gate
-still deadlocks on its parent's lock.
+under one process, lock, workspace, and run log. Release **consumes** that
+journal: `qualificationflow.decide` refuses a commit without a complete,
+successful journal for it or for a commit with its tree, before the prefix,
+lock, tag, push, or dispatch, and
+the `qualification.accept` step revalidates it inside the prefix. Its hosted
+lane then qualifies the selected artifact family. A nested gate still
+deadlocks on its parent's lock.
 
 Read `/dev-gate` before changing this Python composition and `/dev-just` before changing its
 public dispatch. Do not move orchestration into recipes, workflow YAML, or a release script.
 
-## Hosted lanes own release qualification
+## Local proof gates dispatch; hosted lanes qualify publication
 
 The public release command forms are defined by root `RELEASE.md`:
 
@@ -44,6 +48,8 @@ automation. Each Python release plan has this non-negotiable order:
 
 ```text
 just release-binaries <channel> <source-commit>
+  0. refuse unless `just test <source-commit>` passed on this machine
+     (skipped only for `[release].unattended_channels`, i.e. nightly)
   1. require the detached source commit on fresh origin/main and fetch the
      serialized channel source manifest read-only; fail immediately if the
      manifest has no staged channel/profile authority
@@ -51,8 +57,11 @@ just release-binaries <channel> <source-commit>
      qualifies its exact package/profile pairing before publication
 
 just release-profile <channel> <profile> <source-commit>
+  0. refuse unless `just test <source-commit>` passed on this machine
+     (skipped only for `[release].unattended_channels`, i.e. nightly)
   1. require the detached source commit on fresh origin/main and publish its ref
-  2. invoke capsem-admin and watch the exact self-qualifying profile workflow
+  2. invoke capsem-admin and watch the exact profile workflow, which qualifies
+     its artifacts before publication
 ```
 
 The complete gate runs from an independent detached repository whose directory
@@ -71,8 +80,9 @@ the deepest graph-derived resume frontier supported by a retained full-SHA
 prefix and an archived partial attempt. Resumed attempts name the exact parent
 run and digest; recursive coverage of all carried ancestors is required.
 
-Never infer release qualification from a local journal, skill, exit-code
-memory, `latest`, marker file, or title-matching CI run. A candidate diagnostic
+Never infer release qualification from a skill, exit-code memory, `latest`,
+marker file, or title-matching CI run; the only local authority is the exact
+archived journal `qualificationevidence.find_complete` validates. A candidate diagnostic
 may resume only from its journal-derived prefix, frontier, and carried set.
 
 Inside a step, a construction cache is a different mechanism. An asset or VM
@@ -140,8 +150,9 @@ it as `carried` rather than `ok`. Refusing that reuse cost four consecutive
 160-minute qualifications of one release.
 
 Do not extend candidate continuation authority to release attempts. Release CI
-and the two public dispatch commands have no reusable journal for their short
-release graph, so explicit `--from`, `--prefix`, and `--until` are refused.
+and the two public dispatch commands have no reusable journal for their own
+short release graph (they consume the candidate's, never write one), so
+explicit `--from`, `--prefix`, and `--until` are refused.
 Remote-main validation, mutable channel resolution, immutable source
 publication, and final dispatch run fresh on every public attempt.
 
@@ -155,7 +166,9 @@ environment-variable bypass, or direct checked-in caller of:
 Daily nightly automation snapshots `${{ github.sha }}`, calls
 `just release-profile nightly <profile> ${{ github.sha }}` once for each
 selected profile, then `just release-binaries nightly ${{ github.sha }}`. It never
-dispatches either downstream workflow directly. Direct GitHub UI dispatch is
+dispatches either downstream workflow directly. It runs unattended on a fresh
+runner that has no journal, which is why nightly is the one entry in
+`[release].unattended_channels`. Direct GitHub UI dispatch is
 not the documented or tested release path.
 
 Each command owns one artifact family. There is no combined release command.
@@ -167,9 +180,10 @@ explicit product/API decision.
 
 ## Local proof and release-CI composition
 
-Local `just test` is optional whole-world proof. Release commands neither run
-nor require it: each hosted lane performs release qualification against the
-manifest-selected complementary artifact family. The local and hosted paths
+Local `just test` is the whole-world proof every operator release requires for
+its exact commit. Release commands require it but never run it, and each hosted
+lane still performs release qualification against the manifest-selected
+complementary artifact family. The local and hosted paths
 reuse the same checked-in private modules so test quality cannot drift.
 
 `just test` is the complete local CI-equivalent proof, not a smaller developer
@@ -258,10 +272,18 @@ The local gate records `HEAD` and a digest of all tracked and untracked
 non-ignored source bytes. It supports ordinary uncommitted development and
 fails if the source state changes while tests run.
 
-Before dispatching a real release, use whatever focused or complete local proof
-is useful for the change. `just test <source-commit>` is optional and never a
-release prerequisite. Run the actual public release command, never a
-hand-written workflow dispatch; it is the supported bridge into qualifying CI.
+Before dispatching a real release, run `just test <source-commit>` and let it
+pass; the release command refuses otherwise. `just test` accepts any commit on
+a local branch, while the release commit must be on `main`, and
+`qualificationevidence.find_release_proof` bridges the two by tree: the exact
+commit's journal first, else the newest passing journal of any archived commit
+whose tree equals the release commit's. That covers a fast-forwarded `main`
+and a PR merge commit whose tree equals the tested branch head; a merge whose
+tree differs is refused. Four
+consecutive stable attempts once each spent about two and a half hours in the
+hosted lane on a defect the local glow-up finds in minutes. Then run the actual
+public release command, never a hand-written workflow dispatch; it is the
+supported bridge into qualifying CI.
 
 Complete local admission is impact-aware, but its proof is never partial. A
 valid identical-source journal returns immediately. Otherwise unknown and
@@ -269,8 +291,10 @@ high-impact paths remain eligible, while explicitly low-impact paths under the
 ten-commit cadence are refused with their exact `focus-test` owners. The
 exceptional `just test <source-commit> force "<reason>"` records its reason
 before work and cannot be used twice consecutively; only a successful normal
-complete run resets it. None of this state authorizes release publication or
-reuses a behavioral verdict across source identities.
+complete run resets it. A forced run that passes is complete proof for its
+exact commit like any other; failed and interrupted attempts never are.
+Admission state itself never authorizes publication or reuses a behavioral
+verdict across source identities.
 
 ## `--force`: the commit that is not the product
 
@@ -285,20 +309,12 @@ runs the whole source proof and then dies at `channel-source` with "GITHUB_TOKEN
 is required to resolve source manifests" -- four minutes in, naming the variable
 but not where to get it.
 
-Use it for **CI-only changes that do not affect local code or shipped bytes**: a
-workflow file, a gate policy, a check that only ever runs on a hosted runner.
-The artifacts such a commit produces are byte-identical to ones already
-qualified, so re-proving them spends two and a half hours to learn nothing.
-Paying that repeatedly is how a release stops happening at all -- the 0.6.0
-binaries were held twice by a guard that only fired on disposable runners, and
-each retry cost a full requalification of a product nobody had touched.
-
-It is not a shortcut for product changes. Anything altering what ships --
-crates, guest binaries, assets, profiles, packaging -- takes the full
-qualification, because that run is the only thing that proves those bytes.
-
-What it waives, and what it still records:
+`--force` waives exactly one thing: the refusal to release while the outer
+checkout has uncommitted changes. It never waives the exact `just test` journal
+(there is no waiver for that), and it never waives the hosted lane.
 
 - The clean-worktree refusal is skipped, while Citadel and release-source
   contracts run before dispatch, so the tree still has to be one you
   would publish -- a release publishes the commit, never the working tree.
+- `qualification.accept` still runs first, and the command still refuses a
+  commit without a passing `just test` before any of that.

@@ -100,8 +100,9 @@ def admit(command: CandidateLike, commit: SourceCommit | None) -> None:
         suffix = f"\nUse the owning rails instead:\n{routes}" if routes else ""
         raise GateError(
             f"complete test refused: {decision.explanation}{suffix}\n"
-            "Release commands self-qualify; a local full run is optional. "
-            f'An explicitly approved exception uses: just test {target} force "<reason>"'
+            "Releasing this commit still requires a passing complete `just test`. "
+            "With explicit approval, run the exception, which counts as release proof "
+            f'when it passes: just test {target} force "<reason>"'
         )
     command._runner.note(f"complete test admitted: {decision.explanation}")
     if decision.forced:

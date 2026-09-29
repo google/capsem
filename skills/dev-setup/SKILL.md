@@ -188,7 +188,7 @@ just shell            # Build + boot VM interactively (~10s)
 just exec "CMD"        # Build + boot + run command + exit
 just fast-test        # Incomplete source feedback before expensive work
 just focus-test functional # Rerun one affected functional owner
-just test             # Optional reusable whole-system proof when warranted
+just test             # Whole-system proof; required, passing, before a release
 just dev ui               # Frontend dev server (mock mode, no VM)
 just dev              # Full Tauri app with hot-reload
 ```

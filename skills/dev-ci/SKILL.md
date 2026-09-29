@@ -129,7 +129,8 @@ Read `/dev-cache` before changing cache policy or workflow cache behavior.
 Release rules live in root `RELEASE.md`; agent routing lives in `AGENTS.md` and
 `/release-process`.
 
-- `just test` is the complete local all-artifact proof.
+- `just test` is the complete local all-artifact proof, and a passing run is
+  required before either release command dispatches.
 - Binary CI builds packages only, pulls every selected profile, and runs the
   shared complete modules against that resolved pairing.
 - Profile CI builds one channel/profile only, pulls the current package, and

@@ -24,7 +24,7 @@ lessons; it does not restate product policy.
 - Read `references/qualification-and-test-composition.md` before changing public
   release commands, source guards, sandbox/egress, execution-envelope or
   workflow/shell parity, test composition, artifact staging, `ProfileContent`, or
-  `--force` (CI-only changes; never shipped bytes).
+  `--force` (dirty outer checkout only; never the `just test` journal).
 - Read `references/lane-workflows.md` before changing channel locking, preview
   deployment, profile/binary ownership, nightly sequencing, staged activation,
   base-image materialization, or corporate authoring.
@@ -54,13 +54,28 @@ just release-binaries <channel> <source-commit>
 just release-profile <channel> <profile> <source-commit>
 ```
 
-Do not dispatch downstream workflows or author source manifests by hand. Each
-release command is sufficient on its own because its hosted lane performs
-release qualification; `just test <source-commit>` is optional reusable local
-whole-system verification, not a release prerequisite. Use focused tests
-during ordinary development. The release commands and complete local test own
-their sandbox, egress, machine lock, journal, and teardown, so do not nest or
-wrap them.
+Do not dispatch downstream workflows or author source manifests by hand.
+**Run `just test <source-commit>` to success first**: both commands refuse a
+source without a complete, passing journal on this machine, because a hosted
+attempt takes hours to find what the local glow-up and functional lanes find in
+minutes. The hosted lane still qualifies what it publishes. Only the
+unattended nightly scheduler (`[release].unattended_channels`) is exempt, and
+release `--force` never waives the journal. Failed or interrupted runs never
+count; an approved `just test <commit> force "<reason>"` that passes does.
+
+The proof is matched by source identity, the Git tree (every tracked byte,
+lockfile, and submodule pin), so the intended flow is: fix on a branch, run
+`just test <branch-head>` there, then get it onto `main` one of two ways:
+
+1. fast-forward `main` to the tested commit, and release that commit; or
+2. merge the PR, and release the merge commit only when its tree equals the
+   tested tree (`git rev-parse <merge>^{tree} <tested>^{tree}` prints one
+   hash twice). A merge that brought in anything else has a different tree
+   and is refused; test the merge commit itself.
+
+Use focused tests during ordinary development. The release commands and
+complete local test own their sandbox, egress, machine lock, journal, and
+teardown, so do not nest or wrap them.
 
 For failures, select the reference matching the affected boundary above.
 Diagnostic continuation, CI-only `--force`, graph retirement, signing,

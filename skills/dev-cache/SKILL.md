@@ -168,12 +168,12 @@ just fast-test
 just focus-test <owner>
 ```
 
-`just test <source-commit>` is the optional complete local proof. Its journal
+`just test <source-commit>` is the complete local proof a release requires. Its journal
 reuses an exact successful source identity, and its graph carries valid
 artifact frontiers instead of rebuilding them. Low-impact paths are routed by
 `[test_admission]`; forcing complete proof repeatedly is rate-limited by
-commit distance. Release commands self-qualify and do not consume a local
-`just test` prerequisite.
+commit distance. Release commands consume its journal: they refuse a source
+without a passing run for the same commit or tree.
 
 After a failed or interrupted full attempt, automatic retries are refused.
 Use focused checks; obtain explicit approval for each reasoned full retry.

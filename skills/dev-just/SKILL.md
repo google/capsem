@@ -27,7 +27,7 @@ allowlist update in the same change.
 | `just fast-test` | Explicitly incomplete source feedback; it prints the targeted and release rails. |
 | `just focus-test <group> [reuse\|clean] [slow]` | Rerun one existing owner: `assets`, `binaries`, `benchmark`, `functional`, `greyjoy`, `kingslanding`, `install`, `release-system`, or affected `rust`. `release-system` is source-only; `rust` derives changed crates and reverse dependents from Cargo manifests. |
 | `just install` | Optional hands-on local package testing; never a release prerequisite and never release authority. |
-| `just test [source-commit] [normal\|force] [reason]` | Reusable complete local verification; low-impact repeats route to focused owners, while exceptional force requires a reason. Optional before release. |
+| `just test [source-commit] [normal\|force] [reason]` | Reusable complete local verification; low-impact repeats route to focused owners, while exceptional force requires a reason. Required, passing, before any release of that source. |
 | `slow` (fourth `test` argument, third `focus-test` argument) | Permission to rebuild host VM assets whose expensive inputs changed: `Cargo.lock`, `build_system/uv.lock`, the toolchain, builder Dockerfiles, the kernel defconfig. Without it a run whose assets went stale that way stops at the first asset step and names the input, since the rebuild is the guest builder image, every agent, the initrd, the images and the host binaries. Source-only staleness (a `capsem-core` edit) rebuilds without asking. |
 | `just release-binaries <channel> <source-commit>` | Dispatch qualification and publication of packages against pulled profiles. |
 | `just release-profile <channel> <profile> <source-commit>` | Dispatch qualification and publication of one profile (or `all`, behind one source proof) against the pulled package. |
@@ -105,8 +105,9 @@ exchange for no decision made.
   source-only release-contract owner; package rehearsal and installed-product
   proof belong to qualification. Neither feedback command is release authority.
 - No generic or combined release recipe. Each of the two approved release
-  commands is sufficient by itself and dispatches its self-qualifying hosted
-  lane; the two workflows share the per-channel lock.
+  commands refuses a source without a passing `just test` (same commit, or
+  one with the identical tree), then dispatches its hosted lane, which still
+  qualifies what it publishes; the two workflows share the per-channel lock.
 - No dependency-update, fixture-update, audit-only, coverage-only,
   cleanup, session-SQL, or extra package-install convenience recipes. Call the owning
   script/tool directly.

@@ -804,6 +804,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the second proof, not the way defects are found: 0.6.4 stable spent four
   multi-hour dispatches on four defects a local run finds in minutes.
 
+- `just release-binaries` and `just release-profile` now refuse, before
+  creating a prefix, tagging, pushing, or dispatching, unless this machine
+  holds a complete, passing `just test` journal for the release commit or for
+  a commit with the identical Git tree (so a pull request's merge commit reuses
+  its tested branch head's proof, while a merge that brought in anything else
+  is refused). The refusal names `just test <commit>`. Failed and interrupted
+  attempts never count; an approved `just test <commit> force "<reason>"` that
+  passes does. `--force` on a release no longer waives anything but the
+  clean-worktree check. `just test <commit>` now accepts any commit on a local
+  branch, so the proof can come before the merge. The unattended nightly
+  scheduler, `[release].unattended_channels`, is exempt.
+
 - Session ledgers are now format v4: each one carries its own running totals
   (requests, tokens, cost, tool calls, rule matches, plugin and credential
   activity), written in the same transaction as the rows they count, so stats

@@ -2006,13 +2006,11 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
     assert "inputs.sha" not in runtime_preflight
     assert "EXPECTED_SHA" not in runtime_preflight
     assert (
-        "Each release command is sufficient on its own because its hosted lane "
-        "performs release qualification" in normalized_release_skill
+        "**Run `just test <source-commit>` to success first**: both commands refuse a "
+        "source without a complete, passing journal on this machine"
+        in normalized_release_skill
     )
-    assert (
-        "`just test <source-commit>` is optional reusable local whole-system "
-        "verification, not a release prerequisite" in normalized_release_skill
-    )
+    assert "The hosted lane still qualifies what it publishes." in normalized_release_skill
     assert "Release CI reuses the same checked-in private modules" in testing_skill
     assert "Serialized Orthogonal Releases" in agents
 
