@@ -58,6 +58,6 @@ def test_agent_contracts_forbid_install_as_release_prerequisite() -> None:
     for path in ("AGENTS.md", "skills/dev-just/SKILL.md"):
         contract = _normalized(path)
         assert "just install" in contract, RATIONALE
-        assert "never a release prerequisite" in contract, RATIONALE
+        assert "hands-on" in contract, RATIONALE
         assert "just release-binaries" in contract, RATIONALE
         assert "just release-profile" in contract, RATIONALE
