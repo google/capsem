@@ -26,3 +26,43 @@ def test_an_unreadable_directory_is_dated_not_fatal(tmp_path: Path) -> None:
 
     assert measured.logical_bytes == 4, "only what could be read is counted"
     assert measured.last_used_ns >= 10**18, "the unreadable directory still dates the entry"
+
+
+def test_a_file_removed_mid_walk_counts_as_gone(tmp_path: Path, monkeypatch) -> None:
+    """rustc writes and deletes `*.rcgu.o` temporaries in `deps/` while it
+    runs. A release `just test` died before any work on 2026-09-29 because the
+    cargo enforcement walk listed one and it was gone by the time it was
+    measured (FileNotFoundError). A vanished file holds no bytes."""
+    entry = tmp_path / "deps"
+    entry.mkdir()
+    (entry / "kept.rlib").write_bytes(b"abcd")
+    doomed = entry / "unit.rcgu.o"
+    doomed.write_bytes(b"x" * 100)
+    real_scandir = os.scandir
+
+    class RacingListing:
+        """Lists the directory, then lets the compiler delete its temporary."""
+
+        def __init__(self, path) -> None:
+            with real_scandir(path) as listing:
+                self.entries = list(listing)
+            doomed.unlink()
+
+        def __enter__(self):
+            return iter(self.entries)
+
+        def __exit__(self, *_exc) -> None:
+            return None
+
+    racing_scandir = RacingListing
+
+    monkeypatch.setattr(os, "scandir", racing_scandir)
+    measured = measure(entry, set())
+
+    assert measured.logical_bytes == 4
+
+
+def test_a_whole_entry_removed_before_the_walk_is_empty(tmp_path: Path) -> None:
+    gone = tmp_path / "incremental" / "capsem_core-0f3igal4whwc0"
+
+    assert measure(gone, set()).logical_bytes == 0
