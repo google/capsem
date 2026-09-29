@@ -48,11 +48,16 @@ EOF
 
 # Write one arch-scoped immutable source (DEB822 format).
 snapshot_url="${snapshot_base%/}/${snapshot_id}"
+# Only what the image installs: every package comes from main or universe, and
+# nothing is pinned to backports. apt fetches each index sequentially from the
+# one snapshot host, so each suite, component and architecture is a round trip:
+# 32 of them took ~340 s against the Dockerfile's 300 s outage bound on a slow
+# day (2026-09-29); these 12 fit it.
 cat > /etc/apt/sources.list.d/ubuntu.sources << EOF
 Types: deb
 URIs: $snapshot_url
-Suites: noble noble-updates noble-backports noble-security
-Components: main restricted universe multiverse
+Suites: noble noble-updates noble-security
+Components: main universe
 Architectures: $NATIVE_ARCH $FOREIGN_ARCH
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 EOF

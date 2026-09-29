@@ -1506,8 +1506,8 @@ def test_host_builder_bootstraps_https_trust_before_ubuntu_package_fetches() -> 
     # Each network phase carries its own bound (see the Dockerfile comment on
     # the snapshot outage that held this layer for 57 minutes).
     first_update = (
-        "timeout --signal=TERM --kill-after=5s 900s apt-get update "
-        "&& timeout --signal=TERM --kill-after=5s 1800s apt-get install -y --no-install-recommends"
+        "timeout --signal=TERM --kill-after=5s 300s apt-get update "
+        "&& timeout --signal=TERM --kill-after=5s 600s apt-get install -y --no-install-recommends"
     )
     ubuntu_stage = next(
         line

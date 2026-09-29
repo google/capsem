@@ -54,14 +54,11 @@ RUN bash /tmp/sources-multiarch.sh "$APT_SNAPSHOT_BASE" "$APT_SNAPSHOT_ID" \
 # the complete multiarch indexes are fetched exactly once. Cross builds swap
 # these packages at container runtime (see swap-dev-libs.sh).
 # Bound each network phase: a snapshot outage once held this layer for 57 minutes.
-# The bounds are for an outage, not a slow day: on 2026-09-29 snapshot.ubuntu.com
-# answered each of the ~34 multiarch index files in ~10 s, a healthy but slow
-# update of ~340 s, and a 300 s bound failed the release proof twice in a row.
 # ---- Native-arch Tauri dev libraries ----
 RUN test -n "$WORKSPACE_APT_PACKAGES" \
     && test -n "$WORKSPACE_CROSS_APT_PACKAGES" \
-    && timeout --signal=TERM --kill-after=5s 900s apt-get update \
-    && timeout --signal=TERM --kill-after=5s 1800s apt-get install -y --no-install-recommends \
+    && timeout --signal=TERM --kill-after=5s 300s apt-get update \
+    && timeout --signal=TERM --kill-after=5s 600s apt-get install -y --no-install-recommends \
     $WORKSPACE_APT_PACKAGES \
     $WORKSPACE_CROSS_APT_PACKAGES \
     curl \
