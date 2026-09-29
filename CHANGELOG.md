@@ -196,6 +196,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Every gate command that compiles now enforces the shared Cargo target's
+  maximum before its first step and again after its last, including after a
+  failed run, and bounded direct Cargo commands enforce it after the command
+  as well as before. Only the host-build fragment enforced it, and only before
+  building, so clippy in `fast-test`, the static coverage build, `smoke`,
+  `pack-initrd` and other compiling commands grew the target unchecked; it
+  reached 237 GB against its 180 GiB maximum and a focused test run died with
+  ENOSPC.
+
 - `capsem doctor` no longer fails a boot stage because the host was busy. Each
   capsem-init stage now records the steal time accrued during it (time the
   host kept a runnable vCPU off a physical CPU), and the 500 ms per-stage

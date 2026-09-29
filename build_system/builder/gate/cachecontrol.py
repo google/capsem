@@ -7,6 +7,7 @@ from ..cache.controlmodels import ImageCachePolicy
 from . import cachelayout
 from .config import for_root
 from .errors import GateError
+from .lifecycle import Resource
 from .proc import Runner
 from .sourcecommit import SourceCommit
 
@@ -99,3 +100,26 @@ class CacheControl:
         """Enforce one cache owner's maximum before expensive work."""
         reason = f"gate cache enforcement for {label or cache_id}"
         self._run("enforce", cache_id, "--reason", reason)
+
+
+class CargoCacheBound(Resource, name="cargo-cache"):
+    """Hold the shared Cargo target to its contract around a compiling command.
+
+    Acquired before the first step and released after the last, on every path.
+    Enforcing only in front of one fragment's build left every other compiling
+    step unbounded and every compile's growth standing until some later run
+    happened to look, so worktree-salted units reached 237 GB against 180 GiB.
+    """
+
+    def __init__(self, runner: Runner) -> None:
+        self._runner = runner
+
+    def _enforce(self, moment: str) -> None:
+        if not self._runner.observing:
+            CacheControl(self._runner).enforce("cargo", f"{moment} compilation")
+
+    def acquire(self) -> None:
+        self._enforce("before")
+
+    def release(self) -> None:
+        self._enforce("after")

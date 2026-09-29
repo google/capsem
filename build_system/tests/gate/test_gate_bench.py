@@ -233,12 +233,15 @@ def test_a_linked_worktree_reads_binaries_where_cargo_writes_them(tmp_path: Path
     resolve to the build root the compiler was given, as a prefix's do.
     """
     from capsem_builder.gate import cargotarget, preflight
+    from capsem_builder.gate.plan import Plan
 
     config = _linked_worktree(tmp_path)
     shared = cargotarget.path(config)
     (shared / "debug").mkdir(parents=True)
     (shared / "debug" / "capsem").write_bytes(b"built")
-    resources = preflight.holdings(config, _ActingRunner(config.root), "measure", exclusive=True, declared=())
+    resources = preflight.holdings(
+        config, _ActingRunner(config.root), "measure", exclusive=True, declared=(), plan=Plan("measure")
+    )
     link = next(resource for resource in resources if isinstance(resource, cargotarget.CheckoutBuildRoot))
     link.acquire()
     debug = config.root / "cache" / "target" / "cargo" / "debug"

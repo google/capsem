@@ -110,6 +110,15 @@ run (issue #205). Paths Cargo does not name by unit, such as uplifted
 binaries, count toward capacity but are never selected. Native Cargo output locks protect the whole stage and are acquired again
 through deletion; even an explicit cold clean preserves their lock inodes.
 
+The Cargo maximum is held around compilation, not by any one step. Every
+exclusive gate command whose plan claims `workspace_binaries` holds
+`CargoCacheBound` (`gate/cachecontrol.py`), which enforces before the first
+step and after the last, failed runs included; `run-bounded-command.py`
+enforces before and after direct Cargo. Do not add an enforcement step to a
+fragment: a prerequisite of the host build left clippy, coverage and every
+other compile unbounded, and nothing enforced after any compile, until the
+target reached 237 GB against 180 GiB.
+
 The `objects` store (`object_store = true`) is retained the same way, one
 generation at a time: a component receipt together with the objects no other
 receipt names, receipt first. An object two receipts share belongs to neither

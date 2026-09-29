@@ -28,6 +28,7 @@ import pytest
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import preflight
 from capsem_builder.gate.cachetooling import CompilerCache
+from capsem_builder.gate.plan import Plan
 from capsem_builder.gate.reaper import StaleProcesses
 from helpers.gate import RecordingRunner
 
@@ -162,7 +163,9 @@ def test_a_different_program_is_never_reaped_whatever_its_environment(short: Pat
 
 
 def test_every_exclusive_command_reaps_before_it_starts_its_own_server() -> None:
-    held = preflight.holdings(CONFIG, RecordingRunner(ROOT), "test-fast", exclusive=True, declared=())
+    held = preflight.holdings(
+        CONFIG, RecordingRunner(ROOT), "test-fast", exclusive=True, declared=(), plan=Plan("test-fast")
+    )
     kinds = [type(resource) for resource in held]
     assert StaleProcesses in kinds, "an exclusive command started without reaping"
     assert kinds.index(StaleProcesses) < kinds.index(CompilerCache), (
@@ -172,7 +175,9 @@ def test_every_exclusive_command_reaps_before_it_starts_its_own_server() -> None
 
 def test_a_command_without_the_machine_reaps_nothing() -> None:
     """Without the lock, a live server may belong to a run that is using it."""
-    held = preflight.holdings(CONFIG, RecordingRunner(ROOT), "lint", exclusive=False, declared=())
+    held = preflight.holdings(
+        CONFIG, RecordingRunner(ROOT), "lint", exclusive=False, declared=(), plan=Plan("lint")
+    )
     assert StaleProcesses not in [type(resource) for resource in held]
 
 

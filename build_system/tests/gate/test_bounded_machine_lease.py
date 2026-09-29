@@ -178,12 +178,42 @@ def test_direct_cargo_enforces_its_cache_contract_inside_the_machine_lease(
     monkeypatch.setattr(
         boundedlease,
         "_enforce_cargo_cache",
-        lambda root, command: enforced.append((root, tuple(command))),
+        lambda root, command, **_: enforced.append((root, tuple(command))),
     )
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    with boundedlease.leased(("cargo", "test", "-p", "capsem-core"), ROOT, {}):
-        assert enforced == [(ROOT, ("cargo", "test", "-p", "capsem-core"))]
+    command = ("cargo", "test", "-p", "capsem-core")
+    with boundedlease.leased(command, ROOT, {}):
+        assert enforced == [(ROOT, command)]
+    # After as well as before: the compile itself is what grows the target,
+    # and a bound checked only on the way in leaves it above its maximum for
+    # every worktree that arrives next.
+    assert enforced == [(ROOT, command), (ROOT, command)]
+
+
+def test_only_the_check_before_the_command_refuses(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """After the command, its own exit status is the answer; a bound that
+    cannot be restored is reported and refused by the next compile instead."""
+    from capsem_builder.cache.enforcement import EnforcementResult
+    from capsem_builder.gate import boundedlease
+    from capsem_builder.gate.errors import GateError
+
+    stuck = EnforcementResult(
+        cache_id="cargo",
+        before_size_bytes=2,
+        after_size_bytes=2,
+        pruned=False,
+        reclaim_bytes=0,
+        action_count=0,
+        violations=("cargo remains 2 bytes above max size 1",),
+    )
+    monkeypatch.setattr(boundedlease, "enforce_repository", lambda *_, **__: stuck)
+    with pytest.raises(GateError, match="above max size"):
+        boundedlease._enforce_cargo_cache(ROOT, ("cargo", "build"))
+    boundedlease._enforce_cargo_cache(ROOT, ("cargo", "build"), refuse=False)
+    assert "above its contract after the command" in capsys.readouterr().err
 
 
 def test_zero_byte_expiry_does_not_claim_cargo_exceeded_its_limit() -> None:
