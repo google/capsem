@@ -37,3 +37,43 @@ class TestSerialLog:
         logs2 = resp2.get("logs", "")
         # Second call should have at least as much content
         assert len(logs2) >= len(logs1)
+
+
+# Every byte capsem-init writes to the serial console is on the exec-ready
+# path. Since the emulated 16550 raises its transmit interrupt (92295e59b),
+# userspace console writes block until each byte has left through a port-I/O
+# exit: about 95us a byte on nested KVM, so the 4.3 KiB this console carried
+# before the shell banner in 0.6.4 cost ~0.4s of every boot and pushed exec
+# latency past its 2s gate. Progress belongs in the host-preserved boot log;
+# the console keeps failures.
+BOOT_CONSOLE_BUDGET_BYTES = 1024
+# The first thing the guest shell prints: everything before it is boot.
+AGENT_START_MARKER = "welcome to"
+
+
+class TestBootConsoleVolume:
+
+    def test_boot_console_stays_within_its_byte_budget(self, serial_env):
+        client, name = serial_env
+        logs = client.get(f"/vms/{name}/logs").get("logs", "")
+        assert AGENT_START_MARKER in logs, logs[:500]
+        boot = logs.split(AGENT_START_MARKER, 1)[0]
+        assert len(boot.encode()) <= BOOT_CONSOLE_BUDGET_BYTES, (
+            f"{len(boot.encode())} console bytes before the agent started "
+            f"(budget {BOOT_CONSOLE_BUDGET_BYTES}):\n{boot}"
+        )
+
+    def test_boot_console_carries_each_init_line_once(self, serial_env):
+        """The kmsg copy of an init line is for dmesg, not a second console write."""
+        client, name = serial_env
+        logs = client.get(f"/vms/{name}/logs").get("logs", "")
+        boot = logs.split(AGENT_START_MARKER, 1)[0]
+        lines = [line for line in boot.splitlines() if line.startswith("[capsem-init] ")]
+        repeated = sorted({line for line in lines if lines.count(line) > 1})
+        assert not repeated, repeated
+
+    def test_profile_seed_projection_reports_no_ownership_failures(self, serial_env):
+        client, name = serial_env
+        logs = client.get(f"/vms/{name}/logs").get("logs", "")
+        assert "can't preserve ownership" not in logs
+        assert "failed to preserve ownership" not in logs

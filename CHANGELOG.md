@@ -196,6 +196,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A Linux VM is ready for its first command about 0.3 s sooner. Once the
+  emulated serial port began raising its transmit interrupt, every byte the
+  guest's init wrote to the console held boot for a port-I/O exit (about
+  95 µs a byte on nested KVM), and init was writing 4.3 KiB before the shell
+  banner: each progress line twice (its kernel-log copy was printed at the new
+  console log level), one ownership error per seeded profile file, and the
+  whole NAT table and audit status. Init progress now goes to the
+  host-preserved boot log (`logs/.capsem-boot.log`) and to dmesg; the serial
+  console keeps FATAL and WARNING lines, command errors and the link-failure
+  witness, and carries about 300 bytes before the banner.
+
 - Every gate command that compiles now enforces the shared Cargo target's
   maximum before its first step and again after its last, including after a
   failed run, and bounded direct Cargo commands enforce it after the command

@@ -2345,6 +2345,27 @@ class TestKernelConfig:
         assert "count_lines" in watchdog
         assert "virtio_irq_count" in watchdog
 
+    def test_init_keeps_progress_off_the_blocking_serial_console(self):
+        """Console bytes before the agent starts cost ~95us each on nested KVM.
+
+        Progress goes to the host-preserved boot log once the share is up;
+        the console keeps stderr, where every FATAL and WARNING line and the
+        link-failure witness write. The kmsg copy of an init line is for
+        dmesg: at loglevel=4 a KERN_ALERT copy was printed a second time.
+        """
+        content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+        assert "printf '<5>[capsem-init] %s\\n'" in content
+        assert "printf '<1>[capsem-init]" not in content
+        assert 'exec 1>>"$GUEST_LOG_DIR/.capsem-boot.log"' in content
+        for line in content.splitlines():
+            if re.search(r'echo "\[capsem-init\] (FATAL|WARNING)', line):
+                assert line.rstrip().endswith(">&2"), line
+        watchdog = content.split("# The guest's side of a link failure.", 1)[1]
+        watchdog = watchdog.split('init_log "starting PTY agent', 1)[0]
+        assert watchdog.rstrip().endswith(") >&2 &"), watchdog[-80:]
+        assert 'init_log "PTY agent exited with status $AGENT_STATUS" >&2' in content
+        assert "cp -a /newroot/usr/local/share/capsem/profile-root/. /newroot/ 2>&1" in content
+
     def test_init_uses_iptables_nft_only(self):
         content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
         assert "iptables-nft" in content
