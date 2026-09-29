@@ -213,6 +213,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported it as a 510 ms boot regression. Failures still show raw duration
   and steal; hosts that report no steal are budgeted on wall time as before.
 
+- A `Cargo.lock` that gained a crate after bootstrap no longer surfaces as a
+  wall of `Could not resolve host: index.crates.io` minutes into a sandboxed
+  gate run. `just doctor` checks offline that every locked crate is in the
+  local registry, and `just doctor fix` fetches the missing ones (bootstrap
+  now fetches through the same fix). Every gate that drops its network runs
+  the same probe first and refuses up front, naming the missing crate and
+  `just doctor fix`. Doctor also stops suggesting `just doctor-fix`, which
+  was never a recipe.
+
 - On Linux x86_64 hosts, anything a process in the VM wrote to the console
   now reaches `capsem logs`. The emulated serial port never raised its
   transmit interrupt, so only kernel messages got out: a container started

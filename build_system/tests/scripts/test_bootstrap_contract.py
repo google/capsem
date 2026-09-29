@@ -197,7 +197,10 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "pnpm 10 is required after bootstrap" in bootstrap
     assert "uv run --project build_system --frozen capsem-gate install-node" in bootstrap
     assert "uv sync --project build_system --frozen" in bootstrap
-    assert "cargo fetch --locked" in bootstrap
+    # Doctor's `cargo-fetch` fix owns the workspace crates, so a Cargo.lock
+    # that gains one after bootstrap is repaired by `just doctor fix` alike.
+    assert "cargo fetch --locked" not in bootstrap
+    assert "doctor-common.sh\" --fix" in bootstrap
     assert "cd web/app && CI=true pnpm install" not in bootstrap
     assert 'if [ -n "${CAPSEM_GATE_RUN:-}" ]; then' in bootstrap
     assert "fast.toolchain.node already owns every locked workspace" in bootstrap

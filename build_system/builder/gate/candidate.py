@@ -151,14 +151,13 @@ class CompleteGate:
         # than anywhere later, because a profile is inherited by every child
         # and cannot be dropped. See `sandbox.applied`.
         if needs_sandbox:
-            if self.outside_egress:
-                sandbox.prepare_egress(self._config)
             return sandbox.applied(
                 self._config,
                 self._runner,
                 default=sandbox_mode,
                 requested=None,
                 argv=replacement,
+                outside_egress=self.outside_egress,
             )
         return replacement
 

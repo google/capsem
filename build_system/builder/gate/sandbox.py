@@ -73,14 +73,13 @@ def reexec(
     chosen = mode(default, requested)
     if chosen == OFF or active(config):
         return None
-    if outside_egress:
-        prepare_egress(config)
     return applied(
         config,
         runner,
         default=chosen,
         requested=None,
         argv=(sys.executable, "-m", "capsem_builder.gate", *sys.argv[1:]),
+        outside_egress=outside_egress,
     )
 
 
@@ -190,6 +189,23 @@ def active(config: GateConfig) -> bool:
     raise GateError(f"the gate sandbox does not support host system {host.system()!r}")
 
 
+def require_offline_sources(config: GateConfig, runner) -> None:
+    """Refuse to drop the network while `Cargo.lock` needs it.
+
+    A lock that gained a crate since bootstrap used to surface minutes into a
+    run, as a wall of `Could not resolve host: index.crates.io` from the first
+    sandboxed cargo, naming neither the cause nor the fix.
+    """
+    try:
+        runner.capture(config.sandbox.cargo_offline_probe, cwd=config.root)
+    except GateError as failure:
+        raise GateError(
+            "the local Cargo registry does not hold every crate Cargo.lock names, "
+            "and this gate runs with no network. Run `just doctor fix` (it runs "
+            f"`cargo fetch --locked`), then retry.\n{failure}"
+        ) from failure
+
+
 def applied(
     config: GateConfig,
     runner,
@@ -197,17 +213,23 @@ def applied(
     default: SandboxMode,
     requested: SandboxMode | None,
     argv: tuple[str, ...],
+    outside_egress: bool = False,
 ) -> tuple[str, ...]:
     """`argv`, wrapped in this host's kernel sandbox, or unchanged when off.
 
     The whole decision in one place: which mode, where the profile is written,
     and whether to wrap at all. It lives here rather than on the command
     because the command's only job is to say *whether* it wants a sandbox --
-    everything about what one is belongs to this module.
+    everything about what one is belongs to this module. So do its entry
+    conditions: the local crates are checked before a release's egress helper
+    is started, and a refusal leaves nothing behind.
     """
     chosen = mode(default, requested)
     if chosen == OFF or active(config):
         return argv
+    require_offline_sources(config, runner)
+    if outside_egress:
+        prepare_egress(config)
     if host.on_linux():
         if chosen == REPORT:
             raise GateError(
