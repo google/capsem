@@ -27,7 +27,8 @@ esac
 if [ -n "$profile" ] && [ -n "$unit" ]; then
   for fingerprint in "$profile"/.fingerprint/*-"$unit"; do
     if [ -d "$fingerprint" ]; then
-      ln -sfn "$checkout" "$fingerprint/capsem-owner" 2>/dev/null || true
+      # Best effort, and no `set -e`: a missing link only ranks the unit as shared.
+      ln -sfn "$checkout" "$fingerprint/capsem-owner" 2>/dev/null
     fi
   done
 fi
