@@ -122,7 +122,10 @@ class CompilerCache(Resource, name="compiler-cache"):
         from .context import Context
         from .fileactions import MakeDir
 
-        if not self._environment or self._runner.observing:
+        if (
+            self._config.environment.rustc_wrapper not in self._environment
+            or self._runner.observing
+        ):
             return
         stage = cachelayout.stage_path(self._config, "rust-sccache")
         MakeDir(stage).perform(Context(self._runner, self._config, env=self._environment))
