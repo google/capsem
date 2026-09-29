@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -29,7 +30,7 @@ from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.actions import Run, Script
 from capsem_builder.gate.command import GateCommand
 from capsem_builder.gate.errors import GateError
-from capsem_builder.gate.execution import step
+from capsem_builder.gate.execution import Requires, step
 from capsem_builder.gate.lifecycle import Resource
 from capsem_builder.gate.plan import Plan
 from capsem_builder.gate.sourcecommit import qualified_commit
@@ -67,6 +68,10 @@ class _Probe(GateCommand, name="funnel-probe", help="a command a test builds"):
     """Its plan and resources are whatever the test assigned before running."""
 
     steps: tuple = ()
+    # Each step after the one before it. Steps with no edge are ready together
+    # and run concurrently, so a test asserting the order their commands ran
+    # has to declare that order rather than count on the scheduler keeping it.
+    chained = False
     holdings: tuple[Resource, ...] = ()
     on_plan = None
     replacement: tuple[str, ...] | None = None
@@ -81,8 +86,10 @@ class _Probe(GateCommand, name="funnel-probe", help="a command a test builds"):
         if self.on_plan is not None:
             self.on_plan(self._runner)
         plan = Plan(self.name)
+        previous: tuple = ()
         for item in self.steps:
-            plan.add(item)
+            added = plan.add(item, after=previous, requires=Requires.ORDER)
+            previous = (added,) if self.chained else ()
         return plan
 
 
@@ -396,15 +403,40 @@ def test_inspection_issues_no_command_and_acquires_nothing(flag, capsys) -> None
 # ---------------------------------------------------------------------------
 
 
+class _LateFirstStep(RecordingRunner):
+    """`cargo build` finishes only once `uv run` has, or half a second has passed.
+
+    Two steps with no edge between them are ready together and run on
+    separate pool threads, so the order their commands reach the journal is
+    whatever the scheduler chose. Alone that was always declaration order;
+    under a loaded `-n 8` suite it sometimes was not. Holding the first step
+    back makes the unlucky schedule the only one, so an ordering claim that
+    rests on luck fails every time instead of one run in many.
+    """
+
+    def __init__(self, root: Path) -> None:
+        super().__init__(root)
+        self._second_ran = threading.Event()
+
+    def execute(self, command):
+        if command.argv[:2] == ("cargo", "build"):
+            self._second_ran.wait(timeout=0.5)
+        completed = super().execute(command)
+        if command.argv[:2] == ("uv", "run"):
+            self._second_ran.set()
+        return completed
+
+
 def test_every_subprocess_is_recorded_once(journal) -> None:
     """The run log's whole purpose, and it had no production caller.
 
     Recorded here rather than at each call site, because sixteen call sites
     remembering is fifteen chances for one to stop.
     """
-    runner = RecordingRunner(PROJECT_ROOT)
+    runner = _LateFirstStep(PROJECT_ROOT)
     command = _probe(
         runner,
+        chained=True,
         steps=(
             step("one", Run(["cargo", "build"]), Run(["cargo", "clippy"])),
             step(
@@ -416,11 +448,12 @@ def test_every_subprocess_is_recorded_once(journal) -> None:
 
     command.execute()
 
-    assert [entry["argv"][:2] for entry in journal.execs] == [
+    recorded = [entry["argv"] for entry in journal.execs]
+    assert [argv[:2] for argv in recorded] == [
         ("cargo", "build"),
         ("cargo", "clippy"),
         ("uv", "run"),
-    ]
+    ], f"recorded execs: {recorded!r}"
 
 
 def _recorded_command_policy(command: GateCommand, monkeypatch) -> str:
