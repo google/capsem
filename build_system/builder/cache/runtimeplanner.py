@@ -49,10 +49,10 @@ def _docker_actions(
     selected = {action.target for action in actions}
     recovered = sum(action.logical_bytes for action in actions)
     projected = max(0, inventory.owned_bytes - recovered)
+    build = next(
+        (item for item in inventory.resources if item.kind is ResourceKind.BUILD_CACHE), None
+    )
     if inventory.owned_bytes > policy.max_size_bytes and projected > policy.warm_size_bytes:
-        build = next(
-            (item for item in inventory.resources if item.kind is ResourceKind.BUILD_CACHE), None
-        )
         if build is not None and build.identity not in selected:
             reclaim = min(build.logical_bytes, projected - policy.warm_size_bytes)
             actions.append(
@@ -70,6 +70,24 @@ def _docker_actions(
                 )
             )
             projected -= reclaim
+            selected.add(build.identity)
+    if build is not None and build.logical_bytes and build.identity not in selected:
+        # The age refinement applies below the maximum too. Only pressure
+        # reached BuildKit before, so three-week-old records sat under a
+        # Docker total that never crossed its maximum. Reclaim is unknown
+        # until BuildKit applies the filter, so none is claimed here.
+        actions.append(
+            RuntimePruneAction(
+                runtime_id=inventory.runtime_id,
+                operation=RuntimeOperation.PRUNE_BUILD_CACHE,
+                target=build.identity,
+                logical_bytes=0,
+                reason=f"BuildKit records unused for {policy.maximum_age_hours}h",
+                keep_bytes=0,
+                maximum_age_hours=policy.maximum_age_hours,
+                all_unused=True,
+            )
+        )
     if inventory.owned_bytes > policy.max_size_bytes and projected > policy.warm_size_bytes:
         volumes = sorted(
             (
