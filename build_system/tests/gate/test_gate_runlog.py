@@ -735,14 +735,24 @@ def _tight(tmp_path: Path):
     return _checkout(tmp_path, keep_runs=1, keep_bytes=1)
 
 
-def _second_allocator(config) -> threading.Thread:
-    """Another command opening its own run, as a thread we can join."""
+class _SecondAllocator(threading.Thread):
+    """Another command opening its own run, as a thread we can join.
 
-    def allocate() -> None:
-        with RunLog.open(config, "other"):
-            pass
+    It keeps its own failure: raised on the thread, an error reached pytest
+    only as an unhandled-thread warning at teardown, attributed to nothing.
+    """
 
-    return threading.Thread(target=allocate)
+    def __init__(self, config) -> None:
+        super().__init__()
+        self._config = config
+        self.error: BaseException | None = None
+
+    def run(self) -> None:
+        try:
+            with RunLog.open(self._config, "other"):
+                pass
+        except BaseException as error:  # reported by the test that joins it
+            self.error = error
 
 
 def test_a_run_is_protected_before_its_directory_becomes_visible(
@@ -761,28 +771,34 @@ def test_a_run_is_protected_before_its_directory_becomes_visible(
 
     real = module.hold_active
     observed: list[bool] = []
+    second = _SecondAllocator(config)
 
     def barrier(directory: Path, settings):
         # Fires for this run only: the second allocator reaches the same code
         # and would otherwise start a third, and so on.
         if not observed:
-            thread = _second_allocator(config)
-            thread.start()
-            thread.join(timeout=1.0)
-            observed.append(thread.is_alive())
+            second.start()
+            second.join(timeout=1.0)
+            observed.append(second.is_alive())
             monkeypatch.setattr(module, "hold_active", real)
-            thread.join(timeout=10)
         return real(directory, settings)
 
     monkeypatch.setattr(module, "hold_active", barrier)
 
     with RunLog.open(config, "mine") as log:
         directory = log.directory
+    # Joined here and not in the barrier: the barrier runs under the history
+    # lock the second allocator is waiting for, so a join there could only
+    # time out. Unjoined, it was still writing into `tmp_path` when a loaded
+    # suite reached teardown and removed it.
+    second.join(timeout=30)
 
     assert observed == [True], (
         "another allocator ran while this directory existed unmarked, which is "
         "the window it used to be rotated away in"
     )
+    assert not second.is_alive(), "the second allocator never finished once the lock was free"
+    assert second.error is None, f"the second allocator failed: {second.error!r}"
     assert directory.is_dir()
     events = {entry["event"] for entry in read(directory, config.runlog)}
     assert {"run.start", "run.end"} <= events
@@ -802,14 +818,14 @@ def test_a_run_stays_protected_until_its_summary_is_written(
 
     real = module.write_summary
     ran: list[bool] = []
+    second = _SecondAllocator(config)
 
     def barrier(directory: Path, settings, **kwargs):
         if not ran:
             monkeypatch.setattr(module, "write_summary", real)
-            thread = _second_allocator(config)
-            thread.start()
-            thread.join(timeout=10)
-            ran.append(not thread.is_alive())
+            second.start()
+            second.join(timeout=10)
+            ran.append(not second.is_alive())
         return real(directory, settings, **kwargs)
 
     monkeypatch.setattr(module, "write_summary", barrier)
@@ -817,7 +833,9 @@ def test_a_run_stays_protected_until_its_summary_is_written(
     with RunLog.open(config, "mine") as log:
         directory = log.directory
 
+    second.join(timeout=30)
     assert ran == [True], "the second allocator never finished"
+    assert second.error is None, f"the second allocator failed: {second.error!r}"
     assert directory.is_dir(), "the just-finished run was rotated while closing"
     assert (directory / config.runlog.summary).is_file()
 
