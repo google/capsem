@@ -849,6 +849,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The co-work profile advances to 0.6.3 and the code profile to 0.6.4. The
+  staged co-work 0.6.2 and code 0.6.3 images predate the quieter boot
+  console, so 0.6.4 binaries booted them with every init line written to
+  the serial console twice.
+
 - Releases are prepared on one branch and proven locally first. Every fix
   goes on the release branch with its CHANGELOG entry, `just test` must pass
   on that exact commit on the build machine, and only then is `main`
