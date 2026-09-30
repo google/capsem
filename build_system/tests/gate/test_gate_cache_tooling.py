@@ -168,3 +168,19 @@ def test_compiler_cache_server_is_scoped_to_the_gate_command(monkeypatch) -> Non
         command.env[CONFIG.environment.sccache_base_dirs] == str(ROOT)
         for command in runner.commands
     )
+
+
+def test_a_host_without_the_compiler_cache_never_starts_its_server(monkeypatch) -> None:
+    """A hosted runner has no sccache. Once the environment always carried
+    CARGO_INCREMENTAL, a non-empty environment stopped meaning "sccache is
+    here": the stable 0.6.4 package build died on `sccache --stop-server`
+    with FileNotFoundError before compiling anything."""
+    monkeypatch.setattr(cachetooling.shutil, "which", lambda _: None)
+    runner = RecordingRunner(ROOT)
+    runner.observing = False
+    resource = cachetooling.CompilerCache(CONFIG, runner)
+
+    with held(resource):
+        assert CONFIG.environment.rustc_wrapper not in resource.environment()
+
+    assert runner.commands == []

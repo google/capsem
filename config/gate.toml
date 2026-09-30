@@ -3160,10 +3160,12 @@ p95_ms = 9.0
 p99_ms = 20.0
 cpu_s = 0.42
 
+# The timeline, the costliest on-demand ledger route, measured 0.199-0.250 s
+# service CPU per 128 requests on this host; 0.14 left it no required headroom.
 [benchmark.route_health.budgets.ledger.service]
 p95_ms = 7.0
 p99_ms = 15.0
-cpu_s = 0.14
+cpu_s = 0.18
 [benchmark.route_health.budgets.ledger.gateway]
 p95_ms = 9.0
 p99_ms = 20.0
