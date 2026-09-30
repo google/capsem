@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entered. The walk now goes through no-follow descriptors, never enters a
   symlink, and stops at a fixed depth.
 
+- The MCP server, TypeScript SDK and web dashboard no longer resolve
+  `fast-uri` 3.1.7 (GHSA-hrr3-gc8f-f4qj), `ip-address` 10.7.0
+  (GHSA-h3mg-xc3c-68pw, GHSA-j6r3-76f7-8jcv: unbounded work on hostile input)
+  or `brace-expansion` 5.0.9 (GHSA-6j4f-fj2g-mc7p, GHSA-q2hr-2g5m-vwhr,
+  GHSA-qhr7-859c-m2p7: stack exhaustion on nested patterns). The dashboard
+  and marketing site now require `fast-uri` 3.1.8 or later.
+
 - The web dashboard and marketing site no longer resolve `fast-uri` 3.1.6,
   which GHSA-qw65-cvwx-89v3 and GHSA-58mr-gqgx-xq4g (authority injection
   through an unvalidated port) affect. Both now require 3.1.7 or later; the
