@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entered. The walk now goes through no-follow descriptors, never enters a
   symlink, and stops at a fixed depth.
 
+- The build tooling resolves `urllib3` 2.8.0 instead of 2.7.0
+  (GHSA-8988-9cw3-xx77: an HTTPS proxy's TLS settings could be ignored;
+  GHSA-gh4c-6fx4-qh6g and GHSA-vxq7-64xx-v4gw: unbounded work on hostile
+  chunked responses), and the documentation site `dompurify` 3.4.16 instead
+  of 3.4.13 (GHSA-p98j-92pf-mc4p).
+
 - The MCP server, TypeScript SDK and web dashboard no longer resolve
   `fast-uri` 3.1.7 (GHSA-hrr3-gc8f-f4qj), `ip-address` 10.7.0
   (GHSA-h3mg-xc3c-68pw, GHSA-j6r3-76f7-8jcv: unbounded work on hostile input)
