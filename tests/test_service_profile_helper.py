@@ -28,7 +28,9 @@ def test_service_fixture_log_filter_honors_diagnostic_override(variable: str) ->
     )
 
 
-def test_service_fixture_log_filter_keeps_required_evidence_under_ambient_warn() -> None:
+def test_service_fixture_log_filter_keeps_required_evidence_under_ambient_warn() -> (
+    None
+):
     assert (
         service_helper.test_rust_log_filter({"RUST_LOG": "warn"})
         == "service=info,capsem=debug,warn"
@@ -81,7 +83,9 @@ def test_service_instance_stop_removes_private_home(
     home = tmp_path / "capsem-home"
     home.mkdir()
     monkeypatch.setattr(service_helper, "make_capsem_tmp_dir", lambda _prefix: home)
-    monkeypatch.setattr(service_helper, "preserve_tmp_dir_on_failure", lambda _path: None)
+    monkeypatch.setattr(
+        service_helper, "preserve_tmp_dir_on_failure", lambda _path: None
+    )
     service = service_helper.ServiceInstance()
 
     service.stop()
@@ -95,7 +99,9 @@ def test_service_instance_can_keep_shutdown_flushed_state_for_assertions(
     home = tmp_path / "capsem-home"
     home.mkdir()
     monkeypatch.setattr(service_helper, "make_capsem_tmp_dir", lambda _prefix: home)
-    monkeypatch.setattr(service_helper, "preserve_tmp_dir_on_failure", lambda _path: None)
+    monkeypatch.setattr(
+        service_helper, "preserve_tmp_dir_on_failure", lambda _path: None
+    )
     service = service_helper.ServiceInstance()
     state = service.home_dir / "sessions" / "main.db"
     state.parent.mkdir()
@@ -114,7 +120,9 @@ def test_service_instance_stop_and_read_log_reads_complete_rotated_stream(
     home = tmp_path / "capsem-home"
     home.mkdir()
     monkeypatch.setattr(service_helper, "make_capsem_tmp_dir", lambda _prefix: home)
-    monkeypatch.setattr(service_helper, "preserve_tmp_dir_on_failure", lambda _path: None)
+    monkeypatch.setattr(
+        service_helper, "preserve_tmp_dir_on_failure", lambda _path: None
+    )
     service = service_helper.ServiceInstance()
     (service.tmp_dir / "service.log").write_text("first\n")
     (service.tmp_dir / "service.2026-08-30.log").write_text("second\n")
@@ -149,3 +157,41 @@ def test_service_instance_preserves_artifacts_during_exception_teardown(
 
     assert preserved == [(home, True)]
     assert not home.exists()
+
+
+class _Client:
+    def __init__(self, response=None, error=None):
+        self._response = response
+        self._error = error
+
+    def post(self, *args, **kwargs):
+        if self._error is not None:
+            raise self._error
+        return self._response
+
+
+@pytest.mark.parametrize(
+    "client",
+    [_Client(error=TimeoutError()), _Client(None), _Client({"error": "VM is booting"})],
+)
+def test_exec_ready_is_false_when_the_vm_cannot_answer(client) -> None:
+    assert service_helper.wait_exec_ready(client, "vm", timeout=1) is False
+
+
+def test_exec_ready_reports_an_unreadable_answer_instead_of_a_dead_vm() -> None:
+    """A binary transition probe boots the public release, whose exec answers
+    stdout as a plain string; swallowing the decode error reported a VM that
+    had just run the command as one that never became ready."""
+    with pytest.raises(TypeError):
+        service_helper.wait_exec_ready(_Client({"stdout": "ready\n"}), "vm", timeout=1)
+
+
+def test_installed_exec_output_reads_both_published_wire_shapes() -> None:
+    read = service_helper.installed_exec_output_text
+    assert read({"stdout": "ready\n"}) == "ready\n"
+    assert read({"stdout": {"encoding": "utf8", "data": "ready\n"}}) == "ready\n"
+    with pytest.raises(AssertionError):
+        read({"stdout": {"encoding": "base64", "data": "cmVhZHkK"}})
+    assert service_helper.wait_exec_ready(
+        _Client({"stdout": "ready\n"}), "vm", timeout=1, read=read
+    )

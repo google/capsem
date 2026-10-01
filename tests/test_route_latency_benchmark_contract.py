@@ -17,7 +17,9 @@ from tests.ironbank.test_route_health import (
     _scaled_hot_route_budget,
 )
 
-MODULE_PATH = Path(__file__).parent / "capsem-serial" / "test_route_latency_benchmark.py"
+MODULE_PATH = (
+    Path(__file__).parent / "capsem-serial" / "test_route_latency_benchmark.py"
+)
 SPEC = importlib.util.spec_from_file_location("route_latency_benchmark", MODULE_PATH)
 assert SPEC is not None
 route_latency_benchmark = importlib.util.module_from_spec(SPEC)
@@ -110,7 +112,11 @@ def test_hot_route_uses_the_least_contended_independent_window() -> None:
             service_cpu_s=cpu,
             gateway_cpu_s=cpu + 0.01,
         )
-        for latency, cpu in ((0.5, 0.1), (9.0, 0.5), (0.7, 0.09))
+        for latency, cpu in (
+            (0.5, 0.1),
+            *[(9.0, 0.5)] * (HOT_ROUTE_WINDOWS - 2),
+            (0.7, 0.09),
+        )
     ]
 
     selected = _least_contended_route_window(windows)
@@ -123,7 +129,7 @@ def test_hot_route_uses_the_least_contended_independent_window() -> None:
 def test_windowed_route_measurement_uses_independent_reference_windows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cpu_windows = iter((0.1, 0.5, 0.09))
+    cpu_windows = iter([0.1, *[0.5] * (HOT_ROUTE_WINDOWS - 2), 0.09])
     sample_counts: list[int] = []
 
     def measure_route(
