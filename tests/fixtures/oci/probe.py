@@ -97,7 +97,7 @@ for attempt in range(32):
         child = os.fork()
     except OSError as error:
         assert error.errno == errno.EAGAIN, error
-        open('/scratch/ready', 'w').write(str(attempt))
+        open('/scratch/.ready', 'w').write(str(attempt)); __import__('os').rename('/scratch/.ready', '/scratch/ready')
         break
     if child == 0:
         time.sleep(60)
@@ -121,7 +121,7 @@ if os.fork() == 0:
     os._exit(42)
 _, status = os.wait()
 assert os.WIFSIGNALED(status) and os.WTERMSIG(status) == 9, status
-open('/scratch/ready', 'w').write('oom')
+open('/scratch/.ready', 'w').write('oom'); __import__('os').rename('/scratch/.ready', '/scratch/ready')
 """
         with self.bundle.running(source + HOLD):
             wait_for(lambda: (self.bundle.scratch / "ready").exists(), "memory limit")
@@ -142,7 +142,7 @@ open('/scratch/ready', 'w').write('oom')
     def test_cpu_quota(self):
         source = """
 import time
-open('/scratch/ready', 'w').write('cpu')
+open('/scratch/.ready', 'w').write('cpu'); __import__('os').rename('/scratch/.ready', '/scratch/ready')
 deadline = time.monotonic() + 3
 while time.monotonic() < deadline:
     pass
@@ -170,7 +170,7 @@ import os, signal, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 child = os.fork()
 if child:
-    open('/scratch/ready', 'w').write(str(child))
+    open('/scratch/.ready', 'w').write(str(child)); __import__('os').rename('/scratch/.ready', '/scratch/ready')
 while True:
     time.sleep(1)
 """
@@ -190,7 +190,7 @@ while True:
 import os, signal
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 if os.fork():
-    open('/scratch/ready', 'w').write('descendant')
+    open('/scratch/.ready', 'w').write('descendant'); __import__('os').rename('/scratch/.ready', '/scratch/ready')
 """
             + HOLD
         )
