@@ -246,10 +246,14 @@ jobs:
             --key "$RUNNER_TEMP/private_keys/AuthKey_${APPLE_API_KEY}.p8" \
             --key-id "$APPLE_API_KEY" \
             --issuer "$APPLE_API_ISSUER" \
-            >/dev/null 2>&1; then
+            >/dev/null 2>"$RUNNER_TEMP/notarytool-history.log"; then
             echo "Notarization credentials verified (notarytool history succeeded)"
           else
-            echo "::error::notarytool history failed -- check APPLE_API_ISSUER, APPLE_API_KEY, and APPLE_API_KEY_PATH secrets"
+            status=$?
+            rm -rf "$RUNNER_TEMP/private_keys"
+            # Apple's own reason: an expired agreement, a revoked key, or an outage.
+            cat "$RUNNER_TEMP/notarytool-history.log"
+            echo "::error::notarytool history failed (exit $status) -- see Apple's reason above; check APPLE_API_ISSUER, APPLE_API_KEY, APPLE_API_KEY_PATH and the developer account's agreements"
             exit 1
           fi
           rm -rf "$RUNNER_TEMP/private_keys"
