@@ -179,7 +179,7 @@ def test_exec_ready_is_false_when_the_vm_cannot_answer(client) -> None:
 
 
 def test_exec_ready_reports_an_unreadable_answer_instead_of_a_dead_vm() -> None:
-    """The stable 0.6.4 transition probe booted 0.6.3, whose exec answers
+    """A binary transition probe boots the public release, whose exec answers
     stdout as a plain string; swallowing the decode error reported a VM that
     had just run the command as one that never became ready."""
     with pytest.raises(TypeError):
