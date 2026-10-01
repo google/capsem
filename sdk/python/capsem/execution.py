@@ -10,6 +10,9 @@ from .models import ExecOutput, ExecOutputEncoding, ExecResponse
 EXEC_TIMEOUT_CEILING_SECS = 60 * 60
 #: The gateway's budget for readiness, boot and teardown around a command.
 GATEWAY_REQUEST_BUDGET_SECS = 120
+#: How long the service waits for a container workload to become ready
+#: before it answers a create; the image pull happens inside this window.
+CREATE_READY_SECS = 110
 
 
 def command_deadline(default: float, timeout_secs: int | None) -> float:
