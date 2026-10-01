@@ -16,7 +16,7 @@ from helpers.constants import (
 from helpers.gateway import TcpHttpClient
 from helpers.service import (
     ServiceInstance,
-    exec_output_text,
+    installed_exec_output_text,
     resolve_winterfell_artifact_roots,
     vm_record,
     wait_exec_ready,
@@ -59,9 +59,12 @@ def test_installed_gateway_persists_exec_state() -> None:
         )
         assert status == 200 and isinstance(created, dict), created
         vm_id = created["id"]
-        assert wait_exec_ready(service.client(), vm_id, timeout=EXEC_READY_TIMEOUT), (
-            vm_record(service.client(), vm_id)
-        )
+        assert wait_exec_ready(
+            service.client(),
+            vm_id,
+            timeout=EXEC_READY_TIMEOUT,
+            read=installed_exec_output_text,
+        ), vm_record(service.client(), vm_id)
 
         command = "printf 'the north remembers' > /root/stark_words.txt"
         assert (
@@ -70,13 +73,19 @@ def test_installed_gateway_persists_exec_state() -> None:
         )
         assert gateway.call_json("POST", f"/vms/{vm_id}/stop")[0] == 200
         assert gateway.call_json("POST", f"/vms/{vm_id}/resume", timeout=120)[0] == 200
-        assert wait_exec_ready(service.client(), vm_id, timeout=EXEC_READY_TIMEOUT), (
-            vm_record(service.client(), vm_id)
-        )
+        assert wait_exec_ready(
+            service.client(),
+            vm_id,
+            timeout=EXEC_READY_TIMEOUT,
+            read=installed_exec_output_text,
+        ), vm_record(service.client(), vm_id)
         status, result = gateway.call_json(
             "POST", f"/vms/{vm_id}/exec", {"command": "cat /root/stark_words.txt"}
         )
-        assert status == 200 and exec_output_text(result) == "the north remembers"
+        assert (
+            status == 200
+            and installed_exec_output_text(result) == "the north remembers"
+        )
     finally:
         if vm_id is not None:
             with suppress(Exception):

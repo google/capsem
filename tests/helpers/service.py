@@ -320,7 +320,9 @@ def preserve_tmp_dir_on_failure(
     Also rotates `cache/target/tests/evidence/` after each preserve, keeping only the
     most recent `ARTIFACT_MAX_KEPT_DIRS` failure dirs.
     """
-    artifacts_root = Path(os.environ.get("CAPSEM_TEST_ARTIFACTS_ROOT", failures.ARTIFACTS_ROOT))
+    artifacts_root = Path(
+        os.environ.get("CAPSEM_TEST_ARTIFACTS_ROOT", failures.ARTIFACTS_ROOT)
+    )
     tmp_dir = Path(tmp_dir)
     if not tmp_dir.exists():
         return
@@ -656,12 +658,24 @@ def exec_output_text(response, stream="stdout"):
     return output["data"]
 
 
-def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
+def installed_exec_output_text(response, stream="stdout"):
+    """Read a stream from an installed release, which may predate typed output.
+
+    Releases up to 0.6.3 answer each stream as a plain string; the transition
+    probes boot the public release before upgrading it.
+    """
+    output = response[stream]
+    return output if isinstance(output, str) else exec_output_text(response, stream)
+
+
+def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT, read=exec_output_text):
     """Wait until a VM responds to exec.
 
     The server's handle_exec already polls internally for VM readiness,
     so a single call with adequate timeout is sufficient -- no client-side
-    retry loop needed.
+    retry loop needed. A failed request or an error answer means "not
+    ready"; output `read` cannot decode raises, rather than passing for a
+    dead VM.
     """
     try:
         resp = client.post(
@@ -669,9 +683,11 @@ def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
             {"command": "echo ready", "timeout_secs": timeout},
             timeout=timeout + 5,
         )
-        return resp is not None and "ready" in exec_output_text(resp)
     except Exception:
         return False
+    if not isinstance(resp, dict) or "stdout" not in resp:
+        return False
+    return "ready" in read(resp)
 
 
 def vm_record(client, typed_id):
