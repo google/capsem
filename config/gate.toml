@@ -3099,7 +3099,12 @@ minimum_headroom_factor = 1.2
 cpu_accounting_slack_s = 0.011
 reference_samples = 64
 window_samples = 128
-windows = 3
+# The least contended window is kept. With three, one host-busy stretch
+# covering all of them failed whichever of ~80 routes it landed on: the
+# co-work evaluate route measured 0.182 s in a proof and 0.123-0.136 s in
+# every rerun, and a 1.5x-headroom sweep of both profiles found no budget
+# short of margin. Five windows add ~40 s a profile.
+windows = 5
 
 [benchmark.route_health.concurrent_stats]
 p95_ms = 15.0
