@@ -164,6 +164,25 @@ class DebProof:
             interval=self._install.systemd_ready_interval_seconds,
             sleep=self._sleep,
         )
+        self._claim_paths()
+
+    def _claim_paths(self) -> None:
+        """Create and own the writable staging layout before staging writes to it.
+
+        The sealed image dockerignores `cache/`, so the only `/src/cache` in
+        this container is the mountpoint chain Docker materialized as root for
+        the read-only package mount. On a host whose uid is not the guest's,
+        staging as the guest then dies at `mkdir cache/target/tests` -- the
+        exact shape `InstallContainer._claim_paths` already repairs for the
+        install gate, applied here to the proof container it never covered.
+        """
+        guest = self._install.guest_user.name
+        owned = self._install.layout.owned_paths(self._install.mount)
+        self._docker.exec(self._proof.container, ["mkdir", "-p", *owned])
+        self._docker.exec(self._proof.container, ["chown", "-R", f"{guest}:{guest}", *owned])
+        parents = self._install.layout.owned_parent_paths(self._install.mount)
+        self._docker.exec(self._proof.container, ["chown", f"{guest}:{guest}", *parents])
+
     def _prepare_handoff(self, package: str, version: str) -> None:
         """Author the exact local graph before the package's postinst runs."""
         layout = self._install.layout
@@ -262,6 +281,11 @@ class DebProof:
                 f"{guest.home}/{self._install.capsem_home}",
                 "--manifest-url",
                 manifest,
+                # The handoff hydrated the bytes; the baked URL is what the
+                # postinst preserves in manifest-metadata for a preverified
+                # payload. The verifier models exactly this split.
+                "--metadata-manifest-url",
+                self.manifest_url,
                 "--channel",
                 self.channel,
                 "--package-version",

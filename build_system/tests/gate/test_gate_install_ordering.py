@@ -415,7 +415,7 @@ def test_the_legacy_runtime_projection_is_refused(tmp_path: Path) -> None:
     graph = ReleaseGraph(Docker(runner), CONFIG, source_commit=SOURCE_COMMIT)
 
     with pytest.raises(GateError, match="not the legacy runtime projection"):
-        graph.hand_off(f"{LAYOUT.assets}/manifest.json")
+        graph.hand_off(f"{LAYOUT.assets}/manifest.json", channel=INSTALL.channel)
 
     assert not runner.ran(r"install-manifest-request"), (
         "the refusal must happen before anything is written"
@@ -430,7 +430,7 @@ def test_a_handoff_target_that_does_not_exist_is_refused(tmp_path: Path) -> None
     graph = ReleaseGraph(Docker(runner), CONFIG, source_commit=SOURCE_COMMIT)
 
     with pytest.raises(GateError, match="would find no request"):
-        graph.hand_off(AUTHORITATIVE)
+        graph.hand_off(AUTHORITATIVE, channel=INSTALL.channel)
 
 
 def test_clearing_a_handoff_that_was_never_written_does_nothing(tmp_path: Path) -> None:

@@ -196,7 +196,7 @@ def test_exact_package_graph_is_checked_and_handed_off_before_dpkg(
     handoff = transcript.index("install-manifest-request.sh write")
     install = transcript.index("dpkg -i")
     assert extract < first_build < record < second_build < check < handoff < install
-    authoritative = f"{CONFIG.install.layout.channel}/{CONFIG.install.graph_manifest}"
+    authoritative = f"{CONFIG.install.layout.channel}/assets/nightly/manifest.json"
     record_command = runner.matching(r"assets channel record-binary")[0]
     assert f"--manifest-path {authoritative}" in record_command
     assert f"--source-commit {SOURCE_COMMIT}" in transcript
@@ -215,7 +215,7 @@ def test_read_only_content_is_staged_before_record_binary_mutates_the_generated_
     assert f":{CONFIG.install.proof_assets_mount}:ro" in started
     assert f":{CONFIG.install.proof_config_mount}:ro" in started
     record = runner.matching(r"assets channel record-binary")[0]
-    authoritative = f"{CONFIG.install.layout.channel}/{CONFIG.install.graph_manifest}"
+    authoritative = f"{CONFIG.install.layout.channel}/assets/nightly/manifest.json"
     assert f"--manifest-path {authoritative}" in record
     assert (
         f"--manifest-path {CONFIG.install.proof_assets_mount}/{CONFIG.install.manifest_name}"

@@ -29,6 +29,8 @@ looks like a working install.
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
+
 from . import config as gate_config
 from .docker import Docker
 from .errors import GateError
@@ -101,7 +103,19 @@ class ReleaseGraph:
         manifest = author_binary_graph(assets_manifest, build=build, record=record)
         self.build_site(dist=out_dir)
         self.check_channel(admin, channel=channel, dist=out_dir, manifest=manifest)
-        self.hand_off(manifest)
+        self.hand_off(manifest, channel=channel)
+
+    def _authored_graph(self, *, channel: str, out_dir: str) -> str:
+        """Where `assets channel build --channel <channel>` writes its graph.
+
+        `capsem-admin` lays the distribution out as
+        `<out_dir>/assets/<channel>/<manifest>`. The configured
+        `graph_manifest` names that location for the install gate's `local`
+        channel; any other channel -- the package proof's `stable`, say --
+        replaces the channel segment, not the shape.
+        """
+        name = PurePosixPath(self._config.graph_manifest).name
+        return f"{out_dir}/assets/{channel}/{name}"
 
     def extract_admin(self, package: str) -> str:
         """Unpack the package without installing it, and return its admin binary.
@@ -206,7 +220,7 @@ class ReleaseGraph:
             user=self._config.guest_user.name,
             cwd=self._mount,
         )
-        return f"{out_dir}/{self._config.graph_manifest}"
+        return self._authored_graph(channel=channel, out_dir=out_dir)
 
     def build_site(self, *, dist: str) -> None:
         """Render the release site over the generated distribution."""
@@ -241,7 +255,7 @@ class ReleaseGraph:
 
     # -- the handoff -------------------------------------------------------
 
-    def hand_off(self, manifest: str) -> None:
+    def hand_off(self, manifest: str, *, channel: str) -> None:
         """Point the package's postinst at the graph just authored.
 
         Refuses two mistakes the installer cannot report. A target that does
@@ -251,8 +265,9 @@ class ReleaseGraph:
         an install that looks fine and carries the wrong manifest.
         """
         absolute = manifest if manifest.startswith("/") else f"{self._mount}/{manifest}"
+        authored = f"/assets/{channel}/{PurePosixPath(self._config.graph_manifest).name}"
         if absolute.endswith(f"/{self._config.legacy_projection}") and not absolute.endswith(
-            f"/{self._config.graph_manifest}"
+            authored
         ):
             raise GateError(
                 f"the install handoff must select the authoritative release graph, "
