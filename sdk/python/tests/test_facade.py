@@ -7,14 +7,7 @@ import json
 from typing import Any
 
 import pytest
-from capsem import (
-    VM,
-    ExecResult,
-    HttpError,
-    Hypervisor,
-    Registry,
-    models,
-)
+from capsem import VM, ExecResult, HttpError, Hypervisor, Registry, models
 from capsem.execution import CREATE_READY_SECS, GATEWAY_REQUEST_BUDGET_SECS, command_deadline
 
 from .facade_gateway import gateway
@@ -39,10 +32,8 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             profiles = await hv.profiles.list()
             assert profiles and isinstance(profiles[0], models.ProfileSummary)
             network = await hv.networks.create("team")
-            vm = await hv.create(
-                profile=profiles[0], name="new", cpus=4, memory=8,
-                env={"LANG": "C"}, networks=[network],
-            )
+            vm = await hv.create(profile=profiles[0], name="new", cpus=4, memory=8,
+                                 env={"LANG": "C"}, networks=[network])
             assert vm.id == "created-id" and vm.name == "new"
             body = json.loads(state.requests[-1][2])
             assert body == {"profile_id": "code", "name": "new", "persistent": True,
@@ -54,10 +45,17 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             with pytest.raises(RuntimeError, match="closed"):
                 async with vm:
                     pass
+            ref, by_name = hv.vm(id="abc"), hv.vm(name="named")
+            assert ref.id == "abc" and ref._transport is hv._transport
+            assert (await ref.exec("true")).exit_code == 0 and state.requests[-1][1] == "/vms/abc/exec"
+            assert (await by_name.exec("true")).exit_code == 0 and by_name.id == "vm-0"
+            assert [r[1] for r in state.requests[-2:]] == ["/vms/list", "/vms/vm-0/exec"]
+            for bad in ({}, {"id": "abc", "name": "x"}):
+                with pytest.raises(ValueError, match="exactly one"):
+                    hv.vm(**bad)
             temporary = await hv.create()
             body = json.loads(state.requests[-1][2])
-            assert body["persistent"] is False and body["name"] is None
-            assert body["cpus"] is None and body["ram_mb"] is None
+            assert (body["persistent"], body["name"], body["cpus"], body["ram_mb"]) == (False, None, None, None)
             assert isinstance(await hv.log(models.HostLogSource.SERVICE, grep="boot", tail=3, max_bytes=1024), models.HostLogsResponse)
             assert isinstance(await hv.run("printf ok", timeout_secs=4), ExecResult)
             assert isinstance(await hv.debug.panics(since="5m", limit=3), models.PanicsResponse)

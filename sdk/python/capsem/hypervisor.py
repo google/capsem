@@ -72,6 +72,13 @@ class Hypervisor(Client):
     async def list(self) -> models.ListResponse:
         return await api.list_vms(self._transport)
 
+    def vm(self, *, name: str | None = None, id: str | None = None) -> VM:
+        """A handle for an existing VM on this hypervisor's transport, selected by
+        exactly one nonempty name or id."""
+        vm = VM._from_transport(self._transport)
+        vm._select(name=name, id=id)
+        return vm
+
     async def create(self, *, profile: models.ProfileSummary | None = None,
                      name: str = "", cpus: int | None = None,
                      memory: int | None = None, env: dict[str, str] | None = None,
