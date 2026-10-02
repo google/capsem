@@ -111,15 +111,15 @@ def test_the_check_gates_publication_and_force_replaces_it_with_source_proof(nam
 
     assert "source.worktree-clean" not in forced
 
-    # Force drops the clean-tree refusal, not every check. It still consumes
-    # the exact local journal, and proves the source it is about to publish
-    # with the Citadel and release contracts before the release lanes perform
-    # their artifact qualification.
-    assert forced[0] == "qualification.accept"
+    # Force drops the clean-tree refusal and the local journal, not every
+    # check: it proves the source it is about to publish with the Citadel and
+    # release contracts before the release lanes perform their artifact
+    # qualification.
+    assert "qualification.accept" not in forced
     assert "qualification.waived" not in forced
     for proof in ("citadel", "contracts.release"):
         assert proof in forced, f"a forced release skips {proof}"
         assert forced.index(proof) < forced.index("source.publish-ref"), (
             f"{proof} must run before anything is published"
         )
-    assert set(guarded) - set(forced) == {"source.worktree-clean"}
+    assert set(guarded) - set(forced) == {"source.worktree-clean", "qualification.accept"}

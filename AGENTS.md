@@ -281,6 +281,9 @@ a release to find out what is broken: the hosted lane takes hours per attempt
 and stops at the first failure, so it finds one bug per attempt. The 0.6.4
 stable release spent four dispatches, one per bug, that a local run catches in
 minutes. Nothing runs in CI that `just test` has not run locally first.
+The one escape is the release command's `force` argument, which the user
+asks for explicitly: it waives the local journal, never the citadel guards,
+release contracts, live advisory audit or hosted qualification.
 
 A proof covers the tested commit and any commit with the identical Git tree.
 Fast-forward `main` to the tested commit (or merge only when the merge commit's

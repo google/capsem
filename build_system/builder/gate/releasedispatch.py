@@ -43,14 +43,22 @@ class QualifiedRelease:
     machine lock, or any tag, push, or dispatch.
 
     The unattended nightly scheduler is the exception: it runs on a fresh
-    hosted runner with no journal and no way to make one. Declared as a class
-    default and narrowed per instance, because sandbox enforcement reads the
-    class before a command exists.
+    hosted runner with no journal and no way to make one. `--force` is the
+    operator's: a dependency advisory published during the two-hour proof
+    refused three stable dispatches in a row, each fixed by a lockfile bump
+    that then needed another full proof. A forced release still runs the
+    citadel guards, the release contracts and the live advisory audit here,
+    and the hosted lane qualifies its artifacts before publishing. Declared
+    as a class default and narrowed per instance, because sandbox enforcement
+    reads the class before a command exists.
     """
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        if getattr(self._args, "channel", None) in self._config.release.unattended_channels:
+        if (
+            getattr(self._args, "channel", None) in self._config.release.unattended_channels
+            or self._forced()
+        ):
             self.qualification_policy = QualificationPolicy.NONE
 
     def _qualification_steps(self, plan: Plan, commit: SourceCommit, *, after: tuple) -> tuple:
@@ -108,8 +116,8 @@ class QualifiedRelease:
     def _forced_source_proof(self, plan: Plan, *, after: tuple) -> tuple:
         """The cheap proof a forced release still owes.
 
-        `--force` bypasses the developer checkout's clean-tree refusal; it does
-        not waive the local `just test` journal or the hosted lane's product
+        `--force` bypasses the developer checkout's clean-tree refusal and the
+        local `just test` journal; it does not waive the hosted lane's product
         qualification. It used to waive
         *everything*, so a forced release could dispatch source that fails a
         six-second guard -- and did, three times in one afternoon, each costing

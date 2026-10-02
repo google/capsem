@@ -184,8 +184,8 @@ def test_only_networked_release_edges_cross_the_kernel_boundary(name, args) -> N
     )
 
 
-def test_force_does_not_invent_a_local_qualification_waiver() -> None:
-    """`--force` adds source guards; the local journal remains mandatory."""
+def test_force_waives_the_journal_without_a_waiver_step() -> None:
+    """`--force` drops the journal and the clean-tree check, and adds source guards."""
     from helpers.gate import built_command
 
     commit = "f" * 40
@@ -195,8 +195,9 @@ def test_force_does_not_invent_a_local_qualification_waiver() -> None:
         (("channel", "stable"), ("source_commit", commit), ("force", "true")),
         None,
     )._describe()
-    assert forced.labels[0] == "qualification.accept"
+    assert "qualification.accept" not in forced.labels
     assert "qualification.waived" not in forced.labels
+    assert "citadel" in forced.labels
     assert "source.worktree-clean" not in forced.labels
 
 

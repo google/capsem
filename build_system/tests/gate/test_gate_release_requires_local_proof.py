@@ -196,9 +196,20 @@ def test_a_failed_local_test_is_not_proof(config, monkeypatch, name) -> None:
 
 
 @pytest.mark.parametrize("name", sorted(RELEASES))
-def test_force_does_not_waive_the_local_test(config, monkeypatch, name) -> None:
-    """`--force` excuses a dirty outer checkout, never a missing proof."""
-    _refused(_release(config, name, force="true"), monkeypatch, COMMIT)
+def test_force_waives_the_local_test(config, monkeypatch, name) -> None:
+    """`--force` is the operator's escape from the journal, not from the gate:
+    the forced source proof and the hosted lane still run."""
+    command = _release(config, name, force="true")
+
+    assert command.qualification_policy is QualificationPolicy.NONE
+    assert _execute(command, monkeypatch) == ["prefix"]
+
+
+@pytest.mark.parametrize("name", sorted(RELEASES))
+def test_a_forced_release_still_publishes_under_enforcement(config, name) -> None:
+    from capsem_builder.gate.enforcement import enforcement_required
+
+    assert enforcement_required(_release(config, name, force="true"))
 
 
 @pytest.mark.parametrize("name", sorted(RELEASES))

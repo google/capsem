@@ -262,7 +262,7 @@ def missing(commit: SourceCommit) -> GateError:
         "branch head a pull request merged), because the hosted lane takes hours to "
         "find what the local glow-up and functional lanes find in minutes. Failed or "
         f'interrupted attempts do not count; an approved `just test {commit} force "<reason>"` '
-        "retry that passes does."
+        "retry that passes does. An operator-approved release may pass `force` instead."
     )
 
 
