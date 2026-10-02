@@ -650,6 +650,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bodies previously only ever grew. Ephemeral sessions are deleted whole and
   are unaffected.
 
+- `integrations/inspect-ai` (`inspect-capsem-sandbox`) provides a standalone
+  [Inspect AI](https://inspect.aisi.org.uk/) `SandboxEnvironment` registered
+  under `capsem`, supporting direct VM execution (`execution_mode="vm"`,
+  default `code` profile), OCI workload containers, and nested Docker container
+  execution (`execution_mode="container"`) with `Dockerfile` build-context
+  staging, content-addressable image caching, and single-service Docker Compose
+  support (with fast-fail validation on unsupported multi-service
+  configurations).
+
 - The profile catalog names its own defaults, one per runtime: the binary
   compiles them from `config/profile-catalog.toml` (a runtime's default
   counts only when that profile is installed), `GET /status`

@@ -121,3 +121,23 @@ def test_omitting_an_sdk_check_is_rejected(missing: str, monkeypatch: pytest.Mon
     monkeypatch.setitem(globals(), "gate_plan", lambda *_args: incomplete)
     with pytest.raises(AssertionError, match="SDK code"):
         test_sdk_checks_are_in_the_real_fast_plan()
+
+
+def test_inspect_extension_checks_are_in_the_real_fast_plan() -> None:
+    settings = CONFIG.integrations_inspect_ai
+    leaves = sdkchecks.inspect_fragment(Plan("Inspect checks"), CONFIG, after=())
+    actual = gate_plan("test-fast")
+    for check in leaves:
+        assert check.label in actual.labels, SDK_RATIONALE
+        assert actual.step_named(check.label).render() == check.render(), SDK_RATIONALE
+    rendered = "\n".join(line for check in leaves for line in check.render())
+    for command in ("ruff check", "ty check", "--error-on-warning", "pytest", "python -m build"):
+        assert command in rendered, SDK_RATIONALE
+    assert f"{settings.project}/uv.lock" in CONFIG.audits.dependency_policy.lockfiles, SDK_RATIONALE
+    project = tomllib.loads(CONFIG.path(settings.manifest).read_text())
+    coverage, options = project["tool"]["coverage"], project["tool"]["pytest"]["ini_options"]
+    assert coverage["run"]["branch"] is True and coverage["report"]["fail_under"] >= 90, SDK_RATIONALE
+    assert options["filterwarnings"] == ["error"], SDK_RATIONALE
+    assert options["addopts"].split()[0] == "--cov=inspect_capsem", SDK_RATIONALE
+    for path in (path for root in (settings.source, settings.tests) for path in (ROOT / root).rglob("*.py")):
+        assert not re.search(r"#\s*(noqa|type:\s*ignore|ty:\s*ignore)\b", path.read_text()), SDK_RATIONALE

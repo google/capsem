@@ -267,3 +267,15 @@ ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
 coverage = "TypeScript line coverage floor plus packed-tarball stdio acceptance"
 debt = "none: the npm host has one SDK transport and no native packaging owner"
 reason = "The host MCP is a separately installed npm package backed exclusively by the typed gateway SDK."
+
+[[surface]]
+id = "integrations"
+state = "retained"
+current = ["integrations/"]
+targets = ["integrations/"]
+lint = ["fast.integrations.inspect-ai.lint", "fast.integrations.inspect-ai.types", "fast.audit.source-syntax", "fast.audit.markdown"]
+tests = ["fast.integrations.inspect-ai.tests", "fast.integrations.inspect-ai.build", "tests/citadel/test_sdk_quality.py"]
+ci = ["fast-gate", "test", "pr-gate"]
+coverage = "codecov inspect-ai flag; 90 percent line and branch floor"
+debt = "none: standalone integration package"
+reason = "First-party framework integrations (Inspect AI sandbox provider) live under integrations/ and depend on the gateway SDK."

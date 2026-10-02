@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling==1.29.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "inspect-capsem-sandbox"
+version = "0.1.0"
+description = "Capsem SandboxEnvironment extension for Inspect AI"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "capsem>=0.6.3",
+    "inspect-ai>=0.3.263",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.urls]
+Homepage = "https://capsem.org"
+Repository = "https://github.com/google/capsem"
+
+[project.entry-points.inspect_ai]
+capsem = "inspect_capsem._registry"
+
+[tool.hatch.build.targets.wheel]
+packages = ["inspect_capsem"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9",
+    "pytest-asyncio>=1",
+    "pytest-cov>=6",
+    "ruff>=0.15.16",
+    "ty>=0.0.46",
+    "build>=1.2",
+    "hatchling==1.29.0",
+    "editables==0.5",
+]
+
+# Resolve `capsem` from the local workspace checkout during development.
+[tool.uv.sources]
+capsem = { path = "../../sdk/python", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error"]
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--cov=inspect_capsem --cov-report=term-missing:skip-covered --cov-report=xml"
+
+[tool.coverage.run]
+branch = true
+source = ["inspect_capsem"]
+data_file = "../../cache/target/coverage/inspect-ai.coverage"
+
+[tool.coverage.report]
+precision = 2
+fail_under = 90
+
+[tool.coverage.xml]
+output = "../../cache/target/coverage/inspect-ai/coverage.xml"
+
+[tool.ty.environment]
+python-version = "3.11"
