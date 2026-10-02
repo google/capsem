@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entered. The walk now goes through no-follow descriptors, never enters a
   symlink, and stops at a fixed depth.
 
+- The dashboard, documentation, marketing and release-channel sites resolve
+  `devalue` 5.9.4 instead of 5.9.2 (GHSA-4q55-j62x-fr9h, GHSA-hx4r-w6wj-j8fg,
+  GHSA-j22f-vq7h-c4qm, GHSA-mcm9-63f2-9j32, GHSA-r9w8-h9r3-54w4,
+  GHSA-wf3x-273g-mvxv, GHSA-x5rw-q4pp-hg5g: prototype-check bypass and
+  allocation amplification on hostile serialized input).
+
 - The build tooling resolves `urllib3` 2.8.0 instead of 2.7.0
   (GHSA-8988-9cw3-xx77: an HTTPS proxy's TLS settings could be ignored;
   GHSA-gh4c-6fx4-qh6g and GHSA-vxq7-64xx-v4gw: unbounded work on hostile
