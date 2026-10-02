@@ -52,69 +52,67 @@ fn profile_catalog_rejects_flat_only_profile_files() {
 }
 
 /// Which profile a client gets when it names none is the catalog's answer,
-/// not a string compiled into every SDK, and it is asked per runtime: one
-/// profile may claim the VM default and another the container default.
+/// not a string compiled into every SDK, and it is asked per runtime. The
+/// answer comes from `config/profile-catalog.toml`, compiled in, and names a
+/// profile only when that profile is installed.
 #[test]
 fn the_catalog_names_one_default_profile_per_runtime() {
     let builtin = ProfileCatalog::builtin();
     assert_eq!(builtin.default_profile_id(ProfileRuntime::Vm), Some("code"));
     assert_eq!(builtin.default_profile_id(ProfileRuntime::Container), Some("code"));
+    // What the status route publishes: both claims, never just the VM's.
+    assert_eq!(
+        builtin.default_profile_ids(),
+        [("vm", "code"), ("container", "code")].into_iter().collect()
+    );
 
     let dir = tempfile::tempdir().unwrap();
     let code = include_str!("../../../../../../config/profiles/code/profile.toml");
     let cowork = include_str!("../../../../../../config/profiles/co-work/profile.toml");
+    std::fs::create_dir(dir.path().join("co-work")).unwrap();
+    std::fs::write(dir.path().join("co-work/profile.toml"), cowork).unwrap();
+    let catalog = ProfileCatalog::load_from_dir(dir.path()).expect("a catalog without its default still loads");
+    assert!(catalog.default_profile_ids().is_empty(), "code is not installed");
+    for runtime in ProfileRuntime::ALL {
+        assert_eq!(catalog.default_profile_id(runtime), None, "{}", runtime.as_str());
+    }
+
     std::fs::create_dir(dir.path().join("code")).unwrap();
     std::fs::write(dir.path().join("code/profile.toml"), code).unwrap();
     let catalog = ProfileCatalog::load_from_dir(dir.path()).unwrap();
     assert_eq!(catalog.default_profile_id(ProfileRuntime::Vm), Some("code"));
     assert_eq!(catalog.default_profile_id(ProfileRuntime::Container), Some("code"));
+}
 
-    // A second claimant for one runtime is refused, and the message names the
-    // runtime: two profiles may legitimately hold the two claims.
-    std::fs::create_dir(dir.path().join("co-work")).unwrap();
-    std::fs::write(
-        dir.path().join("co-work/profile.toml"),
-        cowork.replace("id = \"co-work\"", "id = \"co-work\"\ndefault_for = [\"container\"]"),
-    )
-    .unwrap();
-    let error = ProfileCatalog::load_from_dir(dir.path()).unwrap_err();
-    assert!(error.contains("more than one default container profile"), "{error}");
-    assert!(
-        !error.contains("default vm profile"),
-        "only the contested runtime is named: {error}"
-    );
-
-    // The two claims may part: the VM keeps code, the container takes co-work.
-    std::fs::write(
-        dir.path().join("code/profile.toml"),
-        code.replace("default_for = [\"vm\", \"container\"]", "default_for = [\"vm\"]"),
-    )
-    .unwrap();
-    let catalog = ProfileCatalog::load_from_dir(dir.path()).expect("one claimant per runtime loads");
-    assert_eq!(catalog.default_profile_id(ProfileRuntime::Vm), Some("code"));
-    assert_eq!(catalog.default_profile_id(ProfileRuntime::Container), Some("co-work"));
-    // What the status route publishes: both claims, never just the VM's.
-    assert_eq!(
-        catalog.default_profile_ids(),
-        [("vm", "code"), ("container", "co-work")].into_iter().collect()
-    );
-
-    std::fs::write(dir.path().join("co-work/profile.toml"), cowork).unwrap();
-    std::fs::write(
-        dir.path().join("code/profile.toml"),
-        code.replace("default_for = [\"vm\", \"container\"]\n", ""),
-    )
-    .unwrap();
-    let catalog = ProfileCatalog::load_from_dir(dir.path()).expect("a catalog without a default still loads");
-    assert!(catalog.default_profile_ids().is_empty());
-    for runtime in ProfileRuntime::ALL {
-        assert_eq!(
-            catalog.default_profile_id(runtime),
-            None,
-            "no profile claims {}",
+/// Every runtime default the binary compiles in names a profile it ships.
+#[test]
+fn the_compiled_defaults_name_shipped_profiles() {
+    let builtin = ProfileCatalog::builtin();
+    for (runtime, id) in runtime_defaults() {
+        assert!(
+            builtin.get(id).is_some(),
+            "{} default {id} is not a shipped profile",
             runtime.as_str()
         );
     }
+}
+
+/// A published profile ledger is staged by binaries already installed, which
+/// parse it strictly: 0.6.3 refused `default_for` and failed every automatic
+/// update to 0.6.4. The claim is not a profile field, and adding it back is
+/// refused here first.
+#[test]
+fn a_profile_cannot_claim_a_default_itself() {
+    let dir = tempfile::tempdir().unwrap();
+    let code = include_str!("../../../../../../config/profiles/code/profile.toml");
+    std::fs::create_dir(dir.path().join("code")).unwrap();
+    std::fs::write(
+        dir.path().join("code/profile.toml"),
+        code.replace("id = \"code\"", "id = \"code\"\ndefault_for = [\"vm\"]"),
+    )
+    .unwrap();
+    let error = ProfileCatalog::load_from_dir(dir.path()).unwrap_err();
+    assert!(error.contains("unknown field `default_for`"), "{error}");
 }
 
 #[test]

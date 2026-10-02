@@ -39,6 +39,24 @@ impl ProfileRuntime {
     }
 }
 
+/// The per-runtime defaults, compiled from `config/profile-catalog.toml`.
+/// Not a profile field: profile ledgers are staged by binaries already
+/// installed, which refuse fields they do not know.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogDefaults {
+    defaults: BTreeMap<ProfileRuntime, String>,
+}
+
+fn runtime_defaults() -> &'static BTreeMap<ProfileRuntime, String> {
+    static DEFAULTS: std::sync::OnceLock<BTreeMap<ProfileRuntime, String>> = std::sync::OnceLock::new();
+    DEFAULTS.get_or_init(|| {
+        toml::from_str::<CatalogDefaults>(include_str!("../../../../../config/profile-catalog.toml"))
+            .expect("the compiled profile catalog must parse")
+            .defaults
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProfileCatalogSource {
     BuiltIn,
@@ -57,15 +75,13 @@ impl ProfileCatalog {
         }
     }
 
-    /// The profile a client gets when it names none for that runtime, if the
-    /// catalog has one. A container and a VM claim separately: the image a
-    /// container runs is not the workstation a VM boots, and the profile that
-    /// suits one will not stay the right answer for the other.
+    /// The profile a client gets when it names none for that runtime, if that
+    /// profile is installed. A container and a VM are asked separately: the
+    /// image a container runs is not the workstation a VM boots, and the
+    /// profile that suits one will not stay the right answer for the other.
     pub fn default_profile_id(&self, runtime: ProfileRuntime) -> Option<&str> {
-        self.profiles
-            .values()
-            .find(|profile| profile.default_for.contains(&runtime))
-            .map(|profile| profile.id.as_str())
+        let wanted = runtime_defaults().get(&runtime)?;
+        self.profiles.get_key_value(wanted).map(|(id, _)| id.as_str())
     }
 
     /// Every runtime's default in one answer, keyed by runtime name, so a
@@ -113,20 +129,6 @@ impl ProfileCatalog {
             }
             if profiles.insert(profile.id.clone(), profile).is_some() {
                 return Err(format!("duplicate profile id {dir_name}"));
-            }
-            for runtime in ProfileRuntime::ALL {
-                let defaults: Vec<&str> = profiles
-                    .values()
-                    .filter(|profile| profile.default_for.contains(&runtime))
-                    .map(|profile| profile.id.as_str())
-                    .collect();
-                if defaults.len() > 1 {
-                    return Err(format!(
-                        "more than one default {} profile: {}",
-                        runtime.as_str(),
-                        defaults.join(", ")
-                    ));
-                }
             }
         }
         if profiles.is_empty() {

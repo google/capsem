@@ -650,8 +650,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bodies previously only ever grew. Ephemeral sessions are deleted whole and
   are unaffected.
 
-- The profile catalog names its own defaults, one per runtime: a profile
-  ledger claims them with `default_for = ["vm", "container"]`, `GET /status`
+- The profile catalog names its own defaults, one per runtime: the binary
+  compiles them from `config/profile-catalog.toml` (a runtime's default
+  counts only when that profile is installed), `GET /status`
   publishes them as `profiles.defaults.vm` and `profiles.defaults.container`,
   and the Python, TypeScript and Rust SDKs plus the npm MCP server resolve
   them from the gateway (once per client) when a call names no profile,
@@ -860,6 +861,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and an old settings file that still names `vm.snapshots.*` keeps loading.
 
 ### Changed
+
+- The code profile advances to 0.6.5. Code 0.6.4 named itself the default
+  profile with a `default_for` field that Capsem 0.6.3 does not know, and
+  0.6.3's updater parses staged profiles strictly, so every automatic update
+  from 0.6.3 failed. The defaults now live in `config/profile-catalog.toml`,
+  compiled into the binary, and a citadel guard refuses a profile key the
+  oldest updating binary would reject.
 
 - The co-work profile advances to 0.6.3 and the code profile to 0.6.4. The
   staged co-work 0.6.2 and code 0.6.3 images predate the quieter boot
