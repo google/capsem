@@ -110,7 +110,7 @@ fn brokered_reference_is_never_dereferenced_for_lookalike_domain() {
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(&_lock, &capsem_home, dir.path(), &test_store);
 
     let secret = "sk-openai-real-key-do-not-leak";
     let reference = seed(CredentialProvider::OpenAi, secret);
@@ -148,7 +148,7 @@ fn injection_ledger_does_not_attribute_lookalike_domains_to_a_provider() {
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(&_lock, &capsem_home, dir.path(), &test_store);
     let reference = seed(CredentialProvider::Anthropic, "sk-ant-ledger-secret");
 
     let found = detect_brokered_http_references("evil-anthropic.com", None, &bearer(&reference), None, None);
