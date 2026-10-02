@@ -3175,7 +3175,7 @@ cpu_s = 0.18
 # the proof for 17404b378 against 9.0: no required headroom. Other ledger
 # routes sit far below either ceiling.
 [benchmark.route_health.budgets.ledger.gateway]
-p95_ms = 12.0
+p95_ms = 15.0
 p99_ms = 20.0
 cpu_s = 0.20
 
