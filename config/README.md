@@ -40,6 +40,11 @@ it.
 
 ## Source vs Runtime
 
+`profile-catalog.toml` names each runtime's default profile. It is compiled
+into the binary and never part of a profile: a published `profile.toml` is
+parsed strictly by the binary already installed, so it may only use keys
+every updating binary knows (`tests/citadel/profile_ledger_keys.toml`).
+
 Checked-in `config/profiles/<profile_id>/profile.toml` is source. It must not
 contain asset or sibling-file `hash` or `size` pins. `capsem-admin` validates
 source profiles, materializes hashes and sizes into `cache/target/config/`, and uses

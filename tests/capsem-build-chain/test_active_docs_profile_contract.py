@@ -30,6 +30,11 @@ ALLOWED_CONFIG_FILES = {
     # file for the same reason as the others -- the drift report is only
     # meaningful against a baseline somebody agreed to.
     "dependency-inventory.json",
+    # Which profile each runtime gets by default, compiled into the binary.
+    # Catalog-level, so not a profile field: a published profile.toml is
+    # parsed strictly by the binary already installed, and a new field there
+    # fails every automatic update from it.
+    "profile-catalog.toml",
 }
 
 FORBIDDEN_CONFIG_DIRS = {
