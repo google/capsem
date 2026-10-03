@@ -256,11 +256,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `capsem-service` starts again after an upgrade over a session index
-  (`~/.capsem/sessions/main.db`) written before the format v4 ledgers. It
-  refused the old file and never listened; the old index is now renamed to
-  `main.db.retired-<time>` with its WAL files and a fresh one is created.
-
 - When `capsem-service` fails to start, the cause is now written to its
   service log. It used to go only to stderr, which nobody reads for a
   detached service, so a refused session ledger left a log that ended
