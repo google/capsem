@@ -1,8 +1,12 @@
 # CAPSEM Hardened Kernel Configuration
 # Minimal x86_64 for QEMU/KVM virtualization
 #
-# Apply on top of allnoconfig:
+# The build copies this file to .config and runs olddefconfig:
 #   cp defconfig.x86_64 .config && make olddefconfig
+#
+# so every option left unset takes the Kconfig default of the kernel version
+# being built, not allnoconfig's. Pin anything a workload depends on; the
+# build fails if the kernel does not honor a pin.
 #
 # Produces a minimal kernel with only VirtIO drivers, no loadable modules,
 # air-gapped IP stack (dummy NIC + iptables REDIRECT), and full exploit

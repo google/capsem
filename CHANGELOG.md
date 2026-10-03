@@ -231,6 +231,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The arm64 guest kernel again gives userspace the 48-bit address space,
+  with 4K pages and 4-level tables, that Google Antigravity CLI's TCMalloc
+  build assumes. A config rewrite dropped the pin, leaving kernel 6.18's
+  default of 52-bit VA with 5-level tables.
+
 - On Linux hosts, `cp -a`, `tar -x` and `chown` work in the VM's `/root`
   workspace again. The VirtioFS server numbered FSYNCDIR 21, the opcode the
   kernel uses for SETXATTR, so every extended-attribute write failed with

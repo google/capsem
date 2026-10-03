@@ -1,8 +1,12 @@
 # CAPSEM Hardened Kernel Configuration
 # Minimal ARM64 for Apple Virtualization.framework
 #
-# Apply on top of allnoconfig:
+# The build copies this file to .config and runs olddefconfig:
 #   cp defconfig.arm64 .config && make olddefconfig
+#
+# so every option left unset takes the Kconfig default of the kernel version
+# being built, not allnoconfig's. Pin anything a workload depends on; the
+# build fails if the kernel does not honor a pin.
 #
 # Produces a ~5MB kernel with only VirtIO drivers, no loadable modules,
 # air-gapped IP stack (dummy NIC + iptables REDIRECT), and full exploit
@@ -17,6 +21,17 @@ CONFIG_NR_CPUS=8
 CONFIG_ARM_GIC_V3=y
 CONFIG_ARM_ARCH_TIMER=y
 CONFIG_OF=y
+
+# Userspace virtual address space.
+#
+# Google Antigravity CLI's Linux ARM64 binary uses TCMalloc and assumes a
+# 48-bit userspace VA layout; on a smaller layout it crashes before it can
+# print --version. Keep 4K pages for ordinary Linux userland compatibility
+# and 4-level, 48-bit VA tables. Pinned, not defaulted: 6.18's default is
+# 52-bit with 5-level tables, and this pin was once lost in a config rewrite.
+CONFIG_ARM64_4K_PAGES=y
+CONFIG_ARM64_VA_BITS_48=y
+CONFIG_ARM64_VA_BITS=48
 
 # ARM64 hardware security (Apple Silicon supports BTI + PAC)
 CONFIG_ARM64_BTI=y
