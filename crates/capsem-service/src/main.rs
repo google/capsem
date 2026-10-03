@@ -57,7 +57,7 @@ mod sandbox_info;
 mod session_cleanup;
 mod session_db_handles;
 mod switches;
-use session_db_handles::session_db_path_for_session_dir;
+use session_db_handles::{prepared_main_db_path, session_db_path_for_session_dir};
 mod session_housekeeping;
 use session_cleanup::{finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result};
 mod ledger_routes;
@@ -867,17 +867,7 @@ impl ServiceState {
     }
 
     fn open_profile_mutation_db_handle(sessions_dir: &StdPath) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
-        let db_path = main_db_path_in(sessions_dir);
-        // An index from before the archive format is moved aside, never
-        // migrated; refusing it stopped every service start after an upgrade.
-        if let Some(retired) = capsem_logger::retire_predating_ledger(&db_path)
-            .with_context(|| format!("failed to check the main.db format: {}", db_path.display()))?
-        {
-            warn!(
-                retired = %retired.display(),
-                "main.db predates the archive format; moved it aside and starting a fresh one"
-            );
-        }
+        let db_path = prepared_main_db_path(sessions_dir)?;
         capsem_logger::ensure_session_index_schema(&db_path)
             .with_context(|| format!("failed to initialize session index in main.db: {}", db_path.display()))?;
         let started = std::time::Instant::now();
