@@ -682,7 +682,7 @@ export async function reloadProfile(profileId: string): Promise<void> {
 
 // -- Stats --
 
-/** Fetch cross-session stats from main.db. */
+/** Fetch cross-session stats folded from the host ledger and live sessions. */
 export async function getStats(): Promise<StatsResponse> {
   if (!_connected) return emptyStats();
   try {

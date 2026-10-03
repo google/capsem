@@ -701,7 +701,7 @@ class TestRapidServiceRestartIsRobust:
         # other test or the real :19222 that the user may have bound.
         port = 30000 + (os.getpid() % 5000)
         # One home/run pair shared by every consecutive service, in the
-        # installed layout so sessions/main.db stays inside this test.
+        # installed layout so sessions/host.db stays inside this test.
         shared_home, shared_tmp = make_service_home_run_dirs()
         spawned: list[subprocess.Popen] = []
         try:

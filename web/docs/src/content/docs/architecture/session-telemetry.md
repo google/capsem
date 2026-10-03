@@ -908,7 +908,7 @@ barrier.
 | `exec`, `audit` | Exec starts and completions; audit events by executable |
 | `security`, `plugins`, `credentials` | Rule matches by action, event type, level and rule; plugin executions; brokered credential use |
 
-The session rollup into `main.db` copies this snapshot when a session stops.
+When a session stops, the host ledger (`~/.capsem/sessions/host.db`) records this snapshot in its `session_stopped` event, and `/stats` folds those snapshots in memory with every running session's live counters.
 
 ## Access patterns
 

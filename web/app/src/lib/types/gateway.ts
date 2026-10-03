@@ -33,7 +33,7 @@ export type { ProvisionRequest, ProvisionResponse, ForkRequest, ForkResponse } f
 
 export type { ExecRequest, ExecResponse } from '@capsem/sdk';
 
-// GET /stats -- cross-session aggregation from main.db
+// GET /stats -- cross-session totals folded from the host ledger and live sessions
 export interface StatsResponse {
   global: GlobalStats;
   sessions: SessionRecord[];

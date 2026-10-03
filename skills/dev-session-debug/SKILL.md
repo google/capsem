@@ -14,8 +14,9 @@ for a named one. The ledger is two files that only make sense together:
   security payloads, deflated in blocks of about 1 MiB. SQLite never holds
   body bytes.
 
-Copy, fork or delete them as a pair; either one alone is useless. A global
-`~/.capsem/sessions/main.db` aggregates stats across sessions.
+Copy, fork or delete them as a pair; either one alone is useless. The host
+ledger `~/.capsem/sessions/host.db` records what happened to every session
+(created, stopped, with its final counters) as a hash-chained event log.
 
 The session ledger has no migrations. A `session.db` written by an older build
 fails to open, loudly and by name, rather than being upgraded in place.
@@ -47,19 +48,10 @@ Python here means the build-system environment:
 system interpreter without the packages these need).
 
 ```bash
-python3 build_system/scripts/doctor/list_sessions.py                     # Recent sessions
-python3 build_system/scripts/doctor/list_sessions.py -n 20               # Show more
-python3 build_system/scripts/doctor/list_sessions.py --with-model        # Only sessions with AI model calls
-python3 build_system/scripts/doctor/list_sessions.py --with-db           # Only sessions whose ledger is still on disk
-python3 build_system/scripts/doctor/list_sessions.py --with-net          # Only sessions with network events
-python3 build_system/scripts/doctor/list_sessions.py --with-tools        # Only sessions with tool calls
-python3 build_system/scripts/doctor/list_sessions.py --min-cost 0.01     # Only sessions that cost money
-python3 build_system/scripts/doctor/list_sessions.py --with-db --with-model # Combine filters
+uv run --project build_system --frozen python -m capsem_builder.gate.tools.doctor.check_session --list   # Recent sessions
 ```
 
-Output columns: ID, Created (MM-DD HH:MM:SS), Duration, Cost, net events, tokens (in+out), tool calls, fs events. Sessions with `*` after the ID still have a `session.db` on disk (queryable).
-
-Stats come from the main.db rollup, so they're available after the session directory is gone.
+Sessions come from the host ledger, so they're listed after the session directory is gone. `GET /stats` folds every finished session's counters with the live counters of running ones.
 
 ### Deep inspection
 
@@ -441,16 +433,15 @@ adaptive poll interval (`poll_interval_for_scan` in
 capped at 10s), never by dropping events. `tests/citadel/test_fs_monitor_has_no_exclusions.py`
 holds the rule.
 
-## Main database (main.db)
+## Host ledger (host.db)
 
-Global rollup at `~/.capsem/sessions/main.db`. Key tables:
-
-- **sessions** -- one row per session: id, mode, status, timestamps, aggregated counts (total_requests, allowed/denied, tokens, cost, tool_calls, file_events)
-- **ai_usage** -- per-session per-provider aggregates (call_count, tokens, cost, duration)
-- **tool_usage** -- per-session per-tool aggregates from the canonical tool ledger
-- **mcp_usage** -- per-session MCP transport aggregates when protocol frames are visible
-
-Rollup happens when a session ends.
+`~/.capsem/sessions/host.db` is a v4 ledger whose `host_events` table records
+what the service did: `session_created`, `session_stopped` (its MessagePack
+`detail` carries the final `LedgerCounters`), `service_started`,
+`service_stopped`, and profile mutations in `profile_mutation_events`. Each
+event's `hash` chains from the previous one's; `DbReader::verify_host_chain`
+in Rust and `host_ledger.verify_chain` in the doctor tools recompute it. The
+old `main.db` beside it is never opened.
 
 ## Common debugging scenarios
 
@@ -561,4 +552,4 @@ sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT COUNT(*), SUM(raw_l
 sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT kind, action, COUNT(*) FROM fs_events GROUP BY kind, action"
 ```
 
-Tip: use `python3 build_system/scripts/doctor/list_sessions.py --with-db --with-model` to find sessions worth querying.
+Tip: `check_session --list` shows recent sessions from the host ledger; `run/sessions/<id>/session.db` is queryable while the session directory exists.

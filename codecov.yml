@@ -137,7 +137,7 @@ component_management:
         - crates/capsem-core/src/fs_monitor.rs
         - crates/capsem-core/src/bin/mcp_export.rs
 
-    # Logger DB, session index/maintenance, log layer, tracing bootstrap.
+    # Logger DB, host ledger, session maintenance, log layer, tracing bootstrap.
     # Future: OTEL, reporting, SSH session recording.
     - component_id: monitoring
       name: Monitoring

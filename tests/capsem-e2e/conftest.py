@@ -48,8 +48,8 @@ class RealService:
     """
 
     def __init__(self):
-        # The installed layout: CAPSEM_HOME owns run/, and sessions/main.db
-        # sits beside it. One directory for both put main.db in the run-wide
+        # The installed layout: CAPSEM_HOME owns run/, and sessions/host.db
+        # sits beside it. One directory for both put the host ledger in the run-wide
         # temporary parent, shared by every worker's service.
         self.home_dir, self.tmp_dir = make_service_home_run_dirs()
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"

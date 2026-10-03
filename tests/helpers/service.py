@@ -490,10 +490,10 @@ class ServiceInstance:
 
     def __init__(self, *, assets_dir: Path | None = None, sign_binaries: bool = True):
         # Match the installed layout exactly: CAPSEM_HOME owns a run/
-        # directory and sessions/main.db is its sibling.  Using the temporary
+        # directory and sessions/host.db is its sibling.  Using the temporary
         # home itself as CAPSEM_RUN_DIR makes main_db_path_for_run_dir() resolve
         # to the shared system temporary directory, so parallel workers all
-        # write the same /tmp/sessions/main.db.
+        # write the same /tmp/sessions/host.db.
         self.home_dir, self.tmp_dir = make_service_home_run_dirs()
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.assets_dir = assets_dir
