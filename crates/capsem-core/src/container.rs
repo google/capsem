@@ -47,6 +47,44 @@ pub const WORKLOAD_ID_MAP: IdMap = IdMap {
     size: 65_536,
 };
 
+/// What the workload's cgroup may use: the VM's resources minus what Capsem's
+/// own guest services keep, so a workload that exhausts its limit is killed
+/// inside its cgroup while the agent, proxies and launcher keep running.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct WorkloadResources {
+    pub memory_bytes: u64,
+    /// CPU time per scheduling period, in thousandths of a CPU.
+    pub cpu_millis: u64,
+    pub pids: u64,
+}
+
+/// Memory the runtime keeps for itself: the agent, the network and DNS
+/// proxies, the launcher and the page cache they need.
+pub const RUNTIME_RESERVE_MB: u64 = 384;
+/// CPU the runtime keeps, in thousandths of a CPU.
+pub const RUNTIME_RESERVE_CPU_MILLIS: u64 = 250;
+/// Below this a workload cannot do useful work; such a VM is refused.
+pub const WORKLOAD_MIN_MB: u64 = 256;
+/// Enough processes for a compiler or a package manager, few enough that a
+/// fork bomb stays inside the cgroup.
+pub const WORKLOAD_PIDS: u64 = 4096;
+
+/// The workload's share of a VM with `ram_mb` of memory and `cpus` CPUs.
+pub fn workload_resources(ram_mb: u64, cpus: u32) -> Result<WorkloadResources> {
+    let memory_mb = ram_mb.saturating_sub(RUNTIME_RESERVE_MB);
+    anyhow::ensure!(
+        memory_mb >= WORKLOAD_MIN_MB,
+        "a VM with {ram_mb} MiB leaves its workload {memory_mb} MiB; it needs at least {} MiB",
+        WORKLOAD_MIN_MB + RUNTIME_RESERVE_MB
+    );
+    anyhow::ensure!(cpus > 0, "a VM needs at least one CPU");
+    Ok(WorkloadResources {
+        memory_bytes: memory_mb * 1024 * 1024,
+        cpu_millis: (u64::from(cpus) * 1000).saturating_sub(RUNTIME_RESERVE_CPU_MILLIS),
+        pids: WORKLOAD_PIDS,
+    })
+}
+
 pub const LAUNCHER: &[u8] = include_bytes!("../../../guest/artifacts/container/launch.py");
 pub const STAGE: &str = ".capsem-image";
 /// Where a container sees the VM workspace (the VM's /root share). The

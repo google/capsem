@@ -341,6 +341,8 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
             )
             .unwrap(),
             "id_map": {"containerID": 0, "hostID": 100000, "size": 65536},
+            // The fixture VM's 2048 MiB and 2 CPUs, minus the runtime's share.
+            "resources": {"memory_bytes": 1664u64 * 1024 * 1024, "cpu_millis": 1750, "pids": 4096},
         })
     );
     assert!(!stage.join("1-0").exists(), "an empty layout file has no part");

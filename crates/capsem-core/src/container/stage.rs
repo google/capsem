@@ -26,14 +26,15 @@ pub enum StagedContent {
 /// The stage for a pulled layout at `root`, in write order: every layout file
 /// with content as its single part, then `transfer.json`, `options.json` (the
 /// command override, container environment, where the container sees the
-/// workspace, and the capabilities, syscall filter and user-namespace map the
-/// workload gets) and
+/// workspace, and the capabilities, syscall filter, user-namespace map and
+/// resources the workload gets) and
 /// the launcher.
 pub fn stage_plan(
     root: &Path,
     files: &[PathBuf],
     args: &[String],
     env: &BTreeMap<String, String>,
+    resources: super::WorkloadResources,
 ) -> Result<Vec<StagedFile>> {
     let transfer = capsem_assets::oci::transfer_manifest(root, files)?;
     let mut plan: Vec<StagedFile> = transfer
@@ -58,6 +59,7 @@ pub fn stage_plan(
             "capabilities": super::seccomp::WORKLOAD_CAPABILITIES,
             "seccomp": super::seccomp::workload_seccomp(oci_architecture()?)?,
             "id_map": super::WORKLOAD_ID_MAP,
+            "resources": resources,
         }))?),
     });
     plan.push(StagedFile {
