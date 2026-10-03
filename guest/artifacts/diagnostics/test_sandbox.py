@@ -395,8 +395,10 @@ def test_heap_is_zeroed_on_alloc_and_on_free():
     """
     result = run("dmesg")
     assert result.returncode == 0, f"dmesg failed: {result.stderr}"
-    [line] = [line for line in result.stdout.splitlines() if "mem auto-init:" in line]
-    assert "heap alloc:on" in line and "heap free:on" in line, line
+    lines = [line for line in result.stdout.splitlines() if "mem auto-init:" in line]
+    # The kernel may add an informational line, e.g. that clearing memory at
+    # boot takes time; the settings line is the one naming both heap modes.
+    assert any("heap alloc:on" in line and "heap free:on" in line for line in lines), lines
 
 
 def test_an_oops_panics_the_vm():
