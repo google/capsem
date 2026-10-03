@@ -121,3 +121,13 @@ def test_fuse_acl_patch_refuses_acls_without_fuse_posix_acl():
     assert "+++ b/fs/fuse/acl.c" in patch
     assert "-\treturn !fc->posix_acl && (i_user_ns(inode) != &init_user_ns);" in patch
     assert "+\treturn !fc->posix_acl;" in patch
+
+
+# Apple's virtio-fs server never negotiates FUSE_ALLOW_IDMAP, so idmapping the
+# workspace failed with EINVAL and a user-namespaced workload saw it owned by
+# nobody. virtio-fs always has default_permissions; the patch clears
+# SB_I_NOIDMAP only under it. See the patch header.
+def test_virtiofs_idmap_patch_requires_default_permissions():
+    patch = (KERNEL_DIR / "patches" / "0002-virtiofs-allow-idmapped-mounts.patch").read_text()
+    assert "+++ b/fs/fuse/virtio_fs.c" in patch
+    assert "+\tif (fc->default_permissions)\n+\t\tsb->s_iflags &= ~SB_I_NOIDMAP;" in patch

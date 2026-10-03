@@ -1,0 +1,46 @@
+From: Elie Bursztein <github@elie.net>
+Subject: [PATCH] virtiofs: allow idmapped mounts without FUSE_ALLOW_IDMAP
+
+FUSE marks every superblock SB_I_NOIDMAP and clears it only when the
+daemon negotiates FUSE_ALLOW_IDMAP on a default_permissions mount. The
+opt-in exists for daemons that check permissions against the uid in the
+request header, which an idmapped mount rewrites.
+
+virtio-fs always mounts with default_permissions, so the guest kernel
+makes every permission decision itself, through the mount's idmap.
+Apple's Virtualization.framework daemon never negotiates
+FUSE_ALLOW_IDMAP and ignores ownership altogether: every entry is 0:0 and
+chown is accepted without effect. mount_setattr(MOUNT_ATTR_IDMAP) on the
+share therefore failed with EINVAL, and a workload in a user namespace
+saw its workspace owned by the overflow uid, so chown, tar -x and cp -a
+failed as container root.
+
+Clear SB_I_NOIDMAP for virtio-fs once default_permissions is in force.
+Nothing changes until a privileged process idmaps a mount explicitly;
+the share's own mount keeps its identity mapping.
+
+---
+--- a/fs/fuse/virtio_fs.c
++++ b/fs/fuse/virtio_fs.c
+@@ -1583,6 +1583,21 @@
+ 	err = fuse_fill_super_common(sb, ctx);
+ 	if (err < 0)
+ 		goto err_free_fuse_devs;
++
++	/*
++	 * Allow idmapped mounts without FUSE_ALLOW_IDMAP from the daemon.
++	 * Upstream requires the daemon to opt in because an idmap-unaware
++	 * daemon checking permissions against the request header uid would
++	 * see the mapped uid. virtio-fs always mounts with
++	 * default_permissions, so the guest kernel makes every permission
++	 * decision through the mount's idmap. Apple's Virtualization.framework
++	 * daemon never negotiates the flag and ignores ownership altogether,
++	 * so without this a user-namespaced workload cannot own its share.
++	 * Only a mount explicitly idmapped with mount_setattr changes; the
++	 * share's own mount is untouched.
++	 */
++	if (fc->default_permissions)
++		sb->s_iflags &= ~SB_I_NOIDMAP;
+ 
+ 	for (i = 0; i < fs->nvqs; i++) {
+ 		struct virtio_fs_vq *fsvq = &fs->vqs[i];

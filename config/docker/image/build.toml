@@ -46,6 +46,7 @@ sha256 = "0f72d938f06828e82c90405174fe572287db7bfe089e2fc46572a99a7f240d43"
 # carries its reason in its header; drop it when the pinned kernel has the fix.
 patches = [
     "kernel/patches/0001-fuse-refuse-posix-acls-without-fuse-posix-acl.patch",
+    "kernel/patches/0002-virtiofs-allow-idmapped-mounts.patch",
 ]
 
 [build.asset_dependencies]

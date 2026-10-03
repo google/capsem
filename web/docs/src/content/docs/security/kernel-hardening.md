@@ -219,3 +219,4 @@ The kernel is built from the pinned kernel.org release plus the patches listed u
 | Patch | Why |
 |-------|-----|
 | `0001-fuse-refuse-posix-acls-without-fuse-posix-acl` | Apple's VirtioFS server stores POSIX ACL xattrs without applying them, so `cp -a` into `/root` lost group and other permission bits. FUSE filesystems whose server does not negotiate `FUSE_POSIX_ACL` now refuse ACLs, as upstream already does outside the initial user namespace, and tools fall back to chmod. |
+| `0002-virtiofs-allow-idmapped-mounts` | Apple's VirtioFS server never offers idmapped-mount support and reports every file as root's, so a workload in a user namespace saw its workspace owned by nobody and could not chown, `tar -x` or `cp -a` in it. virtio-fs always lets the guest kernel make permission decisions, so the kernel now allows idmapping the share without the server's opt-in. Only a mount explicitly idmapped by root changes. |
