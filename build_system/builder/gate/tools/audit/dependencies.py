@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import subprocess
 import sys
@@ -29,9 +30,19 @@ def _lockfiles(root: Path, policy: DependencyAuditConfig) -> tuple[Path, ...]:
     return paths
 
 
-def _digest(root: Path, policy: DependencyAuditConfig, lockfiles: tuple[Path, ...]) -> str:
+def _utc_today() -> datetime.date:
+    return datetime.datetime.now(datetime.UTC).date()
+
+
+def _digest(
+    root: Path, policy: DependencyAuditConfig, lockfiles: tuple[Path, ...], day: datetime.date
+) -> str:
     payload = {
-        "schema": 2,
+        "schema": 3,
+        # Advisories publish against unchanged lockfiles, so a clean verdict
+        # is evidence for its day only. Keyed on inputs alone it was reused
+        # for days while four stable dispatches died on fresh advisories.
+        "day": day.isoformat(),
         "policy": policy.model_dump(mode="json"),
         "lockfiles": {
             path.relative_to(root).as_posix(): subject_digest(path.read_bytes())
@@ -89,11 +100,12 @@ def audit_dependencies(
     *,
     runner: Run = subprocess.run,
     resolve: Resolve = materialize,
+    today: Callable[[], datetime.date] = _utc_today,
 ) -> int:
-    """Reuse an exact clean verdict or scan every configured lockfile once."""
+    """Reuse today's exact clean verdict or scan every configured lockfile once."""
     cache_paths = load_paths(root)
     lockfiles = _lockfiles(root, policy)
-    digest = _digest(root, policy, lockfiles)
+    digest = _digest(root, policy, lockfiles, today())
     cached = reusable(
         cache_paths,
         stage_id=policy.cache_stage,

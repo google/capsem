@@ -579,6 +579,26 @@ JavaScript type/test/build checks, and blocking Rust, Python, and JavaScript
 dependency-vulnerability audits. These checks MUST NOT be duplicated as a
 smaller smoke-only or workflow-only approximation.
 
+A blocking advisory is fixed by upgrading whenever a patched release exists;
+a fix that exists is never excepted. An advisory with **no patched release
+anywhere** MAY be excepted without further approval, so a release is not held
+hostage to an upstream that has not shipped, when all of these hold:
+
+1. No published version of the affected package fixes it, checked against the
+   registry and the advisory's own patched-version field at the time.
+2. The package sits in a dependency we do not control (the upstream would have
+   to ship the fix), and it is not in a shipped binary or a shipped runtime
+   bundle -- build-time tooling only, shown by its dependency path.
+3. The exception goes in `.config/osv-scanner.toml` with a reason naming the
+   package, the dependency path and why it does not ship, and an
+   `ignoreUntil` no more than 30 days out, so the audit fails again and the
+   exception is re-checked rather than kept.
+4. It lands as its own `security(deps):` commit with a CHANGELOG Security entry
+   saying what was excepted and until when.
+
+Anything else -- an advisory reachable from shipped code, or one whose fix
+needs a dependency major-version bump -- remains a maintainer decision.
+
 `just fast-test` remains explicitly incomplete public developer feedback. Its
 use of `_test-fast` does not make it release qualification. Named
 `just focus-test` groups own targeted functional proof, while hosted release

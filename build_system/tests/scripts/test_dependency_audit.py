@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import subprocess
 from pathlib import Path
@@ -15,6 +16,7 @@ from capsem_builder.gate.tools.audit import dependencies as audit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 POLICY = for_root(PROJECT_ROOT).audits.dependency_policy
+DAY = datetime.date(2026, 10, 3)
 
 
 def _paths(tmp_path: Path) -> CachePaths:
@@ -85,6 +87,34 @@ def test_clean_scan_covers_every_configured_lockfile_then_reuses_exact_verdict(
         POLICY.lockfiles
     )
     assert command[command.index("--config") + 1] == POLICY.config
+
+
+def test_a_clean_verdict_does_not_outlive_its_day(monkeypatch, tmp_path: Path) -> None:
+    """Advisories publish against unchanged lockfiles.
+
+    The verdict was keyed on lockfiles and exceptions alone, so a clean scan
+    was reused for days: local runs and the forced release's live audit stayed
+    green while the hosted lane, with no cache, refused four stable 0.6.4
+    dispatches on advisories published in between.
+    """
+    import datetime
+
+    paths = _paths(tmp_path)
+    monkeypatch.setattr(audit, "load_paths", lambda _root: paths)
+    commands: list[list[str]] = []
+    runner = _scanner(commands, set(_osv_ignored()))
+    days = iter([datetime.date(2026, 10, 2), datetime.date(2026, 10, 2), datetime.date(2026, 10, 3)])
+
+    def scan() -> int:
+        return audit.audit_dependencies(
+            PROJECT_ROOT, POLICY, runner=runner, resolve=lambda *_: _tool(tmp_path), today=lambda: next(days)
+        )
+
+    assert scan() == 0
+    assert scan() == 0
+    assert len(commands) == 2, "the same day reuses the verdict"
+    assert scan() == 0
+    assert len(commands) == 4, "the next day scans again"
 
 
 # RustSec is not the only source of Rust advisories. Three rmcp advisories,
@@ -187,7 +217,7 @@ def test_every_osv_ignore_says_why() -> None:
 def test_the_ignore_list_is_part_of_the_cached_verdict(tmp_path: Path) -> None:
     """Widening the ignore list must rescan, not replay yesterday's clean."""
     lockfiles = audit._lockfiles(PROJECT_ROOT, POLICY)
-    before = audit._digest(PROJECT_ROOT, POLICY, lockfiles)
+    before = audit._digest(PROJECT_ROOT, POLICY, lockfiles, DAY)
     moved = tmp_path / "root"
     (moved / Path(POLICY.config).parent).mkdir(parents=True)
     for lockfile in POLICY.lockfiles:
@@ -196,7 +226,7 @@ def test_the_ignore_list_is_part_of_the_cached_verdict(tmp_path: Path) -> None:
     (moved / POLICY.config).write_text(
         (PROJECT_ROOT / POLICY.config).read_text(encoding="utf-8") + "\n# widened\n", encoding="utf-8"
     )
-    after = audit._digest(moved, POLICY, audit._lockfiles(moved, POLICY))
+    after = audit._digest(moved, POLICY, audit._lockfiles(moved, POLICY), DAY)
     assert before != after
 
 
