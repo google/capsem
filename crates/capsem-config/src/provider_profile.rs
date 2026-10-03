@@ -8,7 +8,17 @@ use crate::{CompiledSecurityRule, SecurityRuleProfile, SecurityRuleProvider, Sec
 
 const DEFAULT_PROVIDER_RULES_TOML: &str = include_str!("default_provider_rules.toml");
 const REQUIRED_BUILTIN_PLUGINS: &[&str] = &["credential_broker", "log_sanitizer"];
-const REQUIRED_DEFAULT_RULE_KEYS: &[&str] = &["http", "dns", "mcp", "model", "file", "process"];
+const REQUIRED_DEFAULT_RULE_KEYS: &[&str] = &[
+    "http",
+    "dns",
+    "mcp",
+    "model",
+    "file",
+    "process",
+    "expose",
+    "http_preview",
+    "private",
+];
 
 pub type AiProviderProfile = SecurityRuleProvider;
 
