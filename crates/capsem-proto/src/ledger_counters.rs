@@ -263,5 +263,7 @@ pub fn bounded_entry<'a, V: Default>(map: &'a mut BTreeMap<String, V>, key: &str
     map.entry(key.to_string()).or_default()
 }
 
+mod merge;
+
 #[cfg(test)]
 mod tests;

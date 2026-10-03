@@ -14,6 +14,7 @@ pub mod credential_reference;
 mod exec_stream;
 pub mod forensic;
 pub mod handshake;
+pub mod host_session;
 pub mod ipc;
 pub mod ledger_counters;
 pub mod mcp;
