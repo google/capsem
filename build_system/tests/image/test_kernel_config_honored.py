@@ -23,7 +23,7 @@ DEFCONFIG = "/tmp/capsem.defconfig"
 def check_script() -> str:
     """The verification RUN, joined the way Docker joins continuation lines."""
     text = TEMPLATE.read_text().replace("\\\n", " ")
-    [run] = [line for line in text.splitlines() if line.startswith("RUN unhonored=")]
+    [run] = [line for line in text.splitlines() if "unhonored=$(" in line]
     return run.removeprefix("RUN ")
 
 
@@ -78,3 +78,8 @@ def test_an_unhonored_pin_fails_the_build_and_is_named(
     assert result.returncode != 0
     assert named in result.stderr
     assert "CONFIG_OK" not in result.stderr
+
+
+def test_a_defconfig_without_pins_fails_rather_than_passing_vacuously(tmp_path: Path) -> None:
+    result = verify(tmp_path, "# nothing pinned\n", "CONFIG_A=y\n")
+    assert result.returncode != 0

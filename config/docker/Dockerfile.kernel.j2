@@ -25,11 +25,13 @@ RUN cp /tmp/capsem.defconfig .config && make olddefconfig
 # misspelled, renamed or unsatisfiable symbol: SLAB_FREELIST_RANDOMIZE (the
 # symbol is SLAB_FREELIST_RANDOM) left freelist randomization off while the
 # docs listed it as on, and 6.9's MITIGATION_* rename emptied two x86 pins.
-RUN unhonored=$(grep -E '^CONFIG_[A-Z0-9_]+=' /tmp/capsem.defconfig | while IFS= read -r line; do \
+# A defconfig with no pins would make the check vacuous, so it fails first.
+RUN grep -qE '^CONFIG_[A-Z0-9_]+=' /tmp/capsem.defconfig && \
+    unhonored=$(grep -E '^CONFIG_[A-Z0-9_]+=' /tmp/capsem.defconfig | while IFS= read -r line; do \
         name=${line%%=*}; \
         case "$line" in \
             (*=n) if grep -q "^$name=" .config; then echo "$line"; fi ;; \
-            (*) grep -qxF "$line" .config || echo "$line" ;; \
+            (*) if ! grep -qxF "$line" .config; then echo "$line"; fi ;; \
         esac; \
     done) && \
     if [ -n "$unhonored" ]; then \
