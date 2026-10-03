@@ -12,6 +12,15 @@ from pathlib import Path
 import pytest
 
 KERNEL_DIR = Path(__file__).resolve().parents[3] / "config" / "docker" / "image" / "kernel"
+ARCHES = ("arm64", "x86_64")
+
+# The OCI workload runs in these namespaces; USER_NS lets it hold its
+# capabilities over a mapped uid range instead of over the VM (#289).
+REQUIRED = ("NAMESPACES", "USER_NS", "UTS_NS", "IPC_NS", "PID_NS", "NET_NS", "SECCOMP_FILTER")
+
+# User namespaces expose more of the kernel to the workload, which makes
+# keeping the historically richest escalation surfaces compiled out matter more.
+FORBIDDEN = ("IO_URING", "BPF_SYSCALL", "USERFAULTFD", "MODULES")
 
 
 def defconfig(arch: str) -> dict[str, str]:
@@ -33,4 +42,18 @@ def defconfig(arch: str) -> dict[str, str]:
 def test_arm64_keeps_the_userspace_layout_agy_needs(option: str, value: str) -> None:
     assert defconfig("arm64").get(option) == value, (
         f"defconfig.arm64 must set CONFIG_{option}={value}"
+    )
+
+
+@pytest.mark.parametrize("arch", ARCHES)
+@pytest.mark.parametrize("option", REQUIRED)
+def test_required_option_is_built_in(arch: str, option: str) -> None:
+    assert defconfig(arch).get(option) == "y", f"defconfig.{arch} must set CONFIG_{option}=y"
+
+
+@pytest.mark.parametrize("arch", ARCHES)
+@pytest.mark.parametrize("option", FORBIDDEN)
+def test_forbidden_option_is_compiled_out(arch: str, option: str) -> None:
+    assert defconfig(arch).get(option, "n") == "n", (
+        f"defconfig.{arch} must not enable CONFIG_{option}"
     )

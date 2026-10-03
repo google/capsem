@@ -177,6 +177,9 @@ CONFIG_FHANDLE=y
 
 # Offline OCI workloads: isolated processes and bounded resource usage.
 CONFIG_NAMESPACES=y
+# User namespaces let the OCI workload hold its capabilities over a mapped uid
+# range instead of over the VM (google/capsem#289).
+CONFIG_USER_NS=y
 CONFIG_UTS_NS=y
 CONFIG_IPC_NS=y
 CONFIG_PID_NS=y

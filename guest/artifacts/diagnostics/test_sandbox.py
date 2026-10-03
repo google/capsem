@@ -407,3 +407,22 @@ def test_seccomp_available():
     """Seccomp must be available (CONFIG_SECCOMP=y)."""
     result = run("grep '^Seccomp:' /proc/self/status")
     assert result.returncode == 0, "Seccomp line not found in /proc/self/status"
+
+
+def test_user_namespaces_supported():
+    """The kernel must support user namespaces (CONFIG_USER_NS=y).
+
+    The OCI workload holds its capabilities over a mapped uid range rather than
+    over the VM. Without CONFIG_USER_NS, unshare(CLONE_NEWUSER) fails EINVAL.
+    """
+    probe = (
+        "import ctypes, os; "
+        "libc = ctypes.CDLL(None, use_errno=True); "
+        "rc = libc.unshare(0x10000000); "
+        "print(rc, os.strerror(ctypes.get_errno()))"
+    )
+    result = run(f'python3 -c "{probe}"')
+    assert result.returncode == 0, f"probe failed: {result.stderr}"
+    assert result.stdout.split()[0] == "0", (
+        f"unshare(CLONE_NEWUSER) failed: {result.stdout.strip()}"
+    )
