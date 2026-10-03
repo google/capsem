@@ -30,6 +30,7 @@ AGENTS = {
     "codex-cli": (["codex", "--version"], "codex-cli 0.147.0"),
     "claude-code": (["claude", "--version"], "2.1.229"),
     "agy": (["agy-real", "--version"], "1.1.3"),
+    "claude-desktop": (["dpkg-query", "-W", "claude-desktop"], "1.22209.0"),
 }
 
 

@@ -14,3 +14,6 @@ description = "Claude Code on the Capsem base."
 
 [images.agy]
 description = "Antigravity CLI (agy) on the Capsem base."
+
+[images.claude-desktop]
+description = "Claude Desktop on the Capsem base, streamed as a single-application GUI over Xpra (arm64 only)."

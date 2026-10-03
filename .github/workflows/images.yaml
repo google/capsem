@@ -140,8 +140,13 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        image: [dev, codex-cli, claude-code, agy]
+        image: [dev, codex-cli, claude-code, agy, claude-desktop]
         arch: [arm64, amd64]
+        # Claude Desktop's pinned debs are arm64 only; its catalog entry lists
+        # linux/arm64 alone, and install-gui.sh refuses any other architecture.
+        exclude:
+          - image: claude-desktop
+            arch: amd64
         include:
           - arch: arm64
             runner: ubuntu-24.04-arm
@@ -155,6 +160,8 @@ jobs:
             agent_version: claude --version
           - image: agy
             agent_version: agy-real --version
+          - image: claude-desktop
+            agent_version: dpkg-query -W claude-desktop xpra-server
     env:
       IMAGE: ${{ matrix.image }}
       ARCH: ${{ matrix.arch }}
@@ -255,7 +262,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        image: [dev, codex-cli, claude-code, agy]
+        image: [dev, codex-cli, claude-code, agy, claude-desktop]
     env:
       IMAGE: ${{ matrix.image }}
     steps:

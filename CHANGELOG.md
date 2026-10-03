@@ -686,6 +686,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   catalog (`ghcr.io/google/capsem/catalog:<channel>`) lists every published
   digest and never drops one. Only that workflow can write packages
   (google/capsem#289).
+- A `claude-desktop` official image (arm64): Claude Desktop 1.22209.0 as the
+  one application of an Xpra 6.5.1 session, served over Xpra's websocket
+  protocol on the container's 127.0.0.1:14500 and declared to the runtime
+  with `org.capsem.surface` labels. It runs unprivileged with Chromium's
+  sandbox intact, unlocks a per-home login keyring so Claude's sign-in
+  persists in a named session, and imports the runtime's CA bundle into
+  Chromium's NSS store at startup (google/capsem#289).
 - OpenTelemetry metric export. Set the corp config's `open_telemetry` to an
   OTLP/HTTP base endpoint (metrics go to `/v1/metrics`), or the standard
   `OTEL_EXPORTER_OTLP_*` environment for the service. The service exports its
