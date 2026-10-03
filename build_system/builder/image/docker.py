@@ -162,6 +162,7 @@ def _kernel_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
         "arch_name": arch_name,
         "kernel_version": config.build.kernel.version,
         "kernel_sha256": config.build.kernel.sha256,
+        "kernel_patches": config.build.kernel.patches,
     }
 
 
@@ -1877,6 +1878,10 @@ def prepare_build_context(
         defconfig_dst = context_dir / arch.defconfig
         defconfig_dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(defconfig_src), str(defconfig_dst))
+        for patch in config.build.kernel.patches:
+            patch_dst = context_dir / patch
+            patch_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(guest_dir / "config" / patch), str(patch_dst))
         # capsem-init
         shutil.copy2(
             str(guest_dir / "artifacts" / "capsem-init"),

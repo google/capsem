@@ -41,6 +41,12 @@ forbidden_path_prefixes = [
 [build.kernel]
 version = "6.18.44"
 sha256 = "0f72d938f06828e82c90405174fe572287db7bfe089e2fc46572a99a7f240d43"
+# Applied in order with --fuzz=0, so a kernel bump that moves the patched code
+# fails the build instead of silently compiling an unpatched kernel. Each one
+# carries its reason in its header; drop it when the pinned kernel has the fix.
+patches = [
+    "kernel/patches/0001-fuse-refuse-posix-acls-without-fuse-posix-acl.patch",
+]
 
 [build.asset_dependencies]
 tag_template = "capsem-{template}-dependencies-{arch}:{digest}"

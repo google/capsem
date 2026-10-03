@@ -22,7 +22,7 @@ RUN set -eux; \
     apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update; \
     apt-get install -y --no-install-recommends \
         build-essential bc bison flex libssl-dev libelf-dev \
-        wget ca-certificates xz-utils cpio busybox-static && \
+        wget ca-certificates xz-utils cpio busybox-static patch && \
     rm -rf /var/lib/apt/lists/*
 
 RUN KERNEL_VERSION="{{ kernel_version }}" && \

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -64,6 +64,11 @@ class KernelConfig(BaseModel):
 
     version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    # Applied in order. Every patch lives in kernel/patches/, which the kernel
+    # Dockerfile copies as one directory.
+    patches: tuple[
+        Annotated[str, Field(pattern=r"^kernel/patches/[0-9]{4}-[a-z0-9-]+\.patch$")], ...
+    ] = ()
 
 
 class GuestRustBuilderConfig(BaseModel):

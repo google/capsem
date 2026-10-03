@@ -7,6 +7,7 @@ architecture so a regression on one arch cannot hide behind the other.
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -96,3 +97,27 @@ def test_workloads_can_read_their_own_memory_map() -> None:
     """Redis exits on arm64 when /proc/self/smaps is missing."""
     for arch in ("arm64", "x86_64"):
         assert defconfig(arch).get("PROC_PAGE_MONITOR") == "y", arch
+
+
+# The kernel Dockerfile copies kernel/patches/ whole, so a patch on disk that
+# build.toml does not list would sit in the build context unapplied, looking
+# like part of the kernel. Listed and present must be the same set.
+def test_every_kernel_patch_on_disk_is_listed():
+    listed = tomllib.loads((KERNEL_DIR.parent / "build.toml").read_text())["build"]["kernel"][
+        "patches"
+    ]
+    on_disk = sorted(f"kernel/patches/{p.name}" for p in (KERNEL_DIR / "patches").iterdir())
+    assert sorted(listed) == on_disk
+
+
+# Apple's virtio-fs server stores POSIX ACL xattrs without applying them, so
+# cp -a into /root on macOS dropped group and other bits (0640 became 0600).
+# The guest kernel refuses ACLs for FUSE daemons that did not negotiate
+# FUSE_POSIX_ACL; tools fall back to chmod. See the patch header.
+def test_fuse_acl_patch_refuses_acls_without_fuse_posix_acl():
+    patch = (
+        KERNEL_DIR / "patches" / "0001-fuse-refuse-posix-acls-without-fuse-posix-acl.patch"
+    ).read_text()
+    assert "+++ b/fs/fuse/acl.c" in patch
+    assert "-\treturn !fc->posix_acl && (i_user_ns(inode) != &init_user_ns);" in patch
+    assert "+\treturn !fc->posix_acl;" in patch

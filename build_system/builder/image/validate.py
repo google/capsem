@@ -274,7 +274,7 @@ def _validate_defconfigs(
     config_dir: Path,
     diags: list[Diagnostic],
 ) -> None:
-    """Check that defconfig files exist for each architecture, emit E300."""
+    """Check that each architecture's defconfig (E300) and each kernel patch (E303) exist."""
     kernel_dir = config_dir / "kernel"
     for arch_name, arch in config.build.architectures.items():
         defconfig_path = kernel_dir / Path(arch.defconfig).name
@@ -284,6 +284,15 @@ def _validate_defconfigs(
                 severity=Severity.ERROR,
                 message=f"Missing kernel defconfig for {arch_name}: {arch.defconfig}",
                 file=str(defconfig_path),
+            ))
+    for patch in config.build.kernel.patches:
+        patch_path = config_dir / patch
+        if not patch_path.is_file():
+            diags.append(Diagnostic(
+                code="E303",
+                severity=Severity.ERROR,
+                message=f"Missing kernel patch: {patch}",
+                file=str(patch_path),
             ))
 
 
@@ -559,7 +568,7 @@ def validate_guest(
     # E008: Duplicate keys
     _validate_duplicates(config_dir, parsed, diags)
 
-    # E300: Defconfig validation
+    # E300/E303: Kernel defconfig and patch validation
     _validate_defconfigs(config, config_dir, diags)
 
     # E301/E302: Artifact validation (optional)

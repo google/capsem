@@ -1,0 +1,40 @@
+From: Elie Bursztein <github@elie.net>
+Subject: [PATCH] fuse: refuse POSIX ACLs for daemons without FUSE_POSIX_ACL
+
+A FUSE daemon that does not negotiate FUSE_POSIX_ACL gets ACL writes
+forwarded as opaque system.posix_acl_* xattrs when it is mounted in the
+initial user namespace. The kernel never reads them back for permission
+checks (fuse_get_inode_acl returns NULL), and it leaves applying the
+equivalent mode to the daemon.
+
+Apple's Virtualization.framework virtio-fs server does neither: it stores
+the xattr on the host file and leaves the mode alone. coreutils cp -a,
+cp -p and mv across filesystems set the final mode only through
+system.posix_acl_access, so a 0640 file copied into the share stayed at
+the 0600 cp created it with, and the host file kept an inert ACL xattr.
+
+Refuse ACL get and set for every daemon without FUSE_POSIX_ACL, as the
+kernel already does outside the initial user namespace. Tools then fall
+back to chmod, which every virtio-fs server applies.
+
+---
+--- a/fs/fuse/acl.c
++++ b/fs/fuse/acl.c
+@@ -58,10 +58,14 @@
+ {
+ 	/*
+ 	 * Refuse interacting with POSIX ACLs for daemons that
+-	 * don't support FUSE_POSIX_ACL and are not mounted on
+-	 * the host to retain backwards compatibility.
++	 * don't support FUSE_POSIX_ACL. Upstream keeps passing
++	 * them through as opaque xattrs for mounts in the initial
++	 * user namespace; a daemon that stores them without
++	 * applying them (Apple's virtio-fs server) then silently
++	 * drops the mode a tool like cp -a sets through the ACL.
++	 * Refusing makes such tools fall back to chmod.
+ 	 */
+-	return !fc->posix_acl && (i_user_ns(inode) != &init_user_ns);
++	return !fc->posix_acl;
+ }
+ 
+ struct posix_acl *fuse_get_acl(struct mnt_idmap *idmap,

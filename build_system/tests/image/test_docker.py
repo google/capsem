@@ -861,6 +861,18 @@ class TestRenderKernel:
         assert context["kernel_version"] == real_config.build.kernel.version
         assert context["kernel_sha256"] == real_config.build.kernel.sha256
 
+    def test_every_kernel_patch_is_applied_without_fuzz(self, real_config):
+        result = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
+        assert real_config.build.kernel.patches
+        for kernel_patch in real_config.build.kernel.patches:
+            name = kernel_patch.removeprefix("kernel/patches/")
+            assert (
+                f"patch -p1 --forward --fuzz=0 --no-backup-if-mismatch < /tmp/kernel-patches/{name}"
+                in result
+            )
+        # Patched before the config is generated, so every option sees the patched tree.
+        assert result.index("patch -p1") < result.index("make KCONFIG_ALLCONFIG=")
+
     def test_arm64_from(self, real_config):
         result = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
         dependency = render_dockerfile("Dockerfile.kernel-dependencies.j2", real_config, "arm64")
@@ -2461,6 +2473,8 @@ class TestPrepareBuildContext:
         )
         assert (context_dir / "Dockerfile").is_file()
         assert (context_dir / "kernel" / "defconfig.arm64").is_file()
+        for kernel_patch in real_config.build.kernel.patches:
+            assert (context_dir / kernel_patch).is_file()
         assert (context_dir / "capsem-init").is_file()
 
     def test_rootfs_context_copies_profile_root_and_build_script(

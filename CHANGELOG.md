@@ -275,6 +275,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build assumes. A config rewrite dropped the pin, leaving kernel 6.18's
   default of 52-bit VA with 5-level tables.
 
+- On macOS, `cp -a`, `cp -p` and `mv` into the VM's `/root` workspace keep
+  file modes again: a `0640` file arrived as `0600` and a `0755` directory
+  as `0700`. coreutils sets the final mode through a POSIX ACL xattr, and
+  Apple's VirtioFS server stores that xattr on the host file without
+  applying it. The guest kernel now carries a patch that refuses POSIX ACLs
+  on FUSE filesystems whose server does not support them, so these tools
+  fall back to chmod, and host workspace files no longer collect inert
+  `system.posix_acl_*` xattrs.
+
 - On Linux hosts, `cp -a`, `tar -x` and `chown` work in the VM's `/root`
   workspace again. The VirtioFS server numbered FSYNCDIR 21, the opcode the
   kernel uses for SETXATTR, so every extended-attribute write failed with

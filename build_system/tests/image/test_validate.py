@@ -293,6 +293,21 @@ def test_missing_kernel_defconfig_is_e300(guest_valid: Path) -> None:
     assert "E300" in _codes(validate_guest(guest_valid))
 
 
+def test_missing_kernel_patch_is_e303(guest_valid: Path) -> None:
+    build = guest_valid / "config" / "build.toml"
+    build.write_text(
+        build.read_text().replace(
+            "[build.kernel]\n",
+            '[build.kernel]\npatches = ["kernel/patches/0001-absent.patch"]\n',
+        )
+    )
+    assert "E303" in _codes(validate_guest(guest_valid))
+    patch = guest_valid / "config" / "kernel" / "patches" / "0001-absent.patch"
+    patch.parent.mkdir()
+    patch.write_text("--- a/x\n+++ b/x\n")
+    assert "E303" not in _codes(validate_guest(guest_valid))
+
+
 def test_artifact_validation_checks_required_files(guest_valid: Path, tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()

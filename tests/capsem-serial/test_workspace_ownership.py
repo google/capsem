@@ -4,6 +4,11 @@
 never changes host ownership, so a guest chown is accepted without effect. It
 used to reach an unprivileged host lchown and fail with EPERM, which broke
 `cp -a`, `tar -x` and the profile seed copy into /root.
+
+cp -a sets the final mode through a POSIX ACL xattr. Apple's VirtioFS server
+stores that xattr without applying it, so on macOS a copied 0640 file stayed
+at 0600 until the guest kernel learned to refuse ACLs for such servers
+(config/docker/image/kernel/patches/0001-*).
 """
 
 import pytest
@@ -36,7 +41,8 @@ def test_cp_archive_into_the_workspace_keeps_modes(serial_env):
         client,
         name,
         "set -e; rm -rf /tmp/src /root/dst; mkdir /tmp/src; echo y > /tmp/src/a; "
-        "chmod 640 /tmp/src/a; cp -a /tmp/src /root/dst; stat -c '%a' /root/dst/a",
+        "chmod 755 /tmp/src; chmod 640 /tmp/src/a; cp -a /tmp/src /root/dst; "
+        "stat -c '%a' /root/dst /root/dst/a",
     )
     assert code == 0, out
-    assert out.strip().splitlines()[-1] == "640", out
+    assert out.strip().splitlines()[-2:] == ["755", "640"], out

@@ -16,6 +16,15 @@ FROM ${BASE} AS build
 
 WORKDIR /usr/src/linux
 
+{% if kernel_patches %}
+# Capsem's patches on the pinned source. --fuzz=0 and --forward refuse a patch
+# whose context moved or that is already applied, so a kernel bump cannot
+# quietly ship without one or with one half-applied.
+COPY kernel/patches/ /tmp/kernel-patches/
+RUN set -e{% for patch in kernel_patches %}; \
+    patch -p1 --forward --fuzz=0 --no-backup-if-mismatch < /tmp/kernel-patches/{{ patch | replace('kernel/patches/', '') }}{% endfor %}
+
+{% endif %}
 # Start from allnoconfig and apply the capsem hardened defconfig on top, so
 # nothing is enabled unless the defconfig pins it. olddefconfig would instead
 # fill every unpinned option with this kernel version's upstream default.

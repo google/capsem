@@ -211,3 +211,11 @@ graph LR
 The two defconfig files (`defconfig.arm64`, `defconfig.x86_64`) are applied on top of allnoconfig with `make KCONFIG_ALLCONFIG=<defconfig> allnoconfig`, so the kernel enables nothing the defconfig does not pin. Each pin carries its reason in the file, and both architectures get the same security properties.
 
 Kconfig silently ignores a pinned option it cannot apply: a misspelled or renamed symbol, or one whose dependencies are unmet. The kernel build therefore compares every pinned line of the defconfig with the configuration Kconfig produced and fails, naming each option the kernel did not honor. Starting from allnoconfig makes that check carry real weight: an option whose dependency is not pinned is dropped, and the build says so.
+
+### Source patches
+
+The kernel is built from the pinned kernel.org release plus the patches listed under `[build.kernel] patches` in `config/docker/image/build.toml`, applied in order before configuration. Each is applied with `--fuzz=0`, so a kernel bump that moves the patched code fails the build instead of shipping without the patch. Every patch states its reason in its header, and `build_system/tests/image/test_kernel_defconfig.py` fails if a patch file on disk is not in the list.
+
+| Patch | Why |
+|-------|-----|
+| `0001-fuse-refuse-posix-acls-without-fuse-posix-acl` | Apple's VirtioFS server stores POSIX ACL xattrs without applying them, so `cp -a` into `/root` lost group and other permission bits. FUSE filesystems whose server does not negotiate `FUSE_POSIX_ACL` now refuse ACLs, as upstream already does outside the initial user namespace, and tools fall back to chmod. |
