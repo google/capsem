@@ -51,6 +51,31 @@ def registry(directory, *, image_config=None, image="redis"):
         },
         sort_keys=True,
     ).encode()
+    with serve(directory, image, manifest, media, blobs.get) as served:
+        yield served
+
+
+@contextlib.contextmanager
+def layout_registry(directory, layout, image):
+    """Serve the single-platform image in an OCI layout (`docker buildx build
+    --output type=oci,tar=false`) under `library/<image>`."""
+    layout = Path(layout)
+    (entry,) = json.loads((layout / "index.json").read_text())["manifests"]
+
+    def fetch(digest):
+        path = layout / "blobs" / "sha256" / digest.removeprefix("sha256:")
+        return path.read_bytes() if digest.startswith("sha256:") and path.is_file() else None
+
+    manifest = fetch(entry["digest"])
+    assert manifest is not None, entry
+    with serve(directory, image, manifest, entry["mediaType"], fetch) as served:
+        yield served
+
+
+@contextlib.contextmanager
+def serve(directory, image, manifest, media, fetch):
+    """A TLS registry on localhost serving one manifest and the blobs `fetch`
+    finds; yields (pinned reference, CA certificate, requested paths)."""
     digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
     requests = []
 
@@ -61,9 +86,14 @@ def registry(directory, *, image_config=None, image="redis"):
                 body, kind = b"{}", "application/json"
             elif self.path.startswith(f"/v2/library/{image}/manifests/"):
                 body, kind = manifest, media
+                # An index names its platform manifests by digest.
+                wanted = self.path.rsplit("/", 1)[1]
+                if wanted != digest and wanted.startswith("sha256:"):
+                    body = fetch(wanted)
+                    kind = json.loads(body)["mediaType"] if body else kind
             elif self.path.startswith(f"/v2/library/{image}/blobs/"):
                 body, kind = (
-                    blobs.get(self.path.rsplit("/", 1)[1]),
+                    fetch(self.path.rsplit("/", 1)[1]),
                     "application/octet-stream",
                 )
             else:
@@ -73,10 +103,7 @@ def registry(directory, *, image_config=None, image="redis"):
             self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(body)))
             self.send_header(
-                "Docker-Content-Digest",
-                digest
-                if kind == media
-                else "sha256:" + hashlib.sha256(body).hexdigest(),
+                "Docker-Content-Digest", "sha256:" + hashlib.sha256(body).hexdigest()
             )
             self.end_headers()
             self.wfile.write(body)
