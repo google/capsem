@@ -1,10 +1,11 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Mutex,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use capsem_archive::{ArchiveId, FileHeader, GenerationId, FILE_HEADER_BYTES};
 
@@ -170,6 +171,47 @@ pub(crate) fn archive_schema_status(conn: &Connection) -> rusqlite::Result<Archi
         ));
     }
     Ok(ArchiveSchemaStatus::Fresh)
+}
+
+/// Move `path` aside when it predates the archive format, returning where it
+/// went: renamed with its `-wal` and `-shm` sidecars to
+/// `<name>.retired-<unix-seconds>`, so nothing is lost and the next open
+/// starts fresh. Ledgers older than the archive are moved, never migrated;
+/// refusing the service's own `main.db` stopped every start after an upgrade.
+/// A missing or current ledger is left alone; a ledger in the current format
+/// that fails validation is an error, never moved.
+pub fn retire_predating_ledger(path: &Path) -> rusqlite::Result<Option<PathBuf>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let predates = predates_archive_format(&conn)?;
+    if !predates {
+        archive_schema_status(&conn)?;
+        return Ok(None);
+    }
+    drop(conn);
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let retired = path.with_file_name(format!("{name}.retired-{stamp}"));
+    for sidecar in ["-wal", "-shm"] {
+        let from = path.with_file_name(format!("{name}{sidecar}"));
+        if from.exists() {
+            let to = retired.with_file_name(format!("{name}.retired-{stamp}{sidecar}"));
+            std::fs::rename(&from, &to).map_err(|error| io_error(&from, error))?;
+        }
+    }
+    std::fs::rename(path, &retired).map_err(|error| io_error(path, error))?;
+    Ok(Some(retired))
+}
+
+fn io_error(path: &Path, error: std::io::Error) -> rusqlite::Error {
+    rusqlite::Error::InvalidPath(PathBuf::from(format!("{}: {error}", path.display())))
 }
 
 /// A ledger with tables but no `archive_state`: written before format v4.

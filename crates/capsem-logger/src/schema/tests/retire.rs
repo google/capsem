@@ -43,7 +43,7 @@ fn a_current_ledger_is_left_alone() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("main.db");
     let conn = Connection::open(&path).unwrap();
-    crate::schema::create_tables_with_archive_header(&conn, None).unwrap();
+    create_tables_with_archive_header(&conn, None).unwrap();
     drop(conn);
 
     assert_eq!(retire_predating_ledger(&path).unwrap(), None);
@@ -55,7 +55,7 @@ fn a_broken_ledger_is_an_error_not_a_move() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("main.db");
     let conn = Connection::open(&path).unwrap();
-    crate::schema::create_tables_with_archive_header(&conn, None).unwrap();
+    create_tables_with_archive_header(&conn, None).unwrap();
     conn.execute_batch("DELETE FROM archive_state").unwrap();
     drop(conn);
 
