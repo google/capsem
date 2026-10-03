@@ -69,6 +69,33 @@ The VirtioFS server propagates all I/O errors to the guest:
 
 This ensures the guest kernel marks pages correctly and applications can detect write failures.
 
+## Workspace Ownership and Permissions
+
+The workspace is not a place to separate guest users from each other. Capsem's boundary is the VM: everything inside the guest is the same untrusted party. Unix permissions in `/root` are not a security boundary inside the guest, and on macOS they do not separate users at all.
+
+The guest kernel mounts VirtioFS with `default_permissions`, so it makes every permission decision itself from the owner and mode the server reports. (`/proc/mounts` does not show the option: virtio-fs does not print FUSE mount options.) What those decisions mean depends on what the host server reports as the owner.
+
+| Host | Owner the server reports | Effect inside the guest |
+|------|--------------------------|-------------------------|
+| macOS (Apple VZ) | The uid and gid of the caller, taken from each request | Every caller is the owner of every entry, so the owner's mode bits apply to everyone. Any guest uid can read, write, truncate, unlink and create wherever the owner could. |
+| Linux (KVM) | `0:0` for every entry | Permissions apply as if root owns the whole workspace. |
+
+Neither server changes ownership on the host: a guest `chown` succeeds and has no effect, and every file in the host directory belongs to the user running Capsem.
+
+On Apple VZ, "every entry is owned by root" is only root's view. The same file, re-read with fresh attributes, reports a different owner to each caller:
+
+| Caller | Owner reported for one `0640` file |
+|--------|-------------------------------------|
+| root | `0:0` |
+| uid 1000 | `1000:1000` |
+| uid 2345 | `2345:2345` |
+
+Attributes are cached per inode, not per caller, so a listing can show the owner from whoever refreshed the entry last. A uid with every capability dropped (`setpriv --inh-caps=-all --bounding-set=-all --no-new-privs`) appends to, truncates and unlinks a file root created with mode `0640`, and creates files in a root-owned `0755` directory. The same writes on the guest's `tmpfs` are refused.
+
+The container workload runs in a user namespace whose root maps to VM uid 100000. The guest kernel sends the caller's ids as the caller's own user namespace sees them (kernel patch `0002`, see [Kernel Hardening](/security/kernel-hardening/)), so on Apple VZ the container's root is reported as uid 0 on disk and owns the workspace through the mount's idmap, the same way the VM's root does.
+
+To reproduce on macOS, in a VM: as root, `echo x > /root/f; chmod 640 /root/f`, then as another uid with fresh attributes (`sync; echo 3 > /proc/sys/vm/drop_caches`), `stat -c '%u:%g' /root/f` and `echo y >> /root/f`.
+
 ## KVM Warm-Checkpoint Integrity
 
 On Linux, saving guest RAM and virtqueue indices is not sufficient for a warm
