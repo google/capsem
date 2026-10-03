@@ -424,6 +424,7 @@ Read `/dev-gate` before changing any of it.
 How to spend effort and the shared machine. Each one is a mistake that already happened.
 
 - **Scale verification to the change.** Per commit: `cargo fmt`, clippy and tests for the crates it touches, plus the shape guard (Rust 1000-line and script 300-line ceilings). Once, on the final head before the PR: the whole workspace, citadel, and the VM lanes. Iterate on a failing gate step with `capsem-gate <module>`, not a full `just test`. Start VM runs only after the code they measure has landed.
+- **Use the most focused lens that proves the change.** A handful of VM tests run directly with pytest in the latest `cache/worktrees/<run>`, against the assets that run already built (minutes). A subsystem uses its `focus-test <owner>` (`kingslanding` for containers, `assets` for a guest rebuild). `focus-test functional --slow` runs once, on the final head; a two-hour lane between five-line changes is how a sprint stops moving. If no owner fits, ask the user before adding one.
 - **A narrow suite is not verification.** `tests/test_gate_*.py` alone misses what the contract suites catch; the final run is the whole suite.
 - **A guard must not fake what it guards.** Stubbing the input under test makes the test green by construction.
 - **Measure before and after, twice.** Establish the noise floor by running the unchanged code twice before blaming a difference on a change. Performance work reports both runs side by side.

@@ -42,6 +42,12 @@ lanes then qualify what they publish.
 targeted regression path. During TDD use the smallest native test; run `just test`
 when complete local whole-system verification is useful.
 
+Pick the narrowest lens, in this order: one test file run directly with pytest
+in the latest `cache/worktrees/<run>` (it reuses that run's built assets; rebuild
+and re-sign only what changed), then `focus-test <owner>` (`kingslanding` for
+containers, `assets` to rebuild the guest), then `functional --slow` once on the
+final head. Ask the user before adding a new owner.
+
 The full gate is a construction boundary, not the edit loop. During TDD,
 reproduce the failure with the smallest focused test, run that test red/green,
 and batch adjacent parity fixes before paying for the complete gate. Run it
