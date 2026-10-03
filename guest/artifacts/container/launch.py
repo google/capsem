@@ -1,7 +1,9 @@
 """Run one verified OCI layout; session workspace retains its restart inputs."""
 
+import ctypes
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -9,6 +11,12 @@ import sys
 from pathlib import Path, PurePosixPath
 
 RUNTIME = Path("/var/tmp/capsem-container")
+# The VM workspace seen through the workload's id map. Outside RUNTIME, which
+# is removed recursively on exit and must never reach into the workspace.
+WORKSPACE_VIEW = Path("/var/tmp/capsem-workspace")
+# Every id the workload maps lies at or above this, clear of the VM's own
+# system and user ids, so container root is no uid the VM trusts.
+LOWEST_MAPPED_ID = 65536
 # The VM workspace (the host-visible share) and, inside it, this launcher's
 # own stage. The service names where the container sees the workspace.
 VM_WORKSPACE = "/root"
@@ -37,6 +45,19 @@ REDIRECT_RULE = re.compile(
 )
 RETURN_RULE = re.compile(r"^-A OUTPUT -d (\S+) -j RETURN$")
 
+CLONE_NEWUSER = 0x10000000
+# The mount API's syscalls have one number on every architecture.
+OPEN_TREE, MOVE_MOUNT, MOUNT_SETATTR = 428, 429, 442
+OPEN_TREE_CLONE = 1
+AT_FDCWD = -100
+AT_EMPTY_PATH = 0x1000
+MOVE_MOUNT_F_EMPTY_PATH = 0x4
+MOUNT_ATTR_IDMAP = 0x00100000
+
+
+class MountAttr(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_uint64) for name in ("attr_set", "attr_clr", "propagation", "userns_fd")]
+
 
 def _safe_mount_point(value):
     """An absolute, normalized path the container may mount something at."""
@@ -53,9 +74,10 @@ def _safe_mount_point(value):
 
 
 def configure(unpacked, image, options):
-    for key in ("capabilities", "seccomp"):
+    for key in ("capabilities", "seccomp", "id_map"):
         if key not in options:
             raise ValueError(f"stage options carry no {key}; refusing to run the workload without it")
+    id_map = checked_id_map(options["id_map"])
     process = unpacked["process"]
     metadata = image.get("config") or {}
     if options["args"]:
@@ -131,7 +153,7 @@ def configure(unpacked, image, options):
             {
                 "destination": workspace,
                 "type": "bind",
-                "source": VM_WORKSPACE,
+                "source": str(WORKSPACE_VIEW),
                 "options": ["bind", "rw", "nosuid", "nodev"],
             }
         )
@@ -168,8 +190,10 @@ def configure(unpacked, image, options):
         },
         "linux": {
             "namespaces": [
-                {"type": name} for name in ("pid", "mount", "ipc", "uts", "network")
+                {"type": name} for name in ("user", "pid", "mount", "ipc", "uts", "network")
             ],
+            "uidMappings": [id_map],
+            "gidMappings": [id_map],
             "cgroupsPath": "/capsem-container",
             "resources": {
                 "memory": {"limit": 256 * 1024**2, "swap": 256 * 1024**2},
@@ -191,6 +215,76 @@ def configure(unpacked, image, options):
             "seccomp": options["seccomp"],
         },
     }
+
+
+def checked_id_map(id_map):
+    """The host's map, refused unless container root and every id after it
+    land at or above LOWEST_MAPPED_ID."""
+    if (
+        not isinstance(id_map, dict)
+        or set(id_map) != {"containerID", "hostID", "size"}
+        or not all(type(value) is int for value in id_map.values())
+        or id_map["containerID"] != 0
+        or id_map["hostID"] < LOWEST_MAPPED_ID
+        or not 0 < id_map["size"] <= 65536
+    ):
+        raise ValueError(f"refusing id map {id_map!r}: container root must map above the VM's own ids")
+    return id_map
+
+
+def _syscall_check(result):
+    if result < 0:
+        number = ctypes.get_errno()
+        raise OSError(number, os.strerror(number))
+    return result
+
+
+def idmap_workspace(id_map, target):
+    """Mount the VM workspace at `target` through the workload's id map.
+
+    The VirtioFS server reports every workspace entry as VM uid 0; through this
+    mount that is container root, so the workload can chown, `tar -x` and
+    `cp -a` there. runc 1.1 makes no idmapped mounts; its bind of this one
+    keeps the idmap. The map comes from a user namespace held open by a child
+    for as long as the mount is being made.
+    """
+    libc = ctypes.CDLL(None, use_errno=True)
+    ready_read, ready_write = os.pipe()
+    hold_read, hold_write = os.pipe()
+    child = os.fork()
+    if child == 0:
+        os.close(ready_read)
+        os.close(hold_write)
+        os.write(ready_write, b"1" if libc.unshare(CLONE_NEWUSER) == 0 else b"0")
+        os.read(hold_read, 1)
+        os._exit(0)
+    os.close(ready_write)
+    os.close(hold_read)
+    try:
+        if os.read(ready_read, 1) != b"1":
+            raise OSError("cannot create the workload's user namespace")
+        mapping = f"{id_map['containerID']} {id_map['hostID']} {id_map['size']}\n"
+        for name in ("uid_map", "gid_map"):
+            Path(f"/proc/{child}/{name}").write_text(mapping)
+        userns = os.open(f"/proc/{child}/ns/user", os.O_RDONLY | os.O_CLOEXEC)
+        tree = None
+        try:
+            tree = _syscall_check(
+                libc.syscall(OPEN_TREE, AT_FDCWD, VM_WORKSPACE.encode(), OPEN_TREE_CLONE | os.O_CLOEXEC)
+            )
+            attr = MountAttr(MOUNT_ATTR_IDMAP, 0, 0, userns)
+            _syscall_check(
+                libc.syscall(MOUNT_SETATTR, tree, b"", AT_EMPTY_PATH, ctypes.byref(attr), ctypes.sizeof(attr))
+            )
+            _syscall_check(libc.syscall(MOVE_MOUNT, tree, b"", AT_FDCWD, str(target).encode(), MOVE_MOUNT_F_EMPTY_PATH))
+        finally:
+            if tree is not None:
+                os.close(tree)
+            os.close(userns)
+    finally:
+        os.close(ready_read)
+        os.close(hold_write)
+        os.waitpid(child, 0)
 
 
 def command(*args, check=True, **kwargs):
@@ -393,7 +487,11 @@ def assemble(stage, layout):
 
 
 def run(stage):
-    RUNTIME.mkdir(mode=0o700)  # A second workload cannot overwrite live state.
+    # A second workload cannot overwrite live state. Traversable, not listable:
+    # runc sets the container up as the mapped root, which must reach the
+    # bundle and the resolver file through here.
+    RUNTIME.mkdir(mode=0o711)
+    RUNTIME.chmod(0o711)
     state = RUNTIME / "state"
     runc = ["runc", "--rootless=true", "--root", str(state)]
     process = None
@@ -402,7 +500,15 @@ def run(stage):
         layout.mkdir()
         assemble(stage, layout)
         bundle = RUNTIME / "bundle"
-        command("umoci", "unpack", "--image", f"{layout}:image", str(bundle))
+        options = json.loads((stage / "options.json").read_text())
+        id_map = checked_id_map(options.get("id_map"))
+        mapping = f"{id_map['containerID']}:{id_map['hostID']}:{id_map['size']}"
+        # Owned by the mapped ids, so the root filesystem is container root's.
+        command("umoci", "unpack", "--uid-map", mapping, "--gid-map", mapping, "--image", f"{layout}:image", str(bundle))
+        bundle.chmod(0o711)
+        if options.get("workspace") is not None:
+            WORKSPACE_VIEW.mkdir(mode=0o700, exist_ok=True)
+            idmap_workspace(id_map, WORKSPACE_VIEW)
         index = json.loads((layout / "index.json").read_text())
         manifest = json.loads(
             (
@@ -415,11 +521,7 @@ def run(stage):
             ).read_text()
         )
         config_path = bundle / "config.json"
-        config = configure(
-            json.loads(config_path.read_text()),
-            image,
-            json.loads((stage / "options.json").read_text()),
-        )
+        config = configure(json.loads(config_path.read_text()), image, options)
         config_path.write_text(json.dumps(config))
         (RUNTIME / "resolv.conf").write_text(resolv_conf())
         (stage / "ready").write_text("1\n")

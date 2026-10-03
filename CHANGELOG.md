@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only Unix, IPv4, IPv6 and non-netfilter netlink families, so vsock and
   nf_tables stay unreachable, and only the native ABI is admitted. The
   workload used to run under a filter that allowed everything but vsock.
+- OCI workloads now run in a user namespace: container root is VM uid
+  100000, not VM root, and every id the workload can hold lies above the
+  VM's own. The workspace is mounted through the same map, so it stays
+  root's inside the container and `chown`, `tar -x` and `cp -a` keep
+  working there. On macOS this needed a guest kernel patch, because Apple's
+  VirtioFS server does not support idmapped mounts.
 
 - The guest kernel now applies hardening sysctls at boot and stops the boot
   if any is refused: kernel pointer and log restriction, Yama

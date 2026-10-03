@@ -21,6 +21,7 @@ def launcher():
 SECURITY = {
     "capabilities": ["CAP_CHOWN", "CAP_SETUID"],
     "seccomp": {"defaultAction": "SCMP_ACT_ERRNO", "defaultErrnoRet": 1, "syscalls": []},
+    "id_map": {"containerID": 0, "hostID": 100000, "size": 65536},
 }
 
 
@@ -59,6 +60,7 @@ def test_default_command_user_and_workdir_survive_hardening(launcher):
     assert hooks[0]["args"] == ["/usr/bin/python3", str(SOURCE), "--network-ready"]
     assert hooks[0]["timeout"] == 5
     assert {ns["type"] for ns in config["linux"]["namespaces"]} == {
+        "user",
         "pid",
         "mount",
         "ipc",
@@ -408,7 +410,12 @@ def test_the_workspace_is_mounted_where_the_service_says(launcher):
     config = launcher.configure(unpacked(), image(), options)
     (mount,) = _mounts_at(config, "/workspace")
     assert mount["type"] == "bind"
-    assert mount["source"] == "/root", "the VM's /root is the workspace share"
+    # The VM's /root share, seen through the workload's id map: VM uid 0 --
+    # every entry the VirtioFS server reports -- is container root there.
+    assert mount["source"] == str(launcher.WORKSPACE_VIEW)
+    assert launcher.RUNTIME not in launcher.WORKSPACE_VIEW.parents, (
+        "the runtime directory is removed recursively on exit; the workspace must not be under it"
+    )
     assert {"bind", "nosuid", "nodev"} <= set(mount["options"])
     assert "ro" not in mount["options"], "a workload writes its outputs back to the workspace"
 
@@ -461,9 +468,34 @@ def test_the_host_decides_the_capabilities_and_the_syscall_filter(launcher):
     assert config["process"]["capabilities"]["ambient"] == []
 
 
-@pytest.mark.parametrize("missing", ["capabilities", "seccomp"])
+@pytest.mark.parametrize("missing", ["capabilities", "seccomp", "id_map"])
 def test_a_stage_without_a_filter_or_capabilities_is_refused(launcher, missing):
     options = {**SECURITY, "args": [], "env": {}}
     del options[missing]
     with pytest.raises(ValueError, match=missing):
         launcher.configure(unpacked(), image(), options)
+
+
+def test_the_workload_runs_in_a_user_namespace_with_the_host_map(launcher):
+    config = launcher.configure(unpacked(), image(), {**SECURITY, "args": [], "env": {}})
+    assert {"type": "user"} in config["linux"]["namespaces"]
+    assert config["linux"]["uidMappings"] == [SECURITY["id_map"]]
+    assert config["linux"]["gidMappings"] == [SECURITY["id_map"]]
+
+
+@pytest.mark.parametrize(
+    "id_map",
+    [
+        {"containerID": 0, "hostID": 0, "size": 65536},
+        {"containerID": 0, "hostID": 1, "size": 65536},
+        {"containerID": 1, "hostID": 100000, "size": 65536},
+        {"containerID": 0, "hostID": 100000, "size": 0},
+        {"containerID": 0, "hostID": "100000", "size": 65536},
+        {"containerID": 0, "hostID": 100000},
+    ],
+)
+def test_a_map_that_reaches_vm_system_ids_is_refused(launcher, id_map):
+    """Container root must never be a uid the VM trusts: the whole map sits
+    above the VM's own system and user ids, and starts at container root."""
+    with pytest.raises(ValueError, match="id map"):
+        launcher.configure(unpacked(), image(), {**SECURITY, "id_map": id_map, "args": [], "env": {}})
