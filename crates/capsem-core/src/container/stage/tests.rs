@@ -8,7 +8,9 @@ fn stage_plan_writes_parts_then_the_files_the_launcher_reads() {
     let files = [PathBuf::from("index.json"), PathBuf::from("oci-layout")];
     let env = [("LANG".to_string(), "C".to_string())].into();
     let resources = super::super::workload_resources(2048, 2).unwrap();
-    let plan = stage_plan(root.path(), &files, &["serve".to_string()], &env, resources).unwrap();
+    let digest = format!("sha256:{}", "a".repeat(64));
+    let plan = stage_plan(root.path(), &files, &["serve".to_string()], &env, resources, &digest).unwrap();
+    assert!(stage_plan(root.path(), &files, &[], &env, resources, "sha256:short").is_err());
     let names: Vec<&str> = plan.iter().map(|file| file.name.as_str()).collect();
     assert_eq!(names, ["0-0", "transfer.json", "options.json", "launch.py"]);
     assert!(matches!(&plan[0].content, StagedContent::File(path) if path == &root.path().join("index.json")));
@@ -34,6 +36,7 @@ fn stage_plan_writes_parts_then_the_files_the_launcher_reads() {
             "seccomp": super::super::seccomp::workload_seccomp(super::oci_architecture().unwrap()).unwrap(),
             "id_map": {"containerID": 0, "hostID": 100000, "size": 65536},
             "resources": {"memory_bytes": 1664u64 * 1024 * 1024, "cpu_millis": 1750, "pids": 4096},
+            "digest": digest,
         })
     );
     assert_eq!(super::super::CONTAINER_WORKSPACE, "/workspace");

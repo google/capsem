@@ -26,7 +26,7 @@ impl ImageSource for FixtureImages {
             Ok(PulledImage {
                 root: root.path().to_path_buf(),
                 files: vec![PathBuf::from("index.json"), PathBuf::from("oci-layout")],
-                digest: "sha256:fixture".into(),
+                digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".into(),
                 _hold: Box::new(root),
             })
         })
@@ -173,7 +173,10 @@ async fn create_wait_reports_a_detached_workload_running_once_the_guest_marks_re
     .await
     .expect("a guest-ready detached workload settles the create wait");
     assert_eq!(status.state, ContainerState::Running);
-    assert_eq!(status.digest.as_deref(), Some("sha256:fixture"));
+    assert_eq!(
+        status.digest.as_deref(),
+        Some("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+    );
 }
 
 fn owner_accepting_stage_and_launch(
@@ -298,7 +301,10 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
 
     let status = wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
     let messages = owner.await.unwrap();
-    assert_eq!(status.digest.as_deref(), Some("sha256:fixture"));
+    assert_eq!(
+        status.digest.as_deref(),
+        Some("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+    );
     assert!(status.error.is_none());
     let staged: Vec<&str> = messages
         .iter()
@@ -343,6 +349,7 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
             "id_map": {"containerID": 0, "hostID": 100000, "size": 65536},
             // The fixture VM's 2048 MiB and 2 CPUs, minus the runtime's share.
             "resources": {"memory_bytes": 1664u64 * 1024 * 1024, "cpu_millis": 1750, "pids": 4096},
+            "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
         })
     );
     assert!(!stage.join("1-0").exists(), "an empty layout file has no part");
@@ -529,7 +536,10 @@ async fn container_status_route_reports_running_only_once_the_guest_marks_ready(
     let (status, body) = get_status(&fx.state, "box").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["state"], "running");
-    assert_eq!(body["digest"], "sha256:fixture");
+    assert_eq!(
+        body["digest"],
+        "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    );
 }
 
 #[tokio::test]

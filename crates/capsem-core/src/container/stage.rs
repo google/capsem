@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use super::LAUNCHER;
 
@@ -35,7 +35,9 @@ pub fn stage_plan(
     args: &[String],
     env: &BTreeMap<String, String>,
     resources: super::WorkloadResources,
+    digest: &str,
 ) -> Result<Vec<StagedFile>> {
+    capsem_assets::oci::Digest::parse(digest).context("image digest")?;
     let transfer = capsem_assets::oci::transfer_manifest(root, files)?;
     let mut plan: Vec<StagedFile> = transfer
         .iter()
@@ -60,6 +62,7 @@ pub fn stage_plan(
             "seccomp": super::seccomp::workload_seccomp(oci_architecture()?)?,
             "id_map": super::WORKLOAD_ID_MAP,
             "resources": resources,
+            "digest": digest,
         }))?),
     });
     plan.push(StagedFile {

@@ -262,8 +262,8 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         .ok_or_else(|| format!("VM {id} stopped before its container was staged"))?;
     let resources = capsem_core::container::workload_resources(ram_mb, cpus).map_err(|e| format!("{e:#}"))?;
     let plan = tokio::task::spawn_blocking({
-        let (root, files) = (image.root.clone(), image.files.clone());
-        move || stage::stage_plan(&root, &files, &spec.args, &spec.env, resources)
+        let (root, files, digest) = (image.root.clone(), image.files.clone(), image.digest.clone());
+        move || stage::stage_plan(&root, &files, &spec.args, &spec.env, resources, &digest)
     })
     .await
     .map_err(|e| format!("plan stage: {e}"))?
