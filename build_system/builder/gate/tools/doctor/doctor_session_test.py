@@ -1,7 +1,7 @@
 """Validate the session DB produced by a capsem-doctor run.
 
 Boots the VM with capsem-doctor, captures the session ID, then inspects
-the session.db and main.db to verify that all telemetry pipelines recorded
+the session.db and the host ledger to verify that all telemetry pipelines recorded
 data correctly during the diagnostic run.
 
 Capsem-doctor exercises network (allowed + denied domains), filesystem
@@ -33,6 +33,7 @@ from typing import Any, Protocol, cast
 from capsem_builder.gate.tools.doctor.doctor_session_verify import (
     verify_session as _verify_session,
 )
+from capsem_builder.gate.tools.doctor.host_ledger import host_ledger_path
 
 PROJECT_ROOT = Path(os.environ.get("CAPSEM_REPOSITORY_ROOT", Path.cwd())).resolve()
 SCRIPT_DIR = PROJECT_ROOT / "build_system" / "scripts" / "test"
@@ -94,7 +95,7 @@ def _run_dir() -> Path:
 CAPSEM_HOME = _capsem_home()
 PERSISTENT_DIR = _run_dir() / "persistent"
 SERVICE_SOCKET = _run_dir() / "service.sock"
-MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
+HOST_LEDGER = host_ledger_path(CAPSEM_HOME)
 
 
 def _parse_created_session_id(stdout: str) -> str:
@@ -203,8 +204,8 @@ def run_doctor(binary: str, assets_dir: str, mock_base_url: str) -> tuple[str, P
 
 
 def verify_session(session_id: str, session_dir: Path) -> bool:
-    """Validate the stopped session against its session and main ledgers."""
-    return _verify_session(session_id, session_dir, main_db=MAIN_DB)
+    """Validate the stopped session against its session ledger and the host ledger."""
+    return _verify_session(session_id, session_dir, host_ledger=HOST_LEDGER)
 
 
 def main():

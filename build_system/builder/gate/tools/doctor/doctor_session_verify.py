@@ -187,7 +187,7 @@ def verify_session(
     session_id: str,
     session_dir: Path,
     *,
-    main_db: Path,
+    host_ledger: Path,
 ) -> bool:
     """Open the session DB, run all assertions, and return the verdict."""
     db_path = _session_database(session_dir)
@@ -201,7 +201,7 @@ def verify_session(
         _verify_mcp(connection, results)
         _verify_models(connection, results)
         _verify_tools(connection, results)
-    verify_host_artifacts(results, session_id, session_dir, db_path, main_db)
+    verify_host_artifacts(results, session_id, session_dir, host_ledger)
 
     print(f"\n{BOLD}{'=' * 60}{RESET}")
     total = len(results.passed) + len(results.failed) + len(results.warned)

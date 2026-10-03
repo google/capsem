@@ -1,12 +1,17 @@
-"""Validate host-owned rollups, snapshots, and logs for doctor sessions."""
+"""Validate the host ledger, snapshots, and logs for doctor sessions."""
 
 from __future__ import annotations
 
 import json
-import sqlite3
-from contextlib import closing
 from pathlib import Path
 from typing import Protocol
+
+from capsem_builder.gate.tools.doctor.host_ledger import (
+    SESSION_CREATED,
+    SESSION_STOPPED,
+    read_host_events,
+    verify_chain,
+)
 
 BOLD = "\033[1m"
 RESET = "\033[0m"
@@ -18,58 +23,22 @@ class ResultSink(Protocol):
     def check(self, condition: bool, pass_message: str, fail_message: str) -> None: ...
 
 
-def _session_counts(db_path: Path) -> tuple[int, int, int]:
-    with closing(sqlite3.connect(str(db_path))) as connection:
-        file_events = connection.execute("SELECT COUNT(*) FROM fs_events").fetchone()[0]
-        requests = connection.execute("SELECT COUNT(*) FROM net_events").fetchone()[0]
-        tools = connection.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
-    return file_events, requests, tools
-
-
-def _verify_main_db(
-    results: ResultSink,
-    session_id: str,
-    db_path: Path,
-    main_db: Path,
-) -> None:
-    print(f"\n{BOLD}main.db rollup{RESET}")
-    if not main_db.exists():
-        results.fail(f"main.db not found at {main_db}")
+def _verify_host_ledger(results: ResultSink, session_id: str, host_ledger: Path) -> None:
+    print(f"\n{BOLD}host ledger{RESET}")
+    if not host_ledger.exists():
+        results.fail(f"host ledger not found at {host_ledger}")
         return
-    with closing(sqlite3.connect(str(main_db))) as connection:
-        connection.row_factory = sqlite3.Row
-        row = connection.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
-    if row is None:
-        results.fail(f"session {session_id} not found in main.db")
-        return
-
+    events = read_host_events(host_ledger)
+    try:
+        results.ok(f"host ledger chain intact over {verify_chain(events)} events")
+    except ValueError as error:
+        results.fail(str(error))
+    kinds = [event["kind"] for event in events if event["session_id"] == session_id]
     results.check(
-        row["status"] == "stopped",
-        f"main.db status = {row['status']}",
-        f"main.db status = {row['status']} (expected stopped)",
+        kinds[:1] == [SESSION_CREATED] and kinds[-1:] == [SESSION_STOPPED],
+        f"host ledger records {session_id}: {', '.join(kinds)}",
+        f"host ledger records {session_id} as {kinds} (expected created ... stopped)",
     )
-    totals = {
-        "total_file_events": row["total_file_events"],
-        "total_requests": row["total_requests"],
-        "total_tool_calls": row["total_tool_calls"],
-    }
-    for name, value in totals.items():
-        results.check(value > 0, f"main.db {name} = {value}", f"main.db {name} = 0 (rollup failed)")
-
-    actuals = dict(
-        zip(
-            totals,
-            _session_counts(db_path),
-            strict=True,
-        )
-    )
-    for name, actual in actuals.items():
-        rollup = totals[name]
-        results.check(
-            rollup == actual,
-            f"rollup {name} ({rollup}) matches session.db ({actual})",
-            f"rollup {name} ({rollup}) != session.db ({actual})",
-        )
 
 
 def _valid_log_entry(line: str) -> bool:
@@ -109,9 +78,8 @@ def verify_host_artifacts(
     results: ResultSink,
     session_id: str,
     session_dir: Path,
-    db_path: Path,
-    main_db: Path,
+    host_ledger: Path,
 ) -> None:
     """Validate every host-side artifact after the session DB is closed."""
-    _verify_main_db(results, session_id, db_path, main_db)
+    _verify_host_ledger(results, session_id, host_ledger)
     _verify_log(results, session_dir)
