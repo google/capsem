@@ -77,6 +77,7 @@ from capsem_builder.image.models import (
     VersionedDownloadConfig,
 )
 from capsem_builder.policy.dockerpolicy import BuildNetwork, ContainerNetwork
+from capsem_builder.release.obom import ObomSubject
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 EXACT_EROFS_BASE = "registry.example/debian@sha256:" + "e" * 64
@@ -1621,6 +1622,48 @@ class TestCreateErofs:
         assert " /assets/out/rootfs.erofs /rootfs" in cmd_str
 
     @patch("capsem_builder.image.docker.run_cmd")
+    def test_id_offset_shifts_owners_into_the_workload_namespace(self, mock_run):
+        create_erofs(
+            "docker",
+            Path("/tmp/rootfs.tar"),
+            Path("/tmp/rootfs.erofs"),
+            "lz4hc",
+            "65536",
+            "12",
+            tool_image=EXACT_EROFS_BASE,
+            runtime_network=ContainerNetwork.NONE,
+            id_offset=100000,
+        )
+        cmd_str = " ".join(mock_run.call_args[0][0])
+        assert "--uid-offset=100000 --gid-offset=100000 /assets/rootfs.erofs" in cmd_str
+
+    @patch("capsem_builder.image.docker.run_cmd")
+    def test_without_an_id_offset_owners_are_kept(self, mock_run):
+        create_erofs(
+            "docker",
+            Path("/tmp/rootfs.tar"),
+            Path("/tmp/rootfs.erofs"),
+            "lz4hc",
+            tool_image=EXACT_EROFS_BASE,
+            runtime_network=ContainerNetwork.NONE,
+        )
+        assert "-offset" not in " ".join(mock_run.call_args[0][0])
+
+    @patch("capsem_builder.image.docker.run_cmd")
+    def test_a_non_positive_id_offset_is_refused(self, mock_run):
+        with pytest.raises(ValueError, match="id offset"):
+            create_erofs(
+                "docker",
+                Path("/tmp/rootfs.tar"),
+                Path("/tmp/rootfs.erofs"),
+                "lz4hc",
+                tool_image=EXACT_EROFS_BASE,
+                runtime_network=ContainerNetwork.NONE,
+                id_offset=0,
+            )
+        mock_run.assert_not_called()
+
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_chowns_output_to_invoking_user(self, mock_run):
         create_erofs(
             "docker",
@@ -1980,6 +2023,18 @@ class TestBuildLedger:
         _normalize_cyclonedx_obom(second, architecture="arm64")
 
         assert first.read_bytes() == second.read_bytes()
+
+    def test_normalize_cyclonedx_obom_names_an_image_subject(self, tmp_path):
+        output = tmp_path / "obom.json"
+        output.write_text(json.dumps({"bomFormat": "CycloneDX", "metadata": {}}))
+        subject = ObomSubject(name="ghcr.io/google/capsem/dev", version="sha256:" + "a" * 64)
+
+        _normalize_cyclonedx_obom(output, architecture="arm64", subject=subject)
+
+        component = json.loads(output.read_text())["metadata"]["component"]
+        assert component["name"] == "ghcr.io/google/capsem/dev"
+        assert component["version"] == "sha256:" + "a" * 64
+        assert {"name": "capsem:guest:architecture", "value": "arm64"} in component["properties"]
 
     @patch("capsem_builder.image.docker.remove_image")
     @patch("capsem_builder.image.docker.extract_software_inventory")

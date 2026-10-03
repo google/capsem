@@ -255,6 +255,26 @@ def test_obom_validator_rejects_unpublishable_evidence(
         obom.validate_exported_rootfs_obom(path, architecture="arm64")
 
 
+def test_obom_validator_accepts_an_image_subject(tmp_path: Path) -> None:
+    subject = obom.ObomSubject(name="ghcr.io/google/capsem/dev", version="sha256:" + "a" * 64)
+    document = deepcopy(_valid_obom())
+    metadata = document["metadata"]
+    assert isinstance(metadata, dict)
+    metadata["component"] |= {"name": subject.name, "version": subject.version}
+    path = tmp_path / "obom.json"
+    _write_obom(path, document)
+
+    obom.validate_exported_rootfs_obom(path, architecture="arm64", subject=subject)
+    with pytest.raises(RuntimeError, match=r"ghcr\.io/google/capsem/dev"):
+        obom.validate_exported_rootfs_obom(
+            path,
+            architecture="arm64",
+            subject=obom.ObomSubject(name=subject.name, version="sha256:" + "b" * 64),
+        )
+    with pytest.raises(RuntimeError, match="capsem-rootfs-arm64"):
+        obom.validate_exported_rootfs_obom(path, architecture="arm64")
+
+
 def test_obom_validator_rejects_non_json(tmp_path: Path) -> None:
     path = tmp_path / "broken.json"
     path.write_text("not-json", encoding="utf-8")

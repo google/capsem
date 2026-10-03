@@ -30,7 +30,7 @@ from ..policy.dockerpolicy import (
     require_build_network,
     require_container_network,
 )
-from ..release.obom import validate_exported_rootfs_obom
+from ..release.obom import ObomSubject, validate_exported_rootfs_obom
 from . import assetdependencies, componentcache, guestbinarycache, guestbuilder
 from .assettools import image_tag as asset_tools_image_tag
 from .doctor import check_container_runtime
@@ -599,8 +599,14 @@ def create_erofs(
     *,
     tool_image: str,
     runtime_network: ContainerNetwork,
+    id_offset: int | None = None,
 ) -> None:
-    """Create an EROFS image from a tar archive using a container."""
+    """Create an EROFS image from a tar archive using a container.
+
+    `id_offset` shifts every owner and group by that amount, so an image
+    mounted into a user namespace mapping that range keeps its root-owned
+    files owned by namespace root.
+    """
     network_value = require_container_network(runtime_network)
     if compression not in {"lz4", "lz4hc"}:
         raise ValueError(f"unsupported EROFS compression: {compression}")
@@ -620,6 +626,9 @@ def create_erofs(
     out_dir = Path(out_rel).parent.as_posix()
     cluster_flag = f" -C{cluster_size}" if cluster_size else ""
     level_flag = f",level={compression_level}" if compression_level else ""
+    if id_offset is not None and id_offset <= 0:
+        raise ValueError("EROFS id offset must be positive")
+    offset_flag = f" --uid-offset={id_offset} --gid-offset={id_offset}" if id_offset else ""
     mkdir_output = "" if out_dir == "." else f"mkdir -p /assets/{out_dir} && "
     host_uid = os.getuid()
     host_gid = os.getgid()
@@ -642,7 +651,7 @@ def create_erofs(
             "bash",
             "-c",
             f"mkdir /rootfs && {mkdir_output}tar xf /assets/{tar_rel} -C /rootfs && "
-            f"mkfs.erofs -Enosbcrc -z{compression}{level_flag}{cluster_flag} "
+            f"mkfs.erofs -Enosbcrc -z{compression}{level_flag}{cluster_flag}{offset_flag} "
             f"/assets/{out_rel} /rootfs && "
             f"chown {host_uid}:{host_gid} /assets/{out_rel}",
         ],
@@ -1124,7 +1133,9 @@ def _extract_rootfs_command(tar_path: str) -> list[str]:
     ]
 
 
-def _normalize_cyclonedx_obom(path: Path, *, architecture: str) -> None:
+def _normalize_cyclonedx_obom(
+    path: Path, *, architecture: str, subject: ObomSubject | None = None
+) -> None:
     """Remove build-host context while preserving exported-rootfs evidence."""
     document = json.loads(path.read_text())
 
@@ -1154,15 +1165,9 @@ def _normalize_cyclonedx_obom(path: Path, *, architecture: str) -> None:
     if not isinstance(metadata, dict):
         raise RuntimeError(f"OBOM {path} has non-object metadata")
     metadata.pop("timestamp", None)
-    metadata["component"] = {
-        "type": "operating-system",
-        "name": f"capsem-rootfs-{architecture}",
-        "version": "guest-rootfs",
-        "properties": [
-            {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
-            {"name": "capsem:guest:architecture", "value": architecture},
-        ],
-    }
+    metadata["component"] = (subject or ObomSubject.guest_rootfs(architecture)).component(
+        architecture
+    )
 
     components = document.get("components")
     removed_refs: set[str] = set()
@@ -1227,11 +1232,13 @@ def generate_cyclonedx_obom(
     tool_image: str,
     tool_platform: str,
     runtime_network: ContainerNetwork,
+    subject: ObomSubject | None = None,
 ) -> Path:
     """Generate a CycloneDX OS OBOM for the exported rootfs tar.
 
     The build ledger records declared build inputs. This OBOM is the runtime
-    inventory for what actually ended up in the base image.
+    inventory for what actually ended up in the base image. `subject` names
+    the image the rootfs came from; the default is the VM guest rootfs.
     """
     network_value = require_container_network(runtime_network)
 
@@ -1273,8 +1280,8 @@ def generate_cyclonedx_obom(
         capture=True,
         timeout=OBOM_COMMAND_TIMEOUT_SECONDS,
     )
-    _normalize_cyclonedx_obom(output_path, architecture=architecture)
-    _validate_cyclonedx_obom(output_path, architecture=architecture)
+    _normalize_cyclonedx_obom(output_path, architecture=architecture, subject=subject)
+    _validate_cyclonedx_obom(output_path, architecture=architecture, subject=subject)
     run_cmd(
         [
             runtime,

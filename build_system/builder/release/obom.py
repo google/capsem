@@ -3,12 +3,43 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 
-def validate_exported_rootfs_obom(path: Path, *, architecture: str | None = None) -> None:
-    """Refuse scanner output that was not normalized as guest-rootfs evidence."""
+@dataclass(frozen=True)
+class ObomSubject:
+    """What an exported rootfs is the rootfs of, as its OBOM names it.
+
+    The VM guest rootfs is `capsem-rootfs-<arch>` at version `guest-rootfs`.
+    An official OCI image is its repository at its per-architecture manifest
+    digest, so the OBOM names the exact image it inventories.
+    """
+
+    name: str
+    version: str
+
+    @classmethod
+    def guest_rootfs(cls, architecture: str) -> ObomSubject:
+        return cls(name=f"capsem-rootfs-{architecture}", version="guest-rootfs")
+
+    def component(self, architecture: str) -> dict[str, Any]:
+        return {
+            "type": "operating-system",
+            "name": self.name,
+            "version": self.version,
+            "properties": [
+                {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
+                {"name": "capsem:guest:architecture", "value": architecture},
+            ],
+        }
+
+
+def validate_exported_rootfs_obom(
+    path: Path, *, architecture: str | None = None, subject: ObomSubject | None = None
+) -> None:
+    """Refuse scanner output that was not normalized as exported-rootfs evidence."""
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -40,13 +71,18 @@ def validate_exported_rootfs_obom(path: Path, *, architecture: str | None = None
         properties, "capsem:evidence:scope", "exported-rootfs"
     ):
         raise RuntimeError(f"OBOM {path} is not scoped to the exported rootfs")
-    if architecture is not None and (
-        component.get("type") != "operating-system"
-        or component.get("name") != f"capsem-rootfs-{architecture}"
-        or component.get("version") != "guest-rootfs"
-        or not _property(properties, "capsem:guest:architecture", architecture)
-    ):
-        raise RuntimeError(f"OBOM {path} is not normalized for guest architecture {architecture}")
+    if architecture is not None:
+        expected = subject or ObomSubject.guest_rootfs(architecture)
+        if (
+            component.get("type") != "operating-system"
+            or component.get("name") != expected.name
+            or component.get("version") != expected.version
+            or not _property(properties, "capsem:guest:architecture", architecture)
+        ):
+            raise RuntimeError(
+                f"OBOM {path} is not normalized for {expected.name} on guest architecture "
+                f"{architecture}"
+            )
 
     components = document.get("components")
     if not isinstance(components, list) or not components:
