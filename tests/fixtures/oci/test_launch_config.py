@@ -22,6 +22,7 @@ SECURITY = {
     "capabilities": ["CAP_CHOWN", "CAP_SETUID"],
     "seccomp": {"defaultAction": "SCMP_ACT_ERRNO", "defaultErrnoRet": 1, "syscalls": []},
     "id_map": {"containerID": 0, "hostID": 100000, "size": 65536},
+    "resources": {"memory_bytes": 1024 * 1024**2, "cpu_millis": 1750, "pids": 4096},
 }
 
 
@@ -69,8 +70,8 @@ def test_default_command_user_and_workdir_survive_hardening(launcher):
     }
     assert "CAP_SYS_ADMIN" not in process["capabilities"]["bounding"]
     assert "CAP_NET_RAW" not in process["capabilities"]["bounding"]
-    assert config["linux"]["resources"]["memory"]["limit"] == 256 * 1024**2
-    assert config["linux"]["resources"]["pids"]["limit"] == 256
+    assert config["linux"]["resources"]["memory"]["limit"] == 1024 * 1024**2
+    assert config["linux"]["resources"]["pids"]["limit"] == 4096
     assert all(mount["type"] in {"proc", "tmpfs", "bind"} for mount in config["mounts"])
     assert "/data" in {mount["destination"] for mount in config["mounts"]}
 
@@ -81,9 +82,10 @@ def test_container_trusts_capsem_ca_and_resolves_through_the_gateway(launcher):
     binds = {
         mount["destination"]: mount
         for mount in config["mounts"]
-        if mount["type"] == "bind"
+        if mount["type"] == "bind" and launcher.VOLUMES not in Path(mount["source"]).parents
     }
-    # Only these two host files ever enter a container, and only read-only.
+    # Only these two VM files ever enter a container, and only read-only; the
+    # image's own volumes are its state (test_image_volumes_live_on_...).
     assert set(binds) == {"/etc/resolv.conf", launcher.CA_BUNDLE}
     assert binds[launcher.CA_BUNDLE]["source"] == launcher.CA_BUNDLE
     assert binds["/etc/resolv.conf"]["source"] == str(launcher.RUNTIME / "resolv.conf")
@@ -468,7 +470,7 @@ def test_the_host_decides_the_capabilities_and_the_syscall_filter(launcher):
     assert config["process"]["capabilities"]["ambient"] == []
 
 
-@pytest.mark.parametrize("missing", ["capabilities", "seccomp", "id_map"])
+@pytest.mark.parametrize("missing", ["capabilities", "seccomp", "id_map", "resources"])
 def test_a_stage_without_a_filter_or_capabilities_is_refused(launcher, missing):
     options = {**SECURITY, "args": [], "env": {}}
     del options[missing]
@@ -499,3 +501,68 @@ def test_a_map_that_reaches_vm_system_ids_is_refused(launcher, id_map):
     above the VM's own system and user ids, and starts at container root."""
     with pytest.raises(ValueError, match="id map"):
         launcher.configure(unpacked(), image(), {**SECURITY, "id_map": id_map, "args": [], "env": {}})
+
+
+def test_the_workload_is_sized_by_the_host(launcher):
+    config = launcher.configure(unpacked(), image(), {**SECURITY, "args": [], "env": {}})
+    limits = config["linux"]["resources"]
+    assert limits["memory"] == {"limit": 1024 * 1024**2, "swap": 1024 * 1024**2}
+    assert limits["cpu"] == {"quota": 175000, "period": 100000}
+    assert limits["pids"] == {"limit": 4096}
+
+
+@pytest.mark.parametrize(
+    "resources",
+    [
+        {"memory_bytes": 0, "cpu_millis": 1000, "pids": 1},
+        {"memory_bytes": "1", "cpu_millis": 1000, "pids": 1},
+        {"memory_bytes": 1, "cpu_millis": 1000},
+        {"memory_bytes": 1, "cpu_millis": 1000, "pids": 1, "devices": 1},
+    ],
+)
+def test_malformed_resources_are_refused(launcher, resources):
+    with pytest.raises(ValueError, match="resources"):
+        launcher.configure(unpacked(), image(), {**SECURITY, "resources": resources, "args": [], "env": {}})
+
+
+def test_an_image_needing_more_memory_than_the_vm_gives_is_refused(launcher):
+    hungry = image()
+    hungry["config"]["Labels"] = {launcher.MEMORY_LABEL: "2048"}
+    with pytest.raises(ValueError, match="needs 2048 MiB"):
+        launcher.configure(unpacked(), hungry, {**SECURITY, "args": [], "env": {}})
+    hungry["config"]["Labels"] = {launcher.MEMORY_LABEL: "1024"}
+    launcher.configure(unpacked(), hungry, {**SECURITY, "args": [], "env": {}})
+    hungry["config"]["Labels"] = {launcher.MEMORY_LABEL: "1G"}
+    with pytest.raises(ValueError, match="whole number of MiB"):
+        launcher.configure(unpacked(), hungry, {**SECURITY, "args": [], "env": {}})
+
+
+def test_image_volumes_live_on_the_vm_overlay_not_tmpfs(launcher):
+    config = launcher.configure(unpacked(), image(), {**SECURITY, "args": [], "env": {}})
+    (data,) = _mounts_at(config, "/data")
+    assert data["type"] == "bind"
+    assert data["source"] == str(launcher.volume_dir("/data"))
+    assert launcher.VOLUMES in launcher.volume_dir("/data").parents
+    assert launcher.RUNTIME not in launcher.volume_dir("/data").parents, "RUNTIME is removed on exit"
+    assert "ro" not in data["options"]
+
+
+def test_volume_directories_never_collide(launcher):
+    paths = ["/a/b", "/a_b", "/a/b/", "/data", "/var/lib/data"]
+    assert len({launcher.volume_dir(path) for path in paths}) == len(paths)
+
+
+def test_a_volume_is_seeded_from_the_image_once_and_then_kept(launcher, tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher, "VOLUMES", tmp_path / "volumes")
+    monkeypatch.setattr(launcher.os, "chown", lambda *args: None)
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "data").mkdir(parents=True)
+    (rootfs / "data" / "seed").write_text("from the image")
+    launcher.prepare_volumes({"/data": {}, "/empty": {}}, rootfs, SECURITY["id_map"])
+    seeded = launcher.volume_dir("/data")
+    assert (seeded / "seed").read_text() == "from the image"
+    assert launcher.volume_dir("/empty").is_dir()
+    # Session state survives a relaunch: the image never overwrites it again.
+    (seeded / "seed").write_text("from the session")
+    launcher.prepare_volumes({"/data": {}}, rootfs, SECURITY["id_map"])
+    assert (seeded / "seed").read_text() == "from the session"

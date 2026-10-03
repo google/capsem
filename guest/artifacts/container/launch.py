@@ -14,9 +14,16 @@ RUNTIME = Path("/var/tmp/capsem-container")
 # The VM workspace seen through the workload's id map. Outside RUNTIME, which
 # is removed recursively on exit and must never reach into the workspace.
 WORKSPACE_VIEW = Path("/var/tmp/capsem-workspace")
+# An image's VOLUMEs: on the VM's ext4 system overlay, so they die with an
+# ephemeral VM and persist with a named one. Outside RUNTIME for the same
+# reason as the workspace view.
+VOLUMES = Path("/var/lib/capsem/volumes")
 # Every id the workload maps lies at or above this, clear of the VM's own
 # system and user ids, so container root is no uid the VM trusts.
 LOWEST_MAPPED_ID = 65536
+# An image declares the memory it cannot run without, in MiB.
+MEMORY_LABEL = "org.capsem.memory.min"
+CPU_PERIOD = 100000
 # The VM workspace (the host-visible share) and, inside it, this launcher's
 # own stage. The service names where the container sees the workspace.
 VM_WORKSPACE = "/root"
@@ -74,12 +81,20 @@ def _safe_mount_point(value):
 
 
 def configure(unpacked, image, options):
-    for key in ("capabilities", "seccomp", "id_map"):
+    for key in ("capabilities", "seccomp", "id_map", "resources"):
         if key not in options:
             raise ValueError(f"stage options carry no {key}; refusing to run the workload without it")
-    id_map = checked_id_map(options["id_map"])
     process = unpacked["process"]
     metadata = image.get("config") or {}
+    id_map = checked_id_map(options["id_map"])
+    resources = checked_resources(options["resources"])
+    needs = (metadata.get("Labels") or {}).get(MEMORY_LABEL)
+    if needs is not None:
+        if not (isinstance(needs, str) and needs.isdigit()):
+            raise ValueError(f"image label {MEMORY_LABEL} must be a whole number of MiB")
+        has = resources["memory_bytes"] // (1024 * 1024)
+        if int(needs) > has:
+            raise ValueError(f"image needs {needs} MiB of memory; this VM gives its workload {has} MiB")
     if options["args"]:
         process["args"] = (metadata.get("Entrypoint") or []) + options["args"]
     if not process.get("args") or not process["args"][0]:
@@ -132,7 +147,17 @@ def configure(unpacked, image, options):
             "source": "tmpfs",
             "options": ["nosuid", "nodev", "noexec", "mode=1777", "size=64m"],
         }
-        for path in sorted({"/scratch", "/tmp", "/run", *volumes})
+        for path in sorted({"/scratch", "/tmp", "/run"} - set(volumes))
+    )
+    # The image's declared state, on the VM's system overlay (volume_dir).
+    mounts.extend(
+        {
+            "destination": path,
+            "type": "bind",
+            "source": str(volume_dir(path)),
+            "options": ["bind", "rw", "nosuid", "nodev"],
+        }
+        for path in sorted(volumes)
     )
     mounts.extend(
         {
@@ -196,9 +221,9 @@ def configure(unpacked, image, options):
             "gidMappings": [id_map],
             "cgroupsPath": "/capsem-container",
             "resources": {
-                "memory": {"limit": 256 * 1024**2, "swap": 256 * 1024**2},
-                "pids": {"limit": 256},
-                "cpu": {"quota": 100000, "period": 100000},
+                "memory": {"limit": resources["memory_bytes"], "swap": resources["memory_bytes"]},
+                "pids": {"limit": resources["pids"]},
+                "cpu": {"quota": resources["cpu_millis"] * CPU_PERIOD // 1000, "period": CPU_PERIOD},
             },
             "maskedPaths": [
                 "/proc/kcore",
@@ -230,6 +255,44 @@ def checked_id_map(id_map):
     ):
         raise ValueError(f"refusing id map {id_map!r}: container root must map above the VM's own ids")
     return id_map
+
+
+def volume_dir(path):
+    """Where the VM keeps the image volume mounted at `path`: readable, and
+    distinct for every path (`/a/b` and `/a_b` never share)."""
+    digest = hashlib.sha256(path.encode()).hexdigest()[:16]
+    return VOLUMES / f"{path.strip('/').replace('/', '_')}-{digest}"
+
+
+def prepare_volumes(volumes, rootfs, id_map):
+    """Create each image volume once, seeded with the image's own content at
+    that path (already owned within the map by umoci), or empty and owned by
+    the mapped root. An existing volume is the session's state and is kept."""
+    VOLUMES.mkdir(parents=True, exist_ok=True, mode=0o711)
+    for path in volumes:
+        target = volume_dir(path)
+        if target.exists():
+            continue
+        seed = rootfs / path.lstrip("/")
+        staging = target.with_name(target.name + ".new")
+        shutil.rmtree(staging, ignore_errors=True)
+        if seed.is_dir() and not seed.is_symlink():
+            command("cp", "-a", "--", str(seed), str(staging))
+        else:
+            staging.mkdir(mode=0o755)
+            os.chown(staging, id_map["hostID"], id_map["hostID"])
+        staging.rename(target)
+
+
+def checked_resources(resources):
+    """The host's sizing, refused unless every limit is a positive integer."""
+    if (
+        not isinstance(resources, dict)
+        or set(resources) != {"memory_bytes", "cpu_millis", "pids"}
+        or not all(type(value) is int and value > 0 for value in resources.values())
+    ):
+        raise ValueError(f"refusing workload resources {resources!r}")
+    return resources
 
 
 def _syscall_check(result):
@@ -522,6 +585,12 @@ def run(stage):
         )
         config_path = bundle / "config.json"
         config = configure(json.loads(config_path.read_text()), image, options)
+        # configure() has refused any unsafe volume path by now.
+        prepare_volumes(
+            (image.get("config") or {}).get("Volumes") or {},
+            bundle / "rootfs",
+            checked_id_map(options["id_map"]),
+        )
         config_path.write_text(json.dumps(config))
         (RUNTIME / "resolv.conf").write_text(resolv_conf())
         (stage / "ready").write_text("1\n")

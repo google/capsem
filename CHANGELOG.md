@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   root's inside the container and `chown`, `tar -x` and `cp -a` keep
   working there. On macOS this needed a guest kernel patch, because Apple's
   VirtioFS server does not support idmapped mounts.
+- An OCI workload now gets its VM's memory and CPUs minus a small runtime
+  reserve, instead of a fixed 256 MiB and one CPU, so the agent and proxies
+  keep running when the workload exhausts its cgroup. An image can declare
+  the memory it needs (`org.capsem.memory.min`, in MiB) and is refused on a
+  VM that cannot give it. Image `VOLUME`s live on the VM's disk instead of a
+  64 MiB tmpfs: seeded from the image, owned by the image's user, and kept
+  by a named VM across restarts.
 
 - The guest kernel now applies hardening sysctls at boot and stops the boot
   if any is refused: kernel pointer and log restriction, Yama
