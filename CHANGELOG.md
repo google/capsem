@@ -679,6 +679,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The official images (`dev`, `codex-cli`, `claude-code`, `agy`) are
+  published to `ghcr.io/google/capsem` for arm64 and amd64 by a dedicated
+  workflow, each with a CycloneDX OBOM, an EROFS rootfs whose owners sit in
+  the workload's user namespace, and signed build provenance. A versioned
+  catalog (`ghcr.io/google/capsem/catalog:<channel>`) lists every published
+  digest and never drops one. Only that workflow can write packages
+  (google/capsem#289).
 - OpenTelemetry metric export. Set the corp config's `open_telemetry` to an
   OTLP/HTTP base endpoint (metrics go to `/v1/metrics`), or the standard
   `OTEL_EXPORTER_OTLP_*` environment for the service. The service exports its

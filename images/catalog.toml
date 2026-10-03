@@ -1,0 +1,16 @@
+# The official image catalog's descriptions, one per image under images/.
+# images/ci/catalog.py writes them into every catalog it publishes, and
+# tests/images/test_image_ci.py holds this list, the image directories and the
+# publication workflow's matrix to the same set of names.
+
+[images.dev]
+description = "A development session without an agent: the Capsem base plus a compiler toolchain and everyday tools."
+
+[images.codex-cli]
+description = "OpenAI Codex CLI on the Capsem base."
+
+[images.claude-code]
+description = "Claude Code on the Capsem base."
+
+[images.agy]
+description = "Antigravity CLI (agy) on the Capsem base."

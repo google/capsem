@@ -1,0 +1,346 @@
+name: Official Images
+run-name: Official images (${{ inputs.channel || 'nightly' }})
+
+# The one workflow allowed to write packages. It builds the official images
+# under images/, publishes them to ghcr.io with their OBOM, EROFS rootfs and
+# build provenance, and appends them to the channel catalog. Trunk workflows
+# neither build these images nor hold `packages: write`;
+# tests/citadel/test_image_publication_is_isolated.py keeps it that way.
+
+on:
+  push:
+    branches: [main]
+    paths: ["images/**"]
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Catalog channel to publish.
+        required: true
+        type: choice
+        options:
+          - nightly
+          - stable
+        default: nightly
+
+# Publication is serialized with itself and with nothing else: a trunk run
+# never waits on an image build, and two image runs never race one catalog.
+concurrency:
+  group: capsem-official-images
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  REGISTRY: ghcr.io/google/capsem
+  CHANNEL: ${{ inputs.channel || 'nightly' }}
+  # A push rebuilds only what changed; a scheduled or dispatched run rebuilds
+  # every image on the current base, picking up nothing new but the date.
+  FORCE: ${{ github.event_name != 'push' }}
+
+jobs:
+  base-arch:
+    name: Base (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: amd64
+            runner: ubuntu-24.04
+    env:
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+        with:
+          enable-cache: false
+      - uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4
+        with:
+          version: 1.3.1
+      - name: Log in to the registry
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Look for the published base
+        id: published
+        run: |
+          key="$(uv run --project build_system --frozen python images/ci/inputkey.py images/base)"
+          exists="$(sh images/ci/published.sh "$REGISTRY/base:$key")"
+          printf 'key=%s\nexists=%s\n' "$key" "$exists" >> "$GITHUB_OUTPUT"
+      - name: Build the base
+        if: steps.published.outputs.exists == 'false'
+        run: docker build --platform "linux/$ARCH" --provenance=false --sbom=false --tag capsem-base:local images/base
+      - name: Smoke the base
+        if: steps.published.outputs.exists == 'false'
+        run: sh images/smoke.sh capsem-base:local
+      - name: Push the base for this architecture
+        if: steps.published.outputs.exists == 'false'
+        env:
+          KEY: ${{ steps.published.outputs.key }}
+        run: |
+          docker tag capsem-base:local "$REGISTRY/base:$KEY-$ARCH"
+          docker push "$REGISTRY/base:$KEY-$ARCH"
+
+  base:
+    name: Base index
+    needs: base-arch
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.index.outputs.digest }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+        with:
+          enable-cache: false
+      - uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4
+        with:
+          version: 1.3.1
+      - name: Log in to the registry
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish the multi-arch base index
+        id: index
+        run: |
+          key="$(uv run --project build_system --frozen python images/ci/inputkey.py images/base)"
+          exists="$(sh images/ci/published.sh "$REGISTRY/base:$key")"
+          if [ "$exists" = false ]; then
+            docker buildx imagetools create --tag "$REGISTRY/base:$key" \
+              "$REGISTRY/base:$key-arm64" "$REGISTRY/base:$key-amd64"
+          fi
+          digest="$(oras manifest fetch --descriptor "$REGISTRY/base:$key" | jq -r .digest)"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+  image-arch:
+    name: ${{ matrix.image }} (${{ matrix.arch }})
+    needs: base
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        image: [dev, codex-cli, claude-code, agy]
+        arch: [arm64, amd64]
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: amd64
+            runner: ubuntu-24.04
+          - image: dev
+            agent_version: gcc --version
+          - image: codex-cli
+            agent_version: codex --version
+          - image: claude-code
+            agent_version: claude --version
+          - image: agy
+            agent_version: agy-real --version
+    env:
+      IMAGE: ${{ matrix.image }}
+      ARCH: ${{ matrix.arch }}
+      BASE_DIGEST: ${{ needs.base.outputs.digest }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+        with:
+          enable-cache: false
+      - uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4
+        with:
+          version: 1.3.1
+      - name: Log in to the registry
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Look for the published image
+        id: published
+        run: |
+          key="$(uv run --project build_system --frozen python images/ci/inputkey.py "images/$IMAGE" --with "$BASE_DIGEST")"
+          exists="$(sh images/ci/published.sh "$REGISTRY/$IMAGE:$key")"
+          build=false
+          if [ "$FORCE" = true ] || [ "$exists" = false ]; then build=true; fi
+          printf 'key=%s\nbuild=%s\n' "$key" "$build" >> "$GITHUB_OUTPUT"
+      - name: Build the image
+        if: steps.published.outputs.build == 'true'
+        run: |
+          docker build --platform "linux/$ARCH" --provenance=false --sbom=false \
+            --build-arg "BASE=$REGISTRY/base@$BASE_DIGEST" --tag capsem-image:local "images/$IMAGE"
+      - name: Smoke the image and its agent
+        if: steps.published.outputs.build == 'true'
+        env:
+          AGENT_VERSION: ${{ matrix.agent_version }}
+        run: |
+          read -r -a agent <<< "$AGENT_VERSION"
+          sh images/smoke.sh capsem-image:local "${agent[@]}"
+      - name: Push the image for this architecture
+        id: push
+        if: steps.published.outputs.build == 'true'
+        env:
+          KEY: ${{ steps.published.outputs.key }}
+        run: |
+          docker tag capsem-image:local "$REGISTRY/$IMAGE:$KEY-$ARCH"
+          docker push "$REGISTRY/$IMAGE:$KEY-$ARCH"
+          digest="$(oras manifest fetch --descriptor "$REGISTRY/$IMAGE:$KEY-$ARCH" | jq -r .digest)"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Inventory and pack the rootfs
+        if: steps.published.outputs.build == 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          uv run --project build_system --frozen python images/ci/rootfs.py --image capsem-image:local \
+            --arch "$ARCH" --repository "$REGISTRY/$IMAGE" --digest "$DIGEST" --out rootfs
+      - name: Attach the OBOM and the EROFS rootfs
+        id: attach
+        if: steps.published.outputs.build == 'true'
+        working-directory: rootfs
+        env:
+          SUBJECT: ${{ env.REGISTRY }}/${{ matrix.image }}@${{ steps.push.outputs.digest }}
+        run: |
+          obom="$(oras attach --format json --artifact-type application/vnd.cyclonedx+json \
+            "$SUBJECT" obom.cdx.json:application/vnd.cyclonedx+json | jq -r .digest)"
+          erofs="$(oras attach --format json --artifact-type application/vnd.capsem.rootfs.erofs.v1 \
+            "$SUBJECT" rootfs.erofs:application/vnd.capsem.rootfs.erofs.v1 | jq -r .digest)"
+          printf 'obom=%s\nerofs=%s\n' "$obom" "$erofs" >> "$GITHUB_OUTPUT"
+      - name: Record this architecture
+        env:
+          KEY: ${{ steps.published.outputs.key }}
+          BUILT: ${{ steps.published.outputs.build }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          OBOM: ${{ steps.attach.outputs.obom }}
+          EROFS: ${{ steps.attach.outputs.erofs }}
+        run: |
+          mkdir -p records
+          jq -n --arg image "$IMAGE" --arg arch "$ARCH" --arg key "$KEY" --argjson built "$BUILT" \
+            --arg digest "$DIGEST" --arg obom "$OBOM" --arg erofs "$EROFS" \
+            '{kind: "platform", image: $image, arch: $arch, key: $key, built: $built}
+             + (if $built then {digest: $digest, obom: $obom, erofs: $erofs} else {} end)' \
+            > "records/$IMAGE-$ARCH.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: record-${{ matrix.image }}-${{ matrix.arch }}
+          path: records/
+          if-no-files-found: error
+
+  image:
+    name: ${{ matrix.image }} index
+    needs: image-arch
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: true
+      matrix:
+        image: [dev, codex-cli, claude-code, agy]
+    env:
+      IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4
+        with:
+          version: 1.3.1
+      - name: Log in to the registry
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: record-${{ matrix.image }}-*
+          path: records
+          merge-multiple: true
+      - name: Publish the multi-arch index
+        id: index
+        run: sh images/ci/index.sh "$REGISTRY/$IMAGE" "$IMAGE" records "index-$IMAGE.json" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
+        if: steps.index.outputs.built == 'true'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ matrix.image }}
+          subject-digest: ${{ steps.index.outputs.digest }}
+          push-to-registry: true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: index-${{ matrix.image }}
+          path: index-${{ matrix.image }}.json
+          if-no-files-found: error
+
+  catalog:
+    name: Catalog
+    needs: image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+        with:
+          enable-cache: false
+      - uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4
+        with:
+          version: 1.3.1
+      - name: Log in to the registry
+        env:
+          TOKEN: ${{ github.token }}
+        run: printf '%s' "$TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: record-*
+          path: records
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: index-*
+          path: records
+          merge-multiple: true
+      - name: Append this run to the previous catalog
+        id: merge
+        run: |
+          previous=()
+          exists="$(sh images/ci/published.sh "$REGISTRY/catalog:$CHANNEL")"
+          if [ "$exists" = true ]; then
+            oras pull --output previous "$REGISTRY/catalog:$CHANNEL"
+            previous=(--previous previous/catalog.json)
+          fi
+          changed="$(uv run --project build_system --frozen python images/ci/catalog.py --channel "$CHANNEL" \
+            --registry "$REGISTRY" --records records "${previous[@]}" --out catalog/catalog.json)"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+      - name: Publish the catalog
+        if: steps.merge.outputs.changed == 'true'
+        working-directory: catalog
+        run: |
+          immutable="$REGISTRY/catalog:$CHANNEL-$GITHUB_RUN_ID"
+          exists="$(sh ../images/ci/published.sh "$immutable")"
+          if [ "$exists" = true ]; then
+            echo "$immutable is already published; a run's catalog is never rewritten" >&2
+            exit 1
+          fi
+          oras push --artifact-type application/vnd.capsem.catalog.v1+json \
+            "$immutable" catalog.json:application/vnd.capsem.catalog.v1+json
+          oras tag "$immutable" "$CHANNEL"

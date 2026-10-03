@@ -853,7 +853,7 @@ key = "version"
 # ---------------------------------------------------------------------------
 
 [lint]
-python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest"]
+python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images"]
 # Already passes every rule, and must keep doing so.
 strict_roots = ["build_system/builder", "build_system/sdist_command.py"]
 # Match the import roots exercised by the sole pytest project plus the guest

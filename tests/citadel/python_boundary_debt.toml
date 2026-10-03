@@ -17,4 +17,7 @@ old_import_count = 0
 old_import_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 # .claude holds the agent hooks: stdlib-only scripts run by Claude Code on
 # whatever python3 is, never installed, never imported by a project.
-python_source_roots = [".claude", "benchmarks", "build_system", "guest", "sdk", "tests"]
+# images holds the official image publication scripts, run through the
+# build_system project (`uv run --project build_system`) and type-checked as a
+# [lint].python_roots entry.
+python_source_roots = [".claude", "benchmarks", "build_system", "guest", "images", "sdk", "tests"]
