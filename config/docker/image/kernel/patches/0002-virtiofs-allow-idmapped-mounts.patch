@@ -8,37 +8,47 @@ that are not inode creation carry FUSE_INVALID_UIDGID, which only an
 idmap-aware daemon accepts.
 
 Apple's Virtualization.framework daemon never negotiates FUSE_ALLOW_IDMAP
-and ignores ownership altogether: every entry is 0:0 and chown is accepted
-without effect. mount_setattr(MOUNT_ATTR_IDMAP) on the share therefore
-failed with EINVAL, and a workload in a user namespace saw its workspace
-owned by the overflow uid, so chown, tar -x and cp -a failed as container
-root.
+and reports every entry as owned by the ids in the request header.
+mount_setattr(MOUNT_ATTR_IDMAP) on the share failed with EINVAL, so a
+workload in a user namespace could not own its workspace, and chown,
+tar -x and cp -a failed as container root.
 
-Separate the two decisions. virtio-fs, which always mounts with
-default_permissions so the guest kernel makes every permission decision
-through the mount's idmap, clears SB_I_NOIDMAP itself. Request headers
-follow the idmap only when the daemon negotiated FUSE_ALLOW_IDMAP
-(fc->idmap_headers); every other daemon keeps receiving the caller's own
-fsuid and fsgid, exactly as before. Clearing SB_I_NOIDMAP without this
-sent Apple's daemon uid -1 on ordinary requests and it refused them, so
-root could not create files in the share.
+Separate the decisions:
 
-Nothing changes until a privileged process idmaps a mount explicitly; the
-share's own mount keeps its identity mapping.
+- virtio-fs, which always mounts with default_permissions so the guest
+  kernel makes every permission decision through the mount's idmap,
+  clears SB_I_NOIDMAP itself;
+- request headers follow the idmap only when the daemon negotiated
+  FUSE_ALLOW_IDMAP (fc->idmap_headers). Sending FUSE_INVALID_UIDGID to
+  Apple's daemon made it refuse ordinary requests, and the VM could not
+  boot;
+- otherwise virtio-fs sends the caller's ids as its own user namespace
+  sees them (fc->caller_ns_ids). Apple's daemon reflects them back as the
+  owner, so container root's entries are on-disk root's, which the
+  idmapped workspace shows as container root's. Sending the VM-wide ids
+  instead made them VM uid 100000, outside the map, and the workload could
+  not enter a directory it had just made. Callers in the initial user
+  namespace send exactly what they sent before.
+
+Nothing changes for a mount nobody idmaps, or for a daemon that ignores
+header ids (Capsem's own KVM server).
 
 ---
 --- a/fs/fuse/fuse_i.h
 +++ b/fs/fuse/fuse_i.h
-@@ -899,6 +899,9 @@
+@@ -898,6 +898,12 @@
+ 
  	/** Passthrough support for read/write IO */
  	unsigned int passthrough:1;
- 
++
 +	/** Server negotiated FUSE_ALLOW_IDMAP: request headers follow the idmap */
 +	unsigned int idmap_headers:1;
 +
++	/** Headers carry the caller's ids as its own user namespace sees them */
++	unsigned int caller_ns_ids:1;
+ 
  	/* Use pages instead of pointer for kernel I/O */
  	unsigned int use_pages_for_kvec_io:1;
- 
 --- a/fs/fuse/inode.c
 +++ b/fs/fuse/inode.c
 @@ -1443,10 +1443,12 @@
@@ -58,7 +68,7 @@ share's own mount keeps its identity mapping.
  				fc->io_uring = 1;
 --- a/fs/fuse/dev.c
 +++ b/fs/fuse/dev.c
-@@ -198,7 +198,14 @@
+@@ -198,7 +198,22 @@
  {
  	struct fuse_conn *fc = fm->fc;
  	struct fuse_req *req;
@@ -66,33 +76,55 @@ share's own mount keeps its identity mapping.
 +	/*
 +	 * A server that did not negotiate FUSE_ALLOW_IDMAP gets the caller's
 +	 * fsuid and fsgid, as before idmapped mounts, even on a superblock
-+	 * that allows them (virtio-fs). Only an idmap-aware server can take
++	 * that allows them (virtio-fs): only an idmap-aware server can take
 +	 * FUSE_INVALID_UIDGID on requests that are not inode creation.
 +	 */
 +	bool no_idmap = !fm->sb || (fm->sb->s_iflags & SB_I_NOIDMAP) ||
 +			!fc->idmap_headers;
++	/*
++	 * Apple's virtio-fs server reports every entry as owned by the ids
++	 * in the request header. Sent as the caller's own namespace sees
++	 * them, container root's entries come back as on-disk root's, which
++	 * the workspace's idmapped mount shows as container root's.
++	 */
++	struct user_namespace *ids_ns = no_idmap && fc->caller_ns_ids ?
++					current_user_ns() : fc->user_ns;
  	kuid_t fsuid;
  	kgid_t fsgid;
  	int err;
+@@ -248,8 +263,8 @@
+ 	 */
+ 	fsuid = no_idmap ? current_fsuid() : mapped_fsuid(idmap, fc->user_ns);
+ 	fsgid = no_idmap ? current_fsgid() : mapped_fsgid(idmap, fc->user_ns);
+-	req->in.h.uid = from_kuid(fc->user_ns, fsuid);
+-	req->in.h.gid = from_kgid(fc->user_ns, fsgid);
++	req->in.h.uid = from_kuid(ids_ns, fsuid);
++	req->in.h.gid = from_kgid(ids_ns, fsgid);
+ 
+ 	if (no_idmap && unlikely(req->in.h.uid == ((uid_t)-1) ||
+ 				 req->in.h.gid == ((gid_t)-1))) {
 --- a/fs/fuse/virtio_fs.c
 +++ b/fs/fuse/virtio_fs.c
-@@ -1584,6 +1584,19 @@
+@@ -1583,6 +1583,22 @@
+ 	err = fuse_fill_super_common(sb, ctx);
  	if (err < 0)
  		goto err_free_fuse_devs;
- 
++
 +	/*
 +	 * Allow idmapped mounts without FUSE_ALLOW_IDMAP from the daemon.
 +	 * virtio-fs always mounts with default_permissions, so the guest
-+	 * kernel makes every permission decision through the mount's idmap,
-+	 * and the daemon keeps receiving the caller's own fsuid and fsgid
-+	 * (fuse_get_req). Apple's Virtualization.framework daemon never
-+	 * negotiates the flag and reports every entry as uid 0, so without
-+	 * this a user-namespaced workload cannot own its share. Only a mount
-+	 * explicitly idmapped with mount_setattr changes.
++	 * kernel makes every permission decision through the mount's idmap.
++	 * Apple's Virtualization.framework daemon never negotiates the flag
++	 * and reports every entry as owned by the requester, so the request
++	 * header carries the caller's ids as its own namespace sees them
++	 * (fuse_get_req): a user-namespaced workload then owns what it
++	 * touches through the idmapped workspace. Only a mount explicitly
++	 * idmapped with mount_setattr changes.
 +	 */
-+	if (fc->default_permissions)
++	if (fc->default_permissions) {
 +		sb->s_iflags &= ~SB_I_NOIDMAP;
-+
++		fc->caller_ns_ids = 1;
++	}
+ 
  	for (i = 0; i < fs->nvqs; i++) {
  		struct virtio_fs_vq *fsvq = &fs->vqs[i];
- 

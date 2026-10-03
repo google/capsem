@@ -131,9 +131,13 @@ def test_fuse_acl_patch_refuses_acls_without_fuse_posix_acl():
 def test_virtiofs_idmap_patch_keeps_classic_headers_for_unaware_daemons():
     patch = (KERNEL_DIR / "patches" / "0002-virtiofs-allow-idmapped-mounts.patch").read_text()
     assert "+++ b/fs/fuse/virtio_fs.c" in patch
-    assert "+\tif (fc->default_permissions)\n+\t\tsb->s_iflags &= ~SB_I_NOIDMAP;" in patch
+    assert "+\tif (fc->default_permissions) {\n+\t\tsb->s_iflags &= ~SB_I_NOIDMAP;" in patch
     # The daemon keeps the caller's own ids unless it negotiated idmap
     # support: Apple's refuses the invalid uid an idmapped request carries.
     assert "+++ b/fs/fuse/dev.c" in patch
     assert "+\t\t\t!fc->idmap_headers;" in patch
     assert "+\t\t\t\t\tfc->idmap_headers = 1;" in patch
+    # Apple's daemon reflects the header ids back as the owner; they are the
+    # caller's own, so a workload owns what it touches through the idmap.
+    assert "+\t\t\t\t\tcurrent_user_ns() : fc->user_ns;" in patch
+    assert "+\t\tfc->caller_ns_ids = 1;" in patch

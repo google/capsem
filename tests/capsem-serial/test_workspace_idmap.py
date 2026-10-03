@@ -33,7 +33,7 @@ class Attr(ctypes.Structure):
                 ("prop", ctypes.c_uint64), ("userns_fd", ctypes.c_uint64)]
 
 
-holder = subprocess.Popen(["unshare", "-U", "sleep", "60"])
+holder = subprocess.Popen(["unshare", "-U", "sleep", "60"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(0.3)
 for name in ("uid_map", "gid_map"):
     with open(f"/proc/{holder.pid}/{name}", "w") as f:
