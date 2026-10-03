@@ -20,6 +20,12 @@ compiling checkout into each unit's fingerprint directory, a unit whose
 checkout is gone is reclaimed outright, and under pressure other checkouts'
 units go first, then shared or unrecorded ones, and the working set -- the
 calling checkout and the cache authority -- last.
+
+An uplifted binary such as `debug/capsem-admin` has no unit hash, but each
+signed copy `run_signed.sh` publishes beside it is keyed by the source's
+inode and ctime, so every rebuild adds one. Each copy and its receipt are a
+generation of their own, receipt first so an interrupted removal can only
+force a re-sign; unrecognised, they once held 71 GB outside every unit.
 """
 
 from __future__ import annotations
@@ -34,6 +40,10 @@ from .models import CacheEntry
 #: Scanned in this order; the first member of a unit is its fingerprint.
 UNIT_DIRECTORIES = (".fingerprint", "build", "deps", "examples", "incremental")
 _UNIT_HASH = re.compile(r"-([0-9a-f]{16})(?=[.-]|$)")
+#: A signed copy of an uplifted binary, or its abandoned staging file.
+_SIGNED_COPY = re.compile(r"\.run-signed-.+-([0-9a-f]{64})(?:\.tmp\.\d+)?")
+#: `run_signed.sh` keeps one receipt per copy here, named by the copy's key.
+SIGNED_RECEIPTS = ".run-signed"
 #: A symlink to the compiling checkout, written by `rustc-workspace-wrapper.sh`
 #: beside Cargo's fingerprint. A link, not a file: reading it moves no atime,
 #: so it never disturbs the LRU clock, and a measure never counts it.
@@ -79,6 +89,17 @@ def unit_entries(
                 # Unhashed pieces, such as incremental sessions, stand alone.
                 unit = found.group(1) if found else f"{directory}/{child.name}"
                 groups.setdefault(f"{target_root.as_posix()}/{unit}", []).append(child)
+        top = stage_root / target_root
+        if not top.is_symlink() and top.is_dir():
+            for child in sorted(top.iterdir(), key=lambda item: item.name):
+                found = _SIGNED_COPY.fullmatch(child.name)
+                if not found:
+                    continue
+                members = groups.setdefault(f"{target_root.as_posix()}/signed/{found.group(1)}", [])
+                receipt = top / SIGNED_RECEIPTS / found.group(1)
+                if not members and receipt.is_file():
+                    members.append(receipt)
+                members.append(child)
         for key, members in groups.items():
             measured = [measure(member, allocated_seen) for member in members]
             relative = [member.relative_to(stage_root) for member in members]
