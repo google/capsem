@@ -488,6 +488,10 @@ volume_prefixes = ["capsem-package-target-"]
 build_cache_owned = true
 maximum_age_hours = 168
 keep_image_generations = 1
+# Docker on macOS lives in Colima's VM, whose disk image keeps every freed
+# block until the guest discards it: pruning Docker to 18 GiB left the image at
+# 196 GB until this returned 130 GiB. Skipped where colima is not installed.
+disk_release_command = ["colima", "ssh", "--", "sudo", "fstrim", "-a"]
 
 [runtimes.tart]
 description = "Disposable Tart virtual machines owned by Capsem release proof."
