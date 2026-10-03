@@ -208,7 +208,10 @@ Stop and ask only when the fix is genuinely a judgment call: it changes
 user-visible behavior, would weaken a security boundary (closing one is never
 a reason to wait), forces a real scope expansion, or picks between options a
 maintainer should choose (for example a dependency major-version bump, or
-suppressing an advisory instead of upgrading). State the finding and your recommendation, then act on the answer.
+suppressing an advisory instead of upgrading). The one advisory exception that
+needs no approval is RELEASE.md's time-boxed rule: no patched release exists
+anywhere, the package is build-time only in a dependency we do not control,
+and the entry expires within 30 days. State the finding and your recommendation, then act on the answer.
 A trivial patch bump, a lint fix, a stale-literal cleanup: just do it and say
 what you did.
 
