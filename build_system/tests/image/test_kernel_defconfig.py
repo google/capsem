@@ -31,7 +31,6 @@ FORBIDDEN = (
     "COREDUMP",
     "FTRACE",
     "BLK_DEV_WRITE_MOUNTED",
-    "PROC_PAGE_MONITOR",
 )
 
 # Legacy x86 entry points: vsyscall page, per-process LDT, userspace port
@@ -91,3 +90,9 @@ def test_the_kernel_is_built_from_allnoconfig() -> None:
     text = TEMPLATE.read_text()
     assert "KCONFIG_ALLCONFIG=/tmp/capsem.defconfig allnoconfig" in text
     assert "make olddefconfig" not in text
+
+
+def test_workloads_can_read_their_own_memory_map() -> None:
+    """Redis exits on arm64 when /proc/self/smaps is missing."""
+    for arch in ("arm64", "x86_64"):
+        assert defconfig(arch).get("PROC_PAGE_MONITOR") == "y", arch

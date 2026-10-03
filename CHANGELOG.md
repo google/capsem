@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defconfig does not pin. It used to fill every unpinned option with the
   upstream default, which shipped about 150 (arm64) to 220 (x86_64) options
   nobody chose, including `TIOCSTI` keystroke injection, `process_vm_readv`,
-  core dumps, ftrace, uprobes, writes to mounted block devices, EFI runtime
+  core dumps, ftrace, uprobes, slab debugging, writes to mounted block devices, EFI runtime
   services, power management and HID input, and on x86 the vsyscall page,
   `modify_ldt`, `iopl`/`ioperm` and 16-bit segments. Every upstream
   hardening default is now an explicit pin instead: all x86 speculative

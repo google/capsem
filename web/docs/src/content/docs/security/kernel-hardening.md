@@ -69,7 +69,7 @@ Every disabled subsystem removes code from the kernel binary. No runtime flag ca
 | Cross-process memory access | `CROSS_MEMORY_ATTACH=n` | No `process_vm_readv`/`process_vm_writev` |
 | Core dumps | `COREDUMP=n` | Process memory never written to disk |
 | Tracing | `FTRACE=n`, `UPROBES=n` (x86) | No kernel tracing interfaces |
-| Page and slab introspection | `PROC_PAGE_MONITOR=n`, `SLUB_DEBUG=n` | No `pagemap`/`smaps` or slab debug surface |
+| Slab debugging | `SLUB_DEBUG=n` | No slab debug surface |
 | Writes to mounted block devices | `BLK_DEV_WRITE_MOUNTED=n` | Corrupting a mounted filesystem from userspace |
 | Firmware, EFI, power management | `FW_LOADER=n`, `EFI=n`, `PM=n` | No firmware loading, EFI runtime services or suspend |
 | Legacy x86 entry points | `X86_VSYSCALL_EMULATION=n`, `MODIFY_LDT_SYSCALL=n`, `X86_IOPL_IOPERM=n`, `X86_16BIT=n` | No vsyscall page, per-process LDT, userspace port I/O or 16-bit segments |

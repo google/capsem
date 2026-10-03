@@ -289,6 +289,11 @@ CONFIG_VSOCKETS_DIAG=y
 # The initrd is gzip-compressed.
 CONFIG_RD_GZIP=y
 CONFIG_FUSE_PASSTHROUGH=y
+# /proc/<pid>/smaps and smaps_rollup: workloads read their own memory map.
+# Redis refuses to start on arm64 without it (its copy-on-write kernel-bug
+# probe reads smaps), and jemalloc and browsers account memory through it.
+# pagemap hides physical addresses from unprivileged readers.
+CONFIG_PROC_PAGE_MONITOR=y
 # Keep file capabilities, ACLs and security labels the rootfs image carries.
 CONFIG_EROFS_FS_XATTR=y
 CONFIG_EROFS_FS_POSIX_ACL=y
@@ -361,7 +366,6 @@ CONFIG_UPROBES=n
 # perf_event_open cannot be compiled out: arch/x86/Kconfig selects
 # PERF_EVENTS unconditionally. capsem-init sets kernel.perf_event_paranoid=2.
 CONFIG_SLUB_DEBUG=n
-CONFIG_PROC_PAGE_MONITOR=n
 CONFIG_TIME_NS=n
 CONFIG_CACHESTAT_SYSCALL=n
 CONFIG_SECRETMEM=n
