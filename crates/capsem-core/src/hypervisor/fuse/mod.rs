@@ -63,7 +63,8 @@ pub fn success_response(unique: u64, body: &[u8]) -> Vec<u8> {
 // Utility functions
 // ---------------------------------------------------------------------------
 
-pub fn metadata_to_fuse_attr(ino: u64, meta: &std::fs::Metadata) -> FuseAttr {
+/// The attributes of `meta` as the guest sees them, owned by the caller.
+pub fn metadata_to_fuse_attr(ino: u64, meta: &std::fs::Metadata, caller: &FuseInHeader) -> FuseAttr {
     FuseAttr {
         ino,
         size: meta.size(),
@@ -76,12 +77,15 @@ pub fn metadata_to_fuse_attr(ino: u64, meta: &std::fs::Metadata) -> FuseAttr {
         ctimensec: meta.ctime_nsec() as u32,
         mode: meta.mode(),
         nlink: meta.nlink() as u32,
-        // The backing workspace is owned by the host user, but the guest runs
-        // the exported tree as root. Reporting host ids into the guest makes
-        // standard tools reject their own files, e.g. git's safe.directory
-        // ownership check.
-        uid: 0,
-        gid: 0,
+        // The backing workspace is owned by the host user, whose ids mean
+        // nothing in the guest. Every entry belongs to whoever asks, as
+        // Apple's VirtioFS server reports it: VM root sees its files as its
+        // own (git's safe.directory check passes), and a user-namespaced
+        // workload, whose kernel sends ids as its own namespace sees them,
+        // owns its workspace through the idmapped mount whether it runs as
+        // container root or as an image's unprivileged user.
+        uid: caller.uid,
+        gid: caller.gid,
         rdev: meta.rdev() as u32,
         blksize: meta.blksize() as u32,
         flags: 0,

@@ -124,18 +124,43 @@ fn attr_regular_file() {
     let dir = temp_share("meta-reg");
     std::fs::write(dir.join("test.txt"), b"hello world").unwrap();
     let meta = std::fs::metadata(dir.join("test.txt")).unwrap();
-    let attr = metadata_to_fuse_attr(42, &meta);
+    let attr = metadata_to_fuse_attr(42, &meta, &caller(0, 0));
     assert_eq!(attr.ino, 42);
     assert_eq!(attr.size, 11);
     assert_ne!(attr.mode & S_IFREG, 0);
-    assert_eq!(attr.uid, 0);
-    assert_eq!(attr.gid, 0);
+    assert_eq!((attr.uid, attr.gid), (0, 0), "VM root owns what it reads");
+}
+
+/// Every entry belongs to whoever asks: the host user's ids never reach the
+/// guest, and an image's unprivileged user owns the workspace it writes to.
+#[test]
+fn attr_is_owned_by_the_caller() {
+    let dir = temp_share("meta-caller");
+    std::fs::write(dir.join("test.txt"), b"x").unwrap();
+    let meta = std::fs::metadata(dir.join("test.txt")).unwrap();
+    for (uid, gid) in [(0, 0), (1000, 1000), (1000, 100), (65534, 65534)] {
+        let attr = metadata_to_fuse_attr(7, &meta, &caller(uid, gid));
+        assert_eq!((attr.uid, attr.gid), (uid, gid));
+    }
+}
+
+fn caller(uid: u32, gid: u32) -> FuseInHeader {
+    FuseInHeader {
+        len: 0,
+        opcode: 0,
+        unique: 1,
+        nodeid: 1,
+        uid,
+        gid,
+        pid: 1,
+        padding: 0,
+    }
 }
 
 #[test]
 fn attr_directory() {
     let dir = temp_share("meta-dir");
     let meta = std::fs::metadata(&dir).unwrap();
-    let attr = metadata_to_fuse_attr(1, &meta);
+    let attr = metadata_to_fuse_attr(1, &meta, &caller(0, 0));
     assert_ne!(attr.mode & S_IFDIR, 0);
 }

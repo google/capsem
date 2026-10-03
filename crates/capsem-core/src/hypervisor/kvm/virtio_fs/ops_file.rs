@@ -196,7 +196,7 @@ impl FuseProcessor {
                     Ok(m) => m,
                     Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
                 };
-                return self.entry_and_open_response(header.unique, ino, &meta, fh);
+                return self.entry_and_open_response(header, ino, &meta, fh);
             }
         };
 
@@ -238,10 +238,16 @@ impl FuseProcessor {
             Ok(m) => m,
             Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         };
-        self.entry_and_open_response(header.unique, ino, &meta, fh)
+        self.entry_and_open_response(header, ino, &meta, fh)
     }
 
-    pub(super) fn entry_and_open_response(&self, unique: u64, ino: u64, meta: &std::fs::Metadata, fh: u64) -> Vec<u8> {
+    pub(super) fn entry_and_open_response(
+        &self,
+        header: &FuseInHeader,
+        ino: u64,
+        meta: &std::fs::Metadata,
+        fh: u64,
+    ) -> Vec<u8> {
         let entry = FuseEntryOut {
             nodeid: ino,
             generation: 0,
@@ -249,7 +255,7 @@ impl FuseProcessor {
             attr_valid: 1,
             entry_valid_nsec: 0,
             attr_valid_nsec: 0,
-            attr: fuse::metadata_to_fuse_attr(ino, meta),
+            attr: fuse::metadata_to_fuse_attr(ino, meta, header),
         };
         let open_out = FuseOpenOut {
             fh,
@@ -258,7 +264,7 @@ impl FuseProcessor {
         };
         let mut body = fuse::as_bytes(&entry).to_vec();
         body.extend_from_slice(fuse::as_bytes(&open_out));
-        fuse::success_response(unique, &body)
+        fuse::success_response(header.unique, &body)
     }
 
     pub(super) fn do_flush(&mut self, header: &FuseInHeader, body: &[u8]) -> Vec<u8> {

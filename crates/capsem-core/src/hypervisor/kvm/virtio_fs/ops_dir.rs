@@ -148,7 +148,7 @@ impl FuseProcessor {
             attr_valid: 1,
             entry_valid_nsec: 0,
             attr_valid_nsec: 0,
-            attr: fuse::metadata_to_fuse_attr(ino, &meta),
+            attr: fuse::metadata_to_fuse_attr(ino, &meta, header),
         };
         fuse::success_response(header.unique, fuse::as_bytes(&entry))
     }
@@ -271,7 +271,7 @@ impl FuseProcessor {
             attr_valid: 1,
             entry_valid_nsec: 0,
             attr_valid_nsec: 0,
-            attr: fuse::metadata_to_fuse_attr(ino, &meta),
+            attr: fuse::metadata_to_fuse_attr(ino, &meta, header),
         };
         fuse::success_response(header.unique, fuse::as_bytes(&entry))
     }
@@ -313,7 +313,7 @@ impl FuseProcessor {
             attr_valid: 1,
             entry_valid_nsec: 0,
             attr_valid_nsec: 0,
-            attr: fuse::metadata_to_fuse_attr(ino, &meta),
+            attr: fuse::metadata_to_fuse_attr(ino, &meta, header),
         };
         fuse::success_response(header.unique, fuse::as_bytes(&entry))
     }
@@ -373,7 +373,7 @@ impl FuseProcessor {
             attr_valid: 1,
             entry_valid_nsec: 0,
             attr_valid_nsec: 0,
-            attr: fuse::metadata_to_fuse_attr(ino, &meta),
+            attr: fuse::metadata_to_fuse_attr(ino, &meta, header),
         };
         fuse::success_response(header.unique, fuse::as_bytes(&entry))
     }
