@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The guest kernel now applies hardening sysctls at boot and stops the boot
+  if any is refused: kernel pointer and log restriction, Yama
+  `ptrace_scope=1` (a package script can no longer attach to the agent CLI
+  running beside it and read its credentials), protected links, FIFOs and
+  regular files, no setuid core dumps, `mmap_min_addr=65536`, no TIOCSTI or
+  line-discipline autoload, no ICMP redirects or source routing, and SYN
+  cookies. Yama and SYN cookies are now built into the kernel for this.
+
 - Guest VMs now boot with `init_on_free=1`, so freed kernel heap memory is
   zeroed as well as new allocations, and with `oops=panic`, so a kernel oops
   ends the VM instead of leaving it running on a kernel in an unknown state.

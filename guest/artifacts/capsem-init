@@ -272,6 +272,51 @@ mount -t devtmpfs devtmpfs /newroot/dev
 mkdir -p /newroot/dev/pts
 mount -t devpts   devpts   /newroot/dev/pts
 
+# Kernel hardening that is runtime state rather than build configuration, set
+# before any service starts. A value the kernel refuses stops the boot: a
+# guest that silently runs without one is not the guest capsem-doctor proves.
+harden() {
+    if ! echo "$2" > "/proc/sys/$1"; then
+        echo "[capsem-init] FATAL: hardening sysctl $1 = $2 failed" >&2
+        exit 1
+    fi
+}
+# Kernel pointers and the kernel log stay out of reach of every process.
+harden kernel/kptr_restrict 2
+harden kernel/dmesg_restrict 1
+harden kernel/randomize_va_space 2
+# ptrace only of your own descendants: a package script cannot attach to the
+# agent CLI beside it and read its credentials.
+harden kernel/yama/ptrace_scope 1
+# x86 cannot compile perf_event_open out; deny it to everything unprivileged.
+if [ -e /proc/sys/kernel/perf_event_paranoid ]; then
+    harden kernel/perf_event_paranoid 2
+fi
+# Links, FIFOs and files in world-writable sticky directories (systemd's
+# defaults), and no core dumps of setuid programs.
+harden fs/protected_symlinks 1
+harden fs/protected_hardlinks 1
+harden fs/protected_fifos 1
+harden fs/protected_regular 1
+harden fs/suid_dumpable 0
+harden vm/mmap_min_addr 65536
+harden dev/tty/ldisc_autoload 0
+harden dev/tty/legacy_tiocsti 0
+# The guest is no router: ignore redirects and source routes, and keep
+# TCP listeners responsive under SYN floods. rp_filter stays off: the VM
+# routes between its cables and the workload's veth asymmetrically.
+for scope in all default; do
+    harden "net/ipv4/conf/$scope/accept_redirects" 0
+    harden "net/ipv4/conf/$scope/secure_redirects" 0
+    harden "net/ipv4/conf/$scope/send_redirects" 0
+    harden "net/ipv4/conf/$scope/accept_source_route" 0
+done
+harden net/ipv4/icmp_echo_ignore_broadcasts 1
+harden net/ipv4/icmp_ignore_bogus_error_responses 1
+harden net/ipv4/tcp_syncookies 1
+harden net/ipv4/tcp_rfc1337 1
+init_log "kernel hardened"
+
 # `/` is overlayfs, which does not implement FIFREEZE.  Suspend must freeze
 # the ext4 filesystem that owns the overlay upperdir before KVM snapshots
 # guest/device state.  Expose that existing mount through devtmpfs (rather

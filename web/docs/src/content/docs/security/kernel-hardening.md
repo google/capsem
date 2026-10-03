@@ -139,6 +139,28 @@ console={hvc0|ttyS0} root=/dev/vda ro loglevel=4 quiet init_on_alloc=1 init_on_f
 
 Console device varies by architecture: `hvc0` for ARM64 (Apple VZ), `ttyS0` for x86_64 (KVM).
 
+## Boot-time sysctls
+
+`capsem-init` sets these before any service starts. A value the kernel refuses stops the boot, and capsem-doctor reads every one back (`test_hardening_sysctl_holds`).
+
+| Sysctl | Value | Why |
+|--------|-------|-----|
+| `kernel.kptr_restrict` | 2 | Kernel pointers are never shown, even to root |
+| `kernel.dmesg_restrict` | 1 | The kernel log needs `CAP_SYSLOG` |
+| `kernel.randomize_va_space` | 2 | Full userspace address randomization |
+| `kernel.yama.ptrace_scope` | 1 | `ptrace` only of your own descendants: a package script cannot attach to the agent CLI beside it and read its credentials |
+| `kernel.perf_event_paranoid` | 2 | x86 only: `perf_event_open` cannot be compiled out there, so unprivileged use is denied |
+| `fs.protected_symlinks`, `fs.protected_hardlinks` | 1 | Link-following attacks in shared directories |
+| `fs.protected_fifos`, `fs.protected_regular` | 1 | Opening another user's FIFO or file in a world-writable sticky directory |
+| `fs.suid_dumpable` | 0 | No core dumps of setuid programs |
+| `vm.mmap_min_addr` | 65536 | NULL-page mappings, the classic kernel NULL-dereference exploit |
+| `dev.tty.ldisc_autoload`, `dev.tty.legacy_tiocsti` | 0 | Line-discipline autoload and terminal keystroke injection |
+| `net.ipv4.conf.{all,default}.accept_redirects`, `secure_redirects`, `send_redirects`, `accept_source_route` | 0 | The guest is not a router |
+| `net.ipv4.icmp_echo_ignore_broadcasts`, `icmp_ignore_bogus_error_responses` | 1 | ICMP noise |
+| `net.ipv4.tcp_syncookies`, `tcp_rfc1337` | 1 | Listeners stay responsive under SYN floods; TIME-WAIT assassination |
+
+`rp_filter` is deliberately left off: the VM routes between its network cables and the workload's veth asymmetrically, which strict reverse-path filtering would drop.
+
 ## Validation
 
 Every hardening property is verified at runtime by `capsem-doctor` tests. If any test fails, the VM is not considered healthy.

@@ -451,3 +451,43 @@ def test_guest_services_cannot_create_user_namespaces():
         "(EINVAL: kernel lacks CONFIG_USER_NS; 0: guest services can create "
         "user namespaces)"
     )
+
+
+# -- Boot-time hardening sysctls (capsem-init) --
+
+HARDENED_SYSCTLS = {
+    "kernel/kptr_restrict": "2",
+    "kernel/dmesg_restrict": "1",
+    "kernel/randomize_va_space": "2",
+    "kernel/yama/ptrace_scope": "1",
+    "fs/protected_symlinks": "1",
+    "fs/protected_hardlinks": "1",
+    "fs/protected_fifos": "1",
+    "fs/protected_regular": "1",
+    "fs/suid_dumpable": "0",
+    "vm/mmap_min_addr": "65536",
+    "dev/tty/ldisc_autoload": "0",
+    "dev/tty/legacy_tiocsti": "0",
+    "net/ipv4/conf/all/accept_redirects": "0",
+    "net/ipv4/conf/all/secure_redirects": "0",
+    "net/ipv4/conf/all/send_redirects": "0",
+    "net/ipv4/conf/all/accept_source_route": "0",
+    "net/ipv4/icmp_echo_ignore_broadcasts": "1",
+    "net/ipv4/tcp_syncookies": "1",
+    "net/ipv4/tcp_rfc1337": "1",
+}
+
+
+@pytest.mark.parametrize("name", sorted(HARDENED_SYSCTLS))
+def test_hardening_sysctl_holds(name):
+    """capsem-init sets each value before any service starts."""
+    with open(f"/proc/sys/{name}") as handle:
+        assert handle.read().strip() == HARDENED_SYSCTLS[name], name
+
+
+def test_perf_events_are_denied_where_the_kernel_has_them():
+    """x86 cannot compile perf_event_open out; unprivileged use is denied."""
+    path = "/proc/sys/kernel/perf_event_paranoid"
+    if os.path.exists(path):
+        with open(path) as handle:
+            assert int(handle.read()) >= 2

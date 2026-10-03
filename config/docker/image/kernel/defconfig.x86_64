@@ -309,6 +309,13 @@ CONFIG_SLUB_CPU_PARTIAL=y
 CONFIG_PCI_QUIRKS=y
 
 # --- Upstream hardening and CPU features, kept deliberately ---
+# Yama: ptrace only of your own descendants (kernel.yama.ptrace_scope=1 at
+# boot), so a package script in a workload cannot attach to the agent CLI
+# running beside it as the same user and read its credentials.
+CONFIG_SECURITY=y
+CONFIG_SECURITY_YAMA=y
+# TCP SYN cookies (net.ipv4.tcp_syncookies=1 at boot).
+CONFIG_SYN_COOKIES=y
 CONFIG_RELOCATABLE=y
 CONFIG_RANDOMIZE_MEMORY=y
 CONFIG_RANDOMIZE_KSTACK_OFFSET=y
@@ -351,6 +358,8 @@ CONFIG_CROSS_MEMORY_ATTACH=n
 CONFIG_COREDUMP=n
 CONFIG_FTRACE=n
 CONFIG_UPROBES=n
+# perf_event_open cannot be compiled out: arch/x86/Kconfig selects
+# PERF_EVENTS unconditionally. capsem-init sets kernel.perf_event_paranoid=2.
 CONFIG_SLUB_DEBUG=n
 CONFIG_PROC_PAGE_MONITOR=n
 CONFIG_TIME_NS=n
