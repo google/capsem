@@ -219,7 +219,13 @@ def main() -> int:
                 docker_tool(tuple(c for c in arguments.exclude.split(",") if c)),
                 lintharness.tracked_files(root, "build_system/docker/Dockerfile*"),
                 on_disk=True,
-            )
+            ),
+            lintharness.run(
+                "image Dockerfiles",
+                docker_tool(tuple(c for c in arguments.exclude.split(",") if c)),
+                lintharness.tracked_files(root, "images/*/Dockerfile"),
+                on_disk=True,
+            ),
         ]
     elif arguments.surface == "markdown":
         outcomes = [markdown_links(root)]
@@ -232,10 +238,15 @@ def main() -> int:
 
 
 def _docker_run_bodies(root: Path) -> dict[str, str]:
-    return shellsurfaces.dockerfile_bodies(
+    bodies = shellsurfaces.dockerfile_bodies(
         root / "build_system" / "docker",
         root / "config" / "docker",
         lambda templates: shellsurfaces.rendered_templates(
             templates, root / "config" / "docker" / "image"
         ),
     )
+    # The official images (images/<name>/Dockerfile) are built as written.
+    for path in sorted((root / "images").glob("*/Dockerfile")):
+        for index, run in enumerate(shellsurfaces.run_instructions(path.read_text(encoding="utf-8"))):
+            bodies[f"images/{path.parent.name}/Dockerfile:RUN[{index}]"] = run
+    return bodies

@@ -1963,6 +1963,11 @@ pattern = "build_system/docker/Dockerfile*"
 enforced_by = ["fast.audit.docker"]
 
 [[lint_surfaces]]
+name = "image-dockerfile"
+pattern = "images/*/Dockerfile"
+enforced_by = ["fast.audit.docker", "fast.audit.shell"]
+
+[[lint_surfaces]]
 name = "markdown"
 pattern = "*.md"
 enforced_by = ["fast.audit.markdown"]
