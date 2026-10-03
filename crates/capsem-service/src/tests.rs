@@ -772,6 +772,7 @@ mod db_handle_ownership;
 mod files_api;
 mod files_paths;
 mod fork;
+mod host_ledger_events;
 mod inspection;
 mod interactions;
 mod ipc_command;

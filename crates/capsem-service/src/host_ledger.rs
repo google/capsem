@@ -119,13 +119,20 @@ impl ServiceState {
         Ok(())
     }
 
+    /// Record an event and put it on disk before returning: host events are
+    /// rare, and a forensic record that waits for the next periodic flush can
+    /// lose a session's stop to a crash.
     async fn record_host_event(&self, event: HostEvent) -> anyhow::Result<()> {
         self.host_stats.lock().unwrap().apply(&event);
         let kind = event.kind.as_str();
         self.host_ledger
             .write(WriteOp::HostEvent(event))
             .await
-            .map_err(|error| anyhow!("record {kind} in the host ledger: {error}"))
+            .map_err(|error| anyhow!("record {kind} in the host ledger: {error}"))?;
+        self.host_ledger
+            .flush()
+            .await
+            .map_err(|error| anyhow!("flush {kind} to the host ledger: {error}"))
     }
 
     pub(crate) async fn record_service_event(&self, kind: HostEventKind) -> anyhow::Result<()> {
