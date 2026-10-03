@@ -86,6 +86,10 @@ uses the TypeScript SDK to present these resources to AI agents over stdio. It
 requires an explicit gateway URL, bearer token, and HTTP transport timeout; the
 native Capsem installer does not install Node.js or download the npm package.
 
+The [`inspect-capsem-sandbox`](../integrations/inspect-ai/README.md) extension registers a `capsem`
+`SandboxEnvironment` for [Inspect AI](https://inspect.aisi.org.uk/) backed by
+the Python gateway SDK (`SdkCapsemController`).
+
 ## Oversight
 
 Citadel inventories SDK source, including checked-in generated files. Python

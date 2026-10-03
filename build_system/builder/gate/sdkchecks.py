@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .actions import Run
+from .buildschema import SdkConfig, SourcePackageConfig
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
 from .phase import Phase
@@ -10,21 +11,28 @@ from .plan import Plan
 from .pythonenv import uv_run
 
 
-def python_environment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
-    """The Python SDK's environment, shared by every lane that uses it:
+def python_environment(
+    plan: Plan,
+    config: GateConfig,
+    *,
+    after: tuple[Step, ...] = (),
+    project: str | None = None,
+    prefix: str = "sdk.python",
+) -> Step:
+    """A Python package's environment, shared by every lane that uses it:
     dependencies fetched outside the sandbox, then the project built inside it
     without an isolated build, which would fetch its backend from the network."""
-    project = config.sdk_python.project
+    proj = project or config.sdk_python.project
     prewarm = plan.shared(step(
-        "sdk.python.prewarm",
-        Run(["uv", "sync", "--project", project, "--frozen", "--no-install-project"], outside_sandbox=True),
+        f"{prefix}.prewarm",
+        Run(["uv", "sync", "--project", proj, "--frozen", "--no-install-project"], outside_sandbox=True),
         kind=Kind.COMPILE,
         needs=frozenset({Needs.DISK, Needs.NETWORK}),
         speed=Speed.FAST,
     ), after=after)
     return plan.shared(step(
-        "sdk.python.sync",
-        Run(["uv", "sync", "--project", project, "--frozen", "--no-build-isolation"]),
+        f"{prefix}.sync",
+        Run(["uv", "sync", "--project", proj, "--frozen", "--no-build-isolation"]),
         kind=Kind.COMPILE, needs=frozenset({Needs.DISK}), speed=Speed.FAST,
     ), after=(prewarm,))
 
@@ -41,29 +49,52 @@ def braavos(plan: Plan, phase: Phase, config: GateConfig, *, after: tuple[Step, 
     return python_environment(plan, config), example, bundle
 
 
-def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:
-    settings = config.sdk_python
-    phase = plan.phase("fast.sdk.python")
-    prefix = ["uv", "run", "--project", settings.project, "--frozen", "--no-sync"]
-    synced = python_environment(plan, config, after=after)
-    commands = {
-        "generate": uv_run(config, "python", "-m", "capsem_builder.sdkgen", "--check",
-                           "--specification", settings.specification, "--python-package", settings.source),
-        "lint": [*prefix, "ruff", "check", "--config", config.suites.pytest.project_manifest,
-                 settings.source, settings.tests],
-        "types": [*prefix, "ty", "check", "--project", settings.project, "--error-on-warning",
-                  "--python-platform", "all", settings.source, settings.tests],
-        "build": [*prefix, "python", "-m", "build", "--no-isolation",
-                  "--outdir", settings.build_output, settings.project],
-    }
+def fragment(
+    plan: Plan,
+    config: GateConfig,
+    *,
+    after: tuple[Step, ...],
+    settings: SourcePackageConfig | None = None,
+    prefix: str = "sdk.python",
+) -> tuple[Step, ...]:
+    pkg = settings or config.sdk_python
+    phase = plan.phase(f"fast.{prefix}")
+    uv_prefix = ["uv", "run", "--project", pkg.project, "--frozen", "--no-sync"]
+    synced = python_environment(plan, config, after=after, project=pkg.project, prefix=prefix)
+    commands: dict[str, list[str]] = {}
+    if isinstance(pkg, SdkConfig):
+        commands["generate"] = uv_run(
+            config, "python", "-m", "capsem_builder.sdkgen", "--check",
+            "--specification", pkg.specification, "--python-package", pkg.source,
+        )
+    commands.update({
+        "lint": [*uv_prefix, "ruff", "check", "--config", config.suites.pytest.project_manifest,
+                 pkg.source, pkg.tests],
+        "types": [*uv_prefix, "ty", "check", "--project", pkg.project, "--error-on-warning",
+                  "--python-platform", "all", pkg.source, pkg.tests],
+        "build": [*uv_prefix, "python", "-m", "build", "--no-isolation",
+                  "--outdir", pkg.build_output, pkg.project],
+    })
     checks = tuple(phase.add(step(
         label, Run(argv), kind=Kind.PACKAGE if label == "build" else Kind.LINT, speed=Speed.FAST,
     ), after=(synced,)) for label, argv in commands.items())
     tested = phase.add(step(
-        "tests", Run(["uv", "run", "--frozen", "--no-sync", "pytest"], cwd=config.path(settings.project)),
+        "tests", Run(["uv", "run", "--frozen", "--no-sync", "pytest"], cwd=config.path(pkg.project)),
         kind=Kind.UNIT_TEST, speed=Speed.FAST,
     ), after=(synced,))
     return (*checks, tested)
+
+
+def inspect_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:
+    """The Inspect AI extension: the SDK lane's checks, less generation. Its
+    prewarm also installs the editable SDK it resolves from this checkout."""
+    return fragment(
+        plan,
+        config,
+        after=after,
+        settings=config.integrations_inspect_ai,
+        prefix="integrations.inspect-ai",
+    )
 
 
 def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:
