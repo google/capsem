@@ -68,20 +68,6 @@ pub(crate) async fn drain_background_owners(shutdown: &Arc<Mutex<Shutdown>>) {
     drop(guard);
 }
 
-/// `loglevel=4`: kernel warnings and errors reach the serial console, which
-/// the test fixtures keep. At `loglevel=1` a guest whose every VSOCK link
-/// ended in one millisecond left a console that said nothing at all.
-fn process_kernel_cmdline() -> &'static str {
-    #[cfg(target_arch = "x86_64")]
-    {
-        "console=ttyS0 root=/dev/vda ro loglevel=4 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1"
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        "console=hvc0 root=/dev/vda ro loglevel=4 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1"
-    }
-}
-
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -265,7 +251,7 @@ fn main() -> Result<()> {
         kernel_override: args.kernel.as_deref(),
         initrd_override: args.initrd.as_deref(),
         rootfs_override: Some(&args.rootfs),
-        cmdline: process_kernel_cmdline(),
+        cmdline: capsem_core::vm::config::KERNEL_CMDLINE,
         system_overlay_disk: Some(&system_img),
         virtiofs_shares: &virtiofs_shares,
         cpu_count: args.cpus,

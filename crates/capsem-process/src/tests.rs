@@ -467,21 +467,6 @@ fn aggregator_log_path_lives_in_session_dir() {
 }
 
 #[test]
-fn process_kernel_cmdline_uses_arch_console_and_root_device() {
-    let cmdline = process_kernel_cmdline();
-    assert!(cmdline.contains("root=/dev/vda"));
-    #[cfg(target_arch = "x86_64")]
-    {
-        assert!(cmdline.contains("console=ttyS0"));
-        assert!(!cmdline.contains("console=hvc0"));
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        assert!(cmdline.contains("console=hvc0"));
-    }
-}
-
-#[test]
 fn missing_mcp_aggregator_fails_loud_instead_of_empty_stub() {
     let dir = tempfile::tempdir().unwrap();
     let fake_exe = dir.path().join("capsem-process");

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Guest VMs now boot with `init_on_free=1`, so freed kernel heap memory is
+  zeroed as well as new allocations, and with `oops=panic`, so a kernel oops
+  ends the VM instead of leaving it running on a kernel in an unknown state.
+  capsem-doctor checks both are in effect.
+
 - The guest kernel is now built from allnoconfig, so it enables nothing the
   defconfig does not pin. It used to fill every unpinned option with the
   upstream default, which shipped about 150 (arm64) to 220 (x86_64) options

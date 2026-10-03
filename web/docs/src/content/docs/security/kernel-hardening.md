@@ -120,18 +120,22 @@ The kernel includes different hardware mitigations depending on the target archi
 
 ## Boot command line
 
-Runtime hardening parameters passed via kernel cmdline:
+Runtime hardening parameters passed via kernel cmdline. One constant, `KERNEL_CMDLINE` in `capsem-core`, is the only place it is spelled:
 
 ```
-console={hvc0|ttyS0} root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1
+console={hvc0|ttyS0} root=/dev/vda ro loglevel=4 quiet init_on_alloc=1 init_on_free=1 slab_nomerge page_alloc.shuffle=1 oops=panic random.trust_cpu=1
 ```
 
 | Parameter | Rationale |
 |-----------|-----------|
 | `ro` | Mount rootfs read-only; EROFS is structurally immutable |
-| `init_on_alloc=1` | Runtime enforcement of heap zeroing (belt-and-suspenders with `INIT_ON_ALLOC_DEFAULT_ON`) |
+| `init_on_alloc=1` | Heap pages are zeroed when allocated, so stale data never reaches a new owner |
+| `init_on_free=1` | Heap pages are zeroed when freed, so freed secrets do not linger in memory |
 | `slab_nomerge` | Prevents kernel from merging slab caches; isolates allocations by type |
 | `page_alloc.shuffle=1` | Randomizes page allocator at boot (complements `SHUFFLE_PAGE_ALLOCATOR`) |
+| `oops=panic` | A kernel oops ends the VM instead of leaving it on a kernel in an unknown state, where a failed exploit could be retried |
+| `loglevel=4 quiet` | Kernel warnings and errors still reach the serial console kept for diagnosis |
+| `random.trust_cpu=1` | The CPU's RNG seeds the entropy pool at boot |
 
 Console device varies by architecture: `hvc0` for ARM64 (Apple VZ), `ttyS0` for x86_64 (KVM).
 
@@ -150,7 +154,8 @@ Every hardening property is verified at runtime by `capsem-doctor` tests. If any
 | No IPv6 | `test_no_ipv6` | `/proc/net/if_inet6` absent |
 | No kernel symbols | `test_no_kallsyms` | `/proc/kallsyms` absent or empty |
 | Read-only rootfs | `test_kernel_cmdline_has_ro` | `ro` token in `/proc/cmdline` |
-| Heap zeroing | `test_init_on_alloc` | `init_on_alloc=1` in `/proc/cmdline` |
+| Heap zeroing | `test_init_on_alloc`, `test_heap_is_zeroed_on_alloc_and_on_free` | `init_on_alloc=1` in `/proc/cmdline`; kernel reports heap alloc and free zeroing on |
+| Oops ends the VM | `test_an_oops_panics_the_vm` | `kernel.panic_on_oops` is 1 |
 | Slab isolation | `test_slab_nomerge` | `slab_nomerge` in `/proc/cmdline` |
 | Page shuffle | `test_page_alloc_shuffle` | `page_alloc.shuffle=1` in `/proc/cmdline` |
 | Seccomp available | `test_seccomp_available` | `Seccomp:` line in `/proc/self/status` |

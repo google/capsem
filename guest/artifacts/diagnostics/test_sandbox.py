@@ -387,6 +387,25 @@ def test_init_on_alloc():
     assert "init_on_alloc=1" in result.stdout, f"init_on_alloc=1 not in cmdline: {result.stdout}"
 
 
+def test_heap_is_zeroed_on_alloc_and_on_free():
+    """init_on_alloc=1 and init_on_free=1 are in effect, not only on the cmdline.
+
+    The kernel reports what it applied in one boot line, e.g.
+    "mem auto-init: stack:off, heap alloc:on, heap free:on".
+    """
+    result = run("dmesg")
+    assert result.returncode == 0, f"dmesg failed: {result.stderr}"
+    [line] = [line for line in result.stdout.splitlines() if "mem auto-init:" in line]
+    assert "heap alloc:on" in line and "heap free:on" in line, line
+
+
+def test_an_oops_panics_the_vm():
+    """oops=panic: a kernel oops ends the VM instead of leaving it running."""
+    result = run("cat /proc/sys/kernel/panic_on_oops")
+    assert result.returncode == 0
+    assert result.stdout.strip() == "1", f"panic_on_oops={result.stdout.strip()}"
+
+
 def test_slab_nomerge():
     """Kernel cmdline must include slab_nomerge for heap isolation."""
     result = run("cat /proc/cmdline")
