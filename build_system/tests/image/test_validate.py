@@ -22,6 +22,7 @@ materialize_network = "default"
 max_uncompressed_bytes = 2500000000
 max_erofs_bytes = 900000000
 forbidden_path_prefixes = ["usr/lib/ollama/cuda_"]
+runtime_apt_packages = ["runc"]
 
 [build.asset_dependencies]
 tag_template = "capsem-{template}-dependencies-{arch}:{digest}"

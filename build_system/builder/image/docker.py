@@ -123,9 +123,17 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     """Build Jinja context for Dockerfile.rootfs.j2."""
     arch = config.build.architectures[arch_name]
 
-    apt_packages: list[str] = []
+    runtime = list(config.build.rootfs.runtime_apt_packages)
+    profile: list[str] = []
     if "apt" in config.package_sets:
-        apt_packages = list(config.package_sets["apt"].packages)
+        profile = list(config.package_sets["apt"].packages)
+    claimed = sorted(set(runtime) & set(profile))
+    if claimed:
+        raise ValueError(
+            f"profile apt packages {claimed} belong to the runtime ([build.rootfs] "
+            "runtime_apt_packages); an environment cannot own the container launcher's tools"
+        )
+    apt_packages = runtime + profile
 
     python_packages: list[str] = []
     python_install_cmd = "uv pip install --system --break-system-packages"

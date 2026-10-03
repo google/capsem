@@ -1265,6 +1265,7 @@ class TestBuildVersionScript:
                     max_uncompressed_bytes=2_500_000_000,
                     max_erofs_bytes=900_000_000,
                     forbidden_path_prefixes=("usr/lib/ollama/cuda_",),
+                    runtime_apt_packages=("runc",),
                 ),
                 asset_dependencies=AssetDependencyConfig(
                     tag_template="capsem-{template}-dependencies-{arch}:{digest}",
@@ -1454,6 +1455,7 @@ class TestCreateErofs:
             "max_uncompressed_bytes": 1_024,
             "max_erofs_bytes": 512,
             "forbidden_path_prefixes": ("usr/lib/ollama/cuda_",),
+            "runtime_apt_packages": ("runc",),
             **updates,
         }
         return RootfsConfig(**values)

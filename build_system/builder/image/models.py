@@ -245,9 +245,17 @@ class RootfsConfig(BaseModel):
     max_uncompressed_bytes: int = Field(gt=0)
     max_erofs_bytes: int = Field(gt=0)
     forbidden_path_prefixes: tuple[str, ...]
+    # Debian packages the runtime itself needs: the container launcher's
+    # runtime, unpacker, interpreter and firewall. They are the runtime's,
+    # never an environment's, so no profile may list them.
+    runtime_apt_packages: tuple[str, ...]
 
     @model_validator(mode="after")
     def _limits_are_safe(self):
+        if not self.runtime_apt_packages or len(set(self.runtime_apt_packages)) != len(
+            self.runtime_apt_packages
+        ):
+            raise ValueError("runtime_apt_packages must be a non-empty list without duplicates")
         if self.max_erofs_bytes >= self.max_uncompressed_bytes:
             raise ValueError("max_erofs_bytes must be smaller than max_uncompressed_bytes")
         if not self.forbidden_path_prefixes:

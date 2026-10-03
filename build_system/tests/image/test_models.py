@@ -102,6 +102,7 @@ def _build(**kw):
             max_uncompressed_bytes=2_500_000_000,
             max_erofs_bytes=900_000_000,
             forbidden_path_prefixes=("usr/lib/ollama/cuda_",),
+            runtime_apt_packages=("runc",),
         ),
         "guest_rust_builder": GuestRustBuilderConfig(
             dockerfile="build_system/docker/Dockerfile.guest-rust-builder",
@@ -202,6 +203,7 @@ class TestRootfsConfig:
             max_uncompressed_bytes=2_500_000_000,
             max_erofs_bytes=900_000_000,
             forbidden_path_prefixes=("usr/lib/ollama/cuda_",),
+            runtime_apt_packages=("runc",),
         )
 
         assert config.max_uncompressed_bytes == 2_500_000_000
@@ -223,6 +225,7 @@ class TestRootfsConfig:
                 max_uncompressed_bytes=2_500_000_000,
                 max_erofs_bytes=900_000_000,
                 forbidden_path_prefixes=(prefix,),
+                runtime_apt_packages=("runc",),
             )
 
     @pytest.mark.parametrize(
@@ -244,6 +247,7 @@ class TestRootfsConfig:
             "max_uncompressed_bytes": 2_500_000_000,
             "max_erofs_bytes": 900_000_000,
             "forbidden_path_prefixes": ("usr/lib/ollama/cuda",),
+            "runtime_apt_packages": ("runc",),
             **overrides,
         }
         with pytest.raises(ValidationError):
