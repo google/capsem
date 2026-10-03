@@ -128,6 +128,28 @@ class CargoCacheBound(Resource, name="cargo-cache"):
         self._enforce("after")
 
 
+class MachineCacheBound(Resource, name="machine-cache"):
+    """Leave every cache inside its policy after a command that held the machine.
+
+    Released after the last step and after every other resource, failed runs
+    included. Only Cargo used to be bounded around commands; `test-temp`,
+    `objects` and Docker were pruned by a few rails or by nothing, and reached
+    248 GB, 34 GB and 78 GB of policy-reclaimable bytes on one machine.
+    Violations are recorded in the run log rather than failing a run whose
+    work passed: a stage pinned by live state is reported, not hidden.
+    """
+
+    def __init__(self, runner: Runner) -> None:
+        self._runner = runner
+
+    def acquire(self) -> None:
+        pass
+
+    def release(self) -> None:
+        if not self._runner.observing:
+            CacheControl(self._runner).prune(best_effort=True)
+
+
 def verify_disk_budget(config: GateConfig) -> None:
     """Refuse a retained-cache machine whose disk every cache together can fill.
 
