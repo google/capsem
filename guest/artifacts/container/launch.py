@@ -18,6 +18,10 @@ WORKSPACE_VIEW = Path("/var/tmp/capsem-workspace")
 # ephemeral VM and persist with a named one. Outside RUNTIME for the same
 # reason as the workspace view.
 VOLUMES = Path("/var/lib/capsem/volumes")
+# Unpacked image roots, one per digest, on the same overlay: a named session
+# unpacks its image once instead of on every launch.
+ROOTS = Path("/var/lib/capsem/roots")
+DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 # Every id the workload maps lies at or above this, clear of the VM's own
 # system and user ids, so container root is no uid the VM trusts.
 LOWEST_MAPPED_ID = 65536
@@ -549,6 +553,49 @@ def assemble(stage, layout):
             raise ValueError("OCI upload digest mismatch")
 
 
+def unpacked_root(stage, options, id_map):
+    """The image's unpacked root for this launch: (bundle, image config,
+    umoci's runtime config). Unpacked once per digest and kept on the VM's
+    overlay; a relaunch of a named session reuses it. Only the current
+    digest's root is kept."""
+    digest = options.get("digest")
+    if not (isinstance(digest, str) and DIGEST.match(digest)):
+        raise ValueError(f"stage options carry no valid image digest: {digest!r}")
+    ROOTS.mkdir(parents=True, exist_ok=True, mode=0o711)
+    root = ROOTS / digest.removeprefix("sha256:")
+    for other in ROOTS.iterdir():
+        if other != root:
+            shutil.rmtree(other, ignore_errors=True)
+    if not (root / "ready").is_file():
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(mode=0o711)
+        layout = RUNTIME / "image"
+        layout.mkdir()
+        assemble(stage, layout)
+        index = json.loads((layout / "index.json").read_text())
+        listed = index["manifests"][0]["digest"]
+        if listed != digest:
+            raise ValueError(f"staged layout is {listed}, not the admitted image {digest}")
+        manifest = json.loads((layout / "blobs/sha256" / listed.split(":")[1]).read_text())
+        image_config = (layout / "blobs/sha256" / manifest["config"]["digest"].split(":")[1]).read_text()
+        mapping = f"{id_map['containerID']}:{id_map['hostID']}:{id_map['size']}"
+        # Owned by the mapped ids, so the root filesystem is container root's.
+        command(
+            "umoci", "unpack", "--uid-map", mapping, "--gid-map", mapping,
+            "--image", f"{layout}:image", str(root / "bundle"),
+        )
+        (root / "bundle").chmod(0o711)
+        shutil.copyfile(root / "bundle" / "config.json", root / "runtime.json")
+        (root / "image.json").write_text(image_config)
+        shutil.rmtree(layout)
+        (root / "ready").write_text(digest + "\n")
+    return (
+        root / "bundle",
+        json.loads((root / "image.json").read_text()),
+        json.loads((root / "runtime.json").read_text()),
+    )
+
+
 def run(stage):
     # A second workload cannot overwrite live state. Traversable, not listable:
     # runc sets the container up as the mapped root, which must reach the
@@ -559,32 +606,14 @@ def run(stage):
     runc = ["runc", "--rootless=true", "--root", str(state)]
     process = None
     try:
-        layout = RUNTIME / "image"
-        layout.mkdir()
-        assemble(stage, layout)
-        bundle = RUNTIME / "bundle"
         options = json.loads((stage / "options.json").read_text())
         id_map = checked_id_map(options.get("id_map"))
-        mapping = f"{id_map['containerID']}:{id_map['hostID']}:{id_map['size']}"
-        # Owned by the mapped ids, so the root filesystem is container root's.
-        command("umoci", "unpack", "--uid-map", mapping, "--gid-map", mapping, "--image", f"{layout}:image", str(bundle))
-        bundle.chmod(0o711)
+        bundle, image, unpacked = unpacked_root(stage, options, id_map)
         if options.get("workspace") is not None:
             WORKSPACE_VIEW.mkdir(mode=0o700, exist_ok=True)
             idmap_workspace(id_map, WORKSPACE_VIEW)
-        index = json.loads((layout / "index.json").read_text())
-        manifest = json.loads(
-            (
-                layout / "blobs/sha256" / index["manifests"][0]["digest"].split(":")[1]
-            ).read_text()
-        )
-        image = json.loads(
-            (
-                layout / "blobs/sha256" / manifest["config"]["digest"].split(":")[1]
-            ).read_text()
-        )
         config_path = bundle / "config.json"
-        config = configure(json.loads(config_path.read_text()), image, options)
+        config = configure(unpacked, image, options)
         # configure() has refused any unsafe volume path by now.
         prepare_volumes(
             (image.get("config") or {}).get("Volumes") or {},

@@ -1,6 +1,7 @@
 """Guest launcher policy, exercised without executing an image on the host."""
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -566,3 +567,66 @@ def test_a_volume_is_seeded_from_the_image_once_and_then_kept(launcher, tmp_path
     (seeded / "seed").write_text("from the session")
     launcher.prepare_volumes({"/data": {}}, rootfs, SECURITY["id_map"])
     assert (seeded / "seed").read_text() == "from the session"
+
+
+DIGEST = "sha256:" + "b" * 64
+
+
+def _fake_unpack(launcher, tmp_path, monkeypatch, listed=DIGEST):
+    """assemble() and umoci stubbed: count unpacks, write what they would."""
+    monkeypatch.setattr(launcher, "ROOTS", tmp_path / "roots")
+    monkeypatch.setattr(launcher, "RUNTIME", tmp_path / "runtime")
+    (tmp_path / "runtime").mkdir(exist_ok=True)
+    unpacks = []
+
+    def assemble(stage, layout):
+        blobs = layout / "blobs" / "sha256"
+        blobs.mkdir(parents=True)
+        (layout / "index.json").write_text(json.dumps({"manifests": [{"digest": listed}]}))
+        (blobs / listed.split(":")[1]).write_text(json.dumps({"config": {"digest": "sha256:" + "c" * 64}}))
+        (blobs / ("c" * 64)).write_text(json.dumps(image()))
+
+    def command(*argv, **_):
+        unpacks.append(argv)
+        bundle = Path(argv[-1])
+        (bundle / "rootfs").mkdir(parents=True)
+        (bundle / "config.json").write_text(json.dumps(unpacked()))
+
+    monkeypatch.setattr(launcher, "assemble", assemble)
+    monkeypatch.setattr(launcher, "command", command)
+    return unpacks
+
+
+def test_a_named_session_unpacks_its_image_once(launcher, tmp_path, monkeypatch):
+    unpacks = _fake_unpack(launcher, tmp_path, monkeypatch)
+    options = {**SECURITY, "digest": DIGEST}
+    first = launcher.unpacked_root(tmp_path, options, SECURITY["id_map"])
+    second = launcher.unpacked_root(tmp_path, options, SECURITY["id_map"])
+    assert len(unpacks) == 1, "the relaunch reused the unpacked root"
+    assert first == second
+    bundle, image_config, runtime = first
+    assert bundle == launcher.ROOTS / ("b" * 64) / "bundle"
+    assert image_config == image() and runtime == unpacked()
+    assert "--uid-map" in unpacks[0]
+
+
+def test_only_the_current_digest_keeps_a_root(launcher, tmp_path, monkeypatch):
+    _fake_unpack(launcher, tmp_path, monkeypatch)
+    stale = tmp_path / "roots" / ("d" * 64)
+    stale.mkdir(parents=True)
+    launcher.unpacked_root(tmp_path, {**SECURITY, "digest": DIGEST}, SECURITY["id_map"])
+    assert not stale.exists()
+
+
+def test_a_layout_that_is_not_the_admitted_image_is_refused(launcher, tmp_path, monkeypatch):
+    _fake_unpack(launcher, tmp_path, monkeypatch, listed="sha256:" + "e" * 64)
+    with pytest.raises(ValueError, match="not the admitted image"):
+        launcher.unpacked_root(tmp_path, {**SECURITY, "digest": DIGEST}, SECURITY["id_map"])
+    assert not (tmp_path / "roots" / ("b" * 64) / "ready").exists()
+
+
+@pytest.mark.parametrize("digest", [None, "sha256:short", "sha256:" + "B" * 64, "md5:" + "b" * 64])
+def test_a_stage_without_a_valid_digest_is_refused(launcher, tmp_path, monkeypatch, digest):
+    _fake_unpack(launcher, tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="digest"):
+        launcher.unpacked_root(tmp_path, {**SECURITY, "digest": digest}, SECURITY["id_map"])

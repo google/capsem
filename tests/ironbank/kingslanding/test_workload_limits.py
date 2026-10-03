@@ -22,9 +22,12 @@ pytestmark = pytest.mark.integration
 PROBE = (
     # 900 MB held in one shell variable: past the 640 MiB limit, under the VM.
     '( hog=$(head -c 900000000 /dev/zero | tr "\\0" a); echo "HOG survived ${#hog}" ); echo "MEMORY $?"; '
-    # More processes than the 4096 the workload may hold.
-    'spawned=0; for i in $(seq 4200); do sleep 30 2>/dev/null & spawned=$((spawned + 1)); done 2>/dev/null; '
-    'echo "PIDS $(jobs -p | wc -l)"; kill $(jobs -p) 2>/dev/null; '
+    # More processes than the 4096 the workload may hold. dash exits when a
+    # fork fails, so the forking runs in a subshell that may die; its sleeps
+    # live on, and the parent counts every process in the workload with a
+    # glob, because at the limit it cannot fork either.
+    '( i=0; while [ $i -lt 4200 ]; do sleep 60 & i=$((i + 1)); done ) 2>/dev/null; '
+    'set -- /proc/[0-9]*; echo "PIDS $#"; kill -9 -1 2>/dev/null; '
     'echo "ALIVE"'
 )
 
@@ -46,4 +49,5 @@ def test_memory_and_process_limits_bind_inside_the_workload(service, tmp_path):
     assert "HOG survived" not in output, output
     # The OOM killer took the hog's subshell (SIGKILL: 128 + 9).
     assert words[words.index("MEMORY") + 1] == "137", output
-    assert int(words[words.index("PIDS") + 1]) < 4096, output
+    # The loop got far, and the limit stopped it: never more than 4096.
+    assert 1000 < int(words[words.index("PIDS") + 1]) <= 4096, output
