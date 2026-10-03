@@ -231,6 +231,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- When `capsem-service` fails to start, the cause is now written to its
+  service log. It used to go only to stderr, which nobody reads for a
+  detached service, so a refused session ledger left a log that ended
+  mid-startup with no error.
+
 - The arm64 guest kernel again gives userspace the 48-bit address space,
   with 4K pages and 4-level tables, that Google Antigravity CLI's TCMalloc
   build assumes. A config rewrite dropped the pin, leaving kernel 6.18's

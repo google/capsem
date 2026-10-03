@@ -20,6 +20,14 @@ pub(super) async fn run_service() -> Result<()> {
         default_filter: "info",
     })?;
     capsem_foundation::telemetry::install_panic_logger("capsem-service");
+    // A detached service's stderr reaches nobody, and the gate and installer
+    // send whoever diagnoses a failed start to this log: write the cause here.
+    serve(args, run_dir)
+        .await
+        .inspect_err(|error| error!(error = format!("{error:#}"), "capsem-service failed"))
+}
+
+async fn serve(args: Args, run_dir: PathBuf) -> Result<()> {
     let service_launch_span = tracing::info_span!(
         target: "capsem.launch",
         capsem_foundation::telemetry::LAUNCH_SERVICE_SPAN,
