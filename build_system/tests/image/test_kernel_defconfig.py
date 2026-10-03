@@ -20,7 +20,29 @@ REQUIRED = ("NAMESPACES", "USER_NS", "UTS_NS", "IPC_NS", "PID_NS", "NET_NS", "SE
 
 # User namespaces expose more of the kernel to the workload, which makes
 # keeping the historically richest escalation surfaces compiled out matter more.
-FORBIDDEN = ("IO_URING", "BPF_SYSCALL", "USERFAULTFD", "MODULES")
+FORBIDDEN = (
+    "IO_URING",
+    "BPF_SYSCALL",
+    "USERFAULTFD",
+    "MODULES",
+    # Surface the kernel defaults used to switch on without anyone deciding.
+    "LEGACY_TIOCSTI",
+    "CROSS_MEMORY_ATTACH",
+    "COREDUMP",
+    "FTRACE",
+    "BLK_DEV_WRITE_MOUNTED",
+    "PROC_PAGE_MONITOR",
+)
+
+# Legacy x86 entry points: vsyscall page, per-process LDT, userspace port
+# I/O, 16-bit segments.
+X86_FORBIDDEN = (
+    "X86_VSYSCALL_EMULATION",
+    "MODIFY_LDT_SYSCALL",
+    "X86_IOPL_IOPERM",
+    "X86_16BIT",
+)
+TEMPLATE = KERNEL_DIR.parents[1] / "Dockerfile.kernel.j2"
 
 
 def defconfig(arch: str) -> dict[str, str]:
@@ -57,3 +79,15 @@ def test_forbidden_option_is_compiled_out(arch: str, option: str) -> None:
     assert defconfig(arch).get(option, "n") == "n", (
         f"defconfig.{arch} must not enable CONFIG_{option}"
     )
+
+
+@pytest.mark.parametrize("option", X86_FORBIDDEN)
+def test_x86_legacy_entry_point_is_compiled_out(option: str) -> None:
+    assert defconfig("x86_64").get(option) == "n", f"defconfig.x86_64 must pin CONFIG_{option}=n"
+
+
+def test_the_kernel_is_built_from_allnoconfig() -> None:
+    """olddefconfig filled ~300 unpinned options per arch with upstream defaults."""
+    text = TEMPLATE.read_text()
+    assert "KCONFIG_ALLCONFIG=/tmp/capsem.defconfig allnoconfig" in text
+    assert "make olddefconfig" not in text

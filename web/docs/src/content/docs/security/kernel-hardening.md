@@ -64,6 +64,15 @@ Every disabled subsystem removes code from the kernel binary. No runtime flag ca
 | NFS | `NFS_FS=n`, `NETWORK_FILESYSTEMS=n` | No remote filesystems |
 | SCSI/ATA | `SCSI=n`, `ATA=n` | VirtIO only; no legacy block drivers |
 | Ethernet | `ETHERNET=n`, `NET_VENDOR_VIRTIO=n` | Air-gapped; only dummy NIC |
+| TIOCSTI | `LEGACY_TIOCSTI=n` | Injecting keystrokes into another process's terminal |
+| Line-discipline autoload, legacy PTYs | `LDISC_AUTOLOAD=n`, `LEGACY_PTYS=n` | Old tty attack surface |
+| Cross-process memory access | `CROSS_MEMORY_ATTACH=n` | No `process_vm_readv`/`process_vm_writev` |
+| Core dumps | `COREDUMP=n` | Process memory never written to disk |
+| Tracing | `FTRACE=n`, `UPROBES=n` (x86) | No kernel tracing interfaces |
+| Page and slab introspection | `PROC_PAGE_MONITOR=n`, `SLUB_DEBUG=n` | No `pagemap`/`smaps` or slab debug surface |
+| Writes to mounted block devices | `BLK_DEV_WRITE_MOUNTED=n` | Corrupting a mounted filesystem from userspace |
+| Firmware, EFI, power management | `FW_LOADER=n`, `EFI=n`, `PM=n` | No firmware loading, EFI runtime services or suspend |
+| Legacy x86 entry points | `X86_VSYSCALL_EMULATION=n`, `MODIFY_LDT_SYSCALL=n`, `X86_IOPL_IOPERM=n`, `X86_16BIT=n` | No vsyscall page, per-process LDT, userspace port I/O or 16-bit segments |
 
 ## Namespaces
 
@@ -103,6 +112,11 @@ The kernel includes different hardware mitigations depending on the target archi
 | Spectre-BHB mitigation | `MITIGATE_SPECTRE_BRANCH_HISTORY=y` | -- | Clears branch history on exception entry |
 | Page Table Isolation (KPTI) | -- | `MITIGATION_PAGE_TABLE_ISOLATION=y` | Meltdown mitigation; separate kernel/user page tables |
 | Retpoline | -- | `MITIGATION_RETPOLINE=y` | Spectre v2 mitigation; replaces indirect branches |
+| Speculative-execution mitigations | Spectre-BHB, errata workarounds | Every `MITIGATION_*` (Retbleed, SRSO, MDS, L1TF, SSB, BHI, GDS, RFDS, TAA, ITS, TSA, ...) | Each pinned; none is left to a default |
+| Kernel address randomization | `RANDOMIZE_BASE=y` | `RANDOMIZE_BASE=y`, `RANDOMIZE_MEMORY=y` | KASLR and randomized kernel memory regions |
+| Kernel stack offset randomization | `RANDOMIZE_KSTACK_OFFSET_DEFAULT=y` | `RANDOMIZE_KSTACK_OFFSET_DEFAULT=y` | A different stack offset on every syscall |
+| Control-flow integrity | `ARM64_BTI=y`, `ARM64_GCS=y` | `X86_KERNEL_IBT=y`, `X86_USER_SHADOW_STACK=y` | Indirect-branch tracking and shadow stacks |
+| Privileged-access restrictions | `ARM64_PAN=y`, `ARM64_EPAN=y`, `ARM64_E0PD=y` | `X86_UMIP=y` | Kernel cannot touch user memory unintentionally; user cannot read descriptor tables |
 
 ## Boot command line
 
@@ -163,10 +177,10 @@ graph LR
     end
     subgraph "Capsem kernel"
         C1["allnoconfig (0 options)"] --> C2["Enable only needed"]
-        C2 --> C3["~200 options, ~5 MB binary"]
+        C2 --> C3["~700 options, every one pinned"]
     end
 ```
 
-The two defconfig files (`defconfig.arm64`, `defconfig.x86_64`) are applied with `make olddefconfig` and produce identical security properties on both architectures.
+The two defconfig files (`defconfig.arm64`, `defconfig.x86_64`) are applied on top of allnoconfig with `make KCONFIG_ALLCONFIG=<defconfig> allnoconfig`, so the kernel enables nothing the defconfig does not pin. Each pin carries its reason in the file, and both architectures get the same security properties.
 
-Kconfig silently ignores a pinned option it cannot apply: a misspelled or renamed symbol, or one whose dependencies are unmet. The kernel build therefore compares every pinned line of the defconfig with the configuration `olddefconfig` produced and fails, naming each option the kernel did not honor.
+Kconfig silently ignores a pinned option it cannot apply: a misspelled or renamed symbol, or one whose dependencies are unmet. The kernel build therefore compares every pinned line of the defconfig with the configuration Kconfig produced and fails, naming each option the kernel did not honor. Starting from allnoconfig makes that check carry real weight: an option whose dependency is not pinned is dropped, and the build says so.

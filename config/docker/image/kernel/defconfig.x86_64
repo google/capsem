@@ -1,12 +1,12 @@
 # CAPSEM Hardened Kernel Configuration
 # Minimal x86_64 for QEMU/KVM virtualization
 #
-# The build copies this file to .config and runs olddefconfig:
-#   cp defconfig.x86_64 .config && make olddefconfig
+# Applied on top of allnoconfig:
+#   make KCONFIG_ALLCONFIG=defconfig.x86_64 allnoconfig
 #
-# so every option left unset takes the Kconfig default of the kernel version
-# being built, not allnoconfig's. Pin anything a workload depends on; the
-# build fails if the kernel does not honor a pin.
+# Nothing is enabled unless this file pins it, so every option below is a
+# decision with its reason. The build fails if the kernel does not honor a
+# pin: a misspelled or renamed symbol, or one whose dependency is not pinned.
 #
 # Produces a minimal kernel with only VirtIO drivers, no loadable modules,
 # air-gapped IP stack (dummy NIC + iptables REDIRECT), and full exploit
@@ -261,3 +261,121 @@ CONFIG_NFS_FS=n
 CONFIG_NETWORK_FILESYSTEMS=n
 CONFIG_SCSI=n
 CONFIG_ATA=n
+
+# ==========================================
+# 12. WHAT THE KERNEL DEFAULTS USED TO SUPPLY
+# ==========================================
+# Nothing is on unless pinned here or above. Before the build started from
+# allnoconfig, olddefconfig filled ~330 unpinned options with upstream
+# defaults: some the guest needs, some hardening, some surface nobody chose.
+
+# --- Needed by the guest ---
+CONFIG_SHMEM=y
+CONFIG_MEMFD_CREATE=y
+CONFIG_FILE_LOCKING=y
+CONFIG_SWAP=y
+CONFIG_RSEQ=y
+CONFIG_MEMBARRIER=y
+CONFIG_COMPACTION=y
+CONFIG_MIGRATION=y
+CONFIG_MISC_FILESYSTEMS=y
+CONFIG_NET_CORE=y
+CONFIG_RPS=y
+# ss(8) in capsem-init polls TCP, UDP and vsock listeners through sock_diag.
+CONFIG_INET_DIAG=y
+CONFIG_INET_TCP_DIAG=y
+CONFIG_INET_UDP_DIAG=y
+CONFIG_VSOCKETS_DIAG=y
+# The initrd is gzip-compressed.
+CONFIG_RD_GZIP=y
+CONFIG_FUSE_PASSTHROUGH=y
+# Keep file capabilities, ACLs and security labels the rootfs image carries.
+CONFIG_EROFS_FS_XATTR=y
+CONFIG_EROFS_FS_POSIX_ACL=y
+CONFIG_EROFS_FS_SECURITY=y
+# ext4 metadata checksums (the system overlay) use the accelerated crc32c.
+CONFIG_CRC_OPTIMIZATIONS=y
+# The KVM VMM describes vCPUs to Linux only through an ACPI MADT; without
+# ACPI the guest boots on CPU0 alone. None of ACPI's device drivers are on.
+CONFIG_ACPI=y
+CONFIG_X86_X2APIC=y
+CONFIG_X86_PAT=y
+CONFIG_MTRR=y
+CONFIG_X86_MCE=y
+CONFIG_X86_MCE_INTEL=y
+CONFIG_X86_MCE_AMD=y
+CONFIG_SCHED_MC=y
+CONFIG_SLUB_CPU_PARTIAL=y
+CONFIG_PCI_QUIRKS=y
+
+# --- Upstream hardening and CPU features, kept deliberately ---
+CONFIG_RELOCATABLE=y
+CONFIG_RANDOMIZE_MEMORY=y
+CONFIG_RANDOMIZE_KSTACK_OFFSET=y
+CONFIG_RANDOMIZE_KSTACK_OFFSET_DEFAULT=y
+CONFIG_HARDENED_USERCOPY_DEFAULT_ON=y
+CONFIG_SLAB_BUCKETS=y
+CONFIG_X86_UMIP=y
+CONFIG_X86_KERNEL_IBT=y
+CONFIG_X86_USER_SHADOW_STACK=y
+CONFIG_X86_INTEL_MEMORY_PROTECTION_KEYS=y
+CONFIG_X86_BUS_LOCK_DETECT=y
+CONFIG_MITIGATION_CALL_DEPTH_TRACKING=y
+CONFIG_MITIGATION_GDS=y
+CONFIG_MITIGATION_IBPB_ENTRY=y
+CONFIG_MITIGATION_IBRS_ENTRY=y
+CONFIG_MITIGATION_ITS=y
+CONFIG_MITIGATION_L1TF=y
+CONFIG_MITIGATION_MDS=y
+CONFIG_MITIGATION_MMIO_STALE_DATA=y
+CONFIG_MITIGATION_RETBLEED=y
+CONFIG_MITIGATION_RETHUNK=y
+CONFIG_MITIGATION_RFDS=y
+CONFIG_MITIGATION_SPECTRE_BHI=y
+CONFIG_MITIGATION_SPECTRE_V1=y
+CONFIG_MITIGATION_SPECTRE_V2=y
+CONFIG_MITIGATION_SRBDS=y
+CONFIG_MITIGATION_SRSO=y
+CONFIG_MITIGATION_SSB=y
+CONFIG_MITIGATION_TAA=y
+CONFIG_MITIGATION_TSA=y
+CONFIG_MITIGATION_UNRET_ENTRY=y
+
+# --- Surface no sandbox VM needs, off on purpose ---
+# Keystroke injection into another terminal; tty line-discipline autoload.
+CONFIG_LEGACY_TIOCSTI=n
+CONFIG_LDISC_AUTOLOAD=n
+CONFIG_LEGACY_PTYS=n
+# process_vm_readv/writev: reading another process's memory.
+CONFIG_CROSS_MEMORY_ATTACH=n
+CONFIG_COREDUMP=n
+CONFIG_FTRACE=n
+CONFIG_UPROBES=n
+CONFIG_SLUB_DEBUG=n
+CONFIG_PROC_PAGE_MONITOR=n
+CONFIG_TIME_NS=n
+CONFIG_CACHESTAT_SYSCALL=n
+CONFIG_SECRETMEM=n
+CONFIG_AF_UNIX_OOB=n
+CONFIG_VHOST_MENU=n
+CONFIG_EFI=n
+CONFIG_PM=n
+CONFIG_SUSPEND=n
+CONFIG_HID_SUPPORT=n
+CONFIG_INPUT=n
+CONFIG_SERIO=n
+CONFIG_FW_LOADER=n
+CONFIG_IOMMU_SUPPORT=n
+# Legacy x86 entry points: vsyscall page, per-process LDT, port I/O from
+# userspace, 16-bit segments, sgetmask.
+CONFIG_X86_VSYSCALL_EMULATION=n
+CONFIG_MODIFY_LDT_SYSCALL=n
+CONFIG_X86_IOPL_IOPERM=n
+CONFIG_X86_16BIT=n
+CONFIG_SGETMASK_SYSCALL=n
+# Writes to a mounted block device; merged slab caches; overlayfs following
+# redirects it did not create.
+CONFIG_BLK_DEV_WRITE_MOUNTED=n
+CONFIG_BLOCK_LEGACY_AUTOLOAD=n
+CONFIG_SLAB_MERGE_DEFAULT=n
+CONFIG_OVERLAY_FS_REDIRECT_ALWAYS_FOLLOW=n

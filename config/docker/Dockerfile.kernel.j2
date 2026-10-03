@@ -4,7 +4,7 @@
 # Architecture: {{ arch_name }} ({{ arch.docker_platform }})
 # Produces vmlinuz and initrd.img with busybox + capsem-init.
 #
-# The kernel is compiled from source with a custom defconfig that:
+# The kernel is compiled from source, allnoconfig plus a defconfig that:
 # - Enables only VirtIO drivers (the only hardware in the VM)
 # - Disables loadable modules (CONFIG_MODULES=n)
 # - Enables KASLR, stack protector, FORTIFY_SOURCE
@@ -16,10 +16,11 @@ FROM ${BASE} AS build
 
 WORKDIR /usr/src/linux
 
-# Apply the capsem hardened defconfig. olddefconfig fills every option it does
-# not pin with the Kconfig default of this kernel version.
+# Start from allnoconfig and apply the capsem hardened defconfig on top, so
+# nothing is enabled unless the defconfig pins it. olddefconfig would instead
+# fill every unpinned option with this kernel version's upstream default.
 COPY {{ arch.defconfig }} /tmp/capsem.defconfig
-RUN cp /tmp/capsem.defconfig .config && make olddefconfig
+RUN make KCONFIG_ALLCONFIG=/tmp/capsem.defconfig allnoconfig
 
 # Fail when the kernel did not honor a pinned option. Kconfig silently drops a
 # misspelled, renamed or unsatisfiable symbol: SLAB_FREELIST_RANDOMIZE (the

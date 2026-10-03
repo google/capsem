@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The guest kernel is now built from allnoconfig, so it enables nothing the
+  defconfig does not pin. It used to fill every unpinned option with the
+  upstream default, which shipped about 150 (arm64) to 220 (x86_64) options
+  nobody chose, including `TIOCSTI` keystroke injection, `process_vm_readv`,
+  core dumps, ftrace, uprobes, writes to mounted block devices, EFI runtime
+  services, power management and HID input, and on x86 the vsyscall page,
+  `modify_ldt`, `iopl`/`ioperm` and 16-bit segments. Every upstream
+  hardening default is now an explicit pin instead: all x86 speculative
+  execution mitigations, KASLR with memory randomization, per-syscall stack
+  offset randomization, IBT and shadow stacks, UMIP, PAN/E0PD, slab buckets
+  and the arm64 CPU errata workarounds.
+
 - The guest kernel shipped without slab freelist randomization on both
   architectures although the hardening docs listed it: the defconfig pinned
   `SLAB_FREELIST_RANDOMIZE`, a symbol that does not exist, and Kconfig
