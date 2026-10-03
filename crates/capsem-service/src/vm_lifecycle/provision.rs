@@ -261,17 +261,21 @@ impl ServiceState {
         let pid = child.id().unwrap_or(0);
         info!(id, pid, version, asset_version = %resolved.asset_version, "capsem-process spawned");
 
-        if let Err(error) = self.record_session_index_start(
-            id,
+        // Provisioning runs on a blocking thread that keeps the runtime
+        // handle, so the event lands before anything can stop the session.
+        let created = capsem_proto::host_session::HostSessionDetail {
             persistent,
+            ram_bytes: ram_mb.saturating_mul(1024 * 1024),
             scratch_disk_size_gb,
-            ram_mb,
-            Some(&asset_pins.rootfs.hash),
-            Some(&version),
-            from.as_deref(),
-        ) {
+            storage_mode: "virtiofs".to_string(),
+            rootfs_hash: Some(asset_pins.rootfs.hash.clone()),
+            rootfs_version: Some(version.clone()),
+            forked_from: from.clone(),
+            ..Default::default()
+        };
+        if let Err(error) = tokio::runtime::Handle::current().block_on(self.record_host_session_created(id, created)) {
             let _ = child.start_kill();
-            return Err(error.context("failed to record main.db session start"));
+            return Err(error.context("failed to record the session in the host ledger"));
         }
 
         if persistent {

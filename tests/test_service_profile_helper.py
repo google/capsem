@@ -103,7 +103,7 @@ def test_service_instance_can_keep_shutdown_flushed_state_for_assertions(
         service_helper, "preserve_tmp_dir_on_failure", lambda _path: None
     )
     service = service_helper.ServiceInstance()
-    state = service.home_dir / "sessions" / "main.db"
+    state = service.home_dir / "sessions" / "host.db"
     state.parent.mkdir()
     state.write_bytes(b"flushed")
 

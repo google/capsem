@@ -25,7 +25,7 @@ async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
     let state = Arc::new(state);
     let session_dir = state.run_dir.join("persistent").join("box");
     std::fs::create_dir_all(session_dir.join("guest/workspace")).unwrap();
-    // Not SQLite: the rollup into main.db fails, and the ledger must be kept anyway.
+    // Not SQLite: its counters cannot be read at stop, and the ledger must be kept anyway.
     std::fs::write(session_dir.join("session.db"), b"ledger").unwrap();
     std::fs::write(session_dir.join("process.log"), b"log").unwrap();
     // pid 0: teardown must not signal a real process.

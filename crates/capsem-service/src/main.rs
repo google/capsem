@@ -43,6 +43,7 @@ mod active_profile;
 mod asset_background;
 mod blocking;
 mod container_setup;
+mod host_ledger;
 mod instance;
 mod instance_reaper;
 use instance::InstanceInfo;
@@ -279,18 +280,16 @@ struct ServiceState {
     /// by explicit MCP discovery routes. Hot MCP list routes must not read the
     /// tool cache JSON from disk.
     mcp_tool_cache: Mutex<Vec<ToolCacheEntry>>,
-    /// Logger-owned DB handle for the profile mutation ledger in main.db.
-    /// Profile/MCP/rule/plugin edit routes call `write`; they must never open
+    /// Logger-owned DB handle for the host ledger (`sessions/host.db`): host
+    /// events and profile mutations. Routes call `write`; they must never open
     /// SQLite directly or hold a side `DbWriter`.
-    profile_mutation_db: Arc<capsem_logger::DbHandle>,
+    host_ledger: Arc<capsem_logger::DbHandle>,
+    /// The `/stats` fold of the host ledger, see `host_ledger.rs`.
+    host_stats: Mutex<host_ledger::HostStats>,
     /// Last wall-clock millisecond when preserved boot logs were scanned for
     /// defunct persistent VMs. Hot list/status/info polls must not rescan the
     /// filesystem on every request.
     last_defunct_reconcile_ms: AtomicU64,
-    /// Final `/stats` HTTP response bytes derived from the logger-owned
-    /// `main.db` query. The typed session-summary epoch invalidates it for
-    /// session/usage writes without coupling it to profile-mutation ledger rows.
-    stats_response_cache: Mutex<Option<CachedLedgerResponse>>,
     /// Session-ledger route bytes (security/detection latest, security status,
     /// history processes/counts) keyed by VM id, route and paging, pinned to
     /// the logger read-cache epoch, released when the VM's handle unregisters.
@@ -858,107 +857,6 @@ impl ServiceState {
                            "socket path too long, using the private fallback dir");
         }
         Ok(path)
-    }
-
-    /// Path to main.db (global session index): the file the service opened.
-    /// It lives in the home's sessions directory, never beside the run directory.
-    fn main_db_path(&self) -> PathBuf {
-        self.profile_mutation_db.path().to_path_buf()
-    }
-
-    fn open_profile_mutation_db_handle(sessions_dir: &StdPath) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
-        let db_path = main_db_path_in(sessions_dir);
-        capsem_logger::ensure_session_index_schema(&db_path)
-            .with_context(|| format!("failed to initialize session index in main.db: {}", db_path.display()))?;
-        let started = std::time::Instant::now();
-        let handle = Arc::new(
-            capsem_logger::DbHandle::open(&db_path)
-                .with_context(|| format!("failed to open profile mutation DB handle: {}", db_path.display()))?,
-        );
-        info!(
-            db_path = %db_path.display(),
-            operation = "open_profile_mutation_db_handle",
-            duration_ms = started.elapsed().as_millis(),
-            "opened profile mutation DB handle"
-        );
-        Ok(handle)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn record_session_index_start(
-        &self,
-        id: &str,
-        persistent: bool,
-        scratch_disk_size_gb: u32,
-        ram_mb: u64,
-        rootfs_hash: Option<&str>,
-        rootfs_version: Option<&str>,
-        forked_from: Option<&str>,
-    ) -> anyhow::Result<()> {
-        let record = capsem_core::session::SessionRecord {
-            id: id.to_string(),
-            mode: if persistent { "persistent" } else { "ephemeral" }.to_string(),
-            command: None,
-            status: "running".to_string(),
-            created_at: capsem_core::session::now_iso(),
-            stopped_at: None,
-            scratch_disk_size_gb,
-            ram_bytes: ram_mb.saturating_mul(1024 * 1024),
-            total_requests: 0,
-            allowed_requests: 0,
-            denied_requests: 0,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_estimated_cost: 0.0,
-            total_tool_calls: 0,
-            total_file_events: 0,
-            storage_mode: "virtiofs".to_string(),
-            rootfs_hash: rootfs_hash.map(ToOwned::to_owned),
-            rootfs_version: rootfs_version.map(ToOwned::to_owned),
-            forked_from: forked_from.map(ToOwned::to_owned),
-            persistent,
-            exec_count: 0,
-            audit_event_count: 0,
-        };
-
-        capsem_logger::record_session_start(&self.main_db_path(), &record)
-            .map(|()| self.invalidate_main_db_route_caches())
-            .context("create or mark running main.db session row")
-    }
-
-    fn record_session_index_stop(
-        &self,
-        id: &str,
-        status: &str,
-        session_dir_for_rollup: Option<&StdPath>,
-    ) -> anyhow::Result<()> {
-        let stopped_at = capsem_core::session::now_iso();
-        let session_db_path = session_dir_for_rollup.map(session_db_path_for_session_dir);
-        let session_db_path = session_db_path.filter(|path| path.exists());
-        capsem_logger::record_session_stop(
-            &self.main_db_path(),
-            id,
-            status,
-            Some(&stopped_at),
-            session_db_path.as_deref(),
-        )
-        .map(|()| self.invalidate_main_db_route_caches())
-        .with_context(|| {
-            if let Some(session_db_path) = session_db_path.as_ref() {
-                format!(
-                    "roll up session.db into main.db for {id}: {}",
-                    session_db_path.display()
-                )
-            } else {
-                format!("mark main.db session row {status} for {id} without session.db")
-            }
-        })?;
-        Ok(())
-    }
-
-    fn invalidate_main_db_route_caches(&self) {
-        self.profile_mutation_db.invalidate_read_cache();
-        *self.stats_response_cache.lock().unwrap() = None;
     }
 
     fn storage_diagnostics_cached(&self, session_dir: &StdPath) -> Option<api::StorageDiagnostics> {

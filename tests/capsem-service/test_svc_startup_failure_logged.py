@@ -25,8 +25,8 @@ def test_a_startup_error_is_written_to_the_service_log() -> None:
     home_dir, run_dir = make_service_home_run_dirs()
     sessions = home_dir / "sessions"
     sessions.mkdir()
-    # A ledger from before archive_state: this build refuses to migrate it.
-    with closing(sqlite3.connect(sessions / "main.db")) as legacy:
+    # A host ledger without archive_state: this build refuses to open it.
+    with closing(sqlite3.connect(sessions / "host.db")) as legacy:
         legacy.execute("CREATE TABLE net_events (id INTEGER PRIMARY KEY)")
         legacy.commit()
     sign_binary(PROCESS_BINARY)

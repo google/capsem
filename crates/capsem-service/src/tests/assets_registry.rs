@@ -840,7 +840,7 @@ pub(crate) fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
     )));
     state.service_socket = PathBuf::from("/nonexistent/service.sock");
     state.asset_status_path = asset_status_path_for_run_dir(&run_dir);
-    state.profile_mutation_db = test_profile_mutation_db(&run_dir);
+    state.host_ledger = test_host_ledger(&run_dir);
     state.run_dir = run_dir;
     // The caller owns `test_root`; the fixture's own temporary root goes.
     state._test_tempdir = None;

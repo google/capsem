@@ -4,7 +4,6 @@ pub mod events;
 pub mod network_db;
 pub mod reader;
 pub mod schema;
-pub mod session_index;
 pub mod session_types;
 pub mod writer;
 
@@ -14,19 +13,15 @@ pub use db::{
 };
 pub use events::{
     credential_reference, is_credential_reference, AuditEvent, Decision, DnsEvent, ExecEvent, ExecEventComplete,
-    FileAction, FileEvent, FileKind, McpCall, MembershipState, ModelCall, NetEvent, NetworkMembership, NetworkRecord,
-    NetworkState, ProfileMutationEvent, ProfileMutationStatus, SecurityAskEvent, SecurityAskPending, SecurityAskRecord,
-    SecurityAskStatus, SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage, SecurityDetectionLevel,
-    SecurityRuleAction, SecurityRuleEvent, SecurityRuleMatch, SubstitutionEvent, ToolCallEntry, ToolResponseEntry,
-    TransportEvent, TransportEventKind, CREDENTIAL_REF_PREFIX,
+    FileAction, FileEvent, FileKind, HostEvent, HostEventKind, McpCall, MembershipState, ModelCall, NetEvent,
+    NetworkMembership, NetworkRecord, NetworkState, ProfileMutationEvent, ProfileMutationStatus, SecurityAskEvent,
+    SecurityAskPending, SecurityAskRecord, SecurityAskStatus, SecurityDecision, SecurityDecisionEvent,
+    SecurityDecisionStage, SecurityDetectionLevel, SecurityRuleAction, SecurityRuleEvent, SecurityRuleMatch,
+    SubstitutionEvent, ToolCallEntry, ToolResponseEntry, TransportEvent, TransportEventKind, CREDENTIAL_REF_PREFIX,
 };
 pub use reader::{
     validate_select_only, DbReader, HistoryEntry, ProcessEntry, SecurityRuleActionCount,
     SecurityRuleDetectionLevelCount, SecurityRuleEventTypeCount, SecurityRuleStats, SecurityRuleStatsByRule,
 };
-pub use session_index::{ensure_session_index_schema, record_session_start, record_session_stop, SessionIndex};
-pub use session_types::{
-    epoch_to_iso, generate_session_id, is_valid_session_id, now_iso, GlobalStats, McpToolSummary, ProviderSummary,
-    SessionRecord, ToolSummary,
-};
+pub use session_types::{epoch_to_iso, generate_session_id, is_valid_session_id, now_iso};
 pub use writer::{format_ledger_timestamp, output_preview, DbWriter, RetainOutcome, WriteOp, MAX_BODY_BLOB_BYTES};

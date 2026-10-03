@@ -65,7 +65,7 @@ const BLOCKING_HELPERS: &[&str] = &[
 
 /// Startup runs before the service accepts a request; a stall there delays
 /// readiness, not another caller. `off_worker` is the door itself.
-const EXEMPT_FUNCTIONS: &[&str] = &["run_service", "spawn_companions", "off_worker"];
+const EXEMPT_FUNCTIONS: &[&str] = &["run_service", "start_and_serve", "spawn_companions", "off_worker"];
 
 fn source_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("read service sources").flatten() {

@@ -542,6 +542,26 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_target
         ON profile_mutation_events(category, target_kind, target_key);
 
+    -- What the host did to sessions and itself. Each row chains to the one
+    -- before it: hash = chain_hash(prev_hash, event), genesis all zeros.
+    CREATE TABLE IF NOT EXISTS host_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp_unix_ms INTEGER NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN (
+            'session_created', 'session_started', 'session_stopped', 'session_restarted',
+            'session_forked', 'session_destroyed', 'session_suspended', 'session_resumed',
+            'image_admitted', 'image_denied', 'grant_minted', 'grant_revoked',
+            'settings_changed', 'service_started', 'service_stopped'
+        )),
+        session_id TEXT,
+        actor TEXT NOT NULL,
+        detail BLOB NOT NULL,
+        trace_id TEXT,
+        prev_hash BLOB NOT NULL CHECK (length(prev_hash) = 32),
+        hash BLOB NOT NULL CHECK (length(hash) = 32)
+    );
+    CREATE INDEX IF NOT EXISTS idx_host_events_session ON host_events(session_id, id);
+
 
     -- Correlation indexes: one per table that carries the column.
     CREATE INDEX IF NOT EXISTS idx_net_events_turn_id ON net_events(turn_id);
@@ -603,9 +623,8 @@ pub(super) const CREATE_TRANSPORT: &str = "
     CREATE INDEX IF NOT EXISTS idx_transport_events_network ON transport_events(network_id,id);
     CREATE INDEX IF NOT EXISTS idx_transport_events_connection ON transport_events(connection_id,id);
     CREATE INDEX IF NOT EXISTS idx_transport_events_timestamp ON transport_events(timestamp_unix_ms,id);
-    -- The transport ledger's own version marker. `user_version` belongs to
-    -- SessionIndex in the shared main.db, so this one is logger-owned and
-    -- disk-only; `transport::assert_current` refuses a version it does not
+    -- The transport ledger's own version marker, logger-owned and disk-only,
+    -- independent of SQLite's `user_version`; `transport::assert_current` refuses a version it does not
     -- know rather than upgrading the file. The gate that keeps a deleted
     -- marker from coming back is the TABLE's absence, checked in
     -- `create_tables`, not the row's: `OR IGNORE` here is for two writers

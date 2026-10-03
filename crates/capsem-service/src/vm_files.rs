@@ -15,10 +15,6 @@ pub(crate) use diagnostics::{session_db_triage, session_triage_statements};
 pub(crate) use fork::{clone_session_state, handle_fork};
 pub(super) use ipc_command::send_ipc_command;
 
-pub(super) fn main_db_path_in(sessions_dir: &StdPath) -> PathBuf {
-    sessions_dir.join("main.db")
-}
-
 pub(super) fn gib(bytes: u64) -> u64 {
     bytes / 1024 / 1024 / 1024
 }
@@ -1166,9 +1162,9 @@ pub(super) async fn handle_vm_fork_status(
     vm_operation_status(state, id, "fork").await
 }
 
-/// GET /stats -- return global stats from the canonical ledger.
+/// GET /stats -- global stats folded from the host ledger and live sessions.
 pub(super) async fn handle_stats(State(state): State<Arc<ServiceState>>) -> Result<impl IntoResponse, AppError> {
-    let body = read_stats_response_from_main_db_handle(&state).await?;
+    let body = state.stats_response().await;
     Ok((
         StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "application/json")],

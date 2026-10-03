@@ -179,12 +179,12 @@ async fn profile_mcp_tool_edit_writes_profile_rule_and_mutation_ledger() {
     );
 
     state
-        .profile_mutation_db
+        .host_ledger
         .flush()
         .await
         .expect("flush profile mutation DB before ledger assertion");
-    let main_db = state.main_db_path();
-    let reader = capsem_logger::DbReader::open(&main_db).expect("main.db mutation ledger");
+    let host_ledger = state.host_ledger.path().to_path_buf();
+    let reader = capsem_logger::DbReader::open(&host_ledger).expect("host ledger");
     let rows = reader
         .query_raw(
             "SELECT profile_id, category, target_kind, target_key, operation, status \
@@ -293,12 +293,12 @@ async fn profile_mcp_default_edit_writes_default_rule_and_mutation_ledger() {
     );
 
     state
-        .profile_mutation_db
+        .host_ledger
         .flush()
         .await
         .expect("flush profile mutation DB before ledger assertion");
-    let main_db = state.main_db_path();
-    let reader = capsem_logger::DbReader::open(&main_db).expect("main.db mutation ledger");
+    let host_ledger = state.host_ledger.path().to_path_buf();
+    let reader = capsem_logger::DbReader::open(&host_ledger).expect("host ledger");
     let rows = reader
         .query_raw(
             "SELECT profile_id, category, target_kind, target_key, operation, status \
@@ -415,12 +415,12 @@ async fn profile_mcp_server_edit_delete_persist_profile_and_mutation_ledger() {
         .any(|server| server.name == "github"));
 
     state
-        .profile_mutation_db
+        .host_ledger
         .flush()
         .await
         .expect("flush profile mutation DB before ledger assertion");
-    let main_db = state.main_db_path();
-    let reader = capsem_logger::DbReader::open(&main_db).expect("main.db mutation ledger");
+    let host_ledger = state.host_ledger.path().to_path_buf();
+    let reader = capsem_logger::DbReader::open(&host_ledger).expect("host ledger");
     let rows = reader
         .query_raw(
             "SELECT profile_id, category, filename, target_kind, target_key, operation, status \

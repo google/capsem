@@ -80,12 +80,12 @@ pub(super) fn spawn_exit_reaper(
         let unexpected_exit = removed.is_some() && !clean_exit;
         if removed.is_some() {
             let status = if clean_exit { "stopped" } else { "crashed" };
-            if let Err(error) = state.record_session_index_stop(&id, status, Some(&session_dir)) {
+            if let Err(error) = state.record_host_session_stopped(&id, status, true).await {
                 error!(
                     id,
                     status,
                     error = %error,
-                    "failed to record main.db session stop after child exit"
+                    "failed to record the session stop in the host ledger after child exit"
                 );
             }
         }

@@ -434,3 +434,46 @@ pub(super) fn insert_transport_event(
     )?;
     Ok(())
 }
+
+/// The newest chain link, in memory first: rows reach disk only at a flush.
+fn last_host_hash(conn: &Connection, target: WriteTarget) -> rusqlite::Result<[u8; 32]> {
+    for table in [target.table("host_events"), "main.host_events".to_string()] {
+        let hash: Option<Vec<u8>> = conn
+            .query_row(
+                &format!("SELECT hash FROM {table} ORDER BY id DESC LIMIT 1"),
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(hash) = hash {
+            return hash
+                .try_into()
+                .map_err(|_| rusqlite::Error::InvalidParameterName("host_events hash is not 32 bytes".into()));
+        }
+    }
+    Ok(crate::events::GENESIS_HASH)
+}
+
+pub(super) fn insert_host_event(conn: &Connection, event: &HostEvent, target: WriteTarget) -> rusqlite::Result<()> {
+    let prev_hash = last_host_hash(conn, target)?;
+    let hash = crate::events::chain_hash(&prev_hash, event);
+    execute_cached(
+        conn,
+        &format!(
+            "INSERT INTO {} (timestamp_unix_ms, kind, session_id, actor, detail, trace_id, prev_hash, hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            target.table("host_events")
+        ),
+        params![
+            event.timestamp_unix_ms,
+            event.kind.as_str(),
+            event.session_id,
+            event.actor,
+            event.detail,
+            event.trace_id,
+            prev_hash.as_slice(),
+            hash.as_slice(),
+        ],
+    )?;
+    Ok(())
+}

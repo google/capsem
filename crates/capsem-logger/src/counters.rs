@@ -235,6 +235,7 @@ impl LedgerTally {
             | WriteOp::DnsEvent(_)
             | WriteOp::SecurityDecisionEvent(_)
             | WriteOp::ProfileMutationEvent(_)
+            | WriteOp::HostEvent(_)
             | WriteOp::Network(_)
             | WriteOp::NetworkMembership(_) => {}
         }

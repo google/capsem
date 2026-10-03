@@ -3,8 +3,10 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
+mod host;
 mod network;
 mod transport;
+pub use host::{chain_hash, HostEvent, HostEventKind, GENESIS_HASH};
 pub use network::{MembershipState, NetworkMembership, NetworkRecord, NetworkState};
 pub use transport::{TransportEvent, TransportEventKind};
 

@@ -216,8 +216,8 @@ async fn complete_create(
 /// policy-refused pull's audit row lives in this VM's own ledger. Retain, not
 /// Discard: the owner exits cleanly so that ledger is flushed before it moves.
 async fn discard_failed_create(state: &Arc<ServiceState>, id: &str) {
-    // Resolved first: a teardown that fails -- a ledger too damaged to roll up
-    // into main.db -- must not also lose the ledger it could not read.
+    // Resolved first: a teardown that fails -- a ledger too damaged to read --
+    // must not also lose the ledger it could not read.
     let session_dir = resolve_session_dir(state, id).ok();
     if let Err(error) = shutdown_vm_process(state, id, ShutdownMode::Retain).await {
         error!(vm_id = id, error = %error.1, "failed create did not shut down cleanly");

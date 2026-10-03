@@ -6,8 +6,9 @@ use rusqlite::{params, Connection, OpenFlags, Row};
 use serde::{Deserialize, Serialize};
 
 use crate::events::{
-    AuditEvent, Decision, ExecEvent, FileAction, FileEvent, FileKind, ModelCall, NetEvent, SecurityAskRecord,
-    SecurityAskStatus, SecurityDetectionLevel, SecurityRuleAction, SecurityRuleMatch, ToolCallEntry, ToolResponseEntry,
+    AuditEvent, Decision, ExecEvent, FileAction, FileEvent, FileKind, HostEvent, HostEventKind, ModelCall, NetEvent,
+    SecurityAskRecord, SecurityAskStatus, SecurityDetectionLevel, SecurityRuleAction, SecurityRuleMatch, ToolCallEntry,
+    ToolResponseEntry,
 };
 use crate::schema;
 mod columns;
@@ -185,9 +186,65 @@ pub struct DbReader {
     sync: schema_sync::SyncState,
 }
 
+/// A host event with its stored `prev_hash` and `hash`.
+pub type HostEventRow = (HostEvent, [u8; 32], [u8; 32]);
+
 impl DbReader {
     pub(crate) fn connection(&self) -> &Connection {
         &self.conn
+    }
+
+    /// Every host event in ledger order, each with its stored chain link.
+    pub fn host_events(&self) -> rusqlite::Result<Vec<HostEventRow>> {
+        let mut statement = self.conn.prepare(
+            "SELECT timestamp_unix_ms, kind, session_id, actor, detail, trace_id, prev_hash, hash
+             FROM host_events ORDER BY id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let kind: String = row.get(1)?;
+            let link = |index: usize| -> rusqlite::Result<[u8; 32]> {
+                let bytes: Vec<u8> = row.get(index)?;
+                bytes.try_into().map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(index, "host_events hash".into(), rusqlite::types::Type::Blob)
+                })
+            };
+            Ok((
+                HostEvent {
+                    timestamp_unix_ms: row.get(0)?,
+                    kind: HostEventKind::parse_str(&kind).ok_or_else(|| {
+                        rusqlite::Error::InvalidColumnType(
+                            1,
+                            format!("host event kind {kind}"),
+                            rusqlite::types::Type::Text,
+                        )
+                    })?,
+                    session_id: row.get(2)?,
+                    actor: row.get(3)?,
+                    detail: row.get(4)?,
+                    trace_id: row.get(5)?,
+                },
+                link(6)?,
+                link(7)?,
+            ))
+        })?;
+        rows.collect()
+    }
+
+    /// Recompute the host event chain, returning how many events it covers.
+    /// An event whose link or hash does not follow from the one before it --
+    /// edited, removed, inserted or reordered -- is an error naming its index.
+    pub fn verify_host_chain(&self) -> rusqlite::Result<usize> {
+        let events = self.host_events()?;
+        let mut previous = crate::events::GENESIS_HASH;
+        for (index, (event, prev_hash, hash)) in events.iter().enumerate() {
+            if *prev_hash != previous || *hash != crate::events::chain_hash(&previous, event) {
+                return Err(rusqlite::Error::InvalidParameterName(format!(
+                    "host event chain is broken at event {index}"
+                )));
+            }
+            previous = *hash;
+        }
+        Ok(events.len())
     }
 
     /// Query the most recent N network events, ordered newest first.

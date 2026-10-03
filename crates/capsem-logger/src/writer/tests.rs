@@ -1,10 +1,9 @@
-//! Tests for `writer` (extracted from inline `mod tests`).
-
 use super::*;
 
 mod bodies;
 mod counters;
 mod headers;
+mod host;
 mod producer;
 mod recording;
 mod security;

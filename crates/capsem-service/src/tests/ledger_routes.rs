@@ -568,36 +568,12 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
     let dir = tempfile::tempdir().unwrap();
     let sessions_dir = dir.path().join("sessions");
     std::fs::create_dir_all(&sessions_dir).unwrap();
-    let idx = capsem_core::session::SessionIndex::open(&sessions_dir.join("main.db")).unwrap();
-    idx.create_session(&capsem_core::session::SessionRecord {
-        id: "winterfell-vm".to_string(),
-        mode: "virtiofs".to_string(),
-        command: Some("winterfell".to_string()),
-        status: "running".to_string(),
-        created_at: "2026-06-24T00:00:00Z".to_string(),
-        stopped_at: None,
-        scratch_disk_size_gb: 16,
-        ram_bytes: 4_294_967_296,
-        total_requests: 0,
-        allowed_requests: 0,
-        denied_requests: 0,
-        total_input_tokens: 0,
-        total_output_tokens: 0,
-        total_estimated_cost: 0.0,
-        total_tool_calls: 0,
-        total_file_events: 0,
-        storage_mode: "virtiofs".to_string(),
-        rootfs_hash: None,
-        rootfs_version: None,
-        forked_from: None,
-        persistent: false,
-        exec_count: 0,
-        audit_event_count: 0,
-    })
-    .unwrap();
-    drop(idx);
 
     let (state, _dir) = make_test_state_with_tempdir_at(dir);
+    state
+        .record_host_session_created("winterfell-vm", Default::default())
+        .await
+        .unwrap();
     let app = build_service_router(Arc::clone(&state));
     let session_dir = sessions_dir.join("winterfell-vm");
     std::fs::create_dir_all(&session_dir).unwrap();

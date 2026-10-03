@@ -906,6 +906,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The service keeps a host ledger, `~/.capsem/sessions/host.db`: a
+  hash-chained record of what it did to every session (created, stopped and
+  how, with the session's final counters) and of its own starts and stops,
+  plus the profile changes `main.db` used to hold. Editing, removing or
+  reordering a record breaks the chain, and the doctor tools verify it.
+  `GET /stats` is now folded from this ledger in memory and includes running
+  sessions' live counters, which it used to report as zero until they
+  stopped. The old `~/.capsem/sessions/main.db` is never opened again and
+  its session index is gone.
+
 - The code profile advances to 0.6.5. Code 0.6.4 named itself the default
   profile with a `default_for` field that Capsem 0.6.3 does not know, and
   0.6.3's updater parses staged profiles strictly, so every automatic update

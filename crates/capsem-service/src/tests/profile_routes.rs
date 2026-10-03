@@ -485,12 +485,12 @@ async fn profile_skills_routes_persist_profile_and_mutation_ledger() {
     assert!(profile.skills.paths.is_empty());
 
     state
-        .profile_mutation_db
+        .host_ledger
         .flush()
         .await
         .expect("flush profile mutation DB before ledger assertion");
-    let main_db = state.main_db_path();
-    let reader = capsem_logger::DbReader::open(&main_db).expect("main.db mutation ledger");
+    let host_ledger = state.host_ledger.path().to_path_buf();
+    let reader = capsem_logger::DbReader::open(&host_ledger).expect("host ledger");
     let rows = reader
         .query_raw(
             "SELECT profile_id, category, filename, target_kind, target_key, operation, status \

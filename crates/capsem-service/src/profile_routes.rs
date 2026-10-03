@@ -1627,7 +1627,7 @@ pub(super) async fn write_profile_mutation_event(
         None,
     );
     state
-        .profile_mutation_db
+        .host_ledger
         .write(capsem_logger::WriteOp::ProfileMutationEvent(event.clone()))
         .await
         .map_err(|error| {

@@ -52,16 +52,10 @@ SNAPSHOT_SOURCE = "crates/capsem-logger/src/db/maintenance.rs"
 # shipped and is not rewritten.
 VACUUMED_ROOTS = ("crates", "web", "build_system")
 DOCS_SEGMENT = "do" + "cs"
-VACUUMED_EXEMPT_PREFIX = "/".join(("web", DOCS_SEGMENT, "src", "content", DOCS_SEGMENT, "releases")) + "/"
+VACUUMED_EXEMPT_PREFIX = (
+    "/".join(("web", DOCS_SEGMENT, "src", "content", DOCS_SEGMENT, "releases")) + "/"
+)
 
-# `main.db` survives every build on a developer's machine, so something has to
-# name the dead state in order to remove it. These two files may -- but only to
-# migrate, never to query: a `status IN (...)` list here is the retention shape
-# this change deleted coming back.
-VACUUMED_MIGRATION: dict[str, str] = {
-    "crates/capsem-logger/src/session_index.rs": "the v7->v8 migration drops the columns and rewrites the state",
-    "crates/capsem-logger/src/session_index/tests.rs": "the test of that migration",
-}
 
 VACUUM_RATIONALE = """\
 The session ledger has no compaction path.
@@ -119,7 +113,9 @@ def vacuum_violations(path: str, text: str) -> list[str]:
         if allowed is None:
             violations.append(f"{path}:{number} runs VACUUM outside the snapshot")
         elif path == SNAPSHOT_SOURCE and "VACUUM INTO" not in code:
-            violations.append(f"{path}:{number} is a bare VACUUM in the snapshot source")
+            violations.append(
+                f"{path}:{number} is a bare VACUUM in the snapshot source"
+            )
     return violations
 
 
@@ -127,18 +123,19 @@ def vacuumed_state_violations(path: str, text: str) -> list[str]:
     """Pure predicate over (path, text): every mention of the dead session state."""
     if not path.startswith(VACUUMED_ROOTS) or path.startswith(VACUUMED_EXEMPT_PREFIX):
         return []
-    migrating = path in VACUUMED_MIGRATION
     return [
         f"{path}:{number} names the `vacuumed` session state"
         for number, line in enumerate(text.splitlines(), start=1)
-        if "vacuumed" in line and not (migrating and "status IN" not in line)
+        if "vacuumed" in line
     ]
 
 
 def test_the_snapshot_source_exists() -> None:
     """A guard over a file nobody has asserts nothing."""
     snapshot = PROJECT_ROOT / SNAPSHOT_SOURCE
-    assert "VACUUM INTO" in snapshot.read_text(), f"{snapshot} no longer snapshots; this guard is vacuous"
+    assert "VACUUM INTO" in snapshot.read_text(), (
+        f"{snapshot} no longer snapshots; this guard is vacuous"
+    )
 
 
 def test_no_vacuum_outside_the_snapshot() -> None:
@@ -159,7 +156,9 @@ def test_vacuumed_is_not_a_session_state_anywhere() -> None:
             text = path.read_text()
         except (UnicodeDecodeError, OSError):
             continue
-        violations.extend(vacuumed_state_violations(str(path.relative_to(PROJECT_ROOT)), text))
+        violations.extend(
+            vacuumed_state_violations(str(path.relative_to(PROJECT_ROOT)), text)
+        )
 
     assert not violations, VACUUMED_RATIONALE + "\n" + "\n".join(violations)
 
@@ -174,7 +173,9 @@ pub fn checkpoint_and_vacuum_session_db(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 """
-    assert vacuum_violations("crates/capsem-core/src/session/maintenance.rs", revived) == [
+    assert vacuum_violations(
+        "crates/capsem-core/src/session/maintenance.rs", revived
+    ) == [
         "crates/capsem-core/src/session/maintenance.rs:5 runs VACUUM outside the snapshot"
     ]
 
@@ -182,12 +183,25 @@ pub fn checkpoint_and_vacuum_session_db(path: &Path) -> anyhow::Result<()> {
     bare_in_the_snapshot = 'conn.execute_batch("VACUUM")?;'
     assert len(vacuum_violations(SNAPSHOT_SOURCE, bare_in_the_snapshot)) == 1
 
-    # Even in the file allowed to migrate the state, a query naming it is the
-    # retention shape coming back.
+    # A query naming the state is the retention shape coming back.
     state = "WHERE status IN ('stopped', 'crashed', 'vacuumed') AND persistent = 0"
-    assert len(vacuumed_state_violations("crates/capsem-logger/src/session_index.rs", state)) == 1
-    assert len(vacuumed_state_violations("crates/capsem-service/src/ledger_routes.rs", state)) == 1
-    assert len(vacuumed_state_violations("web/app/src/lib/types/gateway.ts", "vacuumed_at: string;")) == 1
+    assert len(vacuumed_state_violations("crates/capsem-logger/src/db.rs", state)) == 1
+    assert (
+        len(
+            vacuumed_state_violations(
+                "crates/capsem-service/src/ledger_routes.rs", state
+            )
+        )
+        == 1
+    )
+    assert (
+        len(
+            vacuumed_state_violations(
+                "web/app/src/lib/types/gateway.ts", "vacuumed_at: string;"
+            )
+        )
+        == 1
+    )
 
 
 def test_the_predicate_allows_the_snapshot_and_the_refusal() -> None:
@@ -195,11 +209,10 @@ def test_the_predicate_allows_the_snapshot_and_the_refusal() -> None:
     clone = """src_conn.execute_batch(&format!("VACUUM INTO '{escaped}';"))?;"""
     assert vacuum_violations(SNAPSHOT_SOURCE, clone) == []
 
-    refusal = '"VACUUM" | "REINDEX" | "BEGIN" => return Err("statement not allowed".into()),'
+    refusal = (
+        '"VACUUM" | "REINDEX" | "BEGIN" => return Err("statement not allowed".into()),'
+    )
     assert vacuum_violations("crates/capsem-logger/src/reader.rs", refusal) == []
 
     history = "- Numerous snapshot, vacuum, and telemetry fixes"
     assert vacuumed_state_violations(VACUUMED_EXEMPT_PREFIX + "0-14.md", history) == []
-
-    migration = "conn.execute(\"UPDATE sessions SET status = 'stopped' WHERE status = 'vacuumed'\", [])?;"
-    assert vacuumed_state_violations("crates/capsem-logger/src/session_index.rs", migration) == []

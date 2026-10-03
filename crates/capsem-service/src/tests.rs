@@ -69,10 +69,10 @@ fn test_profile_plugin_policy_cache() -> Mutex<BTreeMap<String, BTreeMap<String,
     Mutex::new(build_profile_plugin_policy_cache(None).expect("test profile plugin policy cache should build"))
 }
 
-/// A test state's home is its run directory's parent, so its main.db stays in
+/// A test state's home is its run directory's parent, so its host ledger stays in
 /// the test's own temporary directory.
-fn test_profile_mutation_db(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
-    ServiceState::open_profile_mutation_db_handle(&run_dir.parent().unwrap().join("sessions")).unwrap()
+fn test_host_ledger(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
+    host_ledger::open_host_ledger(&run_dir.parent().unwrap().join("sessions")).unwrap()
 }
 
 pub(crate) fn make_test_state() -> Arc<ServiceState> {
@@ -112,9 +112,9 @@ pub(crate) fn make_test_state_owned() -> ServiceState {
         profile_mcp_default_cache: test_profile_mcp_default_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_db: test_profile_mutation_db(&run_dir),
+        host_ledger: test_host_ledger(&run_dir),
+        host_stats: Mutex::new(Default::default()),
         last_defunct_reconcile_ms: AtomicU64::new(0),
-        stats_response_cache: Mutex::new(None),
         stats_detail_response_cache: Mutex::new(HashMap::new()),
         containers: Default::default(),
         storage_diagnostics_cache: Mutex::new(HashMap::new()),
@@ -197,9 +197,9 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         profile_mcp_default_cache: test_profile_mcp_default_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_db: test_profile_mutation_db(&run_dir),
+        host_ledger: test_host_ledger(&run_dir),
+        host_stats: Mutex::new(Default::default()),
         last_defunct_reconcile_ms: AtomicU64::new(0),
-        stats_response_cache: Mutex::new(None),
         stats_detail_response_cache: Mutex::new(HashMap::new()),
         containers: Default::default(),
         storage_diagnostics_cache: Mutex::new(HashMap::new()),
@@ -743,9 +743,9 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         profile_mcp_default_cache: test_profile_mcp_default_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_db: test_profile_mutation_db(&run_dir),
+        host_ledger: test_host_ledger(&run_dir),
+        host_stats: Mutex::new(Default::default()),
         last_defunct_reconcile_ms: AtomicU64::new(0),
-        stats_response_cache: Mutex::new(None),
         stats_detail_response_cache: Mutex::new(HashMap::new()),
         containers: Default::default(),
         storage_diagnostics_cache: Mutex::new(HashMap::new()),

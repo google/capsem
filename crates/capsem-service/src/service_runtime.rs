@@ -22,12 +22,12 @@ pub(super) async fn run_service() -> Result<()> {
     capsem_foundation::telemetry::install_panic_logger("capsem-service");
     // A detached service's stderr reaches nobody, and the gate and installer
     // send whoever diagnoses a failed start to this log: write the cause here.
-    serve(args, run_dir)
+    start_and_serve(args, run_dir)
         .await
         .inspect_err(|error| error!(error = format!("{error:#}"), "capsem-service failed"))
 }
 
-async fn serve(args: Args, run_dir: PathBuf) -> Result<()> {
+async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     let service_launch_span = tracing::info_span!(
         target: "capsem.launch",
         capsem_foundation::telemetry::LAUNCH_SERVICE_SPAN,
@@ -256,10 +256,8 @@ async fn serve(args: Args, run_dir: PathBuf) -> Result<()> {
         .map_err(|AppError(_, message)| anyhow!("failed to build profile plugin cache: {message}"))?;
     // The home's sessions directory, not the run directory's parent: a run
     // directory placed elsewhere (a short socket path under /tmp) once put
-    // every such service on one shared main.db, where a stale ledger format
-    // stopped each new service before it could listen.
-    let profile_mutation_db =
-        ServiceState::open_profile_mutation_db_handle(&capsem_foundation::paths::capsem_sessions_dir())?;
+    // every such service on one shared ledger.
+    let host_ledger = host_ledger::open_host_ledger(&capsem_foundation::paths::capsem_sessions_dir())?;
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         session_db_handles: Mutex::new(HashMap::new()),
@@ -284,9 +282,9 @@ async fn serve(args: Args, run_dir: PathBuf) -> Result<()> {
         profile_mcp_default_cache: Mutex::new(profile_mcp_default_cache),
         profile_plugin_policy_cache: Mutex::new(profile_plugin_policy_cache),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_db,
+        host_ledger,
+        host_stats: Mutex::new(Default::default()),
         last_defunct_reconcile_ms: AtomicU64::new(0),
-        stats_response_cache: Mutex::new(None),
         stats_detail_response_cache: Mutex::new(HashMap::new()),
         containers: Default::default(),
         storage_diagnostics_cache: Mutex::new(HashMap::new()),
@@ -307,6 +305,10 @@ async fn serve(args: Args, run_dir: PathBuf) -> Result<()> {
     });
     hydrate_startup_route_caches(&state).map_err(|AppError(_, message)| anyhow!("{message}"))?;
     state.hydrate_session_db_handles();
+    state.hydrate_host_stats().await?;
+    state
+        .record_service_event(capsem_logger::HostEventKind::ServiceStarted)
+        .await?;
     // Kept for the life of the service: dropping the exporter flushes and stops
     // export, and dropping the instruments stops observing sessions.
     let _metric_export = telemetry_export::install().map(|exporter| {
@@ -470,6 +472,15 @@ async fn serve(args: Args, run_dir: PathBuf) -> Result<()> {
     }
     let children = std::mem::take(&mut companions.lock().unwrap().children);
     shutdown::stop_companions(children).await;
+    if let Err(error) = state
+        .record_service_event(capsem_logger::HostEventKind::ServiceStopped)
+        .await
+    {
+        warn!(error = %error, "failed to record the service stop in the host ledger");
+    }
+    if let Err(error) = state.host_ledger.flush().await {
+        warn!(error = %error, "failed to flush the host ledger at shutdown");
+    }
     info!("shutdown complete");
     result.context("server error")?;
 

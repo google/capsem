@@ -41,12 +41,7 @@ SERVICE = ROOT / "crates" / "capsem-service" / "src"
 REGISTRY = SERVICE / "tests" / "route_query_plans.rs"
 
 # SQL items that are not ledger reads, keyed `path:item`, with the reason.
-NOT_LEDGER_READS: dict[str, str] = {
-    "crates/capsem-service/src/ledger_routes/global_stats.rs:STATS_RESPONSE_SQL": (
-        "GET /stats reads main.db, one row per session (at most about a thousand per machine), "
-        "filled from each session's counter snapshot at stop; no session ledger is read"
-    ),
-}
+NOT_LEDGER_READS: dict[str, str] = {}
 
 SQL = re.compile(
     r"\bselect\b[\s\S]*\bfrom\b|\binsert\s+into\b|\bupdate\s+\w+\s+set\b|\bdelete\s+from\b|\bpragma\s+\w",

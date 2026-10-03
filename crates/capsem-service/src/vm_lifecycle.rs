@@ -234,8 +234,8 @@ pub(super) async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration
 /// `ShutdownComplete` (capsem-process/src/vsock/shutdown.rs), so a clean
 /// stop costs the shell's exit, not a timer; `SHUTDOWN_COMPLETE_TIMEOUT_SECS`
 /// bounds a silent guest. Required for `handle_stop` on persistent VMs
-/// (preserves workspace state) and `handle_run` (session DB rollup reads
-/// main.db after exit).
+/// (preserves workspace state) and `handle_run` (the host ledger records the
+/// session's final counters after exit).
 ///
 /// `ShutdownMode::Discard` means the caller is permanently deleting the session,
 /// so its guest state and per-session ledger are explicitly disposable. Kill
@@ -328,11 +328,12 @@ pub(super) async fn shutdown_vm_process(
         return Ok(None);
     }
     state
-        .record_session_index_stop(id, "stopped", mode.session_dir_for_rollup(&session_dir))
+        .record_host_session_stopped(id, "stopped", mode.retains_state())
+        .await
         .map_err(|error| {
             AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("session index rollup failed for {id}: {error}"),
+                format!("host ledger stop failed for {id}: {error}"),
             )
         })?;
 

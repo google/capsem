@@ -2,7 +2,7 @@
 //!
 //! Two kinds of handle read a ledger. The service's session handles are
 //! external readers: capsem-process owns the writes and disk is the boundary.
-//! The service's own `main.db` and the network ledgers are owning handles:
+//! The service's own host ledger and the network ledgers are owning handles:
 //! the handle holds the writer. Both are measured at 20k rows and at 1M, the
 //! size a long session reaches, because a poll whose cost grows with the
 //! ledger is only visible on a large one.
@@ -118,7 +118,7 @@ fn owning_handle_poll(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     for &(rows, label) in SIZES {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("main.db");
+        let path = dir.path().join("host.db");
         seed_dns_rows(&path, rows);
         let handle = DbHandle::open(&path).expect("owning handle");
         rt.block_on(handle.ready()).expect("ready");

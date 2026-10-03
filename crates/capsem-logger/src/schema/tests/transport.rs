@@ -55,23 +55,6 @@ fn malformed_or_future_transport_markers_fail_without_reinitializing() {
     }
 }
 
-#[test]
-fn transport_upgrade_preserves_the_shared_session_index_version() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("main.db");
-    let index = crate::SessionIndex::open(&path).unwrap();
-    drop(index);
-    let conn = Connection::open(&path).unwrap();
-    let before: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
-    assert!(before > 1);
-    let writer = crate::DbWriter::open(&path, 8).unwrap();
-    writer.shutdown_blocking();
-    let after: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
-    assert_eq!(after, before);
-    crate::DbReader::open(&path).unwrap().ready().unwrap();
-    crate::SessionIndex::open(&path).unwrap();
-}
-
 #[tokio::test]
 async fn a_current_database_missing_transport_rows_is_corrupt_and_not_recreated() {
     let dir = tempfile::tempdir().unwrap();

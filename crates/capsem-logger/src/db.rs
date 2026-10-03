@@ -717,7 +717,7 @@ impl DbHandle {
     pub async fn write(&self, op: WriteOp) -> DbResult<()> {
         let started = Instant::now();
         let op_kind = op.kind();
-        let affects_session_summary = !matches!(&op, WriteOp::ProfileMutationEvent(_));
+        let affects_session_summary = !matches!(&op, WriteOp::ProfileMutationEvent(_) | WriteOp::HostEvent(_));
         let Some(writer) = &self.inner.writer else {
             let error = "db handle is read-only; session writes must use the owning process DB handle".to_string();
             tracing::error!(
@@ -834,6 +834,7 @@ impl SessionDb {
 }
 
 mod bodies;
+mod host;
 mod hot_counters;
 mod maintenance;
 mod reader_worker;

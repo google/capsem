@@ -138,7 +138,7 @@ async fn hot_routes_never_open_or_query_a_ledger() {
     }
     let session = state.session_db_handle(VM_ID).expect("the session's handle");
     let session_requests = session.reader_requests();
-    let main_requests = state.profile_mutation_db.reader_requests();
+    let host_requests = state.host_ledger.reader_requests();
 
     for _ in 0..8 {
         for (route, first) in routes.iter().zip(&first) {
@@ -162,9 +162,9 @@ async fn hot_routes_never_open_or_query_a_ledger() {
          round trip, no SQLite read, per request"
     );
     assert_eq!(
-        state.profile_mutation_db.reader_requests(),
-        main_requests,
-        "a hot route must not read main.db while it has not changed"
+        state.host_ledger.reader_requests(),
+        host_requests,
+        "a hot route never reads the host ledger: /stats is a fold held in memory"
     );
 }
 

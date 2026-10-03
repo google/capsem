@@ -96,7 +96,6 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/schema/pragmas.rs"),
     Path("crates/capsem-logger/src/schema/security_event_types.rs"),
     Path("crates/capsem-logger/src/schema/transport.rs"),
-    Path("crates/capsem-logger/src/session_index.rs"),
     Path("crates/capsem-logger/src/writer.rs"),
     # The writer thread's own modules. They run on the thread that owns the
     # connection and are handed it as an argument; they do not open one.
@@ -105,6 +104,9 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/writer/model_rows.rs"),
     Path("crates/capsem-logger/src/writer/retention.rs"),
     Path("crates/capsem-logger/src/writer/tests.rs"),
+    # The host ledger's chain test edits a copy of a closed ledger on disk to
+    # prove tampering breaks the chain, the same pattern as handle_tests above.
+    Path("crates/capsem-logger/src/writer/tests/host.rs"),
 }
 
 

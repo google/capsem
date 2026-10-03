@@ -5,7 +5,7 @@
 fn service_db_handle_open_is_owned_by_explicit_service_state_owners() {
     // ServiceState's DB-handle methods live in session_db_handles.rs; the
     // main-ledger owner stays in main.rs.
-    let source = ["/src/main.rs", "/src/session_db_handles.rs"]
+    let source = ["/src/main.rs", "/src/session_db_handles.rs", "/src/host_ledger.rs"]
         .map(|file| {
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR")).to_owned() + file)
                 .expect("service source must be readable")
@@ -30,8 +30,8 @@ fn service_db_handle_open_is_owned_by_explicit_service_state_owners() {
         "the session-state registration method must own the external DB reader lifecycle"
     );
     assert!(
-        source.contains("fn open_profile_mutation_db_handle("),
-        "one DbHandle::open owner must be the profile mutation main-ledger method"
+        source.contains("fn open_host_ledger("),
+        "one DbHandle::open owner must be the host ledger"
     );
     assert!(
         !source.contains("Arc<capsem_logger::DbWriter>"),

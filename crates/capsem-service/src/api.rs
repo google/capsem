@@ -1,19 +1,8 @@
 pub use capsem_api::*;
 use capsem_core::net::policy_config::{DetectionLevel, ProfileConfigFile, SecurityRuleAction};
-use capsem_core::session::{GlobalStats, McpToolSummary, ProviderSummary, SessionRecord, ToolSummary};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
-
-/// Response for GET /stats -- global session stats from the logger DB boundary.
-#[derive(Serialize, Debug, Clone)]
-pub struct StatsResponse {
-    pub global: GlobalStats,
-    pub sessions: Vec<SessionRecord>,
-    pub top_providers: Vec<ProviderSummary>,
-    pub top_tools: Vec<ToolSummary>,
-    pub top_mcp_tools: Vec<McpToolSummary>,
-}
 
 /// Internal owner-authenticated private-name lookup.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

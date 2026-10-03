@@ -8,8 +8,6 @@ pub(crate) use response_cache::{forget_session_responses, session_response_cache
 use rows::{query_route_objects, query_route_typed_rows, route_query_objects};
 pub(crate) mod stats_detail;
 pub(super) use stats_detail::read_stats_detail_payload_from_session_db;
-mod global_stats;
-pub(super) use global_stats::read_stats_response_from_main_db_handle;
 pub(crate) mod history;
 pub(crate) mod timeline;
 pub(super) use timeline::handle_timeline;
@@ -227,26 +225,6 @@ pub(super) async fn session_db(
         }
     };
     Ok(db)
-}
-
-pub(super) fn main_ledger_route_error(
-    ledger: &str,
-    operation: &str,
-    db_path: &StdPath,
-    error: impl std::fmt::Display,
-) -> AppError {
-    let error = error.to_string();
-    error!(
-        ledger,
-        operation,
-        db_path = %db_path.display(),
-        error = %error,
-        "main ledger route DB operation failed"
-    );
-    AppError(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("failed to {operation} {ledger} main ledger: {error}"),
-    )
 }
 
 pub(super) fn hydrate_startup_route_caches(state: &ServiceState) -> Result<(), AppError> {

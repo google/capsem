@@ -1,12 +1,12 @@
 use super::*;
 
 #[test]
-fn tempdir_test_states_use_distinct_session_index_databases() {
+fn tempdir_test_states_use_distinct_host_ledgers() {
     let (first, first_dir) = make_test_state_with_tempdir();
     let (second, second_dir) = make_test_state_with_tempdir();
 
-    let first_db = first.main_db_path();
-    let second_db = second.main_db_path();
+    let first_db = first.host_ledger.path().to_path_buf();
+    let second_db = second.host_ledger.path().to_path_buf();
 
     assert!(
         first_db.starts_with(first_dir.path()),
@@ -20,15 +20,15 @@ fn tempdir_test_states_use_distinct_session_index_databases() {
     );
     assert_ne!(
         first_db, second_db,
-        "independent test states must not share a session index database"
+        "independent test states must not share a host ledger"
     );
 
     let first_owned = make_test_state();
     let second_owned = make_test_state();
     assert_ne!(
-        first_owned.main_db_path(),
-        second_owned.main_db_path(),
-        "test states that own their tempdirs must not share a session index database"
+        first_owned.host_ledger.path().to_path_buf(),
+        second_owned.host_ledger.path().to_path_buf(),
+        "test states that own their tempdirs must not share a host ledger"
     );
 }
 
@@ -854,61 +854,40 @@ fn clear_resume_checkpoint_removes_completion_marker() {
     drop(reg);
 }
 
-// main_db_path
+// host ledger
 
+/// The host ledger lives in the home's sessions dir, wherever the run dir is,
+/// and the service never opens the dead main.db beside it.
 #[test]
-fn main_db_path_is_the_file_the_service_opened() {
-    let state = make_test_state();
-    assert_eq!(state.main_db_path(), state.profile_mutation_db.path());
-    assert!(state.main_db_path().ends_with("sessions/main.db"));
-}
-
-/// main.db is in the home's sessions dir, wherever the run dir is: taken from the
-/// run dir's parent, every service run under /tmp shared /tmp/sessions/main.db,
-/// and a stale ledger format there stopped each new service before it listened.
-#[test]
-fn profile_mutation_db_startup_initializes_session_index_schema() {
+fn the_host_ledger_opens_in_the_home_and_leaves_main_db_alone() {
     let dir = tempfile::tempdir().unwrap();
     let sessions = dir.path().join("home").join("sessions");
-    let handle = ServiceState::open_profile_mutation_db_handle(&sessions).unwrap();
-    let db_path = handle.path().to_path_buf();
+    std::fs::create_dir_all(&sessions).unwrap();
+    let main_db = sessions.join("main.db");
+    std::fs::write(&main_db, b"not a ledger this build can read").unwrap();
+    let handle = host_ledger::open_host_ledger(&sessions).unwrap();
+    assert_eq!(handle.path(), sessions.join("host.db"));
     drop(handle);
-    assert_eq!(db_path, sessions.join("main.db"));
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let session_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(session_count, 0);
-
-    let mutation_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM profile_mutation_events", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(mutation_count, 0);
+    assert_eq!(std::fs::read(&main_db).unwrap(), b"not a ledger this build can read");
 }
 
-#[test]
-fn session_index_start_records_uuid_id_not_display_name() {
-    let dir = tempfile::tempdir().unwrap();
-    let (state, _dir) = make_test_state_with_tempdir_at(dir);
+#[tokio::test]
+async fn host_session_created_records_uuid_id_not_display_name() {
+    let (state, _dir) = make_test_state_with_tempdir();
     let id = new_persistent_vm_id();
     uuid::Uuid::parse_str(&id).expect("VM route id should be a UUID");
-    let display_name = "code-1";
-
     state
-        .record_session_index_start(&id, false, 16, 2048, Some("blake3:abc"), Some("1.3.1782496403"), None)
+        .record_host_session_created(&id, Default::default())
+        .await
         .unwrap();
-
-    let conn = rusqlite::Connection::open(state.main_db_path()).unwrap();
-    let by_id: i64 = conn
-        .query_row("SELECT COUNT(*) FROM sessions WHERE id = ?1", [&id], |row| row.get(0))
-        .unwrap();
-    let by_name: i64 = conn
-        .query_row("SELECT COUNT(*) FROM sessions WHERE id = ?1", [display_name], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    assert_eq!(by_id, 1);
-    assert_eq!(by_name, 0);
+    state.host_ledger.flush().await.unwrap();
+    let events = state.host_ledger.host_events().await.unwrap();
+    let created: Vec<_> = events
+        .iter()
+        .filter(|event| event.kind == capsem_logger::HostEventKind::SessionCreated)
+        .map(|event| event.session_id.clone())
+        .collect();
+    assert_eq!(created, vec![Some(id)]);
 }
 
 // -----------------------------------------------------------------------
@@ -1010,35 +989,6 @@ fn profile_vm_resources_drive_new_session_defaults() {
 }
 
 // -----------------------------------------------------------------------
-// StatsResponse
-// -----------------------------------------------------------------------
-
-#[test]
-fn stats_response_serializes() {
-    let resp = StatsResponse {
-        global: capsem_core::session::GlobalStats {
-            total_sessions: 10,
-            total_input_tokens: 5000,
-            total_output_tokens: 2000,
-            total_estimated_cost: 1.50,
-            total_tool_calls: 100,
-            total_file_events: 300,
-            total_requests: 400,
-            total_allowed: 380,
-            total_denied: 20,
-        },
-        sessions: vec![],
-        top_providers: vec![],
-        top_tools: vec![],
-        top_mcp_tools: vec![],
-    };
-    let json = serde_json::to_string(&resp).unwrap();
-    assert!(json.contains("\"total_sessions\":10"));
-    assert!(json.contains("\"total_estimated_cost\":1.5"));
-    assert!(json.contains("\"top_providers\":[]"));
-}
-
-// -----------------------------------------------------------------------
 // handle_list includes uptime_secs for running VMs
 // -----------------------------------------------------------------------
 
@@ -1056,57 +1006,39 @@ async fn handle_list_includes_uptime_for_running_vms() {
 // -----------------------------------------------------------------------
 
 #[tokio::test]
-async fn db_boundary_route_contract_handle_stats_returns_global_data() {
-    let dir = tempfile::tempdir().unwrap();
-    let run_dir = dir.path().join("run");
-    std::fs::create_dir_all(&run_dir).unwrap();
-    let sessions_dir = dir.path().join("sessions");
-    std::fs::create_dir_all(&sessions_dir).unwrap();
-
-    // Create main.db with a test session
-    let idx = capsem_core::session::SessionIndex::open(&sessions_dir.join("main.db")).unwrap();
-    let record = capsem_core::session::SessionRecord {
-        id: "20260412-120000-abcd".into(),
-        mode: "virtiofs".into(),
-        command: Some("echo hello".into()),
-        status: "stopped".into(),
-        created_at: "2026-04-12T12:00:00Z".into(),
-        stopped_at: Some("2026-04-12T12:05:00Z".into()),
-        scratch_disk_size_gb: 16,
-        ram_bytes: 4294967296,
-        total_requests: 50,
-        allowed_requests: 45,
-        denied_requests: 5,
-        total_input_tokens: 10000,
-        total_output_tokens: 3000,
-        total_estimated_cost: 0.42,
-        total_tool_calls: 25,
-        total_file_events: 100,
-        storage_mode: "virtiofs".into(),
-        rootfs_hash: None,
-        rootfs_version: None,
-        forked_from: None,
-        persistent: false,
-        exec_count: 0,
-        audit_event_count: 0,
-    };
-    idx.create_session(&record).unwrap();
-    drop(idx);
-
-    let (state, _dir) = make_test_state_with_tempdir_at(dir);
-    let result = handle_stats(State(state)).await;
-    if let Err(error) = &result {
-        panic!("stats route must read seeded main.db rows through the logger DB handle: {error:?}");
+async fn handle_stats_folds_the_replayed_host_ledger() {
+    use capsem_logger::HostEventKind::{SessionCreated, SessionStopped};
+    let (state, _dir) = make_test_state_with_tempdir();
+    let mut counters = capsem_proto::ledger_counters::LedgerCounters::default();
+    counters.net.total = 50;
+    counters.model.total.input_tokens = 10_000;
+    counters.model.total.cost_micro_usd = 420_000;
+    let created = capsem_proto::host_session::HostSessionDetail::default();
+    let stopped = host_ledger::stopped_detail("stopped", Some(counters));
+    for event in [
+        host_ledger::host_session_event(SessionCreated, "20260412-120000-abcd", 1_000, &created),
+        host_ledger::host_session_event(SessionStopped, "20260412-120000-abcd", 2_000, &stopped),
+    ] {
+        state
+            .host_ledger
+            .write(capsem_logger::WriteOp::HostEvent(event))
+            .await
+            .unwrap();
     }
-    let response = result.unwrap().into_response();
+    state.host_ledger.flush().await.unwrap();
+    state.hydrate_host_stats().await.unwrap();
+
+    let response = handle_stats(State(state)).await.unwrap().into_response();
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let resp: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(resp["global"]["total_sessions"], 1);
     assert_eq!(resp["global"]["total_input_tokens"], 10000);
     assert_eq!(resp["global"]["total_estimated_cost"], 0.42);
+    assert_eq!(resp["global"]["total_requests"], 50);
     assert_eq!(resp["sessions"].as_array().unwrap().len(), 1);
     assert_eq!(resp["sessions"][0]["id"], "20260412-120000-abcd");
+    assert_eq!(resp["sessions"][0]["status"], "stopped");
 }
 
 #[tokio::test]

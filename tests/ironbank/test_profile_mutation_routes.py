@@ -2,7 +2,7 @@
 
 These tests use only the public service routes plus the mutation ledger.  The
 contract is simple: profile controls mutate profile-owned files, update their
-hash pins, and record the exact mutation in ``main.db``.
+hash pins, and record the exact mutation in the host ledger.
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ def _status(client: Any, method: str, path: str, body: dict | None = None) -> tu
     return client.call_json(method, path, body, timeout=30)
 
 
-def _main_db(service: ServiceInstance) -> Path:
-    return service.home_dir / "sessions" / "main.db"
+def _host_ledger(service: ServiceInstance) -> Path:
+    return service.home_dir / "sessions" / "host.db"
 
 
 def _profile_dir(service: ServiceInstance) -> Path:
@@ -46,7 +46,7 @@ def _blake3_ref(path: Path) -> str:
 
 
 def _mutation_rows(service: ServiceInstance) -> list[dict[str, Any]]:
-    db_path = _main_db(service)
+    db_path = _host_ledger(service)
     assert db_path.exists(), f"mutation ledger missing: {db_path}"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -191,7 +191,7 @@ def test_profile_mutation_routes_persist_profile_files_hashes_and_ledger() -> No
         assert "unknown field" in rejected
 
         # write(event).await accepts into the logger-owned buffer. Graceful
-        # service shutdown is the visibility barrier before opening main.db.
+        # service shutdown is the visibility barrier before opening the host ledger.
         service.stop(cleanup=False)
         rows = _mutation_rows(service)
         observed = {

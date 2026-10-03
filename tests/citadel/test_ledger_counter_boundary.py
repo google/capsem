@@ -46,13 +46,8 @@ AGGREGATE_DEBT: dict[str, str] = {
     "crates/capsem-logger/src/schema/memory_sync.rs:6493cf061729": (
         "the flush folds the decision transitions it moves to disk into counted runs; one flush's rows"
     ),
-    "crates/capsem-logger/src/session_index.rs:01c7d0dfd4aa": "main.db: how many sessions it indexes",
     "crates/capsem-logger/src/writer/retention.rs:4b420a811f87": (
         "retention reports the blocks it keeps; runs on an explicit retention request, over the block index"
-    ),
-    "crates/capsem-service/src/ledger_routes/global_stats.rs:afb847047612": (
-        "GET /stats totals across sessions from main.db, one row per session filled from each session's "
-        "snapshot at stop; it never reads a session ledger"
     ),
     "crates/capsem-service/src/ledger_routes/history.rs:b803454453eb": (
         "GET /history total when a search is given: how many exec/audit rows match a literal substring. "
