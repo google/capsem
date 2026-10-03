@@ -3,6 +3,7 @@ pub mod db;
 pub mod events;
 pub mod network_db;
 pub mod reader;
+pub mod retire;
 pub mod schema;
 pub mod session_index;
 pub mod session_types;
@@ -24,6 +25,7 @@ pub use reader::{
     validate_select_only, DbReader, HistoryEntry, ProcessEntry, SecurityRuleActionCount,
     SecurityRuleDetectionLevelCount, SecurityRuleEventTypeCount, SecurityRuleStats, SecurityRuleStatsByRule,
 };
+pub use retire::retire_predating_ledger;
 pub use session_index::{ensure_session_index_schema, record_session_start, record_session_stop, SessionIndex};
 pub use session_types::{
     epoch_to_iso, generate_session_id, is_valid_session_id, now_iso, GlobalStats, McpToolSummary, ProviderSummary,

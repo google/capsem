@@ -164,14 +164,25 @@ pub(crate) fn archive_schema_status(conn: &Connection) -> rusqlite::Result<Archi
     if table_exists(conn, "main", "archive_state")? {
         return archive_state(conn).map(ArchiveSchemaStatus::Current);
     }
-    for (table, _) in READY_SCHEMA_COLUMNS {
-        if *table != "archive_state" && table_exists(conn, "main", table)? {
-            return Err(contract_error(
-                "session ledger predates required archive_state (format v4); refusing implicit v2 migration",
-            ));
-        }
+    if predates_archive_format(conn)? {
+        return Err(contract_error(
+            "session ledger predates required archive_state (format v4); refusing implicit v2 migration",
+        ));
     }
     Ok(ArchiveSchemaStatus::Fresh)
+}
+
+/// A ledger with tables but no `archive_state`: written before format v4.
+pub(crate) fn predates_archive_format(conn: &Connection) -> rusqlite::Result<bool> {
+    if table_exists(conn, "main", "archive_state")? {
+        return Ok(false);
+    }
+    for (table, _) in READY_SCHEMA_COLUMNS {
+        if *table != "archive_state" && table_exists(conn, "main", table)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub(crate) fn archive_state(conn: &Connection) -> rusqlite::Result<ArchiveState> {
