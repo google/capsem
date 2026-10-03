@@ -340,6 +340,7 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
                 capsem_core::container::stage::oci_architecture().unwrap()
             )
             .unwrap(),
+            "id_map": {"containerID": 0, "hostID": 100000, "size": 65536},
         })
     );
     assert!(!stage.join("1-0").exists(), "an empty layout file has no part");

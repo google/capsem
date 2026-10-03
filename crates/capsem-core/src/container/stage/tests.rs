@@ -23,13 +23,15 @@ fn stage_plan_writes_parts_then_the_files_the_launcher_reads() {
         serde_json::from_slice::<serde_json::Value>(options).unwrap(),
         // The launcher mounts the VM workspace where the service says the
         // container sees it: one owner for that path, not two.
-        // The host decides the workload's capabilities and syscall filter.
+        // The host decides the workload's capabilities, syscall filter and
+        // user-namespace map.
         serde_json::json!({
             "args": ["serve"],
             "env": {"LANG": "C"},
             "workspace": super::super::CONTAINER_WORKSPACE,
             "capabilities": super::super::seccomp::WORKLOAD_CAPABILITIES,
             "seccomp": super::super::seccomp::workload_seccomp(super::oci_architecture().unwrap()).unwrap(),
+            "id_map": {"containerID": 0, "hostID": 100000, "size": 65536},
         })
     );
     assert_eq!(super::super::CONTAINER_WORKSPACE, "/workspace");

@@ -26,7 +26,8 @@ pub enum StagedContent {
 /// The stage for a pulled layout at `root`, in write order: every layout file
 /// with content as its single part, then `transfer.json`, `options.json` (the
 /// command override, container environment, where the container sees the
-/// workspace, and the capabilities and syscall filter the workload gets) and
+/// workspace, and the capabilities, syscall filter and user-namespace map the
+/// workload gets) and
 /// the launcher.
 pub fn stage_plan(
     root: &Path,
@@ -56,6 +57,7 @@ pub fn stage_plan(
             "workspace": super::CONTAINER_WORKSPACE,
             "capabilities": super::seccomp::WORKLOAD_CAPABILITIES,
             "seccomp": super::seccomp::workload_seccomp(oci_architecture()?)?,
+            "id_map": super::WORKLOAD_ID_MAP,
         }))?),
     });
     plan.push(StagedFile {

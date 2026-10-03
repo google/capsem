@@ -27,6 +27,26 @@ impl std::str::FromStr for PortMapping {
     }
 }
 
+/// One user-namespace map, for both uids and gids, in OCI's spelling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct IdMap {
+    #[serde(rename = "containerID")]
+    pub container_id: u32,
+    #[serde(rename = "hostID")]
+    pub host_id: u32,
+    pub size: u32,
+}
+
+/// The workload's user namespace: container ids 0-65535 are VM ids
+/// 100000-165535, so container root is no uid the VM trusts. The workspace is
+/// idmapped through the same map, so its entries (VM uid 0) are container
+/// root's. The launcher refuses a map below VM id 65536.
+pub const WORKLOAD_ID_MAP: IdMap = IdMap {
+    container_id: 0,
+    host_id: 100_000,
+    size: 65_536,
+};
+
 pub const LAUNCHER: &[u8] = include_bytes!("../../../guest/artifacts/container/launch.py");
 pub const STAGE: &str = ".capsem-image";
 /// Where a container sees the VM workspace (the VM's /root share). The
