@@ -409,20 +409,26 @@ def test_seccomp_available():
     assert result.returncode == 0, "Seccomp line not found in /proc/self/status"
 
 
-def test_user_namespaces_supported():
-    """The kernel must support user namespaces (CONFIG_USER_NS=y).
+def test_guest_services_cannot_create_user_namespaces():
+    """The kernel has user namespaces, and guest services cannot create one.
 
-    The OCI workload holds its capabilities over a mapped uid range rather than
-    over the VM. Without CONFIG_USER_NS, unshare(CLONE_NEWUSER) fails EINVAL.
+    CONFIG_USER_NS is on so the OCI workload holds its capabilities over a
+    mapped uid range rather than over the VM. Only the container launcher,
+    which moves /newroot to / in its own mount namespace, may create one:
+    every guest service and everything it spawns runs under
+    `chroot /newroot`, and the kernel refuses CLONE_NEWUSER from a chroot
+    with EPERM. Without CONFIG_USER_NS the answer would be EINVAL instead.
     """
     probe = (
-        "import ctypes, os; "
+        "import ctypes, errno; "
         "libc = ctypes.CDLL(None, use_errno=True); "
         "rc = libc.unshare(0x10000000); "
-        "print(rc, os.strerror(ctypes.get_errno()))"
+        "print(rc, errno.errorcode.get(ctypes.get_errno(), '-'))"
     )
     result = run(f'python3 -c "{probe}"')
     assert result.returncode == 0, f"probe failed: {result.stderr}"
-    assert result.stdout.split()[0] == "0", (
-        f"unshare(CLONE_NEWUSER) failed: {result.stdout.strip()}"
+    assert result.stdout.split() == ["-1", "EPERM"], (
+        f"unshare(CLONE_NEWUSER) from a guest service: {result.stdout.strip()} "
+        "(EINVAL: kernel lacks CONFIG_USER_NS; 0: guest services can create "
+        "user namespaces)"
     )

@@ -3,7 +3,7 @@
 The gate and the installer launch capsem-service detached and, when it dies
 before listening, point at its log. A startup error returned from
 `run_service` went only to stderr, which nobody reads: a dev build refusing
-an installed 0.6 ledger left a service log that ended at "sqlite mmap
+an older installed ledger left a service log that ended at "sqlite mmap
 telemetry recorded" with no cause anywhere.
 """
 

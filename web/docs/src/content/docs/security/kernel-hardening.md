@@ -69,6 +69,8 @@ Every disabled subsystem removes code from the kernel binary. No runtime flag ca
 
 The OCI workload runs in its own PID, mount, IPC, UTS, network and user namespaces (`NAMESPACES`, `PID_NS`, `IPC_NS`, `UTS_NS`, `NET_NS`, `USER_NS`). The user namespace lets the workload hold the capabilities it needs over a mapped uid range instead of over the VM, so container root is not VM root.
 
+Only the container launcher can create a user namespace. Every guest service, and everything it spawns, runs under `chroot /newroot`, and the kernel refuses `CLONE_NEWUSER` from a chroot; the launcher alone moves `/newroot` to `/` in its own mount namespace first.
+
 User namespaces also expose more kernel code to the workload, which is why io_uring, the BPF syscall and userfaultfd stay compiled out. `build_system/tests/image/test_kernel_defconfig.py` pins these options on both architectures.
 
 ## Memory mitigations
@@ -138,7 +140,7 @@ Every hardening property is verified at runtime by `capsem-doctor` tests. If any
 | Slab isolation | `test_slab_nomerge` | `slab_nomerge` in `/proc/cmdline` |
 | Page shuffle | `test_page_alloc_shuffle` | `page_alloc.shuffle=1` in `/proc/cmdline` |
 | Seccomp available | `test_seccomp_available` | `Seccomp:` line in `/proc/self/status` |
-| User namespaces | `test_user_namespaces_supported` | `unshare(CLONE_NEWUSER)` succeeds |
+| User namespaces only for the workload | `test_guest_services_cannot_create_user_namespaces` | `unshare(CLONE_NEWUSER)` from a guest service fails `EPERM` (kernel support present, refused from the services' chroot), not `EINVAL` |
 | Read-only rootfs | `test_sandbox_filesystem_type` | `/dev/vda` filesystem type is `erofs` on 1.3 assets |
 | Overlay configured | `test_overlay_configured` | Root mount is `overlay` with `lowerdir` and `upperdir` |
 | No real NICs | `test_no_real_nics` | Only `lo` and `dummy0` in `/sys/class/net/` |
