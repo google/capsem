@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- OCI workloads now run under a deny-by-default syscall filter: the
+  allowlist Docker, containerd and Podman ship (moby's `default.json`,
+  vendored and pinned), resolved for the guest's architecture and the
+  capabilities the workload holds, so `mount`, `setns`, `unshare`, `bpf`,
+  key management and namespace-creating `clone` are refused. Sockets open
+  only Unix, IPv4, IPv6 and non-netfilter netlink families, so vsock and
+  nf_tables stay unreachable, and only the native ABI is admitted. The
+  workload used to run under a filter that allowed everything but vsock.
+
 - The guest kernel now applies hardening sysctls at boot and stops the boot
   if any is refused: kernel pointer and log restriction, Yama
   `ptrace_scope=1` (a package script can no longer attach to the agent CLI

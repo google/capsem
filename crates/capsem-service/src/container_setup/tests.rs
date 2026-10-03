@@ -331,7 +331,16 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
         serde_json::from_slice(&std::fs::read(stage.join("options.json")).unwrap()).unwrap();
     assert_eq!(
         options,
-        json!({"args": ["serve"], "env": {"MODE": "test"}, "workspace": "/workspace"})
+        json!({
+            "args": ["serve"],
+            "env": {"MODE": "test"},
+            "workspace": "/workspace",
+            "capabilities": capsem_core::container::seccomp::WORKLOAD_CAPABILITIES,
+            "seccomp": capsem_core::container::seccomp::workload_seccomp(
+                capsem_core::container::stage::oci_architecture().unwrap()
+            )
+            .unwrap(),
+        })
     );
     assert!(!stage.join("1-0").exists(), "an empty layout file has no part");
 }

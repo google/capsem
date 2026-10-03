@@ -25,8 +25,9 @@ pub enum StagedContent {
 
 /// The stage for a pulled layout at `root`, in write order: every layout file
 /// with content as its single part, then `transfer.json`, `options.json` (the
-/// command override, container environment and where the container sees the
-/// workspace) and the launcher.
+/// command override, container environment, where the container sees the
+/// workspace, and the capabilities and syscall filter the workload gets) and
+/// the launcher.
 pub fn stage_plan(
     root: &Path,
     files: &[PathBuf],
@@ -49,9 +50,13 @@ pub fn stage_plan(
     });
     plan.push(StagedFile {
         name: "options.json".into(),
-        content: StagedContent::Bytes(serde_json::to_vec(
-            &serde_json::json!({"args": args, "env": env, "workspace": super::CONTAINER_WORKSPACE}),
-        )?),
+        content: StagedContent::Bytes(serde_json::to_vec(&serde_json::json!({
+            "args": args,
+            "env": env,
+            "workspace": super::CONTAINER_WORKSPACE,
+            "capabilities": super::seccomp::WORKLOAD_CAPABILITIES,
+            "seccomp": super::seccomp::workload_seccomp(oci_architecture()?)?,
+        }))?),
     });
     plan.push(StagedFile {
         name: "launch.py".into(),

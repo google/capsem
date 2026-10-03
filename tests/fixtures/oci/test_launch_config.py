@@ -17,6 +17,13 @@ def launcher():
     return module
 
 
+# What the host stages beside every workload (capsem-core container::seccomp).
+SECURITY = {
+    "capabilities": ["CAP_CHOWN", "CAP_SETUID"],
+    "seccomp": {"defaultAction": "SCMP_ACT_ERRNO", "defaultErrnoRet": 1, "syscalls": []},
+}
+
+
 def image():
     return {
         "config": {
@@ -40,7 +47,7 @@ def unpacked():
 
 
 def test_default_command_user_and_workdir_survive_hardening(launcher):
-    config = launcher.configure(unpacked(), image(), {"args": [], "env": {}})
+    config = launcher.configure(unpacked(), image(), {**SECURITY, "args": [], "env": {}})
     process = config["process"]
     assert process["args"] == ["docker-entrypoint.sh", "redis-server"]
     assert process["user"] == {"uid": 0, "gid": 0}
@@ -67,7 +74,7 @@ def test_default_command_user_and_workdir_survive_hardening(launcher):
 
 
 def test_container_trusts_capsem_ca_and_resolves_through_the_gateway(launcher):
-    options = {"args": [], "env": {"NODE_EXTRA_CA_CERTS": "/mine"}}
+    options = {**SECURITY, "args": [], "env": {"NODE_EXTRA_CA_CERTS": "/mine"}}
     config = launcher.configure(unpacked(), image(), options)
     binds = {
         mount["destination"]: mount
@@ -251,7 +258,7 @@ def test_network_ready_hook_refuses_a_vm_without_interception(launcher, tmp_path
 
 
 def test_command_override_replaces_cmd_but_preserves_entrypoint(launcher):
-    options = {"args": ["redis-server", "--save", ""], "env": {"A": "new", "B": "a=b"}}
+    options = {**SECURITY, "args": ["redis-server", "--save", ""], "env": {"A": "new", "B": "a=b"}}
     config = launcher.configure(unpacked(), image(), options)
     assert config["process"]["args"] == [
         "docker-entrypoint.sh",
@@ -277,14 +284,14 @@ def test_image_cannot_replace_security_mounts_or_root(launcher, volume):
     source = image()
     source["config"]["Volumes"] = {volume: {}}
     with pytest.raises(ValueError):
-        launcher.configure(unpacked(), source, {"args": [], "env": {}})
+        launcher.configure(unpacked(), source, {**SECURITY, "args": [], "env": {}})
 
 
 def test_missing_command_fails_before_runtime_launch(launcher):
     config = unpacked()
     config["process"]["args"] = []
     with pytest.raises(ValueError, match="command"):
-        launcher.configure(config, {"config": {}}, {"args": [], "env": {}})
+        launcher.configure(config, {"config": {}}, {**SECURITY, "args": [], "env": {}})
 
 
 def test_uploaded_image_remains_available_for_restart_and_fork(launcher, tmp_path):
@@ -397,7 +404,7 @@ def test_the_workspace_is_mounted_where_the_service_says(launcher):
     The mount point comes from options.json, which Capsem writes: the service
     and the launcher cannot disagree about where the workspace is.
     """
-    options = {"args": [], "env": {}, "workspace": "/workspace"}
+    options = {**SECURITY, "args": [], "env": {}, "workspace": "/workspace"}
     config = launcher.configure(unpacked(), image(), options)
     (mount,) = _mounts_at(config, "/workspace")
     assert mount["type"] == "bind"
@@ -414,7 +421,7 @@ def test_the_stage_stays_hidden_from_the_container(launcher):
     that directory would read those secrets or escape into the VM, so an empty
     read-only mount covers it, after the workspace mount that would expose it.
     """
-    options = {"args": [], "env": {}, "workspace": "/workspace"}
+    options = {**SECURITY, "args": [], "env": {}, "workspace": "/workspace"}
     config = launcher.configure(unpacked(), image(), options)
     destinations = [mount["destination"] for mount in config["mounts"]]
     (mask,) = _mounts_at(config, "/workspace/.capsem-image")
@@ -427,13 +434,13 @@ def test_an_image_volume_cannot_shadow_the_workspace(launcher):
     """An image declaring its own /workspace volume must not hide the real one."""
     declared = image()
     declared["config"]["Volumes"] = {"/workspace": {}}
-    config = launcher.configure(unpacked(), declared, {"args": [], "env": {}, "workspace": "/workspace"})
+    config = launcher.configure(unpacked(), declared, {**SECURITY, "args": [], "env": {}, "workspace": "/workspace"})
     assert _mounts_at(config, "/workspace")[-1]["type"] == "bind", "the last mount at a path is the one seen"
 
 
 def test_a_stage_written_before_the_workspace_mount_existed_starts_without_it(launcher):
     """A persistent VM staged by an older Capsem restarts exactly as it did."""
-    config = launcher.configure(unpacked(), image(), {"args": [], "env": {}})
+    config = launcher.configure(unpacked(), image(), {**SECURITY, "args": [], "env": {}})
     assert not _mounts_at(config, "/workspace")
 
 
@@ -444,4 +451,19 @@ def test_a_stage_written_before_the_workspace_mount_existed_starts_without_it(la
 def test_an_unsafe_workspace_mount_point_is_refused(launcher, workspace):
     """The mount point is launcher input: it must never land on a system path."""
     with pytest.raises(ValueError, match="unsafe workspace mount point"):
-        launcher.configure(unpacked(), image(), {"args": [], "env": {}, "workspace": workspace})
+        launcher.configure(unpacked(), image(), {**SECURITY, "args": [], "env": {}, "workspace": workspace})
+
+
+def test_the_host_decides_the_capabilities_and_the_syscall_filter(launcher):
+    config = launcher.configure(unpacked(), image(), {**SECURITY, "args": [], "env": {}})
+    assert config["linux"]["seccomp"] == SECURITY["seccomp"]
+    assert config["process"]["capabilities"]["bounding"] == SECURITY["capabilities"]
+    assert config["process"]["capabilities"]["ambient"] == []
+
+
+@pytest.mark.parametrize("missing", ["capabilities", "seccomp"])
+def test_a_stage_without_a_filter_or_capabilities_is_refused(launcher, missing):
+    options = {**SECURITY, "args": [], "env": {}}
+    del options[missing]
+    with pytest.raises(ValueError, match=missing):
+        launcher.configure(unpacked(), image(), options)

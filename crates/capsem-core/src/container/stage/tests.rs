@@ -23,7 +23,14 @@ fn stage_plan_writes_parts_then_the_files_the_launcher_reads() {
         serde_json::from_slice::<serde_json::Value>(options).unwrap(),
         // The launcher mounts the VM workspace where the service says the
         // container sees it: one owner for that path, not two.
-        serde_json::json!({"args": ["serve"], "env": {"LANG": "C"}, "workspace": super::super::CONTAINER_WORKSPACE})
+        // The host decides the workload's capabilities and syscall filter.
+        serde_json::json!({
+            "args": ["serve"],
+            "env": {"LANG": "C"},
+            "workspace": super::super::CONTAINER_WORKSPACE,
+            "capabilities": super::super::seccomp::WORKLOAD_CAPABILITIES,
+            "seccomp": super::super::seccomp::workload_seccomp(super::oci_architecture().unwrap()).unwrap(),
+        })
     );
     assert_eq!(super::super::CONTAINER_WORKSPACE, "/workspace");
     assert!(matches!(&plan[3].content, StagedContent::Bytes(bytes) if bytes.as_slice() == LAUNCHER));

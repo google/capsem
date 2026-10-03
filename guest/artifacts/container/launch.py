@@ -53,6 +53,9 @@ def _safe_mount_point(value):
 
 
 def configure(unpacked, image, options):
+    for key in ("capabilities", "seccomp"):
+        if key not in options:
+            raise ValueError(f"stage options carry no {key}; refusing to run the workload without it")
     process = unpacked["process"]
     metadata = image.get("config") or {}
     if options["args"]:
@@ -68,16 +71,11 @@ def configure(unpacked, image, options):
         terminal=False,
         env=[f"{key}={value}" for key, value in environment.items()],
         noNewPrivileges=True,
+        # The host decides what the workload holds and which syscalls it may
+        # make (capsem-core container::seccomp); a stage without them is
+        # refused rather than run with the runtime's defaults.
         capabilities={
-            key: [
-                "CAP_CHOWN",
-                "CAP_DAC_OVERRIDE",
-                "CAP_FOWNER",
-                "CAP_SETGID",
-                "CAP_SETUID",
-            ]
-            if key in {"bounding", "effective", "permitted"}
-            else []
+            key: list(options["capabilities"]) if key in {"bounding", "effective", "permitted"} else []
             for key in ("bounding", "effective", "permitted", "inheritable", "ambient")
         },
         rlimits=[{"type": "RLIMIT_NOFILE", "hard": 4096, "soft": 4096}],
@@ -190,17 +188,7 @@ def configure(unpacked, image, options):
                 "/proc/irq",
                 "/proc/bus",
             ],
-            "seccomp": {
-                "defaultAction": "SCMP_ACT_ALLOW",
-                "syscalls": [
-                    {
-                        "names": ["socket"],
-                        "action": "SCMP_ACT_ERRNO",
-                        "errnoRet": 1,
-                        "args": [{"index": 0, "value": 40, "op": "SCMP_CMP_EQ"}],
-                    }
-                ],
-            },
+            "seccomp": options["seccomp"],
         },
     }
 
