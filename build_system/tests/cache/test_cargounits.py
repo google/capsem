@@ -130,10 +130,32 @@ def test_an_unpinned_stage_above_max_says_nothing_is_held(tmp_path: Path) -> Non
     (root / "debug").mkdir(parents=True)
     (root / "debug/capsem").write_bytes(b"x" * 40)  # uplifted: counted, never selected
 
-    [violation] = plan_prune(scan_retention_inventory(paths, policy, now_ns=now), policy).violations
+    structural, over_max = plan_prune(
+        scan_retention_inventory(paths, policy, now_ns=now), policy
+    ).violations
 
-    assert violation.startswith("cargo remains 40 bytes above max size 10")
-    assert "0 bytes are protected" in violation and "no lock is held" in violation
+    # Retention can never select an uplifted path, so the stage can never
+    # reach warm: that is the cause, reported before the stage reaches max.
+    assert structural.startswith("cargo can never recover to warm size 5")
+    assert over_max.startswith("cargo remains 40 bytes above max size 10")
+    assert "0 bytes are protected" in over_max and "no lock is held" in over_max
+    for violation in (structural, over_max):
+        assert "40 bytes are outside every generation" in violation
+        assert "debug/capsem (40 bytes)" in violation, "the unselectable path is named"
+
+
+def test_unselectable_bytes_within_warm_are_reported_not_refused(tmp_path: Path) -> None:
+    now = 1_000 * HOUR_NS
+    policy = configured(max_size=100, warm_size=50)
+    paths = CachePaths(repository_root=tmp_path, policy=policy)
+    root = paths.stage("cargo")
+    (root / "debug").mkdir(parents=True)
+    (root / "debug/capsem").write_bytes(b"x" * 40)
+
+    inventory = scan_retention_inventory(paths, policy, now_ns=now)
+
+    assert inventory.stages[0].unselectable_bytes == 40
+    assert not plan_prune(inventory, policy).violations
 
 
 def test_unaccounted_walk_does_not_search_every_unit_for_each_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -160,7 +182,7 @@ def test_unaccounted_walk_does_not_search_every_unit_for_each_directory(tmp_path
 
     with monkeypatch.context() as patch:
         patch.setattr(Path, "parents", property(counted_parents))
-        logical, _ = unaccounted_size(root, frozenset(accounted), set())
+        logical, _, _ = unaccounted_size(root, frozenset(accounted), set())
     assert logical == len(b"unowned") + 100
     assert parent_lookups < 500, "inventory must not compare every unowned subtree with every unit"
 

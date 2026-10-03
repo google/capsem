@@ -196,6 +196,11 @@ class StageInventory(BaseModel):
     entries: tuple[CacheEntry, ...]
     #: Native producer locks held while this inventory was taken, with holders.
     held_locks: tuple[str, ...] = ()
+    #: Bytes no generation contains, so no retention can ever select them, and
+    #: the largest such paths. A producer writing names retention does not
+    #: recognise once grew one stage to 71 GB above its maximum unnoticed.
+    unselectable_bytes: Annotated[StrictInt, Field(ge=0)] = 0
+    largest_unselectable: tuple[str, ...] = ()
 
     @property
     def budget_bytes(self) -> int:

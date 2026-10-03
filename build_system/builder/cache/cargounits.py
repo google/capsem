@@ -34,8 +34,9 @@ import os
 import re
 from pathlib import Path
 
+from .leases import held_locks
 from .measure import measure
-from .models import CacheEntry
+from .models import CacheEntry, StageInventory
 
 #: Scanned in this order; the first member of a unit is its fingerprint.
 UNIT_DIRECTORIES = (".fingerprint", "build", "deps", "examples", "incremental")
@@ -122,18 +123,29 @@ def unit_entries(
     return tuple(entries), frozenset(accounted)
 
 
+#: How many of the largest unselectable paths an inventory names.
+LARGEST_UNSELECTABLE = 5
+
+
 def unaccounted_size(
-    root: Path, accounted: frozenset[Path], allocated_seen: set[tuple[int, int]]
-) -> tuple[int, int]:
-    """Bytes under `root` outside every unit, each counted once."""
-    ancestors: set[Path] = set()
+    root: Path,
+    accounted: frozenset[Path],
+    allocated_seen: set[tuple[int, int]],
+    walk: tuple[Path, ...] = (),
+) -> tuple[int, int, tuple[str, ...]]:
+    """Bytes under `root` outside every unit, each counted once, and the
+    largest such paths: no retention can select them, so they must be named
+    when they pin a stage above its maximum."""
+    # The root and every `walk` directory (a Cargo target root, where uplifted
+    # binaries sit) are always walked, so the largest paths name files rather
+    # than the directory that holds them.
+    ancestors: set[Path] = {root, *(root / directory for directory in walk)}
     for member in accounted:
         parent = member.parent
         while parent != root and parent != parent.parent:
             ancestors.add(parent)
             parent = parent.parent
-        if parent == root:
-            ancestors.add(root)
+    leaves: list[tuple[int, Path]] = []
 
     def visit(path: Path) -> tuple[int, int]:
         if path in accounted or path.is_symlink() or not path.exists():
@@ -146,6 +158,47 @@ def unaccounted_size(
                 allocated += child_allocated
             return logical, allocated
         measured = measure(path, allocated_seen)
+        leaves.append((min(measured.logical_bytes, measured.allocated_bytes), path))
         return measured.logical_bytes, measured.allocated_bytes
 
-    return visit(root)
+    logical, allocated = visit(root)
+    leaves.sort(key=lambda leaf: (-leaf[0], leaf[1]))
+    largest = tuple(
+        f"{path.relative_to(root).as_posix()} ({size} bytes)"
+        for size, path in leaves[:LARGEST_UNSELECTABLE]
+        if size
+    )
+    return logical, allocated, largest
+
+
+def cargo_inventory(
+    stage_id, stage_root: Path, stage_policy, allocated_seen, working_set: frozenset[Path]
+) -> StageInventory:
+    """A Cargo stage as its compilation units, everything else accounted beside them."""
+    for target_root in stage_policy.cargo_target_roots:
+        resolved = (stage_root / target_root).resolve()
+        if stage_root.is_dir() and not resolved.is_relative_to(stage_root.resolve()):
+            raise ValueError(f"cache entry root escapes its stage: {stage_root / target_root}")
+    held = held_locks(stage_root, stage_policy.mutation_locks)
+    busy = bool(held)
+    entries, accounted = unit_entries(
+        stage_root,
+        stage_policy.cargo_target_roots,
+        allocated_seen,
+        protected=busy,
+        working_set=working_set,
+    )
+    other_logical, other_allocated, largest = unaccounted_size(
+        stage_root, accounted, allocated_seen, stage_policy.cargo_target_roots
+    )
+    return StageInventory(
+        stage_id=stage_id,
+        path=stage_root,
+        logical_bytes=sum(entry.logical_bytes for entry in entries) + other_logical,
+        allocated_bytes=sum(entry.allocated_bytes for entry in entries) + other_allocated,
+        protected_bytes=sum(entry.budget_bytes for entry in entries if entry.protected),
+        entries=entries,
+        held_locks=held,
+        unselectable_bytes=min(other_logical, other_allocated),
+        largest_unselectable=largest,
+    )
