@@ -70,7 +70,7 @@ Every disabled subsystem removes code from the kernel binary. No runtime flag ca
 | Mitigation | Config | Effect |
 |-----------|--------|--------|
 | Heap zeroing | `INIT_ON_ALLOC_DEFAULT_ON=y` | Every `kmalloc` returns zeroed memory; prevents info leaks |
-| Slab freelist randomization | `SLAB_FREELIST_RANDOMIZE=y` | Randomizes freed slab object order; defeats heap spraying |
+| Slab freelist randomization | `SLAB_FREELIST_RANDOM=y` | Randomizes freed slab object order; defeats heap spraying |
 | Slab freelist hardening | `SLAB_FREELIST_HARDENED=y` | Validates freelist metadata; detects heap corruption |
 | Page allocator shuffle | `SHUFFLE_PAGE_ALLOCATOR=y` | Randomizes page allocation order |
 | Hardened usercopy | `HARDENED_USERCOPY=y` | Validates `copy_to_user`/`copy_from_user` bounds |
@@ -92,9 +92,9 @@ The kernel includes different hardware mitigations depending on the target archi
 | Branch Target Identification | `ARM64_BTI=y` | -- | Spectre-BHB mitigation; restricts indirect branch targets |
 | Pointer Authentication | `ARM64_PTR_AUTH=y`, `ARM64_PTR_AUTH_KERNEL=y` | -- | Signs return addresses; defeats ROP chains |
 | Kernel unmapping at EL0 | `UNMAP_KERNEL_AT_EL0=y` | -- | Removes kernel pages from userspace page tables |
-| Branch predictor hardening | `HARDEN_BRANCH_PREDICTOR=y` | -- | Flushes branch predictor on context switch |
-| Page Table Isolation (KPTI) | -- | `PAGE_TABLE_ISOLATION=y` | Meltdown mitigation; separate kernel/user page tables |
-| Retpoline | -- | `RETPOLINE=y` | Spectre v2 mitigation; replaces indirect branches |
+| Spectre-BHB mitigation | `MITIGATE_SPECTRE_BRANCH_HISTORY=y` | -- | Clears branch history on exception entry |
+| Page Table Isolation (KPTI) | -- | `MITIGATION_PAGE_TABLE_ISOLATION=y` | Meltdown mitigation; separate kernel/user page tables |
+| Retpoline | -- | `MITIGATION_RETPOLINE=y` | Spectre v2 mitigation; replaces indirect branches |
 
 ## Boot command line
 
@@ -159,3 +159,5 @@ graph LR
 ```
 
 The two defconfig files (`defconfig.arm64`, `defconfig.x86_64`) are applied with `make olddefconfig` and produce identical security properties on both architectures.
+
+Kconfig silently ignores a pinned option it cannot apply: a misspelled or renamed symbol, or one whose dependencies are unmet. The kernel build therefore compares every pinned line of the defconfig with the configuration `olddefconfig` produced and fails, naming each option the kernel did not honor.

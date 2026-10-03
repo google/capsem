@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The guest kernel shipped without slab freelist randomization on both
+  architectures although the hardening docs listed it: the defconfig pinned
+  `SLAB_FREELIST_RANDOMIZE`, a symbol that does not exist, and Kconfig
+  ignored it. It now pins `SLAB_FREELIST_RANDOM`. Dead pins for
+  `HARDEN_BRANCH_PREDICTOR` (32-bit ARM only), `DEVPTS_FS`, and the x86
+  `PAGE_TABLE_ISOLATION` and `RETPOLINE` symbols renamed `MITIGATION_*` in
+  6.9 are replaced with the symbols that exist. The kernel build now fails,
+  naming the option, whenever the kernel did not honor a pinned option.
+
 - A guest could make the host walk arbitrary host directories on every
   `/vms/<id>/info` for a stopped persistent VM. The session disk-usage walk
   checked each entry without following links but then read directories by

@@ -16,9 +16,27 @@ FROM ${BASE} AS build
 
 WORKDIR /usr/src/linux
 
-# Apply capsem hardened defconfig (allnoconfig base + our overrides)
-COPY {{ arch.defconfig }} .config
-RUN make olddefconfig
+# Apply the capsem hardened defconfig. olddefconfig fills every option it does
+# not pin with the Kconfig default of this kernel version.
+COPY {{ arch.defconfig }} /tmp/capsem.defconfig
+RUN cp /tmp/capsem.defconfig .config && make olddefconfig
+
+# Fail when the kernel did not honor a pinned option. Kconfig silently drops a
+# misspelled, renamed or unsatisfiable symbol: SLAB_FREELIST_RANDOMIZE (the
+# symbol is SLAB_FREELIST_RANDOM) left freelist randomization off while the
+# docs listed it as on, and 6.9's MITIGATION_* rename emptied two x86 pins.
+RUN unhonored=$(grep -E '^CONFIG_[A-Z0-9_]+=' /tmp/capsem.defconfig | while IFS= read -r line; do \
+        name=${line%%=*}; \
+        case "$line" in \
+            (*=n) if grep -q "^$name=" .config; then echo "$line"; fi ;; \
+            (*) grep -qxF "$line" .config || echo "$line" ;; \
+        esac; \
+    done) && \
+    if [ -n "$unhonored" ]; then \
+        echo "defconfig options this kernel did not honor (misspelled, renamed or unmet dependency):" >&2; \
+        echo "$unhonored" >&2; \
+        exit 1; \
+    fi
 
 # Compile kernel
 RUN make -j"$(nproc)" {{ arch.kernel_image | replace('arch/' ~ arch_name ~ '/boot/', '') }} && \
