@@ -14,6 +14,7 @@ can qualify a plan built by code that is not in the tree being released.
 from __future__ import annotations
 
 import os
+import py_compile
 import subprocess
 import sys
 from pathlib import Path
@@ -29,12 +30,23 @@ sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 BEFORE = "stale"
 AFTER = "fresh"
 
+#: Variables that decide whether a child writes or finds bytecode. They are
+#: dropped from the inherited environment so each test states its own: an
+#: ambient `PYTHONDONTWRITEBYTECODE=1` once meant the cache below was never
+#: written, the hole could not be reproduced, and every isolation test passed
+#: because there was nothing stale to isolate from.
+BYTECODE_VARIABLES = ("PYTHONPYCACHEPREFIX", "PYTHONDONTWRITEBYTECODE")
+
 
 def _probe(directory: Path, value: str) -> Path:
     """A module whose only job is to say which version of itself ran."""
     module = directory / "capsem_bytecode_probe.py"
     module.write_text(f'VALUE = "{value}"\n', encoding="utf-8")
     return module
+
+
+def _hermetic_environment() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k not in BYTECODE_VARIABLES}
 
 
 def _observed(directory: Path, environment: dict[str, str] | None = None) -> str:
@@ -44,7 +56,7 @@ def _observed(directory: Path, environment: dict[str, str] | None = None) -> str
         text=True,
         timeout=60,
         env={
-            **{k: v for k, v in os.environ.items() if k != "PYTHONPYCACHEPREFIX"},
+            **_hermetic_environment(),
             "PYTHONPATH": str(directory),
             **(environment or {}),
         },
@@ -61,25 +73,54 @@ def _rewrite_preserving_timestamp(module: Path, value: str) -> None:
     os.utime(module, ns=(before.st_atime_ns, before.st_mtime_ns))
 
 
-def test_an_ordinary_interpreter_runs_the_stale_bytecode(tmp_path: Path) -> None:
-    """The hole itself, reproduced, so the fix below is not a guess."""
-    module = _probe(tmp_path, BEFORE)
-    assert _observed(tmp_path) == BEFORE  # compiles, and caches
+def _stale_bytecode(directory: Path) -> Path:
+    """Leave `BEFORE` cached where an ordinary interpreter looks, `AFTER` on disk.
 
+    The cache is written here rather than by a first import, which writes
+    nothing under `PYTHONDONTWRITEBYTECODE`. The path is spelled out because
+    `importlib.util.cache_from_source` honours this process's own
+    `pycache_prefix`, which the gate sets. The invalidation mode is pinned
+    because `py_compile` switches to hash-checked bytecode when
+    `SOURCE_DATE_EPOCH` is set, and a hash sees the edit.
+    """
+    module = _probe(directory, BEFORE)
+    cached = directory / "__pycache__" / f"{module.stem}.{sys.implementation.cache_tag}.pyc"
+    py_compile.compile(
+        str(module),
+        cfile=str(cached),
+        doraise=True,
+        invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP,
+    )
     _rewrite_preserving_timestamp(module, AFTER)
+    return module
 
-    assert _observed(tmp_path) == BEFORE, (
-        "this platform's timestamp resolution already defeats the stale cache, "
-        "so the isolation below cannot be proven here"
+
+@pytest.mark.parametrize(
+    "environment",
+    [{}, {"PYTHONDONTWRITEBYTECODE": "1"}],
+    ids=["writes-bytecode", "dont-write-bytecode"],
+)
+def test_an_ordinary_interpreter_runs_the_stale_bytecode(
+    tmp_path: Path, environment: dict[str, str]
+) -> None:
+    """The hole itself, reproduced, so the fix below is not a guess.
+
+    Not writing bytecode does not stop an interpreter reading it, so the hole
+    is open under either setting and the isolation below is proven under both.
+    """
+    _stale_bytecode(tmp_path)
+
+    assert _observed(tmp_path, environment) == BEFORE, (
+        "an ordinary interpreter saw a same-size, same-mtime edit, so the "
+        "stale cache this file exists to isolate from was never constructed"
     )
 
 
 def test_the_launcher_environment_runs_the_current_source(tmp_path: Path) -> None:
     from capsem_builder.gatelaunch import isolated_environment
 
-    module = _probe(tmp_path, BEFORE)
-    _observed(tmp_path)
-    _rewrite_preserving_timestamp(module, AFTER)
+    _stale_bytecode(tmp_path)
+    assert _observed(tmp_path) == BEFORE, "precondition: the cache is stale"
 
     assert _observed(tmp_path, isolated_environment(tmp_path)) == AFTER
 
@@ -118,9 +159,8 @@ def test_children_inherit_the_isolation(tmp_path: Path) -> None:
     environment = isolated_environment(tmp_path)
     assert PYCACHE in environment, "the variable CPython reads must be exported"
 
-    module = _probe(tmp_path, BEFORE)
-    _observed(tmp_path)
-    _rewrite_preserving_timestamp(module, AFTER)
+    _stale_bytecode(tmp_path)
+    assert _observed(tmp_path) == BEFORE, "precondition: the cache is stale"
 
     grandchild = subprocess.run(
         [
@@ -133,7 +173,7 @@ def test_children_inherit_the_isolation(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         timeout=60,
-        env={**os.environ, "PYTHONPATH": str(tmp_path), **environment},
+        env={**_hermetic_environment(), "PYTHONPATH": str(tmp_path), **environment},
     )
     assert grandchild.stdout.strip() == AFTER, grandchild.stderr
 
