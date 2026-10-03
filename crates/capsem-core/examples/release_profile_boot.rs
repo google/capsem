@@ -82,17 +82,6 @@ fn unique_session_root(profile: &str) -> PathBuf {
     ))
 }
 
-fn kernel_cmdline() -> &'static str {
-    #[cfg(target_arch = "x86_64")]
-    {
-        "console=ttyS0 root=/dev/vda ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1"
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        "console=hvc0 root=/dev/vda ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1"
-    }
-}
-
 fn serial_tail(path: &Path) -> String {
     let Ok(bytes) = std::fs::read(path) else {
         return "<serial log unavailable>".to_string();
@@ -144,7 +133,7 @@ fn run() -> Result<()> {
             kernel_override: Some(&kernel),
             initrd_override: Some(&initrd),
             rootfs_override: Some(&rootfs),
-            cmdline: kernel_cmdline(),
+            cmdline: capsem_core::vm::config::KERNEL_CMDLINE,
             system_overlay_disk: Some(&system_overlay),
             virtiofs_shares: &shares,
             cpu_count: 2,

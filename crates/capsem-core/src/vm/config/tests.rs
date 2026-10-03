@@ -20,7 +20,7 @@ fn valid_config_minimal() {
     let config = VmConfig::builder().kernel_path(&kernel).build().unwrap();
     assert_eq!(config.cpu_count, 4); // default
     assert_eq!(config.ram_bytes, 4 * 1024 * 1024 * 1024); // default 4GB
-    assert_eq!(config.kernel_cmdline, default_kernel_cmdline());
+    assert_eq!(config.kernel_cmdline, KERNEL_CMDLINE);
     assert!(config.initrd_path.is_none());
     assert!(config.disk_path.is_none());
 }
@@ -303,7 +303,7 @@ fn builder_defaults_are_sane() {
     assert!(b.initrd_path.is_none());
     assert!(b.disk_path.is_none());
     assert!(b.scratch_disk_path.is_none());
-    assert_eq!(b.kernel_cmdline, default_kernel_cmdline());
+    assert_eq!(b.kernel_cmdline, KERNEL_CMDLINE);
 }
 
 #[test]
@@ -589,4 +589,24 @@ fn no_expected_hash_skips_verification() {
 
     let config = VmConfig::builder().kernel_path(&kernel).build();
     assert!(config.is_ok(), "no hash set means no verification");
+}
+
+#[test]
+fn kernel_cmdline_carries_every_hardening_flag() {
+    let flags: Vec<&str> = KERNEL_CMDLINE.split_whitespace().collect();
+    for flag in [
+        "root=/dev/vda",
+        "ro",
+        "init_on_alloc=1",
+        "init_on_free=1",
+        "slab_nomerge",
+        "page_alloc.shuffle=1",
+        "oops=panic",
+    ] {
+        assert!(flags.contains(&flag), "{flag} missing from {KERNEL_CMDLINE}");
+    }
+    #[cfg(target_arch = "x86_64")]
+    assert!(flags.contains(&"console=ttyS0"));
+    #[cfg(not(target_arch = "x86_64"))]
+    assert!(flags.contains(&"console=hvc0"));
 }

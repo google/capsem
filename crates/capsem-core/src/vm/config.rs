@@ -10,21 +10,33 @@ const MAX_CPU: u32 = 8;
 const MIN_RAM: u64 = 256 * 1024 * 1024; // 256 MB
 const MAX_RAM: u64 = 16 * 1024 * 1024 * 1024; // 16 GB
 
-/// Default kernel command line (arch-dependent console device).
-fn default_kernel_cmdline() -> &'static str {
-    #[cfg(target_arch = "aarch64")]
-    {
-        "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1"
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        "console=ttyS0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1"
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-    {
-        "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1"
-    }
+/// Every flag the guest kernel boots with, after the console.
+///
+/// - `root=/dev/vda ro`: the rootfs is the read-only system image.
+/// - `loglevel=4 quiet`: kernel warnings and errors still reach the serial
+///   console the test fixtures keep. At `loglevel=1` a guest whose every
+///   VSOCK link ended in one millisecond left a console that said nothing.
+/// - `init_on_alloc=1 init_on_free=1`: heap pages are zeroed when allocated
+///   and when freed, so neither stale nor freed data reaches a later reader.
+/// - `slab_nomerge`: every slab cache stays separate, so an overflow in one
+///   object type cannot reach objects of another merged into its cache.
+/// - `page_alloc.shuffle=1`: page allocation order is randomized.
+/// - `oops=panic`: a kernel oops ends the VM instead of leaving it running on
+///   a kernel in an unknown state, where a failed exploit could be retried.
+/// - `random.trust_cpu=1`: the CPU's RNG seeds the pool at boot.
+macro_rules! guest_kernel_flags {
+    () => {
+        "root=/dev/vda ro loglevel=4 quiet init_on_alloc=1 init_on_free=1 slab_nomerge \
+         page_alloc.shuffle=1 oops=panic random.trust_cpu=1"
+    };
 }
+
+/// The guest kernel command line: the one every Capsem VM boots with.
+#[cfg(target_arch = "x86_64")]
+pub const KERNEL_CMDLINE: &str = concat!("console=ttyS0 ", guest_kernel_flags!());
+/// The guest kernel command line: the one every Capsem VM boots with.
+#[cfg(not(target_arch = "x86_64"))]
+pub const KERNEL_CMDLINE: &str = concat!("console=hvc0 ", guest_kernel_flags!());
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -134,7 +146,7 @@ impl Default for VmConfigBuilder {
             disk_path: None,
             scratch_disk_path: None,
             virtio_fs_shares: Vec::new(),
-            kernel_cmdline: default_kernel_cmdline().to_string(),
+            kernel_cmdline: KERNEL_CMDLINE.to_string(),
             expected_kernel_hash: None,
             expected_initrd_hash: None,
             checkpoint_path: None,
