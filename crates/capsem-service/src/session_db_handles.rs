@@ -3,22 +3,6 @@
 
 use super::*;
 
-/// The main.db path, with an index from before the archive format moved aside
-/// first: ledgers are moved, never migrated, and refusing it stopped every
-/// service start after an upgrade.
-pub(super) fn prepared_main_db_path(sessions_dir: &StdPath) -> Result<PathBuf> {
-    let db_path = main_db_path_in(sessions_dir);
-    if let Some(retired) = capsem_logger::retire_predating_ledger(&db_path)
-        .with_context(|| format!("failed to check the main.db format: {}", db_path.display()))?
-    {
-        warn!(
-            retired = %retired.display(),
-            "main.db predates the archive format; moved it aside and starting a fresh one"
-        );
-    }
-    Ok(db_path)
-}
-
 pub(super) fn session_db_path_for_session_dir(session_dir: &StdPath) -> PathBuf {
     session_dir.join("session.db")
 }
