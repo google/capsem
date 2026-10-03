@@ -2,45 +2,97 @@ From: Elie Bursztein <github@elie.net>
 Subject: [PATCH] virtiofs: allow idmapped mounts without FUSE_ALLOW_IDMAP
 
 FUSE marks every superblock SB_I_NOIDMAP and clears it only when the
-daemon negotiates FUSE_ALLOW_IDMAP on a default_permissions mount. The
-opt-in exists for daemons that check permissions against the uid in the
-request header, which an idmapped mount rewrites.
+daemon negotiates FUSE_ALLOW_IDMAP on a default_permissions mount. Once
+cleared, fuse_get_req stops sending the caller's fsuid and fsgid: requests
+that are not inode creation carry FUSE_INVALID_UIDGID, which only an
+idmap-aware daemon accepts.
 
-virtio-fs always mounts with default_permissions, so the guest kernel
-makes every permission decision itself, through the mount's idmap.
-Apple's Virtualization.framework daemon never negotiates
-FUSE_ALLOW_IDMAP and ignores ownership altogether: every entry is 0:0 and
-chown is accepted without effect. mount_setattr(MOUNT_ATTR_IDMAP) on the
-share therefore failed with EINVAL, and a workload in a user namespace
-saw its workspace owned by the overflow uid, so chown, tar -x and cp -a
-failed as container root.
+Apple's Virtualization.framework daemon never negotiates FUSE_ALLOW_IDMAP
+and ignores ownership altogether: every entry is 0:0 and chown is accepted
+without effect. mount_setattr(MOUNT_ATTR_IDMAP) on the share therefore
+failed with EINVAL, and a workload in a user namespace saw its workspace
+owned by the overflow uid, so chown, tar -x and cp -a failed as container
+root.
 
-Clear SB_I_NOIDMAP for virtio-fs once default_permissions is in force.
-Nothing changes until a privileged process idmaps a mount explicitly;
-the share's own mount keeps its identity mapping.
+Separate the two decisions. virtio-fs, which always mounts with
+default_permissions so the guest kernel makes every permission decision
+through the mount's idmap, clears SB_I_NOIDMAP itself. Request headers
+follow the idmap only when the daemon negotiated FUSE_ALLOW_IDMAP
+(fc->idmap_headers); every other daemon keeps receiving the caller's own
+fsuid and fsgid, exactly as before. Clearing SB_I_NOIDMAP without this
+sent Apple's daemon uid -1 on ordinary requests and it refused them, so
+root could not create files in the share.
+
+Nothing changes until a privileged process idmaps a mount explicitly; the
+share's own mount keeps its identity mapping.
 
 ---
+--- a/fs/fuse/fuse_i.h
++++ b/fs/fuse/fuse_i.h
+@@ -899,6 +899,9 @@
+ 	/** Passthrough support for read/write IO */
+ 	unsigned int passthrough:1;
+ 
++	/** Server negotiated FUSE_ALLOW_IDMAP: request headers follow the idmap */
++	unsigned int idmap_headers:1;
++
+ 	/* Use pages instead of pointer for kernel I/O */
+ 	unsigned int use_pages_for_kvec_io:1;
+ 
+--- a/fs/fuse/inode.c
++++ b/fs/fuse/inode.c
+@@ -1443,10 +1443,12 @@
+ 			if (flags & FUSE_NO_EXPORT_SUPPORT)
+ 				fm->sb->s_export_op = &fuse_export_fid_operations;
+ 			if (flags & FUSE_ALLOW_IDMAP) {
+-				if (fc->default_permissions)
++				if (fc->default_permissions) {
+ 					fm->sb->s_iflags &= ~SB_I_NOIDMAP;
+-				else
++					fc->idmap_headers = 1;
++				} else {
+ 					ok = false;
++				}
+ 			}
+ 			if (flags & FUSE_OVER_IO_URING && fuse_uring_enabled())
+ 				fc->io_uring = 1;
+--- a/fs/fuse/dev.c
++++ b/fs/fuse/dev.c
+@@ -198,7 +198,14 @@
+ {
+ 	struct fuse_conn *fc = fm->fc;
+ 	struct fuse_req *req;
+-	bool no_idmap = !fm->sb || (fm->sb->s_iflags & SB_I_NOIDMAP);
++	/*
++	 * A server that did not negotiate FUSE_ALLOW_IDMAP gets the caller's
++	 * fsuid and fsgid, as before idmapped mounts, even on a superblock
++	 * that allows them (virtio-fs). Only an idmap-aware server can take
++	 * FUSE_INVALID_UIDGID on requests that are not inode creation.
++	 */
++	bool no_idmap = !fm->sb || (fm->sb->s_iflags & SB_I_NOIDMAP) ||
++			!fc->idmap_headers;
+ 	kuid_t fsuid;
+ 	kgid_t fsgid;
+ 	int err;
 --- a/fs/fuse/virtio_fs.c
 +++ b/fs/fuse/virtio_fs.c
-@@ -1583,6 +1583,21 @@
- 	err = fuse_fill_super_common(sb, ctx);
+@@ -1584,6 +1584,19 @@
  	if (err < 0)
  		goto err_free_fuse_devs;
-+
+ 
 +	/*
 +	 * Allow idmapped mounts without FUSE_ALLOW_IDMAP from the daemon.
-+	 * Upstream requires the daemon to opt in because an idmap-unaware
-+	 * daemon checking permissions against the request header uid would
-+	 * see the mapped uid. virtio-fs always mounts with
-+	 * default_permissions, so the guest kernel makes every permission
-+	 * decision through the mount's idmap. Apple's Virtualization.framework
-+	 * daemon never negotiates the flag and ignores ownership altogether,
-+	 * so without this a user-namespaced workload cannot own its share.
-+	 * Only a mount explicitly idmapped with mount_setattr changes; the
-+	 * share's own mount is untouched.
++	 * virtio-fs always mounts with default_permissions, so the guest
++	 * kernel makes every permission decision through the mount's idmap,
++	 * and the daemon keeps receiving the caller's own fsuid and fsgid
++	 * (fuse_get_req). Apple's Virtualization.framework daemon never
++	 * negotiates the flag and reports every entry as uid 0, so without
++	 * this a user-namespaced workload cannot own its share. Only a mount
++	 * explicitly idmapped with mount_setattr changes.
 +	 */
 +	if (fc->default_permissions)
 +		sb->s_iflags &= ~SB_I_NOIDMAP;
- 
++
  	for (i = 0; i < fs->nvqs; i++) {
  		struct virtio_fs_vq *fsvq = &fs->vqs[i];
+ 
