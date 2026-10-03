@@ -223,7 +223,8 @@ def test_signed_copies_of_uplifted_binaries_are_reclaimable_generations(tmp_path
         copies[key] = (copy, receipt)
     staging = root / f"debug/.run-signed-capsem-admin-{'d' * 64}.tmp.4242"
     staging.write_bytes(b"x" * 10)
-    os.utime(staging, ns=(now - 96 * HOUR_NS,) * 2)
+    abandoned = now - 96 * HOUR_NS
+    os.utime(staging, ns=(abandoned, abandoned))
 
     inventory = scan_retention_inventory(paths, policy, now_ns=now)
     entries = {entry.key: entry for entry in inventory.stages[0].entries}

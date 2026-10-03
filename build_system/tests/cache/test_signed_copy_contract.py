@@ -28,9 +28,11 @@ def test_published_copy_and_its_staging_file_are_recognised() -> None:
     )
     name = published.removeprefix("$binary_dir/").replace("${original##*/}", "capsem-admin")
     name = name.replace("$key", KEY)
-    assert _SIGNED_COPY.fullmatch(name).group(1) == KEY
     staging = assignment("staging").replace("$published", name).replace("$$", "4242")
-    assert _SIGNED_COPY.fullmatch(staging).group(1) == KEY
+    for published_name in (name, staging):
+        found = _SIGNED_COPY.fullmatch(published_name)
+        assert found is not None, f"retention does not recognise {published_name}"
+        assert found.group(1) == KEY
 
 
 def test_receipts_live_where_retention_looks_for_them() -> None:
