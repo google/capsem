@@ -21,8 +21,9 @@ WORKDIR /usr/src/linux
 # whose context moved or that is already applied, so a kernel bump cannot
 # quietly ship without one or with one half-applied.
 COPY kernel/patches/ /tmp/kernel-patches/
-RUN set -e{% for patch in kernel_patches %}; \
-    patch -p1 --forward --fuzz=0 --no-backup-if-mismatch < /tmp/kernel-patches/{{ patch | replace('kernel/patches/', '') }}{% endfor %}
+{% for patch in kernel_patches %}
+RUN patch -p1 --forward --fuzz=0 --no-backup-if-mismatch < /tmp/kernel-patches/{{ patch | replace('kernel/patches/', '') }}
+{% endfor %}
 
 {% endif %}
 # Start from allnoconfig and apply the capsem hardened defconfig on top, so
