@@ -995,5 +995,4 @@ fn security_event_type_check_rejects_snapshot_event() {
 
 mod dns;
 
-mod retire;
 mod transport;
