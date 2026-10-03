@@ -11,7 +11,7 @@ from ._client import Client
 from ._debug import Debug
 from ._networks import Networks
 from ._profiles import Profiles
-from .execution import ExecResult, command_deadline
+from .execution import CREATE_READY_SECS, GATEWAY_REQUEST_BUDGET_SECS, ExecResult, command_deadline
 from .registry import Registry
 from .vm import VM
 
@@ -111,7 +111,12 @@ class Hypervisor(Client):
         )
         if wire is not None:
             request.container = wire
-        response = await api.create_vm(self._transport, body=request)
+        # The service answers only once a container workload is ready, so
+        # wait at least as long as it does before giving up on the create.
+        response = await api.create_vm(
+            self._transport, body=request,
+            request_timeout=max(self._transport.timeout, CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS),
+        )
         return VM._bind(self._transport, id=response.id, name=response.name, container=image is not None)
 
     async def log(self, source: models.HostLogSource = models.HostLogSource.SERVICE, *,

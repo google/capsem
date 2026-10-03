@@ -15,7 +15,7 @@ from capsem import (
     Registry,
     models,
 )
-from capsem.execution import command_deadline
+from capsem.execution import CREATE_READY_SECS, GATEWAY_REQUEST_BUDGET_SECS, command_deadline
 
 from .facade_gateway import gateway
 
@@ -200,6 +200,23 @@ def test_exec_outlives_the_default_deadline_without_replaying_it() -> None:
                 await hv.run("slow build")
             # `run` without a profile resolves the catalog default first.
             assert [path for _, path, _ in state.requests] == ["/vms/vm-0/exec", "/status", "/run"]
+    asyncio.run(run())
+
+
+def test_create_outlives_the_default_deadline_like_exec(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), Hypervisor(url, "token", timeout=0.05) as hv:
+            state.delays["/vms/create"] = 0.3
+            seen: list[float | None] = []
+            request = hv._transport.request
+
+            async def spy(*args: Any, **kwargs: Any) -> bytes:
+                seen.append(kwargs.get("timeout"))
+                return await request(*args, **kwargs)
+
+            monkeypatch.setattr(hv._transport, "request", spy)
+            assert (await hv.create(image="docker://busybox:latest")).id == "created-id"
+            assert seen == [None, CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS]
     asyncio.run(run())
 
 
