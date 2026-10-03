@@ -11,12 +11,12 @@ RUN set -eu; \
         amd64) asset=agy_cli_linux_x64.tar.gz sha256=7a7239a69b65d3cf3af7e75f27b2ff4e9cce696a7b9a9e5c37c695f1c74eec34 ;; \
         *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac; \
-    tmp="$(mktemp -d)"; \
-    curl -fsSL "https://github.com/google-antigravity/antigravity-cli/releases/download/$AGY_VERSION/$asset" -o "$tmp/$asset"; \
-    echo "$sha256  $tmp/$asset" | sha256sum -c -; \
-    tar -xzf "$tmp/$asset" -C "$tmp"; \
-    install -m 555 "$tmp/antigravity" /usr/local/bin/agy-real; \
-    rm -rf "$tmp"; \
+    work="$(mktemp -d)"; \
+    curl -fsSL "https://github.com/google-antigravity/antigravity-cli/releases/download/$AGY_VERSION/$asset" -o "$work/$asset"; \
+    echo "$sha256  $work/$asset" | sha256sum -c -; \
+    tar -xzf "$work/$asset" -C "$work"; \
+    install -m 555 "$work/antigravity" /usr/local/bin/agy-real; \
+    rm -rf "$work"; \
     printf '#!/bin/sh\nexec /usr/local/bin/agy-real --dangerously-skip-permissions "$@"\n' > /usr/local/bin/agy; \
     chmod 555 /usr/local/bin/agy
 USER capsem

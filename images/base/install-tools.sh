@@ -34,24 +34,24 @@ case "$arch" in
         ;;
 esac
 
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
 
 fetch() {
-    curl -fsSL "$1" -o "$tmp/$2"
-    printf '%s  %s\n' "$3" "$tmp/$2" | sha256sum -c -
+    curl -fsSL "$1" -o "$work/$2"
+    printf '%s  %s\n' "$3" "$work/$2" | sha256sum -c -
 }
 
 fetch "https://nodejs.org/dist/v$NODE_VERSION/$node_asset" "$node_asset" "$node_sha256"
-tar -xJf "$tmp/$node_asset" -C /usr/local --strip-components=1 --no-same-owner \
+tar -xJf "$work/$node_asset" -C /usr/local --strip-components=1 --no-same-owner \
     --exclude='*/CHANGELOG.md' --exclude='*/README.md' --exclude='*/include'
 
 fetch "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/$uv_asset" "$uv_asset" "$uv_sha256"
-tar -xzf "$tmp/$uv_asset" -C "$tmp"
-install -m 555 "$tmp"/uv-*/uv "$tmp"/uv-*/uvx /usr/local/bin/
+tar -xzf "$work/$uv_asset" -C "$work"
+install -m 555 "$work"/uv-*/uv "$work"/uv-*/uvx /usr/local/bin/
 
 fetch "https://github.com/ollama/ollama/releases/download/v$OLLAMA_VERSION/$ollama_asset" "$ollama_asset" "$ollama_sha256"
-zstd -dc "$tmp/$ollama_asset" | tar -xf - -C /usr --no-same-owner
+zstd -dc "$work/$ollama_asset" | tar -xf - -C /usr --no-same-owner
 # CPU only: no image carries a GPU runtime it cannot use.
 rm -rf /usr/lib/ollama/cuda* /usr/lib/ollama/hip* /usr/lib/ollama/jetpack* \
     /usr/lib/ollama/oneapi* /usr/lib/ollama/opencl* /usr/lib/ollama/rocm* \

@@ -161,6 +161,18 @@ debt = "tests/citadel/repository_path_debt.toml"
 reason = "Guest filesystem artifacts and diagnostics remain product-owned."
 
 [[surface]]
+id = "official-images"
+state = "retained"
+current = ["images/"]
+targets = ["images/"]
+lint = ["fast.audit.shell", "fast.audit.source-syntax", "python.ruff"]
+tests = ["tests/images/", "tests/citadel/test_image_publication_is_isolated.py"]
+ci = ["fast-gate", "test-linux", "pr-gate"]
+coverage = "not-applicable: image recipes and publication scripts are proved by tests/images and the image workflow's smoke and boot runs"
+debt = "none: images/ is a new root"
+reason = "The official OCI images and their publication scripts; only .github/workflows/images.yaml builds and publishes them."
+
+[[surface]]
 id = "developer-skills"
 state = "retained"
 current = ["skills/"]
