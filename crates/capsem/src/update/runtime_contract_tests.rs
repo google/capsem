@@ -689,3 +689,18 @@ async fn activate_staged_update_rolls_back_every_selected_path_on_manifest_failu
         "new content-addressed assets must be removed on rollback"
     );
 }
+
+/// GitHub answered a release asset with 500 for about 25 seconds during the
+/// stable 0.6.4 qualification, and an install that waited 1.75 seconds in all
+/// between four attempts failed outright. The retries now ride out half a
+/// minute of transient errors and still give up within a bounded time.
+#[test]
+fn release_downloads_ride_out_half_a_minute_of_server_errors() {
+    let waited: Duration = (1..RELEASE_HTTP_ATTEMPTS).map(release_http_retry_backoff).sum();
+    assert!(waited >= Duration::from_secs(30), "retries wait only {waited:?}");
+    assert!(waited <= Duration::from_secs(60), "retries wait {waited:?}");
+    assert!(release_http_status_is_retryable(
+        reqwest::StatusCode::INTERNAL_SERVER_ERROR
+    ));
+    assert!(!release_http_status_is_retryable(reqwest::StatusCode::NOT_FOUND));
+}

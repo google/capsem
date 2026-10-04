@@ -33,8 +33,8 @@ use capsem_assets::asset_manager::{Architecture, PackageArchitecture};
 use capsem_core::net::policy_config::ProfileCatalog;
 use published_profile_catalog::resolve_release_channel_artifact_url;
 
-const RELEASE_HTTP_ATTEMPTS: usize = 4;
-const RELEASE_HTTP_INITIAL_BACKOFF_MS: u64 = 250;
+const RELEASE_HTTP_ATTEMPTS: usize = 6;
+const RELEASE_HTTP_INITIAL_BACKOFF_MS: u64 = 1_000;
 const INSTALL_MANIFEST_STDIN_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Cached update check result.
