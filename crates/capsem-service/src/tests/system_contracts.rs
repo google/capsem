@@ -66,14 +66,12 @@ async fn system_status_route_returns_exact_installed_documents_in_one_response()
             "binaries": [{"name": "capsem", "installed_path": "/usr/local/bin/capsem"}],
             "evidence": [{"kind": "sbom", "url": "https://example.test/capsem.spdx.json"}]
         }],
-        "profiles": {"code": {
-            "name": "Code",
-            "description": "Optimized for coding.",
-            "revision": "2026.0703.2",
+        "runtime": {
+            "revision": "0.7.0-0123456789ab",
             "status": "current",
             "architectures": [{
                 "architecture": arch,
-                "image_revision": "2026.0714.18",
+                "image_revision": "0.7.0-0123456789ab",
                 "images": [
                     {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":digest('a'),"sha256":digest('1')}},
                     {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":digest('b'),"sha256":digest('2')}},
@@ -86,7 +84,7 @@ async fn system_status_route_returns_exact_installed_documents_in_one_response()
                     "digest":{"blake3":digest('d'),"sha256":digest('4')}
                 }]
             }]
-        }}
+        }
     });
     let metadata = serde_json::json!({
         "schema": "capsem.manifest_metadata.v1",
