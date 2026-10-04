@@ -166,6 +166,7 @@ async fn main() -> Result<()> {
         .route("/status", get(status::handle_status))
         .route("/events", get(handle_events_ws))
         .merge(schema::routes())
+        .merge(surface::routes())
         .merge(service_proxy_routes())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -244,9 +245,6 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             "/vms/{id}/exposures/{exposure_id}/preview-session",
             post(preview::create_session).delete(proxy::handle_proxy),
         )
-        .route("/vms/{id}/surface/", get(surface::launcher))
-        .route("/vms/{id}/surface/launch.js", get(surface::launcher_script))
-        .route("/vms/{id}/surface/session", post(surface::create_session))
         .route("/vms/{id}/logs", get(proxy::handle_proxy))
         .route("/vms/{id}/exec", post(proxy::handle_proxy))
         .route("/vms/{id}/stop", post(proxy::handle_proxy))

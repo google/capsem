@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 
 const POLICY = readFileSync(
-  new URL('../../../../../crates/capsem-gateway/src/surface/assets/capsem-surface.js', import.meta.url),
+  new URL('../../../../../crates/capsem-gateway/src/surface/static/capsem-surface.js', import.meta.url),
   'utf8',
 );
 

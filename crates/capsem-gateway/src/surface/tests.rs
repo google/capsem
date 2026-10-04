@@ -102,7 +102,8 @@ fn state(service_path: &std::path::Path, preview_port: u16) -> Arc<AppState> {
 
 /// The gateway's real route table behind its real authentication.
 fn gateway(state: &Arc<AppState>) -> axum::Router {
-    crate::service_proxy_routes()
+    routes()
+        .merge(crate::service_proxy_routes())
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(state),
             crate::auth::auth_middleware,

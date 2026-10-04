@@ -17,9 +17,9 @@ pub(crate) const CLIENT_ROOT: &str = "/_capsem/surface/";
 /// the build script.
 static VENDORED: &[(&str, &[u8])] = include!(concat!(env!("OUT_DIR"), "/xpra_html5.rs"));
 
-const CAPSEM_SURFACE: &str = include_str!("assets/capsem-surface.js");
-const SETTINGS: &str = include_str!("assets/default-settings.txt");
-const DISCONNECTED: &str = include_str!("assets/connect.html");
+const CAPSEM_SURFACE: &str = include_str!("static/capsem-surface.js");
+const SETTINGS: &str = include_str!("static/default-settings.txt");
+const DISCONNECTED: &str = include_str!("static/connect.html");
 const EXPIRED: &str = "This app session has expired. Open the app again from Capsem.";
 
 /// The client page with its inline script moved out to `xpra-main.js`.

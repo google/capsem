@@ -19,11 +19,22 @@ use crate::AppState;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::Router;
 use capsem_api::{ContainerStatusResponse, ContainerSurfaceKind};
 use std::sync::Arc;
 
-const LAUNCHER: &str = include_str!("surface/assets/launcher.html");
-const LAUNCH_SCRIPT: &str = include_str!("surface/assets/launch.js");
+const LAUNCHER: &str = include_str!("surface/static/launcher.html");
+const LAUNCH_SCRIPT: &str = include_str!("surface/static/launch.js");
+
+/// The gateway's own surface routes. None is a service proxy: the session
+/// route reads the service's container status and mints through `preview`.
+pub fn routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/vms/{id}/surface/", get(launcher))
+        .route("/vms/{id}/surface/launch.js", get(launcher_script))
+        .route("/vms/{id}/surface/session", post(create_session))
+}
 
 fn no_surface() -> Response {
     (
