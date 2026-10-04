@@ -87,6 +87,10 @@ pub fn workload_resources(ram_mb: u64, cpus: u32) -> Result<WorkloadResources> {
 }
 
 pub const LAUNCHER: &[u8] = include_bytes!("../../../guest/artifacts/container/launch.py");
+/// The launcher's stage in the VM workspace: its options, the launcher itself
+/// and its markers, nothing else. The image's bytes are never here; the
+/// launcher reads them from the read-only image share
+/// ([`crate::session::IMAGE_SHARE_TAG`]).
 pub const STAGE: &str = ".capsem-image";
 /// The launcher's marker in [`STAGE`] that an image is staged: every boot
 /// (capsem-init) launches what it marks.

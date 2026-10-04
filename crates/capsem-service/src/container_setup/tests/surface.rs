@@ -28,10 +28,10 @@ fn is_exposure(message: &ServiceToProcess) -> bool {
     )
 }
 
-/// The six setup messages, then one exposure request, answered as the VM's
+/// The four setup messages, then one exposure request, answered as the VM's
 /// security engine would: published, or refused by policy.
 fn owner_answering_the_surface(uds_path: &StdPath, refuse: bool) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
-    spawn_fake_process(uds_path, 7, move |message| {
+    spawn_fake_process(uds_path, 5, move |message| {
         let reply = match message {
             ServiceToProcess::AdmitContainerPull { id, .. } => ProcessToService::ContainerPullAdmission {
                 id: *id,
@@ -166,7 +166,7 @@ async fn an_xpra_image_is_granted_exactly_one_preview_exposure_once_it_runs() {
 #[tokio::test]
 async fn a_terminal_image_is_granted_no_exposure() {
     let fx = gui_fixture(images());
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
     start(&fx.state, "box".into(), spec(None));
     let messages = owner.await.unwrap();
     // The setup ends at the launch: nothing waits to expose anything.

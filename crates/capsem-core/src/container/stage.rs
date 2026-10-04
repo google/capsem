@@ -8,71 +8,114 @@ use anyhow::{bail, Context, Result};
 
 use super::LAUNCHER;
 
-/// One file written into [`super::STAGE`].
+/// One small control file written into [`super::STAGE`]. The image itself is
+/// never staged there: it reaches the guest through the read-only image share
+/// (`crate::session::publish_image_share`), and the stage names it by digest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagedFile {
     pub name: String,
-    pub content: StagedContent,
+    pub bytes: Vec<u8>,
 }
 
+/// What of a pulled layout the image share holds: the manifest the layout's
+/// index names, and every blob, by SHA-256 hex digest.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StagedContent {
-    /// A verified image layout file, copied whole.
-    File(PathBuf),
-    /// Generated launcher input.
-    Bytes(Vec<u8>),
+pub struct ImageBlobs {
+    /// `sha256:<hex>` of the manifest the launcher unpacks.
+    pub manifest: String,
+    pub blobs: Vec<String>,
 }
 
-/// The stage for a pulled layout at `root`, in write order: every layout file
-/// with content as its single part, then `transfer.json`, `options.json` (the
-/// command override, container environment, where the container sees the
-/// workspace, and the capabilities, syscall filter, user-namespace map and
-/// resources the workload gets) and
-/// the launcher. `surface` is what [`image_surface`] read from the same layout.
+/// The blobs of the pulled single-image layout at `root`, whose verified
+/// files are `files`. The manifest the index names, its config and every
+/// layer must be among them: a share missing one could not be unpacked, and
+/// the launcher must never be pointed at a blob the host did not verify.
+pub fn image_blobs(root: &Path, files: &[PathBuf]) -> Result<ImageBlobs> {
+    let directory = Path::new("blobs/sha256");
+    let blobs: Vec<String> = files
+        .iter()
+        .filter_map(|file| file.strip_prefix(directory).ok())
+        .map(|name| {
+            let name = name.to_str().context("blob name is not UTF-8")?;
+            Ok(digest_hex(&format!("sha256:{name}"))?.to_owned())
+        })
+        .collect::<Result<_>>()?;
+    let index = read_json(&root.join("index.json"))?;
+    let manifest = index["manifests"][0]["digest"]
+        .as_str()
+        .context("the layout's index names no manifest")?
+        .to_owned();
+    let document = read_json(&root.join(directory).join(digest_hex(&manifest)?))?;
+    let mut named = vec![manifest.as_str()];
+    named.push(
+        document["config"]["digest"]
+            .as_str()
+            .with_context(|| format!("manifest {manifest} names no config"))?,
+    );
+    for layer in document["layers"]
+        .as_array()
+        .with_context(|| format!("manifest {manifest} lists no layers"))?
+    {
+        named.push(layer["digest"].as_str().context("a layer names no digest")?);
+    }
+    for digest in named {
+        let hex = digest_hex(digest)?;
+        if !blobs.iter().any(|blob| blob == hex) {
+            bail!("manifest {manifest} names {digest}, which the pull did not verify");
+        }
+    }
+    Ok(ImageBlobs { manifest, blobs })
+}
+
+/// The stage, in write order: `options.json` (the image's manifest digest,
+/// the command override, container environment, where the container sees
+/// the workspace, and the capabilities, syscall filter, user-namespace map
+/// and resources the workload gets), then the launcher. `surface` is what
+/// [`image_surface`] read from the image; `manifest` is the digest the image
+/// share holds the image under ([`image_blobs`]).
 pub fn stage_plan(
-    root: &Path,
-    files: &[PathBuf],
+    manifest: &str,
     args: &[String],
     env: &BTreeMap<String, String>,
     resources: super::WorkloadResources,
     surface: DeclaredSurface,
 ) -> Result<Vec<StagedFile>> {
+    digest_hex(manifest)?;
     let surface = surface.seccomp();
-    let transfer = capsem_assets::oci::transfer_manifest(root, files)?;
-    let mut plan: Vec<StagedFile> = transfer
-        .iter()
-        .filter_map(|entry| {
-            entry.part_name().map(|name| StagedFile {
-                name,
-                content: StagedContent::File(root.join(&entry.path)),
-            })
-        })
-        .collect();
-    plan.push(StagedFile {
-        name: "transfer.json".into(),
-        content: StagedContent::Bytes(serde_json::to_vec(&transfer)?),
-    });
-    plan.push(StagedFile {
-        name: "options.json".into(),
-        content: StagedContent::Bytes(serde_json::to_vec(&serde_json::json!({
-            "args": args,
-            "env": env,
-            "workspace": super::CONTAINER_WORKSPACE,
-            "capabilities": super::seccomp::WORKLOAD_CAPABILITIES,
-            "seccomp": super::seccomp::workload_seccomp(oci_architecture()?, surface)?,
-            "id_map": super::WORKLOAD_ID_MAP,
-            "resources": resources,
-            "surface": match surface {
-                super::seccomp::Surface::Terminal => "terminal",
-                super::seccomp::Surface::Xpra => "xpra",
-            },
-        }))?),
-    });
-    plan.push(StagedFile {
-        name: "launch.py".into(),
-        content: StagedContent::Bytes(LAUNCHER.to_vec()),
-    });
-    Ok(plan)
+    Ok(vec![
+        StagedFile {
+            name: "options.json".into(),
+            bytes: serde_json::to_vec(&serde_json::json!({
+                "manifest": manifest,
+                "args": args,
+                "env": env,
+                "workspace": super::CONTAINER_WORKSPACE,
+                "capabilities": super::seccomp::WORKLOAD_CAPABILITIES,
+                "seccomp": super::seccomp::workload_seccomp(oci_architecture()?, surface)?,
+                "id_map": super::WORKLOAD_ID_MAP,
+                "resources": resources,
+                "surface": match surface {
+                    super::seccomp::Surface::Terminal => "terminal",
+                    super::seccomp::Surface::Xpra => "xpra",
+                },
+            }))?,
+        },
+        StagedFile {
+            name: "launch.py".into(),
+            bytes: LAUNCHER.to_vec(),
+        },
+    ])
+}
+
+/// The hex of a `sha256:<hex>` digest, refused unless it is one.
+fn digest_hex(digest: &str) -> Result<&str> {
+    capsem_assets::oci::Digest::parse(digest)?;
+    Ok(digest.trim_start_matches("sha256:"))
+}
+
+fn read_json(path: &Path) -> Result<serde_json::Value> {
+    serde_json::from_slice(&std::fs::read(path).with_context(|| format!("read {}", path.display()))?)
+        .with_context(|| format!("parse {}", path.display()))
 }
 
 /// The label an image declares its surface with (`terminal` or `xpra`).
@@ -140,26 +183,21 @@ pub fn image_surface(root: &Path) -> Result<DeclaredSurface> {
 /// names the manifest, the manifest names the config. The layout is the
 /// puller's verified output, so its blobs are read as written.
 pub fn image_labels(root: &Path) -> Result<serde_json::Map<String, serde_json::Value>> {
-    let read = |path: PathBuf| -> Result<serde_json::Value> {
-        serde_json::from_slice(&std::fs::read(&path).with_context(|| format!("read {}", path.display()))?)
-            .with_context(|| format!("parse {}", path.display()))
+    let blob = |digest: &serde_json::Value| -> Result<serde_json::Value> {
+        read_json(
+            &root
+                .join("blobs/sha256")
+                .join(digest_hex(digest.as_str().context("digest")?)?),
+        )
     };
-    let blob = |digest: &serde_json::Value| -> Result<PathBuf> {
-        let digest = digest.as_str().context("digest")?;
-        let hex = capsem_assets::oci::Digest::parse(digest)?
-            .as_str()
-            .trim_start_matches("sha256:")
-            .to_owned();
-        Ok(root.join("blobs/sha256").join(hex))
-    };
-    let index = read(root.join("index.json"))?;
+    let index = read_json(&root.join("index.json"))?;
     // A layout naming no manifest declares nothing: the terminal surface,
     // the narrowest filter, is what that gives.
     if index["manifests"][0].is_null() {
         return Ok(serde_json::Map::new());
     }
-    let manifest = read(blob(&index["manifests"][0]["digest"])?)?;
-    let config = read(blob(&manifest["config"]["digest"])?)?;
+    let manifest = blob(&index["manifests"][0]["digest"])?;
+    let config = blob(&manifest["config"]["digest"])?;
     Ok(config["config"]["Labels"].as_object().cloned().unwrap_or_default())
 }
 

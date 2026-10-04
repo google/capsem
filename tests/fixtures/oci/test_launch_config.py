@@ -1,5 +1,6 @@
 """Guest launcher policy, exercised without executing an image on the host."""
 
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -348,36 +349,79 @@ def test_missing_command_fails_before_runtime_launch(launcher):
         launcher.configure(config, {"config": {}}, {**SECURITY, "args": [], "env": {}})
 
 
-def test_uploaded_image_remains_available_for_restart_and_fork(launcher, tmp_path):
-    import hashlib
-    import json
+def _blob(share, data):
+    """Put `data` in the share under its own SHA-256; return its digest."""
+    digest = hashlib.sha256(data).hexdigest()
+    (share / digest).write_bytes(data)
+    return f"sha256:{digest}"
 
-    stage = tmp_path / "stage"
-    stage.mkdir()
-    content = b"verified OCI bytes"
-    (stage / "0-0").write_bytes(content)
-    (stage / "transfer.json").write_text(
-        json.dumps(
-            [
-                {
-                    "path": "blob",
-                    "key": 0,
-                    "parts": 1,
-                    "sha256": hashlib.sha256(content).hexdigest(),
-                }
-            ]
-        )
-    )
+
+def _share(tmp_path, layers=(b"layer bytes",)):
+    """An image share as the host publishes it: only blobs, each named by its
+    SHA-256. Returns (share, manifest digest, layer digests)."""
+    share = tmp_path / "share"
+    share.mkdir()
+    config = _blob(share, json.dumps(image()).encode())
+    descriptors = [{"digest": _blob(share, data), "size": len(data)} for data in layers]
+    manifest = {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {"digest": config, "size": len(json.dumps(image()).encode())},
+        "layers": descriptors,
+    }
+    return share, _blob(share, json.dumps(manifest).encode()), [entry["digest"] for entry in descriptors]
+
+
+def test_the_image_is_assembled_from_the_share_and_verified(launcher, tmp_path):
+    """Every launch, first boot or relaunch, assembles the same verified
+    layout from the read-only share; the workspace stage holds no layer."""
+    share, digest, (layer,) = _share(tmp_path)
     for name in ("first-boot", "restart"):
         layout = tmp_path / name
-        layout.mkdir()
-        launcher.assemble(stage, layout)
-        assert (layout / "blob").read_bytes() == content
-    (stage / "0-0").write_bytes(b"tampered")
-    layout = tmp_path / "tampered"
-    layout.mkdir()
-    with pytest.raises(ValueError, match="digest"):
-        launcher.assemble(stage, layout)
+        launcher.assemble(share, digest, layout)
+        blobs = layout / "blobs" / "sha256"
+        assert (blobs / layer.removeprefix("sha256:")).read_bytes() == b"layer bytes"
+        index = json.loads((layout / "index.json").read_text())
+        assert [entry["digest"] for entry in index["manifests"]] == [digest]
+        assert index["manifests"][0]["annotations"] == {"org.opencontainers.image.ref.name": "image"}
+        assert index["manifests"][0]["size"] == (blobs / digest.removeprefix("sha256:")).stat().st_size
+        assert json.loads((layout / "oci-layout").read_text()) == {"imageLayoutVersion": "1.0.0"}
+
+
+@pytest.mark.parametrize("victim", ["manifest", "layer"])
+def test_a_share_blob_that_is_not_the_one_named_is_refused(launcher, tmp_path, victim):
+    share, digest, (layer,) = _share(tmp_path)
+    named = digest if victim == "manifest" else layer
+    (share / named.removeprefix("sha256:")).write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="digest mismatch|larger than"):
+        launcher.assemble(share, digest, tmp_path / "layout")
+
+
+def test_a_layer_whose_size_differs_from_its_descriptor_is_refused(launcher, tmp_path):
+    share, digest, _ = _share(tmp_path)
+    manifest = json.loads((share / digest.removeprefix("sha256:")).read_bytes())
+    manifest["layers"][0]["size"] += 1
+    forged = _blob(share, json.dumps(manifest).encode())
+    with pytest.raises(ValueError, match="digest mismatch"):
+        launcher.assemble(share, forged, tmp_path / "layout")
+
+
+@pytest.mark.parametrize("named", ["sha256:" + "0" * 64, "sha256:../x", "md5:abc"])
+def test_a_manifest_naming_a_blob_outside_the_share_is_refused(launcher, tmp_path, named):
+    share, _, _ = _share(tmp_path)
+    manifest = {"config": {"digest": named, "size": 1}, "layers": []}
+    digest = _blob(share, json.dumps(manifest).encode())
+    with pytest.raises((ValueError, FileNotFoundError)):
+        launcher.assemble(share, digest, tmp_path / "layout")
+
+
+def test_the_share_is_mounted_read_only_only_while_it_is_read(launcher, tmp_path, monkeypatch):
+    monkeypatch.setattr(launcher, "IMAGE_SHARE", tmp_path / "image")
+    calls = []
+    with launcher.image_share(lambda *argv, **_: calls.append(argv)) as mounted:
+        assert mounted == tmp_path / "image"
+        assert calls == [("mount", "-t", "virtiofs", "-o", "ro,nosuid,nodev,noexec", "capsem-image", str(mounted))]
+    assert calls[-1] == ("umount", str(mounted))
 
 
 def test_network_ready_hook_routes_the_container_through_every_cable(launcher, tmp_path):
@@ -618,34 +662,15 @@ def test_a_volume_is_seeded_from_the_image_once_and_then_kept(launcher, tmp_path
     assert (seeded / "seed").read_text() == "from the session"
 
 
-DIGEST = "sha256:" + "b" * 64
-
-
-def _stage(tmp_path, listed=DIGEST):
-    """A stage whose transfer manifest carries one verified index.json part."""
-    stage = tmp_path / "stage"
-    stage.mkdir(exist_ok=True)
-    index = json.dumps({"manifests": [{"digest": listed}]}).encode()
-    (stage / "0-0").write_bytes(index)
-    (stage / "transfer.json").write_text(
-        json.dumps([{"path": "index.json", "key": "0", "parts": 1, "sha256": hashlib.sha256(index).hexdigest()}])
-    )
-    return stage
-
 
 def _fake_unpack(launcher, tmp_path, monkeypatch):
-    """assemble() and umoci stubbed: count unpacks, write what they would."""
+    """umoci stubbed, the share a plain directory: count unpacks and share
+    mounts, write what umoci would. Returns (unpacks, mounts, share, digest)."""
     monkeypatch.setattr(launcher, "ROOTS", tmp_path / "roots")
     monkeypatch.setattr(launcher, "RUNTIME", tmp_path / "runtime")
     (tmp_path / "runtime").mkdir(exist_ok=True)
-    unpacks = []
-
-    def assemble(stage, layout):
-        blobs = layout / "blobs" / "sha256"
-        blobs.mkdir(parents=True)
-        listed = launcher.staged_manifest_digest(stage)
-        (blobs / listed.split(":")[1]).write_text(json.dumps({"config": {"digest": "sha256:" + "c" * 64}}))
-        (blobs / ("c" * 64)).write_text(json.dumps(image()))
+    share, digest, _ = _share(tmp_path)
+    unpacks, mounts = [], []
 
     def command(*argv, **_):
         unpacks.append(argv)
@@ -653,45 +678,50 @@ def _fake_unpack(launcher, tmp_path, monkeypatch):
         (bundle / "rootfs").mkdir(parents=True)
         (bundle / "config.json").write_text(json.dumps(unpacked()))
 
-    monkeypatch.setattr(launcher, "assemble", assemble)
+    @contextlib.contextmanager
+    def mounted():
+        mounts.append(share)
+        yield share
+
     monkeypatch.setattr(launcher, "command", command)
-    return unpacks
+    monkeypatch.setattr(launcher, "image_share", mounted)
+    return unpacks, mounts, digest
 
 
 def test_a_named_session_unpacks_its_image_once(launcher, tmp_path, monkeypatch):
-    unpacks = _fake_unpack(launcher, tmp_path, monkeypatch)
-    stage = _stage(tmp_path)
-    first = launcher.unpacked_root(stage, SECURITY["id_map"])
-    second = launcher.unpacked_root(stage, SECURITY["id_map"])
+    unpacks, mounts, digest = _fake_unpack(launcher, tmp_path, monkeypatch)
+    first = launcher.unpacked_root(digest, SECURITY["id_map"], launcher.image_share)
+    second = launcher.unpacked_root(digest, SECURITY["id_map"], launcher.image_share)
     assert len(unpacks) == 1, "the relaunch reused the unpacked root"
+    assert len(mounts) == 1, "a relaunch never reads the share"
     assert first == second
     bundle, image_config, runtime = first
-    assert bundle == launcher.ROOTS / ("b" * 64) / "bundle"
+    assert bundle == launcher.ROOTS / digest.removeprefix("sha256:") / "bundle"
     assert image_config == image() and runtime == unpacked()
     assert "--uid-map" in unpacks[0]
+    assert not (launcher.RUNTIME / "image").exists(), "the assembled layout is not kept"
 
 
 def test_only_the_current_digest_keeps_a_root(launcher, tmp_path, monkeypatch):
-    _fake_unpack(launcher, tmp_path, monkeypatch)
+    _, _, digest = _fake_unpack(launcher, tmp_path, monkeypatch)
     stale = tmp_path / "roots" / ("d" * 64)
     stale.mkdir(parents=True)
-    launcher.unpacked_root(_stage(tmp_path), SECURITY["id_map"])
+    launcher.unpacked_root(digest, SECURITY["id_map"], launcher.image_share)
     assert not stale.exists()
 
 
-def test_a_tampered_staged_index_is_refused(launcher, tmp_path, monkeypatch):
-    _fake_unpack(launcher, tmp_path, monkeypatch)
-    stage = _stage(tmp_path)
-    (stage / "0-0").write_bytes(json.dumps({"manifests": [{"digest": "sha256:" + "e" * 64}]}).encode())
+def test_a_tampered_share_blob_fails_the_unpack(launcher, tmp_path, monkeypatch):
+    unpacks, _, digest = _fake_unpack(launcher, tmp_path, monkeypatch)
+    (tmp_path / "share" / digest.removeprefix("sha256:")).write_bytes(b'{"config": {}, "layers": []}')
     with pytest.raises(ValueError, match="digest mismatch"):
-        launcher.unpacked_root(stage, SECURITY["id_map"])
+        launcher.unpacked_root(digest, SECURITY["id_map"], launcher.image_share)
+    assert not unpacks, "umoci never saw an unverified blob"
 
 
-@pytest.mark.parametrize("listed", [None, "sha256:short", "sha256:" + "B" * 64, "md5:" + "b" * 64, "sha256:../" + "b" * 61])
-def test_an_index_naming_no_valid_digest_is_refused(launcher, tmp_path, monkeypatch, listed):
-    _fake_unpack(launcher, tmp_path, monkeypatch)
+@pytest.mark.parametrize("named", [None, "sha256:short", "sha256:" + "B" * 64, "md5:" + "b" * 64, "sha256:../" + "b" * 61])
+def test_options_naming_no_valid_manifest_digest_are_refused(launcher, named):
     with pytest.raises(ValueError, match="manifest digest"):
-        launcher.unpacked_root(_stage(tmp_path, listed), SECURITY["id_map"])
+        launcher.manifest_digest({"manifest": named} if named is not None else {})
 
 
 @pytest.mark.parametrize(

@@ -1103,6 +1103,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An image now reaches its VM through a second VirtioFS share, read-only at
+  the device and holding only that image's verified blobs, linked from the
+  host's pull, instead of being copied layer by layer into the workspace.
+  The workspace stage (`/root/.capsem-image`) used to hold every layer byte,
+  guest-writable and visible to anything reading the workspace; it now keeps
+  only `options.json` and `launch.py`. Apple VZ and the KVM VirtioFS server
+  refuse every write to the share whatever the guest's mount options, and
+  the launcher verifies each blob against the manifest digest the host
+  pinned before it unpacks. A fork or `--from` clone links its source's
+  share and a restart reuses the session's own, so neither reads the
+  workspace for its image, and pruning the host's image cache never takes an
+  image from a session.
 - The service keeps a host ledger, `~/.capsem/sessions/host.db`: a
   hash-chained record of what it did to every session (created, stopped and
   how, with the session's final counters) and of its own starts and stops,

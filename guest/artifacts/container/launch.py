@@ -1,5 +1,10 @@
-"""Run one verified OCI layout; session workspace retains its restart inputs."""
+"""Run one verified OCI image; the session workspace keeps only its options.
 
+The image's blobs come from the host's read-only image share, never from the
+workspace: the guest can write the workspace, and cannot write the share.
+"""
+
+import contextlib
 import ctypes
 import hashlib
 import json
@@ -24,6 +29,16 @@ VOLUMES = Path("/var/lib/capsem/volumes")
 # unpacks its image once instead of on every launch.
 ROOTS = Path("/var/lib/capsem/roots")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+# The image's blobs, each named by its SHA-256: the host's read-only VirtioFS
+# device (capsem-core `session::IMAGE_SHARE_TAG`), holding that image and
+# nothing else. Mounted here, in this launcher's private mount namespace, only
+# while an image is unpacked.
+IMAGE_SHARE_TAG = "capsem-image"
+IMAGE_SHARE = Path("/run/capsem-image")
+# A manifest is JSON of a few KiB; never read an unbounded one.
+MANIFEST_LIMIT = 4 * 1024 * 1024
+OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+BLOB_CHUNK = 1024 * 1024
 # Every id the workload maps lies at or above this, clear of the VM's own
 # system and user ids, so container root is no uid the VM trusts.
 LOWEST_MAPPED_ID = 65536
@@ -589,50 +604,89 @@ def network_ready(pid, run=command, sysctl_root=Path("/proc/sys")):
     open_cables(run, sysctl_root)
 
 
-def staged_parts(stage, entry):
-    """One staged file's bytes, part by part, verified against its digest
-    once the last part is read."""
-    digest = hashlib.sha256()
-    for number in range(entry["parts"]):
-        data = (stage / f"{entry['key']}-{number}").read_bytes()
-        digest.update(data)
-        yield data
-    if digest.hexdigest() != entry["sha256"]:
-        raise ValueError("OCI upload digest mismatch")
-
-
-def assemble(stage, layout):
-    """Reassemble bounded uploads and verify each file before umoci sees it."""
-    transfer = json.loads((stage / "transfer.json").read_text())
-    for entry in transfer:
-        relative = PurePosixPath(entry["path"])
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError("unsafe OCI transfer path")
-        destination = layout / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        with destination.open("xb") as output:
-            for data in staged_parts(stage, entry):
-                output.write(data)
-
-
-def staged_manifest_digest(stage):
-    """The manifest the staged layout's index.json names: the identity of
-    what will be unpacked. Reads and verifies index.json alone."""
-    transfer = json.loads((stage / "transfer.json").read_text())
-    (entry,) = [entry for entry in transfer if entry["path"] == "index.json"]
-    index = json.loads(b"".join(staged_parts(stage, entry)))
-    digest = index["manifests"][0]["digest"]
+def manifest_digest(options):
+    """The manifest the host staged the image under: the identity of what
+    will be unpacked, and the only blob the launcher trusts by name."""
+    digest = options.get("manifest")
     if not (isinstance(digest, str) and DIGEST.match(digest)):
-        raise ValueError(f"staged index names no valid manifest digest: {digest!r}")
+        raise ValueError(f"stage options name no valid manifest digest: {digest!r}")
     return digest
 
 
-def unpacked_root(stage, id_map):
+def copy_verified(share, digest, destination, size=None, limit=None):
+    """Copy the blob `digest` from the share to `destination`, refusing it
+    unless its bytes hash to that digest and, when the referrer gave one, its
+    size. The share is read-only to the guest; this is what makes a blob that
+    is not the one named -- whoever put it there -- fail the launch."""
+    if not (isinstance(digest, str) and DIGEST.match(digest)):
+        raise ValueError(f"refusing OCI blob digest {digest!r}")
+    if size is not None and not (type(size) is int and size >= 0):
+        raise ValueError(f"refusing OCI blob size {size!r} for {digest}")
+    hexdigest = digest.removeprefix("sha256:")
+    hasher = hashlib.sha256()
+    count = 0
+    with (share / hexdigest).open("rb") as source, destination.open("xb") as output:
+        while chunk := source.read(BLOB_CHUNK):
+            count += len(chunk)
+            if (size is not None and count > size) or (limit is not None and count > limit):
+                raise ValueError(f"OCI blob {digest} is larger than its descriptor")
+            hasher.update(chunk)
+            output.write(chunk)
+    if hasher.hexdigest() != hexdigest or (size is not None and count != size):
+        raise ValueError(f"OCI blob digest mismatch: {digest}")
+    return count
+
+
+def assemble(share, digest, layout):
+    """A private OCI layout of the image `digest` names, every blob copied
+    from the share and verified before umoci sees it: the manifest against
+    the digest the host pinned, its config and layers against the manifest's
+    descriptors. The index is written here, naming only that manifest."""
+    blobs = layout / "blobs" / "sha256"
+    blobs.mkdir(parents=True)
+    manifest_path = blobs / digest.removeprefix("sha256:")
+    size = copy_verified(share, digest, manifest_path, limit=MANIFEST_LIMIT)
+    manifest = json.loads(manifest_path.read_bytes())
+    descriptors = [manifest["config"], *manifest["layers"]]
+    for descriptor in descriptors:
+        target = blobs / str(descriptor["digest"]).removeprefix("sha256:")
+        # A layer listed twice is one blob, verified once.
+        if not target.exists():
+            copy_verified(share, descriptor["digest"], target, size=descriptor["size"])
+    (layout / "oci-layout").write_text('{"imageLayoutVersion":"1.0.0"}')
+    index = {
+        "schemaVersion": 2,
+        "manifests": [
+            {
+                "mediaType": manifest.get("mediaType", OCI_MANIFEST),
+                "digest": digest,
+                "size": size,
+                "annotations": {"org.opencontainers.image.ref.name": "image"},
+            }
+        ],
+    }
+    (layout / "index.json").write_text(json.dumps(index))
+
+
+@contextlib.contextmanager
+def image_share(run=None):
+    """The host's image share, mounted read-only for as long as the image is
+    read. The launcher runs in its own mount namespace, so the mount is gone
+    with it even when it is killed mid-unpack."""
+    run = run or command
+    IMAGE_SHARE.mkdir(mode=0o700, parents=True, exist_ok=True)
+    run("mount", "-t", "virtiofs", "-o", "ro,nosuid,nodev,noexec", IMAGE_SHARE_TAG, str(IMAGE_SHARE))
+    try:
+        yield IMAGE_SHARE
+    finally:
+        run("umount", str(IMAGE_SHARE), check=False)
+
+
+def unpacked_root(digest, id_map, share=image_share):
     """The image's unpacked root for this launch: (bundle, image config,
     umoci's runtime config). Unpacked once per manifest digest and kept on
-    the VM's overlay; a relaunch of a named session reuses it. Only the
-    current digest's root is kept."""
-    digest = staged_manifest_digest(stage)
+    the VM's overlay; a relaunch of a named session reuses it and never reads
+    the share. Only the current digest's root is kept."""
     ROOTS.mkdir(parents=True, exist_ok=True, mode=0o711)
     root = ROOTS / digest.removeprefix("sha256:")
     for other in ROOTS.iterdir():
@@ -643,7 +697,8 @@ def unpacked_root(stage, id_map):
         root.mkdir(mode=0o711)
         layout = RUNTIME / "image"
         layout.mkdir()
-        assemble(stage, layout)
+        with share() as blobs:
+            assemble(blobs, digest, layout)
         manifest = json.loads((layout / "blobs/sha256" / digest.split(":")[1]).read_text())
         image_config = (layout / "blobs/sha256" / manifest["config"]["digest"].split(":")[1]).read_text()
         mapping = f"{id_map['containerID']}:{id_map['hostID']}:{id_map['size']}"
@@ -676,7 +731,7 @@ def run(stage):
     try:
         options = json.loads((stage / "options.json").read_text())
         id_map = checked_id_map(options.get("id_map"))
-        bundle, image, unpacked = unpacked_root(stage, id_map)
+        bundle, image, unpacked = unpacked_root(manifest_digest(options), id_map)
         if options.get("workspace") is not None:
             WORKSPACE_VIEW.mkdir(mode=0o700, exist_ok=True)
             idmap_workspace(id_map, WORKSPACE_VIEW)

@@ -11,27 +11,38 @@ struct FixtureImages {
     fail: bool,
     gate: Option<Arc<Notify>>,
     access: Arc<Mutex<Option<RegistryAccess>>>,
-    /// Image config labels; `None` serves a layout naming no manifest.
+    /// Image config labels; `None` serves an image with none.
     labels: Option<serde_json::Value>,
     catalog_reads: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 const MANIFEST_BLOB: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const CONFIG_BLOB: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const LAYER_BLOB: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+/// What the fixture's layer holds: no byte of it may reach the workspace.
+const LAYER_BYTES: &[u8] = b"layer bytes that stay in the image share";
 
-/// index.json -> manifest -> config carrying `labels`. Only the two layout
-/// files are staged, so the staged message count is the same either way.
-fn write_labelled_layout(root: &StdPath, labels: &serde_json::Value) -> std::io::Result<()> {
+/// index.json -> manifest -> config carrying `labels`, and one layer, as the
+/// puller lays them out. Returns the layout's verified files.
+fn write_labelled_layout(root: &StdPath, labels: &serde_json::Value) -> std::io::Result<Vec<PathBuf>> {
     let blobs = root.join("blobs/sha256");
     std::fs::create_dir_all(&blobs)?;
     let index = json!({"manifests": [{"digest": format!("sha256:{MANIFEST_BLOB}")}]});
     std::fs::write(root.join("index.json"), serde_json::to_vec(&index)?)?;
-    let manifest = json!({"config": {"digest": format!("sha256:{CONFIG_BLOB}")}});
+    std::fs::write(root.join("oci-layout"), b"")?;
+    let manifest = json!({
+        "config": {"digest": format!("sha256:{CONFIG_BLOB}")},
+        "layers": [{"digest": format!("sha256:{LAYER_BLOB}")}],
+    });
     std::fs::write(blobs.join(MANIFEST_BLOB), serde_json::to_vec(&manifest)?)?;
     std::fs::write(
         blobs.join(CONFIG_BLOB),
         serde_json::to_vec(&json!({"config": {"Labels": labels}}))?,
-    )
+    )?;
+    std::fs::write(blobs.join(LAYER_BLOB), LAYER_BYTES)?;
+    let mut files = vec![PathBuf::from("index.json"), PathBuf::from("oci-layout")];
+    files.extend([MANIFEST_BLOB, CONFIG_BLOB, LAYER_BLOB].map(|blob| PathBuf::from("blobs/sha256").join(blob)));
+    Ok(files)
 }
 
 impl ImageSource for FixtureImages {
@@ -66,14 +77,10 @@ impl ImageSource for FixtureImages {
             }
             anyhow::ensure!(!fail, "registry refused the image");
             let root = tempfile::tempdir()?;
-            match labels {
-                Some(labels) => write_labelled_layout(root.path(), &labels)?,
-                None => std::fs::write(root.path().join("index.json"), b"{\"manifests\":[]}")?,
-            }
-            std::fs::write(root.path().join("oci-layout"), b"")?;
+            let files = write_labelled_layout(root.path(), &labels.unwrap_or_else(|| json!({})))?;
             Ok(PulledImage {
                 root: root.path().to_path_buf(),
-                files: vec![PathBuf::from("index.json"), PathBuf::from("oci-layout")],
+                files,
                 digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".into(),
                 image_digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".into(),
                 _hold: Box::new(root),
@@ -216,7 +223,7 @@ fn mark(fx: &Fixture, marker: &str) {
 #[tokio::test]
 async fn create_wait_reports_a_detached_workload_running_once_the_guest_marks_it_running() {
     let fx = fixture(images());
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
     start(&fx.state, "box".into(), spec(None));
     owner.await.unwrap();
     wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
@@ -250,7 +257,7 @@ async fn create_wait_reports_a_detached_workload_running_once_the_guest_marks_it
 #[tokio::test]
 async fn create_wait_reports_a_detached_workload_that_never_started_as_failed() {
     let fx = fixture(images());
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
     start(&fx.state, "box".into(), spec(None));
     owner.await.unwrap();
     wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
@@ -387,9 +394,9 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
     let images = images();
     let catalog_reads = Arc::clone(&images.catalog_reads);
     let fx = fixture(images);
-    // Pull admission, index.json part, transfer.json, options.json, launch.py,
-    // then the launch exec.
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
+    // Pull admission, options.json, launch.py, then the launch exec: the
+    // image's blobs go to the share, not through the workspace.
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
     start(&fx.state, "box".into(), spec(None));
 
     let status = wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
@@ -414,15 +421,7 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
             _ => None,
         })
         .collect();
-    assert_eq!(
-        staged,
-        [
-            ".capsem-image/0-0",
-            ".capsem-image/transfer.json",
-            ".capsem-image/options.json",
-            ".capsem-image/launch.py"
-        ]
-    );
+    assert_eq!(staged, [".capsem-image/options.json", ".capsem-image/launch.py"]);
     match messages.last() {
         Some(ServiceToProcess::Exec { command, .. }) => {
             assert_eq!(command, &capsem_core::container::detached_launch_command())
@@ -430,12 +429,39 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
         other => panic!("setup must end with the detached launch, got {other:?}"),
     }
     let stage = fx.workspace.join(".capsem-image");
-    assert_eq!(std::fs::read(stage.join("0-0")).unwrap(), b"{\"manifests\":[]}");
+    let mut names: Vec<_> = std::fs::read_dir(&stage)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["launch.py", "options.json"], "only control files are staged");
+    for file in walk(&fx.workspace) {
+        let bytes = std::fs::read(&file).unwrap();
+        assert!(
+            !bytes.windows(LAYER_BYTES.len()).any(|window| window == LAYER_BYTES),
+            "{} holds layer bytes",
+            file.display()
+        );
+    }
+    // The image is in the session's host-only share, every blob and nothing
+    // else, read-only.
+    let session = fx.workspace.parent().unwrap().parent().unwrap();
+    assert_eq!(
+        capsem_core::session::image_share_blobs(session).unwrap(),
+        [MANIFEST_BLOB, CONFIG_BLOB, LAYER_BLOB]
+    );
+    let shared = capsem_core::session::image_share_path(session).join(LAYER_BLOB);
+    assert_eq!(std::fs::read(&shared).unwrap(), LAYER_BYTES);
+    assert_eq!(
+        std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&shared).unwrap().permissions()) & 0o777,
+        0o444
+    );
     let options: serde_json::Value =
         serde_json::from_slice(&std::fs::read(stage.join("options.json")).unwrap()).unwrap();
     assert_eq!(
         options,
         json!({
+            "manifest": format!("sha256:{MANIFEST_BLOB}"),
             "args": ["serve"],
             "env": {"MODE": "test"},
             "workspace": "/workspace",
@@ -451,7 +477,6 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
             "surface": "terminal",
         })
     );
-    assert!(!stage.join("1-0").exists(), "an empty layout file has no part");
     assert_eq!(
         catalog_reads.load(Ordering::Relaxed),
         0,
@@ -530,7 +555,7 @@ async fn registry_credentials_never_reach_the_owner_or_the_staged_workload() {
         access: Arc::clone(&access),
         ..images()
     });
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
     let secret = RegistryAccess {
         username: Some("robot-user".into()),
         password: Some("registry-password".into()),
@@ -603,7 +628,7 @@ async fn cancel_during_staging_never_launches_the_workload() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert!(fx.state.containers.status("box").is_none());
     assert!(
-        !fx.workspace.join(".capsem-image/transfer.json").exists(),
+        !fx.workspace.join(".capsem-image/launch.py").exists(),
         "staging must stop at the cancellation"
     );
 }
@@ -628,7 +653,7 @@ async fn container_status_route_reports_no_workload_as_not_found() {
 #[tokio::test]
 async fn container_status_route_reports_running_only_once_the_guest_marks_it_running() {
     let fx = fixture(images());
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
     start(&fx.state, "box".into(), spec(None));
     owner.await.unwrap();
     wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
@@ -653,7 +678,7 @@ async fn container_status_route_reports_running_only_once_the_guest_marks_it_run
 #[tokio::test]
 async fn container_status_survives_a_service_restart_through_the_launch_record() {
     let fx = fixture(images());
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
     start(&fx.state, "box".into(), spec(None));
     owner.await.unwrap();
     wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;

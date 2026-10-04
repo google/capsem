@@ -9,7 +9,7 @@ use capsem_api::{
     ContainerSpec, ContainerState, ContainerStatusResponse, ContainerSurface, ContainerSurfaceKind, RegistryAccess,
 };
 use capsem_core::container::admission::CatalogSource;
-use capsem_core::container::stage::{self, StagedContent};
+use capsem_core::container::stage;
 use capsem_foundation::unix::contained::{ContainedOpenOptions, EntryKind};
 use std::future::Future;
 use std::pin::Pin;
@@ -107,6 +107,9 @@ impl ImageSource for RegistryImages {
 struct ContainerRecord {
     generation: u64,
     status: ContainerStatusResponse,
+    /// The manifest digest the image share holds the image under, once
+    /// published: what the launch record pins for a relaunch.
+    manifest: Option<String>,
     task: Option<tokio::task::AbortHandle>,
 }
 
@@ -162,6 +165,7 @@ impl ContainerSetups {
                     error: None,
                     surface: None,
                 },
+                manifest: None,
                 task: None,
             },
         );
@@ -169,6 +173,28 @@ impl ContainerSetups {
             task.abort();
         }
         generation
+    }
+
+    /// The manifest digest VM `id`'s image share holds, once published.
+    fn manifest(&self, id: &str) -> Option<String> {
+        self.records
+            .lock()
+            .unwrap()
+            .get(id)
+            .and_then(|record| record.manifest.clone())
+    }
+
+    /// Record the manifest the image share now holds, if this generation
+    /// still owns the VM's record.
+    fn pin_manifest(&self, id: &str, generation: u64, manifest: Option<String>) -> bool {
+        let mut records = self.records.lock().unwrap();
+        match records.get_mut(id) {
+            Some(record) if record.generation == generation => {
+                record.manifest = manifest;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Apply `update` if this generation still owns the VM's record.
@@ -352,13 +378,12 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         .map(|vm| (vm.ram_mb, vm.cpus))
         .ok_or_else(|| format!("VM {id} stopped before its container was staged"))?;
     let resources = capsem_core::container::workload_resources(ram_mb, cpus).map_err(|e| format!("{e:#}"))?;
-    let plan = tokio::task::spawn_blocking({
-        let (root, files) = (image.root.clone(), image.files.clone());
-        move || stage::stage_plan(&root, &files, &spec.args, &spec.env, resources, declared)
-    })
-    .await
-    .map_err(|e| format!("plan stage: {e}"))?
-    .map_err(|e| format!("plan stage: {e:#}"))?;
+    let manifest = share_image(state, id, &image).await?;
+    if !state.containers.pin_manifest(id, generation, Some(manifest.clone())) {
+        return Ok(());
+    }
+    let plan = stage::stage_plan(&manifest, &spec.args, &spec.env, resources, declared)
+        .map_err(|e| format!("plan stage: {e:#}"))?;
     for file in plan {
         if !state.containers.advance(id, generation, |_| {}) {
             return Ok(());
@@ -505,6 +530,10 @@ struct LaunchRecord {
     /// sessions recorded it.
     #[serde(default)]
     resolved: Option<String>,
+    /// The manifest digest the session's image share holds the image under,
+    /// and the one its launcher unpacks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    manifest: Option<String>,
 }
 
 impl LaunchRecord {
@@ -575,6 +604,7 @@ pub(crate) fn record_launched(state: &ServiceState, id: &str) -> Result<(), Stri
         digest: status.digest.unwrap_or_default(),
         surface: status.surface,
         resolved: status.resolved,
+        manifest: state.containers.manifest(id),
     })
     .map_err(|e| format!("encode launch record: {e}"))?;
     capsem_foundation::unix::fs::atomic_write_private(&session_dir.join(LAUNCH_RECORD), &record)
@@ -647,30 +677,32 @@ fn staged_marker(state: &ServiceState, id: &str, marker: &str) -> bool {
         .is_ok_and(|kind| kind == Some(EntryKind::File))
 }
 
-/// Write one staged file into the VM's workspace through the same contained,
-/// no-follow writer and import ledger a file upload uses.
+/// Publish `image`'s verified blobs into VM `id`'s read-only image share and
+/// answer the manifest digest they are held under. Every blob is linked from
+/// the pull's private layout, which nothing but the service can write; the
+/// guest-writable workspace is never a source.
+async fn share_image(state: &ServiceState, id: &str, image: &PulledImage) -> Result<String, String> {
+    let session_dir = resolve_session_dir(state, id).map_err(|e| e.1)?;
+    let (root, files) = (image.root.clone(), image.files.clone());
+    tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+        let image = stage::image_blobs(&root, &files)?;
+        let blobs = capsem_foundation::unix::contained::ContainedDir::open_root(&root)?
+            .walk(std::path::Path::new("blobs/sha256"))?;
+        capsem_core::session::publish_image_share(&session_dir, &blobs, &image.blobs)?;
+        Ok(image.manifest)
+    })
+    .await
+    .map_err(|e| format!("share image: {e}"))?
+    .map_err(|e| format!("share image: {e:#}"))
+}
+
+/// Write one staged control file into the VM's workspace through the same
+/// contained, no-follow writer and import ledger a file upload uses.
 async fn stage_file(state: &Arc<ServiceState>, id: &str, file: stage::StagedFile) -> Result<(), String> {
     let path = format!("{}/{}", capsem_core::container::STAGE, file.name);
     let (parent, name) = resolve_workspace_target(state, id, &path, true).map_err(|e| e.1)?;
-    let (preview, size) = match &file.content {
-        StagedContent::Bytes(bytes) => (file_security_preview_bytes(bytes), bytes.len() as u64),
-        StagedContent::File(source) => {
-            let source = source.clone();
-            tokio::task::spawn_blocking(move || -> std::io::Result<(Vec<u8>, u64)> {
-                use std::io::Read;
-                let input = std::fs::File::open(&source)?;
-                let size = input.metadata()?.len();
-                let mut preview = Vec::new();
-                input
-                    .take(FILE_SECURITY_CONTENT_PREVIEW_MAX as u64)
-                    .read_to_end(&mut preview)?;
-                Ok((preview, size))
-            })
-            .await
-            .map_err(|e| format!("stage {}: {e}", file.name))?
-            .map_err(|e| format!("stage {}: {e}", file.name))?
-        }
-    };
+    let preview = file_security_preview_bytes(&file.bytes);
+    let size = file.bytes.len() as u64;
     if log_file_boundary(state, id, FileBoundaryAction::Import, path, preview, size, None)
         .await
         .map_err(|e| e.1)?
@@ -680,16 +712,10 @@ async fn stage_file(state: &Arc<ServiceState>, id: &str, file: stage::StagedFile
     }
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         use std::io::Write;
-        let mut output = parent
+        parent
             .open_file(&name, ContainedOpenOptions::write_create_truncate(0o644))
-            .map_err(|e| format!("open staged {}: {e}", file.name))?;
-        match file.content {
-            StagedContent::Bytes(bytes) => output.write_all(&bytes),
-            StagedContent::File(source) => {
-                std::fs::File::open(source).and_then(|mut input| std::io::copy(&mut input, &mut output).map(drop))
-            }
-        }
-        .map_err(|e| format!("write staged {}: {e}", file.name))
+            .and_then(|mut output| output.write_all(&file.bytes))
+            .map_err(|e| format!("write staged {}: {e}", file.name))
     })
     .await
     .map_err(|e| format!("stage task: {e}"))?

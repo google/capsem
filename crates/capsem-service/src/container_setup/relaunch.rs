@@ -5,12 +5,20 @@
 //! workload, and the surface grant. An exposure lives in the VM owner process
 //! that made it, so a new owner never inherits one; it is granted again once
 //! the workload runs.
+//!
+//! The image itself needs nothing from here. A relaunch unpacks from the
+//! session's own image share, which is host-only and survives a stop, or not
+//! at all when the unpacked root is already on its overlay; a clone's share is
+//! linked from its source's (`capsem_core::session::clone_sandbox_state`).
+//! Neither reads the workspace, and neither depends on the host's blob cache,
+//! which may have pruned the image since.
 
 use super::*;
 use capsem_foundation::unix::contained::ContainedDir;
 
 /// Carry `source`'s launch record into the session cloned from it, without
-/// its surface exposure: that belongs to the source's owner.
+/// its surface exposure: that belongs to the source's owner. The record pins
+/// the manifest the clone's carried image share holds.
 pub(crate) fn carry_launch_record(source: &std::path::Path, destination: &std::path::Path) -> Result<(), String> {
     let Some(mut record) = read_launch_record(source) else {
         return Ok(());
@@ -33,12 +41,14 @@ pub(crate) fn restore(state: &Arc<ServiceState>, id: &str) {
     let Some(record) = read_launch_record(&session_dir) else {
         return;
     };
+    let manifest = record.manifest.clone();
     let mut status = record.starting();
     if let Some(surface) = status.surface.as_mut() {
         surface.exposure_id = None;
     }
     let generation = state.containers.begin(id, &status.image);
     state.containers.advance(id, generation, |live| *live = status);
+    state.containers.pin_manifest(id, generation, manifest);
     grant_surface_in_background(state, id, generation);
 }
 
@@ -46,11 +56,11 @@ pub(crate) fn restore(state: &Arc<ServiceState>, id: &str) {
 /// nothing and the image the new session names is the only one staged and
 /// run. Its workspace files and the image volumes on its overlay stay.
 ///
-/// The whole stage goes, not only its markers: the launcher left its own copy
-/// read-only, and a carried layer part the new plan does not overwrite would
-/// be read as part of the new image. The stage is flat and guest-written, so
-/// each entry is unlinked without being followed; a directory a guest put
-/// there is left in place, unread.
+/// The carried image share is emptied, so not one blob of the source's image
+/// is left for the new one. The whole stage goes too, not only its markers:
+/// the launcher left its own copy read-only. The stage is flat and
+/// guest-written, so each entry is unlinked without being followed; a
+/// directory a guest put there is left in place, unread.
 pub(crate) fn drop_carried_image(session_dir: &std::path::Path) -> Result<(), String> {
     let not_found = |error: &std::io::Error| error.kind() == std::io::ErrorKind::NotFound;
     let root = ContainedDir::open_root(session_dir).map_err(|e| format!("open {}: {e}", session_dir.display()))?;
@@ -58,6 +68,7 @@ pub(crate) fn drop_carried_image(session_dir: &std::path::Path) -> Result<(), St
         Err(error) if !not_found(&error) => return Err(format!("remove launch record: {error}")),
         _ => {}
     }
+    capsem_core::session::clear_image_share(session_dir).map_err(|e| format!("empty the carried image share: {e}"))?;
     let stage = match capsem_core::session::open_workspace(session_dir)
         .and_then(|workspace| workspace.descend(std::ffi::OsStr::new(capsem_core::container::STAGE)))
     {
