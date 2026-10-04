@@ -3224,14 +3224,10 @@ storage_min_iops = 1
 default = 1000
 linux = 400
 
-# Per runtime, because "slow to start" means something different for `python3`
-# and for an agent that loads a model client.
+# Per runtime the VM ships. The minimal runtime carries only `python3`; agent
+# CLIs and Node live in OCI images and are not part of the VM's startup gate.
 [benchmark.gates.startup_mean_ms]
 python3 = 100
-node = 750
-claude = 2500
-gemini = 5000
-codex = 2500
 
 [benchmark.run]
 # What `just bench` invokes. The binary computes every derived number; a

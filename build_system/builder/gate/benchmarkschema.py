@@ -129,14 +129,11 @@ class DiskIopsConfig(Strict):
 class StartupConfig(Strict):
     """Per runtime, because "slow to start" is not one duration.
 
-    `python3` and an agent that loads a model client do not share a ceiling.
+    The minimal VM runtime ships only `python3`; agent CLIs and Node come from
+    OCI images, which carry their own startup expectations.
     """
 
     python3: int
-    node: int
-    claude: int
-    gemini: int
-    codex: int
 
 
 class BenchmarkGatesConfig(Strict):
