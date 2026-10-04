@@ -22,9 +22,8 @@ fn assets_channel_build_externalizes_runtime_blobs() {
     assert!(!out_dir.join("assets/releases").exists());
     assert!(
         !out_dir.join("runtime/releases").exists(),
-        "an externalized runtime publishes no local blobs and no profile config"
+        "an externalized runtime publishes no local blobs"
     );
-    assert!(!out_dir.join("profiles").exists());
     let channel_manifest: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(out_dir.join("assets/stable/manifest.json")).unwrap())
             .expect("channel manifest parses");

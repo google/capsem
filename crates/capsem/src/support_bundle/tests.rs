@@ -250,12 +250,6 @@ fn bundle_includes_runtime_boundary_debug_contract() {
             "runtime boundary debug contract missing {route}: {boundary}"
         );
     }
-    assert!(
-        !routes
-            .iter()
-            .any(|route| route.as_str().is_some_and(|route| route.starts_with("/profiles"))),
-        "profiles are gone; the debug contract must not advertise a /profiles route: {boundary}"
-    );
 }
 
 #[test]

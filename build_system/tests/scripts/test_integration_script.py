@@ -54,24 +54,7 @@ def test_just_python_entrypoints_load_under_the_host_python(script_path):
     assert "usage:" in result.stdout.lower()
 
 
-def test_integration_script_uses_materialized_profiles_dir(monkeypatch):
-    monkeypatch.delenv("CAPSEM_PROFILES_DIR", raising=False)
-    module = load_integration_script()
-
-    assert module.default_materialized_profiles_dir().endswith("cache/target/config/profiles")
-    assert module._profile_env()["CAPSEM_PROFILES_DIR"] == module.default_materialized_profiles_dir()
-
-
-def test_integration_script_honors_selected_profiles_dir(monkeypatch):
-    monkeypatch.setenv("CAPSEM_PROFILES_DIR", "/verified/profile/catalog")
-    module = load_integration_script()
-
-    assert module.default_materialized_profiles_dir() == "/verified/profile/catalog"
-
-
-def test_integration_script_runs_the_one_runtime_without_a_profile():
-    """One runtime (#289): a CLI run names an optional timeout, never a
-    profile the product no longer has."""
+def test_integration_script_run_prefix_names_only_an_optional_timeout():
     module = load_integration_script()
 
     assert module._run_prefix("cache/target/cargo/debug/capsem", timeout=300) == [
@@ -164,7 +147,6 @@ def test_integration_telemetry_uses_a_retained_named_session(tmp_path, monkeypat
         "delete",
     ]
     assert all(len(args) < 2 or args[1] != "run" for args in calls)
-    assert not any("--profile" in args for args in calls)
 
 
 def test_integration_script_service_paths_use_process_scoped_isolated_home():

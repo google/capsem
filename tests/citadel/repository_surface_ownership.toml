@@ -62,7 +62,7 @@ tests = ["build_system/tests/image/test_docker.py", "build_system/tests/scripts/
 ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
 coverage = "not-applicable: Docker and shell boundaries are exercised by build and install acceptance"
 debt = "tests/citadel/repository_path_debt.toml"
-reason = "Host build and package containers are build-system owned; product profile templates stay in config/docker."
+reason = "Host build and package containers are build-system owned; product image templates stay in config/docker."
 
 [[surface]]
 id = "build-system-packaging"
@@ -130,7 +130,7 @@ state = "retained"
 current = ["config/"]
 targets = ["config/"]
 lint = ["fast.audit.source-syntax", "fast.citadel"]
-tests = ["build_system/tests/image/test_config.py", "tests/test_public_surface_contract.py"]
+tests = ["build_system/tests/image/test_config.py", "tests/test_public_surface_contract.py", "tests/citadel/test_no_vm_profiles.py"]
 ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
 coverage = "not-applicable: product configuration is schema- and acceptance-tested"
 debt = "tests/citadel/repository_path_debt.toml"
@@ -142,7 +142,7 @@ state = "retained"
 current = ["crates/"]
 targets = ["crates/"]
 lint = ["fast.clippy"]
-tests = ["static.rust-coverage", "static.rust-doctests", "build_system/tests/gate/test_rust_test_inventory.py"]
+tests = ["static.rust-coverage", "static.rust-doctests", "build_system/tests/gate/test_rust_test_inventory.py", "tests/citadel/test_no_vm_profiles.py"]
 ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
 coverage = "codecov flags plus config-owned workspace and per-crate Rust coverage ratchets"
 debt = "config/gate.toml exact source-size and per-crate coverage ratchets"

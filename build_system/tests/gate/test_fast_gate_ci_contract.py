@@ -106,26 +106,6 @@ def test_the_public_fast_gate_is_the_shared_module_itself() -> None:
         assert required in planned, f"the fast plan does not run {required}"
 
 
-def test_fast_release_contracts_do_not_depend_on_ignored_build_outputs() -> None:
-    """The cheap contract module must not need what the artifacts module makes.
-
-    `test_materialized_profile_payload.py` reads a materialized catalog, so it
-    belongs to the artifacts module. No other build-chain test may reach for
-    the same directory, or the cheap gate starts depending on a build.
-    """
-    materialized = "tests/capsem-build-chain/test_materialized_profile_payload.py"
-
-    assert (ROOT / materialized).is_file()
-    assert f"--ignore={materialized}" in _planned("test-release-contracts")
-    assert materialized in _planned("test-artifacts")
-    readers = {
-        str(path.relative_to(ROOT))
-        for path in (ROOT / "tests/capsem-build-chain").glob("test_*.py")
-        if "MATERIALIZED_PROFILES_DIR" in path.read_text(encoding="utf-8")
-    }
-    assert readers == {materialized}
-
-
 def test_every_pnpm_cache_owner_materializes_its_store() -> None:
     offenders: list[str] = []
     for workflow_path in sorted((ROOT / ".github/workflows").glob("*.yaml")):

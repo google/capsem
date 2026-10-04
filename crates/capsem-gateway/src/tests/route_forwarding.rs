@@ -28,31 +28,11 @@ async fn gateway_unknown_paths_are_not_forwarded_to_service() {
     assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
 }
 
-/// VM profiles are gone; no `/profiles` route reaches the service.
+/// Retired MCP server mutation routes never reach the service.
 #[tokio::test]
-async fn gateway_profile_routes_are_not_forwarded() {
+async fn gateway_retired_mcp_mutation_routes_are_not_forwarded() {
     let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
     for (method, uri) in [
-        ("GET", "/profiles/list"),
-        ("GET", "/profiles/status"),
-        ("POST", "/profiles/reload"),
-        ("POST", "/profiles/create"),
-        ("GET", "/profiles/code/info"),
-        ("GET", "/profiles/code/obom"),
-        ("POST", "/profiles/code/validate"),
-        ("POST", "/profiles/code/reload"),
-        ("PATCH", "/profiles/code/edit"),
-        ("GET", "/profiles/code/enforcement/rules/list"),
-        ("PUT", "/profiles/code/enforcement/rules/eicar_block/edit"),
-        ("POST", "/profiles/code/detection/evaluate"),
-        ("GET", "/profiles/code/assets/status"),
-        ("POST", "/profiles/code/assets/ensure"),
-        ("PATCH", "/profiles/code/assets/edit"),
-        ("GET", "/profiles/code/skills/list"),
-        ("GET", "/profiles/code/plugins/list"),
-        ("PATCH", "/profiles/code/plugins/dummy_pre_eicar/edit"),
-        ("GET", "/profiles/code/mcp/servers/list"),
-        ("POST", "/profiles/code/mcp/servers/local/tools/echo/call"),
         ("PUT", "/mcp/servers/local/edit"),
         ("DELETE", "/mcp/servers/local/delete"),
     ] {
@@ -299,31 +279,6 @@ async fn gateway_does_not_forward_retired_plugin_authoring_routes() {
         ("POST", "/plugins/test-vm/dummy_pre_eicar"),
         ("GET", "/plugins/global/dummy_pre_eicar"),
         ("POST", "/plugins/global/dummy_pre_eicar"),
-    ] {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_profile_credential_routes() {
-    for (method, uri) in [
-        ("GET", "/profiles/code/credentials/info"),
-        ("GET", "/profiles/code/credentials/status"),
-        ("GET", "/profiles/code/credentials/list"),
-        ("POST", "/profiles/code/credentials/reload"),
-        ("GET", "/profiles/code/credentials/openai/info"),
-        ("DELETE", "/profiles/code/credentials/openai/delete"),
     ] {
         let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
         let resp = app

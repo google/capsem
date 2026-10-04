@@ -78,7 +78,7 @@ an unverified tag. The shared host-builder is an explicit prerequisite; sealing
 that upstream materializer is separate tracked work, so do not describe a cold
 daemon as globally one-egress until that prerequisite is also closed.
 
-Selected runtime bytes travel beside assets/config in one verified read-only
+Selected runtime bytes travel beside assets in one verified read-only
 `RuntimeContent` root. Qualification rechecks those immutable inputs inside the
 container, extracts `capsem-admin` from the exact package, authors one checked
 local graph containing both artifact families, securely hands it to postinst,

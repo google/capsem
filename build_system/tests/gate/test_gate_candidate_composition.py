@@ -157,7 +157,7 @@ def test_ensure_service_owns_the_bounded_host_build_and_signing(
         argparse.Namespace(dry_run=False, graph=False, timing=False),
     )._describe()
 
-    assert plan.after_of("prepare.build-binaries") == {"prepare.materialize-config"}
+    assert plan.after_of("prepare.build-binaries") == {"initrd.hash-aliases"}
     assert plan.after_of("prepare.sign") == {"prepare.build-binaries"}
     assert plan.after_of("prepare") == {"prepare.sign"}
     assert plan.after_of("materialize") == {"prepare"}
@@ -175,8 +175,7 @@ def test_runtime_commands_own_preparation_service_and_guest_edges() -> None:
         )
         plan = GateCommand.registry[command](RecordingRunner(PROJECT_ROOT), args)._describe()
 
-        assert plan.after_of("prepare.materialize-config")
-        assert plan.after_of("prepare.build-binaries") == {"prepare.materialize-config"}
+        assert plan.after_of("prepare.build-binaries") == {"initrd.hash-aliases"}
         assert plan.after_of("prepare.sign") == {"prepare.build-binaries"}
         assert plan.after_of("prepare") == {"prepare.sign"}
         assert plan.after_of("materialize") == {"prepare"}
@@ -224,7 +223,6 @@ def test_every_local_functional_vm_step_selects_the_exact_ironbank_runtime() -> 
     names = CONFIG.environment
     root = CONFIG.path(CONFIG.assets.test_root)
     assets = root / CONFIG.assets.merged_assets_dir
-    catalog = root / CONFIG.assets.merged_config_dir / CONFIG.assets.materialized_profiles_dir
 
     labels = [
         label
@@ -239,14 +237,8 @@ def test_every_local_functional_vm_step_selects_the_exact_ironbank_runtime() -> 
         rendered = "\n".join(plan.step_named(label).render())
         if ".pytest." in label:
             assert f"{names.assets_dir}={assets}" in rendered, label
-            assert f"{names.profiles_dir}={catalog}" in rendered, label
         else:
             assert f"--assets {assets}" in rendered, label
-            if label == "functional.injection":
-                assert f"--profiles-dir {catalog}" in rendered, label
-            else:
-                assert f"{names.profiles_dir}={catalog}" in rendered, label
-        assert "--profile " not in rendered, f"{label} selects a profile the runtime lacks"
 
 
 def test_the_source_state_is_recorded_first_and_re_asserted_last() -> None:
@@ -287,22 +279,6 @@ def test_package_network_is_qualified_before_expensive_candidate_work() -> None:
     assert labels.index(dependencies[-1]) < labels.index("assets.build.arm64")
     assert labels.index(dependencies[-1]) < labels.index("functional.pytest.broad")
     assert all(("host-image", label) in plan.edges for label in dependencies)
-
-
-def test_glowup_reuses_the_content_materialized_by_preparation() -> None:
-    """Standalone ownership must not become duplicate work in composition."""
-    plan = _plan()
-    materializers = [
-        step.label
-        for step in plan.steps
-        if any(
-            action.render() == "bash build_system/scripts/build/materialize-config.sh"
-            for action in step.actions
-        )
-    ]
-
-    assert materializers == ["prepare.materialize-config"]
-    assert "prepare.materialize-config" in ancestors(plan, "package.arm64.content")
 
 
 def test_preparation_waits_for_every_fast_leaf_and_not_one_incidental_step() -> None:

@@ -31,10 +31,6 @@ class TestSetupRoutesRemoved:
     def test_retired_corp_config_route_is_removed(self, client):
         assert client.post("/corp-config", {}) is None
 
-    def test_retired_profile_asset_routes_are_removed(self, client):
-        assert client.get("/profiles/code/assets/status") is None
-        assert client.post("/profiles/code/assets/ensure", {}) is None
-
 
 class TestAssets:
 

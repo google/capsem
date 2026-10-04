@@ -57,7 +57,6 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
         assert (dist / "channels" / channel / "index.html").is_file()
         assert (dist / "channels" / channel / "runtime" / "index.html").is_file()
         manifest = json.loads((dist / current["url"].lstrip("/")).read_text(encoding="utf-8"))
-        assert "profiles" not in manifest
         assert manifest["runtime"]["revision"]
 
     index = (dist / "index.html").read_text(encoding="utf-8")

@@ -1,4 +1,4 @@
-"""Reject hardcoded release channels and profile selections.
+"""Reject hardcoded release channel selections.
 
 This guard intentionally uses only the Python standard library. It runs before
 Capsem's expensive test stages and therefore must work in the same clean Linux
@@ -15,60 +15,15 @@ from pathlib import Path
 
 from capsem_builder.gate import project_root
 from capsem_builder.gate.tools.audit.release_selection_contracts import (
-    _builtin_profiles_match,
     _release_workflows_are_serialized,
     _retired_doctrine_reintroduced,
 )
 
-PROFILE_TERMS = r"(?:code|co-work|cowork|terminal|termional|gui)"
 MATCH_GUARDS = (
     (
-        "user-facing session request hardcodes a named profile",
-        rf"profile_id\s*:\s*['\"]{PROFILE_TERMS}['\"]",
-        ("web/app/src/lib/components", "crates/capsem-tray/src"),
-    ),
-    (
-        "profile picker fabricates a named profile instead of using the installed catalog",
-        rf"(?:profileId\s*=[^\n]*['\"]{PROFILE_TERMS}['\"]|"
-        rf"<option[^>]*value=['\"]{PROFILE_TERMS}['\"])",
-        ("web/app/src/lib/components",),
-    ),
-    (
-        "SDK or MCP surface compiles in a profile name instead of asking the gateway "
-        "catalog for its default",
-        rf"['\"]{PROFILE_TERMS}['\"]",
-        (
-            "sdk/python/capsem",
-            "sdk/typescript/src",
-            "mcp/typescript/src",
-            # The Rust SDK keeps its tests under src/, so its production
-            # modules are named rather than walked.
-            "sdk/rust/src/client.rs",
-            "sdk/rust/src/error.rs",
-            "sdk/rust/src/hypervisor.rs",
-            "sdk/rust/src/lib.rs",
-            "sdk/rust/src/options.rs",
-            "sdk/rust/src/resources.rs",
-            "sdk/rust/src/transport.rs",
-            "sdk/rust/src/vm.rs",
-        ),
-    ),
-    (
-        "profile-scoped MCP route silently uses the default profile",
-        r"['\"]/profiles/\{\}/mcp[^;]{0,240}DEFAULT_PROFILE_ID",
-        ("crates/capsem/src/main.rs",),
-    ),
-    (
-        "workflow input silently defaults a profile or public release channel",
-        rf"(?:channel|asset_channel|profile):\s*\n(?:[^\n]*\n){{0,8}}"
-        rf"\s*default:\s*(?:{PROFILE_TERMS}|stable|nightly)\s*\n",
+        "workflow input silently defaults a public release channel",
+        r"(?:channel|asset_channel):\s*\n(?:[^\n]*\n){0,8}\s*default:\s*(?:stable|nightly)\s*\n",
         (".github/workflows",),
-    ),
-    (
-        "binary release packaging materializes one named profile instead of the selected "
-        "channel catalog",
-        rf"--profile\s+\S*{PROFILE_TERMS}",
-        (".github/workflows/release.yaml",),
     ),
     (
         "release workflow hardcodes a stable/nightly ASSET_MANIFEST_URL instead of an "
@@ -124,7 +79,6 @@ MATCH_GUARDS = (
         "public release HTTP reader passes a bare URL to urllib and may be rejected by the edge",
         r"urlopen\(\s*(?:source|url|manifest_url)\s*,",
         (
-            "build_system/scripts/build/materialize-config.sh",
             "build_system/builder/release/tools/build_complete_release_channel.py",
             "build_system/builder/release/tools/local_release_glowup.py",
         ),
@@ -173,10 +127,9 @@ def main(root: Path | None = None) -> int:
     failed = False
     for label, pattern, paths in MATCH_GUARDS:
         failed = reject_matches(root, label, pattern, paths) or failed
-    failed = _builtin_profiles_match(root) or failed
     failed = _retired_doctrine_reintroduced(root) or failed
     failed = _release_workflows_are_serialized(root) or failed
     if failed:
         return 1
-    print("Hardcoded profile/channel selection guard passed.")
+    print("Hardcoded channel selection guard passed.")
     return 0

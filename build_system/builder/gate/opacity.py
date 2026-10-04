@@ -30,7 +30,7 @@ class OpaqueKind(StrEnum):
 
     RUNTIME_DERIVED = "runtime-derived"
     """Its argv is only known once the step is running: what to reclaim, which
-    profiles exist, which package the builder just wrote."""
+    architectures exist, which package the builder just wrote."""
 
     SECRET_BEARING = "secret-bearing"
     """Its environment carries a credential a dry run must not print. Exactly

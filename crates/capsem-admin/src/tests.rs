@@ -12,26 +12,6 @@ fn file_url(path: &Path) -> String {
     format!("file://{}", path.display())
 }
 
-fn serve_manifest_once(body: String) -> String {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test manifest server");
-    let addr = listener.local_addr().expect("manifest server addr");
-    std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept manifest request");
-        let mut buffer = [0_u8; 4096];
-        let _ = stream.read(&mut buffer);
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        stream.write_all(response.as_bytes()).expect("write manifest response");
-    });
-    format!("http://{addr}/assets/stable/manifest.json")
-}
-
 fn minimal_manifest_json(hash: Option<&str>, include_refresh_policy: bool) -> String {
     let hash = hash.unwrap_or("1111111111111111111111111111111111111111111111111111111111111111");
     format!(
@@ -278,7 +258,7 @@ fn test_software_inventory_json(arch: &str) -> String {
     format!(
         "{}\n",
         serde_json::json!({
-            "schema": "capsem.profile_software_inventory.v1",
+            "schema": "capsem.runtime_software_inventory.v1",
             "architecture": arch,
             "packages": [
                 {
@@ -326,10 +306,10 @@ mod channel_build;
 mod channel_build_bounds;
 #[path = "tests/channel_validation.rs"]
 mod channel_validation;
+#[path = "tests/config_validation.rs"]
+mod config_validation;
 #[path = "tests/image_build.rs"]
 mod image_build;
-#[path = "tests/profile_validation.rs"]
-mod profile_validation;
 #[path = "tests/release_commands.rs"]
 mod release_commands;
 

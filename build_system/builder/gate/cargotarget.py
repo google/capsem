@@ -95,8 +95,8 @@ def link_profiles(config: GateConfig, prefix: Path) -> None:
     property of the machine rather than of the run.
 
     Only the profile directories. The rest of `cache/target/` is the run's own: the
-    journal it is writing, the config it materialized, the homes its VMs boot
-    from. Sharing those would make two runs one run.
+    journal it is writing, the homes its VMs boot from. Sharing those would
+    make two runs one run.
     """
     shared = path(config)
     root = _generated_root(prefix) / "cargo"
@@ -142,8 +142,8 @@ def link_prefix_trees(config: GateConfig, prefix: Path) -> None:
     """Decide what this prefix's `cache/target/` points at, once, in one place.
 
     Two lanes and one answer. Ordinary runs compile into the shared build root;
-    a release lane reads binaries and config a manifest selected and something
-    else staged. Either way the checked-in tests resolve
+    a release lane reads binaries a manifest selected and something else
+    staged. Either way the checked-in tests resolve
     `PROJECT_ROOT/cache/target/...` and are right to, so the prefix is what makes that
     resolve to the correct tree.
     """
@@ -153,15 +153,6 @@ def link_prefix_trees(config: GateConfig, prefix: Path) -> None:
         link_profiles(config, prefix)
         return
     link_pulled_binaries(config, prefix, Path(pulled).resolve())
-    # The materialized config the lane staged, taken from the checkout this
-    # prefix is being made from rather than from an environment variable.
-    # `CAPSEM_PROFILES_DIR` is an overlay the gate adds per step, so it is not
-    # set when the prefix is built -- keying on it meant this never fired, and
-    # a test that set it first agreed with the assumption instead of checking
-    # it.
-    staged = _generated_root(config.root) / "config"
-    if staged.is_dir():
-        link_pulled_tree(config, prefix, "config", staged.resolve())
 
 
 class CheckoutBuildRoot(Resource, name="checkout-build-root"):
@@ -190,32 +181,6 @@ class CheckoutBuildRoot(Resource, name="checkout-build-root"):
 
     def release(self) -> None:
         """The links are how the tree resolves, not something this run holds."""
-
-
-def link_pulled_tree(config: GateConfig, prefix: Path, relative: str, target: Path) -> None:
-    """Point one path under the prefix's `cache/target/` at a tree staged outside it.
-
-    The same fix as the binaries and for the same reason. A release lane
-    qualifies from a prefix carrying only tracked files, while the checked-in
-    tests resolve `PROJECT_ROOT/cache/target/<something>` because a test should not
-    have to know whether this run built its inputs or was handed them. Linking
-    is what makes both true at once.
-
-    Refuses a real directory rather than preferring it: a lane that exists to
-    prove manifest-selected content must not quietly read content it made.
-    """
-    link = _generated_root(prefix) / relative
-    link.parent.mkdir(parents=True, exist_ok=True)
-    if link.is_symlink():
-        if link.readlink() == target:
-            return
-        link.unlink()
-    elif link.exists():
-        raise GateError(
-            f"{link} is a real directory, so this lane would read content it "
-            "produced rather than the content the manifest selected"
-        )
-    link.symlink_to(target, target_is_directory=True)
 
 
 def _tree_bytes(root: Path) -> int:

@@ -14,9 +14,9 @@ from helpers.persistent_registry import registry_entry, write_registry
 from helpers.service import ServiceInstance
 
 DEFUNCT_ID = "55555555-5555-4555-8555-555555555555"
-LEGACY_ID = "66666666-6666-4666-8666-666666666666"
+INCOMPATIBLE_ID = "66666666-6666-4666-8666-666666666666"
 DEFUNCT_NAME = "stale-overlay"
-LEGACY_NAME = "legacy-profile"
+INCOMPATIBLE_NAME = "missing-overlay"
 
 
 def _curl_json_with_status(service: ServiceInstance, method: str, path: str, body=None):
@@ -47,8 +47,8 @@ def test_tui_session_routes_expose_launch_truth_and_delete_only_broken_sessions(
         Path(defunct["session_dir"], "serial.log").write_text(
             "overlayfs mount failed: Stale file handle\nKernel panic - not syncing"
         )
-        # An entry written before profiles were removed is incompatible.
-        incompatible = registry_entry(service.tmp_dir, LEGACY_ID, LEGACY_NAME, profile_id="code")
+        # A persistent VM whose system overlay is gone cannot boot as recorded.
+        incompatible = registry_entry(service.tmp_dir, INCOMPATIBLE_ID, INCOMPATIBLE_NAME, overlay=False)
         write_registry(service.tmp_dir, [defunct, incompatible])
 
         service.start()
@@ -57,22 +57,21 @@ def test_tui_session_routes_expose_launch_truth_and_delete_only_broken_sessions(
         assets = client.get("/assets/status")
         assert isinstance(assets["ready"], bool)
         assert assets["ready"] == (not assets["errors"] and not assets["downloading"]), assets
-        assert client.get("/profiles/list") is None
 
         listing = client.get("/vms/list")
         defunct_row = _row(listing, DEFUNCT_ID)
-        incompatible_row = _row(listing, LEGACY_ID)
+        incompatible_row = _row(listing, INCOMPATIBLE_ID)
         _assert_delete_only(defunct_row, session_id=DEFUNCT_ID, name=DEFUNCT_NAME, status="Defunct")
         _assert_delete_only(
             incompatible_row,
-            session_id=LEGACY_ID,
-            name=LEGACY_NAME,
+            session_id=INCOMPATIBLE_ID,
+            name=INCOMPATIBLE_NAME,
             status="Incompatible",
         )
         assert "Stale file handle" in defunct_row["last_error"]
-        assert "'code' profile" in incompatible_row["resume_blocked_reason"]
+        assert "system overlay rootfs.img unavailable" in incompatible_row["resume_blocked_reason"]
 
-        for session_id in (DEFUNCT_ID, LEGACY_ID):
+        for session_id in (DEFUNCT_ID, INCOMPATIBLE_ID):
             status, payload = _curl_json_with_status(service, "POST", f"/vms/{session_id}/resume", {})
             assert status >= 400
             assert "resume" in payload["error"].lower()

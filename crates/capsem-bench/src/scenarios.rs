@@ -248,7 +248,7 @@ pub(crate) struct ScenarioResult {
     pub(crate) transfer_bytes: u64,
     pub(crate) bytes_per_sec: f64,
     pub(crate) latency_ms: LatencySummary,
-    /// Raw per-request latencies, kept for `capsem.bench.v1` and never
+    /// Raw per-request latencies, kept for `capsem.bench.v2` and never
     /// serialized into this artifact: `capsem-bench` computes every statistic
     /// itself, so a collector that pre-summarizes hides the distribution.
     #[cfg(feature = "host")]

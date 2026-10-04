@@ -423,9 +423,9 @@ fn profile_server(name: &str) -> McpManualServer {
 }
 
 /// With the builtin binary absent, nothing claimed `local` first, so a
-/// profile server of that name became the owner of every `local__*` tool.
+/// configured server of that name became the owner of every `local__*` tool.
 #[test]
-fn a_profile_cannot_shadow_the_builtin_when_its_binary_is_absent() {
+fn a_configured_server_cannot_shadow_the_builtin_when_its_binary_is_absent() {
     let profile = McpConfig {
         servers: vec![
             profile_server("local"),
@@ -442,7 +442,7 @@ fn a_profile_cannot_shadow_the_builtin_when_its_binary_is_absent() {
 }
 
 #[test]
-fn a_profile_cannot_shadow_the_builtin_when_its_binary_is_present() {
+fn a_configured_server_cannot_shadow_the_builtin_when_its_binary_is_present() {
     let dir = tempfile::tempdir().unwrap();
     let builtin = dir.path().join("capsem-mcp-builtin");
     std::fs::write(&builtin, "#!/bin/sh\n").unwrap();

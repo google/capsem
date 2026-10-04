@@ -38,7 +38,7 @@ connections, eight guest setups, and 32 setup requests per second with a burst
 of 16. Setup waits count against the eight-second deadline. Cancelling a queued
 request returns its permits and preserves rate credit; pacing owns no refill task.
 
-The active profile can lower connection and setup ceilings and tune setup pacing:
+The active policy (settings, then corp) can lower connection and setup ceilings and tune setup pacing:
 
 ```toml
 [network.router.expose]

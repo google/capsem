@@ -76,7 +76,7 @@ PAYLOADS = {
     "kernel": b"kernel",
     "obom": b'{"bomFormat":"CycloneDX"}',
     "inventory": (
-        b'{"schema":"capsem.profile_software_inventory.v1","architecture":"x86_64",'
+        b'{"schema":"capsem.runtime_software_inventory.v1","architecture":"x86_64",'
         b'"packages":[{"name":"python","version":"3.12.11","source":"apt"}]}'
     ),
 }

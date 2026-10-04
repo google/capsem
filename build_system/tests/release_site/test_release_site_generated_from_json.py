@@ -60,7 +60,7 @@ def test_no_invented_data() -> None:
 def test_no_catalog_side_channel() -> None:
     build_release_site_from_fixture()
     graph = fixture_graph()
-    forbidden = ("profile_catalog", "catalog.json", "capsem.profile_catalog")
+    forbidden = ("catalog.json",)
 
     serialized_graph = json.dumps(graph, sort_keys=True)
     for token in forbidden:

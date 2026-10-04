@@ -8,7 +8,7 @@ description: Building the Capsem VM runtime (kernel, initrd, rootfs). Use when w
 ## Overview
 
 Capsem builds one VM runtime: a kernel, initrd and rootfs per architecture.
-There is no profile input. Applications come from OCI images (`images/`,
+Applications come from OCI images (`images/`,
 resolved through `images/catalog.toml`), never from the runtime rootfs, so
 every build of a commit produces the same asset set.
 

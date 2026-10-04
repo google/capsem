@@ -1422,12 +1422,8 @@ match = 'request.host == "example.com"'
 fn every_shipped_rule_field_survives_the_field_contract() {
     for (label, toml_text) in [
         (
-            "code",
-            include_str!("../../../../../../config/profiles/code/enforcement.toml"),
-        ),
-        (
-            "co-work",
-            include_str!("../../../../../../config/profiles/co-work/enforcement.toml"),
+            "corp fixture",
+            include_str!("../../../../../../config/corp/enforcement.toml"),
         ),
         ("provider defaults", DEFAULT_PROVIDER_RULES),
     ] {

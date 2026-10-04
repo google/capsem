@@ -42,31 +42,6 @@ def test_install_builds_the_image_its_dockerfile_derives_from() -> None:
     assert labels.index("host-image") < labels.index("install")
 
 
-def test_standalone_install_materializes_the_content_it_validates() -> None:
-    labels = _labels("install")
-
-    assert "materialize-config" in labels, (
-        "the standalone install lane validates the canonical profile-content pair, "
-        "so it must materialize that pair instead of inheriting another run's output"
-    )
-    assert labels.index("materialize-config") < labels.index("install")
-
-
-def test_manifest_selected_install_does_not_replace_selected_content() -> None:
-    import sys as _sys
-
-    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
-    from helpers.gate import built_command
-
-    command = built_command(
-        PROJECT_ROOT,
-        "install",
-        (("selected_content_root", "selected-content"),),
-    )
-
-    assert "materialize-config" not in command._describe().labels
-
-
 def test_composing_install_into_the_gate_does_not_duplicate_the_image() -> None:
     """`plan.shared` makes the second consumer a dependant, not a duplicate."""
     labels = _labels("candidate")

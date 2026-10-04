@@ -97,13 +97,10 @@ class FunctionalConfig(Strict):
     integration_script: str
     binary: str
     assets_dir: str
-    config_root: str
-    profiles_subdir: str
     node_workspaces: tuple[str, ...]
     sdk_rust_example: tuple[str, ...]
     binary_variable: str
     assets_variable: str
-    config_root_variable: str
     assets_dir_variable: str
 
 
@@ -293,4 +290,3 @@ class DevLoopConfig(Strict):
     generate_settings: str
     generated_settings_scratch: str
     check_settings: str
-    materialize_config: str

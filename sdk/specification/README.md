@@ -2,9 +2,9 @@
 
 `openapi.json` is generated from the Rust wire contracts in `capsem-api` and
 served by the gateway at `GET /openapi.json`, using normal bearer authentication.
-The document covers lifecycle, execution, files, private networks, profile
-listing, update, managed restart and statistics operations. Further SDK operations
-join the same document as their gateway contracts are typed.
+The document covers lifecycle, execution, files, private networks, update,
+managed restart and statistics operations. Further SDK operations join the
+same document as their gateway contracts are typed.
 
 Do not edit the JSON by hand. From the repository root, regenerate it with:
 

@@ -100,19 +100,19 @@ def test_component_restores_through_a_shared_asset_lane_symlink(
         / policy.stages["assets"].entry_root
         / "current"
     )
-    first = generation / "code/build-arm64/arm64"
+    first = generation / "first/build-arm64/arm64"
     first.mkdir(parents=True)
     first.joinpath("vmlinuz").write_bytes(b"kernel")
     first.joinpath("initrd.img").write_bytes(b"initrd")
-    first_link = prefix / "cache/target/tests/code/build-arm64"
+    first_link = prefix / "cache/target/tests/first/build-arm64"
     first_link.parent.mkdir(parents=True)
     first_link.symlink_to(first.parent, target_is_directory=True)
     identity = input_digest({"arch": "arm64", "source": "one"})
     store(prefix, "kernel", identity, first_link / "arm64", ("vmlinuz", "initrd.img"))
 
-    second = generation / "co-work/build-arm64"
+    second = generation / "second/build-arm64"
     second.mkdir(parents=True)
-    second_link = prefix / "cache/target/tests/co-work/build-arm64"
+    second_link = prefix / "cache/target/tests/second/build-arm64"
     second_link.parent.mkdir(parents=True)
     second_link.symlink_to(second, target_is_directory=True)
 

@@ -82,9 +82,8 @@ MCP_TO_CLI: dict[str, str | tuple[None, str]] = {
     "capsem_port_open": (None, "typed workload port control has no CLI command yet"),
     "capsem_port_list": (None, "typed workload port control has no CLI command yet"),
     "capsem_port_close": (None, "typed workload port control has no CLI command yet"),
-    "capsem_profiles": (None, "typed profile catalog discovery for AI callers"),
-    "capsem_mcp_info": (None, "typed profile MCP readiness for AI callers"),
-    "capsem_mcp_default": (None, "profile MCP policy inspection for AI callers"),
+    "capsem_mcp_info": (None, "typed MCP readiness for AI callers"),
+    "capsem_mcp_default": (None, "MCP policy inspection for AI callers"),
     "capsem_network_create": (
         None,
         "typed private-network control has no CLI command yet",

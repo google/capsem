@@ -12,15 +12,14 @@ pub(crate) fn compare(
     current_db: &Path,
     dimension: schema::Dimension,
     arch: &str,
-    profile: &str,
     thresholds: Thresholds,
 ) -> Result<()> {
     let baseline_store = store::open(baseline_db)?;
     let current_store = store::open(current_db)?;
-    let baseline = store::latest(&baseline_store, dimension, arch, profile)?
-        .with_context(|| format!("no {} evidence for {arch} {profile}", dimension.as_str()))?;
-    let current = store::latest(&current_store, dimension, arch, profile)?
-        .with_context(|| format!("no {} run for {arch} {profile}", dimension.as_str()))?;
+    let baseline = store::latest(&baseline_store, dimension, arch)?
+        .with_context(|| format!("no {} evidence for {arch}", dimension.as_str()))?;
+    let current = store::latest(&current_store, dimension, arch)?
+        .with_context(|| format!("no {} run for {arch}", dimension.as_str()))?;
     report(&baseline, &judge(&baseline, &current, thresholds));
     Ok(())
 }
@@ -35,15 +34,12 @@ pub(crate) fn verify(records: &Path, evidence_dir: &Path, thresholds: Thresholds
     }
 
     let mut significant = 0usize;
-    for (dimension, arch, profile) in subjects {
-        let Some(record) = store::latest(&measured, dimension, &arch, &profile)? else {
+    for (dimension, arch) in subjects {
+        let Some(record) = store::latest(&measured, dimension, &arch)? else {
             continue;
         };
-        let Some(baseline) = store::latest(&evidence, dimension, &arch, &profile)? else {
-            println!(
-                "{}: no evidence yet for {arch} {profile} -- seeding",
-                dimension.as_str()
-            );
+        let Some(baseline) = store::latest(&evidence, dimension, &arch)? else {
+            println!("{}: no evidence yet for {arch} -- seeding", dimension.as_str());
             continue;
         };
         let verdicts = judge(&baseline, &record, thresholds);

@@ -24,7 +24,7 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 | `release-channel.yaml` | Called by binary or asset release | Validate the generated distribution on an immutable preview, activate it on release.capsem.org, and restore the prior production deployment on any activation-verification failure |
 
 Installers carry host binaries and the selected manifest URL provenance. They
-do not carry a manifest snapshot, a profile catalog, or VM image blobs. The
+do not carry a manifest snapshot or VM image blobs. The
 runtime asset workflow publishes changed image/evidence blobs to the immutable
 GitHub Release tag `runtime-<channel>-<revision>`, where the revision is
 `<workspace version>-<first 12 hex of the source commit>`, using arch-prefixed
@@ -245,14 +245,14 @@ Component-level targets in `codecov.yml`:
 | Component | Path owner |
 |-----------|------------|
 | Network | MITM, TLS, DNS/HTTP/model network parsing and routing |
-| Security | policy config, host config, profile/corp security contracts |
+| Security | policy config, host config, settings/corp security contracts |
 | Tooling | MCP, builtin tools, FS monitor |
 | Monitoring | logger DB, host ledger, log layer |
 | Virtualization | VM lifecycle and hypervisor backends |
 | Runtime | in-VM agent and shared protocol crates |
 | Daemon | app shell and host orchestration |
 | Service | service daemon and process manager |
-| Admin | profile/materialization/image administration |
+| Admin | runtime image, asset, and release administration |
 | CLI | command-line client |
 | TUI | terminal UI |
 | MCP Server | stdio JSON-RPC MCP server |
@@ -304,8 +304,8 @@ Each release publishes:
 - `capsem-sbom.spdx.json` -- host SBOM
 
 Installers carry host binaries, the selected manifest URL, and
-`manifest-metadata.json` provenance. They do not carry `assets/manifest.json`
-or a profile catalog; postinstall hydrates the live channel with
+`manifest-metadata.json` provenance. They do not carry `assets/manifest.json`;
+postinstall hydrates the live channel with
 `capsem update --assets --manifest <URL>`. Heavy runtime image files are
 downloaded through that same path and verified against the runtime-owned file
 metadata before boot. Tag releases do not rebuild or upload runtime images, and
@@ -337,7 +337,7 @@ the physical Mac and boots a real Capsem guest from its exact binary/runtime
 payload to a shell marker. Tart stays out of `just focus-test functional`, which is developer
 feedback rather than release qualification.
 
-Release packages carry no profile catalog. The VM runtime a package boots is
+The VM runtime a package boots is
 selected by the `runtime` document of the channel manifest at
 `https://release.capsem.org/assets/<selected-channel>/manifest.json`, and
 applications reach a session as OCI images resolved through the image catalog.

@@ -46,7 +46,6 @@ def test_plugin_section_renders_route_owned_metadata_and_controls() -> None:
     assert "plugin.config.mode === 'disable'" in source
     assert "aria-label=\"{plugin.id} mode\"" in source
     assert "aria-label=\"{plugin.id} detection level\"" in source
-    assert "profile" not in source.lower()
 
 
 def test_credential_rows_do_not_promote_raw_blake_refs_as_ui_identity() -> None:

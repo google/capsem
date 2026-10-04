@@ -130,26 +130,15 @@ def test_public_runtime_entrypoints_cross_one_gate_boundary() -> None:
 
 
 def test_justfile_routes_assets_through_the_admin_rail() -> None:
-    justfile = (PROJECT_ROOT / "justfile").read_text()
-    materialize_config = (
-        PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh"
-    ).read_text()
-
-    # One runtime (#289): an image build names an architecture and a
-    # template, never a profile.
+    # An image build names an architecture and a template.
     from capsem_builder.gate import config as gate_config
     from capsem_builder.gate.imagebuild import build_argv
 
     config = gate_config.load(PROJECT_ROOT)
     argv = " ".join(build_argv(config, arch="arm64", template="all"))
-    assert "--profile" not in argv
     assert "--config-root config" in argv
     assert "capsem-admin -- image build" in argv
     assert "capsem-admin -- manifest generate" in " ".join(config.initrd.manifest)
-    assert "build_system/scripts/build/materialize-config.sh" in justfile
-    assert "cargo run -p capsem-admin -- profile materialize" in materialize_config
-    assert 'profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)' in materialize_config
-    assert '--config-root "$CONFIG_ROOT"' in materialize_config
 
 
 def test_justfile_and_scripts_do_not_reintroduce_retired_escape_paths() -> None:

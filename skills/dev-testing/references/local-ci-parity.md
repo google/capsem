@@ -54,13 +54,10 @@ runner. A release runner blackout during an expensive tool is a missing
 local/CI resource contract, not permission to rerun unchanged.
 
 Run `build_system/scripts/audit/check-hardcoded-release-selections.sh` at the start of `just test`.
-This source guard is a release contract, not a style check: user-facing and
-profile-scoped requests must obtain profile ids from arguments or the installed
-catalog, package rails must materialize the catalog, native installers must use
-packaged manifest metadata without a stable/nightly fallback, and both release
-commands must bind selection to an explicit channel input. Extend the
-guarded profile terms during renames; keep `code`, `co-work`, `cowork`,
-`terminal`, `termional`, and `gui` until every migration path is complete.
+This source guard is a release contract, not a style check: native
+installers must use packaged manifest metadata without a stable/nightly
+fallback, and both release commands must bind selection to an explicit channel
+input.
 Because it runs before the expensive test stages, the guard must use only
 declared bootstrap dependencies. Its scanner is Python-standard-library
 only and has an executable regression with `rg` absent; never reintroduce a

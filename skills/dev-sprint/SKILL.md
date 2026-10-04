@@ -77,12 +77,12 @@ Load the relevant project skills before coding:
   their subsystems;
 - `/ironbank` for release-critical black-box acceptance.
 
-Keep profile and config ownership crisp:
+Keep config ownership crisp:
 
-- Read `config/README.md` and `tests/README.md` before changing profile source,
+- Read `config/README.md` and `tests/README.md` before changing config source,
   generated config, or config fixtures.
-- Checked-in profile files are source contracts. Generated hashes and
-  materialized config belong under `cache/target/` and are produced by the same
+- Checked-in config files are source contracts. Generated hashes and
+  manifests belong under `cache/target/` and are produced by the same
   `capsem-admin` rail CI and release use.
 - Developer skills live in repository-level `skills/`; product configuration
   must not mirror them.

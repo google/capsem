@@ -14,8 +14,8 @@ The service is the only global runtime object. Policy comes from the built-in
 defaults, `~/.capsem/settings.toml`, and the corp config; every session boots
 the same runtime image set and enforces that merged policy.
 
-The API contract is version 3.0.0. Request bodies refuse unknown fields: a
-`profile_id` in `/vms/create` or `/run` is a 400, not ignored.
+The API contract is version 3.0.0. Request bodies refuse unknown fields with
+a 400 rather than ignoring them.
 
 ## Verb Discipline
 
@@ -158,7 +158,7 @@ describes virtualization state.
 ## UI/TUI Rules
 
 - Plugins, MCP, and assets pages use the global `/plugins`, `/mcp`, and
-  `/assets` routes; there is no per-VM or per-profile scope.
+  `/assets` routes; there is no per-VM scope.
 - Session actions are state-dependent. Incompatible or defunct sessions must
   not offer start/resume/pause actions. A persistent VM created from a VM
   profile before profiles were removed is Incompatible and can only be

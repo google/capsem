@@ -75,7 +75,7 @@ and development installs, records that URL in packaged
 `manifest-metadata.json`, hydrates the live manifest through
 `capsem update --assets --manifest <URL>` during postinstall, installs/restarts
 service files, and writes timestamped install logs. Packages do not carry a
-`~/.capsem/assets/manifest.json` payload, and they ship no profile catalog: VM
+`~/.capsem/assets/manifest.json` payload: VM
 assets are the channel's one runtime, hydrated from the manifest. They do not run an AI-provider setup wizard and
 they do not create a user policy file.
 
@@ -130,7 +130,7 @@ retry after failure; postinstall removes both only after success.
 - `read_cached_update_notice()` -> sync file read on every command
 - `refresh_update_cache_if_stale()` -> background 24h-cached check merged atomically into the installed `manifest-metadata.json` sidecar
 - `run_update()` -> check the selected manifest URL and stage one complete compatible release transaction before mutating the installation
-- `capsem update --yes` -> verifies every changed package/runtime artifact, prints the tested package-manager apply command for audit, executes it through `sudo` when the native package changes, and atomically activates the selected release graph; this is the one ordinary update path used by the installed service
+- `capsem update --yes` -> verifies every changed package/runtime artifact, prints the tested package-manager apply command for audit, executes it through `sudo` when the native package changes, and atomically activates the selected release graph; this is the one ordinary update path used by the installed service. It also removes a leftover `~/.capsem/profiles` directory from older installs with a no-follow contained removal (a symlink is removed as the link)
 - `capsem update --assets` -> low-level diagnostic/repair rail for hydrating the locally installed manifest or an explicit `--manifest` URL; normal product surfaces never direct users to apply assets separately
 - Corporate VM asset channels use `capsem update --assets --manifest <URL>`; `--corp <URL>` provisions policy config and must not be combined with `--assets`
 - `--manifest` and `--corp` are URL-only inputs. Local files must use `file:///absolute/path`, while hosted release and corporate channels use `https://...` or `http://...`; bare paths are rejected so update checks share one URL-based mechanism.
@@ -197,7 +197,7 @@ runnable on every containerd store. Do not repair a failure with runtime apt,
 pnpm, uv sync --project build_system, a second build, or an unverified image tag.
 
 Manifest-selected runtime content includes a verified immutable input subtree
-under the same `RuntimeContent` root as assets and materialized config. Mount
+under the same `RuntimeContent` root as assets. Mount
 that root read-only, reverify it inside the container, and use the extracted
 `capsem-admin` from the exact package to author the checked local package/runtime
 graph before the single `dpkg -i`. The narrower Debian proof uses the same graph

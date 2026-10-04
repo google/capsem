@@ -355,7 +355,7 @@ def _hot_route_contracts() -> list[RouteContract]:
             None,
             {"ready", "downloading", "current_arch", "assets", "errors", "manifest"},
             dict,
-            {"profile_id", "missing_assets", "invalid_assets"},
+            {"missing_assets", "invalid_assets"},
         ),
         RouteContract("GET", "/plugins/list", None, {"plugins"}, dict, {"scope"}),
         RouteContract(
@@ -372,7 +372,6 @@ def _hot_route_contracts() -> list[RouteContract]:
             None,
             {"server_count", "manual_server_count", "builtin_local_enabled"},
             dict,
-            {"profile_id"},
         ),
         RouteContract("GET", "/mcp/default/info", None, {"action", "source", "rule_id"}, dict),
         RouteContract("GET", "/mcp/servers/list", None, None, list),
@@ -442,7 +441,7 @@ def _service_route_contracts() -> list[RouteContract]:
             None,
             {"ready", "downloading", "current_arch", "assets", "errors", "manifest"},
             dict,
-            {"profile_id", "missing_assets", "invalid_assets"},
+            {"missing_assets", "invalid_assets"},
         ),
         RouteContract("GET", "/plugins/list", None, {"plugins"}, dict, {"scope"}),
         RouteContract(
@@ -459,7 +458,6 @@ def _service_route_contracts() -> list[RouteContract]:
             None,
             {"server_count", "manual_server_count", "builtin_local_enabled"},
             dict,
-            {"profile_id"},
         ),
         RouteContract("GET", "/mcp/default/info", None, {"action", "source", "rule_id"}, dict),
         RouteContract("GET", "/mcp/servers/list", None, None, list),
@@ -655,7 +653,6 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
                 None,
                 {"gateway_version", "service", "vm_count", "assets"},
                 dict,
-                {"profiles"},
             ),
             RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
             RouteContract("GET", "/stats", None, {"global", "sessions"}, dict),
@@ -905,7 +902,6 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         assert create["name"] == source_name
         assert source_id != source_name
         _assert_uuid_route_id(source_id)
-        assert "profile_id" not in create
         _assert_timing_budget(timing, p95_ms=45_000.0, max_ms=45_000.0, cpu_s=10.0)
         assert wait_exec_ready(service_client, source_id, timeout=EXEC_READY_TIMEOUT)
 
@@ -968,7 +964,6 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         assert running_status["can_resume"] is False
         assert running_status["available_actions"] == ["pause", "stop", "fork", "delete"]
         running_info = service_client.get(f"/vms/{source_id}/info", timeout=30)
-        assert "profile_id" not in running_info
         assert running_info["name"] == source_name
         assert running_info["status"] == "Running"
         _assert_vm_row(
@@ -1048,7 +1043,6 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
             service_proc=service_proc,
         )
         assert resume_payload["id"] == source_id
-        assert "profile_id" not in resume_payload
         _assert_timing_budget(timing, p95_ms=45_000.0, max_ms=45_000.0, cpu_s=10.0)
         assert wait_exec_ready(service_client, source_id, timeout=EXEC_READY_TIMEOUT)
         _assert_archived_exec_body(service_client, source_id, exec_event_id)

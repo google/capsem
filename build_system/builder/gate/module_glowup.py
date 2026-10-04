@@ -59,8 +59,7 @@ class GlowupModule(
                 runtime = runtimeprepare.prepare(plan, self._config, guest=False, after=(built,)).ready
             glowup(
                 plan, self._config, qualification=self.qualification, after=(built,),
-                local_content=RuntimeContent.built(self._config),
-                materialized=built, runtime=runtime,
+                local_content=RuntimeContent.built(self._config), runtime=runtime,
             )
         return plan
 
@@ -73,7 +72,6 @@ def glowup(
     after: tuple[Step, ...] = (),
     staged: RuntimeContent | None = None,
     local_content: RuntimeContent | None = None,
-    materialized: Step | None = None,
     runtime: Step | None = None,
 ) -> Step:
     """Build the release packages and prove an install upgrades cleanly."""
@@ -88,22 +86,21 @@ def glowup(
         config,
         after,
         content=content,
-        materialized=materialized,
         runtime=runtime,
     )
 
 
 def _content_step(config: GateConfig, content: RuntimeContent, *, arches: tuple | None = None) -> Step:
-    """Validate the complete paired cohort before spending time packaging it."""
+    """Validate the complete content before spending time packaging it."""
     targets = tuple(config.architectures.values()) if arches is None else arches
     return step(
         "content",
         Call(
-            f"verify paired content {content.root} for {', '.join(arch.name for arch in targets)}",
+            f"verify content {content.root} for {', '.join(arch.name for arch in targets)}",
             lambda _context: content.require_complete(config, arches=targets),
             justification=CallJustification(
                 kind=OpaqueKind.PURE_INSPECTION,
-                reason="glow-up consumes one inseparable assets/config cohort",
+                reason="glow-up consumes one complete asset cohort",
                 effects=machine_effects(),
             ),
         ),
@@ -192,8 +189,6 @@ def _glowup_step(
             qualification.bin_dir,
             "--assets-dir",
             content.assets,
-            "--config-root",
-            content.config,
             "--work-dir",
             work_dir,
             "--evidence-dir",
@@ -234,13 +229,11 @@ def _build_and_prove(
     after: tuple,
     *,
     content: RuntimeContent,
-    materialized: Step | None,
     runtime: Step | None = None,
 ) -> Step:
     # `previous` chains each architecture behind the last; the first has
     # nothing before it beyond whatever this phase was given.
-    materialized = materialized or plan.shared(runtimeprepare.materialize_config_step(config))
-    verified = phase.add(_content_step(config, content), after=(materialized, *after))
+    verified = phase.add(_content_step(config, content), after=after)
     previous: tuple = (verified,)
     for arch in config.architectures:
         # The final install step below authors a checked local release graph

@@ -22,7 +22,7 @@ release CI fails immediately because jobs do not share their host filesystem.
 
 The bootstrap command must be a fail-closed step with asset self-building
 disabled: bootstrap materializes host prerequisites, while the following
-profile-owned build-assets plan remains the sole owner of the artifact bytes.
+build-assets plan remains the sole owner of the artifact bytes.
 
 See skills/build-images/SKILL.md and skills/dev-ci/SKILL.md.
 """

@@ -1,9 +1,7 @@
 """Seed `persistent_registry.json` entries in the current registry shape.
 
 An entry pins the boot assets it was created with (`asset_pins`), taken here
-from the installed manifest's current release. An entry that still carries a
-`profile_id` is a VM from before profiles were removed; tests write one with
-`profile_id=...` in `overrides` to prove it is refused.
+from the installed manifest's current release.
 """
 
 from __future__ import annotations

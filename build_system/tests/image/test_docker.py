@@ -144,7 +144,7 @@ def test_software_inventory_records_the_runtime_debian_packages(tmp_path):
     assert container_output.call_count == 1
     assert container_output.call_args.args[3].startswith("dpkg-query -W")
     inventory = json.loads((tmp_path / "software-inventory.json").read_text())
-    assert inventory["schema"] == "capsem.profile_software_inventory.v1"
+    assert inventory["schema"] == "capsem.runtime_software_inventory.v1"
     assert inventory["packages"] == [
         {"architecture": "arm64", "name": "python3", "source": "dpkg", "version": "3.11.2"},
         {"architecture": "arm64", "name": "runc", "source": "dpkg", "version": "1.1.5"},
@@ -678,7 +678,7 @@ class TestGenerateBuildContext:
         assert "arch_name" in ctx
         assert "apt_packages" in ctx
         assert "guest_binaries" in ctx
-        for retired in ("python_packages", "npm_packages", "npm_prefix", "profile_build_script"):
+        for retired in ("python_packages", "npm_packages", "npm_prefix"):
             assert retired not in ctx
 
     def test_kernel_keys(self, real_config):
@@ -1227,7 +1227,6 @@ class TestBuildLedger:
             "apt_packages": list(real_config.build.rootfs.runtime_apt_packages),
         }
         assert "package_inputs" not in record
-        assert "profile_inputs" not in record
         assert record["erofs"] == {
             "enabled": True,
             "compression": "lz4hc",
@@ -1584,7 +1583,7 @@ class TestBuildLedger:
             path.write_text(
                 json.dumps(
                     {
-                        "schema": "capsem.profile_software_inventory.v1",
+                        "schema": "capsem.runtime_software_inventory.v1",
                         "architecture": "arm64",
                         "packages": [],
                     }
@@ -1629,7 +1628,6 @@ class TestBuildLedger:
         ]
         config_record = records[0]
         assert config_record["rendered_rootfs_inputs"]["apt_packages"]
-        assert "profile_inputs" not in config_record
         assert "installed_packages" not in config_record
         inventory_record = records[1]
         assert inventory_record["inputs"]["dependency_image"] == {
@@ -2024,7 +2022,6 @@ class TestPrepareBuildContext:
             context_dir,
             PROJECT_ROOT,
         )
-        assert not (context_dir / "profile-root").exists()
         assert "Credentials are brokered by Capsem" in (context_dir / "tips.txt").read_text()
 
         dependency_context = tmp_path / "dependency"
@@ -2194,7 +2191,7 @@ class TestGenerateChecksums:
             assert entry["size"] > 0
 
     def test_manifest_includes_obom_when_rootfs_build_emits_it(self, tmp_path):
-        """CycloneDX OBOM is pinned as a profile asset, not replaced by build-ledger."""
+        """CycloneDX OBOM is pinned as a runtime asset, not replaced by build-ledger."""
         arm64 = tmp_path / "arm64"
         arm64.mkdir()
         (arm64 / "vmlinuz").write_bytes(b"kernel")
@@ -2226,7 +2223,7 @@ class TestGenerateChecksums:
         (arm64 / "initrd.img").write_bytes(b"initrd")
         (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
         (arm64 / "software-inventory.json").write_text(
-            json.dumps({"schema": "capsem.profile_software_inventory.v1", "packages": []})
+            json.dumps({"schema": "capsem.runtime_software_inventory.v1", "packages": []})
         )
         generate_checksums(tmp_path, "0.13.0")
         manifest = json.loads((tmp_path / "manifest.json").read_text())

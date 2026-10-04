@@ -351,7 +351,7 @@ fn batch_update_rejects_dynamic_guest_env() {
         let result = loader::batch_update_settings(&changes);
         assert!(
             result.is_err(),
-            "dynamic guest.env.* belongs to profile/bootstrap, not settings"
+            "dynamic guest.env.* belongs to the boot environment, not settings"
         );
         assert!(result.unwrap_err().contains("corp-owned setting"));
     });

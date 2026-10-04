@@ -83,6 +83,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/gate/test_gate_test_admission.py",
         "build_system/tests/gate/test_bounded_process_tree.py",
         "build_system/tests/gate/test_candidate_runtime_content.py",
+        "build_system/tests/gate/runtime_content.py",
         "build_system/tests/gate/test_host_docker_ownership.py",
         "build_system/tests/gate/test_machine_cache_bound.py",
         "build_system/tests/gate/test_rust_coverage_ratchet.py",

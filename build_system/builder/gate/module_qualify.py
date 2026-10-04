@@ -4,13 +4,13 @@ One verb per artifact family, and the only `just` recipes any workflow needs.
 
 Before these existed, `release-assets.yaml` and `release.yaml` each assembled
 their lane out of private `_test-*` recipes: three or four steps, in an order
-restated in YAML, with the deferred-profile branch expressed as a step-level
-`if:`. The bodies were shared but the sequence was not, which is how the asset
-lane grew a `_test-profile-artifacts` branch that the binary lane never got.
-Private primitives had become the integration surface, so the integration had
-nowhere to live except the workflow files, twice.
+restated in YAML, with a deferred branch expressed as a step-level `if:`. The
+bodies were shared but the sequence was not, which is how the asset lane grew
+a branch that the binary lane never got. Private primitives had become the
+integration surface, so the integration had nowhere to live except the
+workflow files, twice.
 
-`release-binaries` and `release-profile` cannot be reused here, and that is not
+`release-binaries` and `release-assets` cannot be reused here, and that is not
 an oversight. Those are the operator's dispatchers: they accept a qualified
 commit, publish the immutable source ref, and dispatch these very workflows. A
 workflow calling one would dispatch itself.

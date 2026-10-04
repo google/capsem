@@ -136,7 +136,6 @@ def main() -> int:
     )
     parser.add_argument("--bin-dir", required=True, type=Path)
     parser.add_argument("--assets-dir", required=True, type=Path)
-    parser.add_argument("--config-root", required=True, type=Path)
     parser.add_argument(
         "--install-script", default=PROJECT_ROOT / "web/marketing/public/install.sh", type=Path
     )
@@ -265,7 +264,6 @@ def main() -> int:
                 args.input_deb,
                 stable_deb,
                 args.bin_dir,
-                args.config_root,
                 args.assets_dir,
                 stable_manifest_url,
             )
@@ -273,7 +271,6 @@ def main() -> int:
                 args.input_deb,
                 nightly_deb,
                 args.bin_dir,
-                args.config_root,
                 args.assets_dir,
                 nightly_manifest_url,
             )
@@ -979,7 +976,6 @@ def repack_deb(
     input_deb: Path,
     output_deb: Path,
     bin_dir: Path,
-    config_root: Path,
     assets_dir: Path,
     manifest_url: str,
 ) -> None:
@@ -992,7 +988,6 @@ def repack_deb(
             manifest_url,
             str(input_deb),
             str(bin_dir),
-            str(config_root),
             str(assets_dir),
             str(output_deb),
         ]
@@ -1810,8 +1805,7 @@ if grep -Fq "event=assets_hydrated" "$HOME/.capsem/logs/install.log"; then
   exit 1
 fi
 grep -F "event=service_install_invoked" "$HOME/.capsem/logs/install.log"
-wait_for_profile_assets code "$EVIDENCE_DIR/code-assets-after-install.json"
-wait_for_profile_assets co-work "$EVIDENCE_DIR/co-work-assets-after-install.json"
+wait_for_assets "$EVIDENCE_DIR/assets-after-install.json"
 check_update_log asset_update_complete {stable_manifest_url}
 probe_installed_transition fresh-stable \
   {stable_manifest_url} {fresh_stable_channel} {package_version} \

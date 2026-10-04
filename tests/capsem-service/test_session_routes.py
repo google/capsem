@@ -13,10 +13,10 @@ from helpers.persistent_registry import registry_entry, write_registry
 from helpers.service import ServiceInstance
 
 DEFUNCT_ID = "11111111-1111-4111-8111-111111111111"
-LEGACY_ID = "22222222-2222-4222-8222-222222222222"
+INCOMPATIBLE_ID = "22222222-2222-4222-8222-222222222222"
 MISSING_ASSET_ID = "77777777-7777-4777-8777-777777777777"
 DEFUNCT_NAME = "stale-overlay"
-LEGACY_NAME = "legacy-profile"
+INCOMPATIBLE_NAME = "missing-overlay"
 MISSING_ASSET_NAME = "missing-asset-pin"
 
 
@@ -36,7 +36,6 @@ def _assert_delete_only_session(
     assert payload["id"] == session_id
     if "name" in payload:
         assert payload["name"] == name
-    assert "profile_id" not in payload
     assert payload["status"] == status
     assert payload["persistent"] is True
     assert payload["can_resume"] is False
@@ -53,8 +52,8 @@ def test_session_routes_make_defunct_and_incompatible_sessions_delete_only() -> 
         defunct = registry_entry(service.tmp_dir, DEFUNCT_ID, DEFUNCT_NAME)
         Path(defunct["session_dir"], "process.log").write_text("boot failed\n")
         Path(defunct["session_dir"], "serial.log").write_text(stale_log)
-        # An entry written before profiles were removed is incompatible.
-        incompatible = registry_entry(service.tmp_dir, LEGACY_ID, LEGACY_NAME, profile_id="code")
+        # A persistent VM whose system overlay is gone cannot boot as recorded.
+        incompatible = registry_entry(service.tmp_dir, INCOMPATIBLE_ID, INCOMPATIBLE_NAME, overlay=False)
         write_registry(service.tmp_dir, [defunct, incompatible])
 
         service.start()
@@ -62,22 +61,22 @@ def test_session_routes_make_defunct_and_incompatible_sessions_delete_only() -> 
 
         listing = client.get("/vms/list")
         defunct_row = _row(listing, DEFUNCT_ID)
-        incompatible_row = _row(listing, LEGACY_ID)
+        incompatible_row = _row(listing, INCOMPATIBLE_ID)
         _assert_delete_only_session(
             defunct_row, session_id=DEFUNCT_ID, name=DEFUNCT_NAME, status="Defunct"
         )
         _assert_delete_only_session(
             incompatible_row,
-            session_id=LEGACY_ID,
-            name=LEGACY_NAME,
+            session_id=INCOMPATIBLE_ID,
+            name=INCOMPATIBLE_NAME,
             status="Incompatible",
         )
         assert "Stale file handle" in defunct_row["last_error"]
-        assert "'code' profile" in incompatible_row["resume_blocked_reason"]
+        assert "system overlay rootfs.img unavailable" in incompatible_row["resume_blocked_reason"]
 
         for session_id, name, status in (
             (DEFUNCT_ID, DEFUNCT_NAME, "Defunct"),
-            (LEGACY_ID, LEGACY_NAME, "Incompatible"),
+            (INCOMPATIBLE_ID, INCOMPATIBLE_NAME, "Incompatible"),
         ):
             _assert_delete_only_session(
                 client.get(f"/vms/{session_id}/status"),
@@ -98,10 +97,10 @@ def test_session_routes_make_defunct_and_incompatible_sessions_delete_only() -> 
             assert "resume" in error["error"].lower()
 
         assert client.delete(f"/vms/{DEFUNCT_ID}/delete") == {"success": True}
-        assert client.delete(f"/vms/{LEGACY_ID}/delete") == {"success": True}
+        assert client.delete(f"/vms/{INCOMPATIBLE_ID}/delete") == {"success": True}
         listing_after_delete = client.get("/vms/list")
         assert DEFUNCT_ID not in {row["id"] for row in listing_after_delete["sandboxes"]}
-        assert LEGACY_ID not in {row["id"] for row in listing_after_delete["sandboxes"]}
+        assert INCOMPATIBLE_ID not in {row["id"] for row in listing_after_delete["sandboxes"]}
     finally:
         service.stop()
 

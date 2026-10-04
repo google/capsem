@@ -8,7 +8,7 @@ by *building* instead -- `artifacts.build-chain` where a release verifies, and
 `glowup.install` where a release proves a pulled package.
 
 The cost of that was measured. Seven binary-release dispatches, forty minutes
-each, every one failing in a step no local run reaches: a profile axis reading
+each, every one failing in a step no local run reaches: a plan axis reading
 the checkout, a glow-up composing paths from the checkout layout, suites handed
 no content selection, a workspace `pnpm install` reaching a registry inside a
 loopback-only namespace, a gitignored generated file nothing produced. The

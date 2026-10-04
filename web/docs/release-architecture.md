@@ -10,22 +10,23 @@ The only mutable manifest URL for a channel is:
 
 `channels.json` lists channels and manifest records. A manifest record's
 `version` is the manifest contract version, such as `1.0.2`. It is not the
-Capsem package version, VM asset version, profile revision, or profile image
-revision.
+Capsem package version or the runtime revision.
 
 The selected manifest owns two branches:
 
 ```text
 channel -> packages -> binaries
-channel -> profiles -> architecture -> config/software/images/evidence
+channel -> runtime -> architecture -> software/images/evidence
 ```
 
 Packages are delivery containers. Binaries are executable files owned by a
 package and carry their own SHA-256, BLAKE3, installed path, version, and SBOM
 component reference.
 
-Profiles own `min_capsem_version`, config files, software inventory, profile
-images, and ABOM/OBOM evidence. Profiles never select the current Capsem binary.
+The runtime owns `min_capsem_version`/`max_capsem_version`, software
+inventory, the kernel/initrd/rootfs images, and OBOM evidence. It never selects
+the current Capsem binary and publishes no config file. Applications are OCI
+images resolved through the image catalog, not part of the manifest.
 
 The full release output contract lives in
 `web/docs/src/content/docs/architecture/release-output.md`.

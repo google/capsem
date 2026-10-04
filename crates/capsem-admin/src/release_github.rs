@@ -26,7 +26,7 @@ pub(crate) trait ReleaseLookup {
 ///
 /// Releases are immutable, so the hosted lane would build and verify every
 /// asset and only then refuse at publication, forty minutes in:
-/// a profile revision had been published from an earlier commit and never
+/// a revision had been published from an earlier commit and never
 /// activated, and a release of the same revision from main found out at its
 /// last step. The same commit is a resume, which publication supports.
 pub(crate) fn ensure_publication_identity_is_free(

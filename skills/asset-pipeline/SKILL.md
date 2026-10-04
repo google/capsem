@@ -85,8 +85,8 @@ selection rather than rewriting running VMs.
 Persistent resume boots the registry entry's own asset pins, never the
 current runtime set. A runtime image advance and a deprecated pin preserve the
 VM; an explicit installed-manifest revocation, a missing pinned asset, invalid
-rootfs geometry, or an entry from before profiles were removed (it still names
-a `profile_id`) blocks it. The active policy is re-materialized from current
+rootfs geometry, or a registry entry from before profiles were removed blocks
+it. The active policy is re-materialized from current
 settings and corp config at every boot. Any cached resume verdict must
 fingerprint the installed manifest, rootfs metadata, and pinned asset metadata
 so a revocation or repair is visible immediately.

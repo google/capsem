@@ -480,7 +480,6 @@ fn assets_channel_headers_split_mutable_and_immutable_paths() {
     assert!(headers.contains("/assets/stable/*\n  Cache-Control: no-cache, must-revalidate"));
     assert!(headers.contains("/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable"));
     assert!(headers.contains("/runtime/releases/*\n  Cache-Control: public, max-age=31536000, immutable"));
-    assert!(!headers.contains("/profiles/"), "no profile release tree is published");
     assert!(!headers.contains("/assets/*\n  Cache-Control: no-cache"));
 }
 

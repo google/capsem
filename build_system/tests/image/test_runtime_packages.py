@@ -47,5 +47,5 @@ def test_the_dependency_dockerfile_installs_exactly_the_runtime_packages(arch):
     ]
     assert packages == _declared()
     assert rendered.count("apt-get install") == 1
-    for retired in ("npm", "uv pip", "node", "profile-build", "python-requirements", "vim"):
+    for retired in ("npm", "uv pip", "node", "python-requirements", "vim"):
         assert retired not in rendered, retired

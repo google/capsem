@@ -82,7 +82,7 @@ def test_a_fault_is_emitted_when_it_happens_not_at_the_end(tmp_path: Path) -> No
 
     with _watch(tmp_path, on_fault=seen.append) as watch:
         watch.entered("suite")
-        (tmp_path / "config" / "profile.toml").write_text("x", encoding="utf-8")
+        (tmp_path / "config" / "settings.toml").write_text("x", encoding="utf-8")
         _until(lambda: bool(seen))
         # Still inside the run: no sweep, no exit, no analysis pass.
         assert seen, "the fault was queued for later instead of raised now"
@@ -93,7 +93,7 @@ def test_a_fault_is_emitted_when_it_happens_not_at_the_end(tmp_path: Path) -> No
 def test_a_read_only_close_is_not_recorded_as_a_filesystem_change(tmp_path: Path) -> None:
     """Linux inotify names an ordinary close-after-read ``closed_no_write``.
 
-    Judging it as a mutation makes every compiler/profile read look like a
+    Judging it as a mutation makes every compiler read look like a
     source edit, and hashing each one turns the observer itself into the
     dominant cost of a clean bootstrap.  The kernel has already told us no
     write occurred, so this event must be inert before facts are collected.
@@ -375,14 +375,14 @@ def test_a_relative_path_is_never_judged_against_the_working_directory(
     """The release run of 2026-08-04 logged 42 of these, every one false.
 
     `shutil.rmtree` deletes through a directory descriptor --
-    `os.unlink('profile.toml', dir_fd=5)` -- so a bare entry name reaches the
+    `os.unlink('settings.toml', dir_fd=5)` -- so a bare entry name reaches the
     observer. Resolving it against the current working directory, which is the
     checkout root, named a tracked file the run never touched:
 
-        [source-tree] profile.toml: unlink during the run
+        [source-tree] settings.toml: unlink during the run
 
     A guard that reports 42 phantom source mutations per run is a guard nobody
-    reads, and this is the guard that exists to catch the `config/profiles`
+    reads, and this is the guard that exists to catch the `config/` hardlink
     race that killed a release run. Judged only on absolute paths, so no
     caller's spelling can be misattributed -- not just the one that was found.
     """
@@ -392,9 +392,9 @@ def test_a_relative_path_is_never_judged_against_the_working_directory(
     watch = Watch([], source_root=tmp_path)
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "profile.toml").write_text("x")
+    (tmp_path / "config" / "settings.toml").write_text("x")
 
-    watch._judge(Event(at=1.0, kind="unlink", path=Path("config/profile.toml"), steps=()))
+    watch._judge(Event(at=1.0, kind="unlink", path=Path("config/settings.toml"), steps=()))
     assert watch.faults == [], [fault.render() for fault in watch.faults]
 
 
@@ -405,19 +405,17 @@ def test_rmtree_of_build_output_is_not_reported_as_a_source_mutation(
     from capsem_builder.gate.interception import Instrument
 
     root = tmp_path / "checkout"
-    (root / "cache" / "target" / "config" / "profiles" / "code").mkdir(parents=True)
-    (root / "config" / "profiles").mkdir(parents=True)
-    (root / "cache" / "target" / "config" / "profiles" / "code" / "profile.toml").write_text("x")
-    (root / "cache" / "target" / "config" / "profiles" / "code" / "asset-status.json").write_text(
-        "y"
-    )
+    (root / "cache" / "target" / "build" / "settings").mkdir(parents=True)
+    (root / "config" / "settings").mkdir(parents=True)
+    (root / "cache" / "target" / "build" / "settings" / "settings.toml").write_text("x")
+    (root / "cache" / "target" / "build" / "settings" / "asset-status.json").write_text("y")
 
     # cwd at the checkout root is what made a bare entry name resolve into the
     # source tree in the first place.
     monkeypatch.chdir(root)
     watch = Watch(roots=(root,), source_root=root)
     with Instrument(watch, fd_path_template=FD_PATH_TEMPLATE):
-        shutil.rmtree(root / "cache" / "target" / "config")
+        shutil.rmtree(root / "cache" / "target" / "build")
 
     offenders = [fault for fault in watch.faults if fault.reason == "source-tree"]
     assert not offenders, [fault.render() for fault in offenders]
@@ -433,16 +431,16 @@ def test_an_intercepted_fault_names_an_absolute_path(tmp_path: Path, monkeypatch
     from capsem_builder.gate.interception import Instrument
 
     root = tmp_path / "checkout"
-    (root / "config" / "profiles").mkdir(parents=True)
-    victim = root / "config" / "profiles" / "profile.toml"
+    (root / "config" / "settings").mkdir(parents=True)
+    victim = root / "config" / "settings" / "settings.toml"
     victim.write_text("x")
 
     monkeypatch.chdir(root)
     watch = Watch(roots=(root,), source_root=root)
     with Instrument(watch, fd_path_template=FD_PATH_TEMPLATE):
-        handle = os.open(str(root / "config" / "profiles"), os.O_RDONLY)
+        handle = os.open(str(root / "config" / "settings"), os.O_RDONLY)
         try:
-            os.unlink("profile.toml", dir_fd=handle)
+            os.unlink("settings.toml", dir_fd=handle)
         finally:
             os.close(handle)
 

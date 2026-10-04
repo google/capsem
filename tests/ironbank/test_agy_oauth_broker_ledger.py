@@ -62,18 +62,19 @@ def test_agy_replay_records_google_credential_broker_events(
     }
 
 
-def test_agy_profile_root_does_not_bake_oauth_token_material() -> None:
+def test_image_inputs_do_not_bake_agy_oauth_token_material() -> None:
     forbidden = (
         "antigravity-oauth-token",
         "access_token",
         "refresh_token",
         "id_token",
     )
-    profile_root = Path("config/profiles/code/root")
-    assert profile_root.exists()
-    for path in profile_root.rglob("*"):
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        for needle in forbidden:
-            assert needle not in text, f"{path} must not bake AGY OAuth token material"
+    image_inputs = (Path("guest/artifacts"), Path("config/docker"))
+    for root in image_inputs:
+        assert root.is_dir(), root
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for needle in forbidden:
+                assert needle not in text, f"{path} must not bake AGY OAuth token material"

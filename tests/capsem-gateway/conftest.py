@@ -227,10 +227,6 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         body = self._read_body()
         path_only = self.clean_path.split("?", 1)[0]
         if path_only == "/vms/create":
-            data = json.loads(body) if body else {}
-            if "profile_id" in data:
-                self._send_error(422, "unknown field `profile_id`")
-                return
             vm_id = f"vm-{uuid.uuid4().hex[:8]}"
             self._send_json({"id": vm_id})
         elif path_only == "/images/pull":
@@ -258,10 +254,6 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         elif path_only == "/purge":
             self._send_json({"purged": 0, "persistent_purged": 0, "ephemeral_purged": 0})
         elif path_only == "/run":
-            data = json.loads(body) if body else {}
-            if "profile_id" in data:
-                self._send_error(422, "unknown field `profile_id`")
-                return
             self._send_json({
                 "stdout": {"encoding": "utf8", "data": "mock run output\n"},
                 "stderr": {"encoding": "utf8", "data": ""},

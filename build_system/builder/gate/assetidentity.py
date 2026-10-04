@@ -1,7 +1,7 @@
 """What a built VM asset is a function of.
 
-`AssetLanes._build` shelled into `capsem-admin image build` for every profile
-and every stage, every run, with no check of any kind. Four consecutive
+`AssetLanes._build` shelled into `capsem-admin image build` for every
+architecture and every stage, every run, with no check of any kind. Four consecutive
 qualifications of one release spent about twenty-five minutes each rebuilding
 both architectures from sources none of them had touched -- the last three
 changed only test files and a shell function.

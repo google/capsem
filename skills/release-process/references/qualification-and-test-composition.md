@@ -3,7 +3,7 @@
 Read this reference before changing either public release command, Python plan
 composition, candidate/source guards, sandbox or egress behavior, fail-stop
 ordering, local/release-CI test composition, complementary artifact staging,
-or the paired `RuntimeContent` boundary.
+or the `RuntimeContent` boundary.
 
 ## Python owns release orchestration
 
@@ -254,12 +254,12 @@ or YAML flow-to-block style do not change a release contract and must not spend
 a hosted dispatch. Add the shared semantic reader first, then a Citadel guard
 that prevents a second textual parser.
 
-Assets and materialized configuration travel as one `RuntimeContent` root.
-Package construction, Debian proof, macOS Tart/physical-VZ proof, and final
-install/glow-up must derive both paths from that one value and validate it
-before Docker or Colima. Release CI stages raw manifest inputs into the paired
-root on the host; the sealed proof never rematerializes them or falls back to
-checkout `assets`/`cache/target/config` selectors.
+Runtime assets travel as one `RuntimeContent` root. Package construction,
+Debian proof, macOS Tart/physical-VZ proof, and final install/glow-up must
+derive the assets path from that one value and validate it before Docker or
+Colima. Release CI stages raw manifest inputs into that root on the host; the
+sealed proof never rematerializes them or falls back to the checkout's
+`assets` selector.
 
 Before public activation, the resulting pairing must pass manifest/artifact
 integrity, every VM suite, Winterfell and MCP lifecycle, IronBank, injection,

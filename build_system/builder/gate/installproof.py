@@ -60,34 +60,16 @@ class InstallProof:
         )
 
     def stage_content(self, content: RuntimeContent) -> None:
-        """Copy the one mounted, prevalidated content pair into writable staging."""
-        self.stage_content_from(
-            assets=self._config.functional.assets_dir,
-            content_config=self._config.functional.config_root,
-        )
+        """Copy the one mounted, prevalidated asset tree into writable staging."""
+        self.stage_content_from(assets=self._config.functional.assets_dir)
 
-    def stage_content_from(self, *, assets: str, content_config: str) -> None:
-        """Copy a read-only content projection into the proof's writable layout."""
-        profiles = f"{content_config}/{self._config.functional.profiles_subdir}"
-        config_manifest = (
-            f"{content_config}/{self._config.assets.merged_assets_dir}/"
-            f"{self._settings.manifest_name}"
-        )
+    def stage_content_from(self, *, assets: str) -> None:
+        """Copy a read-only asset projection into the proof's writable layout."""
         self._docker.shell(
             self._container,
             f'test -f "{assets}/{self._settings.manifest_name}" '
-            f'&& test -f "{config_manifest}" '
-            f'&& cmp -s "{assets}/{self._settings.manifest_name}" "{config_manifest}"',
-            user=self._guest.name,
-            cwd=self._mount,
-        )
-        self._docker.shell(
-            self._container,
-            f'test -d "{profiles}" '
-            f'&& rm -rf "{self._layout.assets}" '
-            f'"{self._layout.config}" && mkdir -p "{self._layout.assets}" '
-            f'"{self._layout.config}" && cp -R "{assets}/." "{self._layout.assets}/" '
-            f'&& cp -R "{content_config}/." "{self._layout.config}/"',
+            f'&& rm -rf "{self._layout.assets}" && mkdir -p "{self._layout.assets}" '
+            f'&& cp -R "{assets}/." "{self._layout.assets}/"',
             user=self._guest.name,
             cwd=self._mount,
         )
@@ -224,7 +206,6 @@ class InstallProof:
             f"{self._settings.venv_python} {self._suite.glowup_script} "
             f'--input-deb "{package}" '
             f'--bin-dir {self._settings.bin_dir} --assets-dir "{self._layout.assets}" '
-            f'--config-root "{self._layout.config}" '
             f"--work-dir {self._layout.glowup} --package-ready "
             f"--evidence-dir {self._layout.glowup_evidence} "
             f"--source-commit {self._source_commit}"

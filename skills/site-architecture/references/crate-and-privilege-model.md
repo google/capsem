@@ -33,7 +33,7 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-process`**: low-privilege per-VM boot, vsock, IPC, and job runtime.
 - **`capsem`**: CLI client; HTTP/UDS to the service and direct process UDS for shell.
 - **`capsem-tui`**: terminal control UI over the gateway API.
-- **`capsem-admin`**: runtime image build plus asset/release/profile-catalog validation and materialization.
+- **`capsem-admin`**: runtime image build plus asset, release, and config validation.
 - **`@capsem/mcp`** (`mcp/typescript`): separately installed host MCP server;
   typed SDK client over authenticated gateway HTTP with no native runtime privilege.
 - **`capsem-router`**: Seatbelt/seccomp-confined companion with two jobs from one binary. Per VM owner, a TCP relay for published host ports only (connected descriptor pairs over a private, bounded grant channel). Per named network, `--network`: that network's layer-2 switch. The service plugs each attached VM's cable (a duplicate of that cable's VSOCK 5009 stream) into it; it forwards ethernet frames on MAC only, floods broadcast under a cap, and carries every protocol. No service control socket, ambient file access, listener acceptance, or virtualization entitlement in either job.

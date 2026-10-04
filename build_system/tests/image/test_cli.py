@@ -86,11 +86,6 @@ def test_doctor_runs_the_prerequisite_checks() -> None:
     mock.assert_called_once_with(project_root(cli_module.__file__))
 
 
-def test_doctor_has_no_profile_option() -> None:
-    result = CliRunner().invoke(cli, ["doctor", "--profile", "code"])
-    assert result.exit_code == 2
-
-
 def test_doctor_fails_when_any_check_fails() -> None:
     from capsem_builder.image.doctor import CheckResult
 

@@ -4,23 +4,23 @@ use super::*;
 use std::fs;
 
 fn checkout(root: &std::path::Path) -> std::path::PathBuf {
-    let source = root.join("config/profiles/code");
+    let source = root.join("config/corp");
     fs::create_dir_all(&source).unwrap();
-    let seed = source.join("root.manifest.json");
+    let seed = source.join("corp.toml");
     fs::write(&seed, b"{}").unwrap();
     seed
 }
 
 #[test]
 fn staging_checked_in_source_into_output_copies_instead_of_linking() {
-    // The defect, in one assertion. `capsem-admin` hardlinked profile seeds
+    // The defect, in one assertion. `capsem-admin` hardlinked checked-in seeds
     // into the published release channel, so 48 tracked files sat inside
     // build output sharing an inode. A `chmod` on the artifact rewrote the
     // source file, and no content digest could notice: the bytes never moved.
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let seed = checkout(root);
-    let published = root.join("cache/target/release/distribution/root.manifest.json");
+    let published = root.join("cache/target/release/distribution/corp.toml");
 
     stage(&seed, &published, root).unwrap();
 
@@ -42,7 +42,7 @@ fn a_chmod_on_the_published_artifact_cannot_reach_the_source() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let seed = checkout(root);
-    let published = root.join("cache/target/release/distribution/root.manifest.json");
+    let published = root.join("cache/target/release/distribution/corp.toml");
     stage(&seed, &published, root).unwrap();
 
     fs::set_permissions(&published, fs::Permissions::from_mode(0o000)).unwrap();
@@ -104,15 +104,11 @@ fn a_relative_source_path_is_not_assumed_to_be_build_output() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let seed = checkout(root);
-    let published = root.join("cache/target/release/distribution/root.manifest.json");
+    let published = root.join("cache/target/release/distribution/corp.toml");
 
     let previous = std::env::current_dir().unwrap();
     std::env::set_current_dir(root).unwrap();
-    let result = stage(
-        std::path::Path::new("config/profiles/code/root.manifest.json"),
-        &published,
-        root,
-    );
+    let result = stage(std::path::Path::new("config/corp/corp.toml"), &published, root);
     std::env::set_current_dir(previous).unwrap();
     result.unwrap();
 

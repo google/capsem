@@ -19,7 +19,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-from . import cachelayout, installplan, platformproof, runtimeprepare
+from . import cachelayout, installplan, platformproof
 from . import config as gate_config
 from .actions import Call
 from .cachecontrol import CacheControl
@@ -241,7 +241,7 @@ class InstallCommand(
     def add_arguments(cls, parser) -> None:
         parser.add_argument(
             "--selected-content-root",
-            help="paired assets/config root already selected from a release manifest",
+            help="content root already selected from a release manifest",
         )
 
     def plan(self) -> Plan:
@@ -250,7 +250,6 @@ class InstallCommand(
         # the static preflight step; standalone install builds it once here.
         image = installplan.fragment(plan, self._config)
         selected = getattr(self._args, "selected_content_root", None)
-        prerequisites = (image,)
         if selected:
             root = Path(selected)
             root = root if root.is_absolute() else self._config.path(str(root))
@@ -259,9 +258,7 @@ class InstallCommand(
             )
         else:
             content = LocalInstallContent(RuntimeContent.standalone(self._config))
-            prepared = plan.add(runtimeprepare.materialize_config_step(self._config))
-            prerequisites += (prepared,)
-        plan.add(install_step(self._config, content=content), after=prerequisites)
+        plan.add(install_step(self._config, content=content), after=(image,))
         return plan
 
 

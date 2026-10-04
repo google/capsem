@@ -816,9 +816,6 @@ def test_runtime_preflight_is_reused_without_independent_sha_authority() -> None
     assert "workflow_dispatch:" not in preflight
     assert "inputs.sha" not in preflight
     assert "EXPECTED_SHA" not in preflight
-    assert "materialize-config.sh" in preflight
-    assert "profiles/co-work" not in preflight
-    assert "profiles/code" not in preflight
 
     for name in ("release.yaml", "release-assets.yaml"):
         workflow = _workflow(name)

@@ -18,8 +18,8 @@ use super::security_rule_profile::{
     SecurityRulePriority, SecurityRulePriorityName, SecurityRuleProfile, SecurityRuleSource,
 };
 use super::types::SettingsFile;
-use super::validation::validate_profile_target;
 use crate::mcp::policy::McpConfig;
+use capsem_config::validate_policy_target;
 
 const SETTINGS_FILENAME: &str = "settings.toml";
 const BUILTIN_LOCAL_SERVER: &str = "local";
@@ -121,7 +121,7 @@ impl SettingsPolicyEdit {
         config: SecurityPluginConfig,
         actor: &str,
     ) -> Result<PolicyMutationSummary, String> {
-        validate_profile_target("plugin id", plugin_id)?;
+        validate_policy_target("plugin id", plugin_id)?;
         if corp.plugins.contains_key(plugin_id) {
             return Err(format!("plugin {plugin_id} is set by the corp config"));
         }
@@ -179,8 +179,8 @@ impl SettingsPolicyEdit {
         actor: &str,
     ) -> Result<PolicyMutationSummary, String> {
         let action = mcp_permission_action(action)?;
-        validate_profile_target("mcp server", server)?;
-        validate_profile_target("mcp tool", tool)?;
+        validate_policy_target("mcp server", server)?;
+        validate_policy_target("mcp tool", tool)?;
         let configured = McpConfig::merged(self.document.mcp.as_ref(), corp.mcp.as_ref());
         ensure_mcp_server_configured(configured.as_ref(), server)?;
 
@@ -271,8 +271,8 @@ pub fn mcp_tool_permission(
     server: &str,
     tool: &str,
 ) -> Result<McpToolPermissionStatus, String> {
-    validate_profile_target("mcp server", server)?;
-    validate_profile_target("mcp tool", tool)?;
+    validate_policy_target("mcp server", server)?;
+    validate_policy_target("mcp tool", tool)?;
     let managed = mcp_tool_target(server, tool);
     for (rules, source) in [(&corp.profiles.rules, "corp"), (&settings.profiles.rules, "settings")] {
         if let Some(key) = managed_rule_keys(rules, &managed)?.first() {

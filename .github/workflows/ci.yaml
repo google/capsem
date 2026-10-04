@@ -240,7 +240,6 @@ jobs:
           -q
       - run: bash build_system/scripts/build/generate-settings.sh
       - run: bash build_system/scripts/test/prepare-install-test-assets.sh
-      - run: bash build_system/scripts/build/materialize-config.sh
       - run: cd web/app && pnpm install --frozen-lockfile
       - name: Build TypeScript SDK for frontend consumers
         working-directory: sdk/typescript
@@ -563,16 +562,11 @@ jobs:
           architecture: x86_64
           output: cache/target/ci-install-content/inputs
 
-      - name: Stage one exact install content pair
+      - name: Stage the exact install assets
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --input-dir cache/target/ci-install-content/inputs \
             --assets-dir cache/target/ci-install-content/assets
-          CAPSEM_ASSET_MANIFEST="$PWD/cache/target/ci-install-content/assets/manifest.json" \
-          CAPSEM_ASSETS_PATH="$PWD/cache/target/ci-install-content/assets" \
-          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/ci-install-content/config" \
-          CAPSEM_ARCH=x86_64 \
-            bash build_system/scripts/build/materialize-config.sh --pair-content
 
       - name: Build exact native release package
         env:

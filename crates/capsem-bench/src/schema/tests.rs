@@ -19,7 +19,6 @@ fn record() -> Record {
             governor: Some("performance".to_string()),
             load_before: 0.1,
         },
-        profile: "code".to_string(),
         quick: false,
         metrics: vec![Metric {
             key: "gateway./vms/list.cpu_s".to_string(),
@@ -50,7 +49,6 @@ fn a_round_trip_preserves_every_field_that_is_not_a_float() {
     assert_eq!(parsed.schema, SCHEMA);
     assert_eq!(parsed.dimension, Dimension::Routes);
     assert_eq!(parsed.release, record().release);
-    assert_eq!(parsed.profile, "code");
     assert!(!parsed.quick);
     assert_eq!(parsed.metrics.len(), 1);
     assert_eq!(parsed.metrics[0].key, "gateway./vms/list.cpu_s");

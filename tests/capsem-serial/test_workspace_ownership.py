@@ -3,7 +3,7 @@
 /root is the VirtioFS workspace. The guest sees every entry owned by 0:0 and
 never changes host ownership, so a guest chown is accepted without effect. It
 used to reach an unprivileged host lchown and fail with EPERM, which broke
-`cp -a`, `tar -x` and the profile seed copy into /root.
+`cp -a`, `tar -x` and any seed copy into /root.
 
 cp -a sets the final mode through a POSIX ACL xattr. Apple's VirtioFS server
 stores that xattr without applying it, so on macOS a copied 0640 file stayed

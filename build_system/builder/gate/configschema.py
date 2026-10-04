@@ -63,7 +63,6 @@ class OutputRootsConfig(Strict):
     coverage: str
     distribution: str
     gate_runs: str
-    materialized_config: str
     packages: str
     test_artifacts: str
 
@@ -161,7 +160,6 @@ class EnvironmentConfig(Strict):
     home: str
     run_dir: str
     assets_dir: str
-    profiles_dir: str
     benchmark_root: str
     coverage_file: str
     source_checkout: str
@@ -190,14 +188,9 @@ class EnvironmentConfig(Strict):
         """Which capsem a process is talking to."""
         return {self.home: str(home), self.run_dir: str(run_dir)}
 
-    def content(self, *, assets: object = None, profiles: object = None) -> dict[str, str]:
-        """Where it finds its assets and profiles. Absent means unchanged."""
-        found = {}
-        if assets is not None:
-            found[self.assets_dir] = str(assets)
-        if profiles is not None:
-            found[self.profiles_dir] = str(profiles)
-        return found
+    def content(self, *, assets: object) -> dict[str, str]:
+        """Where it finds its assets."""
+        return {self.assets_dir: str(assets)}
 
 
 class CandidateConfig(Strict):
@@ -214,7 +207,6 @@ class CandidateConfig(Strict):
     doctor_skips: dict[str, str]
     clean_stale_script: str
     generated_settings_script: str
-    materialize_script: str
     recipe_suite: tuple[str, ...]
     candidate_cache: str
     unknown_head: str

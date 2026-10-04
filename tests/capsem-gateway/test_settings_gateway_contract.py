@@ -3,8 +3,7 @@
 The asset, plugin and MCP pages talk to capsem-service through
 capsem-gateway, not directly over the service UDS. These tests keep that
 boundary honest: a service route that is not explicitly forwarded by the
-gateway is a user-visible 404, and the retired profile routes are not
-forwarded at all.
+gateway is a user-visible 404.
 """
 
 from __future__ import annotations
@@ -71,16 +70,6 @@ def test_settings_routes_are_forwarded_through_gateway() -> None:
             "last_hydrated_unix_ms",
             "last_error",
         } <= payload["store"].keys()
-
-        for path in (
-            "/profiles/list",
-            "/profiles/status",
-            "/profiles/code/info",
-            "/profiles/code/assets/status",
-            "/profiles/code/plugins/list",
-        ):
-            status, _ = client.get_status_and_body(path)
-            assert status == 404, (path, status)
     finally:
         if gw is not None:
             gw.stop()

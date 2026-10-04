@@ -26,13 +26,11 @@ def test_new_session_launcher_follows_asset_readiness() -> None:
 
     assert "Customize Session..." not in source
     assert "showCreateModal" not in source
-    assert "profile" not in source.lower()
 
 
 def test_dashboard_does_not_render_release_diagnostics() -> None:
     source = read(DASHBOARD)
 
-    assert "Profile and image state" not in source
     assert ">VM assets<" not in source
     assert "Not published" not in source
 
@@ -61,5 +59,3 @@ def test_asset_api_routes_are_service_wide() -> None:
     assert "export async function ensureAssets(): Promise<AssetStatus>" in source
     assert "_post('/assets/ensure', {})" in source
     assert "getAssetsStatus()," in source  # debugSnapshot reads /assets/status
-    assert "/profiles" not in source
-    assert "profile" not in source.lower()

@@ -1,6 +1,6 @@
-//! Boot verified profile images directly and require the guest control-plane connection.
+//! Boot verified runtime images directly and require the guest control-plane connection.
 //!
-//! This is a release test harness, not a package or profile builder. The Python
+//! This is a release test harness, not a package or image builder. The Python
 //! caller resolves every path and digest from the selected channel manifest.
 
 use std::collections::BTreeMap;
@@ -34,19 +34,6 @@ fn required<'a>(values: &'a BTreeMap<String, String>, flag: &str) -> Result<&'a 
         .with_context(|| format!("missing required argument {flag}"))
 }
 
-fn validate_profile_id(profile: &str) -> Result<()> {
-    if profile.is_empty()
-        || profile == "."
-        || profile == ".."
-        || !profile
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
-    {
-        bail!("unsafe profile identity: {profile:?}");
-    }
-    Ok(())
-}
-
 fn verify_image(path: &Path, digest: &str, label: &str) -> Result<()> {
     if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         bail!("{label} BLAKE3 is malformed");
@@ -70,16 +57,12 @@ fn verify_image(path: &Path, digest: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
-fn unique_session_root(profile: &str) -> PathBuf {
+fn unique_session_root() -> PathBuf {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    std::env::temp_dir().join(format!(
-        "capsem-profile-boot-{}-{}-{stamp}",
-        profile,
-        std::process::id()
-    ))
+    std::env::temp_dir().join(format!("capsem-runtime-boot-{}-{stamp}", std::process::id()))
 }
 
 fn serial_tail(path: &Path) -> String {
@@ -92,14 +75,12 @@ fn serial_tail(path: &Path) -> String {
 
 fn run() -> Result<()> {
     let values = arguments()?;
-    let profile = required(&values, "--profile")?;
-    validate_profile_id(profile)?;
     let kernel = PathBuf::from(required(&values, "--kernel")?);
     let initrd = PathBuf::from(required(&values, "--initrd")?);
     let rootfs = PathBuf::from(required(&values, "--rootfs")?);
     // The digests this harness was told to prove. They are also what boot must
     // verify against: this path is not behind the service, so boot's own check is
-    // the only one, and it must use the profile under test rather than any
+    // the only one, and it must use the runtime under test rather than any
     // channel-wide pointer.
     let kernel_blake3 = required(&values, "--kernel-blake3")?.to_string();
     let initrd_blake3 = required(&values, "--initrd-blake3")?.to_string();
@@ -114,7 +95,7 @@ fn run() -> Result<()> {
         bail!("--timeout must be positive");
     }
 
-    let session_root = unique_session_root(profile);
+    let session_root = unique_session_root();
     create_virtiofs_session(&session_root, 1)
         .with_context(|| format!("create boot-proof session {}", session_root.display()))?;
     let guest_dir = guest_share_dir(&session_root);
@@ -150,7 +131,7 @@ fn run() -> Result<()> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .context("create profile boot runtime")?;
+            .context("create runtime boot tokio runtime")?;
         let deadline = Instant::now() + Duration::from_secs(timeout);
         let connected = runtime.block_on(async {
             loop {
@@ -180,15 +161,15 @@ fn run() -> Result<()> {
         std::fs::remove_dir_all(&session_root)
             .with_context(|| format!("remove successful boot-proof session {}", session_root.display()))?;
     } else {
-        eprintln!("profile boot failure evidence retained at {}", session_root.display());
+        eprintln!("runtime boot failure evidence retained at {}", session_root.display());
     }
     result
 }
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("release profile boot proof failed: {error:#}");
+        eprintln!("release runtime boot proof failed: {error:#}");
         std::process::exit(1);
     }
-    println!("release profile boot proof passed");
+    println!("release runtime boot proof passed");
 }

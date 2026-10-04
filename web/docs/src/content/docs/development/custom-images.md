@@ -75,7 +75,8 @@ belongs in an OCI image.
 
 ### Change network policy
 
-Add allow/block behavior as corp security rules:
+Add allow/block behavior as security rules in `~/.capsem/settings.toml`
+(organizations use `corp.rules` in `corp.toml`):
 
 ```toml
 [profiles.rules.allow_corp_http]

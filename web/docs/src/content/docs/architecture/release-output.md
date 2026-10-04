@@ -139,7 +139,7 @@ one VM runtime document:
 ```
 
 `runtime` is absent (or null) for a channel that has published no runtime yet,
-such as a binary-only first release. There is no `profiles` key.
+such as a binary-only first release.
 
 The manifest must not use the legacy asset-channel shape as its public graph
 shape:
@@ -227,7 +227,7 @@ built from `config/docker/image` and `guest/artifacts` with no other input:
 
 `source_commit`, `min_capsem_version`, and `max_capsem_version` are optional.
 The runtime has no `id`, `name`, `description`, or second `version`, and no
-config references: no profile, MCP, rule, package-list, or root-seed file is
+config references: no MCP, rule, package-list, or root-seed file is
 published.
 
 The runtime does not select a current Capsem binary. It may declare
@@ -373,7 +373,8 @@ Release output tests must verify:
    `channels.json`.
 2. `channels.json` exposes exactly one public manifest URL per channel:
    `/assets/<channel>/manifest.json`.
-3. No public graph or page exposes a profile catalog or a `profiles` key.
+3. No public graph carries the retired `profiles` key; the channel validator
+   rejects it.
 4. Every package has bytes, SHA-256, BLAKE3, and package-owned binaries.
 5. Every binary has installed path, version, bytes, SHA-256, BLAKE3, and SBOM
    component.

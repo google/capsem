@@ -98,10 +98,7 @@ class DebProof:
 
         try:
             self._start(runtime)
-            self._staging.stage_content_from(
-                assets=self._install.proof_assets_mount,
-                content_config=self._install.proof_config_mount,
-            )
+            self._staging.stage_content_from(assets=self._install.proof_assets_mount)
             self._prepare_handoff(container_deb, expected)
             self._install_package(container_deb, expected)
             verify_vm_device_access(self._docker, self._proof.container, self._install)
@@ -147,10 +144,6 @@ class DebProof:
                 Mount.generated(
                     str(self._content.assets),
                     self._install.proof_assets_mount,
-                ),
-                Mount.generated(
-                    str(self._content.config),
-                    self._install.proof_config_mount,
                 ),
             ],
         )

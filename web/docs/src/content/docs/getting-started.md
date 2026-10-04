@@ -78,9 +78,13 @@ Boot a sandboxed VM and get a shell:
 capsem shell
 ```
 
-This creates a Linux session with an air-gapped network. You get a terminal
-inside the sandbox with Python 3, Node.js, git, and common developer packages
-pre-installed. The default session uses the `code` profile.
+This creates a Linux session with an air-gapped network on the minimal VM
+runtime. Agents and developer toolchains come from OCI images; pick one from
+the catalog by name:
+
+```sh
+capsem create -n work --image dev
+```
 
 For a named retained session that survives stop/resume cycles:
 
@@ -134,7 +138,7 @@ materialized as settings-owned boot secrets.
 
 By default, the VM is air-gapped -- network traffic routes through Capsem's host
 network engine, where HTTP and DNS become first-party security events. Add
-allow/block behavior with profile or corp enforcement rules:
+allow/block behavior with rules in `~/.capsem/settings.toml` (or `corp.toml`):
 
 ```toml
 [profiles.rules.allow_python_registry]
@@ -167,7 +171,7 @@ The token comes from `CAPSEM_GATEWAY_TOKEN` or `--token-file`, never from the
 command line. Register the command with your MCP client and pass the token
 through its environment block.
 The package gives agents typed lifecycle, execution, file, diagnostics, network,
-and profile MCP tools through authenticated gateway HTTP.
+and MCP server tools through authenticated gateway HTTP.
 
 ## What's next
 

@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 LOG="$ROOT/cache/containers/logs/build.log"
 
-mkdir -p "$ROOT/cache/target/config/profiles"
 mkdir -p "$(dirname "$LOG")"
 
 dump_build_log() {
@@ -21,8 +20,6 @@ dump_build_log() {
 }
 trap dump_build_log EXIT
 
-echo "[generate] $(date +%H:%M:%S) exporting MCP tool defs" >> "$LOG"
-(cd "$ROOT" && cargo run -p capsem-core --bin mcp_export 2>>"$LOG" > cache/target/config/profiles/catalog.generated.json)
 echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG"
 # `$1`, when given, is where the two tracked settings files go. The checker
 # passes a scratch directory so the gate never writes into its own checked-in

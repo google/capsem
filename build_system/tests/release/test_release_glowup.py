@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import hashlib
 import importlib.util
 import json
@@ -1129,30 +1128,6 @@ def test_release_pairing_cli_is_all_or_nothing() -> None:
     assert module.validate_exact_release_pairing(cleared) is None
 
 
-def test_local_channel_build_names_no_profile_input() -> None:
-    """The runtime is the only VM release unit: authoring passes no profile tree."""
-    tree = ast.parse(LOCAL_GLOWUP_PATH.read_text(encoding="utf-8"))
-    authoring_partials = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "functools"
-        and node.func.attr == "partial"
-        and node.args
-        and isinstance(node.args[0], ast.Name)
-        and node.args[0].id == "author_native_candidate"
-    ]
-
-    assert len(authoring_partials) == 1
-    keywords = {keyword.arg for keyword in authoring_partials[0].keywords}
-    assert not {"profiles_dir", "profile_revision_policy"} & keywords
-    source = LOCAL_GLOWUP_PATH.read_text(encoding="utf-8")
-    for retired in ("--profile-revision-policy", "--profiles-dir", '"--profile"'):
-        assert retired not in source
-
-
 def test_local_glowup_exports_bounded_started_evidence_before_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1173,8 +1148,6 @@ def test_local_glowup_exports_bounded_started_evidence_before_failure(
             str(tmp_path / "bin"),
             "--assets-dir",
             str(tmp_path / "assets"),
-            "--config-root",
-            str(tmp_path / "config"),
             "--work-dir",
             str(tmp_path / "work"),
             "--evidence-dir",
@@ -1567,7 +1540,6 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     for script in (tamper_script, incompatible_script):
         assert 'test "$(installed_runtime_digest)" = "$runtime_digest_before"' in script
         assert "installed_runtime_digest() {" in script
-        assert '"$CAPSEM_HOME_DIR/profiles"' not in script.split("installed_runtime_digest() {")[1]
     assert "probe_installed_transition rejection-preserved" in preserved_script
     for script in (before_script, after_script, preserved_script):
         assert "build_system/scripts/release/verify-installed-release.py" in script
@@ -2577,20 +2549,13 @@ def test_linux_glowup_proves_background_asset_hydration() -> None:
     assert 'grep -Fq "event=manifest_installed"' in fresh_install
     assert 'if grep -Fq "event=assets_hydrated"' in fresh_install
     assert "package installer synchronously hydrated VM assets" in fresh_install
-    assert 'assets status --profile "$profile" --json' in staging
+    assert 'assets status --json > "$output"' in staging
     assert 'status.get("ready") and not status.get("downloading")' in staging
-    assert (
-        'wait_for_profile_assets code "$EVIDENCE_DIR/code-assets-after-install.json"'
-        in fresh_install
-    )
-    assert (
-        'wait_for_profile_assets co-work "$EVIDENCE_DIR/co-work-assets-after-install.json"'
-        in fresh_install
-    )
+    assert 'wait_for_assets "$EVIDENCE_DIR/assets-after-install.json"' in fresh_install
     assert fresh_install.index("event=manifest_installed") < fresh_install.index(
-        "wait_for_profile_assets code"
+        "wait_for_assets"
     )
-    assert fresh_install.index("wait_for_profile_assets co-work") < fresh_install.index(
+    assert fresh_install.index("wait_for_assets") < fresh_install.index(
         "probe_installed_transition fresh-stable"
     )
 

@@ -7,12 +7,11 @@ capsem create -n cache -p 6379:6379 --image docker://redis:7.4.11-alpine
 capsem run --image docker://redis:7.4.11-alpine redis-cli --version
 ```
 
-The build pulls the native Linux image, provisions a VM from the profile and
+The service pulls the native Linux image, provisions a VM on the one runtime and
 uses the image's entrypoint and default command; a command after the image
 overrides its default command. `create --image` starts it detached (output in
 `capsem logs`, VM kept only when named); `run --image` streams it and destroys
 the VM when it ends. Registry-qualified references also work.
-Installed binaries, services, and profiles are not changed by this spike.
 
 ## Ownership and confinement
 
@@ -69,8 +68,8 @@ Ironbank service and VM helpers. Run it through its owner:
 python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 1800 -- just focus-test kingslanding
 ```
 
-After changing kernel or profile package inputs, first rebuild that profile with
-`just build-assets arm64 code` (use `x86_64` on that host). The focused gate
+After changing kernel or runtime package inputs, first rebuild the runtime with
+`just build-assets arm64` (use `x86_64` on that host). The focused gate
 uses the invoking checkout's assembled assets, refreshes its guest/host binaries,
 prepares the digest-pinned native images (Redis, the container under test, and
 iperf3, the native reference for the private-path matrix), and runs the suite
@@ -79,13 +78,13 @@ in `tests/ironbank/greyjoy/` on the same fixture. The fixture supports ARM64 and
 x86_64; cache reuse requires matching image identity and a verified archive hash.
 Preparation uses Docker only on the development host to export a never-started
 image. No Docker daemon runs inside Capsem. The regular functional gate runs
-Kingslanding for each profile; benchmark repetitions are omitted from release
+Kingslanding against the one runtime; benchmark repetitions are omitted from release
 rehearsal to avoid recording the same cohort twice.
 
 The suite covers CLI defaults, image cache reuse, logs, exit/timeout behavior,
 client detachment, stop/restart/fork/delete, OCI layer semantics, resource limits,
 filesystem/network isolation, router confinement and concurrent Redis traffic.
-All services and VMs belong to test fixtures; installed services and profiles are
+All services and VMs belong to test fixtures; installed services are
 untouched. Throughput results are exploratory measurements, not a release threshold.
 
 A named VM retains its image and command. Closing the client detaches. Workload
@@ -96,7 +95,7 @@ fresh on cold boot, so this does not promise database persistence across restart
 
 ## Artifact identities and evidence
 
-Supported ARM64 `code` profile proof: **23 passed in 123.47s** at
+Supported ARM64 proof: **23 passed in 123.47s** at
 `2ade1feeccce7981442093fbcae6f661c3dc9be1`, with no source changes during execution.
 `just focus-test kingslanding` completed all 20 steps in 4m17s under the enforced
 macOS gate sandbox. The journal is
@@ -107,7 +106,7 @@ hardening diagnostics; none of those checks were skipped.
 The preceding failures were investigated and fixed:
 
 - `20260910-131254-63da2a`: shared-cache assets replaced the rebuilt OCI kernel.
-  S04-004 records the selection regression and full ARM64 profile rebuild
+  S04-004 records the selection regression and full ARM64 runtime rebuild
   `20260910-132119-a0c2a3-build-assets` (10 steps, 7m11s).
 - `20260910-133003-c0ac3b`: macOS refused nested Seatbelt initialization.
   The gate now hands off only named self-confining children; the router installs
@@ -152,10 +151,7 @@ was 93/136 (68.38%); confined children cannot write profiling files.
 
 ## Limits and next work
 
-Next: a minimal `container` profile containing the trusted guest agent, OCI runtime
-and required network plumbing, followed by policy-controlled container egress.
-Current containers boot from `code` or `co-work`; their application rootfs is already
-separate, but the surrounding VM still carries the profile's development tools.
+Next: policy-controlled container egress.
 
 - IPv4 loopback TCP publication only; no UDP, LAN binding, container egress, SDK,
   OpenAPI endpoint or Inspect integration. This does not claim Docker compatibility.

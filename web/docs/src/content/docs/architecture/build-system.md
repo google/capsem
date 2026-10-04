@@ -7,7 +7,7 @@ sidebar:
 
 Capsem builds one VM runtime: a kernel, initrd, and rootfs per architecture.
 Its only inputs are the checked-in image contract under `config/docker/image/`
-and the guest payload under `guest/artifacts/`; no profile or application
+and the guest payload under `guest/artifacts/`; no application
 enters the build. `capsem-admin image build` resolves those inputs into a
 generated backend workspace, then invokes the private Python builder backend
 to validate the backend image spec, render Jinja2 Dockerfiles, and produce

@@ -179,21 +179,15 @@ class InstallContainer:
     def _content_mounts(self) -> tuple[Mount, ...]:
         if self._content is None:
             return ()
-        mount = self._settings.mount
-        profile = self._content.content
         mounts = [
             Mount.generated(
-                str(profile.assets),
-                f"{mount}/{self._config.functional.assets_dir}",
-            ),
-            Mount.generated(
-                str(profile.config),
-                f"{mount}/{self._config.functional.config_root}",
+                str(self._content.content.assets),
+                f"{self._settings.mount}/{self._config.functional.assets_dir}",
             ),
         ]
         if isinstance(self._content, SelectedInstallContent):
             # stage-release-test-inputs writes absolute file:// URLs. Mounting
-            # the one paired root at the same address keeps those immutable
+            # the one content root at the same address keeps those immutable
             # bytes resolvable without exposing the checkout or public egress.
             root = self._content.content.root.resolve()
             mounts.append(Mount.generated(str(root), str(root)))

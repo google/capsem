@@ -182,11 +182,12 @@ expose class) and never a path between VMs.
 ### Network/security policy
 
 - Corp config owns enterprise constraints, reporting endpoints, and locked
-  rule/plugin policy.
-- Profile config owns MCP config, rules, detections, plugins, and defaults
-  for sessions created from that profile. It does not select VM assets: every
-  session boots the one runtime.
-- Settings config owns UI/app preferences only.
+  rule/plugin policy. Corp wins, and its locks are respected.
+- The user's `~/.capsem/settings.toml` owns MCP config, rules, detections,
+  plugins, and UI/app preferences, layered over built-in defaults.
+- The service merges the three into each session's `vm/active_policy.toml` at
+  every boot. Policy never selects VM assets: every session boots the one
+  runtime.
 - All enforcement and detection compiles into one `SecurityRuleSet` over
   `SecurityEvent`; there is no domain-policy, HTTP-policy, or MCP-policy
   decision provider.
@@ -222,7 +223,7 @@ columns are schema-contract failures, not empty data.
 
 **Block mode**: `mke2fs` runs unconditionally at boot. Overlay upper is always tmpfs.
 
-**Sessions run profiles.** Session workspace and overlay state are session
+Session workspace and overlay state are session
 state; runtime contents come from the runtime asset contract and application
 contents from OCI images. Never make the overlay upper layer a hidden
 image-authoring rail. To add a tool, put it in an OCI image under `images/`;
@@ -248,7 +249,7 @@ let the package install service files plus manifest URL provenance.
 
 Package install handles service registration, records manifest metadata metadata,
 and hydrates the live manifest through `capsem update --assets --manifest
-<URL>`. Profile configuration handles security rules, plugins, and MCP;
+<URL>`. Settings and corp configuration handle security rules, plugins, and MCP;
 credentials are brokered at runtime.
 
 **Install layout** (`~/.capsem/`):

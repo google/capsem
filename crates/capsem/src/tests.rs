@@ -140,28 +140,6 @@ fn parse_create_with_name() {
     }
 }
 
-/// Profiles are gone: no command takes `--profile`, and naming one is a
-/// usage error rather than a silently ignored flag.
-#[test]
-fn no_command_takes_a_profile() {
-    for args in [
-        vec!["capsem", "create", "--profile", "co-work"],
-        vec!["capsem", "run", "true", "--profile", "co-work"],
-        vec!["capsem", "assets", "status", "--profile", "code"],
-        vec!["capsem", "assets", "ensure", "--profile", "code"],
-        vec!["capsem", "mcp", "servers", "--profile", "co-work"],
-        vec!["capsem", "mcp", "tools", "--profile", "co-work"],
-        vec!["capsem", "mcp", "refresh", "--profile", "co-work"],
-        vec!["capsem", "mcp", "call", "server__tool", "--profile", "co-work"],
-    ] {
-        let error = match Cli::try_parse_from(&args) {
-            Ok(_) => panic!("{args:?} must not parse"),
-            Err(error) => error,
-        };
-        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument, "{args:?}");
-    }
-}
-
 #[test]
 fn parse_create_ephemeral() {
     let cli = Cli::parse_from(["capsem", "create"]);
@@ -462,7 +440,7 @@ fn service_control_commands_do_not_cross_service_api_boundary() {
         let command = cli.command.as_ref().expect("parsed command");
         assert!(
             command_is_handled_before_service_api(command),
-            "{args:?} must be handled before UDS/service API construction so service control cannot depend on profile, status, or credential-store readiness"
+            "{args:?} must be handled before UDS/service API construction so service control cannot depend on asset, status, or credential-store readiness"
         );
     }
 }

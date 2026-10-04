@@ -25,7 +25,6 @@ def test_shipped_settings_are_ui_preferences_not_runtime_policy() -> None:
     settings = _toml(SETTINGS_PATH)
 
     assert set(settings) == {"app", "appearance"}
-    assert "profiles" not in settings
     assert "corp" not in settings
     assert "rules" not in settings
     assert "plugins" not in settings

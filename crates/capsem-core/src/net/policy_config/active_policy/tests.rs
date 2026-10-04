@@ -205,7 +205,7 @@ revision = "0.6.5"
 }
 
 /// `capsem doctor` and capsem-bench drive a hermetic mock server on the host
-/// loopback. Every profile used to allow it; the built-in allow must still
+/// loopback. The built-in allow must still
 /// win over the local network ask, or every doctor request would wait on one.
 #[test]
 fn the_built_in_policy_lets_the_doctor_reach_its_mock_server() {

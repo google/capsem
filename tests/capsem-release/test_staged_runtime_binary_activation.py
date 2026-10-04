@@ -245,14 +245,6 @@ def test_pairing_stages_assets_where_materialization_and_tests_read_them(
         encoding="utf-8",
     )
     uv.chmod(0o755)
-    materializer = tmp_path / "build_system/scripts/build/materialize-config.sh"
-    materializer.parent.mkdir(parents=True)
-    materializer.write_text(
-        'set -eu\ntest -f "$CAPSEM_ASSET_MANIFEST"\n'
-        "mkdir -p cache/target/cargo/debug\n"
-        "printf source > cache/target/cargo/debug/capsem-admin\n",
-        encoding="utf-8",
-    )
     environment = {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -288,7 +280,6 @@ def test_pairing_stages_assets_where_materialization_and_tests_read_them(
     for forbidden in (
         "build_system/scripts/release/stage-release-test-inputs.py",
         "build_system/packaging/linux/install-deb-runtime-dependencies.py",
-        "build_system/scripts/build/materialize-config.sh",
     ):
         assert forbidden not in invoked
     assert github_env.read_text(encoding="utf-8") == ""

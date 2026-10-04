@@ -430,7 +430,7 @@ async fn plugin_aware_emitter_leaves_an_allowing_plugin_alone() {
 /// and the compiler now rejects anything outside it. A table that drifts from
 /// the contract sends authors to rules that will not compile -- it listed a
 /// `security` root that was never valid and omitted `ip`, `tcp`, and `udp` while
-/// a shipped profile rule used all three.
+/// a shipped rule used all three.
 #[test]
 fn published_field_table_matches_the_cel_contract() {
     const POLICY_DOC: &str = include_str!(concat!(

@@ -183,7 +183,7 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "run ./bootstrap.sh" in doctor
 
     # Linux does not accept whatever Node happens to be in the distribution.
-    # The required major comes from the profile image config and the fetched
+    # The required major comes from the guest image config and the fetched
     # official tarball is checked against Node's SHA256 manifest.
     assert "config/docker/image/build.toml" in bootstrap
     assert "latest-v${CAPSEM_NODE_MAJOR}.x/SHASUMS256.txt" in linux
@@ -941,18 +941,18 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
 
 def test_both_release_lanes_reuse_fail_closed_static_module() -> None:
     binary_workflow = _read(".github/workflows/release.yaml")
-    profile_workflow = _read(".github/workflows/release-assets.yaml")
+    runtime_workflow = _read(".github/workflows/release-assets.yaml")
     fast_gate = _read(".github/workflows/fast-gate.yaml")
 
     assert "uses: ./.github/workflows/fast-gate.yaml" in binary_workflow
-    assert "uses: ./.github/workflows/fast-gate.yaml" in profile_workflow
+    assert "uses: ./.github/workflows/fast-gate.yaml" in runtime_workflow
     assert "run: just fast-test" in fast_gate
     assert (
         "run: uv run --project build_system --frozen capsem-gate test-release-contracts"
         in fast_gate
     )
     assert "run: just test" not in binary_workflow
-    assert "run: just test" not in profile_workflow
+    assert "run: just test" not in runtime_workflow
     assert "clippy-workspace-wrapper.sh\"' --workspace --all-targets" in _gate_issues()
 
 

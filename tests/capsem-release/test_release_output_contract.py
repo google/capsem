@@ -159,7 +159,7 @@ def test_generated_release_publishes_no_catalog_or_config(
         _runtime_page_path(generated_release_dist),
     ):
         text = path.read_text(encoding="utf-8")
-        for token in ("catalog.json", '"profiles"', "/profiles/", '"config"'):
+        for token in ("catalog.json", '"config"'):
             if token in text:
                 hits.append(f"{path.relative_to(generated_release_dist)} contains {token}")
     assert hits == []
@@ -255,7 +255,6 @@ def test_deterministic_graph_fixture_matches_release_contract() -> None:
         for version, manifest in manifests.items():
             context = f"manifests.{channel}.{version}"
             assert "binaries" not in manifest, context
-            assert "profiles" not in manifest, context
             assert isinstance(manifest["packages"], list), context
             assert manifest["packages"], context
             for package in manifest["packages"]:

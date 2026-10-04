@@ -10,7 +10,7 @@ container can reach.
 And it is a *race*. `rust-coverage` runs on the host and churns hardlinks
 inside that tree while `linux-rust` reads the same inodes through virtiofs.
 A release run died on it -- `Permission denied` opening
-`config/profiles/code/root/root/.gemini/projects.json`, a file that was `0644`
+a tracked `config/` seed file (`.gemini/projects.json`), a file that was `0644`
 before and `0644` after -- and no amount of declaring `contends` would have
 prevented it, because the two steps genuinely share nothing except the
 filesystem nobody wrote down.

@@ -101,7 +101,6 @@ def test_asset_status_without_a_manifest_is_not_ready_and_ensure_settles(tmp_pat
         assert status["errors"], status
         assert status["manifest"]["origin"] == "missing"
         assert status["manifest"]["validation_status"] == "missing"
-        assert "profile_id" not in status
 
         ensured = client.post("/assets/ensure", {}, timeout=30)
         assert isinstance(ensured["started"], bool), ensured

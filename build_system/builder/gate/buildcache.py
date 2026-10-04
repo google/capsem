@@ -70,7 +70,7 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> None:
     # merging the remaining products. Copying the private ledger wholesale
     # reorders history and also exports the child's stale `.active` marker.
     runtransfer.export(prefix, destination, config)
-    exact_trees = {config.functional.assets_dir, config.functional.config_root}
+    exact_trees = {config.functional.assets_dir}
     for relative in config.prefix.exports:
         # Inventoried as produced output, but transferred above by the owner
         # that understands immutable journals versus host aggregate state.
@@ -79,11 +79,10 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> None:
         origin = prefix / relative
         if not origin.exists():
             continue
-        # A link *out* of the prefix names input, not output. A release lane
-        # points `cache/target/config` at the cohort it was handed, and copying that
-        # back would export an input as though the run had produced it -- and
-        # dies outright if the tree it names has since gone. A link *within*
-        # the prefix is the local gate's own profile selector and must still be
+        # A link *out* of the prefix names input, not output: copying it back
+        # would export an input as though the run had produced it -- and dies
+        # outright if the tree it names has since gone. A link *within* the
+        # prefix is the local gate's own asset selector and must still be
         # dereferenced, which is what the assets case below is about.
         if origin.is_symlink() and not origin.resolve().is_relative_to(prefix.resolve()):
             continue
@@ -92,7 +91,7 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> None:
         if origin.is_dir():
             if relative in exact_trees:
                 remove(target)
-                # Follow a top-level profile selector, but retain selectors
+                # Follow a top-level asset selector, but retain selectors
                 # inside the exported tree such as cache/target/assets/current. The latter
                 # is a relative link in the tree and materializing it copies a
                 # multi-gigabyte architecture for no new bytes.
@@ -201,7 +200,7 @@ def salvage(config: GateConfig, prefix_path: Path) -> list[str]:
             taken.append(relative)
             continue
         # What the link points at, never the link. A prefix reaches its assets
-        # through links -- `cache/target/tests/ironbank/<profile>/assets` is one, and
+        # through links -- `cache/target/tests/ironbank/assets` is one, and
         # `[prefix] exports` says a top-level selector may be another -- and a
         # moved link points into a prefix that is about to be deleted. The
         # result reads as a directory of zero bytes to `du` and as absent to

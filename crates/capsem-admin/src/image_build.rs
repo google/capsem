@@ -1,7 +1,7 @@
 //! The one VM runtime image: kernel, initrd and rootfs, per architecture.
 //!
-//! There is no profile input. Applications come from OCI images; the runtime
-//! is built from `config/docker/image` and the guest artifacts alone, so every
+//! Applications come from OCI images; the runtime is built from
+//! `config/docker/image` and the guest artifacts alone, so every
 //! build of a commit produces the same asset set.
 
 use super::*;

@@ -177,19 +177,6 @@ def test_installed_exec_output_reads_both_published_wire_shapes() -> None:
     )
 
 
-def test_service_instance_names_no_profile_catalog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The service reads no profiles; the helper must not hand it one."""
-    home = tmp_path / "capsem-home"
-    home.mkdir()
-    monkeypatch.setattr(service_helper, "make_capsem_tmp_dir", lambda _prefix: home)
-    service = service_helper.ServiceInstance()
-    assert not hasattr(service, "profiles_dir")
-    assert not hasattr(service_helper, "materialize_test_profiles")
-    assert not hasattr(service_helper, "wait_profile_assets_settled")
-
-
 class _StatusClient:
     def __init__(self, answers: list[dict]) -> None:
         self.answers = answers
@@ -259,7 +246,6 @@ def test_registry_entry_has_the_current_shape_and_manifest_pins(tmp_path: Path) 
     entry = registry_entry(run, "vm-id", "vm-name", assets_dir=assets)
     write_registry(run, [entry])
 
-    assert not {key for key in entry if key.startswith("profile")}
     assert entry["asset_pins"] == {
         "kernel": {"name": "vmlinuz", "hash": "blake3:" + "a" * 64},
         "initrd": {"name": "initrd.img", "hash": "blake3:" + "b" * 64},
@@ -270,6 +256,5 @@ def test_registry_entry_has_the_current_shape_and_manifest_pins(tmp_path: Path) 
     registry = json.loads((run / "persistent_registry.json").read_text())
     assert registry == {"vms": {"vm-name": entry}}
 
-    legacy = registry_entry(run, "old-id", "old-name", assets_dir=assets, overlay=False, profile_id="code")
-    assert legacy["profile_id"] == "code"
-    assert not (Path(legacy["session_dir"]) / "system").exists()
+    bare = registry_entry(run, "bare-id", "bare-name", assets_dir=assets, overlay=False)
+    assert not (Path(bare["session_dir"]) / "system").exists()

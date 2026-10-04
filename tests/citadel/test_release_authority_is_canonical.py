@@ -150,7 +150,7 @@ def test_old_normative_source_and_reference_are_rejected() -> None:
         "The normative contract is elsewhere.",
         "This is the governing contract.",
         "Capsem has exactly two release-facing Just commands.",
-        "A profile release MUST NOT build binaries.",
+        "An asset release MUST NOT build binaries.",
     ],
 )
 def test_agent_and_skill_normative_duplicates_are_rejected(claim: str) -> None:

@@ -155,7 +155,7 @@ with socket.socket() as listener:
         assert stream.read(4) == b'FAIL'
         connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
 """
-    # The profile supplies Python3.11 and util-linux. Replace this owned job
+    # The runtime supplies Python3.11 and util-linux. Replace this owned job
     # with nsenter instead of assuming Python3.12's os.setns is available.
     enter = (
         "import os; pid=open('/var/tmp/capsem-container/workload.pid').read().strip(); "

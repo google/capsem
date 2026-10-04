@@ -167,9 +167,6 @@ pub(super) fn validate_assets_channel_graph_health(
         "health.json manifest URL does not match channel",
     )?;
     let expected_asset_base = require_json_string(health, &["urls", "asset_base"])?;
-    if json_path(health, &["urls", "profile_catalog"]).is_some() {
-        return Err(anyhow!("health.json profile catalog URL mismatch"));
-    }
     let current_assets = require_json_string(health, &["current", "assets"])?;
     let current_binary = require_json_string(health, &["current", "binary"])?;
     require_json_str(

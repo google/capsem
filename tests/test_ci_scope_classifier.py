@@ -173,7 +173,7 @@ def test_rename_classifies_both_old_and_new_owners() -> None:
         ("build_system/release_site/src/index.astro", "release_site"),
         ("crates/capsem-core/src/lib.rs", "rust_guest_config"),
         ("guest/artifacts/capsem-init", "rust_guest_config"),
-        ("config/profiles/code/profile.toml", "rust_guest_config"),
+        ("config/docker/image/build.toml", "rust_guest_config"),
         ("rustfmt.toml", "rust_guest_config"),
         ("benchmarks/collectors/routes", "benchmarks"),
         ("benchmarks/baselines/routes/data.json", "benchmarks"),

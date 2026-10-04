@@ -24,7 +24,6 @@ from .configschema import SafeToken, Strict
 
 class InstallLayout(Strict):
     assets: str
-    config: str
     channel: str
     packages: str
     glowup: str
@@ -37,7 +36,6 @@ class InstallLayout(Strict):
             f"{mount}/{path}"
             for path in (
                 self.assets,
-                self.config,
                 self.channel,
                 self.packages,
                 self.glowup,
@@ -154,7 +152,6 @@ class InstallConfig(Strict):
     selected_inputs_dir: str
     proof_content_mount: str
     proof_assets_name: str
-    proof_config_name: str
     package_runtime_packages: tuple[str, ...]
     layout: InstallLayout
     guest_user: GuestUser
@@ -193,10 +190,6 @@ class InstallConfig(Strict):
     @property
     def proof_assets_mount(self) -> str:
         return str(PurePosixPath(self.proof_content_mount) / self.proof_assets_name)
-
-    @property
-    def proof_config_mount(self) -> str:
-        return str(PurePosixPath(self.proof_content_mount) / self.proof_config_name)
 
 
 class PackageProof(Strict):

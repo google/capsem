@@ -373,14 +373,6 @@ fn image_is_not_a_clone_source_alias() {
 }
 
 #[test]
-fn a_profile_id_is_refused_not_ignored() {
-    let error = serde_json::from_value::<ProvisionRequest>(json!({"profile_id": "code"})).unwrap_err();
-    assert!(error.to_string().contains("unknown field `profile_id`"), "{error}");
-    let error = serde_json::from_value::<RunRequest>(json!({"command": "true", "profile_id": "code"})).unwrap_err();
-    assert!(error.to_string().contains("unknown field `profile_id`"), "{error}");
-}
-
-#[test]
 fn schema_exposes_closed_lifecycle_and_action_values() {
     let state = serde_json::to_value(VmLifecycleState::schema()).unwrap();
     let action = serde_json::to_value(VmAction::schema()).unwrap();

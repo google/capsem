@@ -1051,7 +1051,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     replacement.
   - A persistent VM created from a profile shows as Incompatible and can only
     be deleted; resume and `--from` clones of it are refused with the reason.
-  - Edits made under `~/.capsem/profiles` are not carried over.
+  - Edits made under `~/.capsem/profiles` are not carried over, and
+    `capsem update --yes` deletes that leftover directory. The removal never
+    follows a link: a symlinked `profiles`, or a link inside it, loses only
+    the link and its target is left alone.
+  - `capsem-admin profile validate|check|materialize` are removed, along with
+    `config/profiles/` and `config/profile-catalog.toml`.
+  - `capsem-bench-rs` drops `--profile`; its store (schema v2) keys runs by
+    dimension and architecture only, so an older local store is refused and
+    must be re-recorded.
+  - The guest no longer exports `NODE_OPTIONS`, `NPM_CONFIG_*` or
+    `NO_UPDATE_NOTIFIER`, and login shells no longer put `/opt/ai-clis/bin`
+    on `PATH`; `/root/.local/bin` stays.
   - capsem-process takes `--active-policy` (was `--active-profile`), and
     capsem-mcp-builtin reads `CAPSEM_ACTIVE_POLICY`.
   - The host ledger's `profile_mutation_events` table becomes

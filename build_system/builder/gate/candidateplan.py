@@ -90,7 +90,7 @@ def compose(
     # serial either way -- so the order cost nothing in total time and
     # everything in how long a trivial failure takes to arrive. `contracts` is
     # a nine-minute pytest run, and Ruff, which answers in under two seconds,
-    # sat behind it: two consecutive `release-profile` attempts died at 9m12
+    # sat behind it: two consecutive release attempts died at 9m12
     # and 11m39 on one unused local variable.
     #
     # `fast` also opens with `toolchain.sync`, so running it first means the
@@ -178,7 +178,6 @@ def compose_modules(
         qualification=qualification,
         after=(functional,),
         local_content=RuntimeContent.built(config),
-        materialized=prepared.profile_content,
     )
     # After the glow-up, not instead of it. The local lane's install proof runs
     # the package it built; this runs the same package again through the pulled

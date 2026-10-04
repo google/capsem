@@ -311,7 +311,7 @@ impl VmConfigBuilder {
     /// The blake3 hex digest an expected-hash value denotes.
     ///
     /// Two spellings reach boot for the same digest: asset manifests carry
-    /// bare hex, while release-graph digests and the profile pins derived from
+    /// bare hex, while release-graph digests and the asset pins derived from
     /// them carry `blake3:<hex>`. Both are accepted here, in the one place
     /// that decides what an expected hash means, so no caller has to remember
     /// which spelling it holds.

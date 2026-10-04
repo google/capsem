@@ -402,7 +402,7 @@ def test_asset_materializer_builds_name_their_network_explicitly() -> None:
     assert "network=config.build.materialize_network" in source
 
 
-def test_profile_release_asset_job_has_no_parallel_package_authority() -> None:
+def test_runtime_release_asset_job_has_no_parallel_package_authority() -> None:
     workflow = yaml.safe_load(
         (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8")
     )

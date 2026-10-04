@@ -8,7 +8,7 @@ inputs or was handed them.
 
 Three binary-release dispatches were spent on exactly that mismatch, one
 directory at a time: `cache/target/cargo/debug` for the host binaries, then `cache/target/config`
-for the materialized profiles, with `--maxfail=5` hiding whatever stood behind
+for the materialized config, with `--maxfail=5` hiding whatever stood behind
 them. Each fix was applied at the site that failed rather than to the class.
 
 The class is checkable without running anything: for each `cache/target/` subtree a
@@ -26,9 +26,8 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 #: Both first-party trees that run inside a lane. Scripts were the hole the
-#: first version left: `integration_test.py` resolves `cache/target/config` and
-#: `mock_server.py` resolves `cache/target/cargo/debug`, exactly like the tests do, and
-#: nothing was checking them.
+#: first version left: `mock_server.py` resolves `cache/target/cargo/debug`,
+#: exactly like the tests do, and nothing was checking it.
 SOURCES = (PROJECT_ROOT / "tests", PROJECT_ROOT / "scripts")
 
 #: What `cargotarget.link_prefix_trees` points at staged input for a pulled

@@ -1486,7 +1486,6 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 ),
                 timeout_s=20,
             )
-            assert "profile_id" not in info
             # The session's totals are the writer's counter snapshot (#223),
             # written with the rows it counts.
             totals = ledger_totals(conn)

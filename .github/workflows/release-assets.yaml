@@ -182,9 +182,8 @@ jobs:
             --check-functional-cohort \
             --github-output "$GITHUB_OUTPUT"
 
-      # A channel that has published no runtime yet (a first channel, or the
-      # first runtime after the per-profile graphs it replaced) has none to
-      # pull. That is the only empty set accepted: a runtime the manifest names
+      # A channel that has published no runtime yet has none to pull. That is
+      # the only empty set accepted: a runtime the manifest names
       # must still resolve every one of its artifacts.
       - name: Fetch exact deployed public-before runtime
         uses: ./.github/actions/fetch-release-inputs

@@ -216,18 +216,18 @@ def test_each_manifests_dependency_image_is_declared_current(monkeypatch, tmp_pa
         def __init__(self, name: str) -> None:
             self.manifest = Manifest(name)
 
-    for profile in ("code", "co-work"):
+    for manifest in ("guest", "fixture"):
         image_build_backend.declare_current(
-            Config(profile),
+            Config(manifest),
             AssetDependencyImage(
-                reference=f"capsem-rootfs-dependencies-x86_64:{profile}", image_id="sha256:x"
+                reference=f"capsem-rootfs-dependencies-x86_64:{manifest}", image_id="sha256:x"
             ),
             PROJECT_ROOT,
         )
 
     assert dockercurrent.live_tags(load_paths(PROJECT_ROOT), now_ns=time.time_ns()) == {
-        "capsem-rootfs-dependencies-x86_64:code",
-        "capsem-rootfs-dependencies-x86_64:co-work",
+        "capsem-rootfs-dependencies-x86_64:guest",
+        "capsem-rootfs-dependencies-x86_64:fixture",
     }
 
 

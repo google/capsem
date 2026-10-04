@@ -87,9 +87,8 @@ priority = "default"
 reason = "Default allow for process execution and audit activity."
 match = 'has(process.exec.path) || has(process.command) || has(process.exec.id)'
 
-# Publication, preview and private-network allows. They lived only in the
-# profiles' enforcement.toml; without a profile, published ports, previews and
-# named networks would fall to the 000_local_network ask.
+# Publication, preview and private-network allows. Without them, published
+# ports, previews and named networks would fall to the 000_local_network ask.
 [default.expose]
 name = "expose"
 action = "allow"
@@ -112,9 +111,9 @@ reason = "Allow a member of a shared named network to plug this VM into the netw
 match = 'network.mode == "private" && network.side == "destination" && network.protocol == "link"'
 
 # The hermetic mock server `capsem doctor` and capsem-bench start on the host
-# loopback. Every profile shipped this allow; without it their guest traffic
-# would fall to the local network ask. Built-in rules share one priority and
-# are ordered by id, so the id sorts before 000_local_network.
+# loopback. Without this allow their guest traffic would fall to the local
+# network ask. Built-in rules share one priority and are ordered by id, so the
+# id sorts before 000_local_network.
 [default.000_capsem_mock_server]
 name = "capsem_mock_server"
 action = "allow"
@@ -122,7 +121,7 @@ priority = "default"
 reason = "Allow Capsem doctor, benchmark, and Ironbank traffic to the local hermetic mock server."
 match = '(http.host == "127.0.0.1" || http.host == "localhost") && ip.value == "127.0.0.1" && tcp.port == "3713"'
 
-# The profiles' one Sigma detection, as the equivalent built-in rule.
+# Skill-load detection, as a built-in rule.
 [default.skill_loaded]
 name = "skill_loaded"
 action = "allow"

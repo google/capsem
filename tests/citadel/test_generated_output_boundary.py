@@ -24,7 +24,6 @@ FINAL_OUTPUT_ROOTS = {
     "coverage": "cache/target/coverage",
     "distribution": "cache/target/release/distribution",
     "gate_runs": "cache/target/gate-runs",
-    "materialized_config": "cache/target/config",
     "packages": "cache/target/packages",
     "test_artifacts": "cache/target/tests/evidence",
 }
@@ -347,7 +346,7 @@ def _synthetic_policy() -> dict[str, Any]:
             "tracked generated root byte",
         ),
         (
-            _synthetic(tracked=("config/profiles/code/catalog.generated.json",)),
+            _synthetic(tracked=("config/corp/catalog.generated.json",)),
             "generated file in source/config root",
         ),
         (

@@ -21,12 +21,12 @@ pub const EXEC_STDIN_WINDOW: usize = 16;
 const MAX_EXEC_FRAME_BYTES: u32 = 512 * 1024;
 
 /// Encoding used after the `ExecStarted` control frame on the dedicated exec
-/// connection. Profiles released before typed streams sent one raw merged
+/// connection. Guest agents released before typed streams sent one raw merged
 /// stdout/stderr byte stream; current agents preserve the two output lanes.
 #[derive(Serialize, Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecOutputProtocol {
-    /// Compatibility format used by immutable profiles released before typed
+    /// Compatibility format used by immutable guest images released before typed
     /// exec streams. The host reports the merged bytes as stdout.
     #[default]
     RawMerged,

@@ -280,7 +280,6 @@ def test_missing_first_party_channel_bootstraps_through_capsem_admin(
     command = calls[0]
     assert command[:6] == ["cargo", "run", "-p", "capsem-admin", "--", "release"]
     assert command[command.index("--channel") + 1] == "nightly"
-    assert "--profile" not in command
     assert command[command.index("--source-commit") + 1] == "a" * 40
 
 
@@ -1222,14 +1221,6 @@ def test_selected_install_transport_keeps_the_verified_source_graph(
     staged_manifest = STAGE.stage_runtime(inputs, root / "assets")
     config = gate_config.load(ROOT)
     content = RuntimeContent.isolated(config, root)
-    config_manifest = content.config_manifest(config)
-    config_manifest.parent.mkdir(parents=True)
-    config_manifest.write_bytes(staged_manifest.read_bytes())
-    # The service catalog is materialized from the checkout, never staged from
-    # release inputs; stand one in so only the runtime projection is under test.
-    catalog_entry = content.profiles(config) / "code" / "profile.toml"
-    catalog_entry.parent.mkdir(parents=True)
-    catalog_entry.write_text('id = "code"\n', encoding="utf-8")
 
     selected = SelectedInstallContent(content)
     selected.require_complete(config, arches=(config.architectures["x86_64"],))

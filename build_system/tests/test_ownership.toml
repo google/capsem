@@ -16,11 +16,6 @@ target = "build_system/tests/gate/fixtures/typecheck/gate_vocabulary_strings.py.
 
 [[owned]]
 owner = "gate"
-source = "tests/helpers/profile_content.py"
-target = "build_system/tests/gate/profile_content.py"
-
-[[owned]]
-owner = "gate"
 source = "tests/helpers/runlog_worker.py"
 target = "build_system/tests/gate/runlog_worker.py"
 

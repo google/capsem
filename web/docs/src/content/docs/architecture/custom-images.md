@@ -263,12 +263,12 @@ Block external search and allow only internal registries:
 Edit the corp enforcement rule file:
 
 ```toml
-[profiles.rules.allow_internal_registry]
+[corp.rules.allow_internal_registry]
 name = "allow_internal_registry"
 action = "allow"
 match = 'http.host.matches("(^|.*\\.)internal\\.corp\\.com$")'
 
-[profiles.rules.block_external_search]
+[corp.rules.block_external_search]
 name = "block_external_search"
 action = "block"
 match = 'http.host.matches("(^|.*\\.)(google\\.com|bing\\.com|duckduckgo\\.com)$")'

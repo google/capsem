@@ -136,7 +136,6 @@ component_management:
         - crates/capsem-core/src/auditfs.rs
         - crates/capsem-core/src/contained_fs.rs
         - crates/capsem-core/src/fs_monitor.rs
-        - crates/capsem-core/src/bin/mcp_export.rs
 
     # Logger DB, host ledger, session maintenance, log layer, tracing bootstrap.
     # Future: OTEL, reporting, SSH session recording.
@@ -196,7 +195,7 @@ component_management:
       paths:
         - sdk/rust/src/**
 
-    # Pure settings, provider, profile, MCP, and security-rule contracts.
+    # Pure settings, provider, MCP, and security-rule contracts.
     - component_id: config
       name: Configuration
       paths:
@@ -254,8 +253,8 @@ component_management:
       paths:
         - crates/capsem-process/src/**
 
-    # Admin/profile tooling: manifest generation, profile materialization,
-    # image build orchestration, and release asset validation.
+    # Admin tooling: manifest generation, image build orchestration, and
+    # release asset validation.
     - component_id: admin
       name: Admin
       paths:
@@ -291,7 +290,7 @@ component_management:
       paths:
         - crates/capsem-gateway/src/**
 
-    # Terminal UI: profile/session control over the service API.
+    # Terminal UI: session control over the service API.
     - component_id: tui
       name: TUI
       paths:

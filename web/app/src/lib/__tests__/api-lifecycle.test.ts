@@ -43,7 +43,6 @@ describe('VM lifecycle', () => {
     const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
     expect(call[0]).toContain('/vms/create');
     expect(call[1].method).toBe('POST');
-    expect(JSON.parse(call[1].body)).not.toHaveProperty('profile_id');
   });
 
   it('provisionVm leaves resource defaults to the service', async () => {

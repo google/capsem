@@ -85,7 +85,7 @@ const QUERY_MANY_CACHE_ENTRIES: usize = 8;
 pub enum ReadCacheDomain {
     /// Any accepted write can affect this reader.
     All,
-    /// Aggregates sourced from the main DB session/usage tables. Profile
+    /// Aggregates sourced from the main DB session/usage tables. Policy
     /// mutation ledger rows are orthogonal and must not evict this projection.
     SessionSummary,
     /// The counter snapshot polled routes read. Moves when the reader worker

@@ -58,9 +58,9 @@ surface requires explicit product/API approval.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/vms/create` | Create a session from a profile |
-| GET | `/vms/list` | List sessions and profile/status metadata |
-| GET | `/vms/{id}/info` | Session identity, profile, config, and diagnostics |
+| POST | `/vms/create` | Create a session from the one runtime, sized by request flags |
+| GET | `/vms/list` | List sessions and status metadata |
+| GET | `/vms/{id}/info` | Session identity, config, and diagnostics |
 | GET | `/vms/{id}/status` | Hot in-memory runtime state and counters |
 | POST | `/vms/{id}/exec` | Execute command, return stdout/stderr/exit_code |
 | POST | `/run` | One-shot create + exec + destroy through the same service path |
@@ -80,7 +80,7 @@ surface requires explicit product/API approval.
 
 MCP tools include `capsem_create`, `capsem_list`, `capsem_info`, `capsem_exec`,
 `capsem_run`, lifecycle tools, file read/write, logs, timeline, triage,
-status, fork, private networks, and profile MCP tools. Raw SQL inspection tools are not part of
+status, fork, private networks, and MCP server tools (`capsem_mcp_*`). Raw SQL inspection tools are not part of
 the product surface; telemetry access must use typed routes.
 
 ## Host-guest communication

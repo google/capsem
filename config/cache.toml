@@ -121,23 +121,13 @@ maximum_age_hours = 720
 maximum_count = 60
 managed_globs = ["20*-*"]
 
-[stages.materialized-config]
-description = "Validated profile configuration materialized for builders and tests."
-scope = "disk"
-path = "target/config"
-warm_size_bytes = 67108864 # 64 MiB
-max_size_bytes = 134217728 # 128 MiB
-prune_strategy = "generational"
-maximum_age_hours = 336
-maximum_count = 8
-
 [stages.objects]
 description = "Content-addressed immutable objects shared across build and release lanes."
 scope = "disk"
 path = "objects"
 warm_size_bytes = 8589934592 # 8 GiB
 max_size_bytes = 12884901888 # 12 GiB
-# A generation is one rootfs per profile (~850 MB each) plus kernel and initrd.
+# A generation is one rootfs per architecture (~850 MB each) plus kernel and initrd.
 # At 48 GiB and 90 days the store held 37 GB: ~40 unreferenced rootfs objects
 # from 112 rootfs receipts, most three weeks old. 12 GiB keeps ~6 generations.
 # One receipt generation at a time, with the objects only it names; readers and

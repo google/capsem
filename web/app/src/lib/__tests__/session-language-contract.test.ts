@@ -71,7 +71,6 @@ describe('user-facing session language contract', () => {
     expect(dashboard).not.toContain('getUpdateStatus');
     expect(dashboard).not.toContain('Not published');
     expect(dashboard).not.toContain('Start</span>');
-    expect(dashboard.toLowerCase()).not.toContain('profile');
   });
 
   it('routes About Capsem to a top-level canonical status page', () => {
@@ -88,7 +87,6 @@ describe('user-facing session language contract', () => {
     expect(about).toContain('system.manifest_metadata.manifest_url');
     expect(about).toContain('system.assets.assets');
     expect(about).toContain('system?.assets.current_arch');
-    expect(about.toLowerCase()).not.toContain('profile');
     expect(about).toContain('packageEvidence(pkg)');
     expect(about).toContain('evidence.url');
     expect(about).toContain('<details');
@@ -107,16 +105,14 @@ describe('user-facing session language contract', () => {
     expect(quickCreateSources).not.toContain('generatedVmName');
     expect(quickCreateSources).not.toContain('ram_mb');
     expect(quickCreateSources).not.toContain('cpus:');
-    expect(quickCreateSources).not.toContain('profile_id');
     expect(dashboard).toContain('vmStore.provision({ persistent: true })');
     expect(appShell).toContain('vmStore.openCreateModal()');
   });
 
-  it('customizes a session from the service defaults without a profile picker', () => {
+  it('customizes a session from the service defaults', () => {
     expect(createDialog).toContain('const DEFAULT_RAM_MB = 12288');
     expect(createDialog).toContain('const DEFAULT_CPUS = 4');
     expect(createDialog).toContain('disabled={creating}');
-    expect(createDialog.toLowerCase()).not.toContain('profile');
   });
 
   it('uses sessions in toolbar controls and keeps build stamp out of visible chrome', () => {
@@ -125,7 +121,6 @@ describe('user-facing session language contract', () => {
     expect(toolbar).not.toContain('Frontend build');
     expect(toolbar).not.toContain('build {__BUILD_TS__}');
     expect(toolbar).not.toContain('VM Logs');
-    expect(toolbar).not.toContain("openSingleton('profile'");
   });
 
   it('uses semantic tokens for toolbar status chrome', () => {

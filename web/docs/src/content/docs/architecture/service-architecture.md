@@ -159,7 +159,7 @@ not forwarded to the service.
 configuration and identity. Policy, plugins, MCP, and assets are global:
 every VM enforces the same merged policy (built-in defaults, `settings.toml`,
 corp) and boots the same runtime image set. Request bodies refuse unknown
-fields, so a `profile_id` is a 400.
+fields with a 400.
 
 Every client -- CLI, TUI, web terminal, SDKs, MCP -- reaches a VM through these
 routes. Only the service talks to a VM owner, over typed IPC; no client dials a

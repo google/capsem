@@ -288,10 +288,10 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
     assert!(includes_openai_rule);
 }
 
-/// Without a profile, publication, preview and named-network allows and the
-/// skill detection must still be in force: they ship built in.
+/// Publication, preview and named-network allows and the skill detection
+/// ship built in.
 #[test]
-fn built_in_defaults_cover_what_profiles_supplied() {
+fn built_in_defaults_cover_publication_preview_networks_and_skills() {
     let built_in = ProviderRuleProfile::builtin_security_defaults()
         .compile(SecurityRuleSource::BuiltinDefault)
         .expect("built-in defaults compile");
@@ -310,22 +310,4 @@ fn built_in_defaults_cover_what_profiles_supplied() {
         skill.condition,
         r#"file.read.name == "SKILL.md" && file.read.ext == "md""#
     );
-
-    // Every default rule a shipped profile defines is built in.
-    let profiles = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/profiles");
-    for entry in std::fs::read_dir(profiles).expect("profiles dir") {
-        let path = entry.unwrap().path().join("enforcement.toml");
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let table: toml::Table = toml::from_str(&text).expect("enforcement parses");
-        for id in table
-            .get("default")
-            .and_then(toml::Value::as_table)
-            .into_iter()
-            .flat_map(|t| t.keys())
-        {
-            rule(id);
-        }
-    }
 }

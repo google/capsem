@@ -30,10 +30,10 @@ capsem_wait_for_service() {
     return 1
 }
 
-capsem_wait_for_profile_assets() {
-    local profile="$1" output="$2" attempt
+capsem_wait_for_assets() {
+    local output="$1" attempt
     for attempt in $(seq 1 180); do
-        "$CAPSEM" assets status --profile "$profile" --json > "$output"
+        "$CAPSEM" assets status --json > "$output"
         if python3 - "$output" <<'PY'
 import json
 from pathlib import Path
@@ -47,7 +47,7 @@ PY
         fi
         sleep 1
     done
-    echo "ERROR: profile $profile assets did not settle after $attempt polls" >&2
+    echo "ERROR: assets did not settle after $attempt polls" >&2
     cat "$output" >&2
     return 1
 }
@@ -59,12 +59,12 @@ capsem_finish_install_hydration() {
         echo "ERROR: package installer synchronously hydrated VM assets" >&2
         return 1
     fi
-    capsem_wait_for_profile_assets code "$SHARE/code-assets-after-install.json"
+    capsem_wait_for_assets "$SHARE/assets-after-install.json"
 }
 
 capsem_probe_asset_hydration() {
     local asset_path
-    asset_path=$(python3 - "$SHARE/code-assets-after-install.json" <<'PY'
+    asset_path=$(python3 - "$SHARE/assets-after-install.json" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -76,8 +76,8 @@ PY
 )
     test -f "$asset_path"
     rm "$asset_path"
-    "$CAPSEM" assets ensure --profile code --json > "$SHARE/code-assets-repair-start.json"
-    python3 - "$SHARE/code-assets-repair-start.json" <<'PY'
+    "$CAPSEM" assets ensure --json > "$SHARE/assets-repair-start.json"
+    python3 - "$SHARE/assets-repair-start.json" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -88,10 +88,10 @@ if status.get("started") is not True or status.get("downloading") is not True:
 if status.get("ready") is not False:
     raise SystemExit(f"asset repair claimed readiness before background completion: {status}")
 PY
-    capsem_wait_for_profile_assets code "$SHARE/code-assets-repair-complete.json"
+    capsem_wait_for_assets "$SHARE/assets-repair-complete.json"
     python3 - "$ASSET_HYDRATION_EVIDENCE" \
-        "$SHARE/code-assets-repair-start.json" \
-        "$SHARE/code-assets-repair-complete.json" <<'PY'
+        "$SHARE/assets-repair-start.json" \
+        "$SHARE/assets-repair-complete.json" <<'PY'
 import json
 from pathlib import Path
 import sys

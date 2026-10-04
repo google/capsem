@@ -1,6 +1,6 @@
 # Capsem corporate constraints and reporting.
 #
-# Corp owns constraints, locks, and reporting integrations over profiles. It
+# Corp owns constraints, locks, and reporting integrations over policy. It
 # does not own UI/application settings.
 
 refresh_policy = "24h"

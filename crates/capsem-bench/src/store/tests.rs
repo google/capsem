@@ -2,7 +2,7 @@ use super::{history, insert, latest, open, prune, SCHEMA_VERSION};
 use crate::schema::{Dimension, Host, Metric, Record, Release, Unit, SCHEMA};
 use crate::stats::Summary;
 
-fn record(dimension: Dimension, arch: &str, profile: &str, at: &str, value: f64) -> Record {
+fn record(dimension: Dimension, arch: &str, at: &str, value: f64) -> Record {
     Record {
         schema: SCHEMA.to_string(),
         dimension,
@@ -20,7 +20,6 @@ fn record(dimension: Dimension, arch: &str, profile: &str, at: &str, value: f64)
             governor: Some("performance".to_string()),
             load_before: 0.1,
         },
-        profile: profile.to_string(),
         quick: false,
         metrics: vec![Metric {
             key: "gateway./vms/list.cpu_s".to_string(),
@@ -32,7 +31,7 @@ fn record(dimension: Dimension, arch: &str, profile: &str, at: &str, value: f64)
 }
 
 fn base() -> Record {
-    record(Dimension::Routes, "x86_64", "code", "2026-08-21T12:00:00Z", 0.14)
+    record(Dimension::Routes, "x86_64", "2026-08-21T12:00:00Z", 0.14)
 }
 
 fn store() -> (tempfile::TempDir, rusqlite::Connection) {
@@ -45,7 +44,7 @@ fn store() -> (tempfile::TempDir, rusqlite::Connection) {
 fn a_record_round_trips_through_the_store() {
     let (_dir, mut connection) = store();
     insert(&mut connection, &base()).expect("inserts");
-    let found = latest(&connection, Dimension::Routes, "x86_64", "code")
+    let found = latest(&connection, Dimension::Routes, "x86_64")
         .expect("queries")
         .expect("present");
     assert_eq!(found.release.version, "0.6.0");
@@ -89,10 +88,10 @@ fn a_store_from_another_schema_version_is_refused() {
 fn the_latest_run_wins() {
     let (_dir, mut connection) = store();
     for (at, value) in [("2026-08-20T12:00:00Z", 0.10), ("2026-08-21T12:00:00Z", 0.20)] {
-        let row = record(Dimension::Routes, "x86_64", "code", at, value);
+        let row = record(Dimension::Routes, "x86_64", at, value);
         insert(&mut connection, &row).expect("inserts");
     }
-    let found = latest(&connection, Dimension::Routes, "x86_64", "code")
+    let found = latest(&connection, Dimension::Routes, "x86_64")
         .expect("queries")
         .expect("present");
     assert_eq!(found.recorded_at, "2026-08-21T12:00:00Z");
@@ -102,37 +101,11 @@ fn the_latest_run_wins() {
 #[test]
 fn another_architecture_is_not_evidence() {
     let (_dir, mut connection) = store();
-    let row = record(Dimension::Routes, "arm64", "code", "2026-08-21T12:00:00Z", 0.1);
+    let row = record(Dimension::Routes, "arm64", "2026-08-21T12:00:00Z", 0.1);
     insert(&mut connection, &row).expect("inserts");
-    assert!(latest(&connection, Dimension::Routes, "x86_64", "code")
+    assert!(latest(&connection, Dimension::Routes, "x86_64")
         .expect("queries")
         .is_none());
-}
-
-#[test]
-fn another_profile_is_not_evidence() {
-    let (_dir, mut connection) = store();
-    let row = record(Dimension::Routes, "x86_64", "co-work", "2026-08-21T12:00:00Z", 0.1);
-    insert(&mut connection, &row).expect("inserts");
-    assert!(latest(&connection, Dimension::Routes, "x86_64", "code")
-        .expect("queries")
-        .is_none());
-}
-
-#[test]
-fn two_profiles_of_one_release_both_survive() {
-    // The old scheme keyed on a filename that carried no profile, so the
-    // second lane of a gate silently overwrote the first.
-    let (_dir, mut connection) = store();
-    for profile in ["code", "co-work"] {
-        let row = record(Dimension::Routes, "x86_64", profile, "2026-08-21T12:00:00Z", 0.1);
-        insert(&mut connection, &row).expect("inserts");
-    }
-    for profile in ["code", "co-work"] {
-        assert!(latest(&connection, Dimension::Routes, "x86_64", profile)
-            .expect("queries")
-            .is_some());
-    }
 }
 
 #[test]
@@ -142,7 +115,7 @@ fn a_quick_run_is_recorded_but_never_evidence() {
     let mut quick = base();
     quick.quick = true;
     insert(&mut connection, &quick).expect("inserts");
-    assert!(latest(&connection, Dimension::Routes, "x86_64", "code")
+    assert!(latest(&connection, Dimension::Routes, "x86_64")
         .expect("queries")
         .is_none());
     let rows: i64 = connection
@@ -159,10 +132,10 @@ fn history_is_a_query_rather_than_a_glob() {
         ("2026-08-20T12:00:00Z", 0.12),
         ("2026-08-21T12:00:00Z", 0.11),
     ] {
-        let row = record(Dimension::Routes, "x86_64", "code", at, value);
+        let row = record(Dimension::Routes, "x86_64", at, value);
         insert(&mut connection, &row).expect("inserts");
     }
-    let trend = history(&connection, "gateway./vms/list.cpu_s", "x86_64", "code").expect("queries");
+    let trend = history(&connection, "gateway./vms/list.cpu_s", "x86_64").expect("queries");
     assert_eq!(trend.len(), 3, "oldest first, one point per run");
     assert_eq!(trend[0].2, 0.10);
     assert_eq!(trend[2].2, 0.11);
@@ -203,7 +176,7 @@ fn the_schema_version_is_stamped() {
 // ---------------------------------------------------------------------------
 
 fn versioned(at: &str, version: &str, value: f64) -> Record {
-    let mut row = record(Dimension::Routes, "x86_64", "code", at, value);
+    let mut row = record(Dimension::Routes, "x86_64", at, value);
     row.release.version = version.to_string();
     row
 }
@@ -230,7 +203,7 @@ fn only_the_newest_run_of_an_older_version_survives() {
         insert(&mut connection, &versioned(at, "0.5.0", 0.1)).expect("inserts");
     }
     assert_eq!(prune(&mut connection, "0.6.0").expect("prunes"), 2);
-    let kept = latest(&connection, Dimension::Routes, "x86_64", "code")
+    let kept = latest(&connection, Dimension::Routes, "x86_64")
         .expect("queries")
         .expect("present");
     assert_eq!(kept.recorded_at, "2026-06-03T10:00:00Z");
@@ -250,9 +223,7 @@ fn each_subject_keeps_its_own_survivor() {
     }
     assert_eq!(prune(&mut connection, "0.6.0").expect("prunes"), 2);
     for arch in ["x86_64", "arm64"] {
-        assert!(latest(&connection, Dimension::Routes, arch, "code")
-            .expect("queries")
-            .is_some());
+        assert!(latest(&connection, Dimension::Routes, arch).expect("queries").is_some());
     }
 }
 
@@ -286,7 +257,7 @@ fn a_quick_run_of_an_older_version_is_not_the_survivor() {
     insert(&mut connection, &quick).expect("inserts");
 
     prune(&mut connection, "0.6.0").expect("prunes");
-    let kept = latest(&connection, Dimension::Routes, "x86_64", "code")
+    let kept = latest(&connection, Dimension::Routes, "x86_64")
         .expect("queries")
         .expect("present");
     assert_eq!(kept.recorded_at, "2026-06-01T10:00:00Z");

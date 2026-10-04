@@ -102,9 +102,8 @@ The initrd is a gzipped cpio archive that the kernel unpacks into RAM at boot. T
 2. Copies in the freshly cross-compiled guest binaries (chmod 555, read-only)
 3. Copies in shell scripts: `capsem-init` (PID 1), `capsem-doctor`, `capsem-bench`
 4. Repacks with `cpio + gzip`
-5. Regenerates BLAKE3 checksums (`B3SUMS` + `manifest.json`)
-6. `_materialize-config` uses the updated manifest to regenerate the catalog
-   the development service reads under `cache/target/config/`
+5. Regenerates BLAKE3 checksums (`B3SUMS` + `manifest.json`), which the
+   development service reads to resolve the runtime
 
 This is why `just run` is fast (~10s) -- it only rebuilds what changed, not the full rootfs.
 

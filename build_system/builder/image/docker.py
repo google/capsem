@@ -953,7 +953,7 @@ def extract_software_inventory(
     ]
     rows.sort(key=lambda row: (row["source"], row["name"], row["architecture"], row["version"]))
     inventory = {
-        "schema": "capsem.profile_software_inventory.v1",
+        "schema": "capsem.runtime_software_inventory.v1",
         "architecture": arch_name,
         "packages": rows,
     }

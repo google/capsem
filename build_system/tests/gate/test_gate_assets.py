@@ -44,7 +44,7 @@ def _run_all(gate) -> None:
     gate.assemble()
 
 
-def _checkout(tmp_path: Path, *, catalog: tuple[str, ...] = ("code",)) -> Path:
+def _checkout(tmp_path: Path) -> Path:
     (tmp_path / "config").mkdir(parents=True)
     gate = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     (tmp_path / "config" / "gate.toml").write_text(
@@ -65,12 +65,6 @@ def _checkout(tmp_path: Path, *, catalog: tuple[str, ...] = ("code",)) -> Path:
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(PROJECT_ROOT / relative, destination)
-    # The service still reads a pinned catalog under `profiles/` (#289 removes
-    # it last), so the gate materializes every checked-in entry.
-    for name in catalog:
-        directory = tmp_path / "config" / "profiles" / name
-        directory.mkdir(parents=True)
-        (directory / "profile.toml").write_text(f'id = "{name}"\n')
     for relative in CONFIG.assets.identity_roots:
         source = PROJECT_ROOT / relative
         destination = tmp_path / relative
@@ -125,16 +119,6 @@ class Gating(RecordingRunner):
         if "manifest generate" in rendered:
             Path(command.argv[-1]).mkdir(parents=True, exist_ok=True)
             (Path(command.argv[-1]) / "manifest.json").write_text("{}")
-        if "profile materialize" in rendered:
-            output = Path(command.argv[command.argv.index("--output-root") + 1])
-            profile = Path(command.argv[command.argv.index("--profile") + 1]).parent.name
-            materialized = output / "profiles" / profile
-            materialized.mkdir(parents=True, exist_ok=True)
-            (materialized / "profile.toml").write_text(f'id = "{profile}"\n')
-            config = gate_config.for_root(self.root)
-            manifest = output / config.assets.merged_assets_dir / config.install.manifest_name
-            manifest.parent.mkdir(parents=True, exist_ok=True)
-            manifest.write_text("{}")
         return completed
 
 
@@ -143,13 +127,12 @@ def _gate(
     monkeypatch: pytest.MonkeyPatch,
     *,
     runner_class: type[Gating] = Gating,
-    catalog: tuple[str, ...] = ("code",),
     **kwargs,
 ) -> tuple[AssetGate, Gating]:
     monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
     monkeypatch.setattr("capsem_builder.gate.pidfiles.stop_gate_service", lambda *_a: None)
     monkeypatch.setattr("capsem_builder.gate.assets.WaitForSocket.perform", lambda _self, _context: None)
-    runner = runner_class(_checkout(tmp_path, catalog=catalog), **kwargs)
+    runner = runner_class(_checkout(tmp_path), **kwargs)
     return AssetGate(runner), runner
 
 
@@ -298,32 +281,6 @@ def test_hash_aliases_are_materialized_before_the_manifest_is_checked(
     runner.assert_order(r"create_hash_assets\.py", r"manifest check")
 
 
-def test_the_runtime_configuration_is_materialized_against_the_generated_manifest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    gate, runner = _gate(tmp_path, monkeypatch, catalog=("co-work", "code"))
-
-    _run_all(gate)
-
-    materialized = runner.matching(r"profile materialize")
-    assert len(materialized) == 2, "every catalog entry the service reads is materialized"
-    assert all("file://" in line for line in materialized), (
-        "the configuration must be materialized against the manifest just "
-        "generated, not against a channel URL"
-    )
-    assert all(f"--output-root {gate.test_root}/config" in line for line in materialized)
-
-
-def test_the_boot_proof_runs_after_the_configuration_is_materialized(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    gate, runner = _gate(tmp_path, monkeypatch)
-
-    _run_all(gate)
-
-    runner.assert_order(r"profile materialize", r"prove-installed-shell\.py")
-
-
 def test_the_boot_service_is_detached_owned_and_ready_before_the_shell_proof(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -341,7 +298,6 @@ def test_the_boot_service_is_detached_owned_and_ready_before_the_shell_proof(
     launched = runner.matching(r"capsem-service .*--foreground")
     assert len(launched) == 1
     assert f"--assets-dir {gate.test_root}/assets" in launched[0]
-    assert f"CAPSEM_PROFILES_DIR={gate.test_root}/config/profiles" in launched[0]
     runner.assert_order(r"capsem-service .*--foreground", r"prove-installed-shell\.py")
 
 
@@ -360,7 +316,6 @@ def test_the_boot_proof_runs_against_the_merged_runtime_assets(
     arch = gate.host_arch.name
     assert f"--marker CAPSEM_ASSET_RUNTIME_{arch}_SHELL_OK" in proof
     assert f"--session-name asset-runtime-{arch}" in proof
-    assert "--profile" not in proof, "there is one runtime; the proof selects no profile"
 
 
 def test_the_verified_runtime_becomes_the_canonical_following_input(
@@ -370,38 +325,19 @@ def test_the_verified_runtime_becomes_the_canonical_following_input(
 
     A warm canonical tree used to survive the private build. IronBank proved
     ``cache/target/tests/ironbank`` and the following modules silently opened
-    the older ``assets/`` and ``cache/target/config/profiles`` instead.
+    the older ``assets/`` instead.
     """
-    gate, _ = _gate(tmp_path, monkeypatch, catalog=("co-work", "code"))
+    gate, _ = _gate(tmp_path, monkeypatch)
     root = gate.root
     stale_assets = root / CONFIG.functional.assets_dir
     stale_assets.mkdir(parents=True)
     (stale_assets / "manifest.json").write_text('{"stale":true}\n')
-    stale_profiles = root / CONFIG.functional.config_root / CONFIG.functional.profiles_subdir
-    stale_profiles.mkdir(parents=True)
-    (stale_profiles / "stale.toml").write_text("stale = true\n")
-    stale_config = root / CONFIG.functional.config_root
-    stale_config_manifest = (
-        stale_config / CONFIG.assets.merged_assets_dir / CONFIG.install.manifest_name
-    )
-    stale_config_manifest.parent.mkdir(parents=True, exist_ok=True)
-    stale_config_manifest.write_text('{"stale":true}\n')
-    stale_sibling = stale_config / "retired" / "stale.toml"
-    stale_sibling.parent.mkdir(parents=True)
-    stale_sibling.write_text("stale = true\n")
     _run_all(gate)
 
     selected_assets = gate.test_root / CONFIG.assets.merged_assets_dir
     assert stale_assets.is_symlink()
     assert stale_assets.resolve() == selected_assets.resolve()
     assert (stale_assets / "manifest.json").read_text() == "{}"
-    assert not (stale_profiles / "stale.toml").exists()
-    assert stale_config_manifest.read_text() == "{}"
-    assert not stale_sibling.exists()
-    assert sorted(path.parent.name for path in stale_profiles.glob("*/profile.toml")) == [
-        "co-work",
-        "code",
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +359,7 @@ def test_a_failed_boot_preserves_its_evidence(
                 run_dir = Path(command.env["CAPSEM_RUN_DIR"])
                 (run_dir / "vm").mkdir(parents=True, exist_ok=True)
                 (run_dir / "serial.log").write_text("boot failed")
-                (run_dir / "vm" / "active_profile.toml").write_text("pins")
+                (run_dir / "vm" / "active_policy.toml").write_text("policy")
                 (run_dir / "guest").mkdir(exist_ok=True)
                 (run_dir / "guest" / "workspace.log").write_text("noise")
             return super().execute(command)
@@ -440,7 +376,7 @@ def test_a_failed_boot_preserves_its_evidence(
 
     preserved = gate.test_root / CONFIG.assets.failure_evidence_dir
     assert (preserved / "serial.log").is_file()
-    assert (preserved / "vm" / "active_profile.toml").is_file()
+    assert (preserved / "vm" / "active_policy.toml").is_file()
     assert not (preserved / "guest").exists(), (
         "guest/ duplicates the guest's own workspace once per generation and "
         "must not be copied into cache/target/"

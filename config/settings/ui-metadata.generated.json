@@ -153,7 +153,7 @@
       "collapsed": false,
       "web": {
         "name": "Network Mechanics",
-        "description": "Network engine mechanics. HTTP/DNS decisions are profile security rules.",
+        "description": "Network engine mechanics. HTTP/DNS decisions are security rules.",
         "http_upstream_ports": {
           "name": "Allowed plain HTTP upstream ports",
           "description": "Plain HTTP upstream ports the MITM may dial after guest traffic reaches the local proxy.",

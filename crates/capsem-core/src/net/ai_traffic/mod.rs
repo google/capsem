@@ -12,7 +12,7 @@
 ///
 /// # Provider identity vs protocol
 ///
-/// Provider identity is settings/profile data (`ai.openai`, `ai.ollama`,
+/// Provider identity is settings and corp data (`ai.openai`, `ai.ollama`,
 /// custom private gateways). Rust owns typed wire protocol adapters such as
 /// OpenAI, Anthropic, Google, and native Ollama. A new OpenAI-compatible
 /// endpoint must not need a new Rust enum variant.

@@ -323,7 +323,7 @@ pub fn load_corp_files() -> SettingsFile {
                 for (rule_id, rule) in file.corp.rules {
                     corp.corp.rules.entry(rule_id).or_insert(rule);
                 }
-                // Provider profile config: first corp path wins per provider.
+                // Provider config: first corp path wins per provider.
                 for (provider_id, provider) in file.ai {
                     corp.ai.entry(provider_id).or_insert(provider);
                 }

@@ -11,7 +11,7 @@ The asset pipeline moves kernel, initrd, and rootfs images from build through to
 
 Capsem builds one VM runtime. Its inputs are the image contract under
 `config/docker/image/` and the guest payload under `guest/artifacts/`; no
-profile or application enters the build. The build rail materializes a backend
+application enters the build. The build rail materializes a backend
 image workspace before Docker runs:
 
 ```
@@ -126,9 +126,8 @@ evidence lists. VM asset attestations are incomplete unless
 `github_attestations_vm_assets` is present and its `predicate_url` points at the
 published VM OBOM evidence for the current asset release.
 Runtime-owned image, software inventory, and OBOM records are validated from
-the `runtime` document of `/assets/<channel>/manifest.json`; there is no
-`profiles` key, no published config file, and no profile catalog artifact in
-the release-channel contract. Released runtime files live under
+the `runtime` document of `/assets/<channel>/manifest.json`; the
+release-channel contract publishes no config file. Released runtime files live under
 `/runtime/releases/<channel>/<revision>/<architecture>/<file>`.
 
 Key points:
@@ -164,23 +163,11 @@ After manifest generation, `build_system/scripts/build/create_hash_assets.py` cr
 `<stem>-<hex16>.<ext>` hardlinks so the dev layout matches the
 content-addressable names used by the installed layout.
 
-After `_pack-initrd` updates the manifest, `_materialize-config` runs
-`capsem-admin profile materialize` to fill the catalog the local development
-service still reads (through `CAPSEM_PROFILES_DIR`) until that catalog is
-retired. It is a dev/test service input, not a build or release unit, and no
-package ships it. It writes:
-
-```
-cache/target/config/
-  settings.toml
-  corp.toml
-  profiles/code/profile.toml # selected arch assets rewritten from manifest
-  profiles/code/*.toml|yaml # copied rule files
-  assets/manifest.json
-```
-
-The generated catalog uses verified `file://` URLs for the active local arch.
-Its checked-in source must not be edited to match a local repacked initrd.
+The local development service resolves the runtime from the manifest in its
+assets directory (`cache/target/assets/manifest.json` in a checkout), exactly
+as an installed service reads `~/.capsem/assets/manifest.json`. A repacked
+initrd is picked up by regenerating that manifest, never by hand-editing a
+hash.
 
 ### Custom corp build manifest flow
 
@@ -194,7 +181,6 @@ bash build_system/packaging/macos/build-pkg.sh \
   cache/target/cargo/release/bundle/macos/Capsem.app \
   cache/target/release \
   /path/to/assets \
-  cache/target/config \
   1.3.corp.1
 ```
 
@@ -213,8 +199,7 @@ Asset hashes are **not** baked into the binary at compile time -- that would tie
 
 On an installed host the selected channel manifest's `runtime` document is the
 runtime contract; a revoked runtime is refused. In dev/test the service reads
-the same descriptors from the materialized catalog under
-`cache/target/config/profiles`:
+the same descriptors from `cache/target/assets/manifest.json`:
 
 1. VM create resolves the runtime's current host-arch kernel, initrd, and
    rootfs assets.
@@ -226,8 +211,8 @@ the same descriptors from the materialized catalog under
 Failure modes:
 
 - **Generated config missing**: the justfile service path fails before launch.
-- **Generated catalog/manifest mismatch**: `capsem-admin profile check` rejects
-  the materialized dev catalog before boot.
+- **Manifest invalid**: `capsem-admin manifest check` rejects a malformed or
+  inconsistent manifest before it is used.
 - **Asset bytes mismatch**: asset ensure or `VmConfig::build()` rejects the
   file and the VM does not boot.
 
@@ -298,10 +283,9 @@ Assets are verified at multiple points:
 | After download | `asset_manager.rs` | Temp file deleted, download retried |
 | Before boot | `vm/config.rs` | `ConfigError::HashMismatch`, boot prevented |
 
-Both use BLAKE3 with 64-character hex format. In dev/test, expected hashes are
-copied from `cache/target/assets/manifest.json` into the materialized catalog
-under `cache/target/config/` by `capsem-admin profile materialize`; the
-service reads the generated copy, never the checked-in source.
+Both use BLAKE3 with 64-character hex format. In dev/test, expected hashes come
+from `cache/target/assets/manifest.json`, written by
+`capsem-admin manifest generate`.
 
 ## Per-Architecture Isolation
 

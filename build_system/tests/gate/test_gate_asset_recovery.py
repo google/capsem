@@ -476,7 +476,6 @@ def test_the_one_recovery_build_invalidates_completion_first() -> None:
     manifest = config.path(config.imagebuild.output) / config.install.manifest_name
     assert image.actions[0].render() == f"when host assets are missing or stale: rm -rf {manifest}"
     assert "capsem-admin" in image.actions[1].render()
-    assert "--profile" not in image.actions[1].render()
 
 
 # ---------------------------------------------------------------------------
@@ -760,9 +759,8 @@ def test_preflight_keeps_only_reusable_lane_roots(
     monkeypatch.delenv(CACHE_POLICY.authority_environment, raising=False)
     test_root = output.parent
     (test_root / config.assets.merged_assets_dir).mkdir()
-    (test_root / config.assets.merged_config_dir).mkdir()
-    # A profile-era tree (`<profile>/build-<arch>`) is obsolete output now.
-    obsolete = test_root / "code"
+    # Anything that is not a lane root is obsolete output.
+    obsolete = test_root / "retired"
     obsolete.mkdir()
     log = config.path(config.assets.test_root) / f"build-{arch.name}.log"
     log.write_text("old", encoding="utf-8")
@@ -772,7 +770,6 @@ def test_preflight_keeps_only_reusable_lane_roots(
 
     assert output.is_dir()
     assert not (test_root / config.assets.merged_assets_dir).exists()
-    assert not (test_root / config.assets.merged_config_dir).exists()
     assert not obsolete.exists()
     assert not log.exists()
 

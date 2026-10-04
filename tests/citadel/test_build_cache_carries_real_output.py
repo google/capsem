@@ -126,17 +126,17 @@ def test_scaffolding_is_never_copied_back_into_the_checkout() -> None:
 def test_a_tree_reached_through_a_link_is_carried_as_its_contents(
     tmp_path: Path,
 ) -> None:
-    """Profile content reaches the assets through a relative symlink.
+    """A lane may reach the assets through a relative symlink.
 
-    `cache/target/tests/ironbank/<profile>/assets` is a link to `cache/target/assets`,
-    so what a run leaves behind is one real directory and several pointers at
+    A link such as `cache/target/ironbank-assets/<lane>/assets` points at
+    `cache/target/assets`, so what a run leaves behind is one real directory and several pointers at
     it. Moving a pointer instead of the directory would fill the cache with
     links into a prefix that no longer exists, and the next run would be lent a
     path that resolves to nothing.
     """
     config = _relocated(tmp_path)
     finished = _produced(config, "cccccccc")
-    pointer = finished / "cache" / "target" / "ironbank-assets" / "code"
+    pointer = finished / "cache" / "target" / "ironbank-assets" / "lane"
     pointer.mkdir(parents=True)
     (pointer / "assets").symlink_to("../../assets")
 
@@ -356,7 +356,7 @@ def test_the_cache_never_holds_a_link_where_a_tree_should_be(tmp_path: Path) -> 
     the cache is for -- carrying a finished run's work -- never happened once.
 
     A prefix legitimately reaches its assets through links; `[prefix] exports`
-    says as much, and `cache/target/tests/ironbank/<profile>/assets` is one. So the
+    says as much, and a lane's `assets` link is one. So the
     salvage has to move what a link points at, not the link.
     """
     config = _relocated(tmp_path)

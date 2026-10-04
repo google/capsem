@@ -201,9 +201,7 @@ def test_canonical_manifest_url() -> None:
             encoding="utf-8"
         )
         assert canonical in page
-        assert "Profile Catalog" not in page
         assert "catalog.json" not in page
-        assert "profile_catalog" not in page
 
         for manifest_record in record["manifests"]:
             url = manifest_record["url"]
@@ -224,7 +222,7 @@ def test_no_catalog_side_channel() -> None:
             for channel in graph["channels"]
         ],
     ]
-    forbidden_tokens = ("Profile Catalog", "profile_catalog", "catalog.json")
+    forbidden_tokens = ("catalog.json",)
     for page_path in rendered_pages:
         page = page_path.read_text(encoding="utf-8")
         for token in forbidden_tokens:
@@ -240,7 +238,6 @@ def test_no_catalog_side_channel() -> None:
     for channel, record in graph["channels"].items():
         current = next(item for item in record["manifests"] if item["status"] == "current")
         manifest = graph["manifests"][channel][current["version"]]
-        assert "profile_catalog" not in manifest
         assert "catalog" not in manifest
 
 

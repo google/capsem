@@ -16,9 +16,9 @@ from helpers.persistent_registry import registry_entry, write_registry
 from helpers.service import ServiceInstance
 
 DEFUNCT_ID = "77777777-7777-4777-8777-777777777777"
-LEGACY_ID = "88888888-8888-4888-8888-888888888888"
+INCOMPATIBLE_ID = "88888888-8888-4888-8888-888888888888"
 DEFUNCT_NAME = "stale-overlay"
-LEGACY_NAME = "legacy-profile"
+INCOMPATIBLE_NAME = "missing-overlay"
 
 
 def _curl_json_with_status(service: ServiceInstance, method: str, path: str, body=None):
@@ -35,7 +35,6 @@ def _assert_delete_only(row: dict[str, Any], *, session_id: str, name: str, stat
     assert row["id"] == session_id
     assert row["name"] == name
     assert row["status"] == status
-    assert "profile_id" not in row
     assert row["persistent"] is True
     assert row["can_resume"] is False
     assert row["available_actions"] == ["delete"]
@@ -57,39 +56,36 @@ def test_session_dashboard_routes_are_delete_only_for_broken_sessions() -> None:
             "overlayfs mount failed: Stale file handle\nKernel panic - not syncing",
             encoding="utf-8",
         )
-        # An entry written before profiles were removed is incompatible.
+        # A persistent VM whose system overlay is gone cannot boot as recorded.
         incompatible = registry_entry(
             service.tmp_dir,
-            LEGACY_ID,
-            LEGACY_NAME,
+            INCOMPATIBLE_ID,
+            INCOMPATIBLE_NAME,
             ram_mb=DEFAULT_RAM_MB,
-            cpus=DEFAULT_CPUS,
-            profile_id="code",
+            cpus=DEFAULT_CPUS, overlay=False,
         )
         write_registry(service.tmp_dir, [defunct, incompatible])
 
         service.start()
         client = service.client()
 
-        assert _curl_json_with_status(service, "GET", "/profiles/list")[0] == 404
-
         listing = client.get("/vms/list", timeout=30)
         assert "sandboxes" in listing
         defunct_row = _row(listing, DEFUNCT_ID)
-        incompatible_row = _row(listing, LEGACY_ID)
+        incompatible_row = _row(listing, INCOMPATIBLE_ID)
         _assert_delete_only(defunct_row, session_id=DEFUNCT_ID, name=DEFUNCT_NAME, status="Defunct")
         _assert_delete_only(
             incompatible_row,
-            session_id=LEGACY_ID,
-            name=LEGACY_NAME,
+            session_id=INCOMPATIBLE_ID,
+            name=INCOMPATIBLE_NAME,
             status="Incompatible",
         )
         assert "Stale file handle" in defunct_row["last_error"]
-        assert "'code' profile" in incompatible_row["resume_blocked_reason"]
+        assert "system overlay rootfs.img unavailable" in incompatible_row["resume_blocked_reason"]
 
         for session_id, name, status in (
             (DEFUNCT_ID, DEFUNCT_NAME, "Defunct"),
-            (LEGACY_ID, LEGACY_NAME, "Incompatible"),
+            (INCOMPATIBLE_ID, INCOMPATIBLE_NAME, "Incompatible"),
         ):
             _assert_delete_only(
                 client.get(f"/vms/{session_id}/status", timeout=30),
@@ -117,11 +113,11 @@ def test_session_dashboard_routes_are_delete_only_for_broken_sessions() -> None:
         assert purge["purged"] == 1
         after_purge = client.get("/vms/list", timeout=30)
         assert DEFUNCT_ID not in {row["id"] for row in after_purge["sandboxes"]}
-        assert _row(after_purge, LEGACY_ID)["status"] == "Incompatible"
+        assert _row(after_purge, INCOMPATIBLE_ID)["status"] == "Incompatible"
 
-        assert client.delete(f"/vms/{LEGACY_ID}/delete", timeout=30) == {"success": True}
+        assert client.delete(f"/vms/{INCOMPATIBLE_ID}/delete", timeout=30) == {"success": True}
         after_delete = client.get("/vms/list", timeout=30)
-        assert LEGACY_ID not in {row["id"] for row in after_delete["sandboxes"]}
+        assert INCOMPATIBLE_ID not in {row["id"] for row in after_delete["sandboxes"]}
     finally:
         service.stop()
 
@@ -155,12 +151,10 @@ def test_session_dashboard_create_names_are_vm_counted_not_tmp() -> None:
             info = client.get(f"/vms/{session_id}/info", timeout=30)
             assert info["id"] == session_id
             assert info["name"] == expected_name
-            assert "profile_id" not in info
 
         listing = client.get("/vms/list", timeout=30)
         listed = {row["id"]: row for row in listing["sandboxes"]}
         assert set(created) <= listed.keys()
-        assert all("profile_id" not in listed[session_id] for session_id in created)
         assert [listed[session_id]["name"] for session_id in created] == ["vm-1", "vm-2"]
     finally:
         if service.proc is not None:

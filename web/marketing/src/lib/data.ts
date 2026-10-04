@@ -73,13 +73,13 @@ export const SECURITY_BLOCKS = [
   },
   {
     badge: "CONTROL",
-    title: "Enterprise-grade policy with profile and corp config layers",
+    title: "Enterprise-grade policy with user and corp config layers",
     description:
-      "Each profile owns its enforcement, detection, MCP, plugin, and asset configuration. Corp-level config at /etc/capsem/corp.toml (MDM-distributed) locks down policy and reporting with enterprise overrides that users cannot bypass.",
+      "Your settings own enforcement, detection, MCP, and plugin configuration on top of safe built-in defaults. Corp-level config at /etc/capsem/corp.toml (MDM-distributed) locks down policy and reporting with enterprise overrides that users cannot bypass.",
     bullets: [
-      "Profile-owned CEL enforcement rules",
+      "CEL enforcement rules in your settings",
       "Detection rules with Sigma import/export",
-      "Corp config locks and reports profile behavior",
+      "Corp config locks and reports policy behavior",
     ],
   },
 ] as const;
@@ -107,7 +107,7 @@ export const FAQS = [
   {
     question: "Does Capsem work with Claude Code, Gemini CLI, and Codex?",
     answer:
-      "Yes. Capsem supports any AI coding agent that runs in a terminal. Claude Code, Gemini CLI, and Codex are pre-installed in the VM and configured to work through the MITM proxy automatically.",
+      "Yes. Capsem supports any AI coding agent that runs in a terminal. Claude Code, Codex, and Antigravity ship as official OCI images that run in the VM and work through the MITM proxy automatically.",
   },
   {
     question: "How does the MITM proxy work?",
@@ -122,7 +122,7 @@ export const FAQS = [
   {
     question: "Can I customize which domains are allowed?",
     answer:
-      "Yes. Edit the profile's enforcement rules to control HTTP, DNS, MCP, model, file, process, IP, and transport behavior. For enterprise deployments, /etc/capsem/corp.toml provides lockdown that individual users cannot override.",
+      "Yes. Edit the enforcement rules in your settings to control HTTP, DNS, MCP, model, file, process, IP, and transport behavior. For enterprise deployments, /etc/capsem/corp.toml provides lockdown that individual users cannot override.",
   },
   {
     question: "Is the VM truly air-gapped?",

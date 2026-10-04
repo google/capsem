@@ -5,7 +5,6 @@ approved_output_probes = [
   "cache/target/packages/.boundary-probe",
   "cache/target/release/distribution/.boundary-probe",
   "cache/target/tests/evidence/.boundary-probe",
-  "cache/target/config/.boundary-probe",
   "cache/target/tests/benchmarks/.boundary-probe",
   "cache/target/gate-runs/.boundary-probe",
   "cache/target/coverage/.boundary-probe",
@@ -26,7 +25,6 @@ ci_transfer_count = 0
 ci_transfer_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 prefix_exports = [
   "cache/target/assets",
-  "cache/target/config",
   "cache/target/coverage",
   "cache/target/release/distribution",
   "cache/target/gate-runs",

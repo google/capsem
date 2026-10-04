@@ -20,7 +20,7 @@ from capsem_builder.gate.content import RuntimeContent, SelectedInstallContent
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.installcontainer import InstallContainer
 from helpers.gate import RecordingRunner
-from profile_content import materialize_required_artifacts
+from runtime_content import materialize_required_artifacts
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -230,10 +230,6 @@ def test_selected_release_transport_is_mounted_read_only_at_its_absolute_address
     assert (
         f"-v {resolved / CONFIG.assets.merged_assets_dir}:{mount}/{CONFIG.functional.assets_dir}:ro"
     ) in started
-    assert (
-        f"-v {resolved / CONFIG.assets.merged_config_dir}:"
-        f"{mount}/{CONFIG.functional.config_root}:ro"
-    ) in started
 
 
 def _complete_selected_content(tmp_path: Path) -> SelectedInstallContent:
@@ -243,12 +239,7 @@ def _complete_selected_content(tmp_path: Path) -> SelectedInstallContent:
     inputs.mkdir(parents=True)
     selected_manifest = {
         "channel": "stable",
-        "profiles": {
-            "code": {
-                "architectures": [],
-                "url": "https://release.capsem.test/profiles/code/profile.toml",
-            }
-        },
+        "packages": [{"url": "https://release.capsem.test/packages/capsem.deb"}],
     }
     runtime_manifest = {
         "assets": {
@@ -269,12 +260,6 @@ def _complete_selected_content(tmp_path: Path) -> SelectedInstallContent:
         selected.content.assets,
         arches=(CONFIG.host_arch(),),
     )
-    config_manifest = selected.content.config_manifest(CONFIG)
-    config_manifest.parent.mkdir(parents=True)
-    config_manifest.write_bytes(runtime_encoded)
-    profile = selected.content.profiles(CONFIG) / "code/profile.toml"
-    profile.parent.mkdir(parents=True)
-    profile.write_text("name = 'code'\n")
     return selected
 
 
@@ -287,7 +272,7 @@ def test_selected_release_transport_accepts_the_published_graph_for_shared_verif
     selected.require_complete(CONFIG, arches=(CONFIG.host_arch(),))
 
     document = json.loads(manifest.read_text())
-    assert document["profiles"]["code"]["url"].startswith("https://release.capsem.test/")
+    assert document["packages"][0]["url"].startswith("https://release.capsem.test/")
 
 
 def test_selected_release_transport_is_distinct_from_the_runtime_projection(
@@ -300,7 +285,6 @@ def test_selected_release_transport_is_distinct_from_the_runtime_projection(
     transport = selected.inputs(CONFIG) / CONFIG.install.manifest_name
     runtime = selected.content.assets / CONFIG.install.manifest_name
     assert transport.read_bytes() != runtime.read_bytes()
-    assert runtime.read_bytes() == selected.content.config_manifest(CONFIG).read_bytes()
 
 
 def test_systemd_that_never_comes_up_fails_with_the_wait_it_gave(
@@ -541,7 +525,7 @@ def test_generated_asset_selector_identity_is_stable(tmp_path: Path) -> None:
         helper_id="sha256:helper",
         source=source,
     )
-    selected = tmp_path / "cache" / "target" / "ironbank-assets" / "code" / "assets"
+    selected = tmp_path / "cache" / "target" / "ironbank" / "assets"
     selected.mkdir(parents=True)
     (tmp_path / "assets").symlink_to("cache/target/tests/ironbank/code/assets")
 

@@ -85,8 +85,8 @@ Only emit `model_calls` telemetry for actual LLM API paths (e.g., `/v1/messages`
 
 1. Network mechanics parse and normalize SNI, HTTP, DNS, model, and process
    facts into a `SecurityEvent`.
-2. Profile and corp rules compile into one `SecurityRuleSet`; profile defaults
-   are normal late-priority rules.
+2. Built-in default, settings, and corp rules compile into one
+   `SecurityRuleSet`; built-in defaults are normal late-priority rules.
 3. Security plugins run by stage over the same `SecurityEvent` object:
    `preprocess`, rule evaluation, `postprocess`, then `logging` before ledger
    handoff.
