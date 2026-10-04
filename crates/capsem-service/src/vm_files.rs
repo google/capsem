@@ -1,7 +1,7 @@
 mod provision;
 use super::*;
 pub(super) use crate::sandbox_info::handle_list;
-pub(crate) use provision::handle_provision;
+pub(crate) use provision::{handle_provision, provision_failure};
 
 mod diagnostics;
 mod launch;
@@ -659,14 +659,7 @@ pub(super) fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &s
                  (full logs: `capsem logs {id}`)"
             ),
         )),
-        ProvisionAttemptOutcome::ProvisionError(e) => {
-            let status = if e.to_string().contains("already exists") {
-                StatusCode::CONFLICT
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            AttemptDecision::BailWithError(AppError(status, format!("provision failed: {e}")))
-        }
+        ProvisionAttemptOutcome::ProvisionError(e) => AttemptDecision::BailWithError(provision_failure(&e)),
     }
 }
 

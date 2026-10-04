@@ -471,6 +471,33 @@ fn classify_provision_error_other_returns_500() {
     }
 }
 
+#[test]
+fn classify_provision_error_reports_the_whole_cause_chain() {
+    // #289: the caller saw only "load the policy inputs", never why.
+    let err = anyhow::anyhow!("settings.toml cannot define corp.rules").context("load the policy inputs");
+    match classify_attempt_decision(ProvisionAttemptOutcome::ProvisionError(err), "vm-7") {
+        AttemptDecision::BailWithError(AppError(status, msg)) => {
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(
+                msg,
+                "provision failed: load the policy inputs: settings.toml cannot define corp.rules"
+            );
+        }
+        other => panic!("expected BailWithError(500), got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_provision_error_finds_already_exists_below_context() {
+    let err = anyhow::anyhow!("persistent VM \"vm-8\" already exists").context("claim the persistent name");
+    match classify_attempt_decision(ProvisionAttemptOutcome::ProvisionError(err), "vm-8") {
+        AttemptDecision::BailWithError(AppError(status, msg)) => {
+            assert_eq!(status, StatusCode::CONFLICT, "{msg}");
+        }
+        other => panic!("expected BailWithError(409), got {other:?}"),
+    }
+}
+
 // wait_for_vm_ready polls a cheap local sentinel file. Lock the production
 // backoff directly instead of asserting host wall-clock timing, which measures
 // test-runner starvation under parallel LLVM coverage rather than poll delay.

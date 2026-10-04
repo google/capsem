@@ -105,7 +105,7 @@ pub(crate) async fn handle_provision(
                     "capsem-process exited before reaching ready"
                 );
             } else if let ProvisionAttemptOutcome::ProvisionError(ref e) = outcome {
-                error!(id, error = %e, "provision failed");
+                error!(id, error = %format_args!("{e:#}"), "provision failed");
             }
             match classify_attempt_decision(outcome, &id) {
                 AttemptDecision::Succeed(uds_path) => Some(Ok(uds_path)),
@@ -238,6 +238,18 @@ async fn discard_failed_create(state: &Arc<ServiceState>, id: &str) {
         }
     }
     network_routes::vm_deleted(state, id).await;
+}
+
+/// The caller's view of a failed provision: the whole cause chain, since the
+/// top context alone ("load the policy inputs") never says why.
+pub(crate) fn provision_failure(e: &anyhow::Error) -> AppError {
+    let message = format!("{e:#}");
+    let status = if message.contains("already exists") {
+        StatusCode::CONFLICT
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    };
+    AppError(status, format!("provision failed: {message}"))
 }
 
 #[cfg(test)]
