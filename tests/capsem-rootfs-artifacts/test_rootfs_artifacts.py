@@ -106,3 +106,23 @@ class TestDoctorConsistency:
         for name in ["capsem-bashrc", "banner.txt", "capsem-init"]:
             assert name in docker_src, f"docker.py missing reference to {name}"
             assert name in doctor_src, f"doctor.py missing reference to {name}"
+
+
+class TestRuntimeHosts:
+    """The exported rootfs has an empty /etc/hosts: Docker writes that file
+    only into a running container and discards writes made during a build, so
+    no Dockerfile step can fill it. capsem-init owns it, like resolv.conf."""
+
+    def test_capsem_init_binds_ipv4_localhost_over_etc_hosts(self):
+        init = (ARTIFACTS_DIR / "capsem-init").read_text()
+        assert "printf '127.0.0.1 localhost\\n' > /newroot/run/hosts" in init
+        assert "mount --bind /newroot/run/hosts /newroot/etc/hosts" in init
+
+    def test_hosts_names_no_ipv6_address_the_kernel_cannot_reach(self):
+        """The guest kernel is built without IPv6, so ::1 does not exist."""
+        for arch in ("arm64", "x86_64"):
+            defconfig = PROJECT_ROOT / f"config/docker/image/kernel/defconfig.{arch}"
+            assert "CONFIG_IPV6=n" in defconfig.read_text().splitlines()
+        init = (ARTIFACTS_DIR / "capsem-init").read_text()
+        hosts_lines = [line for line in init.splitlines() if "/newroot/run/hosts" in line]
+        assert hosts_lines and not any("::1" in line for line in hosts_lines)

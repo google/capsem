@@ -425,8 +425,10 @@ chroot /newroot ip route add default dev dummy0
 printf 'nameserver 127.0.0.1\noptions timeout:6 attempts:2\n' > /newroot/run/resolv.conf
 mount --bind /newroot/run/resolv.conf /newroot/etc/resolv.conf
 # localhost resolves through /etc/hosts before DNS, which never answers it.
-# The minimal runtime ships the file empty; profile builds used to fill it.
-printf '127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n' > /newroot/run/hosts
+# The exported rootfs ships it empty: Docker writes /etc/hosts only into a
+# running container and discards build-time writes. IPv4 only -- the guest
+# kernel is built without IPv6.
+printf '127.0.0.1 localhost\n' > /newroot/run/hosts
 mount --bind /newroot/run/hosts /newroot/etc/hosts
 
 # iptables-nft REDIRECT: use the nftables backend, not legacy xtables.

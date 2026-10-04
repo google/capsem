@@ -324,6 +324,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `localhost` resolves inside the VM again. The runtime image booted with an
+  empty `/etc/hosts` and the guest DNS never answers `localhost`, so tools
+  that connect to `localhost` failed; capsem-init now provides
+  `127.0.0.1 localhost` at boot.
 - The plugin and MCP-permission routes the UI, TUI and tray poll answer in
   well under a millisecond again (#289). `/plugins/list` took about 15 ms and
   `/plugins/credential_broker/credentials/info` and `/mcp/default/info` about
