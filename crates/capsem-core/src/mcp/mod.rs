@@ -8,7 +8,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::mcp::policy::McpProfileConfig;
+use crate::mcp::policy::McpConfig;
 use capsem_proto::mcp_contracts::{McpServerDef, McpToolDef, ToolAnnotations};
 
 /// Compute a CPU-proportional default for framed MCP in-flight handlers.
@@ -35,15 +35,15 @@ pub fn resolve_inflight_cap() -> usize {
 /// It is the only server whose tool results may carry ledger records (see
 /// `capsem_proto::mcp_contracts::builtin_ledger`), so it is identified by this
 /// field, which only `local_builtin_server_def` sets, and never by a name a
-/// profile could also choose.
+/// configured server could also choose.
 pub const BUILTIN_SERVER_SOURCE: &str = "builtin";
 
 /// The name the builtin server's tools are namespaced under (`local__echo`).
 pub const BUILTIN_SERVER_NAME: &str = "local";
 
-/// Server names no profile may take: the builtin's own, and the name it had
+/// Server names no configured server may take: the builtin's own, and the name it had
 /// before it was `local`. Reserved whether or not the builtin binary is
-/// installed -- a profile server named `local` on a host without it would
+/// installed -- a configured server named `local` on a host without it would
 /// otherwise own every `local__*` tool name, and nothing downstream could tell
 /// its tools from the builtin's by name.
 const RESERVED_SERVER_NAMES: &[&str] = &[BUILTIN_SERVER_NAME, "builtin"];
@@ -96,13 +96,15 @@ fn local_builtin_server_def(bin: &Path, builtin_env: HashMap<String, String>, en
     }
 }
 
-/// Build the profile-owned MCP server list.
+/// The source label of a server declared in settings or corp `[mcp]`.
+pub const CONFIGURED_SERVER_SOURCE: &str = "config";
+
+/// Build a session's MCP server list from its merged `[mcp]` configuration:
+/// the builtin `local` server unless turned off, then each declared server.
 ///
-/// This does not auto-detect host AI CLI MCP configs and does not merge
-/// settings/corp MCP sections. Profile routes use this helper so
-/// `/profiles/{profile_id}/mcp/...` reflects the selected profile contract.
-pub fn build_profile_server_list(
-    profile_config: &McpProfileConfig,
+/// This does not auto-detect host AI CLI MCP configs.
+pub fn build_server_list(
+    config: &McpConfig,
     builtin_binary: Option<&Path>,
     builtin_env: HashMap<String, String>,
 ) -> Vec<McpServerDef> {
@@ -111,30 +113,26 @@ pub fn build_profile_server_list(
 
     if let Some(bin) = builtin_binary {
         if bin.exists() {
-            let enabled = profile_config
-                .server_enabled
-                .get(BUILTIN_SERVER_NAME)
-                .copied()
-                .unwrap_or(true);
+            let enabled = config.server_enabled.get(BUILTIN_SERVER_NAME).copied().unwrap_or(true);
             servers.push(local_builtin_server_def(bin, builtin_env, enabled));
             seen.insert(BUILTIN_SERVER_NAME.to_string());
-            info!(bin = %bin.display(), "added profile local builtin MCP server");
+            info!(bin = %bin.display(), "added local builtin MCP server");
         } else {
             warn!(bin = %bin.display(), "builtin MCP server binary not found, skipping");
         }
     }
 
-    for manual in &profile_config.servers {
+    for manual in &config.servers {
         if manual.name.is_empty() {
-            warn!("profile MCP server has empty name, skipping");
+            warn!("configured MCP server has empty name, skipping");
             continue;
         }
         if RESERVED_SERVER_NAMES.contains(&manual.name.as_str()) {
-            warn!(name = %manual.name, "profile MCP server uses a name reserved for the builtin server, skipping");
+            warn!(name = %manual.name, "configured MCP server uses a name reserved for the builtin server, skipping");
             continue;
         }
         if manual.name.contains(capsem_proto::mcp_contracts::NS_SEP) {
-            warn!(name = %manual.name, "profile MCP server name contains namespace separator '{}', skipping to prevent ambiguity", capsem_proto::mcp_contracts::NS_SEP);
+            warn!(name = %manual.name, "configured MCP server name contains namespace separator '{}', skipping to prevent ambiguity", capsem_proto::mcp_contracts::NS_SEP);
             continue;
         }
         if seen.insert(manual.name.clone()) {
@@ -147,11 +145,11 @@ pub fn build_profile_server_list(
                 headers: manual.headers.clone(),
                 auth: manual.auth.clone(),
                 enabled: manual.enabled,
-                source: "profile".to_string(),
+                source: CONFIGURED_SERVER_SOURCE.to_string(),
                 pool_size: None,
                 pool_safe_tools: Vec::new(),
             };
-            if let Some(&enabled) = profile_config.server_enabled.get(&def.name) {
+            if let Some(&enabled) = config.server_enabled.get(&def.name) {
                 def.enabled = enabled;
             }
             servers.push(def);

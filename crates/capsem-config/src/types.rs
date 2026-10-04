@@ -395,7 +395,7 @@ impl PolicySubject for serde_json::Value {
 pub struct SettingsFile {
     #[serde(default)]
     pub settings: HashMap<String, SettingEntry>,
-    /// External rule files shared by user profiles and corporate policy.
+    /// External rule files referenced by settings or corporate policy.
     #[serde(default, skip_serializing_if = "RuleFileReferences::is_empty")]
     pub rule_files: RuleFileReferences,
     /// Visible default security rules (`[default.<domain>]`).
@@ -404,7 +404,7 @@ pub struct SettingsFile {
     /// Optional corp provisioning refresh policy metadata, e.g. "24h".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_policy: Option<String>,
-    /// First-principle profile-owned security rules (`[profiles.rules.*]`).
+    /// User security rules (`[profiles.rules.*]`; the namespace outlived VM profiles).
     #[serde(
         default,
         skip_serializing_if = "super::security_rule_profile::SecurityRuleGroup::is_empty"
@@ -425,9 +425,9 @@ pub struct SettingsFile {
     /// Runtime plugin policy (`[plugins]`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub plugins: BTreeMap<String, super::security_rule_profile::SecurityPluginConfig>,
-    /// MCP server configuration (optional section in profile/corp TOML).
+    /// MCP server configuration (optional section in settings or corp TOML).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp: Option<crate::mcp::McpProfileConfig>,
+    pub mcp: Option<crate::mcp::McpConfig>,
     /// Corporate-owned network mechanics such as DNS upstreams.
     #[serde(default, skip_serializing_if = "NetworkConfig::is_empty")]
     pub network: NetworkConfig,
@@ -737,7 +737,7 @@ pub fn default_true() -> bool {
     true
 }
 
-/// A declarative MCP server definition from defaults, profile, or corp TOML.
+/// A declarative MCP server definition from defaults, settings, or corp TOML.
 ///
 /// MCP servers are auto-injected into AI agent config files (Claude, Gemini, Codex)
 /// at boot time. Enterprises can add servers via corp.toml.

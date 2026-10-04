@@ -74,12 +74,13 @@ pub struct BootOptions<'a> {
     pub checkpoint_path: Option<std::path::PathBuf>,
     pub machine_identifier_path: Option<&'a Path>,
     pub serial_log_path: Option<&'a Path>,
-    /// Asset hashes pinned by the profile this VM is booting.
+    /// Asset hashes this VM is pinned to boot.
     ///
-    /// A channel carries one image set per profile, so no channel-wide pointer
-    /// can answer this: the caller knows which profile it is starting and must
-    /// say what that profile pins. Absent means the caller could not determine
-    /// them, which is a hard error rather than a licence to boot unverified.
+    /// The caller pins them -- a new VM to the installed runtime asset set, a
+    /// persistent VM to the set it was created with -- so nothing here reads a
+    /// manifest pointer that may have moved since. Absent means the caller
+    /// could not determine them, which is a hard error rather than a licence
+    /// to boot unverified.
     pub expected_asset_hashes: Option<capsem_assets::asset_manager::ExpectedAssetHashes>,
 }
 
@@ -154,12 +155,11 @@ pub fn boot_vm(
             builder = builder.serial_log_path(slp);
         }
 
-        // Verify against the hashes the booting profile pins, supplied by the
-        // caller. Reading them from the manifest's channel-wide pointer instead
-        // verified every profile against whichever one that pointer named, which
-        // is correct only while a channel carries exactly one profile.
+        // Verify against the hashes the caller pinned for this VM. Reading the
+        // manifest's current pointer instead would verify a persistent VM
+        // against images newer than the ones it was created with.
         let expected_hashes = expected_asset_hashes.context(
-            "refusing to boot without the booting profile's pinned asset hashes: \
+            "refusing to boot without the VM's pinned asset hashes: \
              an unverified kernel is worse than a failed boot",
         )?;
         // Logged in full, not truncated. Pins reach here in two spellings --

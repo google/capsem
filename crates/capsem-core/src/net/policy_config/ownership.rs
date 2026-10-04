@@ -1,9 +1,12 @@
 use super::types::SettingsFile;
 
+/// Which file may set a registry setting id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigOwner {
+    /// UI and application preferences, written by `/settings/edit`.
     Settings,
-    Profile,
+    /// Behavior settings (VM resources, network mechanics, credentials): only
+    /// a corporate config may set them; everyone else runs their defaults.
     Corp,
 }
 
@@ -11,7 +14,6 @@ impl ConfigOwner {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Settings => "settings",
-            Self::Profile => "profile",
             Self::Corp => "corp",
         }
     }
@@ -21,65 +23,32 @@ pub fn setting_id_owner(id: &str) -> ConfigOwner {
     if id.starts_with("app.") || id.starts_with("appearance.") {
         ConfigOwner::Settings
     } else {
-        ConfigOwner::Profile
+        ConfigOwner::Corp
     }
 }
 
+/// settings.toml carries the user's preferences and the user's policy:
+/// security rules (inline or through `rule_files`), AI providers, plugin
+/// modes and MCP servers. Corporate integration and network mechanics stay
+/// corp-only.
 pub fn validate_settings_toml_contract(file: &SettingsFile) -> Result<(), String> {
-    reject_non_settings_sections(file)?;
+    reject_corp_only_sections(file)?;
     reject_settings_keys_not_owned_by(file, ConfigOwner::Settings, "settings.toml")
 }
 
-pub fn validate_profile_toml_contract(file: &SettingsFile) -> Result<(), String> {
-    if file.refresh_policy.is_some() {
-        return Err("profile.toml cannot define corp refresh metadata".to_string());
-    }
-    if !file.corp.is_empty() {
-        return Err("profile.toml cannot define corp.rules".to_string());
-    }
-    if !file.corp_rule_files.is_empty() {
-        return Err("profile.toml cannot define corp rule-file endpoints".to_string());
-    }
-    if !file.network.is_empty() {
-        return Err("profile.toml cannot define network mechanics".to_string());
-    }
-    if file.images.is_some() {
-        return Err("profile.toml cannot define image policy".to_string());
-    }
-    reject_settings_keys_not_owned_by(file, ConfigOwner::Profile, "profile.toml")
-}
-
 pub fn validate_corp_toml_contract(file: &SettingsFile) -> Result<(), String> {
-    reject_settings_keys_not_owned_by(file, ConfigOwner::Profile, "corp.toml")
+    reject_settings_keys_not_owned_by(file, ConfigOwner::Corp, "corp.toml")
 }
 
-fn reject_non_settings_sections(file: &SettingsFile) -> Result<(), String> {
-    if !file.rule_files.is_empty() {
-        return Err("settings.toml cannot define rule_files".to_string());
-    }
-    if !file.default.is_empty() {
-        return Err("settings.toml cannot define default rules".to_string());
-    }
+fn reject_corp_only_sections(file: &SettingsFile) -> Result<(), String> {
     if file.refresh_policy.is_some() {
         return Err("settings.toml cannot define corp refresh metadata".to_string());
-    }
-    if !file.profiles.is_empty() {
-        return Err("settings.toml cannot define profiles.rules".to_string());
     }
     if !file.corp.is_empty() {
         return Err("settings.toml cannot define corp.rules".to_string());
     }
     if !file.corp_rule_files.is_empty() {
         return Err("settings.toml cannot define corp rule-file endpoints".to_string());
-    }
-    if !file.ai.is_empty() {
-        return Err("settings.toml cannot define ai providers".to_string());
-    }
-    if !file.plugins.is_empty() {
-        return Err("settings.toml cannot define plugins".to_string());
-    }
-    if file.mcp.is_some() {
-        return Err("settings.toml cannot define MCP servers".to_string());
     }
     if !file.network.is_empty() {
         return Err("settings.toml cannot define network mechanics".to_string());

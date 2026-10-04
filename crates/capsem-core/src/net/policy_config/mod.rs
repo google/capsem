@@ -6,7 +6,7 @@
 //!
 //! Merge semantics: corp settings override local settings per-key.
 
-mod active_profile_digest;
+mod active_policy;
 mod builder;
 pub mod corp_provision;
 mod lint;
@@ -18,11 +18,12 @@ mod provider_profile;
 mod resolver;
 mod security_rule_profile;
 mod settings_metadata;
+mod settings_policy;
 mod tree;
 mod types;
 mod validation;
 
-pub use active_profile_digest::active_profile_digest;
+pub use active_policy::{active_policy_digest, ActivePolicyFile};
 pub use builder::*;
 pub use capsem_config::*;
 pub use lint::load_merged_lint;
@@ -30,6 +31,7 @@ pub use loader::*;
 pub use ownership::*;
 pub use profile_catalog::*;
 pub use profile_contract::*;
+pub use settings_policy::*;
 pub use tree::load_settings_tree;
 
 /// Immutable plugin configuration selected for one runtime generation.
