@@ -95,6 +95,7 @@ fn a_surface_appears_only_for_an_image_that_declares_one() {
         exit_code: None,
         error: None,
         surface: None,
+        resolved: None,
     };
     assert!(serde_json::to_value(&terminal).unwrap().get("surface").is_none());
     let pending = ContainerStatusResponse {
