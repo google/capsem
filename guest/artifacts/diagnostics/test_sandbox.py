@@ -262,7 +262,7 @@ def test_allowed_domain():
 
 
 def test_denied_domain():
-    """Public deny proof requires an explicit deny-rule profile."""
+    """Public deny proof requires an explicit deny rule."""
     result = run(
         "curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1", timeout=15
     )

@@ -651,15 +651,6 @@ export IS_SANDBOX=1
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
-
-# Optimize Node.js and Python for the sandboxed VM environment
-# 1. Prevent kernel OOMs by capping Node's V8 heap (VM has 4GB RAM by default)
-export NODE_OPTIONS="--max-old-space-size=2048"
-# 2. Disable slow network checks and ads during CLI executions
-export NO_UPDATE_NOTIFIER=1
-export NPM_CONFIG_UPDATE_NOTIFIER=false
-export NPM_CONFIG_FUND=false
-export NPM_CONFIG_AUDIT=false
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Create Python virtualenv in the background so it doesn't block the PTY agent.
@@ -676,12 +667,12 @@ boot_mark "venv"
 
 # Ensure PATH and venv survive login shells (tmux panes).
 # /etc/profile resets PATH, so we must restore the host-injected dirs here.
-# Source of truth for the base PATH is config/defaults.toml.
+# Source of truth for the base PATH is config/docker/image/vm/environment.toml.
 cat > /newroot/etc/profile.d/capsem.sh << 'PROFILE'
 # Prepend dirs that the host injects via BootConfig but /etc/profile drops.
 case ":$PATH:" in
-    *:/opt/ai-clis/bin:*) ;;
-    *) export PATH="/opt/ai-clis/bin:/root/.local/bin:$PATH" ;;
+    *:/root/.local/bin:*) ;;
+    *) export PATH="/root/.local/bin:$PATH" ;;
 esac
 export TERM=xterm-256color
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
