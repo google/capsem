@@ -324,6 +324,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An image session's workload now resolves `localhost` (and its hostname,
+  `container`) to its own loopback. The launcher supplies `/etc/hosts`
+  read-only beside `/etc/resolv.conf`, as any container runtime does; an
+  image's own file is whatever its build left, usually empty, so a workload
+  that listened on or dialed `localhost` asked the gateway's DNS, which never
+  answers it. Antigravity (`agy`) could not start its language server and
+  exited at once.
 - `capsem create --image` returns once the image's workload is running, and
   `GET /vms/{id}/container` says `running` only then. Both used to report it
   running as soon as the image was unpacked, before runc had created the

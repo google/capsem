@@ -47,6 +47,7 @@ sleep 1
 wrk -t1 -c1 -d1s http://127.0.0.1:8080/ | sed -n 's/^Requests\\/sec: *\\([0-9.]*\\).*/WRK \\1/p'
 kill "$server"
 dig -v 2>&1 | head -1 | sed 's/^/DIG /'
+getent hosts localhost | awk '{print "HOSTS " $1}'
 tools=0; for t in nc socat ping jq sqlite3 git strace redis-benchmark curl wget; do command -v "$t" >/dev/null && tools=$((tools + 1)); done; echo "TOOLS $tools"
 """
 
@@ -90,6 +91,8 @@ def test_the_debug_image_runs_by_its_pin_and_its_tools_work(service, tmp_path):
         assert found["IPERF"] == "True", output
         assert float(found["WRK"]) > 0, output
         assert found["DIG"].startswith("DiG 9."), output
+        # The workload resolves its own loopback name, as under any runtime.
+        assert found["HOSTS"] == "127.0.0.1", output
         assert found["TOOLS"] == "10", output
 
         for command, version in AGENTS.items():

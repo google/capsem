@@ -135,9 +135,10 @@ def test_container_trusts_capsem_ca_and_resolves_through_the_gateway(launcher):
         for mount in config["mounts"]
         if mount["type"] == "bind" and launcher.VOLUMES not in Path(mount["source"]).parents
     }
-    # Only these two VM files ever enter a container, and only read-only; the
+    # Only these VM files ever enter a container, and only read-only; the
     # image's own volumes are its state (test_image_volumes_live_on_...).
-    assert set(binds) == {"/etc/resolv.conf", launcher.CA_BUNDLE}
+    assert set(binds) == {"/etc/resolv.conf", "/etc/hosts", launcher.CA_BUNDLE}
+    assert binds["/etc/hosts"]["source"] == str(launcher.RUNTIME / "hosts")
     assert binds[launcher.CA_BUNDLE]["source"] == launcher.CA_BUNDLE
     assert binds["/etc/resolv.conf"]["source"] == str(launcher.RUNTIME / "resolv.conf")
     for mount in binds.values():
@@ -148,6 +149,26 @@ def test_container_trusts_capsem_ca_and_resolves_through_the_gateway(launcher):
     assert env["CURL_CA_BUNDLE"] == launcher.CA_BUNDLE
     assert env["NODE_EXTRA_CA_CERTS"] == "/mine", "explicit user environment wins"
     assert launcher.resolv_conf().startswith(f"nameserver {launcher.GATEWAY}\n")
+
+
+def test_localhost_names_the_containers_own_loopback(launcher):
+    """An image's /etc/hosts is whatever its build left, usually empty: a
+    runtime supplies it. Without `localhost` a workload that listens on or
+    dials it (agy's language server does) fails to resolve its own name
+    through the gateway's DNS, which never answers it."""
+    hosts = launcher.hosts_file()
+    entries = {
+        name: address
+        for line in hosts.splitlines()
+        if line and not line.startswith("#")
+        for address, *names in [line.split()]
+        for name in names
+    }
+    assert entries["localhost"] == "127.0.0.1"
+    config = launcher.configure(unpacked(), image(), {**SECURITY, "args": [], "env": {}})
+    assert entries[config["hostname"]] == "127.0.0.1"
+    # Loopback only: nothing here names the VM or any other address.
+    assert set(entries.values()) == {"127.0.0.1"}
 
 
 VM_OUTPUT_RULES = """\
