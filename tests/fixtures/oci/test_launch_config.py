@@ -20,11 +20,12 @@ def launcher():
 
 
 # What the host stages beside every workload (capsem-core container::seccomp).
+RESOURCES = {"memory_bytes": 1024 * 1024**2, "cpu_millis": 1750, "pids": 4096}
 SECURITY = {
     "capabilities": ["CAP_CHOWN", "CAP_SETUID"],
     "seccomp": {"defaultAction": "SCMP_ACT_ERRNO", "defaultErrnoRet": 1, "syscalls": []},
     "id_map": {"containerID": 0, "hostID": 100000, "size": 65536},
-    "resources": {"memory_bytes": 1024 * 1024**2, "cpu_millis": 1750, "pids": 4096},
+    "resources": RESOURCES,
 }
 
 
@@ -651,7 +652,7 @@ def test_an_index_naming_no_valid_digest_is_refused(launcher, tmp_path, monkeypa
     [(128 * 1024**2, 64 * 1024**2), (2 * 1024**3, 512 * 1024**2), (16 * 1024**3, 1024**3)],
 )
 def test_the_workload_has_shared_memory_sized_from_its_memory(launcher, memory, shm):
-    options = {**SECURITY, "resources": {**SECURITY["resources"], "memory_bytes": memory}, "args": [], "env": {}}
+    options = {**SECURITY, "resources": {**RESOURCES, "memory_bytes": memory}, "args": [], "env": {}}
     config = launcher.configure(unpacked(), image(), options)
     (mount,) = _mounts_at(config, "/dev/shm")
     assert mount["type"] == "tmpfs"
