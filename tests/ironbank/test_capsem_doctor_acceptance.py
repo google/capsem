@@ -62,16 +62,14 @@ def test_capsem_doctor_gate_is_backed_by_full_ledger_proof() -> None:
 
 
 def test_capsem_doctor_guest_diagnostics_keep_functional_package_manager_proof() -> None:
+    """The VM's own package manager is proven by the doctor; pip and the other
+    language package managers belong to images, and are proven in a
+    capsem-debug workload by the package-manager ledger suite."""
     runtimes = (DIAGNOSTICS_DIR / "test_runtimes.py").read_text(encoding="utf-8")
-
-    expected_proofs = [
-        "test_pip_install_works",
-        "pip install --no-index",
-        "capsem-pip-ok",
-        "test_apt_install_works",
-        "apt-get install -y -qq",
-        "capsem-apt-ok",
-    ]
-
-    for proof in expected_proofs:
+    for proof in ["test_apt_install_works", "apt-get install -y -qq", "capsem-apt-ok"]:
         assert proof in runtimes, proof
+
+    ledger_suite = PROJECT_ROOT / "tests" / "ironbank" / "test_package_manager_ledger.py"
+    workload = ledger_suite.read_text(encoding="utf-8")
+    for proof in ["pip install --no-index", "uv pip install"]:
+        assert proof in workload, proof
