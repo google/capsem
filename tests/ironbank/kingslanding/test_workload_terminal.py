@@ -7,6 +7,7 @@ user, inside the workload's user namespace; ending that shell enters the
 workload again instead of exposing the VM shell underneath.
 """
 
+import contextlib
 import json
 import re
 import time
@@ -30,17 +31,18 @@ TYPED = 'read _ lower _ < /proc/self/uid_map; echo "PROBE-$(id -u)-$lower-$([ -d
 PROBE = re.compile(r"PROBE-(\d+)-(\d+)-(vm|workload)")
 
 
+@contextlib.contextmanager
 def terminal(service, vm_id):
     port = int((service.tmp_dir / "gateway.port").read_text())
     token = (service.tmp_dir / "gateway.token").read_text().strip()
-    socket = connect(
+    with connect(
         f"ws://127.0.0.1:{port}/vms/{vm_id}/stream",
         subprotocols=[Subprotocol("capsem.stream.v1")],
         additional_headers={"Authorization": f"Bearer {token}"},
         open_timeout=10,
-    )
-    socket.send(bytes([CONTROL]) + json.dumps({"type": "start", "kind": "terminal"}).encode())
-    return socket
+    ) as socket:
+        socket.send(bytes([CONTROL]) + json.dumps({"type": "start", "kind": "terminal"}).encode())
+        yield socket
 
 
 def probe(socket, after=b"", deadline=90):
