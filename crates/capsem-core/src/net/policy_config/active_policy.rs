@@ -21,6 +21,8 @@ use super::types::{NetworkConfig, SettingsFile};
 use crate::mcp::policy::McpConfig;
 use capsem_config::validate_policy_target;
 
+mod toggles;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActivePolicyFile {
@@ -53,19 +55,26 @@ impl ActivePolicyFile {
     pub fn from_settings_and_corp(settings: &SettingsFile, corp: &SettingsFile) -> Result<Self, String> {
         settings.validate_metadata_contract()?;
         corp.validate_metadata_contract()?;
-        let user_rules = SecurityRuleProfile {
+        let mut user_rules = SecurityRuleProfile {
             default: settings.default.clone(),
             profiles: settings.profiles.clone(),
             ai: settings.ai.clone(),
             ..SecurityRuleProfile::default()
         };
-        let corp_rules = SecurityRuleProfile {
+        let mut corp_rules = SecurityRuleProfile {
             default: corp.default.clone(),
             profiles: corp.profiles.clone(),
             corp: corp.corp.clone(),
             ai: corp.ai.clone(),
             plugins: BTreeMap::new(),
         };
+        let (user_toggles, corp_toggles) = toggles::toggle_block_rules(settings, corp)?;
+        for (id, rule) in user_toggles {
+            user_rules.profiles.rules.entry(id).or_insert(rule);
+        }
+        for (id, rule) in corp_toggles {
+            corp_rules.corp.rules.entry(id).or_insert(rule);
+        }
         let merged = MergedPolicies::from_files(settings, corp)?;
         let mut network = network_config_from_policy_and_dns(&merged.network, corp.network.dns.clone());
         network.upstream_overrides = corp.network.upstream_overrides.clone();
