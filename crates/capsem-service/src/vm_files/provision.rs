@@ -57,7 +57,7 @@ pub(crate) async fn handle_provision(
         let state = Arc::clone(&state);
         let id = id_for_loop.clone();
         let name = name.clone();
-        let payload_env = payload.env.clone();
+        let payload_env = capsem_core::container::session_env(payload.env.clone(), payload.container.is_some());
         let payload_from = payload.from.clone();
         let payload_profile_id = profile_id.clone();
         let payload_persistent = persistent;
