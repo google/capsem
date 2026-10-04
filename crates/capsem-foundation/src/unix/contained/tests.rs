@@ -454,3 +454,69 @@ fn listings_tell_a_symlink_from_other_special_entries() {
     assert!(!find("fifo").is_symlink && find("fifo").kind == EntryKind::Other);
     assert!(!find("file").is_symlink);
 }
+
+#[test]
+fn hard_link_names_the_same_inode_below_another_directory() {
+    let tree = tree();
+    std::fs::write(tree.root_path.join("blob"), b"verified").unwrap();
+    let to = ContainedDir::open_root(&tree.outside).unwrap();
+    tree.root
+        .hard_link(OsStr::new("blob"), &to, OsStr::new("copy"))
+        .unwrap();
+    let source = std::fs::metadata(tree.root_path.join("blob")).unwrap();
+    let linked = std::fs::metadata(tree.outside.join("copy")).unwrap();
+    assert_eq!((source.ino(), source.nlink()), (linked.ino(), 2));
+    assert_eq!(std::fs::read(tree.outside.join("copy")).unwrap(), b"verified");
+}
+
+#[test]
+fn hard_link_refuses_a_link_a_directory_and_an_existing_destination() {
+    let tree = tree();
+    std::fs::write(tree.outside.join("secret"), b"host secret").unwrap();
+    symlink(tree.outside.join("secret"), tree.root_path.join("link")).unwrap();
+    std::fs::create_dir(tree.root_path.join("directory")).unwrap();
+    std::fs::write(tree.root_path.join("blob"), b"verified").unwrap();
+    let to = ContainedDir::open_root(&tree.outside).unwrap();
+    for name in ["link", "directory", "missing"] {
+        assert!(
+            tree.root.hard_link(OsStr::new(name), &to, OsStr::new(name)).is_err(),
+            "{name}"
+        );
+        assert!(to.entry_kind(OsStr::new(name)).unwrap().is_none(), "{name} was linked");
+    }
+    // An existing destination, even a dangling link, is never replaced.
+    symlink("/nowhere", tree.outside.join("planted")).unwrap();
+    let error = tree
+        .root
+        .hard_link(OsStr::new("blob"), &to, OsStr::new("planted"))
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+    assert_eq!(
+        std::fs::read_link(tree.outside.join("planted")).unwrap(),
+        Path::new("/nowhere")
+    );
+    assert!(tree
+        .root
+        .hard_link(OsStr::new("../blob"), &to, OsStr::new("x"))
+        .is_err());
+    assert!(tree
+        .root
+        .hard_link(OsStr::new("blob"), &to, OsStr::new("../x"))
+        .is_err());
+}
+
+#[test]
+fn only_filesystem_limits_count_as_a_link_that_cannot_be_made() {
+    for errno in [
+        Errno::EXDEV,
+        Errno::EPERM,
+        Errno::ENOTSUP,
+        Errno::EOPNOTSUPP,
+        Errno::EMLINK,
+    ] {
+        assert!(is_link_unsupported(&io::Error::from(errno)), "{errno}");
+    }
+    for errno in [Errno::EEXIST, Errno::ENOENT, Errno::EACCES, Errno::ELOOP] {
+        assert!(!is_link_unsupported(&io::Error::from(errno)), "{errno}");
+    }
+}

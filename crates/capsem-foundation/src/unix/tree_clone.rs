@@ -20,7 +20,9 @@ use std::os::fd::AsFd;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-use super::contained::{is_not_directory, is_symlink_refusal, ContainedDir, ContainedOpenOptions, EntryKind};
+use super::contained::{
+    is_link_unsupported, is_not_directory, is_symlink_refusal, ContainedDir, ContainedOpenOptions, EntryKind,
+};
 use super::fs::{self, CloneMethod};
 
 /// Permission bits carried from a source entry to its clone.
@@ -108,6 +110,35 @@ pub fn clone_file(
     let (clone, method) = fs::clone_file_into(&source, dst_dir, dst_name, mode)?;
     fs::sync_before_barrier(clone.as_fd())?;
     Ok(method)
+}
+
+/// How [`link_file`] gave its destination the source's content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkMethod {
+    /// A second name for the source's inode: no byte was copied.
+    HardLink,
+    /// The filesystem cannot link it there; the file was cloned instead.
+    Cloned(CloneMethod),
+}
+
+/// Give the regular file `name` of `src_dir` the new name `dst_name` below
+/// `dst_dir`: a hard link where the filesystem allows one, otherwise a clone
+/// ([`clone_file`]), which shares extents where it can and copies where it
+/// cannot. A hard link shares the inode, so both names must be out of every
+/// untrusted writer's reach; see [`ContainedDir::hard_link`].
+pub fn link_file(
+    src_dir: &ContainedDir,
+    name: &OsStr,
+    dst_dir: &ContainedDir,
+    dst_name: &OsStr,
+) -> io::Result<LinkMethod> {
+    match src_dir.hard_link(name, dst_dir, dst_name) {
+        Ok(()) => Ok(LinkMethod::HardLink),
+        Err(error) if is_link_unsupported(&error) => {
+            clone_file(src_dir, name, dst_dir, dst_name).map(LinkMethod::Cloned)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Flush a regular file of `dir` without following a link. The descriptor is

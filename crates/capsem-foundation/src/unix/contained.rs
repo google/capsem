@@ -14,7 +14,7 @@ use std::path::{Component, Path, PathBuf};
 use nix::errno::Errno;
 use nix::fcntl::{openat, readlinkat, renameat, AtFlags, OFlag};
 use nix::sys::stat::{fstatat, mkdirat, Mode, SFlag};
-use nix::unistd::symlinkat;
+use nix::unistd::{linkat, symlinkat};
 use nix::unistd::{unlinkat, UnlinkatFlags};
 
 /// A handle on one directory below the containment root.
@@ -126,6 +126,21 @@ pub struct EntryIdentity {
 /// `O_NOFOLLOW` on a symlink fails with `ELOOP` on Linux and macOS alike.
 pub fn is_symlink_refusal(error: &io::Error) -> bool {
     error.raw_os_error() == Some(Errno::ELOOP as i32)
+}
+
+/// Whether [`ContainedDir::hard_link`] failed because a hard link cannot be
+/// made there at all -- another filesystem, one without hard links, or a link
+/// count at its limit -- rather than because of the names involved.
+pub fn is_link_unsupported(error: &io::Error) -> bool {
+    [
+        Errno::EXDEV,
+        Errno::EPERM,
+        Errno::ENOTSUP,
+        Errno::EOPNOTSUPP,
+        Errno::EMLINK,
+    ]
+    .iter()
+    .any(|errno| error.raw_os_error() == Some(*errno as i32))
 }
 
 /// Whether a path component expected to be a directory was another file type.
@@ -285,6 +300,42 @@ impl ContainedDir {
         check_component(name)?;
         check_component(to_name)?;
         renameat(Some(self.fd.as_raw_fd()), name, Some(to.fd.as_raw_fd()), to_name)?;
+        Ok(())
+    }
+
+    /// Make `to_name` below `to` a second name for the regular file `name`.
+    ///
+    /// Neither name is resolved. A source that is not a regular file -- a
+    /// link, FIFO or device -- is refused rather than linked, and an existing
+    /// destination of any type is an error. `linkat` without
+    /// `AT_SYMLINK_FOLLOW` links a symlink as itself, so a source swapped for
+    /// one after the check is caught by the destination check and removed.
+    ///
+    /// Both names then share one inode: a writer of either writes the other.
+    /// Link only files no untrusted writer can reach under either name.
+    pub fn hard_link(&self, name: &OsStr, to: &ContainedDir, to_name: &OsStr) -> io::Result<()> {
+        check_component(name)?;
+        check_component(to_name)?;
+        let not_regular = || {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is not a regular file", Path::new(name).display()),
+            )
+        };
+        if self.entry_kind(name)? != Some(EntryKind::File) {
+            return Err(not_regular());
+        }
+        linkat(
+            Some(self.fd.as_raw_fd()),
+            name,
+            Some(to.fd.as_raw_fd()),
+            to_name,
+            AtFlags::empty(),
+        )?;
+        if to.entry_kind(to_name)? != Some(EntryKind::File) {
+            to.remove_non_directory(to_name)?;
+            return Err(not_regular());
+        }
         Ok(())
     }
 
