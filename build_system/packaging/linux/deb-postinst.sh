@@ -105,6 +105,8 @@ CAPSEM_INSTALL_PHASE="install_manifest"
 if capsem_install_runs_inside_service /proc/self/cgroup; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=defer_service_owned_manifest_activation source=$MANIFEST_SOURCE unit=capsem.service"
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=defer_service_owned_service_finalization unit=capsem.service"
+    capsem_schedule_replaced_service_restart "$TARGET_USER"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=scheduled_replaced_service_restart unit=capsem.service"
     rm -f "$CAPSEM_INSTALL_MANIFEST_REQUEST" "$CAPSEM_INSTALL_MANIFEST_PAYLOAD"
     CAPSEM_INSTALL_PHASE="complete"
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=complete handoff=service_owned_update"

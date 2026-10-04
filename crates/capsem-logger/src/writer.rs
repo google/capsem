@@ -19,6 +19,7 @@ use crate::schema;
 
 mod bodies;
 mod flush_faults;
+mod legacy;
 mod model_rows;
 mod producer;
 #[cfg(test)]
@@ -342,6 +343,7 @@ impl DbWriter {
 
     fn open_once(path: &Path, capacity: usize, now: LedgerClock) -> rusqlite::Result<Self> {
         let held = writer_lock::acquire(path)?;
+        legacy::set_aside_pre_archive_ledger(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
@@ -362,6 +364,12 @@ impl DbWriter {
             schema::ArchiveSchemaStatus::Current(_) => {
                 schema::create_tables(&conn)?;
                 BodyArchive::open_existing(path, now, &conn)?
+            }
+            // Moved aside above, under this same writer lock.
+            schema::ArchiveSchemaStatus::PreArchive => {
+                return Err(rusqlite::Error::InvalidParameterName(
+                    schema::PRE_ARCHIVE_REFUSAL.to_string(),
+                ))
             }
         };
         let memory_uri = schema::memory_uri_for_path(path);

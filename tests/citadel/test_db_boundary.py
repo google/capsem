@@ -107,6 +107,11 @@ LOGGER_DB_INTERNALS = {
     # The host ledger's chain test edits a copy of a closed ledger on disk to
     # prove tampering breaks the chain, the same pattern as handle_tests above.
     Path("crates/capsem-logger/src/writer/tests/host.rs"),
+    # The writer's open path, under the writer lock it already holds: it reads
+    # whether a ledger predates format v4 and moves such a file aside before
+    # the writer opens a fresh one. It never reads or writes ledger rows.
+    Path("crates/capsem-logger/src/writer/legacy.rs"),
+    Path("crates/capsem-logger/src/writer/legacy/tests.rs"),
 }
 
 

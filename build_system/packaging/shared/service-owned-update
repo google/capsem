@@ -7,3 +7,24 @@ capsem_install_runs_inside_service() {
     [ -r "$cgroup_file" ] || return 1
     grep -Eq '(^|/)capsem(-update)?[.]service($|/)' "$cgroup_file"
 }
+
+# A service-owned update installs the new binaries under a service still
+# running the old ones, and only that service can decide to restart. Capsem
+# 0.6.3 restarts after it reloads the activated profiles, so a profile it
+# cannot parse -- 0.6.4's network.mode rules -- left it running v0.6.3
+# against v0.6.4 binaries until someone restarted it. The new package
+# therefore schedules the restart itself: after the updater has had time to
+# activate the staged state, and only when the running executable was
+# replaced. A service that restarted on its own is left alone.
+# shellcheck disable=SC2016 # expanded by the scheduled shell, not here
+CAPSEM_REPLACED_SERVICE_CHECK='pid=$(systemctl --user show -p MainPID --value capsem.service); case "$(readlink "${CAPSEM_PROC:-/proc}/$pid/exe" 2>/dev/null)" in *" (deleted)") systemctl --user restart capsem.service ;; esac'
+
+capsem_schedule_replaced_service_restart() {
+    local user="$1" delay="${2:-60}" uid runtime
+    uid="$(id -u "$user" 2>/dev/null)" || return 0
+    runtime="${CAPSEM_USER_RUNTIME_ROOT:-/run/user}/$uid"
+    [ -d "$runtime" ] || return 0
+    runuser -u "$user" -- env "XDG_RUNTIME_DIR=$runtime" \
+        systemd-run --user --quiet --collect --on-active="$delay" \
+        /bin/sh -c "$CAPSEM_REPLACED_SERVICE_CHECK" || true
+}

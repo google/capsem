@@ -46,6 +46,9 @@ pub(crate) fn create_tables_with_archive_header(
     prepared: Option<FileHeader>,
 ) -> rusqlite::Result<()> {
     let status = archive_schema_status(conn)?;
+    if status == ArchiveSchemaStatus::PreArchive {
+        return Err(contract_error(PRE_ARCHIVE_REFUSAL));
+    }
     let has_archive_state = matches!(status, ArchiveSchemaStatus::Current(_));
 
     conn.execute_batch("BEGIN IMMEDIATE")?;
@@ -158,7 +161,12 @@ pub(crate) struct ArchiveState {
 pub(crate) enum ArchiveSchemaStatus {
     Fresh,
     Current(ArchiveState),
+    /// Ledger tables with no `archive_state`: written before format v4.
+    PreArchive,
 }
+
+pub(crate) const PRE_ARCHIVE_REFUSAL: &str =
+    "session ledger predates required archive_state (format v4); refusing implicit v2 migration";
 
 pub(crate) fn archive_schema_status(conn: &Connection) -> rusqlite::Result<ArchiveSchemaStatus> {
     if table_exists(conn, "main", "archive_state")? {
@@ -166,9 +174,7 @@ pub(crate) fn archive_schema_status(conn: &Connection) -> rusqlite::Result<Archi
     }
     for (table, _) in READY_SCHEMA_COLUMNS {
         if *table != "archive_state" && table_exists(conn, "main", table)? {
-            return Err(contract_error(
-                "session ledger predates required archive_state (format v4); refusing implicit v2 migration",
-            ));
+            return Ok(ArchiveSchemaStatus::PreArchive);
         }
     }
     Ok(ArchiveSchemaStatus::Fresh)
