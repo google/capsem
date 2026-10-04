@@ -54,27 +54,54 @@ def image_session(
     cpus: int = DEFAULT_CPUS,
     timeout: float = 300,
 ) -> Iterator[str]:
-    """A named session whose workload is `image`; yields its id once the
-    workload runs, and deletes it afterwards.
+    """A named session whose workload is the pinned `image`; yields its id
+    once the workload runs, and deletes it afterwards.
 
-    The registry stays up for the session, so a restart or fork that pulls
-    again finds the same digest. A missing layout fails here, never skips:
-    `image.ready()` raises when the prefetch did not stage it. `layout` names
-    one staged elsewhere (an installed proof's inputs), verified against the
-    same pin; `client` defaults to the service's own socket (the gateway's
-    TCP client drives it the same way).
+    A missing layout fails here, never skips: `image.ready()` raises when the
+    prefetch did not stage it. `layout` names one staged elsewhere (an
+    installed proof's inputs), verified against the same pin; `client`
+    defaults to the service's own socket (the gateway's TCP client drives it
+    the same way).
     """
-    workdir.mkdir(parents=True, exist_ok=True)
-    client = client or service.client()
     if layout is None:
         layout = image.ready()
     else:
         image.verify(layout, image.pinned(), image.platform_name())
-    with layout_registry(workdir, layout, image.settings().name) as (
-        reference,
-        certificate,
-        _,
-    ):
+    with session_of(
+        service,
+        workdir,
+        name,
+        layout=layout,
+        image_name=image.settings().name,
+        client=client,
+        env=env,
+        ram_mb=ram_mb,
+        cpus=cpus,
+        timeout=timeout,
+    ) as vm_id:
+        yield vm_id
+
+
+@contextlib.contextmanager
+def session_of(
+    service,
+    workdir: Path,
+    name: str,
+    *,
+    layout: Path,
+    image_name: str,
+    client=None,
+    env: Mapping[str, str] | None = None,
+    ram_mb: int = DEFAULT_RAM_MB,
+    cpus: int = DEFAULT_CPUS,
+    timeout: float = 300,
+) -> Iterator[str]:
+    """A named session of the image in `layout`, served by its own digest from
+    a loopback registry and admitted as exactly that image. The registry stays
+    up for the session, so a restart or fork that pulls again finds it."""
+    workdir.mkdir(parents=True, exist_ok=True)
+    client = client or service.client()
+    with layout_registry(workdir, layout, image_name) as (reference, certificate, _):
         grant_exact(service.home_dir, reference)
         created = client.post(
             "/vms/create",
