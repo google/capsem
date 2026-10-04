@@ -17,12 +17,19 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
-use super::{cache::BlobCache, digest_hex, image_reference, verify_platform};
+use super::{
+    cache::BlobCache,
+    catalog::{Catalog, CATALOG_MEDIA_TYPE},
+    digest_hex, image_reference,
+    selector::Digest as ContentDigest,
+    verify_platform,
+};
 
 const METADATA_LIMIT: usize = 4 * 1024 * 1024;
 const LAYER_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 const IMAGE_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
 const PULL_TIMEOUT: Duration = Duration::from_secs(300);
+const CATALOG_LIMIT: u64 = 1024 * 1024;
 
 /// A disposable OCI layout. Keeping this value alive keeps its files alive.
 pub struct ImageLayout {
@@ -124,6 +131,57 @@ impl Puller {
             .context("OCI pull exceeded five minutes")?
     }
 
+    /// Fetch and validate the image catalog at `reference`, usually
+    /// `ghcr.io/google/capsem/catalog:<channel>`. The manifest is re-read on
+    /// every call because the channel tag moves; the returned digest names
+    /// this catalog version. The layer is verified against its descriptor and
+    /// shares the image blob cache. `parent` holds the disposable staging.
+    pub async fn fetch_catalog(&self, reference: &str, parent: &Path) -> Result<(ContentDigest, Catalog)> {
+        tokio::time::timeout(PULL_TIMEOUT, self.fetch_catalog_inner(reference, parent))
+            .await
+            .context("catalog fetch exceeded five minutes")?
+    }
+
+    async fn fetch_catalog_inner(&self, reference: &str, parent: &Path) -> Result<(ContentDigest, Catalog)> {
+        let reference = image_reference(reference)?;
+        if let Some(cache) = &self.cache {
+            cache.prepare().await?;
+        }
+        let token = self
+            .registry
+            .auth(&reference, &self.authentication, RegistryOperation::Pull)
+            .await?;
+        let bytes = self.manifest(&reference, token.as_deref()).await?;
+        let identity = ContentDigest::parse(&sha256(&bytes))?;
+        let manifest: OciImageManifest =
+            serde_json::from_slice(&bytes).context("catalog must be a single OCI artifact manifest")?;
+        ensure!(manifest.schema_version == 2, "unsupported catalog manifest schema");
+        let [layer] = manifest.layers.as_slice() else {
+            anyhow::bail!(
+                "catalog manifest must have exactly one layer, found {}",
+                manifest.layers.len()
+            );
+        };
+        ensure!(
+            layer.media_type == CATALOG_MEDIA_TYPE,
+            "catalog layer media type is {:?}, expected {CATALOG_MEDIA_TYPE}",
+            layer.media_type
+        );
+        ensure!(
+            layer.size > 0 && layer.size as u64 <= CATALOG_LIMIT,
+            "catalog layer size {} is outside the 1 MiB limit",
+            layer.size
+        );
+        ensure!(
+            layer.urls.as_ref().is_none_or(Vec::is_empty),
+            "external catalog URLs are unsupported"
+        );
+        let directory = staging(parent).await?;
+        self.blob(&reference, layer, directory.path()).await?;
+        let document = tokio::fs::read(directory.path().join(digest_hex(&layer.digest)?)).await?;
+        Ok((identity, Catalog::parse(&document)?))
+    }
+
     async fn pull_inner(&self, reference: &str, parent: &Path) -> Result<ImageLayout> {
         let reference = image_reference(reference)?;
         if let Some(cache) = &self.cache {
@@ -172,14 +230,7 @@ impl Puller {
         let mut manifest: OciImageManifest =
             serde_json::from_slice(&bytes).context("expected platform image manifest")?;
         validate_manifest(&mut manifest)?;
-        let parent = parent.to_owned();
-        let directory = tokio::task::spawn_blocking(move || {
-            tempfile::Builder::new()
-                .prefix("oci-")
-                .permissions(std::fs::Permissions::from_mode(0o700))
-                .tempdir_in(parent)
-        })
-        .await??;
+        let directory = staging(parent).await?;
         let blob_dir = directory.path().join("blobs/sha256");
         tokio::fs::create_dir_all(&blob_dir).await?;
         self.blob(&reference, &manifest.config, &blob_dir).await?;
@@ -327,6 +378,18 @@ impl Puller {
         }
         Ok(())
     }
+}
+
+/// A private, disposable directory under `parent` for verified downloads.
+async fn staging(parent: &Path) -> Result<tempfile::TempDir> {
+    let parent = parent.to_owned();
+    Ok(tokio::task::spawn_blocking(move || {
+        tempfile::Builder::new()
+            .prefix("oci-")
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir_in(parent)
+    })
+    .await??)
 }
 
 fn sha256(bytes: &[u8]) -> String {

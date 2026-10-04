@@ -467,3 +467,146 @@ async fn pinned_manifest_checks_config_platform_without_trusting_the_index() {
     let error = registry.puller().pull(&reference, parent.path()).await.err().unwrap();
     assert!(format!("{error:#}").contains("linux/arm64"), "{error:#}");
 }
+
+const CATALOG_DOCUMENT: &str = r#"{"schema_version":1,"channel":"stable","entries":{"codex":{"description":"Codex","versions":[
+    {"image":"ghcr.io/google/capsem/codex@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","platforms":["linux/arm64"],"contract":1}]}}}"#;
+
+/// A registry whose `team/image:stable` is a catalog artifact: an empty
+/// config and one layer, described as `media` and declared as `size`.
+async fn catalog_registry(media: &'static str, layer: Vec<u8>, size: Option<u64>) -> Registry {
+    let registry = Registry::start(move |manifest, blobs| {
+        let empty = b"{}";
+        blobs.insert(format!("/v2/team/image/blobs/{}", digest(empty)), empty.to_vec());
+        blobs.insert(format!("/v2/team/image/blobs/{}", digest(&layer)), layer.clone());
+        let mut layer_descriptor = descriptor(media, &layer);
+        if let Some(size) = size {
+            layer_descriptor["size"] = json!(size);
+        }
+        *manifest = json!({"schemaVersion":2,"mediaType":OCI_IMAGE_MEDIA_TYPE,"artifactType":CATALOG_MEDIA_TYPE,
+            "config":descriptor("application/vnd.oci.empty.v1+json", empty),"layers":[layer_descriptor]});
+    })
+    .await;
+    {
+        let mut blobs = registry.blobs.lock().unwrap();
+        let manifest = blobs[&format!("/v2/team/image/manifests/{}", registry.source_digest)].clone();
+        blobs.insert("/v2/team/image/manifests/stable".into(), manifest);
+    }
+    registry
+}
+
+impl Registry {
+    fn catalog(&self) -> String {
+        format!("{}/team/image:stable", self.address)
+    }
+
+    fn blob_requests(&self) -> usize {
+        let requests = self.requests.lock().unwrap();
+        requests.iter().filter(|r| r.path.contains("/blobs/")).count()
+    }
+}
+
+#[tokio::test]
+async fn catalog_is_fetched_verified_and_identified_by_manifest_digest() {
+    let registry = catalog_registry(CATALOG_MEDIA_TYPE, CATALOG_DOCUMENT.as_bytes().to_vec(), None).await;
+    let parent = tempfile::tempdir().unwrap();
+    let cache_root = super::super::tests::private_dir();
+    let mut puller = registry.puller();
+    puller.cache = Some(super::super::cache::BlobCache::at(cache_root.path()).unwrap());
+    let (identity, catalog) = puller.fetch_catalog(&registry.catalog(), parent.path()).await.unwrap();
+    assert_eq!(identity.as_str(), registry.source_digest);
+    assert!(catalog.entry("codex").is_some());
+    assert_eq!(
+        std::fs::read_dir(parent.path()).unwrap().count(),
+        0,
+        "staging is disposable"
+    );
+    // The tag is re-read every time; the unchanged layer comes from the cache.
+    let pinned = format!("{}/team/image@{}", registry.address, registry.source_digest);
+    let (again, _) = puller.fetch_catalog(&pinned, parent.path()).await.unwrap();
+    assert_eq!(again, identity);
+    assert_eq!(registry.blob_requests(), 1);
+}
+
+#[tokio::test]
+async fn catalog_layer_must_carry_the_catalog_media_type() {
+    let registry = catalog_registry(
+        "application/vnd.oci.image.layer.v1.tar+gzip",
+        CATALOG_DOCUMENT.as_bytes().to_vec(),
+        None,
+    )
+    .await;
+    let parent = tempfile::tempdir().unwrap();
+    let error = registry
+        .puller()
+        .fetch_catalog(&registry.catalog(), parent.path())
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("media type"), "{error:#}");
+    assert_eq!(registry.blob_requests(), 0, "refused before fetching the layer");
+}
+
+#[tokio::test]
+async fn oversized_catalog_layer_is_refused_before_fetch() {
+    let large = vec![b' '; CATALOG_LIMIT as usize + 1];
+    for (layer, size) in [
+        (large, None),
+        (CATALOG_DOCUMENT.as_bytes().to_vec(), Some(u64::MAX >> 1)),
+    ] {
+        let registry = catalog_registry(CATALOG_MEDIA_TYPE, layer, size).await;
+        let parent = tempfile::tempdir().unwrap();
+        let error = registry
+            .puller()
+            .fetch_catalog(&registry.catalog(), parent.path())
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("1 MiB"), "{error:#}");
+        assert_eq!(registry.blob_requests(), 0);
+    }
+}
+
+#[tokio::test]
+async fn catalog_layer_bytes_must_match_their_digest_and_parse() {
+    let registry = catalog_registry(CATALOG_MEDIA_TYPE, CATALOG_DOCUMENT.as_bytes().to_vec(), None).await;
+    registry.blobs.lock().unwrap().insert(
+        format!("/v2/team/image/blobs/{}", digest(CATALOG_DOCUMENT.as_bytes())),
+        CATALOG_DOCUMENT.replace("Codex", "Evil!").into_bytes(),
+    );
+    let parent = tempfile::tempdir().unwrap();
+    let error = registry
+        .puller()
+        .fetch_catalog(&registry.catalog(), parent.path())
+        .await
+        .unwrap_err();
+    // oci-client verifies the stream against the descriptor before our own check.
+    assert!(format!("{error:#}").to_lowercase().contains("digest"), "{error:#}");
+
+    let invalid = CATALOG_DOCUMENT.replace("\"contract\":1", "\"contract\":1,\"extra\":true");
+    let registry = catalog_registry(CATALOG_MEDIA_TYPE, invalid.into_bytes(), None).await;
+    let error = registry
+        .puller()
+        .fetch_catalog(&registry.catalog(), parent.path())
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("unknown field"), "{error:#}");
+}
+
+#[tokio::test]
+async fn catalog_must_be_one_artifact_manifest_not_an_image_index() {
+    let registry = catalog_registry(CATALOG_MEDIA_TYPE, CATALOG_DOCUMENT.as_bytes().to_vec(), None).await;
+    let parent = tempfile::tempdir().unwrap();
+    let index = format!("{}/team/image:latest", registry.address);
+    assert!(registry.puller().fetch_catalog(&index, parent.path()).await.is_err());
+
+    let registry = Registry::start(|manifest, _| {
+        let layer = manifest["layers"][0].clone();
+        manifest["layers"] = json!([layer.clone(), layer]);
+    })
+    .await;
+    let pinned = format!("{}/team/image@{}", registry.address, registry.source_digest);
+    let error = registry
+        .puller()
+        .fetch_catalog(&pinned, parent.path())
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("exactly one layer"), "{error:#}");
+}
