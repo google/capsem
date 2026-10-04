@@ -520,3 +520,44 @@ fn boot_without_kvm_fails_gracefully() {
         .build();
     assert!(config.is_err());
 }
+
+/// The guest must be told of every slot up to the last share: the image share
+/// sits at slot 5 behind the workspace share, and is lost if any earlier
+/// device's absence shortens the count.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn every_mmio_slot_up_to_the_last_share_is_announced() {
+    let share = |tag: &str| crate::VirtioFsShare {
+        tag: tag.into(),
+        host_path: "/share".into(),
+        read_only: tag == "capsem-image",
+    };
+    let mut config = crate::VmConfig {
+        cpu_count: 1,
+        ram_bytes: 1 << 30,
+        kernel_path: "/vmlinuz".into(),
+        initrd_path: None,
+        disk_path: Some("/rootfs".into()),
+        scratch_disk_path: Some("/system".into()),
+        virtio_fs_shares: vec![share("capsem"), share("capsem-image")],
+        kernel_cmdline: String::new(),
+        expected_kernel_hash: None,
+        expected_initrd_hash: None,
+        checkpoint_path: None,
+        expected_disk_hash: None,
+        machine_identifier_path: None,
+        serial_log_path: None,
+    };
+    assert_eq!(virtio_mmio_device_count(&config, &[1]), 6);
+    config.scratch_disk_path = None;
+    assert_eq!(
+        virtio_mmio_device_count(&config, &[]),
+        6,
+        "the image share keeps slot 5"
+    );
+    config.virtio_fs_shares.clear();
+    assert_eq!(virtio_mmio_device_count(&config, &[1]), 4);
+    assert_eq!(virtio_mmio_device_count(&config, &[]), 2);
+    config.disk_path = None;
+    assert_eq!(virtio_mmio_device_count(&config, &[]), 1);
+}
