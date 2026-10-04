@@ -15,8 +15,6 @@ mod selector;
 pub use oci_client::secrets::RegistryAuth;
 pub use pull::{ImageLayout, Puller};
 pub use selector::{admits, allows_source, Digest, ImageReference, ImageSelector, Repository, ResolvedImage};
-mod transfer;
-pub use transfer::{transfer_manifest, TransferEntry};
 
 /// Require a qualified registry reference or explicit `docker://` prefix so
 /// existing shell-command arguments cannot silently turn into image pulls.
