@@ -16,4 +16,11 @@ RUN set -eu; \
 USER capsem
 ENV DISABLE_AUTOUPDATER=1
 RUN claude --version | grep -F "$CLAUDE_VERSION"
+# Capsem's MCP tools, at the name the session's proxy answers on the host. A
+# container cannot reach the in-guest vsock relay; plain HTTP is enough
+# because the connection ends at the VM's own proxy, never on a network.
+RUN f=/home/capsem/.claude.json; \
+    [ -f "$f" ] || echo '{}' > "$f"; \
+    jq '.mcpServers.capsem = {type: "http", url: "http://mcp.capsem.internal/mcp"}' "$f" > "$f.new"; \
+    mv "$f.new" "$f"
 CMD ["claude"]

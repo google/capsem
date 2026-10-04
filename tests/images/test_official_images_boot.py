@@ -34,10 +34,30 @@ AGENTS = {
 }
 
 
+MCP_URL = "http://mcp.capsem.internal/mcp"
+
+# Where each agent reads its user-scope MCP servers. A container cannot reach
+# the in-guest vsock relay, so the agent must use the internal HTTP name the
+# session's proxy answers.
+MCP_CONFIGS = {
+    "codex-cli": "/home/capsem/.codex/config.toml",
+    "claude-code": "/home/capsem/.claude.json",
+    "agy": "/home/capsem/.gemini/config/mcp_config.json",
+}
+
+
 @pytest.mark.parametrize("name", sorted(AGENTS))
 def test_the_image_boots_and_its_agent_runs(service, tmp_path, name):
+    _run_in_image(service, tmp_path, name, *AGENTS[name])
+
+
+@pytest.mark.parametrize("name", sorted(MCP_CONFIGS))
+def test_the_images_agent_reaches_capsem_mcp_over_http(service, tmp_path, name):
+    _run_in_image(service, tmp_path, name, ["cat", MCP_CONFIGS[name]], MCP_URL)
+
+
+def _run_in_image(service, tmp_path, name, argv, expected):
     layout = Path(LAYOUTS or "") / name
-    argv, expected = AGENTS[name]
     with layout_registry(tmp_path, layout, name) as (reference, certificate, _):
         result = subprocess.run(
             [*command(service, reference, certificate), *argv],

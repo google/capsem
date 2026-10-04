@@ -705,7 +705,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`transport = 'http'`), and never dials it. Every other name in
   `capsem.internal`, and the MCP name on any other port, is refused with a
   `capsem.internal.reserved` network event instead of being handed to the
-  host's resolver.
+  host's resolver. The official `claude-code`, `codex-cli` and `agy` images
+  configure their agent's `capsem` MCP server at that URL.
 - OpenTelemetry metric export. Set the corp config's `open_telemetry` to an
   OTLP/HTTP base endpoint (metrics go to `/v1/metrics`), or the standard
   `OTEL_EXPORTER_OTLP_*` environment for the service. The service exports its

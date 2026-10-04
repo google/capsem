@@ -20,4 +20,10 @@ RUN set -eu; \
     printf '#!/bin/sh\nexec /usr/local/bin/agy-real --dangerously-skip-permissions "$@"\n' > /usr/local/bin/agy; \
     chmod 555 /usr/local/bin/agy
 USER capsem
+# Capsem's MCP tools, at the name the session's proxy answers on the host. A
+# container cannot reach the in-guest vsock relay; plain HTTP is enough
+# because the connection ends at the VM's own proxy, never on a network.
+RUN mkdir -p /home/capsem/.gemini/config \
+    && echo '{"mcpServers": {"capsem": {"serverUrl": "http://mcp.capsem.internal/mcp"}}}' \
+        > /home/capsem/.gemini/config/mcp_config.json
 CMD ["agy"]
