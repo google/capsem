@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import pytest
 from ironbank.model_client_assertions import assert_one_model_client
-from ironbank.model_client_config import HERMETIC_ANTHROPIC_MODEL, LIVE_CLAUDE_MODEL
+from ironbank.model_client_config import (
+    HERMETIC_ANTHROPIC_MODEL,
+    LIVE_CLAUDE_MODEL,
+    WORKLOAD_OLLAMA_HOST,
+)
 from ironbank.model_client_scripts import (
     claude_api_script,
     claude_ollama_launch_script,
@@ -65,7 +69,7 @@ def test_claude_cli_ollama_launch_replay_ledger(model_client_env: ModelClientEnv
     )
     assert result["provider"] == "ollama"
     assert result["credential_provider"] == "ollama"
-    assert result["domain"] == "127.0.0.1"
+    assert result["domain"] == WORKLOAD_OLLAMA_HOST
     assert result["path"] == "/v1/messages"
     assert result["tool_call_name"] == "Bash"
 

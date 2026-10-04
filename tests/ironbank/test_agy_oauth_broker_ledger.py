@@ -69,7 +69,8 @@ def test_image_inputs_do_not_bake_agy_oauth_token_material() -> None:
         "refresh_token",
         "id_token",
     )
-    image_inputs = (Path("guest/artifacts"), Path("config/docker"))
+    # The VM runtime, and every image that ships agy (capsem-debug included).
+    image_inputs = (Path("guest/artifacts"), Path("config/docker"), Path("images"))
     for root in image_inputs:
         assert root.is_dir(), root
         for path in root.rglob("*"):
