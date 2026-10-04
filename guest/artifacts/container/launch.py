@@ -151,6 +151,14 @@ def configure(unpacked, image, options):
             "source": "tmpfs",
             "options": ["nosuid", "noexec", "mode=755", "size=1m"],
         },
+        # A private instance for the workload's own terminals (`runc exec -t`);
+        # no gid=, which the user namespace does not map. runc links /dev/ptmx.
+        {
+            "destination": "/dev/pts",
+            "type": "devpts",
+            "source": "devpts",
+            "options": ["nosuid", "noexec", "newinstance", "ptmxmode=0666", "mode=0620"],
+        },
         {
             "destination": "/dev/shm",
             "type": "tmpfs",

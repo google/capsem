@@ -75,7 +75,10 @@ def test_default_command_user_and_workdir_survive_hardening(launcher):
     assert "CAP_NET_RAW" not in process["capabilities"]["bounding"]
     assert config["linux"]["resources"]["memory"]["limit"] == 1024 * 1024**2
     assert config["linux"]["resources"]["pids"]["limit"] == 4096
-    assert all(mount["type"] in {"proc", "tmpfs", "bind"} for mount in config["mounts"])
+    assert all(
+        mount["type"] in {"proc", "tmpfs", "bind"} or (mount["type"], mount["destination"]) == ("devpts", "/dev/pts")
+        for mount in config["mounts"]
+    )
     assert "/data" in {mount["destination"] for mount in config["mounts"]}
 
 
@@ -660,3 +663,16 @@ def test_the_workload_has_shared_memory_sized_from_its_memory(launcher, memory, 
     assert {"nosuid", "nodev", "noexec"} <= set(mount["options"])
     destinations = [m["destination"] for m in config["mounts"]]
     assert destinations.index("/dev/shm") > destinations.index("/dev"), "mounted inside /dev, after it"
+
+
+def test_the_workload_has_its_own_pseudo_terminals(launcher):
+    """`runc exec -t` (the session terminal) opens /dev/ptmx: the workload gets
+    a private devpts instance, never the VM's terminals, with no group option
+    the user namespace does not map."""
+    config = launcher.configure(unpacked(), image(), {**SECURITY, "args": [], "env": {}})
+    (mount,) = _mounts_at(config, "/dev/pts")
+    assert mount["type"] == "devpts"
+    assert {"newinstance", "ptmxmode=0666", "nosuid", "noexec"} <= set(mount["options"])
+    assert not any(option.startswith("gid=") for option in mount["options"])
+    destinations = [m["destination"] for m in config["mounts"]]
+    assert destinations.index("/dev/pts") > destinations.index("/dev"), "mounted inside /dev, after it"
