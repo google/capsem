@@ -44,8 +44,13 @@ pub(crate) fn restore(state: &Arc<ServiceState>, id: &str) {
 
 /// Forget the staged image a clone carried, so its first boot launches
 /// nothing and the image the new session names is the only one staged and
-/// run. Its workspace files and the image volumes on its overlay stay. The
-/// markers are guest-written, so they are removed without being followed.
+/// run. Its workspace files and the image volumes on its overlay stay.
+///
+/// The whole stage goes, not only its markers: the launcher left its own copy
+/// read-only, and a carried layer part the new plan does not overwrite would
+/// be read as part of the new image. The stage is flat and guest-written, so
+/// each entry is unlinked without being followed; a directory a guest put
+/// there is left in place, unread.
 pub(crate) fn drop_carried_image(session_dir: &std::path::Path) -> Result<(), String> {
     let not_found = |error: &std::io::Error| error.kind() == std::io::ErrorKind::NotFound;
     let root = ContainedDir::open_root(session_dir).map_err(|e| format!("open {}: {e}", session_dir.display()))?;
@@ -60,13 +65,12 @@ pub(crate) fn drop_carried_image(session_dir: &std::path::Path) -> Result<(), St
         Err(error) if not_found(&error) => return Ok(()),
         Err(error) => return Err(format!("open the carried stage: {error}")),
     };
-    for marker in [
-        capsem_core::container::STAGE_READY,
-        capsem_core::container::STAGE_RUNNING,
-        capsem_core::container::STAGE_FAILED,
-    ] {
-        match stage.remove_non_directory(std::ffi::OsStr::new(marker)) {
-            Err(error) if !not_found(&error) => return Err(format!("remove stage marker {marker}: {error}")),
+    let entries = stage.entries().map_err(|e| format!("list the carried stage: {e}"))?;
+    for entry in entries.into_iter().filter(|entry| entry.kind != EntryKind::Directory) {
+        match stage.remove_non_directory(&entry.name) {
+            Err(error) if !not_found(&error) => {
+                return Err(format!("remove carried {}: {error}", entry.name.to_string_lossy()))
+            }
             _ => {}
         }
     }

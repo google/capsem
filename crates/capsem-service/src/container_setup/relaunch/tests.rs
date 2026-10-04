@@ -59,7 +59,7 @@ fn a_clone_of_a_bare_vm_carries_nothing() {
 /// the named image is the only workload; the guest-written markers are
 /// unlinked, never followed, and the rest of the workspace stays.
 #[test]
-fn a_clone_taking_a_new_image_forgets_the_carried_one() {
+fn a_clone_taking_a_new_image_forgets_the_whole_carried_stage() {
     let dir = tempfile::tempdir().unwrap();
     let session = dir.path().join("clone");
     write_record(&session, &record(None));
@@ -67,6 +67,12 @@ fn a_clone_taking_a_new_image_forgets_the_carried_one() {
     std::fs::create_dir_all(&stage).unwrap();
     std::fs::write(stage.join("ready"), b"1\n").unwrap();
     std::fs::write(stage.join("index.json"), b"{}").unwrap();
+    std::fs::write(stage.join("launch.py"), b"#").unwrap();
+    std::fs::set_permissions(
+        stage.join("launch.py"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o555),
+    )
+    .unwrap();
     std::fs::write(session.join("guest/workspace/notes.txt"), b"kept").unwrap();
     let outside = dir.path().join("host-file");
     std::fs::write(&outside, b"keep").unwrap();
@@ -78,7 +84,10 @@ fn a_clone_taking_a_new_image_forgets_the_carried_one() {
     assert!(!stage.join("ready").exists());
     assert!(std::fs::symlink_metadata(stage.join("running")).is_err());
     assert_eq!(std::fs::read(&outside).unwrap(), b"keep");
-    assert!(stage.join("index.json").exists());
+    // The rest of the carried stage goes too: the launcher's own read-only
+    // copy would refuse the new image's, and an old layer part would join it.
+    assert!(!stage.join("index.json").exists());
+    assert!(!stage.join("launch.py").exists());
     assert_eq!(
         std::fs::read(session.join("guest/workspace/notes.txt")).unwrap(),
         b"kept"
