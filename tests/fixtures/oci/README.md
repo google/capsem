@@ -115,6 +115,14 @@ digest, so every checkout and gate prefix uses one copy:
 - the suites call `debug_image.ready()`, which verifies and never fetches,
   and serve the layout through `registry.layout_registry`.
 
+A workload has its own loopback; it never reaches the VM's. Clients in one
+reach the hermetic mock upstream by name: `start_mock_server(dns_answers="routable")`
+answers every fixture name with TEST-NET-2, the container's gateway carries
+it to the VM proxies by port, and a corp `upstream_overrides` entry routes the
+name to the mock (`ironbank/model_client_config.py` has the local-model
+endpoint, `ollama.capsem.test:3713`). What only a loopback name exercises --
+the broker's hermetic OAuth endpoint -- stays a `"target": "vm"` exec.
+
 ### Building, pinning and publishing it (maintainers)
 
 1. Change `images/capsem-debug/` (bump a pin, add a tool). Regenerate the
