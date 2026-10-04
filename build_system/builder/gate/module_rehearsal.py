@@ -42,11 +42,11 @@ from .actions import Script
 from .command import GateCommand
 from .config import GateConfig
 from .content import RuntimeContent
+from .contentcheck import ContentComplete
 from .execution import Kind, Needs, Speed, Step, step
 from .module_artifacts import pulled_artifacts
 from .module_glowup import pulled_package
 from .plan import Plan
-from .contentcheck import ContentComplete
 from .qualification import Qualification
 from .testmodules import InWorkspace
 from .versions import workspace_version
