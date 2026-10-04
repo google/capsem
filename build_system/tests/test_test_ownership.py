@@ -118,6 +118,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/scripts/test_cargo_workspace_cache.py",
         "build_system/tests/scripts/test_dependency_audit.py",
         "build_system/tests/scripts/test_rust_affected.py",
+        "build_system/tests/scripts/test_vendor_xpra_html5.py",
         "build_system/tests/sdkgen/test_call_deadlines.py",
         "build_system/tests/sdkgen/test_cli.py",
         "build_system/tests/sdkgen/test_generation.py",
