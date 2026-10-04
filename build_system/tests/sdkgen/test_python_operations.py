@@ -164,7 +164,7 @@ def test_invalid_input_fails_before_network_io(package: ModuleType) -> None:
 
 
 def test_invalid_identifiers_and_collisions_fail_generation() -> None:
-    route = ROUTES[0]
+    route = next(route for route in ROUTES if route.operation.parameters)
     invalid = route.operation.model_copy(update={"operation_id": "class"})
     with pytest.raises(ValueError, match="identifier"):
         render_operations([Route(route.path, route.method, invalid)])

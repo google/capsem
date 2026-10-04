@@ -21,9 +21,9 @@ def test_all_routes_are_generated_in_small_modules() -> None:
     assert len(sources) == len(routes) + 1
     assert max(len(source.splitlines()) for source in sources.values()) < 150
     assert sources == render_operations(list(reversed(routes)))
-    call = sources["call_profile_mcp_tool.rs"]
-    assert "parameters: &[\n            (\"profile_id\"" in call
-    assert ".request(\n            reqwest::Method::POST," in call
+    call = sources["call_mcp_tool.rs"]
+    assert 'parameters: &[("server_id", path_server_id.as_str()), ("tool_id", path_tool_id.as_str())]' in call
+    assert '.request(reqwest::Method::POST, "/mcp/servers/{server_id}/tools/{tool_id}/call", request)' in call
 
 
 def test_a_call_is_split_where_rustfmt_splits_it() -> None:
@@ -67,7 +67,7 @@ def test_unhandled_query_encoding_fails_closed() -> None:
 
 
 def test_collisions_and_reserved_identifiers_fail_closed() -> None:
-    route = read_operations(SPEC)[0]
+    route = next(route for route in read_operations(SPEC) if route.operation.parameters)
     with pytest.raises(ValueError, match="colliding"):
         render_operations([route, route])
     invalid = route.operation.model_copy(update={"operation_id": "type"})
