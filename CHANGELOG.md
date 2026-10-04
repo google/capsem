@@ -229,6 +229,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `main.db.pre-v4-<seconds>` and a fresh ledger starts; the old session
   history is not shown in the new one.
 
+- An automatic update from Capsem 0.6.3 now ends on the new binaries. 0.6.3
+  restarts itself only after reloading the updated profiles, and it cannot
+  parse 0.6.4's network rules, so it kept serving as 0.6.3. The 0.6.4 package
+  now schedules a restart a minute after the update that runs only when the
+  service's executable was replaced.
+
 - On Linux hosts, `cp -a`, `tar -x` and `chown` work in the VM's `/root`
   workspace again. The VirtioFS server numbered FSYNCDIR 21, the opcode the
   kernel uses for SETXATTR, so every extended-attribute write failed with

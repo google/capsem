@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import os
+import pwd
 import subprocess
 import tomllib
 from pathlib import Path
@@ -331,3 +332,85 @@ def test_installed_glowup_owns_the_release_regression_story_matrix() -> None:
     ):
         assert "capsem-tui --help" not in source
         assert "CAPSEM_TUI_LATENCY" not in source
+
+
+def _stub(bin_dir: Path, name: str, body: str) -> None:
+    path = bin_dir / name
+    path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    path.chmod(0o755)
+
+
+@pytest.mark.parametrize("replaced", [True, False])
+def test_the_scheduled_check_restarts_only_a_replaced_service(
+    tmp_path: Path, replaced: bool
+) -> None:
+    """0.6.3 stayed on its own binaries after updating itself to 0.6.4: its
+    profile reload failed before its restart. The check restarts the service
+    only when its running executable is gone, and leaves a fresh one alone."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "systemctl.log"
+    _stub(bin_dir, "systemctl", f'echo "$*" >> {log}\n[ "$2" = show ] && echo 4242\nexit 0')
+    proc = tmp_path / "proc" / "4242"
+    proc.mkdir(parents=True)
+    target = "/usr/bin/capsem-service (deleted)" if replaced else "/usr/bin/capsem-service"
+    (proc / "exe").symlink_to(target)
+
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; /bin/sh -c "$CAPSEM_REPLACED_SERVICE_CHECK"',
+            "bash",
+            str(ROOT / "build_system/packaging/shared/service-owned-update"),
+        ],
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin", "CAPSEM_PROC": str(tmp_path / "proc")},
+        check=True,
+    )
+
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert ("--user restart capsem.service" in calls) is replaced, calls
+
+
+def test_the_restart_is_scheduled_as_the_user_after_activation(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    argv = tmp_path / "runuser.argv"
+    _stub(bin_dir, "runuser", f'printf "%s\\n" "$@" > {argv}')
+    user = pwd.getpwuid(os.getuid()).pw_name
+    runtime = tmp_path / "run-user"
+    (runtime / str(os.getuid())).mkdir(parents=True)
+
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; capsem_schedule_replaced_service_restart "$2"',
+            "bash",
+            str(ROOT / "build_system/packaging/shared/service-owned-update"),
+            user,
+        ],
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin", "CAPSEM_USER_RUNTIME_ROOT": str(runtime)},
+        check=True,
+    )
+
+    args = argv.read_text(encoding="utf-8").splitlines()
+    assert args[:3] == ["-u", user, "--"]
+    assert f"XDG_RUNTIME_DIR={runtime}/{os.getuid()}" in args
+    assert args[args.index("systemd-run") : args.index("systemd-run") + 5] == [
+        "systemd-run",
+        "--user",
+        "--quiet",
+        "--collect",
+        "--on-active=60",
+    ]
+    assert args[-1].startswith("pid=$(systemctl --user show -p MainPID")
+
+
+def test_a_service_owned_postinstall_schedules_the_restart() -> None:
+    postinstall = (ROOT / "build_system/packaging/linux/deb-postinst.sh").read_text(
+        encoding="utf-8"
+    )
+    branch = postinstall[postinstall.index("if capsem_install_runs_inside_service") :]
+    owned = branch[: branch.index("\nfi")]
+    assert 'capsem_schedule_replaced_service_restart "$TARGET_USER"' in owned
