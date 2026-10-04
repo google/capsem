@@ -73,6 +73,7 @@ def _hits(client, vm_id):
     result = client.post(
         f"/vms/{vm_id}/exec",
         {
+            "target": "vm",
             "command": "test ! -f /root/preview-hits && printf 0 || wc -l </root/preview-hits",
             "timeout_secs": 5,
         },
@@ -95,7 +96,7 @@ def _start_server(service, redis):
     )
     result = client.post(
         f"/vms/{vm_id}/exec",
-        {"command": launcher, "timeout_secs": 5},
+        {"target": "vm", "command": launcher, "timeout_secs": 5},
     )
     assert result["exit_code"] == 0, result
 
@@ -105,6 +106,7 @@ def _start_server(service, redis):
         result = client.post(
             f"/vms/{vm_id}/exec",
             {
+                "target": "vm",
                 "command": (
                     "pid=$(cat /var/tmp/capsem-container/workload.pid); "
                     f"nsenter --net=/proc/$pid/ns/net -- python3 -c {shlex.quote(probe)}"

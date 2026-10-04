@@ -70,7 +70,7 @@ def test_redis_guest_and_published_transport_samples(redis, service):
                     )
                     response = service.client().post(
                         f"/vms/{redis['vm']['id']}/exec",
-                        {"command": invocation, "timeout_secs": 40},
+                        {"target": "vm", "command": invocation, "timeout_secs": 40},
                         timeout=45,
                     )
                     assert response.get("exit_code") == 0, response

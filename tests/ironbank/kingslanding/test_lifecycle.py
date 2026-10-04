@@ -82,7 +82,7 @@ def test_existing_fork_starts_saved_container_without_stealing_ports(redis, serv
     source = redis["vm"]["id"]
     marker = client.post(
         f"/vms/{source}/exec",
-        {"command": "printf fork-proof > /root/fork-marker", "timeout_secs": 5},
+        {"target": "vm", "command": "printf fork-proof > /root/fork-marker", "timeout_secs": 5},
     )
     assert marker["exit_code"] == 0
     fork = client.post(
@@ -97,6 +97,7 @@ def test_existing_fork_starts_saved_container_without_stealing_ports(redis, serv
             result = client.post(
                 f"/vms/{fork_id}/exec",
                 {
+                    "target": "vm",
                     "command": "set -eu; test $(cat /root/fork-marker) = fork-proof; pid=$(cat /var/tmp/capsem-container/workload.pid); nsenter -t $pid -n /bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/6379; printf \"PING\\r\\n\" >&3; head -c 7 <&3'",
                     "timeout_secs": 5,
                 },

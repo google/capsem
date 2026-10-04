@@ -680,7 +680,7 @@ def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT, read=exec_outpu
     try:
         resp = client.post(
             f"/vms/{vm_name}/exec",
-            {"command": "echo ready", "timeout_secs": timeout},
+            {"target": "vm", "command": "echo ready", "timeout_secs": timeout},
             timeout=timeout + 5,
         )
     except Exception:

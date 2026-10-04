@@ -188,7 +188,7 @@ with socket.socket() as listener:
         running = executor.submit(
             service.client().post,
             f"/vms/{redis['vm']['id']}/exec",
-            {"command": "python3 -c " + shlex.quote(enter), "timeout_secs": 15},
+            {"target": "vm", "command": "python3 -c " + shlex.quote(enter), "timeout_secs": 15},
         )
         wait_for(exchange, "guest TCP reset propagated over VSOCK", timeout=10)
         response = running.result(timeout=20)
@@ -212,6 +212,7 @@ def test_binary_values_and_guest_namespace_isolation(redis, service):
     response = service.client().post(
         f"/vms/{redis['vm']['id']}/exec",
         {
+            "target": "vm",
             "command": 'python3 -c \'import subprocess; subprocess.Popen(["python3", "-m", "http.server", "9099", "--bind", "127.0.0.1"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)\'',
             "timeout_secs": 5,
         },
@@ -222,6 +223,7 @@ def test_binary_values_and_guest_namespace_isolation(redis, service):
         response = service.client().post(
             f"/vms/{redis['vm']['id']}/exec",
             {
+                "target": "vm",
                 "command": "python3 -c 'import urllib.request; assert urllib.request.urlopen(\"http://127.0.0.1:9099\", timeout=1).status == 200'",
                 "timeout_secs": 5,
             },
@@ -272,7 +274,7 @@ def test_router_crash_cannot_stop_or_control_the_vm(redis, service):
             stream.read(1)
     response = service.client().post(
         f"/vms/{redis['vm']['id']}/exec",
-        {"command": "printf owner-alive", "timeout_secs": 5},
+        {"target": "vm", "command": "printf owner-alive", "timeout_secs": 5},
     )
     assert response["exit_code"] == 0 and exec_output_text(response) == "owner-alive"
     assert redis["process"].poll() is None

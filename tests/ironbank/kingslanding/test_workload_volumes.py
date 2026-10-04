@@ -28,7 +28,7 @@ def redis_command(port, command):
 
 
 def vm_exec(client, vm_id, command):
-    result = client.post(f"/vms/{vm_id}/exec", {"command": command, "timeout_secs": 10})
+    result = client.post(f"/vms/{vm_id}/exec", {"target": "vm", "command": command, "timeout_secs": 10})
     assert result.get("exit_code") == 0, result
     return exec_output_text(result)
 

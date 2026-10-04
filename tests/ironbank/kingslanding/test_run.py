@@ -196,6 +196,7 @@ def test_cli_run_image_streams_and_an_interrupt_destroys_the_vm(service, tmp_pat
                 proof = client.post(
                     f"/vms/{rows[0]['id']}/exec",
                     {
+                        "target": "vm",
                         "command": "set -eu; pid=$(cat /var/tmp/capsem-container/workload.pid); "
                         "nsenter -t $pid -n /bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/6379; printf \"PING\\r\\n\" >&3; head -c 7 <&3'",
                         "timeout_secs": 10,
@@ -338,6 +339,7 @@ def test_cli_create_image_starts_detached_and_keeps_only_a_named_vm(service, tmp
             proof = client.post(
                 f"/vms/{vm['id']}/exec",
                 {
+                    "target": "vm",
                     "command": "set -eu; pid=$(cat /var/tmp/capsem-container/workload.pid); "
                     "nsenter -t $pid -n /bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/6379; printf \"PING\\r\\n\" >&3; head -c 7 <&3'",
                     "timeout_secs": 10,

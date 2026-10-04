@@ -114,7 +114,7 @@ def container(service, tmp_path, evidence):
 def guest(service, vm_id, shell, timeout=40, check=True):
     response = service.client().post(
         f"/vms/{vm_id}/exec",
-        {"command": shell, "timeout_secs": timeout},
+        {"target": "vm", "command": shell, "timeout_secs": timeout},
         timeout=timeout + 5,
     )
     if check:

@@ -92,7 +92,7 @@ class Report:
 def guest(service, vm_id, shell, timeout=40):
     """Run `shell` inside the VM; return the exec response."""
     return service.client().post(
-        f"/vms/{vm_id}/exec", {"command": shell, "timeout_secs": timeout}, timeout=timeout + 5
+        f"/vms/{vm_id}/exec", {"target": "vm", "command": shell, "timeout_secs": timeout}, timeout=timeout + 5
     )
 
 

@@ -88,7 +88,7 @@ def boot(service, tmp_path, reference, certificate, name, *options):
 
 def guest(service, vm_id, shell, timeout=180):
     return service.client().post(
-        f"/vms/{vm_id}/exec", {"command": shell, "timeout_secs": timeout}, timeout=timeout + 5
+        f"/vms/{vm_id}/exec", {"target": "vm", "command": shell, "timeout_secs": timeout}, timeout=timeout + 5
     )
 
 

@@ -75,7 +75,7 @@ EVIDENCE_DIR = Path(os.environ.get("CAPSEM_GYM_EVIDENCE_DIR") or tempfile.gettem
 
 def guest(service, vm_id, shell, timeout=40):
     return service.client().post(
-        f"/vms/{vm_id}/exec", {"command": shell, "timeout_secs": timeout}, timeout=timeout + 5
+        f"/vms/{vm_id}/exec", {"target": "vm", "command": shell, "timeout_secs": timeout}, timeout=timeout + 5
     )
 
 
