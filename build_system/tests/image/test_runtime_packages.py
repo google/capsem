@@ -49,3 +49,45 @@ def test_the_dependency_dockerfile_installs_exactly_the_runtime_packages(arch):
     assert rendered.count("apt-get install") == 1
     for retired in ("npm", "uv pip", "node", "python-requirements", "vim"):
         assert retired not in rendered, retired
+
+
+DEBUG_IMAGE = PROJECT_ROOT / "images" / "capsem-debug" / "Dockerfile"
+
+#: Packages the runtime and capsem-debug both install, each because the
+#: runtime itself needs it -- never because a test does.
+SHARED_WITH_DEBUG_IMAGE = {
+    "ca-certificates": "the trust store the Capsem CA is installed into",
+    "curl": "the in-guest network diagnostics",
+    "iproute2": "the container launcher's veth and routes",
+    "procps": "capsem-doctor's process checks",
+    "python3": "the container launcher and capsem-doctor",
+    "python3-pytest": "capsem-doctor, the `capsem doctor` diagnostic users run",
+    "python3-rich": "capsem-bench's report",
+    "python3-venv": "capsem-doctor's hermetic pip probe",
+}
+
+RUNTIME_TOOLING_RATIONALE = """\
+Test tooling belongs in capsem-debug, not in the VM runtime.
+
+The runtime rootfs is one minimal image (#289); a test that needs a runner, a
+network tool, a package manager, a model SDK or an agent CLI opens a
+capsem-debug session (tests/helpers/debug_session.py) and runs it there. A
+package both install must be one the runtime needs for itself, listed with
+that reason in SHARED_WITH_DEBUG_IMAGE. See tests/fixtures/oci/README.md.
+"""
+
+
+def _debug_image_packages() -> set[str]:
+    text = DEBUG_IMAGE.read_text().replace("\\\n", " ")
+    match = re.search(r"apt-get install -y --no-install-recommends ([^;]+);", text)
+    assert match is not None, "images/capsem-debug/Dockerfile installs no Debian packages"
+    return set(match.group(1).split())
+
+
+def test_the_runtime_carries_no_test_tooling_the_debug_image_does():
+    debug = _debug_image_packages()
+    assert {"iperf3", "wrk", "dnsutils", "python3-pip"} <= debug
+    shared = set(_declared()) & debug
+    assert shared <= set(SHARED_WITH_DEBUG_IMAGE), (
+        f"{sorted(shared - set(SHARED_WITH_DEBUG_IMAGE))}\n{RUNTIME_TOOLING_RATIONALE}"
+    )
