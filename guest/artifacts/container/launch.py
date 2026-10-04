@@ -533,6 +533,18 @@ def network_ready(pid, run=command, sysctl_root=Path("/proc/sys")):
     open_cables(run, sysctl_root)
 
 
+def staged_parts(stage, entry):
+    """One staged file's bytes, part by part, verified against its digest
+    once the last part is read."""
+    digest = hashlib.sha256()
+    for number in range(entry["parts"]):
+        data = (stage / f"{entry['key']}-{number}").read_bytes()
+        digest.update(data)
+        yield data
+    if digest.hexdigest() != entry["sha256"]:
+        raise ValueError("OCI upload digest mismatch")
+
+
 def assemble(stage, layout):
     """Reassemble bounded uploads and verify each file before umoci sees it."""
     transfer = json.loads((stage / "transfer.json").read_text())
@@ -542,25 +554,29 @@ def assemble(stage, layout):
             raise ValueError("unsafe OCI transfer path")
         destination = layout / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        digest = hashlib.sha256()
         with destination.open("xb") as output:
-            for number in range(entry["parts"]):
-                part = stage / f"{entry['key']}-{number}"
-                data = part.read_bytes()
+            for data in staged_parts(stage, entry):
                 output.write(data)
-                digest.update(data)
-        if digest.hexdigest() != entry["sha256"]:
-            raise ValueError("OCI upload digest mismatch")
 
 
-def unpacked_root(stage, options, id_map):
-    """The image's unpacked root for this launch: (bundle, image config,
-    umoci's runtime config). Unpacked once per digest and kept on the VM's
-    overlay; a relaunch of a named session reuses it. Only the current
-    digest's root is kept."""
-    digest = options.get("digest")
+def staged_manifest_digest(stage):
+    """The manifest the staged layout's index.json names: the identity of
+    what will be unpacked. Reads and verifies index.json alone."""
+    transfer = json.loads((stage / "transfer.json").read_text())
+    (entry,) = [entry for entry in transfer if entry["path"] == "index.json"]
+    index = json.loads(b"".join(staged_parts(stage, entry)))
+    digest = index["manifests"][0]["digest"]
     if not (isinstance(digest, str) and DIGEST.match(digest)):
-        raise ValueError(f"stage options carry no valid image digest: {digest!r}")
+        raise ValueError(f"staged index names no valid manifest digest: {digest!r}")
+    return digest
+
+
+def unpacked_root(stage, id_map):
+    """The image's unpacked root for this launch: (bundle, image config,
+    umoci's runtime config). Unpacked once per manifest digest and kept on
+    the VM's overlay; a relaunch of a named session reuses it. Only the
+    current digest's root is kept."""
+    digest = staged_manifest_digest(stage)
     ROOTS.mkdir(parents=True, exist_ok=True, mode=0o711)
     root = ROOTS / digest.removeprefix("sha256:")
     for other in ROOTS.iterdir():
@@ -572,11 +588,7 @@ def unpacked_root(stage, options, id_map):
         layout = RUNTIME / "image"
         layout.mkdir()
         assemble(stage, layout)
-        index = json.loads((layout / "index.json").read_text())
-        listed = index["manifests"][0]["digest"]
-        if listed != digest:
-            raise ValueError(f"staged layout is {listed}, not the admitted image {digest}")
-        manifest = json.loads((layout / "blobs/sha256" / listed.split(":")[1]).read_text())
+        manifest = json.loads((layout / "blobs/sha256" / digest.split(":")[1]).read_text())
         image_config = (layout / "blobs/sha256" / manifest["config"]["digest"].split(":")[1]).read_text()
         mapping = f"{id_map['containerID']}:{id_map['hostID']}:{id_map['size']}"
         # Owned by the mapped ids, so the root filesystem is container root's.
@@ -608,7 +620,7 @@ def run(stage):
     try:
         options = json.loads((stage / "options.json").read_text())
         id_map = checked_id_map(options.get("id_map"))
-        bundle, image, unpacked = unpacked_root(stage, options, id_map)
+        bundle, image, unpacked = unpacked_root(stage, id_map)
         if options.get("workspace") is not None:
             WORKSPACE_VIEW.mkdir(mode=0o700, exist_ok=True)
             idmap_workspace(id_map, WORKSPACE_VIEW)

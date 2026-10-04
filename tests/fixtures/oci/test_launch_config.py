@@ -1,5 +1,6 @@
 """Guest launcher policy, exercised without executing an image on the host."""
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -572,7 +573,19 @@ def test_a_volume_is_seeded_from_the_image_once_and_then_kept(launcher, tmp_path
 DIGEST = "sha256:" + "b" * 64
 
 
-def _fake_unpack(launcher, tmp_path, monkeypatch, listed=DIGEST):
+def _stage(tmp_path, listed=DIGEST):
+    """A stage whose transfer manifest carries one verified index.json part."""
+    stage = tmp_path / "stage"
+    stage.mkdir(exist_ok=True)
+    index = json.dumps({"manifests": [{"digest": listed}]}).encode()
+    (stage / "0-0").write_bytes(index)
+    (stage / "transfer.json").write_text(
+        json.dumps([{"path": "index.json", "key": "0", "parts": 1, "sha256": hashlib.sha256(index).hexdigest()}])
+    )
+    return stage
+
+
+def _fake_unpack(launcher, tmp_path, monkeypatch):
     """assemble() and umoci stubbed: count unpacks, write what they would."""
     monkeypatch.setattr(launcher, "ROOTS", tmp_path / "roots")
     monkeypatch.setattr(launcher, "RUNTIME", tmp_path / "runtime")
@@ -582,7 +595,7 @@ def _fake_unpack(launcher, tmp_path, monkeypatch, listed=DIGEST):
     def assemble(stage, layout):
         blobs = layout / "blobs" / "sha256"
         blobs.mkdir(parents=True)
-        (layout / "index.json").write_text(json.dumps({"manifests": [{"digest": listed}]}))
+        listed = launcher.staged_manifest_digest(stage)
         (blobs / listed.split(":")[1]).write_text(json.dumps({"config": {"digest": "sha256:" + "c" * 64}}))
         (blobs / ("c" * 64)).write_text(json.dumps(image()))
 
@@ -599,9 +612,9 @@ def _fake_unpack(launcher, tmp_path, monkeypatch, listed=DIGEST):
 
 def test_a_named_session_unpacks_its_image_once(launcher, tmp_path, monkeypatch):
     unpacks = _fake_unpack(launcher, tmp_path, monkeypatch)
-    options = {**SECURITY, "digest": DIGEST}
-    first = launcher.unpacked_root(tmp_path, options, SECURITY["id_map"])
-    second = launcher.unpacked_root(tmp_path, options, SECURITY["id_map"])
+    stage = _stage(tmp_path)
+    first = launcher.unpacked_root(stage, SECURITY["id_map"])
+    second = launcher.unpacked_root(stage, SECURITY["id_map"])
     assert len(unpacks) == 1, "the relaunch reused the unpacked root"
     assert first == second
     bundle, image_config, runtime = first
@@ -614,19 +627,20 @@ def test_only_the_current_digest_keeps_a_root(launcher, tmp_path, monkeypatch):
     _fake_unpack(launcher, tmp_path, monkeypatch)
     stale = tmp_path / "roots" / ("d" * 64)
     stale.mkdir(parents=True)
-    launcher.unpacked_root(tmp_path, {**SECURITY, "digest": DIGEST}, SECURITY["id_map"])
+    launcher.unpacked_root(_stage(tmp_path), SECURITY["id_map"])
     assert not stale.exists()
 
 
-def test_a_layout_that_is_not_the_admitted_image_is_refused(launcher, tmp_path, monkeypatch):
-    _fake_unpack(launcher, tmp_path, monkeypatch, listed="sha256:" + "e" * 64)
-    with pytest.raises(ValueError, match="not the admitted image"):
-        launcher.unpacked_root(tmp_path, {**SECURITY, "digest": DIGEST}, SECURITY["id_map"])
-    assert not (tmp_path / "roots" / ("b" * 64) / "ready").exists()
-
-
-@pytest.mark.parametrize("digest", [None, "sha256:short", "sha256:" + "B" * 64, "md5:" + "b" * 64])
-def test_a_stage_without_a_valid_digest_is_refused(launcher, tmp_path, monkeypatch, digest):
+def test_a_tampered_staged_index_is_refused(launcher, tmp_path, monkeypatch):
     _fake_unpack(launcher, tmp_path, monkeypatch)
-    with pytest.raises(ValueError, match="digest"):
-        launcher.unpacked_root(tmp_path, {**SECURITY, "digest": digest}, SECURITY["id_map"])
+    stage = _stage(tmp_path)
+    (stage / "0-0").write_bytes(json.dumps({"manifests": [{"digest": "sha256:" + "e" * 64}]}).encode())
+    with pytest.raises(ValueError, match="digest mismatch"):
+        launcher.unpacked_root(stage, SECURITY["id_map"])
+
+
+@pytest.mark.parametrize("listed", [None, "sha256:short", "sha256:" + "B" * 64, "md5:" + "b" * 64, "sha256:../" + "b" * 61])
+def test_an_index_naming_no_valid_digest_is_refused(launcher, tmp_path, monkeypatch, listed):
+    _fake_unpack(launcher, tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="manifest digest"):
+        launcher.unpacked_root(_stage(tmp_path, listed), SECURITY["id_map"])
