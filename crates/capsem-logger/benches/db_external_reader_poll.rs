@@ -173,7 +173,7 @@ fn external_reader_ready(c: &mut Criterion) {
         seed_dns_rows(&broken, rows);
         Connection::open(&broken)
             .expect("open broken db")
-            .execute_batch("DROP TABLE profile_mutation_events;")
+            .execute_batch("DROP TABLE policy_mutation_events;")
             .expect("drop a required table");
         let reader = DbHandle::open_external_reader(&broken).expect("external reader");
         c.bench_function(&format!("external_reader_ready_failed_{label}"), |b| {

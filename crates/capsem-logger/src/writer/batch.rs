@@ -187,7 +187,7 @@ fn insert_batch_ops<'a>(
             }
             WriteOp::SecurityAskEvent(e) => insert_security_ask_event(tx, e, WriteTarget::Memory, bodies)?,
             WriteOp::SecurityDecisionEvent(e) => insert_security_decision_event(tx, e, WriteTarget::Memory, bodies)?,
-            WriteOp::ProfileMutationEvent(e) => insert_profile_mutation_event(tx, e, WriteTarget::Memory)?,
+            WriteOp::PolicyMutationEvent(e) => insert_policy_mutation_event(tx, e, WriteTarget::Memory)?,
             WriteOp::HostEvent(e) => insert_host_event(tx, e, WriteTarget::Memory)?,
             WriteOp::Network(n) => event_rows::upsert_network(tx, n, WriteTarget::Memory)?,
             WriteOp::NetworkMembership(m) => event_rows::upsert_network_membership(tx, m, WriteTarget::Memory)?,

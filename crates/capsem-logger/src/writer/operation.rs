@@ -17,7 +17,7 @@ impl WriteOp {
             WriteOp::SecurityRuleEvent(_) => "security_rule_event",
             WriteOp::SecurityAskEvent(_) => "security_ask_event",
             WriteOp::SecurityDecisionEvent(_) => "security_decision_event",
-            WriteOp::ProfileMutationEvent(_) => "profile_mutation_event",
+            WriteOp::PolicyMutationEvent(_) => "policy_mutation_event",
             WriteOp::HostEvent(_) => "host_event",
             WriteOp::Network(_) => "network",
             WriteOp::NetworkMembership(_) => "network_membership",
@@ -41,7 +41,7 @@ impl WriteOp {
             WriteOp::SecurityRuleEvent(event) => Some(event.event_id.clone()),
             WriteOp::SecurityAskEvent(event) => Some(event.event_id.clone()),
             WriteOp::SecurityDecisionEvent(event) => Some(event.event_id.clone()),
-            WriteOp::ProfileMutationEvent(event) => Some(event.mutation_id.clone()),
+            WriteOp::PolicyMutationEvent(event) => Some(event.mutation_id.clone()),
             // Registry rows are state, not events: keyed by their ids, no event id.
             WriteOp::ExecEventComplete(_)
             | WriteOp::HostEvent(_)
@@ -64,7 +64,7 @@ impl WriteOp {
             WriteOp::SecurityRuleEvent(event) => Some(event.event_id.as_str()),
             WriteOp::SecurityAskEvent(event) => Some(event.event_id.as_str()),
             WriteOp::SecurityDecisionEvent(event) => Some(event.event_id.as_str()),
-            WriteOp::ProfileMutationEvent(event) => Some(event.mutation_id.as_str()),
+            WriteOp::PolicyMutationEvent(event) => Some(event.mutation_id.as_str()),
             WriteOp::ExecEventComplete(_)
             | WriteOp::HostEvent(_)
             | WriteOp::Network(_)
@@ -123,8 +123,8 @@ pub(super) fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'stati
         WriteOp::SecurityDecisionEvent(_) => {
             tables.insert("security_decision_events");
         }
-        WriteOp::ProfileMutationEvent(_) => {
-            tables.insert("profile_mutation_events");
+        WriteOp::PolicyMutationEvent(_) => {
+            tables.insert("policy_mutation_events");
         }
         WriteOp::HostEvent(_) => {
             tables.insert("host_events");
