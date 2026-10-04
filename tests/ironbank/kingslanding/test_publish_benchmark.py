@@ -99,6 +99,14 @@ def container(service, tmp_path, evidence):
             for name in ("process.log", "serial.log", ".capsem-agent-stdio.log"):
                 for log in service.tmp_dir.rglob(name):
                     (evidence / name).write_bytes(log.read_bytes())
+            # `capsem run` deletes its VM, logs and all, as soon as the
+            # workload's attach ends. Its own streams and exit status are then
+            # the only record of why: the workload's exit, or the stream error.
+            (evidence / "cli-exit.txt").write_text(f"{process.poll()}\n")
+            for name in ("stdout", "stderr"):
+                (evidence / f"cli-{name}.log").write_bytes(
+                    (tmp_path / name).read_bytes()
+                )
             print(f"KINGSLANDING EVIDENCE: {evidence}")
             if process.poll() is None:
                 process.terminate()
@@ -164,9 +172,7 @@ def client_args(direction, streams, seconds=SECONDS):
     ]
 
 
-def test_published_port_transport_samples(
-    container, service, evidence
-):
+def test_published_port_transport_samples(container, service, evidence):
     output = evidence
     doctor = subprocess.run(
         [BENCH, "doctor", "--json"], capture_output=True, timeout=15, check=False
