@@ -36,6 +36,10 @@ pub struct ImageLayout {
     directory: tempfile::TempDir,
     /// Digest of the original platform manifest, before OCI media normalization.
     pub source_digest: String,
+    /// Digest of what the reference resolved to: the multi-platform index
+    /// when the registry served one (the identity catalogs and pinned
+    /// references name), otherwise the platform manifest itself.
+    pub image_digest: String,
     files: Vec<PathBuf>,
 }
 
@@ -192,6 +196,7 @@ impl Puller {
             .auth(&reference, &self.authentication, RegistryOperation::Pull)
             .await?;
         let first = self.manifest(&reference, token.as_deref()).await?;
+        let image_digest = sha256(&first);
         let bytes = match serde_json::from_slice::<OciManifest>(&first)? {
             OciManifest::Image(_) => first,
             OciManifest::ImageIndex(index) => {
@@ -270,6 +275,7 @@ impl Puller {
         Ok(ImageLayout {
             directory,
             source_digest,
+            image_digest,
             files,
         })
     }
