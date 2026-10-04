@@ -644,3 +644,18 @@ def test_an_index_naming_no_valid_digest_is_refused(launcher, tmp_path, monkeypa
     _fake_unpack(launcher, tmp_path, monkeypatch)
     with pytest.raises(ValueError, match="manifest digest"):
         launcher.unpacked_root(_stage(tmp_path, listed), SECURITY["id_map"])
+
+
+@pytest.mark.parametrize(
+    ("memory", "shm"),
+    [(128 * 1024**2, 64 * 1024**2), (2 * 1024**3, 512 * 1024**2), (16 * 1024**3, 1024**3)],
+)
+def test_the_workload_has_shared_memory_sized_from_its_memory(launcher, memory, shm):
+    options = {**SECURITY, "resources": {**SECURITY["resources"], "memory_bytes": memory}, "args": [], "env": {}}
+    config = launcher.configure(unpacked(), image(), options)
+    (mount,) = _mounts_at(config, "/dev/shm")
+    assert mount["type"] == "tmpfs"
+    assert f"size={shm}" in mount["options"]
+    assert {"nosuid", "nodev", "noexec"} <= set(mount["options"])
+    destinations = [m["destination"] for m in config["mounts"]]
+    assert destinations.index("/dev/shm") > destinations.index("/dev"), "mounted inside /dev, after it"

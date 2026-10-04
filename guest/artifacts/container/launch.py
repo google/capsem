@@ -143,6 +143,12 @@ def configure(unpacked, image, options):
             "source": "tmpfs",
             "options": ["nosuid", "noexec", "mode=755", "size=1m"],
         },
+        {
+            "destination": "/dev/shm",
+            "type": "tmpfs",
+            "source": "shm",
+            "options": ["nosuid", "nodev", "noexec", "mode=1777", f"size={shm_bytes(resources)}"],
+        },
     ]
     mounts.extend(
         {
@@ -286,6 +292,14 @@ def prepare_volumes(volumes, rootfs, id_map):
             staging.mkdir(mode=0o755)
             os.chown(staging, id_map["hostID"], id_map["hostID"])
         staging.rename(target)
+
+
+def shm_bytes(resources):
+    """POSIX shared memory for the workload: a quarter of its memory, at
+    least 64 MiB and at most 1 GiB. Chromium renders into it and draws blank
+    windows below about 256 MiB. Its pages are charged to the workload's
+    cgroup like any other memory, so the size widens no limit."""
+    return max(64 * 1024**2, min(1024**3, resources["memory_bytes"] // 4))
 
 
 def checked_resources(resources):
