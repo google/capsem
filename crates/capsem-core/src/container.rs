@@ -88,6 +88,13 @@ pub fn workload_resources(ram_mb: u64, cpus: u32) -> Result<WorkloadResources> {
 
 pub const LAUNCHER: &[u8] = include_bytes!("../../../guest/artifacts/container/launch.py");
 pub const STAGE: &str = ".capsem-image";
+/// The launcher's marker in [`STAGE`] that runc started the workload, written
+/// by runc's poststart hook. `ready` says only that the image is staged: it is
+/// written before runc creates anything, and a boot relaunches what it marks.
+pub const STAGE_RUNNING: &str = "running";
+/// The launcher's marker in [`STAGE`] that a launch ended without starting
+/// the workload.
+pub const STAGE_FAILED: &str = "failed";
 /// Where a container sees the VM workspace (the VM's /root share). The
 /// launcher mounts it there with the stage hidden, and the files API maps
 /// absolute container paths under it back to the workspace.

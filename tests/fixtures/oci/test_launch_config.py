@@ -59,6 +59,7 @@ def test_default_command_user_and_workdir_survive_hardening(launcher):
     assert process["cwd"] == "/data"
     assert process["noNewPrivileges"] is True
     assert config["root"] == {"path": "rootfs", "readonly": True}
+    assert set(config["hooks"]) == {"prestart", "poststart"}
     hooks = config["hooks"]["prestart"]
     assert len(hooks) == 1 and hooks[0]["path"] == "/usr/bin/python3"
     assert hooks[0]["args"] == ["/usr/bin/python3", str(SOURCE), "--network-ready"]
@@ -80,6 +81,49 @@ def test_default_command_user_and_workdir_survive_hardening(launcher):
         for mount in config["mounts"]
     )
     assert "/data" in {mount["destination"] for mount in config["mounts"]}
+
+
+def test_the_workload_is_marked_running_by_runc_once_it_started(launcher, tmp_path):
+    """The service reports `running` from the stage's marker, and an exec into
+    the workload needs runc to call it running. The launcher prepares the
+    bundle before `runc run` creates anything, so the marker comes from runc's
+    poststart hook -- after the workload's process started -- and from nothing
+    the launcher writes before it."""
+    config = launcher.configure(unpacked(), image(), {**SECURITY, "args": [], "env": {}})
+    assert config["hooks"]["poststart"] == [
+        {
+            "path": "/usr/bin/python3",
+            "args": ["/usr/bin/python3", str(SOURCE), "--started"],
+            "env": ["PATH=/usr/sbin:/usr/bin:/sbin:/bin"],
+            "timeout": 5,
+        }
+    ]
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    launcher.workload_started(stage)
+    assert (stage / "running").read_text() == "1\n"
+
+
+def test_a_launch_starts_from_no_markers_and_reports_a_workload_that_never_started(
+    launcher, tmp_path
+):
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    # What the last launch of a named session left behind.
+    (stage / "running").write_text("1\n")
+    (stage / "failed").write_text("1\n")
+    launcher.clear_launch_markers(stage)
+    assert not (stage / "running").exists() and not (stage / "failed").exists()
+
+    # runc gave up before the workload ran: say so, instead of starting forever.
+    launcher.launch_ended(stage)
+    assert (stage / "failed").read_text() == "1\n"
+
+    # A workload that ran and then ended is not a failed start.
+    launcher.clear_launch_markers(stage)
+    launcher.workload_started(stage)
+    launcher.launch_ended(stage)
+    assert not (stage / "failed").exists()
 
 
 def test_container_trusts_capsem_ca_and_resolves_through_the_gateway(launcher):

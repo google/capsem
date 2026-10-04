@@ -34,6 +34,11 @@ CPU_PERIOD = 100000
 # own stage. The service names where the container sees the workspace.
 VM_WORKSPACE = "/root"
 STAGE = ".capsem-image"
+# Markers in the stage the service reads (capsem-core `container`): `ready`,
+# the image is staged and unpacked, and a boot relaunches it; `running`, runc
+# started the workload; `failed`, a launch ended without starting it.
+RUNNING = "running"
+FAILED = "failed"
 CONTAINER = "workload"
 # The one runtime state root: the launch and every later exec name it.
 RUNC = ("runc", "--rootless=true", "--root", str(RUNTIME / "state"))
@@ -226,18 +231,9 @@ def configure(unpacked, image, options):
         "process": process,
         "mounts": mounts,
         "hooks": {
-            "prestart": [
-                {
-                    "path": "/usr/bin/python3",
-                    "args": [
-                        "/usr/bin/python3",
-                        str(Path(__file__).resolve()),
-                        "--network-ready",
-                    ],
-                    "env": ["PATH=/usr/sbin:/usr/bin:/sbin:/bin"],
-                    "timeout": 5,
-                }
-            ]
+            "prestart": [_launcher_hook("--network-ready")],
+            # Once the workload's process started: what makes it `running`.
+            "poststart": [_launcher_hook("--started")],
         },
         "linux": {
             "namespaces": [
@@ -266,6 +262,36 @@ def configure(unpacked, image, options):
             "seccomp": options["seccomp"],
         },
     }
+
+
+def _launcher_hook(argument):
+    """A runc hook running this launcher with `argument`, in the VM."""
+    return {
+        "path": "/usr/bin/python3",
+        "args": ["/usr/bin/python3", str(Path(__file__).resolve()), argument],
+        "env": ["PATH=/usr/sbin:/usr/bin:/sbin:/bin"],
+        "timeout": 5,
+    }
+
+
+def workload_started(stage):
+    """Mark the workload running: runc's poststart hook, once its process
+    started. The service reads this marker, so `running` -- and a create
+    that waited for it -- means an exec can enter the workload."""
+    (stage / RUNNING).write_text("1\n")
+
+
+def clear_launch_markers(stage):
+    """A launch starts from nothing the last one of a named session left."""
+    for marker in (RUNNING, FAILED):
+        (stage / marker).unlink(missing_ok=True)
+
+
+def launch_ended(stage):
+    """runc returned. A workload that never started is a failed launch, which
+    the service reports instead of waiting for it to start."""
+    if not (stage / RUNNING).exists():
+        (stage / FAILED).write_text("1\n")
 
 
 def checked_id_map(id_map):
@@ -646,6 +672,7 @@ def run(stage):
     RUNTIME.chmod(0o711)
     state = RUNTIME / "state"
     process = None
+    clear_launch_markers(stage)
     try:
         options = json.loads((stage / "options.json").read_text())
         id_map = checked_id_map(options.get("id_map"))
@@ -679,6 +706,7 @@ def run(stage):
         )
         return process.wait()
     finally:
+        launch_ended(stage)
         if (state / CONTAINER).exists():
             command(*RUNC, "delete", "--force", CONTAINER)
         if process is not None and process.poll() is None:
@@ -798,6 +826,9 @@ if __name__ == "__main__":
         if pid <= 1:
             raise ValueError("invalid container network namespace pid")
         network_ready(pid)
+    elif sys.argv[1:] == ["--started"]:
+        # The launcher runs from its stage (capsem-core LAUNCH_COMMAND).
+        workload_started(Path(__file__).resolve().parent)
     elif len(sys.argv) == 3 and sys.argv[1] == "--exec":
         exec_workload(sys.argv[2])
     elif sys.argv[1:] == ["--attach"]:
