@@ -211,23 +211,25 @@ The aggregator splits on the first `__` when routing, so tool names containing `
 
 ## Server definition sources
 
-MCP server definitions are profile-owned and filtered by corp constraints. The
-list is processed in trust order so corp constraints cannot be shadowed by a
-profile entry:
+Every VM runs the same MCP servers: the `[mcp]` table of
+`~/.capsem/settings.toml` with the corp config's `[mcp]` laid over it, so a
+corp entry cannot be shadowed by a user entry. The service writes the merged
+result into each session's `vm/active_policy.toml`, and capsem-process builds
+the server list from that file only:
 
-1. **Corp constraints** from corp config and referenced rule files
-2. **Profile MCP servers** from the active profile
-3. **Registry/builtin server descriptors** owned by Capsem
+1. **Builtin `local` server** (`capsem-mcp-builtin`), unless turned off
+2. **Configured servers** from the merged `[mcp]` table
 
-Names containing `__` or matching `builtin` are rejected. Empty names are rejected.
+Names containing `__`, empty names, and the reserved names `local` and
+`builtin` are rejected.
 
 ## Hot reload
 
 The `refresh` operation allows live reconfiguration without restarting the VM:
 
-1. Service receives `POST /profiles/{profile_id}/mcp/servers/{server_id}/refresh`
-2. Service sends `McpRefreshTools` IPC to capsem-process
-3. capsem-process reads fresh profile/corp MCP config
+1. Service receives `POST /mcp/servers/{server_id}/refresh`
+2. Service sends `McpRefreshTools` IPC to every running capsem-process
+3. capsem-process re-reads its session's `active_policy.toml`
 4. Client sends `refresh` with new definitions to the aggregator
 5. Aggregator disconnects all servers, replaces definitions, reconnects
 
@@ -241,7 +243,7 @@ The service exposes MCP operations through its HTTP API, which capsem-process ha
 |---|---|
 | `McpListServers` | `aggregator.list_servers()` |
 | `McpListTools` | `aggregator.list_tools()` |
-| `McpRefreshTools` | Read settings, `aggregator.refresh(new_servers)` |
+| `McpRefreshTools` | Re-read `active_policy.toml`, `aggregator.refresh(new_servers)` |
 | `McpCallTool` | `aggregator.call_tool(name, args)` |
 
 These IPC messages let the CLI, gateway, and frontend query and control MCP servers through the standard service API path.
@@ -266,7 +268,7 @@ The aggregator is designed for graceful degradation:
 | `capsem-mcp-aggregator/src/main.rs` | Subprocess binary: init, frame loop, request dispatch |
 | `capsem-core/src/mcp/aggregator.rs` | Protocol types (`AggregatorRequest/Response`) and `AggregatorClient` |
 | `capsem-core/src/mcp/server_manager.rs` | `McpServerManager`: rmcp connections, tool catalog, namespacing |
-| `capsem-core/src/mcp/mod.rs` | `build_profile_server_list()`: profile-owned MCP servers plus the local builtin server |
-| `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch and driver tasks for the selected profile's MCP contract |
+| `capsem-core/src/mcp/mod.rs` | `build_server_list()`: the local builtin server plus the merged `[mcp]` servers |
+| `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch and driver tasks for the session's MCP servers |
 | `capsem-core/src/net/mitm_proxy/mcp_endpoint.rs` | MITM MCP endpoint: policy, telemetry, and dispatch through the aggregator |
 | `capsem-proto/src/ipc.rs` | Service-process IPC messages for MCP operations |

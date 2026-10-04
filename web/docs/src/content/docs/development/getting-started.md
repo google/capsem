@@ -79,10 +79,12 @@ build` and the Linux handoff gate. Assets are gitignored and must be built
 locally. See [Life of a Build > Container runtime](./stack#container-runtime)
 if you need to retune Colima resources.
 
-The build is profile-derived. `code` is the default coding-agent profile, and
-the runtime profile for the current local build is generated under
-`cache/target/config/` by `capsem-admin profile materialize` during `just shell`,
-`just exec`, `just fast-test`, `just test`, and release packaging.
+The image build is profile-derived: `code` is the build profile the image is
+made from, and its materialized catalog is generated under
+`cache/target/config/` by `capsem-admin profile materialize`. The runtime has no
+profiles. Every VM boots the one kernel/initrd/rootfs set of the installed
+manifest, and its policy comes from `~/.capsem/settings.toml` and the corp
+config (see [Policy](/security/policy/)).
 
 ## Verify
 
@@ -128,16 +130,17 @@ No Apple Developer ID certificate is needed for local development -- ad-hoc sign
 
 ## Customizing the VM image
 
-To add packages or guest tools, edit the profile-owned files under
+To add packages or guest tools, edit the build profile's files under
 `config/profiles/code/` and rebuild through `just build-assets code`.
-Profile/corp files own security rules and provider access. See
+Security rules and provider access are not part of the image; they come from
+`~/.capsem/settings.toml` and the corp config. See
 [Customizing VM Images](./custom-images) for the workflow.
 
 ## API keys (optional)
 
 Interactive AI sessions can configure credentials inside the VM or let the
 credential broker capture/materialize them at a supported boundary. Raw API keys
-are not settings-owned boot secrets; logs and profile state use BLAKE3
+are not settings-owned boot secrets; logs and policy state use BLAKE3
 references.
 
 ## Troubleshooting

@@ -100,7 +100,7 @@ ordinary layer-2 switch, and joining it plugs a cable into that switch.
   current members are plugged into a fresh switch, and nobody who left comes
   back. Deleting a network with members is refused; retiring an empty one
   stops and reaps its switch.
-- **Audit.** A VM's profile decides once per plug whether the VM may be on a
+- **Audit.** The VM's policy decides once per plug whether the VM may be on a
   network at all (`network.protocol == "link"`). Every plug, refusal and close
   is a row in the network's history; a close row carries the switch's counters
   for that cable (frames and bytes each way, and drops by reason: `short`,
@@ -170,10 +170,12 @@ graph TD
     E -->|Allow| H["Materialize request<br/>log telemetry"]
 ```
 
-### Profile And Corp Rules
+### User And Corp Rules
 
-Users customize policy with profile rules; organizations add constraints with
-corp rules or referenced enforcement/Sigma files.
+Users customize policy with rules under `profiles.rules` in
+`~/.capsem/settings.toml` (the table name is the rule namespace; it does not
+select a VM profile); organizations add constraints with corp rules or
+referenced enforcement/Sigma files. Corp wins over the user.
 
 ```toml
 [profiles.rules.allow_internal_http]
@@ -244,7 +246,7 @@ DNS queries are logged separately in `dns_events` with `qname`, `qtype`,
 | Scenario | Outcome | Why |
 |----------|---------|-----|
 | HTTPS to blocked domain (`api.openai.com`) | 403 Forbidden | Matching `block` rule |
-| HTTP port 80 (`http://google.com`) | Redirected to the plain-HTTP listener | Profile/corp CEL rules still decide the request |
+| HTTP port 80 (`http://google.com`) | Redirected to the plain-HTTP listener | User/corp CEL rules still decide the request |
 | Dev proxy ports (3128, 3713, 8080, 11434) | Redirected to the plain-HTTP listener | Local model/proxy traffic stays on the same security rail |
 | Other non-standard ports (`https://google.com:8443`) | Connection refused | Only declared intercept ports are redirected |
 | Direct IP (`https://1.1.1.1`) | Connection refused | No real NIC; dummy0 has no real route |

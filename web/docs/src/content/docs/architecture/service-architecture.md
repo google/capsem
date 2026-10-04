@@ -156,9 +156,10 @@ through an explicit allowlist. Unknown paths return 404 at the gateway and are
 not forwarded to the service.
 
 `status` means hot runtime counters suitable for polling. `info` means
-configuration and identity. Profile-owned behavior lives under
-`/profiles/{profile_id}/...`; only service-wide runtime aggregation lives at
-the root.
+configuration and identity. Policy, plugins, MCP, and assets are global:
+every VM enforces the same merged policy (built-in defaults, `settings.toml`,
+corp) and boots the same runtime image set. Request bodies refuse unknown
+fields, so a `profile_id` is a 400.
 
 Every client -- CLI, TUI, web terminal, SDKs, MCP -- reaches a VM through these
 routes. Only the service talks to a VM owner, over typed IPC; no client dials a
@@ -172,15 +173,15 @@ connection.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/vms/create` | Create a VM from a profile, optionally with a name, resource overrides, and a `container` workload |
+| POST | `/vms/create` | Create a VM (default 4 CPUs, 12 GiB RAM, 64 GiB scratch disk), optionally with a name, resource overrides, and a `container` workload |
 | GET | `/vms/{id}/container` | Container workload setup and runtime state (pulling, staging, staged, starting, running, failed), and the `repository@digest` it resolved to |
 | GET | `/images` | Image catalog entries the policy permits: name, description, architectures, the pin this host runs (`?refresh=true` rereads the catalog) |
 | POST | `/images/pull` | Resolve a catalog name or reference, check its source, pull it into the host image cache, admit it; 403 when the policy refuses |
 | GET/POST | `/vms/{id}/exposures` | List or open loopback port exposures held by the VM owner |
 | DELETE | `/vms/{id}/exposures/{exposure_id}` | Close an exposure for good |
 | GET | `/vms/{id}/stream` | `capsem.stream.v1` WebSocket: terminal, streaming exec, or attached container |
-| GET | `/vms/list` | List VMs and their profile/status metadata |
-| GET | `/vms/{id}/info` | VM identity, profile, config, plugin descriptors, and non-hot metadata |
+| GET | `/vms/list` | List VMs and their lifecycle/status metadata |
+| GET | `/vms/{id}/info` | VM identity, resources, resume eligibility, and non-hot metadata |
 | GET | `/vms/{id}/status` | Runtime state for one VM |
 | POST | `/vms/{id}/exec` | Execute command, return stdout/stderr/exit_code |
 | POST | `/run` | One-shot: provision + exec + destroy |
@@ -220,57 +221,45 @@ connection.
 | GET | `/enforcement/latest` | Service-wide latest enforcement rows |
 | GET | `/enforcement/status` | Service-wide enforcement counters |
 
-### Profiles, Rules, Plugins, Assets, MCP
+### Assets, Plugins, MCP
+
+Every VM boots the one runtime image set of the installed release manifest; a
+persistent VM keeps the asset pins it was created with. Policy edits below
+write `~/.capsem/settings.toml`, are recorded in the host ledger table
+`policy_mutation_events`, and are acknowledged by every running VM (by exact
+policy digest) before the route returns.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/profiles/list` | List configured profiles |
-| GET | `/profiles/status` | Profile readiness, asset status, and validation state |
-| POST | `/profiles/reload` | Reload the profile catalog |
-| GET | `/profiles/{profile_id}/info` | Profile identity/config truth |
-| POST | `/profiles/{profile_id}/validate` | Validate a profile |
-| POST | `/profiles/{profile_id}/reload` | Reload one profile |
-| GET | `/profiles/{profile_id}/obom` | Base-image CycloneDX OBOM metadata and local document when installed |
-| POST | `/profiles/{profile_id}/enforcement/evaluate` | Evaluate a supplied security event against enforcement rules |
-| GET | `/profiles/{profile_id}/enforcement/info` | Enforcement file/config info |
-| GET | `/profiles/{profile_id}/enforcement/rules/list` | Compiled enforcement rules |
-| PUT | `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit` | Add or replace one enforcement rule |
-| DELETE | `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete` | Delete one enforcement rule |
-| POST | `/profiles/{profile_id}/enforcement/reload` | Reload enforcement rules |
-| POST | `/profiles/{profile_id}/detection/evaluate` | Evaluate a supplied security event against detection rules |
-| GET | `/profiles/{profile_id}/detection/info` | Detection file/config info |
-| GET | `/profiles/{profile_id}/detection/rules/list` | Compiled detection rules |
-| PUT | `/profiles/{profile_id}/detection/rules/{rule_id}/edit` | Add or replace one detection rule |
-| DELETE | `/profiles/{profile_id}/detection/rules/{rule_id}/delete` | Delete one detection rule |
-| POST | `/profiles/{profile_id}/detection/reload` | Reload detection rules |
-| GET | `/profiles/{profile_id}/plugins/list` | Profile plugin config plus registry descriptors |
-| GET | `/profiles/{profile_id}/plugins/info` | Plugin subsystem info for the profile |
-| GET | `/profiles/{profile_id}/plugins/{plugin_id}/info` | One plugin config and descriptor |
-| PATCH | `/profiles/{profile_id}/plugins/{plugin_id}/edit` | Edit one plugin config |
-| GET | `/profiles/{profile_id}/assets/status` | Profile asset readiness |
-| GET | `/profiles/{profile_id}/assets/info` | Profile asset descriptors |
-| POST | `/profiles/{profile_id}/assets/ensure` | Download/verify profile assets |
-| GET | `/profiles/{profile_id}/mcp/info` | Profile MCP config info |
-| GET | `/profiles/{profile_id}/mcp/servers/list` | Profile MCP servers |
-| PUT | `/profiles/{profile_id}/mcp/servers/{server_id}/edit` | Add or replace one MCP server |
-| DELETE | `/profiles/{profile_id}/mcp/servers/{server_id}/delete` | Delete one MCP server |
-| GET | `/profiles/{profile_id}/mcp/servers/{server_id}/tools/list` | Tools for one MCP server |
-| POST | `/profiles/{profile_id}/mcp/servers/{server_id}/refresh` | Refresh one MCP server |
-| PATCH | `/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit` | Enable/disable or edit one MCP tool |
-| POST | `/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call` | Call one MCP tool |
+| GET | `/assets/status` | Runtime image set readiness, manifest provenance, and download progress |
+| POST | `/assets/ensure` | Start downloading missing runtime assets |
+| GET | `/plugins/list` | Every plugin with its effective mode and its source (built in, settings, corp) |
+| GET | `/plugins/{plugin_id}/info` | One plugin's config, descriptor, and runtime activity |
+| PATCH | `/plugins/{plugin_id}/edit` | Set one plugin's mode or detection level |
+| GET | `/plugins/credential_broker/credentials/info` | Credential broker store and brokered activity, no raw secrets |
+| POST | `/plugins/credential_broker/credentials/reload` | Retry the durable credential store |
+| GET | `/mcp/info` | MCP server count and built-in `local` server state |
+| GET | `/mcp/servers/list` | Configured MCP servers |
+| GET | `/mcp/default/info` | Default MCP tool permission |
+| PATCH | `/mcp/default/edit` | Set the default MCP tool permission |
+| GET | `/mcp/servers/{server_id}/tools/list` | Tools for one MCP server, with effective permissions |
+| POST | `/mcp/servers/{server_id}/refresh` | Rediscover one server's tools in every running VM |
+| PATCH | `/mcp/servers/{server_id}/tools/{tool_id}/edit` | Allow, ask, or block one MCP tool |
+| POST | `/mcp/servers/{server_id}/tools/{tool_id}/call` | Call one MCP tool through a running VM |
 
 ### Service, Settings, Corp
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| GET | `/status` | Service status, including runtime asset readiness (`assets`) |
 | GET | `/version` | Service version |
 | GET | `/stats` | Full telemetry dump (all sessions) |
 | GET | `/service-logs` | Service log tail |
 | GET | `/triage` | Debug triage bundle |
 | GET | `/panics` | Panic log summary |
 | GET | `/host-logs/{name}` | Named host log |
-| GET | `/settings/info` | UI/application settings |
-| PATCH | `/settings/edit` | Edit settings-owned preferences |
+| GET | `/settings/info` | The resolved `settings.toml` tree and validation issues |
+| PATCH | `/settings/edit` | Batch-edit `app.*`/`appearance.*` preferences in `settings.toml` |
 | GET | `/corp/info` | Corporate constraint/reporting config |
 | PUT | `/corp/edit` | Replace corporate config |
 | POST | `/corp/validate` | Validate corporate config |
@@ -291,9 +280,8 @@ authority path.
   bin/                 capsem, capsem-service, capsem-process, capsem-mcp-aggregator, capsem-mcp-builtin, capsem-gateway, capsem-tray
   assets/              manifest.json, manifest-metadata.json, vmlinuz-{hash16}, initrd-{hash16}.img, rootfs-{hash16}.erofs
   run/                 service.sock, service.pid, gateway.token, gateway.port, instances/
-  settings.toml        UI/application preferences
-  corp.toml            Enterprise constraints/reporting config (optional)
-  profiles/            Profile-owned assets, rules, MCP, plugins, VM defaults
+  settings.toml        User policy (rules, plugins, MCP, AI providers) and app preferences
+  corp.toml            Enterprise constraints/reporting config (optional; wins over settings.toml)
 ```
 
 ### Self-update

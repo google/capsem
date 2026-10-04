@@ -82,14 +82,14 @@ rerun the failing recipe.
 Existing VM pins are preserved by the VM pinning rail; deprecation blocks new
 selection rather than rewriting running VMs.
 
-Persistent resume has its own immutable authority: the registry's profile and
-asset pins plus the session's saved validated `vm/active_profile.toml`. Never
-materialize today's profile over that file before deciding whether the old VM
-may boot. A normal profile/image advance and a deprecated pin preserve the VM;
-an explicit installed-manifest revocation, a corrupt saved profile, a missing
-pinned asset, or invalid rootfs geometry blocks it. Any cached resume verdict
-must fingerprint the saved profile, installed manifest, rootfs metadata, and
-pinned asset metadata so a revocation or repair is visible immediately.
+Persistent resume boots the registry entry's own asset pins, never the
+current runtime set. A runtime image advance and a deprecated pin preserve the
+VM; an explicit installed-manifest revocation, a missing pinned asset, invalid
+rootfs geometry, or an entry from before profiles were removed (it still names
+a `profile_id`) blocks it. The active policy is re-materialized from current
+settings and corp config at every boot. Any cached resume verdict must
+fingerprint the installed manifest, rootfs metadata, and pinned asset metadata
+so a revocation or repair is visible immediately.
 
 ## Common Issues
 

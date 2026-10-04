@@ -156,10 +156,10 @@ On macOS, all binaries must be codesigned with the `com.apple.security.virtualiz
 
 ## Stage 4: Boot
 
-The service loads the selected profile from `cache/target/config/profiles` in
-development and the installed profile directory in packaged builds. That
-profile selects three assets from `~/.capsem/assets/` (installed) or
-`cache/target/assets/{arch}/` (development):
+The service boots every new VM from one runtime image set: the three assets
+that the asset manifest names for this release and host architecture, from
+`~/.capsem/assets/` (installed) or `cache/target/assets/{arch}/` (development).
+A persistent VM keeps the asset pins it was created with:
 
 | Asset | Produced by | What it is |
 |-------|-------------|------------|
@@ -167,7 +167,7 @@ profile selects three assets from `~/.capsem/assets/` (installed) or
 | `initrd.img` | `just run` (repacked each time) | Guest binaries + init scripts |
 | `rootfs.erofs` | `just build-assets code [arch]` | Debian bookworm base + AI CLIs + tools, EROFS/LZ4HC |
 
-Boot sequence: capsem-service spawns capsem-process, which loads the kernel + initrd into a VM. `capsem-init` (PID 1) sets up overlayfs, air-gapped networking, and launches the PTY agent + net proxy + MCP server + sysutil. The host connects over vsock.
+Boot sequence: capsem-service merges the built-in defaults, `~/.capsem/settings.toml`, and the corp config into the session's `vm/active_policy.toml`, then spawns capsem-process (`--active-policy`), which loads the kernel + initrd into a VM. `capsem-init` (PID 1) sets up overlayfs, air-gapped networking, and launches the PTY agent + net proxy + MCP server + sysutil. The host connects over vsock.
 
 ## VM image builds (`just build-assets code`)
 

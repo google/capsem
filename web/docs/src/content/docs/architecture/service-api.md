@@ -10,8 +10,12 @@ The desktop UI, TUI, CLI, tray, and gateway must reflect these routes; they must
 not invent fallback paths, compatibility aliases, or display-only contract
 names.
 
-The service is the only global runtime object. Profiles own behavior and
-configuration. Sessions execute profiles.
+The service is the only global runtime object. Policy comes from the built-in
+defaults, `~/.capsem/settings.toml`, and the corp config; every session boots
+the same runtime image set and enforces that merged policy.
+
+The API contract is version 3.0.0. Request bodies refuse unknown fields: a
+`profile_id` in `/vms/create` or `/run` is a 400, not ignored.
 
 ## Verb Discipline
 
@@ -23,10 +27,9 @@ Route suffixes are part of the contract:
 | `status` | Runtime readiness, counters, progress, and liveness. Status routes must avoid hot-path DB reads unless explicitly documented. |
 | `list` | Inventory of child objects. |
 | `latest` | Recent ledger rows, including event ids needed for forensic lookup. |
-| `evaluate` | Dry-run a supplied event or rule payload through the production evaluator. |
-| `edit` | Mutate an existing settings/profile/plugin/rule object through its typed contract. |
-| `reload` | Re-read persisted profile, corp, rule, detection, or catalog material. |
-| `ensure` | Materialize or download missing profile assets. |
+| `edit` | Mutate an existing settings, plugin, or MCP permission object through its typed contract. |
+| `reload` | Re-read persisted corp or credential-store material. |
+| `ensure` | Download missing runtime assets. |
 | `create`, `delete`, `clone`, `fork`, `save`, `start`, `resume`, `pause`, `stop`, `restart` | Command routes with explicit side effects. |
 
 Unknown routes must return 404 at the gateway or service boundary. No generic
@@ -34,13 +37,13 @@ path forwarding is allowed.
 
 ## Service-Global Routes
 
-These routes describe the daemon, service-wide runtime summaries, or global
-catalog entry points. They are not profile behavior.
+These routes describe the daemon and service-wide runtime summaries.
 
 | Method | Route | Contract |
 |---|---|---|
+| `GET` | `/status` | Service status, including `assets` (runtime asset readiness). |
 | `GET` | `/version` | Installed service version. |
-| `GET` | `/update/status` | Binary, VM asset, profile, and image update availability from the installed manifest and release-channel cache. |
+| `GET` | `/update/status` | Binary, VM asset, and image update availability from the installed manifest and release-channel cache. |
 | `GET` | `/stats` | Service-wide runtime counters. |
 | `GET` | `/service-logs` | Service log tail for diagnostics. |
 | `GET` | `/triage` | Structured support bundle summary. |
@@ -54,92 +57,65 @@ catalog entry points. They are not profile behavior.
 | `GET` | `/enforcement/status` | Service-wide enforcement counters. |
 | `GET` | `/detection/latest` | Service-wide recent detection ledger rows. |
 | `GET` | `/detection/status` | Service-wide detection counters. |
-| `GET` | `/profiles/list` | Profile catalog visible to this service. |
-| `GET` | `/profiles/status` | Profile readiness and asset status summary. |
-| `POST` | `/profiles/reload` | Reload the profile catalog. |
-| `GET` | `/settings/info` | UI/application settings, not VM behavior. |
-| `PATCH` | `/settings/edit` | Edit UI/application settings. |
+| `GET` | `/settings/info` | The unified `settings.toml` tree with corp locks and validation issues. |
+| `PATCH` | `/settings/edit` | Batch-edit `app.*`/`appearance.*` preferences in `settings.toml` and return the refreshed tree; corp-owned ids are refused. |
 | `GET` | `/corp/info` | Corporate constraints and reporting config. |
 | `PUT` | `/corp/edit` | Replace corporate constraints where local policy permits. |
 | `POST` | `/corp/validate` | Validate corporate config without applying it. |
 | `POST` | `/corp/reload` | Reload corporate config. |
 
-## Profile Routes
+## Assets
 
-Profile routes are scoped by `profile_id`. Rules, detection, plugins, MCP,
-skills, assets, and profile metadata all belong here.
-
-| Method | Route | Contract |
-|---|---|---|
-| `GET` | `/profiles/{profile_id}/info` | Profile descriptor, icon, description, VM defaults, and file origins. |
-| `GET` | `/profiles/{profile_id}/obom` | Base-image OBOM evidence for this profile. |
-| `POST` | `/profiles/{profile_id}/validate` | Validate the profile and pinned files. |
-| `POST` | `/profiles/{profile_id}/reload` | Reload one profile. |
-| `GET` | `/profiles/{profile_id}/assets/info` | Profile asset declaration and origins. |
-| `GET` | `/profiles/{profile_id}/assets/status` | Per-asset readiness, hash, and missing/download state. |
-| `POST` | `/profiles/{profile_id}/assets/ensure` | Download or materialize missing profile assets. |
-
-### Enforcement and Detection
+Every VM boots one runtime image set: the kernel, initrd, and rootfs of the
+installed manifest's release for this host's architecture. A persistent VM
+keeps the asset pins it was created with.
 
 | Method | Route | Contract |
 |---|---|---|
-| `POST` | `/profiles/{profile_id}/enforcement/evaluate` | Evaluate a supplied `SecurityEvent` against profile enforcement rules. |
-| `GET` | `/profiles/{profile_id}/enforcement/info` | Enforcement file origins and compile status. |
-| `GET` | `/profiles/{profile_id}/enforcement/rules/list` | Compiled enforcement rules with source/default/priority/action metadata. |
-| `PUT` | `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit` | Add or replace one profile enforcement rule. |
-| `DELETE` | `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete` | Delete one mutable profile enforcement rule. |
-| `POST` | `/profiles/{profile_id}/enforcement/reload` | Reload enforcement rules for the profile. |
-| `POST` | `/profiles/{profile_id}/detection/evaluate` | Evaluate a supplied event against profile detection rules. |
-| `GET` | `/profiles/{profile_id}/detection/info` | Detection file origins and compile status. |
-| `GET` | `/profiles/{profile_id}/detection/rules/list` | Compiled detection rules, including Sigma-derived rules. |
-| `PUT` | `/profiles/{profile_id}/detection/rules/{rule_id}/edit` | Add or replace one profile detection rule. |
-| `DELETE` | `/profiles/{profile_id}/detection/rules/{rule_id}/delete` | Delete one mutable profile detection rule. |
-| `POST` | `/profiles/{profile_id}/detection/reload` | Reload detection rules for the profile. |
+| `GET` | `/assets/status` | Readiness of the runtime image set: per-asset presence, expected hash and size, manifest provenance, and reconciliation progress. |
+| `POST` | `/assets/ensure` | Start a reconciliation that downloads missing assets; answers with the same status and whether this call started it. |
+
+## Policy
+
+The policy a VM enforces is the built-in defaults, the user's
+`~/.capsem/settings.toml`, and the corp config, merged per session into
+`vm/active_policy.toml`. Corp wins. The `edit` routes below write
+`settings.toml`, record the change in the host ledger table
+`policy_mutation_events`, and put it in force in every running VM -- each VM
+acknowledges the exact policy digest -- before they answer. An edit to a value
+corp already decides is refused.
 
 ### Plugins
 
-Plugins expose profile config and registry-owned descriptors. Runtime plugin
-activity for a running session appears under session stats and security ledger
-routes.
+Runtime plugin activity for a running session also appears under session stats
+and security ledger routes.
 
 | Method | Route | Contract |
 |---|---|---|
-| `GET` | `/profiles/{profile_id}/plugins/info` | Plugin subsystem info for the profile. |
-| `GET` | `/profiles/{profile_id}/plugins/list` | Profile plugin config plus registry metadata. |
-| `GET` | `/profiles/{profile_id}/plugins/{plugin_id}/info` | One plugin descriptor, config, capabilities, stages, and status schema. |
-| `PATCH` | `/profiles/{profile_id}/plugins/{plugin_id}/edit` | Enable, disable, or edit one plugin config object. |
-| `GET` | `/profiles/{profile_id}/plugins/credential_broker/credentials/info` | Credential broker inventory summary without raw secrets. |
+| `GET` | `/plugins/list` | Every catalogued plugin with its effective mode and whether settings or corp set it. |
+| `GET` | `/plugins/{plugin_id}/info` | One plugin's descriptor, effective config, and runtime activity across sessions. |
+| `PATCH` | `/plugins/{plugin_id}/edit` | Set one plugin's mode or detection level. |
+| `GET` | `/plugins/credential_broker/credentials/info` | Credential broker store, grants, and brokered activity, without raw secrets. |
+| `POST` | `/plugins/credential_broker/credentials/reload` | Retry the durable credential store and re-read session counters. |
 
 ### MCP
 
-MCP is profile-owned. There is no global MCP tool list.
+Every VM runs the same MCP servers: `settings.toml` `[mcp]` with corp's laid
+over it.
 
 | Method | Route | Contract |
 |---|---|---|
-| `GET` | `/profiles/{profile_id}/mcp/info` | Profile MCP subsystem info. |
-| `GET` | `/profiles/{profile_id}/mcp/default/info` | Default MCP policy for this profile. |
-| `PATCH` | `/profiles/{profile_id}/mcp/default/edit` | Edit the profile default MCP action. |
-| `GET` | `/profiles/{profile_id}/mcp/servers/list` | MCP servers declared or discovered for this profile. |
-| `PUT` | `/profiles/{profile_id}/mcp/servers/{server_id}/edit` | Add or replace one profile MCP server. |
-| `DELETE` | `/profiles/{profile_id}/mcp/servers/{server_id}/delete` | Delete one profile MCP server. |
-| `POST` | `/profiles/{profile_id}/mcp/servers/{server_id}/refresh` | Refresh one server's tool/resource inventory. |
-| `GET` | `/profiles/{profile_id}/mcp/servers/{server_id}/tools/list` | Tools for one MCP server. |
-| `PATCH` | `/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit` | Edit one tool's action for this profile. |
-| `POST` | `/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call` | Call one MCP tool through the audited service path. |
+| `GET` | `/mcp/info` | Server count and whether the built-in `local` server is enabled. |
+| `GET` | `/mcp/servers/list` | Configured servers and their discovery status. |
+| `GET` | `/mcp/default/info` | Default MCP tool permission and who set it. |
+| `PATCH` | `/mcp/default/edit` | Set the default MCP tool permission. |
+| `GET` | `/mcp/servers/{server_id}/tools/list` | One server's discovered tools with effective permissions. |
+| `POST` | `/mcp/servers/{server_id}/refresh` | Rediscover one server's tools in every running VM. |
+| `PATCH` | `/mcp/servers/{server_id}/tools/{tool_id}/edit` | Allow, ask, or block one tool. |
+| `POST` | `/mcp/servers/{server_id}/tools/{tool_id}/call` | Call one tool through a running VM's aggregator, under that VM's policy. |
 
-### Skills
-
-Skills are profile-owned. The current routes reserve the profile-scoped control
-surface; implementation must keep skill metadata and mutation behind the
-profile contract.
-
-| Method | Route | Contract |
-|---|---|---|
-| `GET` | `/profiles/{profile_id}/skills/info` | Profile skill subsystem info. |
-| `GET` | `/profiles/{profile_id}/skills/list` | Skills enabled or available for the profile. |
-| `POST` | `/profiles/{profile_id}/skills/add` | Add a skill to the profile. |
-| `PATCH` | `/profiles/{profile_id}/skills/{skill_id}/edit` | Edit one profile skill. |
-| `DELETE` | `/profiles/{profile_id}/skills/{skill_id}/delete` | Delete one profile skill. |
+There are no rule list, evaluate, or reload routes; rules are edited in
+`settings.toml` (or corp) and read back through `/settings/info`.
 
 ## Session Routes
 
@@ -149,9 +125,9 @@ describes virtualization state.
 
 | Method | Route | Contract |
 |---|---|---|
-| `POST` | `/vms/create` | Create a new session from a profile. |
+| `POST` | `/vms/create` | Create a new session from the runtime image set (default 4 CPUs, 12 GiB RAM, 64 GiB scratch disk). |
 | `GET` | `/vms/list` | List sessions. |
-| `GET` | `/vms/{id}/info` | Session config/runtime info, including profile, process, and storage diagnostics. |
+| `GET` | `/vms/{id}/info` | Session config/runtime info, including resources, resume eligibility, process, and storage diagnostics. |
 | `GET` | `/vms/{id}/status` | In-memory session liveness, readiness, state, and counters. |
 | `POST` | `/vms/{id}/stop` | Stop a running session. |
 | `POST` | `/vms/{id}/pause` | Pause or suspend a running session. |
@@ -181,12 +157,10 @@ describes virtualization state.
 
 ## UI/TUI Rules
 
-- The UI/TUI must use profile routes for profile behavior and settings routes
-  only for UI/application preferences.
-- Profile cards render name, description, icon, readiness, and asset checklist
-  from profile route data.
-- Enforcement, detection, plugins, MCP, assets, and skills pages are scoped by
-  profile id.
+- Plugins, MCP, and assets pages use the global `/plugins`, `/mcp`, and
+  `/assets` routes; there is no per-VM or per-profile scope.
 - Session actions are state-dependent. Incompatible or defunct sessions must
-  not offer start/resume/pause actions.
+  not offer start/resume/pause actions. A persistent VM created from a VM
+  profile before profiles were removed is Incompatible and can only be
+  deleted.
 - Raw JSON is a debug view. Normal panels should render the typed fields once.
