@@ -81,6 +81,15 @@ def test_the_key_changes_with_every_input(tmp_path: Path, change: str) -> None:
     assert _key(tmp_path, extra) != before
 
 
+def test_the_qualification_manifest_is_not_a_build_input(tmp_path: Path) -> None:
+    """`qualify.toml` says how the built image is tested, not how it is
+    built: editing it re-qualifies the image, never rebuilds it."""
+    image = _tree(tmp_path, {"Dockerfile": "FROM x\n"})
+    before = _key(tmp_path)
+    (image / "qualify.toml").write_text('capabilities = ["agent"]\n')
+    assert _key(tmp_path) == before
+
+
 def test_moving_bytes_between_files_changes_the_key(tmp_path: Path) -> None:
     """Length-prefixed fields: `ab`+`c` must not collide with `a`+`bc`."""
     _tree(tmp_path / "a", {"1": "ab", "2": "c"})

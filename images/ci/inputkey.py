@@ -21,12 +21,18 @@ ROOT = Path(__file__).resolve().parents[2]
 #: Bumped when the key's construction changes, so no old tag is mistaken for
 #: a build of the same inputs under the new rule.
 VERSION = b"capsem-official-image-input-key-v1"
+#: Files beside an image that its build never reads: the qualification
+#: manifest says how the built image is tested, so editing it re-qualifies the
+#: image (tests/qualification) instead of rebuilding it.
+NOT_BUILD_INPUTS = frozenset({"qualify.toml"})
 
 
 def _files(path: Path) -> list[Path]:
     if path.is_file():
         return [path]
-    files = sorted(entry for entry in path.rglob("*") if entry.is_file())
+    files = sorted(
+        entry for entry in path.rglob("*") if entry.is_file() and entry.name not in NOT_BUILD_INPUTS
+    )
     if not files:
         raise ValueError(f"{path} holds no files, so it cannot key a build")
     return files
