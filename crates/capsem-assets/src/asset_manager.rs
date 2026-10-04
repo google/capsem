@@ -237,23 +237,15 @@ pub struct ExpectedAssetHashes {
     pub rootfs: String,
 }
 
-/// Comparable state for every profile carried by one public release graph.
+/// Comparable identity of the runtime one public release graph carries.
 ///
 /// The installed public manifest remains the authority on disk. This in-memory
-/// view gives the updater and service deterministic identities without
-/// flattening distinct profile revisions or image sets into one default.
+/// view gives the updater and service deterministic identities for the
+/// runtime's evidence and boot images.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReleaseGraphProfileState {
-    pub catalog_revision: String,
-    pub images_revision: String,
-    pub profiles: BTreeMap<String, ReleaseGraphProfileIdentity>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReleaseGraphProfileIdentity {
+pub struct ReleaseGraphRuntimeState {
     pub revision: String,
     pub status: String,
-    pub config_revision: String,
     pub evidence_revision: String,
     pub images_revision: String,
     pub architectures: Vec<String>,
@@ -469,59 +461,22 @@ impl ManifestV2 {
 /// adapter exists only because the boot resolver needs the compact v2 asset
 /// index; it must never be serialized back over the installed manifest.
 fn manifest_v2_from_release_graph(value: &serde_json::Value) -> Result<ManifestV2> {
-    // Validate and retain the complete graph state before deriving the compact
-    // compatibility view used by legacy boot-resolution callers.
-    release_graph_profile_state(value)?;
-    let profiles = value
-        .get("profiles")
-        .and_then(serde_json::Value::as_object)
-        .context("manifest is neither format 2 nor a release graph with profiles")?;
-    if profiles.is_empty() {
-        bail!("release graph contains no profiles");
+    let state = release_graph_runtime_state(value)?.context("release graph contains no runtime")?;
+    if state.status.eq_ignore_ascii_case("revoked") {
+        bail!("release graph runtime {} is revoked", state.revision);
     }
-
-    // Every profile owns its own images, so a channel-wide pointer can name at
-    // most one of them. Emit a release for each and let `current` name only the
-    // default, so no profile's assets are discarded on the way through.
-    let usable: Vec<(&String, &serde_json::Value)> = profiles
-        .iter()
-        .filter(|(_, profile)| profile.get("status").and_then(serde_json::Value::as_str) != Some("revoked"))
-        .collect();
-    if usable.is_empty() {
-        bail!("release graph contains no usable profile");
+    let runtime = &value["runtime"];
+    let min_binary = runtime
+        .get("min_capsem_version")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let mut arches = HashMap::new();
+    for architecture in runtime["architectures"].as_array().into_iter().flatten() {
+        let arch = architecture["architecture"].as_str().unwrap_or_default();
+        arches.insert(arch.to_string(), runtime_architecture_boot_assets(arch, architecture)?);
     }
-    let default_first = {
-        let mut ordered = usable.clone();
-        ordered.sort_by_key(|(id, _)| (id.as_str() != "default", (*id).clone()));
-        ordered
-    };
-
-    let mut releases: HashMap<String, AssetRelease> = HashMap::new();
-    let mut current_version: Option<String> = None;
-    for (profile_id, profile) in default_first {
-        let (asset_version, min_binary, arches) = profile_asset_release(profile)?;
-        // Two profiles may share an image revision while pinning different
-        // images, so the revision alone cannot key them.
-        let key = if releases.contains_key(&asset_version) {
-            format!("{asset_version}+{profile_id}")
-        } else {
-            asset_version
-        };
-        if current_version.is_none() {
-            current_version = Some(key.clone());
-        }
-        releases.insert(
-            key,
-            AssetRelease {
-                date: String::new(),
-                deprecated: false,
-                deprecated_date: None,
-                min_binary,
-                arches,
-            },
-        );
-    }
-    let asset_version = current_version.context("release graph contains no usable profile")?;
+    let asset_version = state.revision;
 
     let packages = value
         .get("packages")
@@ -545,7 +500,16 @@ fn manifest_v2_from_release_graph(value: &serde_json::Value) -> Result<ManifestV
         asset_base: None,
         assets: AssetsSection {
             current: asset_version.clone(),
-            releases,
+            releases: HashMap::from([(
+                asset_version.clone(),
+                AssetRelease {
+                    date: String::new(),
+                    deprecated: false,
+                    deprecated_date: None,
+                    min_binary,
+                    arches,
+                },
+            )]),
         },
         binaries: BinariesSection {
             current: binary_version.clone(),
@@ -564,258 +528,151 @@ fn manifest_v2_from_release_graph(value: &serde_json::Value) -> Result<ManifestV
     })
 }
 
-/// One profile's assets: architecture -> logical asset name -> entry.
-type ProfileArchAssets = HashMap<String, HashMap<String, AssetEntry>>;
+/// One runtime architecture's boot assets: logical asset name -> entry.
+fn runtime_architecture_boot_assets(
+    arch: &str,
+    architecture: &serde_json::Value,
+) -> Result<HashMap<String, AssetEntry>> {
+    let images = architecture
+        .get("images")
+        .and_then(serde_json::Value::as_array)
+        .context("release graph runtime architecture is missing images")?;
+    let mut assets = HashMap::new();
+    for image in images
+        .iter()
+        .filter(|image| image.get("status").and_then(serde_json::Value::as_str) != Some("revoked"))
+    {
+        let Some(kind) = image.get("kind").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if !matches!(kind, "kernel" | "initrd" | "rootfs") {
+            continue;
+        }
+        let name = image
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .context("release graph image is missing name")?;
+        let digest = image.get("digest").context("release graph image is missing digest")?;
+        assets.insert(
+            name.to_string(),
+            AssetEntry {
+                hash: digest
+                    .get("blake3")
+                    .and_then(serde_json::Value::as_str)
+                    .context("release graph image is missing BLAKE3")?
+                    .to_string(),
+                sha256: digest
+                    .get("sha256")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                size: image
+                    .get("bytes")
+                    .and_then(serde_json::Value::as_u64)
+                    .context("release graph image is missing byte size")?,
+            },
+        );
+    }
+    for required in ["vmlinuz", "initrd.img", "rootfs.erofs"] {
+        if !assets.contains_key(required) {
+            bail!("release graph runtime architecture {arch} is missing {required}");
+        }
+    }
+    Ok(assets)
+}
 
-/// One profile's image set: its asset version, minimum binary, and per-arch
-/// assets. Each profile carries its own, which is why no channel-wide pointer
-/// can stand in for them.
-fn profile_asset_release(profile: &serde_json::Value) -> Result<(String, String, ProfileArchAssets)> {
-    let min_binary = profile
-        .get("min_capsem_version")
+/// Parse and fingerprint the runtime a public graph carries.
+///
+/// `None` means the graph publishes no runtime yet (a binary-only channel).
+/// Semantically unordered artifact lists and object keys are canonicalized so
+/// formatting or JSON key order cannot manufacture an update; evidence and
+/// image identity are fingerprinted separately so a caller can tell an
+/// evidence-only republish from new boot images.
+pub fn release_graph_runtime_state(value: &serde_json::Value) -> Result<Option<ReleaseGraphRuntimeState>> {
+    let runtime = match value.get("runtime") {
+        None | Some(serde_json::Value::Null) => return Ok(None),
+        Some(runtime) => runtime,
+    };
+    ensure!(runtime.is_object(), "release graph runtime must be an object");
+    let revision = runtime
+        .get("revision")
         .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
+        .context("release graph runtime is missing revision")?
         .to_string();
-    let architectures = profile
+    validate_version(&revision).with_context(|| format!("release graph runtime revision {revision} is invalid"))?;
+    let status = runtime
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("current")
+        .to_string();
+    let revoked = status.eq_ignore_ascii_case("revoked");
+    let architectures = runtime
         .get("architectures")
         .and_then(serde_json::Value::as_array)
-        .context("release graph profile is missing architectures")?;
-    let mut arches = HashMap::new();
-    let mut asset_version = None;
+        .context("release graph runtime is missing architectures")?;
+    if architectures.is_empty() && !revoked {
+        bail!("release graph runtime {revision} contains no architectures");
+    }
+
+    let mut architecture_names = BTreeSet::new();
+    let mut evidence_scope = BTreeMap::new();
+    let mut images_scope = BTreeMap::new();
     for architecture in architectures {
         let arch = architecture
             .get("architecture")
             .and_then(serde_json::Value::as_str)
-            .context("release graph profile architecture is missing architecture")?;
+            .context("release graph runtime architecture is missing architecture")?;
+        validate_filename(arch).with_context(|| format!("invalid runtime architecture key {arch:?}"))?;
+        if !architecture_names.insert(arch.to_string()) {
+            bail!("release graph runtime repeats architecture {arch}");
+        }
         let image_revision = architecture
             .get("image_revision")
             .and_then(serde_json::Value::as_str)
-            .context("release graph profile architecture is missing image_revision")?;
-        match asset_version.as_deref() {
-            Some(expected) if expected != image_revision => {
-                bail!("release graph profile image revisions disagree: {expected} != {image_revision} for {arch}")
-            }
-            None => asset_version = Some(image_revision.to_string()),
-            _ => {}
-        }
-        let images = architecture
-            .get("images")
-            .and_then(serde_json::Value::as_array)
-            .context("release graph profile architecture is missing images")?;
-        let mut assets = HashMap::new();
-        for image in images
-            .iter()
-            .filter(|image| image.get("status").and_then(serde_json::Value::as_str) != Some("revoked"))
-        {
-            let Some(kind) = image.get("kind").and_then(serde_json::Value::as_str) else {
-                continue;
-            };
-            if !matches!(kind, "kernel" | "initrd" | "rootfs") {
-                continue;
-            }
-            let name = image
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .context("release graph image is missing name")?;
-            let digest = image.get("digest").context("release graph image is missing digest")?;
-            assets.insert(
-                name.to_string(),
-                AssetEntry {
-                    hash: digest
-                        .get("blake3")
-                        .and_then(serde_json::Value::as_str)
-                        .context("release graph image is missing BLAKE3")?
-                        .to_string(),
-                    sha256: digest
-                        .get("sha256")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                    size: image
-                        .get("bytes")
-                        .and_then(serde_json::Value::as_u64)
-                        .context("release graph image is missing byte size")?,
-                },
+            .context("release graph runtime architecture is missing image_revision")?;
+        if image_revision != revision {
+            bail!(
+                "release graph runtime architecture {arch} image revision {image_revision} is not runtime {revision}"
             );
         }
-        for required in ["vmlinuz", "initrd.img", "rootfs.erofs"] {
-            if !assets.contains_key(required) {
-                bail!("release graph profile architecture {arch} is missing {required}");
-            }
-        }
-        arches.insert(arch.to_string(), assets);
-    }
-    if arches.is_empty() {
-        bail!("release graph profile contains no usable architectures");
-    }
-    let asset_version = asset_version.context("release graph profile contains no image revision")?;
-
-    Ok((asset_version, min_binary, arches))
-}
-
-/// Parse and fingerprint every profile-owned identity in a public graph.
-///
-/// Object keys and semantically unordered artifact lists are canonicalized so
-/// formatting or JSON key order cannot manufacture an update. Membership,
-/// revisions, config, evidence, and image identity all participate in the
-/// catalog revision; only profile/image identity participates in the image
-/// revision.
-pub fn release_graph_profile_state(value: &serde_json::Value) -> Result<ReleaseGraphProfileState> {
-    let profiles = value
-        .get("profiles")
-        .and_then(serde_json::Value::as_object)
-        .context("release graph is missing profiles")?;
-    if profiles.is_empty() {
-        bail!("release graph contains no profiles");
-    }
-
-    let mut identities = BTreeMap::new();
-    let mut catalog_scope = BTreeMap::new();
-    let mut images_scope = BTreeMap::new();
-    let mut usable_profiles = 0usize;
-
-    for (profile_id, profile) in profiles {
-        validate_version(profile_id).with_context(|| format!("release graph profile id {profile_id} is invalid"))?;
-        let revision = profile
-            .get("revision")
-            .and_then(serde_json::Value::as_str)
-            .context("release graph profile is missing revision")?
-            .to_string();
-        validate_version(&revision)
-            .with_context(|| format!("release graph profile {profile_id} has invalid revision {revision}"))?;
-        let status = profile
-            .get("status")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("current")
-            .to_string();
-        let revoked = status.eq_ignore_ascii_case("revoked");
+        let evidence = canonical_active_artifacts(
+            architecture.get("evidence"),
+            &format!("release graph runtime architecture {arch} evidence"),
+            false,
+        )?;
+        let images = canonical_active_artifacts(
+            architecture.get("images"),
+            &format!("release graph runtime architecture {arch} images"),
+            true,
+        )?;
         if !revoked {
-            usable_profiles += 1;
-        }
-
-        let architectures = profile
-            .get("architectures")
-            .and_then(serde_json::Value::as_array)
-            .context("release graph profile is missing architectures")?;
-        if architectures.is_empty() && !revoked {
-            bail!("release graph profile {profile_id} contains no architectures");
-        }
-
-        let mut architecture_names = BTreeSet::new();
-        let mut config_scope = BTreeMap::new();
-        let mut evidence_scope = BTreeMap::new();
-        let mut profile_images_scope = BTreeMap::new();
-        for architecture in architectures {
-            let arch = architecture
-                .get("architecture")
-                .and_then(serde_json::Value::as_str)
-                .context("release graph profile architecture is missing architecture")?;
-            if !architecture_names.insert(arch.to_string()) {
-                bail!("release graph profile {profile_id} repeats architecture {arch}");
-            }
-            let image_revision = architecture
-                .get("image_revision")
-                .and_then(serde_json::Value::as_str)
-                .context("release graph profile architecture is missing image_revision")?;
-            validate_version(image_revision).with_context(|| {
-                format!("release graph profile {profile_id} architecture {arch} has invalid image revision")
-            })?;
-
-            let configs = canonical_active_artifacts(
-                architecture.get("config"),
-                &format!("release graph profile {profile_id} architecture {arch} config"),
-                false,
-            )?;
-            let evidence = canonical_active_artifacts(
-                architecture.get("evidence"),
-                &format!("release graph profile {profile_id} architecture {arch} evidence"),
-                false,
-            )?;
-            let images = canonical_active_artifacts(
-                architecture.get("images"),
-                &format!("release graph profile {profile_id} architecture {arch} images"),
-                true,
-            )?;
-            if !revoked {
-                let image_kinds: BTreeSet<&str> = images
-                    .iter()
-                    .filter_map(|image| image.get("kind").and_then(serde_json::Value::as_str))
-                    .collect();
-                for required in ["kernel", "initrd", "rootfs"] {
-                    if !image_kinds.contains(required) {
-                        bail!("release graph profile {profile_id} architecture {arch} is missing {required} image");
-                    }
+            let image_kinds: BTreeSet<&str> = images
+                .iter()
+                .filter_map(|image| image.get("kind").and_then(serde_json::Value::as_str))
+                .collect();
+            for required in ["kernel", "initrd", "rootfs"] {
+                if !image_kinds.contains(required) {
+                    bail!("release graph runtime architecture {arch} is missing {required} image");
                 }
             }
-
-            config_scope.insert(arch.to_string(), configs);
-            evidence_scope.insert(arch.to_string(), evidence);
-            profile_images_scope.insert(
-                arch.to_string(),
-                serde_json::json!({
-                    "image_revision": image_revision,
-                    "images": images,
-                }),
-            );
         }
+        evidence_scope.insert(arch.to_string(), evidence);
+        images_scope.insert(arch.to_string(), images);
+    }
 
-        let config_revision = state_revision(
-            "config",
-            &serde_json::to_value(&config_scope).context("serialize profile config state")?,
-        );
-        let evidence_revision = state_revision(
+    Ok(Some(ReleaseGraphRuntimeState {
+        evidence_revision: state_revision(
             "evidence",
-            &serde_json::to_value(&evidence_scope).context("serialize profile evidence state")?,
-        );
-        let profile_images_revision = state_revision(
-            "images",
-            &serde_json::to_value(&profile_images_scope).context("serialize profile image state")?,
-        );
-        let identity = ReleaseGraphProfileIdentity {
-            revision: revision.clone(),
-            status: status.clone(),
-            config_revision: config_revision.clone(),
-            evidence_revision: evidence_revision.clone(),
-            images_revision: profile_images_revision.clone(),
-            architectures: architecture_names.into_iter().collect(),
-        };
-        let mut metadata = profile.clone();
-        if let Some(object) = metadata.as_object_mut() {
-            object.remove("architectures");
-        }
-        catalog_scope.insert(
-            profile_id.clone(),
-            serde_json::json!({
-                "metadata": metadata,
-                "config_revision": config_revision,
-                "evidence_revision": evidence_revision,
-                "images_revision": profile_images_revision,
-            }),
-        );
-        images_scope.insert(
-            profile_id.clone(),
-            serde_json::json!({
-                "status": status,
-                "architectures": profile_images_scope,
-            }),
-        );
-        identities.insert(profile_id.clone(), identity);
-    }
-    if usable_profiles == 0 {
-        bail!("release graph contains no usable profile");
-    }
-
-    Ok(ReleaseGraphProfileState {
-        catalog_revision: state_revision(
-            "catalog",
-            &serde_json::to_value(catalog_scope).context("serialize release graph profile catalog state")?,
+            &serde_json::to_value(&evidence_scope).context("serialize runtime evidence state")?,
         ),
         images_revision: state_revision(
             "images",
-            &serde_json::to_value(images_scope).context("serialize release graph image catalog state")?,
+            &serde_json::json!({"revision": revision, "architectures": images_scope}),
         ),
-        profiles: identities,
-    })
+        revision,
+        status,
+        architectures: architecture_names.into_iter().collect(),
+    }))
 }
 
 fn canonical_active_artifacts(

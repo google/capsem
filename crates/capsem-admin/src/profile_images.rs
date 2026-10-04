@@ -1,57 +1,5 @@
 use super::*;
 
-pub(super) fn image_build_workspace_path(source_profile: &ProfileConfigFile, arch: Option<&str>) -> PathBuf {
-    PathBuf::from("cache/target/build")
-        .join("image-workspace")
-        .join(&source_profile.id)
-        .join(arch.unwrap_or("all"))
-}
-
-pub(super) fn image_build_command(args: ImageBuildArgs) -> Result<()> {
-    let source_profile = load_profile(&args.profile)?;
-    let workspace = image_build_workspace_path(&source_profile, args.arch.as_deref());
-    let workspace_report = materialize_image_workspace(&ImageWorkspaceArgs {
-        profile: args.profile.clone(),
-        config_root: args.config_root.clone(),
-        guest_dir: args.guest_dir.clone(),
-        output: workspace,
-        arch: args.arch.clone(),
-        json: true,
-    })?;
-    let plan = image_build_plan(&ImageBuildArgs {
-        profile: PathBuf::from(&workspace_report.profile_path),
-        config_root: PathBuf::from(&workspace_report.config_root),
-        guest_dir: PathBuf::from(&workspace_report.workspace).join("guest"),
-        output: args.output.clone(),
-        arch: args.arch.clone(),
-        template: args.template,
-        clean: args.clean,
-        json: args.json,
-    })?;
-    if plan.clean {
-        clean_image_outputs(&plan)?;
-    }
-    for command in &plan.commands {
-        run_command(command)?;
-    }
-    print_image_build_plan(&plan, args.json)?;
-    Ok(())
-}
-
-pub(super) fn image_workspace_command(args: ImageWorkspaceArgs) -> Result<()> {
-    let json = args.json;
-    let report = materialize_image_workspace(&args)?;
-    if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        println!(
-            "profile {} rev {} -> {}",
-            report.profile_id, report.profile_revision, report.workspace
-        );
-    }
-    Ok(())
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProfilePinMode {
     Source,
@@ -246,25 +194,6 @@ pub(super) fn normalized_python_name(name: &str) -> String {
     name.to_ascii_lowercase().replace(['_', '.'], "-")
 }
 
-pub(super) fn exact_python_dependencies(packages: &[String]) -> Result<BTreeMap<String, String>> {
-    packages
-        .iter()
-        .map(|package| {
-            let (name, version) = package
-                .split_once("==")
-                .ok_or_else(|| anyhow!("Python requirement {package} must select one exact version"))?;
-            if name.is_empty()
-                || version.is_empty()
-                || version.contains(['=', ';', '@'])
-                || version.contains(char::is_whitespace)
-            {
-                return Err(anyhow!("Python requirement {package} must select one exact version"));
-            }
-            Ok((normalized_python_name(name), version.to_string()))
-        })
-        .collect()
-}
-
 pub(super) fn validate_python_requirements_lock(
     path: &Path,
     expected: Option<&BTreeMap<String, String>>,
@@ -321,28 +250,6 @@ pub(super) fn validate_python_requirements_lock(
         ));
     }
     Ok(dependencies)
-}
-
-pub(super) fn exact_npm_dependencies(packages: &[String]) -> Result<BTreeMap<String, String>> {
-    packages
-        .iter()
-        .map(|package| {
-            let (name, version) = package
-                .rsplit_once('@')
-                .ok_or_else(|| anyhow!("npm package {package} must select one exact version"))?;
-            if name.is_empty()
-                || version.is_empty()
-                || version
-                    .chars()
-                    .next()
-                    .is_some_and(|prefix| matches!(prefix, '^' | '~' | '>' | '<' | '='))
-                || version.contains(char::is_whitespace)
-            {
-                return Err(anyhow!("npm package {package} must select one exact version"));
-            }
-            Ok((name.to_string(), version.to_string()))
-        })
-        .collect()
 }
 
 pub(super) fn validate_npm_package_lock(
@@ -587,14 +494,9 @@ pub(super) fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Resul
     let manifest_bytes = read_manifest_url(&args.manifest)?;
     let manifest_content = std::str::from_utf8(&manifest_bytes)
         .with_context(|| format!("manifest URL did not return UTF-8 JSON: {}", args.manifest))?;
-    let materialize_manifest = load_profile_materialize_manifest(
-        &args.manifest,
-        manifest_content,
-        &manifest_bytes,
-        &profile.id,
-        &selected_arches,
-    )
-    .with_context(|| format!("parse manifest from {}", args.manifest))?;
+    let materialize_manifest =
+        load_profile_materialize_manifest(&args.manifest, manifest_content, &manifest_bytes, &selected_arches)
+            .with_context(|| format!("parse manifest from {}", args.manifest))?;
     let manifest = materialize_manifest.manifest;
     let current_release = manifest.assets.releases.get(&manifest.assets.current).ok_or_else(|| {
         anyhow!(
@@ -697,118 +599,110 @@ pub(super) struct ProfileMaterializeManifest {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ReleaseChannelProfileManifest {
-    profiles: BTreeMap<String, ReleaseChannelProfileDocument>,
+pub(super) struct ReleaseChannelRuntimeManifest {
+    #[serde(default)]
+    runtime: Option<ReleaseChannelRuntimeDocument>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ReleaseChannelProfileDocument {
+pub(super) struct ReleaseChannelRuntimeDocument {
     revision: String,
     #[serde(default)]
     status: String,
-    /// The binary floor the graph profile declares.
+    /// The binary floor the graph runtime declares.
     ///
     /// Read here because the runtime manifest this projects into has the same
     /// field under another name, and dropping it produced a manifest that
     /// re-authoring a channel from could not name a floor at all: the glow-up
     /// hands its paired runtime manifest back to `assets channel build`, which
-    /// copies `min_binary` onto every graph profile as `min_capsem_version`,
+    /// copies `min_binary` onto the graph runtime as `min_capsem_version`,
     /// and `record-binary` then refuses an empty semver. That is the whole
     /// release-lane glow-up, failing on a field nobody had carried across.
     #[serde(default)]
     min_capsem_version: String,
     #[serde(default)]
-    architectures: Vec<ReleaseChannelProfileArchitecture>,
+    architectures: Vec<ReleaseChannelRuntimeArchitecture>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ReleaseChannelProfileArchitecture {
+pub(super) struct ReleaseChannelRuntimeArchitecture {
     architecture: String,
     #[serde(default)]
-    images: Vec<ReleaseChannelProfileArtifact>,
+    images: Vec<ReleaseChannelRuntimeArtifact>,
     #[serde(default)]
-    evidence: Vec<ReleaseChannelProfileArtifact>,
+    evidence: Vec<ReleaseChannelRuntimeArtifact>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ReleaseChannelProfileArtifact {
+pub(super) struct ReleaseChannelRuntimeArtifact {
     kind: String,
     #[serde(default)]
     name: String,
     url: String,
     #[serde(rename = "bytes")]
     size: u64,
-    digest: ReleaseChannelProfileDigest,
+    digest: ReleaseChannelRuntimeDigest,
     #[serde(default)]
     status: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct ReleaseChannelProfileDigest {
+pub(super) struct ReleaseChannelRuntimeDigest {
     sha256: String,
     blake3: String,
 }
 
+/// A release graph carries `packages`; a format-2 asset manifest does not.
 pub(super) fn load_profile_materialize_manifest(
     manifest_url: &str,
     manifest_content: &str,
     manifest_bytes: &[u8],
-    profile_id: &str,
     selected_arches: &[String],
 ) -> Result<ProfileMaterializeManifest> {
     let release_graph = serde_json::from_str::<serde_json::Value>(manifest_content)
         .ok()
-        .and_then(|document| document.get("profiles").cloned())
-        .is_some_and(|profiles| profiles.is_object());
-    if release_graph {
-        return profile_materialize_manifest_from_release_channel(
-            manifest_url,
-            manifest_content,
-            profile_id,
-            selected_arches,
-        );
+        .is_some_and(|document| document.get("packages").is_some());
+    if !release_graph {
+        if let Ok(manifest) = ManifestV2::from_json(manifest_content) {
+            return Ok(ProfileMaterializeManifest {
+                manifest,
+                manifest_bytes: manifest_bytes.to_vec(),
+                asset_urls: HashMap::new(),
+            });
+        }
     }
-    if let Ok(manifest) = ManifestV2::from_json(manifest_content) {
-        return Ok(ProfileMaterializeManifest {
-            manifest,
-            manifest_bytes: manifest_bytes.to_vec(),
-            asset_urls: HashMap::new(),
-        });
-    }
-
-    profile_materialize_manifest_from_release_channel(manifest_url, manifest_content, profile_id, selected_arches)
+    profile_materialize_manifest_from_release_channel(manifest_url, manifest_content, selected_arches)
 }
 
+/// Project a release channel's runtime into the asset manifest a profile pins.
 pub(super) fn profile_materialize_manifest_from_release_channel(
     manifest_url: &str,
     manifest_content: &str,
-    profile_id: &str,
     selected_arches: &[String],
 ) -> Result<ProfileMaterializeManifest> {
-    let document: ReleaseChannelProfileManifest =
-        serde_json::from_str(manifest_content).context("failed to parse release channel profile manifest JSON")?;
-    let profile = document
-        .profiles
-        .get(profile_id)
-        .ok_or_else(|| anyhow!("release channel manifest does not contain profile {profile_id}"))?;
-    if release_channel_status_is_revoked(&profile.status) {
-        anyhow::bail!("release channel profile {profile_id} is revoked");
+    let document: ReleaseChannelRuntimeManifest =
+        serde_json::from_str(manifest_content).context("failed to parse release channel runtime manifest JSON")?;
+    let runtime = document
+        .runtime
+        .ok_or_else(|| anyhow!("release channel manifest does not publish a runtime"))?;
+    if release_channel_status_is_revoked(&runtime.status) {
+        anyhow::bail!("release channel runtime {} is revoked", runtime.revision);
     }
 
     let mut arch_entries: HashMap<String, HashMap<String, capsem_assets::asset_manager::AssetEntry>> = HashMap::new();
     let mut asset_urls = HashMap::new();
     for arch in selected_arches {
-        let architecture = profile
+        let architecture = runtime
             .architectures
             .iter()
             .find(|candidate| candidate.architecture == *arch)
-            .ok_or_else(|| anyhow!("release channel profile {profile_id} does not contain architecture {arch}"))?;
+            .ok_or_else(|| anyhow!("release channel runtime does not contain architecture {arch}"))?;
         let mut assets = HashMap::new();
         for artifact in architecture.images.iter().chain(architecture.evidence.iter()) {
             if release_channel_status_is_revoked(&artifact.status) {
                 continue;
             }
-            let Some(logical_name) = release_channel_profile_artifact_logical_name(artifact) else {
+            let Some(logical_name) = release_channel_runtime_artifact_logical_name(artifact) else {
                 continue;
             };
             validate_release_channel_digest(&artifact.digest)
@@ -829,8 +723,8 @@ pub(super) fn profile_materialize_manifest_from_release_channel(
         for required in ["vmlinuz", "initrd.img", "rootfs.erofs"] {
             if !assets.contains_key(required) {
                 anyhow::bail!(
-                    "release channel profile {profile_id} revision {} architecture {arch} missing {required} image",
-                    profile.revision
+                    "release channel runtime {} architecture {arch} missing {required} image",
+                    runtime.revision
                 );
             }
         }
@@ -843,16 +737,16 @@ pub(super) fn profile_materialize_manifest_from_release_channel(
         refresh_policy: "24h".to_string(),
         asset_base: None,
         assets: capsem_assets::asset_manager::AssetsSection {
-            current: profile.revision.clone(),
+            current: runtime.revision.clone(),
             releases: HashMap::from([(
-                profile.revision.clone(),
+                runtime.revision.clone(),
                 capsem_assets::asset_manager::AssetRelease {
                     date: String::new(),
                     deprecated: false,
                     deprecated_date: None,
-                    // The graph profile's declared floor, under the name a
+                    // The graph runtime's declared floor, under the name a
                     // runtime manifest gives it. See the field's own comment.
-                    min_binary: profile.min_capsem_version.clone(),
+                    min_binary: runtime.min_capsem_version.clone(),
                     arches: arch_entries,
                 },
             )]),
@@ -865,7 +759,7 @@ pub(super) fn profile_materialize_manifest_from_release_channel(
                     date: String::new(),
                     deprecated: false,
                     deprecated_date: None,
-                    min_assets: profile.revision.clone(),
+                    min_assets: runtime.revision,
                     version: binary_version,
                     files: Vec::new(),
                 },
@@ -883,8 +777,8 @@ pub(super) fn profile_materialize_manifest_from_release_channel(
     })
 }
 
-pub(super) fn release_channel_profile_artifact_logical_name(
-    artifact: &ReleaseChannelProfileArtifact,
+pub(super) fn release_channel_runtime_artifact_logical_name(
+    artifact: &ReleaseChannelRuntimeArtifact,
 ) -> Option<&'static str> {
     match artifact.kind.as_str() {
         "kernel" => Some("vmlinuz"),
@@ -902,12 +796,12 @@ pub(super) fn release_channel_status_is_revoked(status: &str) -> bool {
     status.eq_ignore_ascii_case("revoked")
 }
 
-pub(super) fn validate_release_channel_digest(digest: &ReleaseChannelProfileDigest) -> Result<()> {
+pub(super) fn validate_release_channel_digest(digest: &ReleaseChannelRuntimeDigest) -> Result<()> {
     if !is_64_hex(&digest.blake3) {
-        anyhow::bail!("profile image blake3 must be a 64-character hex digest");
+        anyhow::bail!("runtime image blake3 must be a 64-character hex digest");
     }
     if !is_64_hex(&digest.sha256) {
-        anyhow::bail!("profile image sha256 must be a 64-character hex digest");
+        anyhow::bail!("runtime image sha256 must be a 64-character hex digest");
     }
     Ok(())
 }
@@ -930,7 +824,18 @@ pub(super) fn resolve_release_channel_artifact_url(channel_source: &str, artifac
     let base =
         reqwest::Url::parse(channel_source).with_context(|| format!("parse release channel URL {channel_source}"))?;
     if trimmed.starts_with('/') {
+        // Site-root relative. A `file://` channel is a release-site tree on
+        // disk whose root is the directory holding `assets/`, not `/`.
         let mut root = base;
+        if root.scheme() == "file" {
+            if let Some(dist) = root.path().rfind("/assets/") {
+                let path = format!("{}{trimmed}", &root.path()[..dist]);
+                root.set_path(&path);
+                root.set_query(None);
+                root.set_fragment(None);
+                return Ok(root.to_string());
+            }
+        }
         root.set_path(trimmed);
         root.set_query(None);
         root.set_fragment(None);
@@ -1161,28 +1066,6 @@ pub(super) fn read_obom_generator(path: &Path) -> Result<(String, String)> {
     Ok((name.to_string(), version.to_string()))
 }
 
-pub(super) fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
-    fs::create_dir_all(destination).with_context(|| format!("create {}", destination.display()))?;
-    for entry in fs::read_dir(source).with_context(|| format!("read {}", source.display()))? {
-        let entry = entry.with_context(|| format!("read entry in {}", source.display()))?;
-        let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-        let file_type = entry
-            .file_type()
-            .with_context(|| format!("stat {}", source_path.display()))?;
-        if file_type.is_dir() {
-            copy_dir_recursive(&source_path, &destination_path)?;
-        } else if file_type.is_file() {
-            if let Some(parent) = destination_path.parent() {
-                fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-            }
-            fs::copy(&source_path, &destination_path)
-                .with_context(|| format!("copy {} to {}", source_path.display(), destination_path.display()))?;
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn load_profile(path: &Path) -> Result<ProfileConfigFile> {
     let content = fs::read_to_string(path).with_context(|| format!("read profile {}", path.display()))?;
     toml::from_str(&content).with_context(|| format!("parse profile {}", path.display()))
@@ -1230,304 +1113,6 @@ impl SettingsConfigFile {
     }
 }
 
-pub(super) fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> {
-    let profile = load_profile(&args.profile)?;
-    profile
-        .validate()
-        .map_err(|error| anyhow!("validate profile {}: {error}", args.profile.display()))?;
-    profile
-        .compile_security_rule_set_from_files(&args.config_root, SecurityRuleSource::User)
-        .map_err(|error| {
-            anyhow!(
-                "compile profile rule files for {} with config root {}: {error}",
-                args.profile.display(),
-                args.config_root.display()
-            )
-        })?;
-
-    let mut arches = profile.assets.arch.keys().cloned().collect::<Vec<_>>();
-    arches.sort();
-    if let Some(arch) = &args.arch {
-        if !profile.assets.arch.contains_key(arch) {
-            return Err(anyhow!("profile {} does not define assets for arch {arch}", profile.id));
-        }
-        arches = vec![arch.clone()];
-    }
-    if arches.is_empty() {
-        return Err(anyhow!("profile {} defines no asset architectures", profile.id));
-    }
-
-    let mut arch_plans = Vec::new();
-    let mut commands = Vec::new();
-    for arch in &arches {
-        let assets = profile.assets.arch.get(arch).expect("arch came from profile asset map");
-        arch_plans.push(ImageBuildArchPlan {
-            arch: arch.clone(),
-            kernel: assets.kernel.name.clone(),
-            initrd: assets.initrd.name.clone(),
-            rootfs: assets.rootfs.name.clone(),
-        });
-        if matches!(args.template, ImageBuildTemplate::All | ImageBuildTemplate::Kernel) {
-            commands.push(CommandReport {
-                step: "kernel".to_string(),
-                arch: Some(arch.clone()),
-                env: BTreeMap::new(),
-                argv: builder_python_command([
-                    "-m".to_string(),
-                    "capsem_builder.image.image_build_backend".to_string(),
-                    args.guest_dir.display().to_string(),
-                    "--arch".to_string(),
-                    arch.clone(),
-                    "--template".to_string(),
-                    "kernel".to_string(),
-                    "--output".to_string(),
-                    format!("{}/", args.output.display()),
-                ]),
-            });
-        }
-        if matches!(args.template, ImageBuildTemplate::All | ImageBuildTemplate::Rootfs) {
-            let mut env = BTreeMap::new();
-            env.insert("CAPSEM_BUILD_EXPERIMENTAL_EROFS".to_string(), "1".to_string());
-            env.insert("CAPSEM_BUILD_EROFS_COMPRESSION".to_string(), "lz4hc".to_string());
-            env.insert("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL".to_string(), "12".to_string());
-            commands.push(CommandReport {
-                step: "rootfs".to_string(),
-                arch: Some(arch.clone()),
-                env,
-                argv: builder_python_command([
-                    "-m".to_string(),
-                    "capsem_builder.image.image_build_backend".to_string(),
-                    args.guest_dir.display().to_string(),
-                    "--arch".to_string(),
-                    arch.clone(),
-                    "--template".to_string(),
-                    "rootfs".to_string(),
-                    "--output".to_string(),
-                    format!("{}/", args.output.display()),
-                ]),
-            });
-        }
-    }
-    if !matches!(args.template, ImageBuildTemplate::Kernel) {
-        commands.push(manifest_generate_command_report(&ManifestGenerateArgs {
-            assets_dir: args.output.clone(),
-            arches: arches.clone(),
-            version: None,
-            json: false,
-        }));
-    }
-
-    Ok(ImageBuildPlan {
-        schema: "capsem.admin.image_build_plan.v1",
-        profile_id: profile.id,
-        profile_revision: profile.revision,
-        guest_dir: args.guest_dir.display().to_string(),
-        output: args.output.display().to_string(),
-        clean: args.clean,
-        template: match args.template {
-            ImageBuildTemplate::All => "all",
-            ImageBuildTemplate::Kernel => "kernel",
-            ImageBuildTemplate::Rootfs => "rootfs",
-        },
-        arches: arch_plans,
-        commands,
-    })
-}
-
-#[cfg(test)]
-pub(super) fn verify_image_outputs(args: &ImageVerifyArgs) -> Result<ImageVerifyReport> {
-    let profile = load_profile(&args.profile)?;
-    profile
-        .validate()
-        .map_err(|error| anyhow!("validate profile {}: {error}", args.profile.display()))?;
-    profile
-        .compile_security_rule_set_from_files(&args.config_root, SecurityRuleSource::User)
-        .map_err(|error| {
-            anyhow!(
-                "compile profile rule files for {} with config root {}: {error}",
-                args.profile.display(),
-                args.config_root.display()
-            )
-        })?;
-
-    let manifest_path = args
-        .manifest
-        .clone()
-        .unwrap_or_else(|| args.output.join("manifest.json"));
-    let manifest = load_manifest(&manifest_path)?;
-    let current_release = manifest.assets.releases.get(&manifest.assets.current).ok_or_else(|| {
-        anyhow!(
-            "manifest {} current asset release {} is missing",
-            manifest_path.display(),
-            manifest.assets.current
-        )
-    })?;
-
-    let mut arches = Vec::new();
-    for arch in selected_profile_arches(&profile, args.arch.as_deref())? {
-        let manifest_assets = current_release.arches.get(&arch).ok_or_else(|| {
-            anyhow!(
-                "manifest {} current release {} does not contain profile arch {arch}",
-                manifest_path.display(),
-                manifest.assets.current
-            )
-        })?;
-        let profile_assets = profile
-            .assets
-            .arch
-            .get(&arch)
-            .expect("arch came from selected_profile_arches");
-        let mut asset_reports = Vec::new();
-        for descriptor in [&profile_assets.kernel, &profile_assets.initrd, &profile_assets.rootfs] {
-            let entry = manifest_assets.get(&descriptor.name).ok_or_else(|| {
-                anyhow!(
-                    "manifest {} current release {} arch {arch} is missing {}",
-                    manifest_path.display(),
-                    manifest.assets.current,
-                    descriptor.name
-                )
-            })?;
-            asset_reports.push(check_local_asset(
-                &args.output,
-                &arch,
-                &descriptor.name,
-                &entry.hash,
-                entry.size,
-            )?);
-        }
-        fail_if_local_asset_checks_failed("image output verify", &asset_reports)?;
-        arches.push(ImageVerifyArchReport {
-            arch,
-            assets: asset_reports,
-        });
-    }
-
-    Ok(ImageVerifyReport {
-        schema: "capsem.admin.image_verify.v1",
-        ok: true,
-        profile_id: profile.id,
-        profile_revision: profile.revision,
-        output: args.output.display().to_string(),
-        manifest: manifest_path.display().to_string(),
-        arches,
-    })
-}
-
-pub(super) fn materialize_image_workspace(args: &ImageWorkspaceArgs) -> Result<ImageWorkspaceReport> {
-    check_config_root(&args.config_root, args.arch.as_deref())?;
-    check_profile(&ProfileCheckArgs {
-        path: args.profile.clone(),
-        config_root: Some(args.config_root.clone()),
-        arch: args.arch.clone(),
-        json: true,
-    })?;
-    let profile = load_profile(&args.profile)?;
-    profile
-        .validate()
-        .map_err(|error| anyhow!("validate profile {}: {error}", args.profile.display()))?;
-    profile
-        .compile_security_rule_set_from_files(&args.config_root, SecurityRuleSource::User)
-        .map_err(|error| {
-            anyhow!(
-                "compile profile rule files for {} with config root {}: {error}",
-                args.profile.display(),
-                args.config_root.display()
-            )
-        })?;
-    let arches = selected_profile_arches(&profile, args.arch.as_deref())?;
-
-    let workspace = &args.output;
-    if workspace.exists() {
-        fs::remove_dir_all(workspace)
-            .with_context(|| format!("remove stale image workspace {}", workspace.display()))?;
-    }
-    let workspace_config_root = workspace.join("config");
-    let workspace_guest_dir = workspace.join("guest");
-    let workspace_profile_path = workspace_config_root
-        .join("profiles")
-        .join(&profile.id)
-        .join("profile.toml");
-    let workspace_rules_root = workspace_config_root.join("profiles").join(&profile.id);
-    fs::create_dir_all(
-        workspace_profile_path
-            .parent()
-            .expect("workspace profile path has parent"),
-    )
-    .with_context(|| format!("create {}", workspace_profile_path.display()))?;
-    fs::create_dir_all(&workspace_rules_root).with_context(|| format!("create {}", workspace_rules_root.display()))?;
-
-    let profile_toml = fs::read(&args.profile).with_context(|| format!("read {}", args.profile.display()))?;
-    fs::write(&workspace_profile_path, &profile_toml)
-        .with_context(|| format!("write {}", workspace_profile_path.display()))?;
-
-    let mut rule_files = Vec::new();
-    copy_profile_rule_file(
-        &args.config_root,
-        &workspace_config_root,
-        profile.rule_files.enforcement.as_deref(),
-        "enforcement",
-        &mut rule_files,
-    )?;
-    copy_profile_rule_file(
-        &args.config_root,
-        &workspace_config_root,
-        profile.rule_files.sigma.as_deref(),
-        "sigma",
-        &mut rule_files,
-    )?;
-    copy_profile_descriptor_files(&profile, &args.config_root, &workspace_config_root)?;
-    materialize_profile_guest_inputs(&profile, &args.config_root, &args.guest_dir, &workspace_guest_dir)?;
-
-    let copied_check = check_profile(&ProfileCheckArgs {
-        path: workspace_profile_path.clone(),
-        config_root: Some(workspace_config_root.clone()),
-        arch: args.arch.clone(),
-        json: true,
-    })?;
-    if copied_check.validation.profile_id != profile.id {
-        return Err(anyhow!(
-            "workspace profile id drifted: expected {}, got {}",
-            profile.id,
-            copied_check.validation.profile_id
-        ));
-    }
-
-    let plan = image_build_plan(&ImageBuildArgs {
-        profile: workspace_profile_path.clone(),
-        config_root: workspace_config_root.clone(),
-        guest_dir: workspace_guest_dir,
-        output: workspace.join("assets"),
-        arch: args.arch.clone(),
-        template: ImageBuildTemplate::All,
-        clean: false,
-        json: true,
-    })?;
-    let build_plan_path = workspace.join("build-plan.json");
-    fs::write(&build_plan_path, serde_json::to_vec_pretty(&plan)?)
-        .with_context(|| format!("write {}", build_plan_path.display()))?;
-
-    let report = ImageWorkspaceReport {
-        schema: "capsem.admin.image_workspace.v1",
-        ok: true,
-        profile_id: profile.id,
-        profile_revision: profile.revision,
-        workspace: workspace.display().to_string(),
-        config_root: workspace_config_root.display().to_string(),
-        profile_path: workspace_profile_path.display().to_string(),
-        profile_blake3: blake3::hash(&profile_toml).to_hex().to_string(),
-        build_plan_path: build_plan_path.display().to_string(),
-        rule_files,
-        arches: plan
-            .arches
-            .into_iter()
-            .filter(|arch| arches.iter().any(|selected| selected == &arch.arch))
-            .collect(),
-    };
-    fs::write(workspace.join("workspace.json"), serde_json::to_vec_pretty(&report)?)
-        .with_context(|| format!("write {}", workspace.join("workspace.json").display()))?;
-    Ok(report)
-}
-
 pub(super) fn copy_profile_descriptor_files(
     profile: &ProfileConfigFile,
     source_config_root: &Path,
@@ -1562,133 +1147,6 @@ pub(super) fn copy_profile_descriptor_files(
     Ok(())
 }
 
-pub(super) fn materialize_profile_guest_inputs(
-    profile: &ProfileConfigFile,
-    config_root: &Path,
-    source_guest_dir: &Path,
-    workspace_guest_dir: &Path,
-) -> Result<()> {
-    let source_config = config_root.join("docker").join("image");
-    let workspace_config = workspace_guest_dir.join("config");
-    fs::create_dir_all(&workspace_config).with_context(|| format!("create {}", workspace_config.display()))?;
-    for relative in ["build.toml", "manifest.toml"] {
-        let source = source_config.join(relative);
-        let destination = workspace_config.join(relative);
-        fs::copy(&source, &destination)
-            .with_context(|| format!("copy {} to {}", source.display(), destination.display()))?;
-    }
-    copy_dir_recursive(&source_config.join("kernel"), &workspace_config.join("kernel"))?;
-    copy_dir_recursive(&source_config.join("security"), &workspace_config.join("security"))?;
-    copy_dir_recursive(&source_config.join("vm"), &workspace_config.join("vm"))?;
-    write_profile_vm_resources_toml(&workspace_config.join("vm").join("resources.toml"), profile)?;
-    copy_dir_recursive(
-        &source_guest_dir.join("artifacts"),
-        &workspace_guest_dir.join("artifacts"),
-    )?;
-
-    let packages_dir = workspace_config.join("packages");
-    fs::create_dir_all(&packages_dir).with_context(|| format!("create {}", packages_dir.display()))?;
-    if let Some(descriptor) = profile.files.apt_packages.as_ref() {
-        let packages = read_profile_package_lines(&config_root.join(&descriptor.path))?;
-        write_profile_package_toml(
-            &packages_dir.join("apt.toml"),
-            "apt",
-            "System Packages",
-            "apt",
-            "apt-get install -y --no-install-recommends",
-            &packages,
-        )?;
-    }
-    if let (Some(descriptor), Some(lock_descriptor)) = (
-        profile.files.python_requirements.as_ref(),
-        profile.files.python_requirements_lock.as_ref(),
-    ) {
-        let packages = read_profile_package_lines(&config_root.join(&descriptor.path))?;
-        write_profile_package_toml(
-            &packages_dir.join("python.toml"),
-            "python",
-            "Python Packages",
-            "uv",
-            "uv pip install --system --break-system-packages",
-            &packages,
-        )?;
-        let lock_source = config_root.join(&lock_descriptor.path);
-        let expected = exact_python_dependencies(&packages)?;
-        validate_python_requirements_lock(&lock_source, Some(&expected))?;
-        fs::copy(&lock_source, packages_dir.join("python-requirements.lock"))
-            .with_context(|| format!("copy Python requirements lock {}", lock_source.display()))?;
-    }
-    if let (Some(descriptor), Some(lock_descriptor)) = (
-        profile.files.npm_packages.as_ref(),
-        profile.files.npm_package_lock.as_ref(),
-    ) {
-        let packages = read_profile_package_lines(&config_root.join(&descriptor.path))?;
-        write_profile_package_toml(
-            &packages_dir.join("npm.toml"),
-            "npm",
-            "Node Packages",
-            "npm",
-            "npm install -g --prefix /opt/ai-clis",
-            &packages,
-        )?;
-        let expected = exact_npm_dependencies(&packages)?;
-        let lock_source = config_root.join(&lock_descriptor.path);
-        validate_npm_package_lock(&lock_source, Some(&expected))?;
-        fs::copy(&lock_source, packages_dir.join("npm-package-lock.json"))
-            .with_context(|| format!("copy npm package lock {}", lock_source.display()))?;
-        fs::write(
-            packages_dir.join("npm-package.json"),
-            serde_json::to_vec_pretty(&serde_json::json!({
-                "name": "capsem-profile-ai-clis",
-                "private": true,
-                "dependencies": expected,
-            }))?,
-        )?;
-    }
-    if let Some(descriptor) = profile.files.build.as_ref() {
-        let source = config_root.join(&descriptor.path);
-        let destination = workspace_guest_dir.join("profile-build.sh");
-        fs::copy(&source, &destination)
-            .with_context(|| format!("copy {} to {}", source.display(), destination.display()))?;
-    }
-    if let Some(descriptor) = profile.files.tips.as_ref() {
-        let source = config_root.join(&descriptor.path);
-        let artifacts_dir = workspace_guest_dir.join("artifacts");
-        fs::create_dir_all(&artifacts_dir).with_context(|| format!("create {}", artifacts_dir.display()))?;
-        fs::copy(&source, artifacts_dir.join("tips.txt"))
-            .with_context(|| format!("copy profile tips {}", source.display()))?;
-    }
-    if let Some(descriptor) = profile.files.root_manifest.as_ref() {
-        let manifest_path = config_root.join(&descriptor.path);
-        let source_root = manifest_path
-            .parent()
-            .ok_or_else(|| anyhow!("profile root manifest has no parent"))?
-            .join("root");
-        copy_dir_recursive(&source_root, &workspace_guest_dir.join("profile-root"))?;
-    }
-    Ok(())
-}
-
-pub(super) fn write_profile_vm_resources_toml(path: &Path, profile: &ProfileConfigFile) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let content = format!(
-        "[resources]\n\
-         cpu_count = {}\n\
-         ram_gb = {}\n\
-         scratch_disk_size_gb = {}\n\
-         log_bodies = false\n\
-         max_body_capture = 4096\n\
-         retention_days = 30\n\
-         max_sessions = 100\n\
-         min_content_sessions = 25\n\
-         max_disk_gb = 100\n",
-        profile.vm.cpu_count, profile.vm.ram_gb, profile.vm.scratch_disk_size_gb
-    );
-    fs::write(path, content).with_context(|| format!("write {}", path.display()))
-}
-
 pub(super) fn read_profile_package_lines(path: &Path) -> Result<Vec<String>> {
     let content = fs::read_to_string(path).with_context(|| format!("read package list {}", path.display()))?;
     let packages = content
@@ -1701,80 +1159,6 @@ pub(super) fn read_profile_package_lines(path: &Path) -> Result<Vec<String>> {
         return Err(anyhow!("package list {} is empty", path.display()));
     }
     Ok(packages)
-}
-
-pub(super) fn write_profile_package_toml(
-    path: &Path,
-    key: &str,
-    name: &str,
-    manager: &str,
-    install_cmd: &str,
-    packages: &[String],
-) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow!("package TOML path has no parent: {}", path.display()))?;
-    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    let packages = packages
-        .iter()
-        .map(|package| format!("    {package:?}"))
-        .collect::<Vec<_>>()
-        .join(",\n");
-    let content = format!(
-        r#"[{key}]
-name = {name:?}
-manager = {manager:?}
-install_cmd = {install_cmd:?}
-packages = [
-{packages},
-]
-"#
-    );
-    fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
-    Ok(())
-}
-
-pub(super) fn copy_profile_rule_file(
-    config_root: &Path,
-    workspace_config_root: &Path,
-    rule_file: Option<&str>,
-    kind: &'static str,
-    reports: &mut Vec<ImageWorkspaceRuleFileReport>,
-) -> Result<()> {
-    let Some(rule_file) = rule_file else {
-        return Ok(());
-    };
-    if Path::new(rule_file).is_absolute() {
-        return Err(anyhow!(
-            "image workspace requires profile rule files to be relative, got {rule_file}"
-        ));
-    }
-    let source_path = resolve_profile_rule_file_path(config_root, rule_file);
-    let destination_path = workspace_config_root.join(rule_file);
-    fs::create_dir_all(
-        destination_path
-            .parent()
-            .ok_or_else(|| anyhow!("rule file destination has no parent"))?,
-    )
-    .with_context(|| format!("create parent for {}", destination_path.display()))?;
-    let bytes = fs::read(&source_path).with_context(|| format!("read rule file {}", source_path.display()))?;
-    fs::write(&destination_path, &bytes).with_context(|| format!("write rule file {}", destination_path.display()))?;
-    reports.push(ImageWorkspaceRuleFileReport {
-        kind,
-        source: source_path.display().to_string(),
-        path: destination_path.display().to_string(),
-        blake3: blake3::hash(&bytes).to_hex().to_string(),
-        size: bytes.len() as u64,
-    });
-    Ok(())
-}
-
-pub(super) fn builder_python_command(arguments: impl IntoIterator<Item = String>) -> Vec<String> {
-    ["uv", "run", "--project", "build_system", "--frozen", "python"]
-        .into_iter()
-        .map(str::to_owned)
-        .chain(arguments)
-        .collect()
 }
 
 pub(super) fn selected_profile_arches(profile: &ProfileConfigFile, only_arch: Option<&str>) -> Result<Vec<String>> {
@@ -1879,102 +1263,6 @@ pub(super) fn validate_relative_manifest_path(field: &str, value: &str) -> Resul
         || value.trim() != value
     {
         return Err(anyhow!("{field} must be a relative path without traversal: {value}"));
-    }
-    Ok(())
-}
-
-pub(super) fn print_image_build_plan(plan: &ImageBuildPlan, json: bool) -> Result<()> {
-    if json {
-        println!("{}", serde_json::to_string_pretty(plan)?);
-        return Ok(());
-    }
-    println!(
-        "profile {} rev {} -> {}",
-        plan.profile_id, plan.profile_revision, plan.output
-    );
-    for arch in &plan.arches {
-        println!("  {}: {}, {}, {}", arch.arch, arch.kernel, arch.initrd, arch.rootfs);
-    }
-    for command in &plan.commands {
-        let env = if command.env.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "{} ",
-                command
-                    .env
-                    .iter()
-                    .map(|(key, value)| format!("{key}={value}"))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            )
-        };
-        println!("  {}{}", env, command.argv.join(" "));
-    }
-    Ok(())
-}
-
-pub(super) fn clean_image_outputs(plan: &ImageBuildPlan) -> Result<()> {
-    let output = PathBuf::from(&plan.output);
-    for arch in &plan.arches {
-        let path = output.join(&arch.arch);
-        if !path.exists() {
-            continue;
-        }
-        match plan.template {
-            "all" => {
-                fs::remove_dir_all(&path).with_context(|| format!("remove {}", path.display()))?;
-            }
-            "kernel" => {
-                for name in [&arch.kernel, &arch.initrd] {
-                    let file = path.join(name);
-                    if file.exists() {
-                        fs::remove_file(&file).with_context(|| format!("remove {}", file.display()))?;
-                    }
-                }
-            }
-            "rootfs" => {
-                for name in [
-                    arch.rootfs.as_str(),
-                    "rootfs.squashfs",
-                    "obom.cdx.json",
-                    "software-inventory.json",
-                    "build-ledger.log",
-                    "tool-versions.txt",
-                ] {
-                    let file = path.join(name);
-                    if file.exists() {
-                        fs::remove_file(&file).with_context(|| format!("remove {}", file.display()))?;
-                    }
-                }
-            }
-            other => return Err(anyhow!("unsupported image build template {other}")),
-        }
-    }
-    if plan.arches.len() > 1 {
-        for name in ["manifest.json", "B3SUMS"] {
-            let path = output.join(name);
-            if path.exists() {
-                fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
-            }
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn run_command(command: &CommandReport) -> Result<()> {
-    let (program, args) = command
-        .argv
-        .split_first()
-        .ok_or_else(|| anyhow!("empty command for step {}", command.step))?;
-    let status = Command::new(program)
-        .args(args)
-        .envs(&command.env)
-        .stdin(Stdio::null())
-        .status()
-        .with_context(|| format!("run image build step {}", command.step))?;
-    if !status.success() {
-        return Err(anyhow!("image build step {} failed with status {status}", command.step));
     }
     Ok(())
 }

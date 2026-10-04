@@ -1,38 +1,34 @@
 use super::*;
 
 #[test]
-fn graph_channel_page_validates_each_mixed_profile_revision() {
+fn graph_channel_page_names_the_runtime_revision() {
     let manifest = serde_json::json!({
         "version": "1.0.0",
-        "profiles": {
-            "co-work": {"revision": "2026.06.08.7"},
-            "code": {"revision": "2026.06.08.8"},
-        },
+        "runtime": {"revision": "0.7.0-0123456789ab"},
     });
     let health = serde_json::json!({
         "generated_at": "2026-07-28T00:00:00Z",
         "current": {"binary": "1.6.0"},
-        "profiles": {"revision": "profiles-derived-set-identity"},
         "evidence": {"host_binary_files": []},
     });
-    let complete_page = concat!(
-        "2026-07-28T00:00:00Z 1.0.0 /assets/nightly/manifest.json ",
-        "co-work 2026.06.08.7 code 2026.06.08.8"
-    );
+    let complete_page = "2026-07-28T00:00:00Z 1.0.0 /assets/nightly/manifest.json runtime 0.7.0-0123456789ab";
 
     validate_assets_channel_graph_page_state(complete_page, "nightly", &manifest, &health)
-        .expect("all manifest-owned profile revisions are rendered");
+        .expect("the manifest-owned runtime revision is rendered");
 
-    let missing_code_revision = concat!(
-        "2026-07-28T00:00:00Z 1.0.0 /assets/nightly/manifest.json ",
-        "co-work 2026.06.08.7 code profiles-derived-set-identity"
-    );
-    let error = validate_assets_channel_graph_page_state(missing_code_revision, "nightly", &manifest, &health)
-        .expect_err("aggregate identity cannot replace a missing profile revision");
+    let missing_revision = "2026-07-28T00:00:00Z 1.0.0 /assets/nightly/manifest.json runtime";
+    let error = validate_assets_channel_graph_page_state(missing_revision, "nightly", &manifest, &health)
+        .expect_err("the page must name the runtime it publishes");
     assert!(
-        error.to_string().contains("missing profile revision code 2026.06.08.8"),
+        error
+            .to_string()
+            .contains("missing runtime revision 0.7.0-0123456789ab"),
         "{error:#}"
     );
+
+    let binary_only = serde_json::json!({"version": "1.0.0"});
+    validate_assets_channel_graph_page_state(missing_revision, "nightly", &binary_only, &health)
+        .expect("a channel without a runtime has no runtime revision to render");
 }
 
 #[test]
@@ -465,73 +461,6 @@ fn profile_check_validates_profile_payload_files_and_root_manifest() {
 }
 
 #[test]
-fn release_graph_publishes_every_manifested_profile_root_payload() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir.parent().and_then(Path::parent).expect("repo root");
-    let config_root = repo_root.join("config");
-    let profile = load_profile(&config_root.join("profiles/code/profile.toml")).expect("load profile");
-    let root_manifest: ProfileRootManifest = serde_json::from_slice(
-        &fs::read(config_root.join("profiles/code/root.manifest.json")).expect("read root manifest"),
-    )
-    .expect("parse root manifest");
-    let mut copies = Vec::new();
-
-    let rows = graph_profile_config_refs(
-        &profile,
-        &config_root,
-        "nightly",
-        &profile.revision,
-        "x86_64",
-        &mut copies,
-    )
-    .expect("build profile config graph");
-    let root_rows = rows
-        .iter()
-        .filter(|row| row["kind"].as_str() == Some("root_payload"))
-        .collect::<Vec<_>>();
-
-    assert_eq!(root_rows.len(), root_manifest.files.len());
-    let expected_paths = root_manifest
-        .files
-        .iter()
-        .map(|entry| format!("profiles/code/root/{}", entry.path))
-        .collect::<BTreeSet<_>>();
-    let actual_paths = root_rows
-        .iter()
-        .map(|row| row["path"].as_str().expect("root payload path").to_string())
-        .collect::<BTreeSet<_>>();
-    assert_eq!(actual_paths, expected_paths);
-    let expected_digests = root_rows
-        .iter()
-        .map(|row| row["digest"]["blake3"].as_str().expect("root payload BLAKE3"))
-        .collect::<BTreeSet<_>>();
-    let actual_urls = root_rows
-        .iter()
-        .map(|row| row["url"].as_str().expect("root payload URL"))
-        .collect::<BTreeSet<_>>();
-    assert_eq!(actual_urls.len(), expected_digests.len());
-    let urls_by_digest = root_rows
-        .iter()
-        .fold(BTreeMap::<&str, BTreeSet<&str>>::new(), |mut grouped, row| {
-            grouped
-                .entry(row["digest"]["blake3"].as_str().expect("root payload BLAKE3"))
-                .or_default()
-                .insert(row["url"].as_str().expect("root payload URL"));
-            grouped
-        });
-    assert!(
-        urls_by_digest.values().all(|urls| urls.len() == 1),
-        "identical root payload bytes must reuse one immutable URL"
-    );
-    for row in root_rows {
-        let path = row["path"].as_str().expect("root payload path");
-        assert!(copies.iter().any(|copy| {
-            copy.url == row["url"].as_str().expect("root payload URL") && copy.source == config_root.join(path)
-        }));
-    }
-}
-
-#[test]
 fn profile_check_rejects_missing_profile_payload_file() {
     let temp = tempfile::tempdir().expect("tempdir");
     let config_root = temp.path().join("config");
@@ -869,73 +798,4 @@ fn profile_check_rejects_local_model_provider_profile_root_payloads() {
         format!("{error:#}").contains("profile root provider override"),
         "{error:#}"
     );
-}
-
-#[test]
-fn image_verify_rejects_profile_manifest_pin_drift() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let output = temp.path().join("assets");
-    let arch_dir = output.join("arm64");
-    fs::create_dir_all(&arch_dir).expect("asset dir");
-    let kernel = b"kernel";
-    let initrd = b"initrd";
-    let rootfs = b"rootfs";
-    fs::write(arch_dir.join("vmlinuz"), kernel).expect("kernel");
-    fs::write(arch_dir.join("initrd.img"), initrd).expect("initrd");
-    fs::write(arch_dir.join("rootfs.erofs"), rootfs).expect("rootfs");
-    let kernel_hash = blake3::hash(kernel).to_hex().to_string();
-    let rootfs_hash = blake3::hash(rootfs).to_hex().to_string();
-    let wrong_initrd_hash = "1111111111111111111111111111111111111111111111111111111111111111";
-    fs::write(
-        output.join("manifest.json"),
-        format!(
-            r#"{{
-  "format": 2,
-  "refresh_policy": "24h",
-  "assets": {{
-    "current": "2030.0101.1",
-    "releases": {{
-      "2030.0101.1": {{
-        "date": "2030-01-01",
-        "deprecated": false,
-        "min_binary": "1.0.0",
-        "arches": {{
-          "arm64": {{
-            "vmlinuz": {{"hash": "{kernel_hash}", "size": {kernel_size}}},
-            "initrd.img": {{"hash": "{wrong_initrd_hash}", "size": {initrd_size}}},
-            "rootfs.erofs": {{"hash": "{rootfs_hash}", "size": {rootfs_size}}}
-          }}
-        }}
-      }}
-    }}
-  }},
-  "binaries": {{
-    "current": "1.0.0",
-    "releases": {{"1.0.0": {{"date": "2030-01-01", "deprecated": false, "min_assets": "2030.0101.1"}}}}
-  }}
-}}"#,
-            kernel_size = kernel.len(),
-            initrd_size = initrd.len(),
-            rootfs_size = rootfs.len(),
-        ),
-    )
-    .expect("manifest");
-
-    let mut profile = ProfileConfigFile::builtin_primary();
-    profile.rule_files.enforcement = None;
-    profile.rule_files.sigma = None;
-    profile.assets.arch.retain(|arch, _| arch == "arm64");
-    let profile_path = temp.path().join("profile.toml");
-    fs::write(&profile_path, toml::to_string(&profile).expect("serialize profile")).expect("profile");
-
-    let error = verify_image_outputs(&ImageVerifyArgs {
-        profile: profile_path,
-        config_root: temp.path().to_path_buf(),
-        output,
-        manifest: None,
-        arch: Some("arm64".to_string()),
-    })
-    .expect_err("manifest/output drift rejected");
-
-    assert!(format!("{error:#}").contains("image output verify failed"), "{error:#}");
 }

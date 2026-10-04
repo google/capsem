@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{anyhow, bail, Context, Result};
 pub use capsem_assets::asset_manager::{Architecture, PackageArchitecture};
@@ -8,10 +8,10 @@ use sha2::{Digest as ShaDigest, Sha256};
 
 use crate::source_commit::{deserialize_optional, SourceCommit};
 
-const REQUIRED_PROFILE_IMAGE_ARTIFACT_KINDS: [ProfileImageArtifactKind; 3] = [
-    ProfileImageArtifactKind::Kernel,
-    ProfileImageArtifactKind::Initrd,
-    ProfileImageArtifactKind::Rootfs,
+const REQUIRED_RUNTIME_IMAGE_ARTIFACT_KINDS: [RuntimeImageArtifactKind; 3] = [
+    RuntimeImageArtifactKind::Kernel,
+    RuntimeImageArtifactKind::Initrd,
+    RuntimeImageArtifactKind::Rootfs,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,28 +52,10 @@ pub enum PackageKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ProfileImageArtifactKind {
+pub enum RuntimeImageArtifactKind {
     Kernel,
     Initrd,
     Rootfs,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProfileConfigKind {
-    Profile,
-    Mcp,
-    Enforcement,
-    Detection,
-    AptPackages,
-    PythonRequirements,
-    PythonRequirementsLock,
-    NpmPackages,
-    NpmPackageLock,
-    Build,
-    Tips,
-    RootManifest,
-    RootPayload,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,8 +64,8 @@ pub enum ReleaseLedgerKind {
     Manifest,
     Package,
     Binary,
-    Profile,
-    ProfileImage,
+    Runtime,
+    RuntimeImage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,13 +79,18 @@ pub enum ReleaseLedgerArchitecture {
 #[serde(deny_unknown_fields)]
 pub struct EvidenceRef {
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub url: String,
+    pub bytes: u64,
     pub digest: DigestSet,
+    pub status: Status,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageInventoryRow {
+    pub id: String,
     pub name: String,
     pub version: String,
     #[serde(
@@ -148,24 +135,27 @@ pub struct PackagedExecutableFile {
     pub bytes: Vec<u8>,
 }
 
+/// One channel's public release graph: the package cohort and the runtime.
+///
+/// `runtime` is absent until the channel's first runtime release; a graph
+/// carries no other VM release unit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseManifest {
     pub version: String,
+    pub channel: String,
     #[serde(default = "default_status_current")]
     pub status: Status,
     #[serde(default)]
     pub packages: Vec<PackageInventoryRow>,
-    #[serde(default)]
-    pub profiles: BTreeMap<String, ProfileDocument>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<RuntimeDocument>,
 }
 
+/// The VM runtime a channel publishes: one image set per architecture.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProfileDocument {
-    pub version: String,
-    pub id: String,
-    pub name: String,
+pub struct RuntimeDocument {
     pub revision: String,
     #[serde(
         default,
@@ -178,7 +168,7 @@ pub struct ProfileDocument {
     pub min_capsem_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_capsem_version: Option<String>,
-    pub architectures: Vec<ProfileArchitectureImages>,
+    pub architectures: Vec<RuntimeArchitecture>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,54 +184,21 @@ pub struct SoftwareInventoryRow {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProfileConfigRef {
-    pub kind: ProfileConfigKind,
-    pub path: String,
-    pub url: String,
-    pub bytes: u64,
-    pub digest: DigestSet,
-    pub status: Status,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProfileArchitectureImages {
+pub struct RuntimeArchitecture {
     pub architecture: Architecture,
+    pub package_inventory_revision: String,
+    pub image_revision: String,
     #[serde(default)]
     pub software: Vec<SoftwareInventoryRow>,
-    #[serde(default)]
-    pub config: Vec<ProfileConfigRef>,
-    #[serde(rename = "images")]
-    pub artifacts: Vec<ProfileImageArtifactRef>,
+    pub images: Vec<RuntimeImageArtifactRef>,
     #[serde(default)]
     pub evidence: Vec<EvidenceRef>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProfileVersionHistory {
-    pub channel: String,
-    pub profile_id: String,
-    pub versions: Vec<ProfileDocument>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ProfileImageArtifactKey {
-    pub architecture: Architecture,
-    pub kind: ProfileImageArtifactKind,
-    pub name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProfileImageDiff {
-    pub added: Vec<ProfileImageArtifactKey>,
-    pub retained: Vec<ProfileImageArtifactKey>,
-    pub removed: Vec<ProfileImageArtifactKey>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProfileImageArtifactRef {
-    pub kind: ProfileImageArtifactKind,
+pub struct RuntimeImageArtifactRef {
+    pub kind: RuntimeImageArtifactKind,
     pub name: String,
     pub url: String,
     pub bytes: u64,
@@ -278,8 +235,6 @@ pub struct ReleaseLedgerEntry {
     pub name: String,
     pub version: String,
     pub status: Status,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub architecture: Option<ReleaseLedgerArchitecture>,
 }
@@ -610,7 +565,6 @@ impl ReleaseLedger {
                     name: manifest_record.url.clone(),
                     version: manifest_record.version.clone(),
                     status: manifest_record.status,
-                    profile: None,
                     architecture: None,
                 });
             }
@@ -635,7 +589,6 @@ impl ReleaseManifest {
                 name: package.name.clone(),
                 version: package.version.clone(),
                 status: package.status,
-                profile: None,
                 architecture: Some(ReleaseLedgerArchitecture::Package(package.architecture)),
             });
         }
@@ -647,30 +600,27 @@ impl ReleaseManifest {
                     name: binary.name.clone(),
                     version: binary.version.clone(),
                     status: binary.status,
-                    profile: None,
                     architecture: Some(ReleaseLedgerArchitecture::Package(binary.architecture)),
                 });
             }
         }
-        for (profile_id, profile) in &self.profiles {
+        if let Some(runtime) = &self.runtime {
             entries.push(ReleaseLedgerEntry {
                 channel: channel.to_string(),
-                kind: ReleaseLedgerKind::Profile,
-                name: profile_id.clone(),
-                version: profile.revision.clone(),
-                status: profile.status,
-                profile: Some(profile_id.clone()),
+                kind: ReleaseLedgerKind::Runtime,
+                name: "runtime".to_string(),
+                version: runtime.revision.clone(),
+                status: runtime.status,
                 architecture: None,
             });
-            for architecture in &profile.architectures {
-                for artifact in &architecture.artifacts {
+            for architecture in &runtime.architectures {
+                for image in &architecture.images {
                     entries.push(ReleaseLedgerEntry {
                         channel: channel.to_string(),
-                        kind: ReleaseLedgerKind::ProfileImage,
-                        name: artifact.name.clone(),
-                        version: profile.revision.clone(),
-                        status: artifact.status,
-                        profile: Some(profile_id.clone()),
+                        kind: ReleaseLedgerKind::RuntimeImage,
+                        name: image.name.clone(),
+                        version: runtime.revision.clone(),
+                        status: image.status,
                         architecture: Some(ReleaseLedgerArchitecture::Machine(architecture.architecture)),
                     });
                 }
@@ -680,175 +630,101 @@ impl ReleaseManifest {
     }
 }
 
-impl ProfileDocument {
-    pub fn validate_profile_ownership(&self) -> Result<()> {
-        if self.version.trim().is_empty() {
-            bail!("profile {} version must not be empty", self.id);
+/// Refuse a runtime revision that cannot name an immutable publication path.
+///
+/// The revision is a path component of every published image URL and part of
+/// the publication identity, so it is restricted to one URL-safe component.
+pub fn validate_runtime_revision(revision: &str) -> Result<()> {
+    if revision.is_empty()
+        || revision.contains("..")
+        || !revision
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        bail!("runtime revision must be one URL-path-safe component: {revision:?}");
+    }
+    Ok(())
+}
+
+impl RuntimeDocument {
+    pub fn validate(&self) -> Result<()> {
+        validate_runtime_revision(&self.revision)?;
+        let minimum = parse_capsem_bound(self.min_capsem_version.as_deref(), "minimum")?;
+        let maximum = parse_capsem_bound(self.max_capsem_version.as_deref(), "maximum")?;
+        if let (Some(minimum), Some(maximum)) = (&minimum, &maximum) {
+            if minimum > maximum {
+                bail!("runtime minimum Capsem version {minimum} exceeds maximum {maximum}");
+            }
         }
-        if self.id.trim().is_empty() {
-            bail!("profile id must not be empty");
-        }
-        if self.name.trim().is_empty() {
-            bail!("profile {} name must not be empty", self.id);
-        }
-        if self.revision.trim().is_empty() {
-            bail!("profile {} revision must not be empty", self.id);
-        }
-        validate_profile_semver(&self.version).with_context(|| format!("profile {} version is invalid", self.id))?;
-        validate_profile_semver(&self.revision).with_context(|| format!("profile {} revision is invalid", self.id))?;
         if self.architectures.is_empty() {
-            bail!("profile {} must list architecture records", self.id);
+            bail!("runtime {} must list architecture records", self.revision);
         }
+        let mut seen = BTreeSet::new();
         for architecture in &self.architectures {
-            architecture.validate(&self.id)?;
+            if !seen.insert(architecture.architecture) {
+                bail!(
+                    "runtime {} repeats architecture {}",
+                    self.revision,
+                    architecture.architecture.as_str()
+                );
+            }
+            architecture.validate(&self.revision)?;
         }
         Ok(())
     }
 }
 
-fn validate_profile_semver(value: &str) -> Result<()> {
-    Version::parse(value.trim())
-        .map(|_| ())
-        .with_context(|| format!("profile release version {value:?} must be SemVer-compatible"))
-}
-
-impl ProfileVersionHistory {
-    pub fn new(channel: impl Into<String>, first: ProfileDocument) -> Result<Self> {
-        first.validate_profile_ownership()?;
-        let channel = channel.into();
-        validate_channel_id(&channel)?;
-        Ok(Self {
-            channel,
-            profile_id: first.id.clone(),
-            versions: vec![first],
+fn parse_capsem_bound(value: Option<&str>, label: &str) -> Result<Option<Version>> {
+    value
+        .map(|value| {
+            Version::parse(value).with_context(|| format!("runtime {label} Capsem version is invalid: {value}"))
         })
-    }
-
-    pub fn append_version(&mut self, next: ProfileDocument) -> Result<()> {
-        next.validate_profile_ownership()?;
-        if next.id != self.profile_id {
-            bail!("profile history {} cannot append profile {}", self.profile_id, next.id);
-        }
-        if self.versions.iter().any(|profile| profile.revision == next.revision) {
-            bail!(
-                "profile history {} already contains revision {}",
-                self.profile_id,
-                next.revision
-            );
-        }
-        self.versions.push(next);
-        Ok(())
-    }
-}
-
-pub fn diff_profile_image_artifacts(previous: &ProfileDocument, next: &ProfileDocument) -> Result<ProfileImageDiff> {
-    if previous.id != next.id {
-        bail!(
-            "cannot diff profile images for different profiles: {} vs {}",
-            previous.id,
-            next.id
-        );
-    }
-    previous.validate_profile_ownership()?;
-    next.validate_profile_ownership()?;
-    let previous_keys = profile_image_artifact_keys(previous);
-    let next_keys = profile_image_artifact_keys(next);
-    Ok(ProfileImageDiff {
-        added: next_keys.difference(&previous_keys).cloned().collect(),
-        retained: next_keys.intersection(&previous_keys).cloned().collect(),
-        removed: previous_keys.difference(&next_keys).cloned().collect(),
-    })
-}
-
-fn profile_image_artifact_keys(profile: &ProfileDocument) -> std::collections::BTreeSet<ProfileImageArtifactKey> {
-    let mut keys = std::collections::BTreeSet::new();
-    for architecture in &profile.architectures {
-        for artifact in &architecture.artifacts {
-            keys.insert(ProfileImageArtifactKey {
-                architecture: architecture.architecture,
-                kind: artifact.kind,
-                name: artifact.name.clone(),
-            });
-        }
-    }
-    keys
+        .transpose()
 }
 
 impl SoftwareInventoryRow {
-    fn validate(&self, profile: &str) -> Result<()> {
+    fn validate(&self, architecture: Architecture) -> Result<()> {
+        let arch = architecture.as_str();
         if self.name.trim().is_empty() {
-            bail!("profile {profile} software name must not be empty");
-        }
-        if self.version.trim().is_empty() {
-            bail!("profile {profile} software {} version must not be empty", self.name);
+            bail!("runtime {arch} software name must not be empty");
         }
         let version = self.version.trim();
+        if version.is_empty() {
+            bail!("runtime {arch} software {} version must not be empty", self.name);
+        }
         if matches!(
             version.to_ascii_lowercase().as_str(),
             "unversioned" | "unknown" | "latest"
         ) {
-            bail!("profile {profile} software {} version is {}", self.name, self.version);
+            bail!("runtime {arch} software {} version is {}", self.name, self.version);
         }
         if self.source.trim().is_empty() {
-            bail!("profile {profile} software {} source must not be empty", self.name);
+            bail!("runtime {arch} software {} source must not be empty", self.name);
+        }
+        if self.architecture != architecture {
+            bail!("runtime {arch} software {} architecture mismatch", self.name);
         }
         validate_url_like(&self.evidence)
-            .with_context(|| format!("profile {profile} software {} evidence is invalid", self.name))?;
+            .with_context(|| format!("runtime {arch} software {} evidence is invalid", self.name))?;
         self.digest
-            .validate(&format!("profile {profile} software {}", self.name))?;
+            .validate(&format!("runtime {arch} software {}", self.name))?;
         Ok(())
     }
 }
 
-impl ProfileConfigRef {
-    fn validate(&self, profile: &str) -> Result<()> {
-        if self.path.trim().is_empty() {
-            bail!("profile {profile} config {} path must not be empty", self.kind.as_str());
+impl RuntimeArchitecture {
+    fn validate(&self, revision: &str) -> Result<()> {
+        let arch = self.architecture.as_str();
+        for (label, value) in [
+            ("package_inventory_revision", &self.package_inventory_revision),
+            ("image_revision", &self.image_revision),
+        ] {
+            if value != revision {
+                bail!("runtime {revision} architecture {arch} {label} {value} is not the runtime revision");
+            }
         }
-        validate_url_like(&self.url)
-            .with_context(|| format!("profile {profile} config {} url is invalid", self.kind.as_str()))?;
-        if self.bytes == 0 {
-            bail!("profile {profile} config {} bytes must be non-zero", self.kind.as_str());
-        }
-        self.digest
-            .validate(&format!("profile {profile} config {}", self.kind.as_str()))?;
-        Ok(())
-    }
-}
-
-impl ProfileConfigKind {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Profile => "profile",
-            Self::Mcp => "mcp",
-            Self::Enforcement => "enforcement",
-            Self::Detection => "detection",
-            Self::AptPackages => "apt_packages",
-            Self::PythonRequirements => "python_requirements",
-            Self::PythonRequirementsLock => "python_requirements_lock",
-            Self::NpmPackages => "npm_packages",
-            Self::NpmPackageLock => "npm_package_lock",
-            Self::Build => "build",
-            Self::Tips => "tips",
-            Self::RootManifest => "root_manifest",
-            Self::RootPayload => "root_payload",
-        }
-    }
-}
-
-impl ProfileArchitectureImages {
-    fn validate(&self, profile: &str) -> Result<()> {
         if self.software.is_empty() {
-            bail!(
-                "profile {profile} architecture {:?} must list software",
-                self.architecture
-            );
-        }
-        if self.config.is_empty() {
-            bail!(
-                "profile {profile} architecture {:?} must list config",
-                self.architecture
-            );
+            bail!("runtime {revision} architecture {arch} must list software");
         }
         let software_inventory_digests = self
             .evidence
@@ -857,54 +733,31 @@ impl ProfileArchitectureImages {
             .map(|evidence| &evidence.digest)
             .collect::<Vec<_>>();
         for software in &self.software {
-            software.validate(profile)?;
-            if software.architecture != self.architecture {
+            software.validate(self.architecture)?;
+            if software_inventory_digests.contains(&&software.digest) {
                 bail!(
-                    "profile {profile} architecture {:?} software {} architecture mismatch",
-                    self.architecture,
-                    software.name
-                );
-            }
-            if software_inventory_digests
-                .iter()
-                .any(|digest| **digest == software.digest)
-            {
-                bail!(
-                    "profile {profile} architecture {:?} software {} digest reuses software_inventory evidence digest",
-                    self.architecture,
+                    "runtime {arch} software {} digest reuses software_inventory evidence digest",
                     software.name
                 );
             }
         }
-        for config in &self.config {
-            config.validate(profile)?;
-        }
-        if self.artifacts.is_empty() {
-            bail!("profile {profile} image set must list artifacts");
-        }
-        for required_kind in REQUIRED_PROFILE_IMAGE_ARTIFACT_KINDS {
-            if !self.artifacts.iter().any(|artifact| artifact.kind == required_kind) {
+        for required_kind in REQUIRED_RUNTIME_IMAGE_ARTIFACT_KINDS {
+            if !self.images.iter().any(|image| image.kind == required_kind) {
                 bail!(
-                    "profile {profile} architecture {:?} images missing {}",
-                    self.architecture,
+                    "runtime {revision} architecture {arch} images missing {}",
                     required_kind.as_str()
                 );
             }
         }
-        for artifact in &self.artifacts {
-            artifact.validate(profile)?;
+        for image in &self.images {
+            image.validate(arch)?;
         }
         for evidence in &self.evidence {
             let kind = evidence.kind.as_str();
             if matches!(kind, "abom" | "obom") && !evidence_url_matches_architecture(&evidence.url, self.architecture) {
-                bail!(
-                    "profile {profile} architecture {:?} evidence {} url must include /{}/",
-                    self.architecture,
-                    kind,
-                    self.architecture.as_str()
-                );
+                bail!("runtime architecture {arch} evidence {kind} url must include /{arch}/");
             }
-            evidence.validate(&format!("profile {profile} image evidence"))?;
+            evidence.validate(&format!("runtime {arch} image"))?;
         }
         Ok(())
     }
@@ -915,7 +768,7 @@ fn evidence_url_matches_architecture(url: &str, architecture: Architecture) -> b
     url.contains(&format!("/{arch}/")) || url.contains(&format!("/{arch}-"))
 }
 
-impl ProfileImageArtifactKind {
+impl RuntimeImageArtifactKind {
     fn as_str(self) -> &'static str {
         match self {
             Self::Kernel => "kernel",
@@ -925,18 +778,18 @@ impl ProfileImageArtifactKind {
     }
 }
 
-impl ProfileImageArtifactRef {
-    fn validate(&self, profile: &str) -> Result<()> {
+impl RuntimeImageArtifactRef {
+    fn validate(&self, arch: &str) -> Result<()> {
         if self.name.trim().is_empty() {
-            bail!("profile {profile} image artifact name must not be empty");
+            bail!("runtime {arch} image artifact name must not be empty");
         }
         validate_url_like(&self.url)
-            .with_context(|| format!("profile {profile} image artifact {} url is invalid", self.name))?;
+            .with_context(|| format!("runtime {arch} image artifact {} url is invalid", self.name))?;
         if self.bytes == 0 {
-            bail!("profile {profile} image artifact {} bytes must be non-zero", self.name);
+            bail!("runtime {arch} image artifact {} bytes must be non-zero", self.name);
         }
         self.digest
-            .validate(&format!("profile {profile} image artifact {}", self.name))?;
+            .validate(&format!("runtime {arch} image artifact {}", self.name))?;
         Ok(())
     }
 }
@@ -1028,55 +881,6 @@ fn validate_url_like(value: &str) -> Result<()> {
         || value.starts_with("file://"))
     {
         bail!("expected release-site relative, file, or http(s) URL, got {value}");
-    }
-    Ok(())
-}
-
-/// Parse a profile revision as strict semver.
-///
-/// A revision is a profile's tag: what a corp operator reads, what asset reuse
-/// is keyed on, and what publication immutability is enforced against. It is
-/// versioned independently per profile -- profiles are orthogonal, so `code`
-/// moving says nothing about `co-work` -- and it is a separate axis from the
-/// `min_capsem_version`/`max_capsem_version` window the profile declares
-/// against the binary.
-///
-/// Strict semver is not decoration. The scheme this replaces was a date plus a
-/// counter (`2026.06.08.9`), which could not order releases: the date recorded
-/// when a human last edited the field rather than when the assets were built,
-/// and text comparison ranks `0.10.0` below `0.9.0`.
-pub fn parse_profile_revision(revision: &str) -> Result<Version> {
-    Version::parse(revision)
-        .with_context(|| format!("profile revision must be semver MAJOR.MINOR.PATCH, got {revision:?}"))
-}
-
-/// Recognize the one revision shape used by profiles published before 0.6.
-///
-/// This is an import format, never an authoring format. Keeping it separate
-/// from `parse_profile_revision` prevents a compatibility read from weakening
-/// the strict rule for every new first-party and corporate profile.
-pub fn is_legacy_profile_revision(revision: &str) -> bool {
-    let components = revision.split('.').collect::<Vec<_>>();
-    components.len() == 4
-        && components
-            .iter()
-            .all(|component| !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit()))
-}
-
-/// Reject a publication whose revision does not advance past what is published.
-///
-/// Immutable publication already refuses to overwrite differing bytes under an
-/// existing revision, but it cannot tell the operator what to do about it. This
-/// fails earlier and says the actionable thing: the revision has to move.
-pub fn ensure_revision_advances(previous: &str, next: &str) -> Result<()> {
-    let next_version = parse_profile_revision(next)?;
-    let previous_version = match parse_profile_revision(previous) {
-        Ok(version) => version,
-        Err(_) if is_legacy_profile_revision(previous) => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    if next_version <= previous_version {
-        bail!("profile revision {next:?} does not advance past published {previous:?}");
     }
     Ok(())
 }

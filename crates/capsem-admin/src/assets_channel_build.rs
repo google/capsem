@@ -2,16 +2,14 @@ use super::*;
 
 pub(super) fn assets_channel_build_command(args: AssetsChannelBuildArgs) -> Result<()> {
     let generated_at = args.generated_at.unwrap_or(current_utc_rfc3339()?);
-    let report = build_assets_channel_with_policy(
+    let report = build_assets_channel(
         &args.manifest,
         &args.assets_dir,
-        &args.profiles_dir,
         &args.channel,
         &args.manifest_version,
         &args.out_dir,
         &generated_at,
         args.asset_source_base.as_deref(),
-        args.profile_revision_policy,
     )?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -49,42 +47,14 @@ pub(super) fn assets_channel_record_binary_command(args: AssetsChannelRecordBina
     Ok(())
 }
 
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn build_assets_channel(
     manifest_url: &str,
     assets_dir: &Path,
-    profiles_dir: &Path,
     channel: &str,
     manifest_version: &str,
     out_dir: &Path,
     generated_at: &str,
     asset_source_base: Option<&str>,
-) -> Result<AssetsChannelBuildReport> {
-    build_assets_channel_with_policy(
-        manifest_url,
-        assets_dir,
-        profiles_dir,
-        channel,
-        manifest_version,
-        out_dir,
-        generated_at,
-        asset_source_base,
-        ProfileRevisionPolicyArg::Strict,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn build_assets_channel_with_policy(
-    manifest_url: &str,
-    assets_dir: &Path,
-    profiles_dir: &Path,
-    channel: &str,
-    manifest_version: &str,
-    out_dir: &Path,
-    generated_at: &str,
-    asset_source_base: Option<&str>,
-    profile_revision_policy: ProfileRevisionPolicyArg,
 ) -> Result<AssetsChannelBuildReport> {
     validate_channel_name(channel)?;
     let manifest_bytes = read_manifest_url(manifest_url)?;
@@ -93,6 +63,8 @@ pub(super) fn build_assets_channel_with_policy(
     let manifest_value: serde_json::Value =
         serde_json::from_str(manifest_content).with_context(|| format!("parse manifest from {manifest_url}"))?;
     if is_release_graph_manifest_value(&manifest_value) {
+        validate_assets_channel_graph_manifest(&manifest_value, channel)?;
+        mirror_graph_runtime_files(&manifest_value, manifest_url, out_dir)?;
         return build_assets_channel_from_graph(manifest_value, channel, manifest_version, out_dir, generated_at);
     }
     let manifest =
@@ -138,25 +110,26 @@ pub(super) fn build_assets_channel_with_policy(
         hydrate_current_asset_entry_sha256(&mut channel_manifest_doc, assets_dir, &mut asset_digest_cache)?;
         0
     };
-    let publishable_profiles = publishable_profiles(
+    let publishable_runtime = publishable_runtime(
         &channel_manifest_doc,
-        profiles_dir,
         channel,
         asset_base,
         assets_dir,
         &mut asset_digest_cache,
-        profile_revision_policy,
     )?;
-    copy_profile_release_files(out_dir, &publishable_profiles.file_copies)?;
+    copy_runtime_release_files(out_dir, &publishable_runtime.file_copies)?;
     validate_graph_manifest_version(manifest_version)?;
     let graph_manifest_version = manifest_version.to_string();
     let graph_manifest_url = format!("/assets/{channel}/manifest.json");
     let graph_manifest = render_graph_release_manifest(
         &channel_manifest_doc,
         channel,
-        &publishable_profiles.profiles,
-        asset_base,
+        &publishable_runtime.runtime,
         &graph_manifest_version,
+    )?;
+    validate_assets_channel_graph_manifest(
+        &serde_json::from_str(&graph_manifest).context("parse rendered graph manifest")?,
+        channel,
     )?;
     let channel_manifest = channel_dir.join("manifest.json");
     fs::write(&channel_manifest, &graph_manifest).with_context(|| format!("write {}", channel_manifest.display()))?;
@@ -167,7 +140,7 @@ pub(super) fn build_assets_channel_with_policy(
         channel,
         generated_at,
         &graph_manifest_blake3,
-        publishable_profiles.summary,
+        publishable_runtime.summary,
         asset_base,
     );
     fs::write(
@@ -245,6 +218,74 @@ pub(super) fn record_binary_release_metadata(
     ))
 }
 
+/// Copy a graph's site-relative runtime files into this distribution.
+///
+/// A graph re-published from another release site names its images and
+/// evidence by site-relative `/runtime/releases/...` paths, which only resolve
+/// if the bytes travel with it. Each is fetched from the source site, verified
+/// against the graph's size and digests, and written at the same path here.
+/// Absolute URLs already name their immutable published location and stay.
+///
+/// A graph copied away from its site (a working copy beside the release
+/// tooling) has no source bytes to fetch; its caller stages them. Such a file
+/// is skipped here rather than refused, because `assets channel check` refuses
+/// any dist whose site-relative bytes are missing or wrong. Bytes that *are*
+/// fetched and do not match the graph are always refused.
+pub(super) fn mirror_graph_runtime_files(graph: &serde_json::Value, source_url: &str, out_dir: &Path) -> Result<usize> {
+    let Some(runtime) = graph_runtime(graph) else {
+        return Ok(0);
+    };
+    let mut mirrored = 0;
+    for architecture in runtime["architectures"].as_array().into_iter().flatten() {
+        for row in ["images", "evidence"]
+            .into_iter()
+            .flat_map(|field| architecture[field].as_array().into_iter().flatten())
+        {
+            let url = require_json_string(row, &["url"])?;
+            let Some(relative) = url.strip_prefix('/') else {
+                continue;
+            };
+            if !url.starts_with("/runtime/releases/")
+                || relative
+                    .split('/')
+                    .any(|component| component.is_empty() || component == "." || component == "..")
+            {
+                return Err(anyhow!("graph runtime file {url} is not a runtime release path"));
+            }
+            let bytes = row["bytes"]
+                .as_u64()
+                .ok_or_else(|| anyhow!("graph runtime file {url} bytes missing"))?;
+            let sha256 = require_json_string(row, &["digest", "sha256"])?;
+            let blake3 = require_json_string(row, &["digest", "blake3"])?;
+            let matches = |content: &[u8]| {
+                content.len() as u64 == bytes
+                    && format!("{:x}", Sha256::digest(content)) == sha256
+                    && blake3::hash(content).to_hex().as_str() == blake3
+            };
+            let destination = out_dir.join(relative);
+            if fs::read(&destination).is_ok_and(|existing| matches(&existing)) {
+                continue;
+            }
+            let source = resolve_release_channel_artifact_url(source_url, &url)?;
+            let Ok(content) = read_url_bytes(&source, "graph runtime file") else {
+                continue;
+            };
+            if !matches(&content) {
+                return Err(anyhow!(
+                    "graph runtime file {source} does not match its graph size and digests"
+                ));
+            }
+            let parent = destination
+                .parent()
+                .ok_or_else(|| anyhow!("graph runtime file {url} has no parent"))?;
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+            fs::write(&destination, &content).with_context(|| format!("write {}", destination.display()))?;
+            mirrored += 1;
+        }
+    }
+    Ok(mirrored)
+}
+
 pub(super) fn build_assets_channel_from_graph(
     mut graph_manifest: serde_json::Value,
     channel: &str,
@@ -253,7 +294,7 @@ pub(super) fn build_assets_channel_from_graph(
     generated_at: &str,
 ) -> Result<AssetsChannelBuildReport> {
     validate_assets_channel_graph_manifest(&graph_manifest, channel)?;
-    validate_graph_profiles_match_current_binary(&graph_manifest)?;
+    validate_graph_runtime_matches_current_binary(&graph_manifest)?;
     graph_manifest["version"] = serde_json::Value::String(manifest_version.to_string());
     graph_manifest["channel"] = serde_json::Value::String(channel.to_string());
     graph_manifest["status"] = serde_json::Value::String("current".to_string());
@@ -320,19 +361,16 @@ pub(super) fn record_graph_binary_release_metadata(
     min_assets: Option<&str>,
     files: &[BinaryFile],
 ) -> Result<AssetsChannelRecordBinaryReport> {
-    let profiles = manifest
-        .get("profiles")
-        .and_then(|value| value.as_object())
-        .ok_or_else(|| anyhow!("graph manifest profiles must be an object"))?;
-    if profiles.is_empty() {
-        return Err(anyhow!("graph manifest profiles must not be empty"));
-    }
-    let min_assets = min_assets
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| graph_profile_revision_summary(profiles));
+    validate_assets_channel_graph_manifest(&manifest, require_json_string(&manifest, &["channel"])?.as_str())?;
+    let min_assets = min_assets.map(ToOwned::to_owned).or_else(|| {
+        graph_runtime(&manifest)
+            .and_then(|runtime| runtime.get("revision"))
+            .and_then(|revision| revision.as_str())
+            .map(ToOwned::to_owned)
+    });
     let packages = graph_packages_from_binary_files(version, source_commit, files)?;
     manifest["packages"] = serde_json::Value::Array(packages);
-    validate_graph_profiles_match_current_binary(&manifest)?;
+    validate_graph_runtime_matches_current_binary(&manifest)?;
     let mut bytes = serde_json::to_vec_pretty(&manifest).context("serialize updated manifest")?;
     bytes.push(b'\n');
     fs::write(manifest_path, &bytes).with_context(|| format!("write {}", manifest_path.display()))?;
@@ -460,18 +498,6 @@ pub(super) fn graph_package_from_binary_file(
         ],
         "status": "current",
     }))
-}
-
-pub(super) fn graph_profile_revision_summary(profiles: &serde_json::Map<String, serde_json::Value>) -> String {
-    let revisions = profiles
-        .values()
-        .filter_map(|profile| profile.get("revision").and_then(|value| value.as_str()))
-        .collect::<BTreeSet<_>>();
-    if revisions.len() == 1 {
-        revisions.into_iter().next().unwrap_or("unknown").to_string()
-    } else {
-        "mixed".to_string()
-    }
 }
 
 pub(super) fn validate_binary_version(version: &str) -> Result<()> {

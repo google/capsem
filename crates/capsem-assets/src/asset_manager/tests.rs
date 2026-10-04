@@ -52,9 +52,16 @@ fn manifest_parse() {
     assert_eq!(arm64["vmlinuz"].size, 7797248);
 }
 
-#[test]
-fn public_release_graph_parses_to_runtime_view_without_rewriting_document() {
-    let raw = serde_json::json!({
+fn runtime_images(kernel_blake3: char) -> serde_json::Value {
+    serde_json::json!([
+        {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":kernel_blake3.to_string().repeat(64),"sha256":"1".repeat(64)}},
+        {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":"b".repeat(64),"sha256":"2".repeat(64)}},
+        {"kind":"rootfs","name":"rootfs.erofs","bytes":30,"status":"current","digest":{"blake3":"c".repeat(64),"sha256":"3".repeat(64)}}
+    ])
+}
+
+fn runtime_graph() -> serde_json::Value {
+    serde_json::json!({
         "channel": "stable",
         "version": "1.0.142",
         "status": "current",
@@ -63,191 +70,153 @@ fn public_release_graph_parses_to_runtime_view_without_rewriting_document() {
             "version": "1.5.1783857731",
             "status": "current"
         }],
-        "profiles": {
-            "co-work": {
-                "name": "Co-work",
-                "description": "Shared profile for collaborative agent sessions.",
-                "revision": "2026.0703.2",
-                "status": "current",
-                "min_capsem_version": "1.5.0",
-                "architectures": [{
-                    "architecture": "arm64",
-                    "image_revision": "2026.0714.18",
-                    "images": [
-                        {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sha256":"1111111111111111111111111111111111111111111111111111111111111111"}},
-                        {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"2222222222222222222222222222222222222222222222222222222222222222"}},
-                        {"kind":"rootfs","name":"rootfs.erofs","bytes":30,"status":"current","digest":{"blake3":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sha256":"3333333333333333333333333333333333333333333333333333333333333333"}}
-                    ]
-                }]
-            }
+        "runtime": {
+            "revision": "2026.0714.18",
+            "status": "current",
+            "min_capsem_version": "1.5.0",
+            "architectures": [{
+                "architecture": "arm64",
+                "package_inventory_revision": "2026.0714.18",
+                "image_revision": "2026.0714.18",
+                "images": runtime_images('a'),
+                "evidence": [{"kind":"obom","bytes":1,"digest":{"blake3":"e".repeat(64),"sha256":"5".repeat(64)}}]
+            }]
         }
-    });
+    })
+}
+
+#[test]
+fn public_release_graph_parses_to_runtime_view_without_rewriting_document() {
+    let raw = runtime_graph();
     let raw_text = serde_json::to_string(&raw).unwrap();
 
     let runtime = ManifestV2::from_json(&raw_text).unwrap();
 
     assert_eq!(runtime.assets.current, "2026.0714.18");
+    assert_eq!(runtime.assets.releases.len(), 1);
+    assert_eq!(runtime.assets.releases["2026.0714.18"].min_binary, "1.5.0");
     assert_eq!(runtime.binaries.current, "1.5.1783857731");
     assert_eq!(
         runtime.assets.releases["2026.0714.18"].arches["arm64"]["rootfs.erofs"].size,
         30
     );
     let unchanged: serde_json::Value = serde_json::from_str(&raw_text).unwrap();
-    assert_eq!(
-        unchanged["profiles"]["co-work"]["description"],
-        raw["profiles"]["co-work"]["description"]
-    );
-    assert_eq!(unchanged["packages"], raw["packages"]);
+    assert_eq!(unchanged, raw);
 }
 
 #[test]
-fn public_release_graph_retains_every_profile_state_identity() {
-    let images = |seed: char| {
-        serde_json::json!([
-            {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":seed.to_string().repeat(64),"sha256":"1".repeat(64)}},
-            {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":"b".repeat(64),"sha256":"2".repeat(64)}},
-            {"kind":"rootfs","name":"rootfs.erofs","bytes":30,"status":"current","digest":{"blake3":"c".repeat(64),"sha256":"3".repeat(64)}}
-        ])
-    };
-    let graph = serde_json::json!({
-        "profiles": {
-            "co-work": {
-                "revision": "2030.0101.1",
-                "status": "current",
-                "architectures": [{
-                    "architecture": "arm64",
-                    "image_revision": "2030.0101.10",
-                    "config": [{"kind":"profile","path":"profiles/co-work/profile.toml","bytes":1,"digest":{"blake3":"d".repeat(64),"sha256":"4".repeat(64)}}],
-                    "images": images('a'),
-                    "evidence": [{"kind":"obom","bytes":1,"digest":{"blake3":"e".repeat(64),"sha256":"5".repeat(64)}}]
-                }]
-            },
-            "code": {
-                "revision": "2030.0101.2",
-                "status": "current",
-                "architectures": [{
-                    "architecture": "arm64",
-                    "image_revision": "2030.0101.20",
-                    "config": [{"kind":"profile","path":"profiles/code/profile.toml","bytes":1,"digest":{"blake3":"f".repeat(64),"sha256":"6".repeat(64)}}],
-                    "images": images('9'),
-                    "evidence": [{"kind":"obom","bytes":1,"digest":{"blake3":"8".repeat(64),"sha256":"7".repeat(64)}}]
-                }]
-            }
-        }
-    });
+fn a_release_graph_without_a_runtime_has_no_asset_release() {
+    let mut graph = runtime_graph();
+    graph.as_object_mut().unwrap().remove("runtime");
 
-    let state = release_graph_profile_state(&graph).unwrap();
+    assert_eq!(release_graph_runtime_state(&graph).unwrap(), None);
+    let error = ManifestV2::from_json(&graph.to_string()).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("release graph contains no runtime"),
+        "{error:#}"
+    );
 
-    assert_eq!(state.profiles.keys().cloned().collect::<Vec<_>>(), ["co-work", "code"]);
-    assert_eq!(state.profiles["co-work"].revision, "2030.0101.1");
-    assert_eq!(state.profiles["code"].revision, "2030.0101.2");
-    assert!(state.catalog_revision.starts_with("catalog-"));
+    graph["runtime"] = serde_json::Value::Null;
+    assert_eq!(release_graph_runtime_state(&graph).unwrap(), None);
+}
+
+#[test]
+fn a_release_graph_that_still_publishes_profiles_has_no_runtime() {
+    let mut graph = runtime_graph();
+    let runtime = graph.as_object_mut().unwrap().remove("runtime").unwrap();
+    graph["profiles"] = serde_json::json!({"code": runtime});
+
+    let error = ManifestV2::from_json(&graph.to_string()).unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("release graph contains no runtime"),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn public_release_graph_runtime_state_separates_evidence_from_images() {
+    let graph = runtime_graph();
+    let state = release_graph_runtime_state(&graph).unwrap().unwrap();
+
+    assert_eq!(state.revision, "2026.0714.18");
+    assert_eq!(state.status, "current");
+    assert_eq!(state.architectures, ["arm64"]);
+    assert!(state.evidence_revision.starts_with("evidence-"));
     assert!(state.images_revision.starts_with("images-"));
 
-    let mut config_changed = graph.clone();
-    config_changed["profiles"]["code"]["architectures"][0]["config"][0]["digest"]["blake3"] =
-        serde_json::json!("0".repeat(64));
-    let config_state = release_graph_profile_state(&config_changed).unwrap();
-    assert_ne!(config_state.catalog_revision, state.catalog_revision);
-    assert_eq!(config_state.images_revision, state.images_revision);
-
-    let mut revision_changed = graph.clone();
-    revision_changed["profiles"]["code"]["revision"] = serde_json::json!("2030.0101.3");
-    let revision_state = release_graph_profile_state(&revision_changed).unwrap();
-    assert_ne!(revision_state.catalog_revision, state.catalog_revision);
-    assert_eq!(revision_state.images_revision, state.images_revision);
+    let mut reordered = graph.clone();
+    reordered["runtime"]["architectures"][0]["images"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
+    assert_eq!(release_graph_runtime_state(&reordered).unwrap().unwrap(), state);
 
     let mut evidence_changed = graph.clone();
-    evidence_changed["profiles"]["code"]["architectures"][0]["evidence"][0]["digest"]["blake3"] =
+    evidence_changed["runtime"]["architectures"][0]["evidence"][0]["digest"]["blake3"] =
         serde_json::json!("1".repeat(64));
-    let evidence_state = release_graph_profile_state(&evidence_changed).unwrap();
-    assert_ne!(evidence_state.catalog_revision, state.catalog_revision);
+    let evidence_state = release_graph_runtime_state(&evidence_changed).unwrap().unwrap();
+    assert_ne!(evidence_state.evidence_revision, state.evidence_revision);
     assert_eq!(evidence_state.images_revision, state.images_revision);
 
     let mut image_changed = graph;
-    image_changed["profiles"]["code"]["architectures"][0]["images"][0]["digest"]["blake3"] =
-        serde_json::json!("2".repeat(64));
-    let image_state = release_graph_profile_state(&image_changed).unwrap();
-    assert_ne!(image_state.catalog_revision, state.catalog_revision);
+    image_changed["runtime"]["architectures"][0]["images"] = runtime_images('9');
+    let image_state = release_graph_runtime_state(&image_changed).unwrap().unwrap();
+    assert_eq!(image_state.evidence_revision, state.evidence_revision);
     assert_ne!(image_state.images_revision, state.images_revision);
 }
 
 #[test]
-fn public_release_graph_rejects_an_incomplete_sibling_profile() {
-    let complete_images = serde_json::json!([
-        {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":"a".repeat(64),"sha256":"1".repeat(64)}},
-        {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":"b".repeat(64),"sha256":"2".repeat(64)}},
-        {"kind":"rootfs","name":"rootfs.erofs","bytes":30,"status":"current","digest":{"blake3":"c".repeat(64),"sha256":"3".repeat(64)}}
-    ]);
-    let graph = serde_json::json!({
-        "packages": [{"version": "1.5.0", "status": "current"}],
-        "profiles": {
-            "default": {
-                "revision": "2030.0101.1",
-                "status": "current",
-                "architectures": [{"architecture":"arm64","image_revision":"2030.0101.1","images":complete_images}]
-            },
-            "code": {
-                "revision": "2030.0101.2",
-                "status": "current",
-                "architectures": [{"architecture":"arm64","image_revision":"2030.0101.2","images":[
-                    {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":"a".repeat(64),"sha256":"1".repeat(64)}},
-                    {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":"b".repeat(64),"sha256":"2".repeat(64)}}
-                ]}]
-            }
-        }
-    });
+fn public_release_graph_rejects_an_incomplete_runtime_architecture() {
+    let mut graph = runtime_graph();
+    graph["runtime"]["architectures"][0]["images"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
 
     let error = ManifestV2::from_json(&graph.to_string()).unwrap_err();
 
-    assert!(format!("{error:#}").contains("profile code"));
-    assert!(format!("{error:#}").contains("rootfs"));
+    assert!(format!("{error:#}").contains("arm64"), "{error:#}");
+    assert!(format!("{error:#}").contains("rootfs"), "{error:#}");
 }
 
 #[test]
-fn public_release_graph_requires_one_exact_image_revision_for_every_architecture() {
-    let base_image = serde_json::json!({
-        "kind": "kernel",
-        "name": "vmlinuz",
-        "bytes": 10,
-        "status": "current",
-        "digest": {"blake3": "a".repeat(64), "sha256": "1".repeat(64)}
-    });
-    let images = vec![
-        base_image,
-        serde_json::json!({
-            "kind": "initrd", "name": "initrd.img", "bytes": 20, "status": "current",
-            "digest": {"blake3": "b".repeat(64), "sha256": "2".repeat(64)}
-        }),
-        serde_json::json!({
-            "kind": "rootfs", "name": "rootfs.erofs", "bytes": 30, "status": "current",
-            "digest": {"blake3": "c".repeat(64), "sha256": "3".repeat(64)}
-        }),
-    ];
-    let graph = |architectures: serde_json::Value| {
-        serde_json::json!({
-            "packages": [{"version": "1.5.0", "status": "current"}],
-            "profiles": {"code": {
-                "revision": "profile-revision-is-not-an-image-version",
-                "status": "current",
-                "architectures": architectures
-            }}
-        })
-    };
+fn public_release_graph_refuses_a_revoked_runtime_for_boot() {
+    let mut graph = runtime_graph();
+    graph["runtime"]["status"] = serde_json::json!("revoked");
 
-    let missing = graph(serde_json::json!([{
-        "architecture": "arm64",
-        "images": images
-    }]));
+    let state = release_graph_runtime_state(&graph).unwrap().unwrap();
+    assert_eq!(state.status, "revoked");
+    let error = ManifestV2::from_json(&graph.to_string()).unwrap_err();
+    assert!(format!("{error:#}").contains("revoked"), "{error:#}");
+}
+
+#[test]
+fn public_release_graph_requires_the_runtime_revision_on_every_architecture() {
+    let mut missing = runtime_graph();
+    missing["runtime"]["architectures"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("image_revision");
     let error = ManifestV2::from_json(&missing.to_string()).unwrap_err();
-    assert!(format!("{error:#}").contains("missing image_revision"));
+    assert!(format!("{error:#}").contains("missing image_revision"), "{error:#}");
 
-    let disagreeing = graph(serde_json::json!([
-        {"architecture": "arm64", "image_revision": "2026.0714.18", "images": images},
-        {"architecture": "x86_64", "image_revision": "2026.0714.19", "images": images}
-    ]));
+    let mut disagreeing = runtime_graph();
+    disagreeing["runtime"]["architectures"][0]["image_revision"] = serde_json::json!("2026.0714.19");
     let error = ManifestV2::from_json(&disagreeing.to_string()).unwrap_err();
-    assert!(format!("{error:#}").contains("image revisions disagree"));
+    assert!(
+        format!("{error:#}").contains("is not runtime 2026.0714.18"),
+        "{error:#}"
+    );
+
+    let mut repeated = runtime_graph();
+    let architecture = repeated["runtime"]["architectures"][0].clone();
+    repeated["runtime"]["architectures"]
+        .as_array_mut()
+        .unwrap()
+        .push(architecture);
+    let error = ManifestV2::from_json(&repeated.to_string()).unwrap_err();
+    assert!(format!("{error:#}").contains("repeats architecture arm64"), "{error:#}");
 }
 
 #[test]

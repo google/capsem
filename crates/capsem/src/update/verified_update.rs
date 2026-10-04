@@ -3,7 +3,7 @@ use super::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UpdatePlanStep {
     Binary,
-    Profiles,
+    Runtime,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,7 +18,6 @@ pub(super) struct StagedUpdate {
     pub(super) manifest_path: PathBuf,
     pub(super) installer_path: Option<PathBuf>,
     pub(super) assets_dir: Option<PathBuf>,
-    pub(super) profiles_dir: Option<PathBuf>,
 }
 
 pub(super) fn plan_verified_update(
@@ -52,12 +51,8 @@ pub(super) fn plan_verified_update(
     semver::Version::parse(&selected_binary)
         .with_context(|| format!("parse selected Capsem version {selected_binary}"))?;
 
-    let graph = serde_json::from_slice::<ReleaseGraphManifest>(manifest_bytes).ok();
-    if let Some(graph) = graph
-        .as_ref()
-        .filter(|graph| !graph.packages.is_empty() || !graph.profiles.is_empty())
-    {
-        validate_release_graph_update_pairing(graph, &selected_binary)?;
+    if let Some(graph) = release_graph_from_payload(manifest_bytes)? {
+        validate_release_graph_update_pairing(&graph, &selected_binary)?;
     } else {
         let manifest_text = std::str::from_utf8(manifest_bytes).context("release manifest is not valid UTF-8")?;
         let manifest = capsem_assets::asset_manager::ManifestV2::from_json(manifest_text)
@@ -74,14 +69,11 @@ pub(super) fn plan_verified_update(
         steps.push(UpdatePlanStep::Binary);
     }
 
-    let profiles_changed =
-        check.profiles_update_available || check.assets_update_available || check.images_update_available;
-    if profiles_changed {
-        steps.push(UpdatePlanStep::Profiles);
+    if check.assets_update_available || check.images_update_available {
+        steps.push(UpdatePlanStep::Runtime);
     }
 
     let blocked = [
-        check.profiles_blocked_reason.as_deref(),
         check.assets_blocked_reason.as_deref(),
         check.images_blocked_reason.as_deref(),
     ]
@@ -90,7 +82,7 @@ pub(super) fn plan_verified_update(
     .collect::<Vec<_>>();
     if !blocked.is_empty() && !check.update_available {
         anyhow::bail!(
-            "selected profile update is incompatible with installed binary {installed_binary}: {}",
+            "selected runtime update is incompatible with installed binary {installed_binary}: {}",
             blocked.join("; ")
         );
     }
@@ -113,33 +105,34 @@ pub(super) fn validate_release_graph_update_pairing(graph: &ReleaseGraphManifest
         }
     }
 
-    for (profile_id, profile) in &graph.profiles {
-        if release_channel_status_is_revoked(&profile.status) {
-            continue;
+    let Some(runtime) = graph
+        .runtime
+        .as_ref()
+        .filter(|runtime| !release_channel_status_is_revoked(&runtime.status))
+    else {
+        return Ok(());
+    };
+    let revision = &runtime.revision;
+    if let Some(minimum) = runtime
+        .min_capsem_version
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        let minimum_version = semver::Version::parse(minimum)
+            .with_context(|| format!("runtime {revision} has invalid minimum Capsem version {minimum}"))?;
+        if selected < minimum_version {
+            anyhow::bail!("runtime {revision} requires Capsem {minimum} or newer, selected {selected_binary}");
         }
-        if let Some(minimum) = profile
-            .extra
-            .get("min_capsem_version")
-            .and_then(serde_json::Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-        {
-            let minimum_version = semver::Version::parse(minimum)
-                .with_context(|| format!("profile {profile_id} has invalid minimum Capsem version {minimum}"))?;
-            if selected < minimum_version {
-                anyhow::bail!("profile {profile_id} requires Capsem {minimum} or newer, selected {selected_binary}");
-            }
-        }
-        if let Some(maximum) = profile
-            .extra
-            .get("max_capsem_version")
-            .and_then(serde_json::Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-        {
-            let maximum_version = semver::Version::parse(maximum)
-                .with_context(|| format!("profile {profile_id} has invalid maximum Capsem version {maximum}"))?;
-            if selected > maximum_version {
-                anyhow::bail!("profile {profile_id} supports Capsem through {maximum}, selected {selected_binary}");
-            }
+    }
+    if let Some(maximum) = runtime
+        .max_capsem_version
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        let maximum_version = semver::Version::parse(maximum)
+            .with_context(|| format!("runtime {revision} has invalid maximum Capsem version {maximum}"))?;
+        if selected > maximum_version {
+            anyhow::bail!("runtime {revision} supports Capsem through {maximum}, selected {selected_binary}");
         }
     }
     Ok(())
@@ -162,11 +155,11 @@ pub(super) fn validate_v2_update_pairing(
             Path::new("."),
         )
         .with_context(|| {
-            format!("selected binary {selected_binary} has no compatible profile assets in the verified manifest")
+            format!("selected binary {selected_binary} has no compatible runtime assets in the verified manifest")
         })?;
     if resolved.asset_version != manifest.assets.current {
         anyhow::bail!(
-            "verified manifest selects incompatible binary/profile state: binary {selected_binary} resolves assets {}, not selected {}",
+            "verified manifest selects incompatible binary/runtime state: binary {selected_binary} resolves assets {}, not selected {}",
             resolved.asset_version,
             manifest.assets.current
         );
@@ -214,8 +207,8 @@ pub(super) async fn stage_verified_update_at(
         } else {
             None
         };
-        if plan.steps.contains(&UpdatePlanStep::Profiles) {
-            stage_profile_candidate(&stage_root, source, manifest_bytes, &plan.selected_binary, check).await?;
+        if plan.steps.contains(&UpdatePlanStep::Runtime) {
+            stage_runtime_candidate(&stage_root, source, manifest_bytes, &plan.selected_binary).await?;
         }
         Ok(installer_path)
     }
@@ -241,39 +234,30 @@ pub(super) async fn stage_verified_update_at(
     })?;
 
     let assets_dir = final_root.join("assets");
-    let profiles_dir = final_root.join("profiles");
     Ok(StagedUpdate {
         manifest_path: final_root.join("manifest.json"),
         installer_path,
         assets_dir: assets_dir.is_dir().then_some(assets_dir),
-        profiles_dir: profiles_dir.is_dir().then_some(profiles_dir),
     })
 }
 
-pub(super) async fn stage_profile_candidate(
+/// Download and verify the candidate runtime's images for this host before
+/// anything installed changes.
+pub(super) async fn stage_runtime_candidate(
     stage_root: &Path,
     source: &str,
     manifest_bytes: &[u8],
     selected_binary: &str,
-    check: &UpdateCheck,
 ) -> Result<()> {
     let body = std::str::from_utf8(manifest_bytes)
         .with_context(|| format!("manifest URL did not return UTF-8 JSON: {source}"))?;
-    let document: serde_json::Value =
-        serde_json::from_str(body).with_context(|| format!("parse manifest JSON from {source}"))?;
-    if document.get("format").is_none() && document.get("profiles").is_some() {
-        let arch = capsem_assets::asset_manager::host_manifest_arch();
-        let graph = manifest_from_release_channel_profile_graph(body, arch)?;
-        capsem_assets::asset_manager::ManifestV2::from_json(body)
-            .context("validate release graph through the runtime manifest parser")?;
-        hydrate_release_channel_profile_assets(&stage_root.join("assets"), source, &graph.asset_downloads).await?;
-        stage_release_channel_profile_configs(
-            source,
-            &graph.config_downloads,
-            &graph.runtime_pins,
-            &stage_root.join("profiles"),
-        )
-        .await?;
+    if let Some(graph) = release_graph_from_payload(manifest_bytes)? {
+        let downloads = runtime_asset_downloads(&graph, capsem_assets::asset_manager::host_manifest_arch())?;
+        if !downloads.is_empty() {
+            capsem_assets::asset_manager::ManifestV2::from_json(body)
+                .context("validate release graph through the runtime manifest parser")?;
+            hydrate_release_channel_runtime_assets(&stage_root.join("assets"), source, &downloads).await?;
+        }
         return Ok(());
     }
 
@@ -291,20 +275,10 @@ pub(super) async fn stage_profile_candidate(
         &assets_dir.join("manifest-metadata.json"),
         &serde_json::to_vec_pretty(&metadata)?,
     )?;
-    hydrate_assets_for_binary(&assets_dir, selected_binary).await?;
-
-    match (
-        check.profile_catalog_source.as_deref(),
-        check.profile_catalog_hash.as_deref(),
-    ) {
-        (Some(_), Some(_)) => stage_published_profile_catalog(check, &stage_root.join("profiles")).await,
-        (None, None) => Ok(()),
-        _ => anyhow::bail!("profile catalog update must provide both its immutable source and BLAKE3 digest"),
-    }
+    hydrate_assets_for_binary(&assets_dir, selected_binary).await
 }
 
 pub(super) fn activate_staged_update_at(
-    capsem_home: &Path,
     installed_assets: &Path,
     staged: &StagedUpdate,
     check: &UpdateCheck,
@@ -329,45 +303,12 @@ pub(super) fn activate_staged_update_at(
 
     std::fs::create_dir_all(installed_assets).with_context(|| format!("create {}", installed_assets.display()))?;
     let previous_manifest = InstalledManifestSnapshot::capture(installed_assets)?;
-    let profiles_dir = capsem_home.join("profiles");
-    let profile_stage = capsem_home.join(format!("profiles.activating.{}", std::process::id()));
-    let profile_backup = capsem_home.join(format!("profiles.previous.{}", std::process::id()));
-    remove_directory_if_present(&profile_stage)?;
-    remove_directory_if_present(&profile_backup)?;
 
     let mut created_assets = Vec::new();
-    let mut profiles_swapped = false;
     let activation_result: Result<()> = (|| {
         if let Some(candidate_assets) = staged.assets_dir.as_deref() {
             created_assets = copy_staged_asset_files(candidate_assets, installed_assets)
-                .with_context(|| format!("activate staged profile assets from {}", candidate_assets.display()))?;
-        }
-
-        if let Some(candidate_profiles) = staged.profiles_dir.as_deref() {
-            copy_directory_tree(candidate_profiles, &profile_stage)?;
-            if profiles_dir.exists() {
-                if !profiles_dir.is_dir() {
-                    anyhow::bail!(
-                        "installed profile catalog is not a directory: {}",
-                        profiles_dir.display()
-                    );
-                }
-                std::fs::rename(&profiles_dir, &profile_backup).with_context(|| {
-                    format!(
-                        "move installed profile catalog {} to {}",
-                        profiles_dir.display(),
-                        profile_backup.display()
-                    )
-                })?;
-            }
-            if let Err(error) = std::fs::rename(&profile_stage, &profiles_dir) {
-                if profile_backup.exists() {
-                    let _ = std::fs::rename(&profile_backup, &profiles_dir);
-                }
-                return Err(anyhow::Error::new(error)
-                    .context(format!("activate staged profile catalog at {}", profiles_dir.display())));
-            }
-            profiles_swapped = true;
+                .with_context(|| format!("activate staged runtime assets from {}", candidate_assets.display()))?;
         }
 
         atomic_write(&installed_assets.join("manifest.json"), &manifest_bytes)?;
@@ -378,19 +319,6 @@ pub(super) fn activate_staged_update_at(
 
     if let Err(error) = activation_result {
         let mut rollback_errors = Vec::new();
-        if profiles_swapped {
-            if let Err(rollback_error) = remove_directory_if_present(&profiles_dir) {
-                rollback_errors.push(format!("{rollback_error:#}"));
-            }
-            if profile_backup.exists() {
-                if let Err(rollback_error) = std::fs::rename(&profile_backup, &profiles_dir) {
-                    rollback_errors.push(format!(
-                        "restore profile catalog {}: {rollback_error}",
-                        profiles_dir.display()
-                    ));
-                }
-            }
-        }
         if let Err(rollback_error) = previous_manifest.restore(installed_assets) {
             rollback_errors.push(format!("{rollback_error:#}"));
         }
@@ -401,7 +329,6 @@ pub(super) fn activate_staged_update_at(
                 }
             }
         }
-        let _ = remove_directory_if_present(&profile_stage);
         if rollback_errors.is_empty() {
             return Err(error).context("activate staged update; restored previous installed state");
         }
@@ -410,13 +337,10 @@ pub(super) fn activate_staged_update_at(
             rollback_errors.join("; ")
         );
     }
-
-    remove_directory_if_present(&profile_backup)?;
     Ok(())
 }
 
 pub(super) fn activate_staged_update_with_asset_audit(
-    capsem_home: &Path,
     installed_assets: &Path,
     staged: &StagedUpdate,
     check: &UpdateCheck,
@@ -441,7 +365,7 @@ pub(super) fn activate_staged_update_with_asset_audit(
         "previous": previous_state
     }));
 
-    if let Err(error) = activate_staged_update_at(capsem_home, installed_assets, staged, check, transition) {
+    if let Err(error) = activate_staged_update_at(installed_assets, staged, check, transition) {
         append_update_audit(serde_json::json!({
             "event": "asset_update_failed",
             "action": "asset_update",
@@ -512,38 +436,6 @@ pub(super) fn copy_staged_asset_files(source_root: &Path, target_root: &Path) ->
     Ok(created)
 }
 
-pub(super) fn copy_directory_tree(source: &Path, target: &Path) -> Result<()> {
-    if !source.is_dir() {
-        anyhow::bail!("staged directory is missing: {}", source.display());
-    }
-    remove_directory_if_present(target)?;
-    std::fs::create_dir_all(target).with_context(|| format!("create {}", target.display()))?;
-    for entry in std::fs::read_dir(source).with_context(|| format!("read {}", source.display()))? {
-        let entry = entry.with_context(|| format!("read entry under {}", source.display()))?;
-        let file_type = entry
-            .file_type()
-            .with_context(|| format!("inspect {}", entry.path().display()))?;
-        let destination = target.join(entry.file_name());
-        if file_type.is_dir() {
-            copy_directory_tree(&entry.path(), &destination)?;
-        } else if file_type.is_file() {
-            std::fs::copy(entry.path(), &destination).with_context(|| {
-                format!(
-                    "copy staged profile {} to {}",
-                    entry.path().display(),
-                    destination.display()
-                )
-            })?;
-        } else {
-            anyhow::bail!(
-                "staged profile catalog contains unsupported filesystem entry {}",
-                entry.path().display()
-            );
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn regular_files_below(root: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     let mut directories = vec![root.to_path_buf()];
@@ -567,19 +459,4 @@ pub(super) fn regular_files_below(root: &Path) -> Result<Vec<PathBuf>> {
     }
     files.sort();
     Ok(files)
-}
-
-pub(super) fn remove_directory_if_present(path: &Path) -> Result<()> {
-    match std::fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).with_context(|| format!("remove {}", path.display())),
-    }
-}
-
-impl ReleaseChannelUpdateTarget {
-    #[allow(dead_code)]
-    pub(super) fn latest_version(&self) -> Option<String> {
-        self.latest.clone().or_else(|| self.current.clone())
-    }
 }

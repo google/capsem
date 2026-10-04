@@ -62,13 +62,6 @@ fn update_check_roundtrip() {
         assets_update_available: true,
         assets_state: Some("published".into()),
         assets_blocked_reason: None,
-        latest_profiles: Some("profiles-2030.0101.1".into()),
-        current_profiles: Some("profiles-2030.0101.0".into()),
-        profiles_update_available: false,
-        profiles_state: Some("published".into()),
-        profiles_blocked_reason: Some("requires binary 1.4.0 or newer".into()),
-        profile_catalog_source: Some("/profiles/releases/profiles-2030.0101.1/catalog.json".into()),
-        profile_catalog_hash: Some("b".repeat(64)),
         latest_images: None,
         images_update_available: false,
         images_state: Some("not_published".into()),
@@ -91,19 +84,6 @@ fn update_check_roundtrip() {
     assert!(rt.assets_update_available);
     assert_eq!(rt.assets_state, Some("published".into()));
     assert_eq!(rt.assets_blocked_reason, None);
-    assert_eq!(rt.latest_profiles, Some("profiles-2030.0101.1".into()));
-    assert_eq!(rt.current_profiles, Some("profiles-2030.0101.0".into()));
-    assert!(!rt.profiles_update_available);
-    assert_eq!(rt.profiles_state, Some("published".into()));
-    assert_eq!(
-        rt.profiles_blocked_reason,
-        Some("requires binary 1.4.0 or newer".into())
-    );
-    assert_eq!(
-        rt.profile_catalog_source,
-        Some("/profiles/releases/profiles-2030.0101.1/catalog.json".into())
-    );
-    assert_eq!(rt.profile_catalog_hash, Some("b".repeat(64)));
     assert_eq!(rt.latest_images, None);
     assert!(!rt.images_update_available);
     assert_eq!(rt.images_state, Some("not_published".into()));
@@ -130,13 +110,6 @@ fn update_check_old_cache_shape_defaults_new_release_channel_fields() {
     assert!(!rt.assets_update_available);
     assert_eq!(rt.assets_state, None);
     assert_eq!(rt.assets_blocked_reason, None);
-    assert_eq!(rt.latest_profiles, None);
-    assert_eq!(rt.current_profiles, None);
-    assert!(!rt.profiles_update_available);
-    assert_eq!(rt.profiles_state, None);
-    assert_eq!(rt.profiles_blocked_reason, None);
-    assert_eq!(rt.profile_catalog_source, None);
-    assert_eq!(rt.profile_catalog_hash, None);
     assert_eq!(rt.latest_images, None);
     assert!(!rt.images_update_available);
     assert_eq!(rt.images_state, None);
@@ -166,47 +139,6 @@ fn cached_update_notice_reports_asset_only_updates() {
     );
 }
 
-#[test]
-fn cached_update_notice_reports_profile_catalog_updates() {
-    let _lock = crate::lock_test_env();
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
-    let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", "");
-    let mut check = cached_notice_check();
-    check.latest_profiles = Some("profiles-2030.0101.1".into());
-    check.current_profiles = Some("profiles-2030.0101.0".into());
-    check.profiles_update_available = true;
-    seed_manifest_metadata(&check);
-    write_cache(&check).unwrap();
-
-    assert_eq!(
-        read_cached_update_notice().as_deref(),
-        Some(
-            "Profile catalog update available: profiles-2030.0101.1. The installed service will apply it automatically."
-        )
-    );
-}
-
-#[test]
-fn cached_update_notice_reports_blocked_profile_catalog_updates() {
-    let _lock = crate::lock_test_env();
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
-    let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", "");
-    let mut check = cached_notice_check();
-    check.latest_profiles = Some("profiles-2030.0101.1".into());
-    check.current_profiles = Some("profiles-2030.0101.0".into());
-    check.profiles_blocked_reason = Some("requires binary 1.4.1 or newer".into());
-    seed_manifest_metadata(&check);
-    write_cache(&check).unwrap();
-
-    assert_eq!(
-        read_cached_update_notice().as_deref(),
-        Some(
-            "Profile catalog update blocked: requires binary 1.4.1 or newer. Run `capsem update --check` for details."
-        )
-    );
-}
 #[test]
 fn update_check_merges_into_single_manifest_metadata_file() {
     let _lock = crate::lock_test_env();
@@ -277,7 +209,6 @@ fn stable_to_nightly_manifest_switch_resolves_nightly_updates() {
         100,
         "1.4.0",
         Some("2026.0627.8"),
-        None,
         &InstallLayout::MacosPkg,
         stable_source,
         Some("stable-channel-hash".into()),
@@ -288,7 +219,6 @@ fn stable_to_nightly_manifest_switch_resolves_nightly_updates() {
         200,
         "1.4.0",
         Some("2026.0627.8"),
-        None,
         &InstallLayout::MacosPkg,
         nightly_source,
         Some("nightly-channel-hash".into()),
@@ -375,13 +305,6 @@ fn cached_notice_check() -> UpdateCheck {
         assets_update_available: false,
         assets_state: Some("published".into()),
         assets_blocked_reason: None,
-        latest_profiles: Some("profiles-2030.0101.1".into()),
-        current_profiles: Some("profiles-2030.0101.0".into()),
-        profiles_update_available: false,
-        profiles_state: Some("published".into()),
-        profiles_blocked_reason: Some("requires binary 1.4.1 or newer".into()),
-        profile_catalog_source: Some("/profiles/releases/profiles-2030.0101.1/catalog.json".into()),
-        profile_catalog_hash: Some("b".repeat(64)),
         latest_images: None,
         images_update_available: false,
         images_state: Some("not_published".into()),
@@ -419,13 +342,6 @@ fn update_channel_provenance_preserves_previous_cache_on_failure() {
         assets_update_available: true,
         assets_state: Some("published".into()),
         assets_blocked_reason: None,
-        latest_profiles: None,
-        current_profiles: None,
-        profiles_update_available: false,
-        profiles_state: None,
-        profiles_blocked_reason: None,
-        profile_catalog_source: None,
-        profile_catalog_hash: None,
         latest_images: None,
         images_update_available: false,
         images_state: None,
@@ -850,8 +766,7 @@ fn release_graph_update_check_selects_linux_deb_package() {
                 "bytes": 333,
                 "digest": {"sha256": "3".repeat(64), "blake3": "c".repeat(64)}
             }
-        ],
-        "profiles": {}
+        ]
     }))
     .unwrap();
 
@@ -860,7 +775,6 @@ fn release_graph_update_check_selects_linux_deb_package() {
         1718444400,
         "1.5.0",
         Some("2026.0709.6"),
-        Some("profiles-2026.0709.6"),
         &InstallLayout::LinuxDeb,
         "http://127.0.0.1:33773/assets/nightly/manifest.json",
         Some("f".repeat(64)),
@@ -880,7 +794,6 @@ fn release_graph_update_check_selects_linux_deb_package() {
     assert_eq!(installer.install_layout, "linux_deb");
     assert_eq!(check.latest_assets, None);
     assert!(!check.assets_update_available);
-    assert_eq!(check.latest_profiles, None);
     assert_eq!(check.channel_hash, Some("f".repeat(64)));
     assert_eq!(check.validation_status, Some("valid".to_string()));
 }
@@ -898,8 +811,7 @@ fn release_graph_reads_exact_legacy_x86_64_amd64_package_row() {
             "status": "current",
             "bytes": 222,
             "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
-        }],
-        "profiles": {}
+        }]
     }))
     .expect("the immutable legacy package identity must remain readable");
 
@@ -965,8 +877,7 @@ fn release_graph_rejects_non_exact_legacy_package_architecture_aliases() {
                 "status": "current",
                 "bytes": 222,
                 "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
-            }],
-            "profiles": {}
+            }]
         }))
         .expect_err(label);
 
@@ -1008,8 +919,7 @@ fn release_graph_update_check_selects_macos_pkg_package() {
                 "bytes": 222,
                 "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
             }
-        ],
-        "profiles": {}
+        ]
     }))
     .unwrap();
 
@@ -1017,7 +927,6 @@ fn release_graph_update_check_selects_macos_pkg_package() {
         &graph,
         1718444400,
         "1.5.0",
-        None,
         None,
         &InstallLayout::MacosPkg,
         "https://release.capsem.org/assets/stable/manifest.json",
@@ -1047,8 +956,7 @@ fn release_graph_update_check_does_not_select_installer_when_current() {
                 "bytes": 222,
                 "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
             }
-        ],
-        "profiles": {}
+        ]
     }))
     .unwrap();
 
@@ -1056,7 +964,6 @@ fn release_graph_update_check_does_not_select_installer_when_current() {
         &graph,
         1718444400,
         "1.5.0",
-        None,
         None,
         &InstallLayout::LinuxDeb,
         "https://release.capsem.org/assets/stable/manifest.json",
@@ -1085,8 +992,7 @@ fn shared_release_payload_parser_accepts_public_release_graphs() {
             "status": "current",
             "bytes": 123,
             "digest": {"sha256": "3".repeat(64), "blake3": "b".repeat(64)}
-        }],
-        "profiles": {}
+        }]
     }))
     .unwrap();
 
@@ -1106,60 +1012,47 @@ fn shared_release_payload_parser_accepts_public_release_graphs() {
     assert_eq!(check.channel_hash, Some("f".repeat(64)));
 }
 
-#[test]
-fn shared_release_payload_parser_accepts_profiles_only_release_graphs() {
-    let body = serde_json::to_vec(&serde_json::json!({
+fn runtime_graph(revision: &str, kernel_blake3: char) -> serde_json::Value {
+    let image = |kind: &str, name: &str, sha256: char, blake3: char| {
+        serde_json::json!({
+            "kind": kind,
+            "name": name,
+            "url": format!("https://release.capsem.org/runtime/releases/stable/{revision}/{name}"),
+            "bytes": 1,
+            "status": "current",
+            "digest": {"sha256": sha256.to_string().repeat(64), "blake3": blake3.to_string().repeat(64)}
+        })
+    };
+    serde_json::json!({
         "version": "1.0.142",
         "channel": "stable",
         "status": "current",
         "packages": [],
-        "profiles": {
-            "default": {
-                "revision": "2030.0101.2",
-                "status": "current",
-                "architectures": [{
-                    "architecture": machine_architecture(),
-                    "image_revision": "2030.0101.7",
-                    "images": [
-                        {
-                            "kind": "kernel",
-                            "name": "vmlinuz",
-                            "url": "https://release.capsem.org/assets/releases/2030.0101.7/vmlinuz",
-                            "bytes": 1,
-                            "status": "current",
-                            "digest": {
-                                "sha256": "1".repeat(64),
-                                "blake3": "a".repeat(64)
-                            }
-                        },
-                        {
-                            "kind": "initrd",
-                            "name": "initrd.img",
-                            "url": "https://release.capsem.org/assets/releases/2030.0101.7/initrd.img",
-                            "bytes": 1,
-                            "status": "current",
-                            "digest": {
-                                "sha256": "2".repeat(64),
-                                "blake3": "b".repeat(64)
-                            }
-                        },
-                        {
-                            "kind": "rootfs",
-                            "name": "rootfs.erofs",
-                            "url": "https://release.capsem.org/assets/releases/2030.0101.7/rootfs.erofs",
-                            "bytes": 1,
-                            "status": "current",
-                            "digest": {
-                                "sha256": "3".repeat(64),
-                                "blake3": "c".repeat(64)
-                            }
-                        }
-                    ]
+        "runtime": {
+            "revision": revision,
+            "status": "current",
+            "architectures": [{
+                "architecture": machine_architecture(),
+                "image_revision": revision,
+                "images": [
+                    image("kernel", "vmlinuz", '1', kernel_blake3),
+                    image("initrd", "initrd.img", '2', 'b'),
+                    image("rootfs", "rootfs.erofs", '3', 'c')
+                ],
+                "evidence": [{
+                    "kind": "obom",
+                    "url": format!("https://release.capsem.org/runtime/releases/stable/{revision}/obom.cdx.json"),
+                    "bytes": 1,
+                    "digest": {"sha256": "5".repeat(64), "blake3": "e".repeat(64)}
                 }]
-            }
+            }]
         }
-    }))
-    .unwrap();
+    })
+}
+
+#[test]
+fn shared_release_payload_parser_accepts_runtime_only_release_graphs() {
+    let body = serde_json::to_vec(&runtime_graph("0.7.0-0123456789ab", 'a')).unwrap();
 
     let check = update_check_from_release_payload(
         &body,
@@ -1167,17 +1060,14 @@ fn shared_release_payload_parser_accepts_profiles_only_release_graphs() {
         "https://release.capsem.org/assets/stable/manifest.json",
         Some("f".repeat(64)),
     )
-    .expect("profiles-only public graph payload");
+    .expect("runtime-only public graph payload");
 
     assert_eq!(check.latest_version, None);
+    assert_eq!(check.latest_assets.as_deref(), Some("0.7.0-0123456789ab"));
     assert!(check
-        .latest_assets
+        .latest_images
         .as_deref()
         .is_some_and(|revision| revision.starts_with("images-")));
-    assert!(check
-        .latest_profiles
-        .as_deref()
-        .is_some_and(|revision| revision.starts_with("catalog-")));
     assert_eq!(
         binary_installer_from_release_payload(
             &body,
@@ -1190,182 +1080,110 @@ fn shared_release_payload_parser_accepts_profiles_only_release_graphs() {
 }
 
 #[test]
-fn release_graph_materializes_installed_profile_pins_from_manifest() {
-    let source = r#"
-[assets]
-format = "profile-assets.v1"
-refresh_policy = "on_profile_refresh"
+fn a_release_graph_without_a_runtime_has_no_asset_track() {
+    let mut graph = runtime_graph("0.7.0-0123456789ab", 'a');
+    graph.as_object_mut().unwrap().remove("runtime");
+    let body = serde_json::to_vec(&graph).unwrap();
 
-[assets.arch.x86_64.kernel]
-name = "vmlinuz"
-url = "https://old.example/vmlinuz"
-
-[assets.arch.x86_64.initrd]
-name = "initrd.img"
-url = "https://old.example/initrd.img"
-
-[assets.arch.x86_64.rootfs]
-name = "rootfs.erofs"
-url = "https://old.example/rootfs.erofs"
-"#;
-    let pins = [
-        ("kernel", "vmlinuz", "a", 11_u64),
-        ("initrd", "initrd.img", "b", 22_u64),
-        ("rootfs", "rootfs.erofs", "c", 33_u64),
-    ]
-    .into_iter()
-    .map(|(kind, name, digest_seed, size)| ReleaseChannelProfileRuntimePin {
-        profile_id: "code".to_string(),
-        arch: "x86_64".to_string(),
-        kind: kind.to_string(),
-        name: name.to_string(),
-        url: format!("/profiles/releases/test/code/x86_64/{name}"),
-        size,
-        blake3: digest_seed.repeat(64),
-    })
-    .collect::<Vec<_>>();
-
-    let materialized = materialize_release_channel_profile_toml(
-        source,
-        "code",
-        "https://release.example/assets/nightly/manifest.json",
-        &pins,
+    let check = update_check_from_release_payload(
+        &body,
+        &InstallLayout::LinuxDeb,
+        "https://release.capsem.org/assets/stable/manifest.json",
+        Some("f".repeat(64)),
     )
-    .unwrap();
-    let document: toml::Value = toml::from_str(&materialized).unwrap();
-    let assets = &document["assets"]["arch"]["x86_64"];
+    .expect("binary-only public graph payload");
 
-    for (kind, name, digest_seed, size) in [
-        ("kernel", "vmlinuz", "a", 11_i64),
-        ("initrd", "initrd.img", "b", 22_i64),
-        ("rootfs", "rootfs.erofs", "c", 33_i64),
-    ] {
-        assert_eq!(assets[kind]["name"].as_str(), Some(name));
-        assert_eq!(
-            assets[kind]["url"].as_str(),
-            Some(format!("https://release.example/profiles/releases/test/code/x86_64/{name}").as_str())
-        );
-        assert_eq!(
-            assets[kind]["hash"].as_str(),
-            Some(format!("blake3:{}", digest_seed.repeat(64)).as_str())
-        );
-        assert_eq!(assets[kind]["size"].as_integer(), Some(size));
-    }
+    assert_eq!(check.latest_assets, None);
+    assert!(!check.assets_update_available);
+    assert_eq!(check.assets_state.as_deref(), Some("not_published"));
+    assert_eq!(check.images_state.as_deref(), Some("not_published"));
+    let parsed = release_graph_from_payload(&body).unwrap().expect("graph");
+    assert!(runtime_asset_downloads(&parsed, machine_architecture().as_str())
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
-fn release_graph_profile_materialization_rejects_incomplete_manifest_pins() {
-    let source = r#"
-[assets]
-format = "profile-assets.v1"
-refresh_policy = "on_profile_refresh"
+fn a_release_graph_that_still_publishes_profiles_is_refused() {
+    let mut graph = runtime_graph("0.7.0-0123456789ab", 'a');
+    let runtime = graph.as_object_mut().unwrap().remove("runtime").unwrap();
+    graph["profiles"] = serde_json::json!({"code": runtime});
+    let body = serde_json::to_vec(&graph).unwrap();
 
-[assets.arch.x86_64.kernel]
-name = "vmlinuz"
-url = "https://old.example/vmlinuz"
-
-[assets.arch.x86_64.initrd]
-name = "initrd.img"
-url = "https://old.example/initrd.img"
-
-[assets.arch.x86_64.rootfs]
-name = "rootfs.erofs"
-url = "https://old.example/rootfs.erofs"
-"#;
-    let pins = vec![ReleaseChannelProfileRuntimePin {
-        profile_id: "code".to_string(),
-        arch: "x86_64".to_string(),
-        kind: "kernel".to_string(),
-        name: "vmlinuz".to_string(),
-        url: "https://release.example/vmlinuz".to_string(),
-        size: 11,
-        blake3: "a".repeat(64),
-    }];
-
-    let error = materialize_release_channel_profile_toml(
-        source,
-        "code",
-        "https://release.example/assets/nightly/manifest.json",
-        &pins,
+    let error = update_check_from_release_payload(
+        &body,
+        &InstallLayout::LinuxDeb,
+        "https://release.capsem.org/assets/stable/manifest.json",
+        Some("f".repeat(64)),
     )
     .unwrap_err();
 
-    assert!(
-        format!("{error:#}").contains("missing manifest runtime pins"),
-        "{error:#}"
-    );
+    assert!(format!("{error:#}").contains("publishes profiles"), "{error:#}");
 }
 
 #[test]
-fn release_graph_update_compares_independent_multi_profile_state() {
-    let profile = |revision: &str, image_revision: &str, seed: char| {
-        serde_json::json!({
-            "revision": revision,
-            "status": "current",
-            "architectures": [{
-                "architecture": machine_architecture(),
-                "image_revision": image_revision,
-                "config": [{
-                    "kind": "profile",
-                    "path": format!("profiles/{revision}/profile.toml"),
-                    "url": format!("https://release.example/{revision}/profile.toml"),
-                    "bytes": 1,
-                    "digest": {"sha256": "1".repeat(64), "blake3": seed.to_string().repeat(64)}
-                }],
-                "images": [
-                    {"kind":"kernel","name":"vmlinuz","url":"https://release.example/vmlinuz","bytes":1,"status":"current","digest":{"sha256":"2".repeat(64),"blake3":"b".repeat(64)}},
-                    {"kind":"initrd","name":"initrd.img","url":"https://release.example/initrd.img","bytes":1,"status":"current","digest":{"sha256":"3".repeat(64),"blake3":"c".repeat(64)}},
-                    {"kind":"rootfs","name":"rootfs.erofs","url":"https://release.example/rootfs.erofs","bytes":1,"status":"current","digest":{"sha256":"4".repeat(64),"blake3":"d".repeat(64)}}
-                ],
-                "evidence": [{
-                    "kind": "obom",
-                    "url": format!("https://release.example/{revision}/obom.cdx.json"),
-                    "bytes": 1,
-                    "digest": {"sha256": "5".repeat(64), "blake3": "e".repeat(64)}
-                }]
-            }]
-        })
-    };
-    let graph_value = serde_json::json!({
-        "packages": [],
-        "profiles": {
-            "co-work": profile("2030.0101.1", "2030.0101.10", 'a'),
-            "code": profile("2030.0101.2", "2030.0101.20", 'f')
-        }
-    });
-    let installed_state = capsem_assets::asset_manager::release_graph_profile_state(&graph_value).unwrap();
-    let graph: ReleaseGraphManifest = serde_json::from_value(graph_value.clone()).unwrap();
+fn runtime_asset_downloads_take_the_hosts_image_set_from_the_runtime() {
+    let graph: ReleaseGraphManifest = serde_json::from_value(runtime_graph("0.7.0-0123456789ab", 'a')).unwrap();
+
+    let downloads = runtime_asset_downloads(&graph, machine_architecture().as_str()).unwrap();
+
     assert_eq!(
-        serde_json::json!({"profiles": &graph.profiles})["profiles"],
-        graph_value["profiles"]
+        downloads
+            .iter()
+            .map(|download| download.logical_name.as_str())
+            .collect::<Vec<_>>(),
+        ["initrd.img", "rootfs.erofs", "vmlinuz"]
     );
+    let other_arch = match machine_architecture() {
+        Architecture::Arm64 => "x86_64",
+        Architecture::X86_64 => "arm64",
+    };
+    let error = runtime_asset_downloads(&graph, other_arch).unwrap_err();
+    assert!(format!("{error:#}").contains("has no"), "{error:#}");
+
+    let mut incomplete = runtime_graph("0.7.0-0123456789ab", 'a');
+    incomplete["runtime"]["architectures"][0]["images"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    let incomplete: ReleaseGraphManifest = serde_json::from_value(incomplete).unwrap();
+    let error = runtime_asset_downloads(&incomplete, machine_architecture().as_str()).unwrap_err();
+    assert!(format!("{error:#}").contains("missing rootfs.erofs"), "{error:#}");
+}
+
+#[test]
+fn release_graph_update_compares_the_installed_runtime_revision() {
+    let graph_value = runtime_graph("0.7.0-0123456789ab", 'a');
+    let installed_state = capsem_assets::asset_manager::release_graph_runtime_state(&graph_value)
+        .unwrap()
+        .unwrap();
+    let graph: ReleaseGraphManifest = serde_json::from_value(graph_value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&graph.runtime).unwrap(), graph_value["runtime"]);
 
     let first = update_check_from_release_graph_manifest(
         &graph,
         1718444400,
         "1.5.0",
-        None,
-        None,
+        Some("0.6.9-aaaaaaaaaaaa"),
         &InstallLayout::LinuxDeb,
         "https://release.capsem.org/assets/nightly/manifest.json",
         None,
     )
     .unwrap();
 
-    let latest_profiles = first.latest_profiles.as_deref().unwrap();
-    let latest_images = first.latest_images.as_deref().unwrap();
-    assert_eq!(latest_profiles, installed_state.catalog_revision);
-    assert_eq!(latest_images, installed_state.images_revision);
-    assert!(latest_profiles.starts_with("catalog-"));
-    assert!(latest_images.starts_with("images-"));
-    assert_eq!(first.latest_assets.as_deref(), Some(latest_images));
+    assert_eq!(first.latest_assets.as_deref(), Some("0.7.0-0123456789ab"));
+    assert_eq!(
+        first.latest_images.as_deref(),
+        Some(installed_state.images_revision.as_str())
+    );
+    assert!(first.assets_update_available);
+    assert!(first.images_update_available);
 
     let unchanged = update_check_from_release_graph_manifest(
         &graph,
         1718444401,
         "1.5.0",
-        Some(latest_images),
-        Some(latest_profiles),
+        Some(installed_state.revision.as_str()),
         &InstallLayout::LinuxDeb,
         "https://release.capsem.org/assets/nightly/manifest.json",
         None,
@@ -1373,7 +1191,6 @@ fn release_graph_update_compares_independent_multi_profile_state() {
     .unwrap();
 
     assert!(!unchanged.assets_update_available);
-    assert!(!unchanged.profiles_update_available);
     assert!(!unchanged.images_update_available);
 }
 
@@ -1395,8 +1212,7 @@ fn release_graph_update_check_does_not_downgrade_lower_nightly_package() {
                 "bytes": 222,
                 "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
             }
-        ],
-        "profiles": {}
+        ]
     }))
     .unwrap();
 
@@ -1404,7 +1220,6 @@ fn release_graph_update_check_does_not_downgrade_lower_nightly_package() {
         &graph,
         1718444400,
         "1.5.100",
-        None,
         None,
         &InstallLayout::LinuxDeb,
         "https://release.capsem.org/assets/nightly/manifest.json",
@@ -1435,8 +1250,7 @@ fn release_graph_update_check_does_not_update_non_comparable_nightly_package() {
                 "bytes": 222,
                 "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
             }
-        ],
-        "profiles": {}
+        ]
     }))
     .unwrap();
 
@@ -1444,7 +1258,6 @@ fn release_graph_update_check_does_not_update_non_comparable_nightly_package() {
         &graph,
         1718444400,
         "1.5.100",
-        None,
         None,
         &InstallLayout::LinuxDeb,
         "https://release.capsem.org/assets/nightly/manifest.json",
@@ -1455,249 +1268,6 @@ fn release_graph_update_check_does_not_update_non_comparable_nightly_package() {
     assert_eq!(check.latest_version, Some("nightly-20260710".to_string()));
     assert!(!check.update_available);
     assert_eq!(check.binary_installer, None);
-}
-
-#[test]
-fn release_health_update_check_uses_updates_block() {
-    let pkg_sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    let deb_sha = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
-    let pkg_blake3 = "1111111111111111111111111111111111111111111111111111111111111111";
-    let deb_blake3 = "2222222222222222222222222222222222222222222222222222222222222222";
-    let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
-        "schema": "capsem.assets_channel.legacy.v1",
-        "updates": {
-            "binary": {
-                "latest": "99.99.99",
-                "current": "99.99.98",
-                "files": [
-                    {
-                        "name": "Capsem-99.99.99.pkg",
-                        "url": "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg",
-                        "sha256": pkg_sha,
-                        "blake3": pkg_blake3,
-                        "size": 123
-                    },
-                    {
-                        "name": format!("Capsem_99.99.99_{}.deb", deb_arch()),
-                        "url": format!("https://github.com/google/capsem/releases/download/v99.99.99/Capsem_99.99.99_{}.deb", deb_arch()),
-                        "sha256": deb_sha,
-                        "blake3": deb_blake3,
-                        "size": 456
-                    }
-                ]
-            },
-            "assets": {
-                "latest": "2030.0101.1",
-                "current": "2030.0101.0",
-                "state": "published",
-                "compatibility": {
-                    "min_binary": "1.0.0"
-                }
-            },
-            "profiles": {
-                "latest": "profiles-2030.0101.1",
-                "state": "published",
-                "source": "/profiles/releases/profiles-2030.0101.1/catalog.json",
-                "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                "requires_newer": {
-                    "binary": false,
-                    "assets": false
-                }
-            },
-            "images": {"latest": null, "state": "not_published"}
-        }
-    }))
-    .unwrap();
-
-    let check = update_check_from_release_health(
-        &health,
-        1718444400,
-        "1.3.1782582155",
-        Some("2026.0627.1"),
-        Some("profiles-2030.0101.0"),
-        &InstallLayout::MacosPkg,
-        "https://release.capsem.org/assets/stable/manifest.json",
-        Some("f".repeat(64)),
-    )
-    .unwrap();
-
-    assert_eq!(check.latest_version, Some("99.99.99".to_string()));
-    assert!(check.update_available);
-    let installer = check.binary_installer.as_ref().unwrap();
-    assert_eq!(installer.name, "Capsem-99.99.99.pkg");
-    assert_eq!(installer.sha256, pkg_sha);
-    assert_eq!(installer.size, 123);
-    assert_eq!(installer.install_layout, "macos_pkg");
-    assert_eq!(check.latest_assets, Some("2030.0101.1".to_string()));
-    assert!(check.assets_update_available);
-    assert_eq!(check.assets_state, Some("published".to_string()));
-    assert_eq!(check.assets_blocked_reason, None);
-    assert_eq!(check.current_profiles, Some("profiles-2030.0101.0".to_string()));
-    assert_eq!(check.latest_profiles, Some("profiles-2030.0101.1".to_string()));
-    assert!(check.profiles_update_available);
-    assert_eq!(check.profiles_state, Some("published".to_string()));
-    assert_eq!(check.profiles_blocked_reason, None);
-    assert_eq!(
-        check.profile_catalog_source,
-        Some("/profiles/releases/profiles-2030.0101.1/catalog.json".to_string())
-    );
-    assert_eq!(check.profile_catalog_hash, Some("b".repeat(64)));
-    assert_eq!(check.latest_images, None);
-    assert!(!check.images_update_available);
-    assert_eq!(check.images_state, Some("not_published".to_string()));
-    assert_eq!(check.images_blocked_reason, None);
-    assert_eq!(
-        check.source,
-        Some("https://release.capsem.org/assets/stable/manifest.json".to_string())
-    );
-    assert_eq!(check.channel_hash, Some("f".repeat(64)));
-    assert_eq!(check.validation_status, Some("valid".to_string()));
-    assert_eq!(check.validation_error, None);
-}
-
-#[test]
-fn release_health_update_check_accepts_legacy_current_targets() {
-    let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
-        "schema": "capsem.assets_channel.legacy.v1",
-        "updates": {
-            "binary": {"current": "99.99.99"},
-            "assets": {"current": "2030.0101.1"}
-        }
-    }))
-    .unwrap();
-
-    let check = update_check_from_release_health(
-        &health,
-        1718444400,
-        "1.3.1782582155",
-        Some("2026.0627.1"),
-        None,
-        &InstallLayout::MacosPkg,
-        "https://release.capsem.org/assets/stable/manifest.json",
-        None,
-    )
-    .unwrap();
-
-    assert_eq!(check.latest_version, Some("99.99.99".to_string()));
-    assert_eq!(check.latest_assets, Some("2030.0101.1".to_string()));
-}
-
-#[test]
-fn release_health_asset_update_reports_blocked_compatibility() {
-    let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
-        "schema": "capsem.assets_channel.legacy.v1",
-        "updates": {
-            "binary": {"current": "1.3.1782582155"},
-            "assets": {
-                "latest": "2030.0101.1",
-                "current": "2030.0101.1",
-                "state": "published",
-                "compatibility": {
-                    "min_binary": "99.99.99"
-                }
-            }
-        }
-    }))
-    .unwrap();
-
-    let check = update_check_from_release_health(
-        &health,
-        1718444400,
-        "1.3.1782582155",
-        Some("2026.0627.1"),
-        None,
-        &InstallLayout::MacosPkg,
-        "https://release.capsem.org/assets/stable/manifest.json",
-        None,
-    )
-    .unwrap();
-
-    assert_eq!(check.latest_assets, Some("2030.0101.1".to_string()));
-    assert_eq!(check.current_assets, Some("2026.0627.1".to_string()));
-    assert!(!check.assets_update_available);
-    assert_eq!(check.assets_state, Some("published".to_string()));
-    assert_eq!(
-        check.assets_blocked_reason.as_deref(),
-        Some("requires binary 99.99.99 or newer")
-    );
-}
-
-#[test]
-fn release_health_deprecated_asset_update_is_blocked() {
-    let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
-        "schema": "capsem.assets_channel.legacy.v1",
-        "updates": {
-            "binary": {"current": "1.3.1782582155"},
-            "assets": {
-                "latest": "2030.0101.1",
-                "current": "2030.0101.1",
-                "state": "deprecated"
-            }
-        }
-    }))
-    .unwrap();
-
-    let check = update_check_from_release_health(
-        &health,
-        1718444400,
-        "1.3.1782582155",
-        Some("2026.0627.1"),
-        None,
-        &InstallLayout::MacosPkg,
-        "https://release.capsem.org/assets/stable/manifest.json",
-        None,
-    )
-    .unwrap();
-
-    assert!(!check.assets_update_available);
-    assert_eq!(
-        check.assets_blocked_reason.as_deref(),
-        Some("latest VM asset release is deprecated")
-    );
-}
-
-#[test]
-fn release_health_profile_update_reports_blocked_compatibility() {
-    let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
-        "schema": "capsem.assets_channel.legacy.v1",
-        "updates": {
-            "binary": {"current": "1.3.1782582155"},
-            "assets": {"current": "2026.0627.1"},
-            "profiles": {
-                "latest": "profiles-2030.0101.1",
-                "state": "published",
-                "requires_newer": {
-                    "binary": true,
-                    "assets": false
-                },
-                "compatibility": {
-                    "min_binary": "1.4.0",
-                    "min_assets": "2026.0627.1"
-                }
-            }
-        }
-    }))
-    .unwrap();
-
-    let check = update_check_from_release_health(
-        &health,
-        1718444400,
-        "1.3.1782582155",
-        Some("2026.0627.1"),
-        Some("profiles-2030.0101.0"),
-        &InstallLayout::MacosPkg,
-        "https://release.capsem.org/assets/stable/manifest.json",
-        None,
-    )
-    .unwrap();
-
-    assert_eq!(check.current_profiles, Some("profiles-2030.0101.0".to_string()));
-    assert_eq!(check.latest_profiles, Some("profiles-2030.0101.1".to_string()));
-    assert!(!check.profiles_update_available);
-    assert_eq!(
-        check.profiles_blocked_reason.as_deref(),
-        Some("requires binary 1.4.0 or newer")
-    );
 }
 
 #[test]
@@ -2161,35 +1731,6 @@ impl Drop for EnvGuard {
 }
 
 #[test]
-fn release_health_update_check_rejects_wrong_schema() {
-    let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
-        "schema": "capsem.bad_legacy.v1",
-        "updates": {
-            "binary": {"current": "99.99.99"},
-            "assets": {"current": "2030.0101.1"}
-        }
-    }))
-    .unwrap();
-
-    let err = update_check_from_release_health(
-        &health,
-        1718444400,
-        "1.3.1782582155",
-        Some("2026.0627.1"),
-        None,
-        &InstallLayout::MacosPkg,
-        "https://release.capsem.org/assets/stable/manifest.json",
-        None,
-    )
-    .unwrap_err();
-
-    assert!(
-        format!("{err:#}").contains("release channel legacy schema mismatch"),
-        "{err:#}"
-    );
-}
-
-#[test]
 fn write_manifest_metadata_preserves_package_provenance() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("installed-assets");
@@ -2420,7 +1961,6 @@ fn staged_channel_switch_records_correlated_asset_audit() {
         manifest_path: staged_root.join("manifest.json"),
         installer_path: None,
         assets_dir: None,
-        profiles_dir: None,
     };
     let check = UpdateCheck {
         checked_at: now_secs(),
@@ -2432,13 +1972,6 @@ fn staged_channel_switch_records_correlated_asset_audit() {
         assets_update_available: false,
         assets_state: Some("published".into()),
         assets_blocked_reason: None,
-        latest_profiles: None,
-        current_profiles: None,
-        profiles_update_available: false,
-        profiles_state: None,
-        profiles_blocked_reason: None,
-        profile_catalog_source: None,
-        profile_catalog_hash: None,
         latest_images: None,
         images_update_available: false,
         images_state: None,
@@ -2450,7 +1983,6 @@ fn staged_channel_switch_records_correlated_asset_audit() {
     };
 
     activate_staged_update_with_asset_audit(
-        home.path(),
         &assets_dir,
         &staged,
         &check,
@@ -2500,14 +2032,12 @@ fn failed_staged_channel_switch_never_records_asset_completion() {
         manifest_path: staged_root.join("manifest.json"),
         installer_path: None,
         assets_dir: None,
-        profiles_dir: None,
     };
     let mut check = cached_notice_check();
     check.source = Some(source.into());
     check.channel_hash = Some("f".repeat(64));
 
     let error = activate_staged_update_with_asset_audit(
-        home.path(),
         &assets_dir,
         &staged,
         &check,

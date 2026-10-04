@@ -1,66 +1,107 @@
 use super::*;
 
-#[test]
-fn profile_release_commands_publish_report_is_lane_scoped() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let stable_manifest = temp.path().join("stable-manifest.json");
-    let nightly_manifest = temp.path().join("nightly-manifest.json");
-    write_profile_release_manifest(&stable_manifest, "1.4.0", "1.0.0", "deprecated");
-    write_profile_release_manifest(&nightly_manifest, "1.5.0-nightly.20300101", "2026.7.2-2", "supported");
-
-    let args = ReleaseArgs {
+fn release_args(manifest_path: &Path, manifest_version: &str, runtime_revision: &str) -> ReleaseArgs {
+    ReleaseArgs {
         source_commit: source_commit(),
-        manifest_path: Some(nightly_manifest.clone()),
+        manifest_path: Some(manifest_path.to_path_buf()),
         candidate_manifest: None,
         publication_base: None,
         channel: "nightly".to_string(),
-        manifest_version: Some("1.5.0-nightly.20300101".to_string()),
-        profile: "co-work".to_string(),
-        profile_version: Some("2026.7.2-2".to_string()),
-        config_root: repo_config_profiles_dir().parent().expect("config root").to_path_buf(),
-        status: ProfileReleaseStatusArg::Current,
+        manifest_version: Some(manifest_version.to_string()),
+        runtime_revision: Some(runtime_revision.to_string()),
+        status: ReleaseStatusArg::Current,
         bootstrap_from_manifest: None,
         bootstrap_retired_manifest: None,
         bootstrap_retired_sha256: None,
         bootstrap_output: None,
         dry_run: false,
         json: true,
-    };
+    }
+}
 
-    let report = apply_profile_release_status(&args).expect("publish profile release");
+fn write_runtime_release_manifest(path: &Path, channel: &str, manifest_version: &str, revision: &str, status: &str) {
+    let mut manifest = test_runtime_graph(channel, revision);
+    manifest["version"] = serde_json::json!(manifest_version);
+    manifest["runtime"]["status"] = serde_json::json!(status);
+    for architecture in manifest["runtime"]["architectures"]
+        .as_array_mut()
+        .expect("architectures")
+    {
+        for image in architecture["images"].as_array_mut().expect("images") {
+            image["status"] = serde_json::json!(status);
+        }
+    }
+    fs::write(
+        path,
+        serde_json::to_vec_pretty(&manifest).expect("runtime release manifest"),
+    )
+    .expect("write runtime release manifest");
+}
 
-    assert_eq!(report.schema, "capsem.admin.profile_release.v1");
+#[test]
+fn runtime_release_status_is_channel_scoped() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stable_manifest = temp.path().join("stable-manifest.json");
+    let nightly_manifest = temp.path().join("nightly-manifest.json");
+    write_runtime_release_manifest(&stable_manifest, "stable", "1.4.0", "1.0.0", "deprecated");
+    write_runtime_release_manifest(
+        &nightly_manifest,
+        "nightly",
+        "1.5.0-nightly.20300101",
+        "0.7.0-0123456789ab",
+        "supported",
+    );
+
+    let args = release_args(&nightly_manifest, "1.5.0-nightly.20300101", "0.7.0-0123456789ab");
+    let report = apply_runtime_release_status(&args).expect("publish runtime release");
+
+    assert_eq!(report.schema, "capsem.admin.runtime_release.v1");
     assert_eq!(report.action, "release");
     assert_eq!(report.status, release_graph::Status::Current);
+    assert_eq!(report.runtime_revision, "0.7.0-0123456789ab");
+    assert_eq!(report.publication_identity, "runtime-nightly-0.7.0-0123456789ab");
     assert_eq!(report.changed_channels, vec!["nightly"]);
     assert_eq!(report.changed_manifests, vec!["1.5.0-nightly.20300101"]);
-    assert_eq!(report.changed_profiles, vec!["co-work"]);
-    assert_eq!(report.changed_config_refs, 1);
     assert_eq!(report.changed_image_artifacts, 3);
+    let report_json = serde_json::to_value(&report).expect("report json");
+    for retired in ["profile", "profile_version", "changed_profiles", "changed_config_refs"] {
+        assert!(report_json.get(retired).is_none(), "{retired} left the release report");
+    }
 
     let nightly: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&nightly_manifest).expect("nightly manifest")).expect("nightly json");
-    assert_eq!(nightly["profiles"]["co-work"]["status"].as_str(), Some("current"));
+    assert_eq!(nightly["runtime"]["status"].as_str(), Some("current"));
     assert_eq!(
-        nightly["profiles"]["co-work"]["architectures"][0]["config"][0]["status"].as_str(),
-        Some("current")
-    );
-    assert_eq!(
-        nightly["profiles"]["co-work"]["architectures"][0]["images"][0]["status"].as_str(),
+        nightly["runtime"]["architectures"][0]["images"][0]["status"].as_str(),
         Some("current")
     );
 
     let stable: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&stable_manifest).expect("stable manifest")).expect("stable json");
     assert_eq!(
-        stable["profiles"]["co-work"]["status"].as_str(),
+        stable["runtime"]["status"].as_str(),
         Some("deprecated"),
-        "publishing nightly co-work must not mutate stable"
+        "publishing the nightly runtime must not mutate stable"
     );
 }
 
 #[test]
-fn profile_release_commands_require_enum_status_values() {
+fn runtime_release_status_refuses_a_revision_the_manifest_does_not_carry() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manifest = temp.path().join("manifest.json");
+    write_runtime_release_manifest(&manifest, "nightly", "1.0.0", "0.7.0-0123456789ab", "current");
+
+    let error = apply_runtime_release_status(&release_args(&manifest, "1.0.0", "0.7.0-fedcba987654"))
+        .expect_err("a different runtime revision is not this manifest's runtime");
+
+    assert!(
+        format!("{error:#}").contains("expected 0.7.0-fedcba987654"),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn runtime_release_commands_require_enum_status_values() {
     let error = Cli::try_parse_from([
         "capsem-admin",
         "release",
@@ -70,12 +111,10 @@ fn profile_release_commands_require_enum_status_values() {
         "nightly",
         "--manifest-version",
         "1.5.0-nightly.20300101",
-        "--profile",
-        "co-work",
         "--source-commit",
         "0123456789abcdef0123456789abcdef01234567",
-        "--profile-version",
-        "2026.7.2-2",
+        "--runtime-revision",
+        "0.7.0-0123456789ab",
         "--status",
         "removed",
     ])
@@ -97,29 +136,47 @@ fn retired_graph_authoring_verifies_the_exact_input_bytes() {
 }
 
 #[test]
-fn profile_release_paths_are_channel_qualified() {
-    let stable =
-        profile_release_url("stable", "code", "2026.06.08.7", "arm64", "rootfs.erofs").expect("stable profile URL");
-    let nightly =
-        profile_release_url("nightly", "code", "2026.06.08.7", "arm64", "rootfs.erofs").expect("nightly profile URL");
+fn runtime_release_paths_are_channel_qualified() {
+    let stable = runtime_release_url("stable", "0.7.0-0123456789ab", "arm64", "rootfs.erofs").expect("stable URL");
+    let nightly = runtime_release_url("nightly", "0.7.0-0123456789ab", "arm64", "rootfs.erofs").expect("nightly URL");
 
-    assert_eq!(stable, "/profiles/releases/stable/code/2026.06.08.7/arm64/rootfs.erofs");
+    assert_eq!(stable, "/runtime/releases/stable/0.7.0-0123456789ab/arm64/rootfs.erofs");
     assert_eq!(
         nightly,
-        "/profiles/releases/nightly/code/2026.06.08.7/arm64/rootfs.erofs"
+        "/runtime/releases/nightly/0.7.0-0123456789ab/arm64/rootfs.erofs"
     );
-    assert_ne!(stable, nightly);
+    for (arch, file) in [("..", "rootfs.erofs"), ("arm64", "../rootfs.erofs"), ("arm64", "")] {
+        assert!(
+            runtime_release_url("stable", "0.7.0-0123456789ab", arch, file).is_err(),
+            "{arch}/{file} must not form a runtime path"
+        );
+    }
 }
 
 #[test]
-fn release_command_has_one_operator_shape() {
+fn runtime_revision_is_the_workspace_version_and_the_commit_prefix() {
+    let commit = source_commit();
+
+    assert_eq!(
+        commit.runtime_revision(),
+        format!("{}-0123456789ab", env!("CARGO_PKG_VERSION"))
+    );
+    let selection = validate_release_selection("nightly", &commit).expect("selection validates");
+    assert_eq!(selection.runtime_revision, commit.runtime_revision());
+    assert_eq!(
+        selection.publication_identity,
+        format!("runtime-nightly-{}", commit.runtime_revision())
+    );
+    assert!(validate_release_selection("night/ly", &commit).is_err());
+}
+
+#[test]
+fn validate_and_release_take_only_channel_and_source_commit() {
     let cli = Cli::parse_from([
         "capsem-admin",
         "release",
         "--channel",
         "nightly",
-        "--profile",
-        "code",
         "--source-commit",
         "0123456789abcdef0123456789abcdef01234567",
         "--dry-run",
@@ -127,36 +184,60 @@ fn release_command_has_one_operator_shape() {
     match cli.command {
         Commands::Release(args) => {
             assert_eq!(args.channel, "nightly");
-            assert_eq!(args.profile, "code");
             assert_eq!(args.source_commit.as_str(), "0123456789abcdef0123456789abcdef01234567");
             assert!(args.manifest_path.is_none());
             assert!(args.dry_run);
         }
         _ => panic!("expected release command"),
     }
+    let cli = Cli::parse_from([
+        "capsem-admin",
+        "validate",
+        "--channel",
+        "stable",
+        "--source-commit",
+        "0123456789abcdef0123456789abcdef01234567",
+        "--json",
+    ]);
+    assert!(matches!(cli.command, Commands::Validate(_)));
+    for retired in [["--profile", "code"], ["--config-root", "config"]] {
+        for command in ["validate", "release"] {
+            Cli::try_parse_from([
+                "capsem-admin",
+                command,
+                "--channel",
+                "stable",
+                "--source-commit",
+                "0123456789abcdef0123456789abcdef01234567",
+                retired[0],
+                retired[1],
+            ])
+            .expect_err("profiles are not a release unit");
+        }
+    }
     assert_eq!(
-        profile_publication_identity("nightly", "code", "2026.06.08.7").expect("publication identity"),
-        "profile-nightly-code-2026.06.08.7"
+        runtime_publication_identity("nightly", "0.7.0-0123456789ab").expect("publication identity"),
+        "runtime-nightly-0.7.0-0123456789ab"
     );
     assert!(
-        profile_publication_identity("nightly", "code", "revision/escape").is_err(),
+        runtime_publication_identity("nightly", "revision/escape").is_err(),
         "publication identities must be safe immutable GitHub release tags"
     );
 }
 
 #[derive(Default)]
-struct RecordingProfileWorkflowRunner {
+struct RecordingReleaseWorkflowRunner {
     listings: std::collections::VecDeque<String>,
     calls: Vec<Vec<String>>,
     waits: usize,
     fail_watch: bool,
 }
 
-impl ProfileWorkflowRunner for RecordingProfileWorkflowRunner {
+impl ReleaseWorkflowRunner for RecordingReleaseWorkflowRunner {
     fn run(&mut self, args: &[String]) -> Result<()> {
         self.calls.push(args.to_vec());
         if self.fail_watch && args.first().map(String::as_str) == Some("run") {
-            return Err(anyhow!("watched profile workflow failed"));
+            return Err(anyhow!("watched runtime workflow failed"));
         }
         Ok(())
     }
@@ -173,45 +254,34 @@ impl ProfileWorkflowRunner for RecordingProfileWorkflowRunner {
     }
 }
 
+fn workflow_run(id: u64, title: &str, commit: &SourceCommit, status: &str, conclusion: &str) -> serde_json::Value {
+    serde_json::json!({
+        "databaseId": id,
+        "displayTitle": title,
+        "headSha": commit,
+        "headBranch": format!("capsem-source-{commit}"),
+        "status": status,
+        "conclusion": conclusion,
+    })
+}
+
 #[test]
-fn profile_release_dispatch_waits_for_its_exact_workflow_run() {
+fn runtime_release_dispatch_waits_for_its_exact_workflow_run() {
     let commit = source_commit();
     let source_ref = format!("capsem-source-{commit}");
-    let mut runner = RecordingProfileWorkflowRunner {
+    let title = "Release runtime nightly dispatch-7";
+    let mut runner = RecordingReleaseWorkflowRunner {
         listings: [
             "[]".to_string(),
-            serde_json::json!([{
-                "databaseId": 42,
-                "displayTitle": "Release profile nightly/code dispatch-7",
-                "headSha": commit,
-                "headBranch": source_ref,
-                "status": "in_progress",
-                "conclusion": "",
-            }])
-            .to_string(),
-            serde_json::json!({
-                "databaseId": 42,
-                "displayTitle": "Release profile nightly/code dispatch-7",
-                "headSha": commit,
-                "headBranch": source_ref,
-                "status": "completed",
-                "conclusion": "success",
-            })
-            .to_string(),
+            serde_json::json!([workflow_run(42, title, &commit, "in_progress", "")]).to_string(),
+            workflow_run(42, title, &commit, "completed", "success").to_string(),
         ]
         .into(),
         ..Default::default()
     };
 
-    let run_id = dispatch_profile_workflow(
-        &mut runner,
-        "release-assets.yaml",
-        "nightly",
-        "code",
-        &commit,
-        "dispatch-7",
-    )
-    .expect("dispatch is found and watched");
+    let run_id = dispatch_release_workflow(&mut runner, "release-assets.yaml", "nightly", &commit, "dispatch-7")
+        .expect("dispatch is found and watched");
 
     assert_eq!(run_id, 42);
     assert_eq!(runner.waits, 1);
@@ -226,8 +296,6 @@ fn profile_release_dispatch_waits_for_its_exact_workflow_run() {
             "-f",
             "channel=nightly",
             "-f",
-            "profile=code",
-            "-f",
             "dry_run=false",
             "-f",
             "dispatch_id=dispatch-7",
@@ -239,44 +307,27 @@ fn profile_release_dispatch_waits_for_its_exact_workflow_run() {
 }
 
 #[test]
-fn profile_release_dispatch_ignores_an_unrelated_pending_run() {
+fn runtime_release_dispatch_ignores_an_unrelated_pending_run() {
     let commit = source_commit();
-    let source_ref = format!("capsem-source-{commit}");
-    let mut runner = RecordingProfileWorkflowRunner {
+    let ours = "Release runtime nightly ours";
+    let mut runner = RecordingReleaseWorkflowRunner {
         listings: [
-            serde_json::json!([{
-                "databaseId": 9,
-                "displayTitle": "Release profile nightly/co-work somebody-else",
-                "headSha": commit,
-                "headBranch": source_ref,
-                "status": "in_progress",
-                "conclusion": "",
-            }])
+            serde_json::json!([workflow_run(
+                9,
+                "Release runtime nightly somebody-else",
+                &commit,
+                "in_progress",
+                ""
+            )])
             .to_string(),
-            serde_json::json!([{
-                "databaseId": 10,
-                "displayTitle": "Release profile nightly/code ours",
-                "headSha": commit,
-                "headBranch": source_ref,
-                "status": "in_progress",
-                "conclusion": "",
-            }])
-            .to_string(),
-            serde_json::json!({
-                "databaseId": 10,
-                "displayTitle": "Release profile nightly/code ours",
-                "headSha": commit,
-                "headBranch": source_ref,
-                "status": "completed",
-                "conclusion": "success",
-            })
-            .to_string(),
+            serde_json::json!([workflow_run(10, ours, &commit, "in_progress", "")]).to_string(),
+            workflow_run(10, ours, &commit, "completed", "success").to_string(),
         ]
         .into(),
         ..Default::default()
     };
 
-    let run_id = dispatch_profile_workflow(&mut runner, "release-assets.yaml", "nightly", "code", &commit, "ours")
+    let run_id = dispatch_release_workflow(&mut runner, "release-assets.yaml", "nightly", &commit, "ours")
         .expect("the correlated run is selected");
 
     assert_eq!(run_id, 10);
@@ -284,42 +335,101 @@ fn profile_release_dispatch_ignores_an_unrelated_pending_run() {
 }
 
 #[test]
-fn profile_release_dispatch_propagates_the_exact_run_failure() {
+fn runtime_release_dispatch_propagates_the_exact_run_failure() {
     let commit = source_commit();
-    let mut runner = RecordingProfileWorkflowRunner {
-        listings: [serde_json::json!([{
-            "databaseId": 11,
-            "displayTitle": "Release profile nightly/code ours",
-            "headSha": commit,
-            "headBranch": format!("capsem-source-{commit}"),
-            "status": "in_progress",
-            "conclusion": "",
-        }])
+    let mut runner = RecordingReleaseWorkflowRunner {
+        listings: [serde_json::json!([workflow_run(
+            11,
+            "Release runtime nightly ours",
+            &commit,
+            "in_progress",
+            ""
+        )])
         .to_string()]
         .into(),
         fail_watch: true,
         ..Default::default()
     };
 
-    let error = dispatch_profile_workflow(&mut runner, "release-assets.yaml", "nightly", "code", &commit, "ours")
+    let error = dispatch_release_workflow(&mut runner, "release-assets.yaml", "nightly", &commit, "ours")
         .expect_err("the public command must fail with its exact workflow run");
 
-    assert!(format!("{error:#}").contains("watched profile workflow failed"));
+    assert!(format!("{error:#}").contains("watched runtime workflow failed"));
     assert_eq!(runner.calls.last().expect("watch call")[2], "11");
 }
 
 #[test]
-fn profile_release_merges_only_selected_profile_and_reports_compatibility() {
+fn runtime_release_merges_the_candidate_runtime_and_reports_compatibility() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/capsem-release/fixtures/release-graph-stable-nightly.json");
-    let graph: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(fixture).expect("fixture")).expect("fixture json");
-    let base = graph["manifests"]["nightly"]["1.0.2"].clone();
+    let revision = source_commit().runtime_revision();
+    let mut base = test_runtime_graph("nightly", "0.6.9-aaaaaaaaaaaa");
+    base["version"] = serde_json::json!("1.0.2");
+    let mut candidate = test_runtime_graph("nightly", &revision);
+    candidate["version"] = serde_json::json!("1.0.2");
+    candidate["runtime"]["min_capsem_version"] = serde_json::json!("9.0.0");
+    let base_path = temp.path().join("base.json");
+    let candidate_path = temp.path().join("candidate.json");
+    fs::write(&base_path, serde_json::to_vec_pretty(&base).expect("base json")).expect("write base");
+    let publication_base = format!("https://github.com/google/capsem/releases/download/runtime-nightly-{revision}");
+    let args = ReleaseArgs {
+        candidate_manifest: Some(candidate_path.clone()),
+        publication_base: Some(publication_base.clone()),
+        ..release_args(&base_path, "1.0.2", &revision)
+    };
+
+    candidate["runtime"]["source_commit"] = serde_json::Value::String("f".repeat(40));
+    fs::write(
+        &candidate_path,
+        serde_json::to_vec_pretty(&candidate).expect("candidate json"),
+    )
+    .expect("write mismatched candidate");
+    let error = apply_runtime_release_status(&args).expect_err("wrong source commit rejected");
+    assert!(format!("{error:#}").contains("was built from"), "{error:#}");
+    candidate["runtime"]
+        .as_object_mut()
+        .expect("runtime object")
+        .remove("source_commit");
+    fs::write(
+        &candidate_path,
+        serde_json::to_vec_pretty(&candidate).expect("candidate json"),
+    )
+    .expect("write candidate");
+
+    let report = apply_runtime_release_status(&args).expect("merge candidate runtime");
+    let merged: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&base_path).expect("merged")).expect("merged json");
+
+    assert!(!report.compatible_with_current_binary);
+    assert_eq!(report.changed_image_artifacts, 0);
+    assert_eq!(merged["packages"], base["packages"]);
+    assert!(merged.get("profiles").is_none());
+    assert_eq!(merged["runtime"]["source_commit"], source_commit().as_str());
+    assert!(merged.get("source_commit").is_none());
+    assert_eq!(merged["runtime"]["revision"].as_str(), Some(revision.as_str()));
+    assert_eq!(
+        merged["runtime"]["architectures"][0]["images"][0]["url"].as_str(),
+        Some(format!("{publication_base}/arm64-vmlinuz").as_str())
+    );
+    assert!(merged["runtime"]["architectures"][0]["software"]
+        .as_array()
+        .expect("software rows")
+        .iter()
+        .all(|row| row["evidence"].as_str()
+            == Some(format!("{publication_base}/arm64-software-inventory.json").as_str())));
+    assert!(merged["runtime"]["architectures"][0]["evidence"]
+        .as_array()
+        .expect("evidence rows")
+        .iter()
+        .all(|row| !row["url"].as_str().expect("evidence URL").contains("/arm64-arm64-")));
+    validate_assets_channel_graph_manifest(&merged, "nightly").expect("merged graph validates");
+}
+
+#[test]
+fn runtime_release_refuses_a_candidate_without_a_runtime() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let base = test_runtime_graph("nightly", "0.6.9-aaaaaaaaaaaa");
     let mut candidate = base.clone();
-    candidate["profiles"]["code"]["revision"] = serde_json::Value::String("2026.07.24.1".to_string());
-    candidate["profiles"]["code"]["version"] = serde_json::Value::String("2026.07.24.1".to_string());
-    candidate["profiles"]["code"]["min_capsem_version"] = serde_json::Value::String("9.0.0".to_string());
+    candidate.as_object_mut().expect("graph").remove("runtime");
     let base_path = temp.path().join("base.json");
     let candidate_path = temp.path().join("candidate.json");
     fs::write(&base_path, serde_json::to_vec_pretty(&base).expect("base json")).expect("write base");
@@ -329,168 +439,64 @@ fn profile_release_merges_only_selected_profile_and_reports_compatibility() {
     )
     .expect("write candidate");
     let args = ReleaseArgs {
-        source_commit: source_commit(),
-        channel: "nightly".to_string(),
-        profile: "code".to_string(),
-        config_root: PathBuf::from("config"),
-        manifest_path: Some(base_path.clone()),
         candidate_manifest: Some(candidate_path),
-        publication_base: Some(
-            "https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1".to_string(),
-        ),
-        manifest_version: Some("1.0.2".to_string()),
-        profile_version: Some("2026.07.24.1".to_string()),
-        status: ProfileReleaseStatusArg::Current,
-        bootstrap_from_manifest: None,
-        bootstrap_retired_manifest: None,
-        bootstrap_retired_sha256: None,
-        bootstrap_output: None,
-        dry_run: false,
+        ..release_args(&base_path, "1.0.2", "0.7.0-0123456789ab")
+    };
+
+    let error = apply_runtime_release_status(&args).expect_err("nothing to publish");
+
+    assert!(format!("{error:#}").contains("does not publish a runtime"), "{error:#}");
+}
+
+#[test]
+fn corporate_manifest_carries_the_corporations_runtime_under_its_base() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let base = "https://corp.example/runtime/";
+    let official = test_runtime_graph("stable", "1.0.0");
+    let mut runtime_source = test_runtime_graph("acme-stable", "2030.0101.1");
+    runtime_source["packages"] = serde_json::json!([]);
+    rewrite_runtime_publication_urls(&mut runtime_source["runtime"], &format!("{base}2030.0101.1"))
+        .expect("corporate publication URLs");
+    let official_path = temp.path().join("official.json");
+    let runtime_path = temp.path().join("runtime.json");
+    fs::write(&official_path, serde_json::to_vec(&official).expect("official json")).expect("write official");
+    fs::write(
+        &runtime_path,
+        serde_json::to_vec(&runtime_source).expect("runtime json"),
+    )
+    .expect("write runtime");
+    let args = |runtime_base: &str| ManifestCorporateArgs {
+        corporation: "acme".to_string(),
+        channel: "acme-stable".to_string(),
+        official_manifest: official_path.clone(),
+        runtime_manifest: runtime_path.clone(),
+        runtime_base: runtime_base.to_string(),
+        binary: "latest".to_string(),
+        source_commit: source_commit(),
+        output_root: temp.path().join("out"),
+        manifest_version: "1.0.0".to_string(),
         json: true,
     };
 
-    candidate["profiles"]["code"]["source_commit"] = serde_json::Value::String("f".repeat(40));
-    fs::write(
-        args.candidate_manifest.as_ref().expect("candidate path"),
-        serde_json::to_vec_pretty(&candidate).expect("candidate json"),
-    )
-    .expect("write mismatched candidate");
-    let error = apply_profile_release_status(&args).expect_err("wrong source commit rejected");
-    assert!(format!("{error:#}").contains("was built from"), "{error:#}");
-    candidate["profiles"]["code"]
-        .as_object_mut()
-        .expect("profile object")
-        .remove("source_commit");
-    fs::write(
-        args.candidate_manifest.as_ref().expect("candidate path"),
-        serde_json::to_vec_pretty(&candidate).expect("candidate json"),
-    )
-    .expect("write candidate");
+    let report = author_corporate_manifest(&args(base)).expect("corporate manifest authored");
 
-    let report = apply_profile_release_status(&args).expect("merge selected profile");
-    let merged: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(base_path).expect("merged")).expect("merged json");
+    assert_eq!(report.runtime_revision, "2030.0101.1");
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report.output_manifest).expect("output")).expect("output json");
+    assert_eq!(written["packages"], official["packages"]);
+    assert_eq!(written["runtime"]["source_commit"], source_commit().as_str());
+    assert!(written.get("profiles").is_none());
 
-    assert!(!report.compatible_with_current_binary);
-    assert_eq!(report.changed_profiles, vec!["code"]);
-    assert_eq!(merged["packages"], base["packages"]);
-    assert_eq!(merged["profiles"]["co-work"], base["profiles"]["co-work"]);
-    assert_eq!(merged["profiles"]["code"]["source_commit"], source_commit().as_str());
-    assert!(merged.get("source_commit").is_none());
-    assert_eq!(merged["profiles"]["code"]["revision"].as_str(), Some("2026.07.24.1"));
-    assert_eq!(
-        merged["profiles"]["code"]["architectures"][0]["config"][0]["url"].as_str(),
-        Some("https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1/arm64-profile.toml")
+    let error = author_corporate_manifest(&args("https://other.example/runtime/"))
+        .expect_err("runtime references must live under the owned base");
+    assert!(
+        format!("{error:#}").contains("outside the owned runtime base"),
+        "{error:#}"
     );
-    assert_eq!(
-        merged["profiles"]["code"]["architectures"][0]["images"][0]["url"].as_str(),
-        Some("https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1/arm64-vmlinuz")
-    );
-    assert!(merged["profiles"]["code"]["architectures"][0]["software"]
-        .as_array()
-        .expect("software rows")
-        .iter()
-        .all(|row| row["evidence"].as_str()
-            == Some(
-                "https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1/arm64-software-inventory.json"
-            )));
-    assert!(merged["profiles"]["code"]["architectures"][0]["evidence"]
-        .as_array()
-        .expect("evidence rows")
-        .iter()
-        .all(|row| !row["url"].as_str().expect("evidence URL").contains("/arm64-arm64-")));
-}
 
-fn write_profile_release_manifest(path: &Path, manifest_version: &str, profile_revision: &str, status: &str) {
-    fs::write(
-        path,
-        format!(
-            r#"{{
-	  "version": "{manifest_version}",
-	  "status": "current",
-	  "packages": [],
-	  "profiles": {{
-    "co-work": {{
-      "version": "{profile_revision}",
-      "id": "co-work",
-      "name": "Co-work",
-      "revision": "{profile_revision}",
-      "status": "{status}",
-	      "min_capsem_version": "1.4.0",
-	      "architectures": [
-	        {{
-	          "architecture": "arm64",
-	          "software": [
-	            {{
-	              "name": "python",
-	              "version": "3.12.11",
-	              "source": "apt",
-	              "architecture": "arm64",
-	              "evidence": "/profiles/releases/{profile_revision}/co-work/arm64/apt-packages.txt",
-	              "digest": {digest}
-	            }}
-	          ],
-	          "config": [
-	            {{
-	              "kind": "mcp",
-	              "path": "profiles/co-work/mcp.json",
-	              "url": "/profiles/releases/{profile_revision}/co-work/arm64/mcp.json",
-	              "bytes": 12,
-	              "digest": {digest},
-	              "status": "{status}"
-	            }}
-	          ],
-		          "images": [
-		            {{
-		              "kind": "kernel",
-		              "name": "vmlinuz",
-		              "url": "/profiles/releases/{profile_revision}/co-work/arm64/vmlinuz",
-		              "bytes": 42,
-		              "digest": {digest},
-		              "status": "{status}"
-		            }},
-		            {{
-		              "kind": "initrd",
-		              "name": "initrd.img",
-		              "url": "/profiles/releases/{profile_revision}/co-work/arm64/initrd.img",
-		              "bytes": 42,
-		              "digest": {digest},
-		              "status": "{status}"
-		            }},
-		            {{
-		              "kind": "rootfs",
-		              "name": "rootfs.erofs",
-		              "url": "/profiles/releases/{profile_revision}/co-work/arm64/rootfs.erofs",
-	              "bytes": 42,
-	              "digest": {digest},
-	              "status": "{status}"
-	            }}
-	          ],
-	          "evidence": [
-	            {{
-	              "kind": "abom",
-	              "url": "/profiles/releases/{profile_revision}/co-work/arm64/abom.cdx.json",
-	              "digest": {digest}
-	            }},
-	            {{
-	              "kind": "sbom",
-	              "url": "/profiles/releases/{profile_revision}/co-work/arm64/sbom.cdx.json",
-	              "digest": {digest}
-	            }}
-	          ]
-	        }}
-	      ]
-    }}
-  }}
-}}"#,
-            manifest_version = manifest_version,
-            profile_revision = profile_revision,
-            status = status,
-            digest = serde_json::json!({
-                "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                "blake3": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-            }),
-        ),
-    )
-    .expect("profile release manifest");
+    let mut no_runtime = runtime_source.clone();
+    no_runtime.as_object_mut().expect("graph").remove("runtime");
+    fs::write(&runtime_path, serde_json::to_vec(&no_runtime).expect("runtime json")).expect("write runtime");
+    let error = author_corporate_manifest(&args(base)).expect_err("a corporate graph needs its runtime");
+    assert!(format!("{error:#}").contains("must contain a runtime"), "{error:#}");
 }
