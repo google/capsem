@@ -61,6 +61,10 @@ pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> an
             .context("create compat symlink for workspace")?;
     }
 
+    // The image the source staged, linked from its host-only share: never
+    // re-read from anything the guest could have written.
+    super::image_share::carry_image_share(src_session_dir, dst_session_dir).context("carry the image share")?;
+
     // The ledger lives at the session root, outside the share. session.db may
     // be in WAL mode while the VM runs, so copying the main file alone can
     // produce a stale or malformed fork; the logger writes a coherent image

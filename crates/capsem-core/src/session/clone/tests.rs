@@ -52,6 +52,28 @@ fn clones_system_workspace_and_compat_links() {
     assert_eq!(std::fs::read(s.dst.join("workspace/hello.txt")).unwrap(), b"world");
 }
 
+/// The fork's image comes from the source's host-only share, linked; the
+/// guest-writable workspace plays no part in it.
+#[test]
+fn the_image_share_is_carried_by_link_outside_the_guest_share() {
+    use std::os::unix::fs::MetadataExt;
+
+    let s = sessions();
+    let blob = "a".repeat(64);
+    std::fs::create_dir(s.src.join("image")).unwrap();
+    std::fs::write(s.src.join("image").join(&blob), b"layer").unwrap();
+
+    clone_sandbox_state(&s.src, &s.dst).unwrap();
+
+    let carried = s.dst.join("image").join(&blob);
+    assert_eq!(std::fs::read(&carried).unwrap(), b"layer");
+    assert_eq!(
+        std::fs::metadata(&carried).unwrap().ino(),
+        std::fs::metadata(s.src.join("image").join(&blob)).unwrap().ino()
+    );
+    assert!(!s.dst.join("guest/image").exists());
+}
+
 #[test]
 fn a_session_from_before_the_single_share_layout_still_clones() {
     let tmp = tempfile::tempdir().unwrap();

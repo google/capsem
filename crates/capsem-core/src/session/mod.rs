@@ -1,6 +1,7 @@
 //! Session management: unique session IDs, overlays, workspaces, and lifecycle.
 
 mod clone;
+mod image_share;
 mod maintenance;
 mod overlay;
 mod workspace;
@@ -10,6 +11,10 @@ mod tests;
 
 pub use capsem_logger::{epoch_to_iso, generate_session_id, is_valid_session_id, now_iso};
 pub use clone::{clone_file, clone_sandbox_state};
+pub use image_share::{
+    carry_image_share, clear_image_share, image_share_blobs, image_share_path, prepare_image_share,
+    publish_image_share, IMAGE_SHARE_DIR, IMAGE_SHARE_TAG,
+};
 pub use maintenance::*;
 pub use overlay::{
     adopt_system_overlay, open_system_overlay, system_overlay_image_path, system_overlay_metadata, SYSTEM_OVERLAY_DIR,
