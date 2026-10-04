@@ -278,6 +278,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A profile MCP tool the service invokes on the user's behalf is now
+  recorded in `tool_calls` as `transport = 'direct'`. It was recorded as
+  `vsock_frame`, the guest relay's transport, which it never used.
 - When `capsem-service` fails to start, the cause is now written to its
   service log. It used to go only to stderr, which nobody reads for a
   detached service, so a refused session ledger left a log that ended
@@ -693,6 +696,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sandbox intact, unlocks a per-home login keyring so Claude's sign-in
   persists in a named session, and imports the runtime's CA bundle into
   Chromium's NSS store at startup (google/capsem#289).
+- OCI workloads reach Capsem's MCP tools over streamable HTTP at
+  `http://mcp.capsem.internal/mcp`. A container cannot open vsock, so the
+  in-guest relay was out of its reach. The session's DNS answers the name
+  in every VM, before any peer could claim it, and never asks upstream; the
+  VM's proxy answers requests for it with that VM's MCP endpoint, under the
+  same MCP policy and in the same `tool_calls` ledger as the relay
+  (`transport = 'http'`), and never dials it. Every other name in
+  `capsem.internal`, and the MCP name on any other port, is refused with a
+  `capsem.internal.reserved` network event instead of being handed to the
+  host's resolver.
 - OpenTelemetry metric export. Set the corp config's `open_telemetry` to an
   OTLP/HTTP base endpoint (metrics go to `/v1/metrics`), or the standard
   `OTEL_EXPORTER_OTLP_*` environment for the service. The service exports its

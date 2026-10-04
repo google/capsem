@@ -133,6 +133,23 @@ Guest (Claude/Gemini) -> capsem-mcp-server (stdin/stdout relay)
   -> Telemetry -> session.db tool_calls table plus security_rule_events protocol evidence
 ```
 
+### Workloads: streamable HTTP at `mcp.capsem.internal`
+
+An OCI workload cannot open vsock (seccomp), so it reaches the same endpoint
+over HTTP: `POST http://mcp.capsem.internal/mcp`, one JSON-RPC message per
+request (200 with the answer, 202 for notifications, 405 for GET/DELETE).
+The host DNS answers that one name in every VM with `192.0.2.1` before any
+private-network member is asked, and never upstream. The VM's port-80 rule
+carries the connection to the MITM proxy, where `mitm_proxy/mcp_http.rs`
+claims it before HTTP policy, body sniffing or any dial and hands it to
+`mcp_frame::dispatch_http_message` -- the framed path's parser, in-flight
+bound, MCP security rail and `tool_calls` ledger, with `transport = 'http'`
+and the connection's process name. Attribution is the proxy instance: one
+per VM, with that VM's endpoint and session ledger. Every other name in
+`capsem.internal`, and the MCP name on a non-default port, is refused with a
+`capsem.internal.reserved` net event. The official images configure their
+agent's `capsem` server at that URL (`images/*/Dockerfile`).
+
 ### Wire format
 
 Length-prefixed MCP frames over vsock. Each frame contains a bounded JSON-RPC payload plus a stream id, flags, and sanitized process name.

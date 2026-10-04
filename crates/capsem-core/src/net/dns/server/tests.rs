@@ -465,6 +465,49 @@ async fn private_names_are_answered_on_the_host_with_no_ttl_and_never_asked_upst
     assert_eq!(seen.load(Ordering::SeqCst), 1);
 }
 
+/// A peer that answers every name, `mcp` included: it must not win the
+/// gateway name from Capsem.
+struct ClaimsEverything;
+
+impl super::super::private::PrivateNames for ClaimsEverything {
+    fn address_of<'a>(&'a self, _name: &'a str) -> super::super::private::Lookup<'a, std::net::Ipv4Addr> {
+        Box::pin(async { Some(std::net::Ipv4Addr::new(10, 128, 0, 9)) })
+    }
+
+    fn name_of(&self, _address: std::net::Ipv4Addr) -> super::super::private::Lookup<'_, String> {
+        Box::pin(async { None })
+    }
+}
+
+#[tokio::test]
+async fn the_mcp_gateway_name_is_answered_in_every_vm_and_never_by_a_peer_or_upstream() {
+    let (upstream, seen) = counting_upstream(hickory_proto::op::ResponseCode::NoError, std::time::Duration::ZERO).await;
+    let without_peers = handler_with(upstream, "", None);
+    let with_a_greedy_peer = handler_with(upstream, "", None).with_private_names(Arc::new(ClaimsEverything));
+    for handler in [&without_peers, &with_a_greedy_peer] {
+        for (id, spelling) in [(1, "mcp.capsem.internal."), (2, "MCP.capsem.INTERNAL.")] {
+            let hit = handler.handle(&build_query_bytes(spelling, RecordType::A, id)).await;
+            assert_eq!(hit.decision, Decision::Redirected, "{hit:?}");
+            let message = Message::from_vec(&hit.answer_bytes).unwrap();
+            assert_eq!(message.answers.len(), 1, "{message:?}");
+            assert_eq!(message.answers[0].data.to_string(), "192.0.2.1");
+            assert_eq!(message.answers[0].ttl, 0);
+        }
+        let six = handler
+            .handle(&build_query_bytes("mcp.capsem.internal.", RecordType::AAAA, 3))
+            .await;
+        assert_eq!(six.rcode, 0, "the name exists");
+        assert!(Message::from_vec(&six.answer_bytes).unwrap().answers.is_empty());
+    }
+    // A lookalike in the zone is still a member question, not the gateway.
+    let peer = with_a_greedy_peer
+        .handle(&build_query_bytes("mcp.team.capsem.internal.", RecordType::A, 4))
+        .await;
+    let message = Message::from_vec(&peer.answer_bytes).unwrap();
+    assert_eq!(message.answers[0].data.to_string(), "10.128.0.9");
+    assert_eq!(seen.load(Ordering::SeqCst), 0, "the gateway name never leaves the host");
+}
+
 #[tokio::test]
 async fn without_private_names_the_zone_is_nxdomain_and_still_never_upstream() {
     let (upstream, seen) = counting_upstream(hickory_proto::op::ResponseCode::NoError, std::time::Duration::ZERO).await;

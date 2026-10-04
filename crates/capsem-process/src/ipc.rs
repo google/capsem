@@ -938,10 +938,7 @@ pub(crate) async fn handle_ipc_connection(
                         jsonrpc: "2.0".to_string(),
                         id: Some(serde_json::json!(id)),
                         method: "tools/call".to_string(),
-                        params: Some(serde_json::json!({
-                            "name": namespaced_name,
-                            "arguments": arguments,
-                        })),
+                        params: Some(serde_json::json!({"name": namespaced_name, "arguments": arguments})),
                         meta: None,
                     };
                     let response = capsem_core::net::mitm_proxy::dispatch_logged_mcp_request(
@@ -949,6 +946,7 @@ pub(crate) async fn handle_ipc_connection(
                         Arc::clone(&mcp.db),
                         request,
                         "capsem-service".to_string(),
+                        capsem_core::net::mitm_proxy::McpTransport::Direct,
                     )
                     .await;
                     mcp.db.flush().await;

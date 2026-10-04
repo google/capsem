@@ -276,6 +276,12 @@ impl DnsHandler {
     ) -> DnsHandlerResult {
         use super::private::PrivateQuestion;
         let answer = match (&self.private_names, question) {
+            // Capsem's own name, in every VM whether or not it has peers.
+            (_, PrivateQuestion::McpGateway) => Some(build_redirect_response(
+                query_bytes,
+                &[std::net::IpAddr::V4(super::private::MCP_ADDRESS)],
+                0,
+            )),
             (Some(names), PrivateQuestion::Name(name)) => names
                 .address_of(&name)
                 .await

@@ -19,6 +19,7 @@ pub mod hooks;
 pub mod interpreter_hook;
 mod mcp_endpoint;
 mod mcp_frame;
+mod mcp_http;
 mod mcp_observe;
 pub mod pipeline;
 pub mod protocol;
@@ -67,7 +68,7 @@ use util::{
 };
 
 pub use mcp_endpoint::{McpEndpointState, McpTimeouts, ScopedMcpTools};
-pub use mcp_frame::dispatch_logged_mcp_request;
+pub use mcp_frame::{dispatch_logged_mcp_request, McpTransport};
 
 /// Re-exported so capsem-app can reference the type without depending on rustls.
 pub type UpstreamTlsConfig = rustls::ClientConfig;
@@ -598,16 +599,7 @@ async fn handle_inner(vsock_fd: OwnedFd, config: &Arc<MitmProxyConfig>) -> Resul
     match detected {
         Protocol::Tls => serve_tls(initial_buf, vsock_stream, config, process_name).await,
         Protocol::Http => serve_plain_http(initial_buf, vsock_stream, config, process_name).await,
-        Protocol::McpFrame => {
-            let Some(endpoint) = &config.mcp_endpoint else {
-                return Err((
-                    "mcp.capsem.internal".to_string(),
-                    Decision::Error,
-                    "framed MCP endpoint disabled".into(),
-                ));
-            };
-            mcp_frame::serve(initial_buf, vsock_stream, Arc::clone(endpoint), Arc::clone(&config.db)).await
-        }
+        Protocol::McpFrame => mcp_frame::serve(initial_buf, vsock_stream, config).await,
         Protocol::Unknown => unreachable!("Protocol::Unknown returned Err earlier"),
     }
 }
@@ -734,6 +726,11 @@ async fn serve_pipeline<IO>(
                 Protocol::McpFrame => unreachable!("framed MCP bypasses HTTP pipeline"),
                 Protocol::Unknown => (String::new(), 0),
             };
+            // Capsem's own zone is answered here, before any HTTP policy, body sniff or dial.
+            if let Some(route) = mcp_http::internal_route(&request_domain, upstream_port, protocol) {
+                let (domain, port) = (&request_domain, upstream_port);
+                return Ok(mcp_http::serve(req, route, domain, port, protocol, &config_arc, &process_name).await);
+            }
             let ai_identity = {
                 let registry = config_arc.model_endpoints.read().unwrap();
                 ai_identity_for_target_or_path(&registry, &request_domain, upstream_port, req.uri().path())

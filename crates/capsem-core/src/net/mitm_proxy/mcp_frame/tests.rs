@@ -712,7 +712,7 @@ async fn completing_mcp_logging_then_shutting_down_preserves_rule_rows() {
         &endpoint.security_rules,
         &req,
         &response,
-        "codex",
+        McpCaller::frame("codex"),
         1,
         McpCallPolicyFields::default(),
     )
@@ -755,4 +755,35 @@ async fn the_call_and_rule_rows_precede_the_reply() {
 
     drop(guest);
     serve.await.unwrap().unwrap();
+}
+
+/// The ledger names the transport the caller arrived on; a host-side or HTTP
+/// call recorded as `vsock_frame` would misreport where it came from.
+#[tokio::test]
+async fn each_transport_is_recorded_under_its_own_name() {
+    for transport in [McpTransport::VsockFrame, McpTransport::Http, McpTransport::Direct] {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("session.db");
+        let db = Arc::new(DbWriter::open(&db_path, 64).unwrap());
+        let logged = dispatch_logged_mcp_request(
+            endpoint_with_matching_rule(),
+            Arc::clone(&db),
+            request("tools/call", json!({"name":"local__echo","arguments":{}})),
+            "codex".to_string(),
+            transport,
+        )
+        .await
+        .expect("a request gets a response");
+        assert!(logged.response.error.is_none(), "{:?}", logged.response);
+        db.shutdown_blocking();
+        let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+        let rows: serde_json::Value = serde_json::from_str(
+            &reader
+                .query_raw("SELECT transport, process_name FROM tool_calls")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(rows["rows"][0][0], transport.as_str(), "{rows}");
+        assert_eq!(rows["rows"][0][1], "codex", "{rows}");
+    }
 }

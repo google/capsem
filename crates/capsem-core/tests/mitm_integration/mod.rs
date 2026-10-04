@@ -5,5 +5,6 @@ use super::*;
 
 mod deadlines;
 mod host_normalization;
+mod mcp_gateway_route;
 mod mcp_over_http;
 mod websocket_policy;

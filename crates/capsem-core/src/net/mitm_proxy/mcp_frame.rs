@@ -15,6 +15,7 @@ use capsem_logger::{DbWriter, Decision, McpCall, WriteOp};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, warn};
 
+use crate::net::dns::private::MCP_HOST;
 use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet};
 use crate::security_engine::{
     emit_evaluated_security_rules, emit_security_write, evaluate_security_boundary, McpSecurityEvent,
@@ -43,10 +44,16 @@ const FRAME_BODY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3
 pub(super) async fn serve(
     initial_buf: Vec<u8>,
     vsock_stream: AsyncFdStream,
-    endpoint: Arc<McpEndpointState>,
-    db: Arc<DbWriter>,
+    config: &super::MitmProxyConfig,
 ) -> Result<String, (String, Decision, String)> {
-    serve_io(initial_buf, vsock_stream, endpoint, db).await
+    let Some(endpoint) = &config.mcp_endpoint else {
+        return Err((
+            MCP_HOST.to_string(),
+            Decision::Error,
+            "framed MCP endpoint disabled".into(),
+        ));
+    };
+    serve_io(initial_buf, vsock_stream, Arc::clone(endpoint), Arc::clone(&config.db)).await
 }
 
 /// Dispatch an MCP JSON-RPC request through the same security-event and
@@ -62,12 +69,38 @@ pub struct LoggedMcpResponse {
     pub event_id: Option<String>,
 }
 
+/// The transport an MCP message reached Capsem on, as the ledger names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpTransport {
+    /// Bounded frames from the in-guest relay on the MITM vsock port.
+    VsockFrame,
+    /// Streamable HTTP from a workload to the internal MCP name.
+    Http,
+    /// A host-side caller dispatching on the user's behalf.
+    Direct,
+}
+
+impl McpTransport {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::VsockFrame => "vsock_frame",
+            Self::Http => "http",
+            Self::Direct => "direct",
+        }
+    }
+}
+
 pub async fn dispatch_logged_mcp_request(
     endpoint: Arc<McpEndpointState>,
     db: Arc<DbWriter>,
     request: JsonRpcRequest,
     process_name: String,
+    transport: McpTransport,
 ) -> Option<LoggedMcpResponse> {
+    let caller = McpCaller {
+        process_name: &process_name,
+        transport,
+    };
     let summary = interpret_mcp_method(&request);
     let runtime_event_type = runtime_mcp_event_type(&summary.method);
     let request_decision = evaluate_mcp_security_event(
@@ -82,7 +115,7 @@ pub async fn dispatch_logged_mcp_request(
             &endpoint.security_rules,
             &request,
             &response,
-            &process_name,
+            caller,
             0,
             McpCallPolicyFields::from(&request_decision),
         )
@@ -121,7 +154,7 @@ pub async fn dispatch_logged_mcp_request(
         &endpoint.security_rules,
         &request,
         &response,
-        &process_name,
+        caller,
         duration_ms,
         McpCallPolicyFields::from(&final_decision),
     )
@@ -130,6 +163,62 @@ pub async fn dispatch_logged_mcp_request(
         response,
         event_id: emission.event_id,
     })
+}
+
+/// What one streamable-HTTP MCP message gets back.
+#[derive(Debug)]
+pub(super) enum HttpMcpReply {
+    /// A request's answer: 200 with the JSON-RPC response.
+    Answer(JsonRpcResponse),
+    /// A notification, or a client's response to nothing we asked: 202.
+    Accepted,
+    /// Bytes that are no JSON-RPC request: 400 with the error.
+    Invalid(JsonRpcResponse),
+}
+
+/// Dispatch one MCP message a workload POSTed to the internal MCP name:
+/// the parser, in-flight bound, security rail and ledger of a framed one,
+/// recorded as `http`.
+pub(super) async fn dispatch_http_message(
+    endpoint: Arc<McpEndpointState>,
+    db: Arc<DbWriter>,
+    payload: &[u8],
+    process_name: &str,
+) -> HttpMcpReply {
+    let request = match parse_json_rpc_payload(payload) {
+        Ok(request) => request,
+        Err(_) if is_client_response(payload) => return HttpMcpReply::Accepted,
+        Err(error) => return HttpMcpReply::Invalid(JsonRpcResponse::err(error.id, error.code, error.message)),
+    };
+    let notification = request.id.is_none();
+    let Ok(_permit) = Arc::clone(&endpoint.inflight).acquire_owned().await else {
+        return HttpMcpReply::Invalid(JsonRpcResponse::err(
+            request.id,
+            -32603,
+            "MCP endpoint is shutting down",
+        ));
+    };
+    let logged = dispatch_logged_mcp_request(endpoint, db, request, process_name.to_string(), McpTransport::Http).await;
+    match logged {
+        Some(logged) if !notification => HttpMcpReply::Answer(logged.response),
+        _ => HttpMcpReply::Accepted,
+    }
+}
+
+/// A JSON-RPC response object: what a client sends back to a server request.
+/// This server sends none, so there is nothing to route it to.
+fn is_client_response(payload: &[u8]) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Shape<'a> {
+        #[serde(borrow)]
+        method: Option<&'a serde_json::value::RawValue>,
+        #[serde(borrow)]
+        result: Option<&'a serde_json::value::RawValue>,
+        #[serde(borrow)]
+        error: Option<&'a serde_json::value::RawValue>,
+    }
+    serde_json::from_slice::<Shape<'_>>(payload)
+        .is_ok_and(|shape| shape.method.is_none() && (shape.result.is_some() || shape.error.is_some()))
 }
 
 async fn serve_io<I>(
@@ -280,7 +369,7 @@ where
                         &endpoint_h.security_rules,
                         &request_h,
                         &response,
-                        &process_name_h,
+                        McpCaller::frame(&process_name_h),
                         0,
                         McpCallPolicyFields::from(&request_decision_h),
                     )
@@ -297,7 +386,7 @@ where
                     &endpoint.security_rules,
                     &dispatch_request,
                     &response,
-                    &process_name,
+                    McpCaller::frame(&process_name),
                     0,
                     McpCallPolicyFields::from(&request_decision),
                 )
@@ -362,7 +451,7 @@ where
                     &endpoint_h.security_rules,
                     &dispatch_request,
                     &response,
-                    &process_name_h,
+                    McpCaller::frame(&process_name_h),
                     duration_ms,
                     policy_fields,
                 )
@@ -394,15 +483,9 @@ where
         }
     }
 
-    result.map_err(|e| {
-        (
-            "mcp.capsem.internal".to_string(),
-            Decision::Error,
-            format!("framed MCP: {e:#}"),
-        )
-    })?;
+    result.map_err(|e| (MCP_HOST.to_string(), Decision::Error, format!("framed MCP: {e:#}")))?;
 
-    Ok("mcp.capsem.internal".to_string())
+    Ok(MCP_HOST.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -533,6 +616,22 @@ impl From<&SecurityEnforcementDecision> for McpCallPolicyFields {
     }
 }
 
+/// Who sent an MCP message and over what, as one ledger attribution.
+#[derive(Debug, Clone, Copy)]
+struct McpCaller<'a> {
+    process_name: &'a str,
+    transport: McpTransport,
+}
+
+impl<'a> McpCaller<'a> {
+    fn frame(process_name: &'a str) -> Self {
+        Self {
+            process_name,
+            transport: McpTransport::VsockFrame,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct LoggedMcpEmission {
     event_id: Option<String>,
@@ -543,10 +642,14 @@ async fn log_mcp_call_with_policy(
     security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
     req: &JsonRpcRequest,
     resp: &JsonRpcResponse,
-    process_name: &str,
+    caller: McpCaller<'_>,
     duration_ms: u64,
     policy_fields: McpCallPolicyFields,
 ) -> LoggedMcpEmission {
+    let McpCaller {
+        process_name,
+        transport,
+    } = caller;
     let (server_name, tool_name) = mcp_log_attribution(req);
     let decision = if policy_fields
         .policy_action
@@ -595,7 +698,7 @@ async fn log_mcp_call_with_policy(
         process_name: Some(process_name.to_string()),
         bytes_sent,
         bytes_received,
-        transport: "vsock_frame".to_string(),
+        transport: transport.as_str().to_string(),
         policy_mode: policy_fields.policy_mode,
         policy_action: policy_fields.policy_action,
         policy_rule: policy_fields.policy_rule,
