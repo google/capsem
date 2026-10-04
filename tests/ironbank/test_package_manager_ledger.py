@@ -18,22 +18,20 @@ from pathlib import Path
 
 import pytest
 from helpers.body_archive import session_archive
-from helpers.constants import (
-    DEFAULT_CPUS,
-    DEFAULT_RAM_MB,
-    EXEC_READY_TIMEOUT,
-)
+from helpers.debug_session import WORKSPACE, debug_session
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
     exec_output_text,
     vm_name,
     vm_session_db_path,
-    wait_exec_ready,
 )
 from helpers.session_ledger import open_session_ledger
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+#: The image's user (uid 1000) as the VM's audit ledger sees it: the
+#: workload's user namespace maps container 0 to VM 100000.
+WORKLOAD_UID = 101000
 
 pytestmark = pytest.mark.integration
 
@@ -118,29 +116,37 @@ def _assert_ledger_id(value: object) -> None:
 
 
 
-def _package_probe_script() -> str:
+#: The package managers an application brings run in its workload: Node,
+#: npm/npx, pip and uv come from capsem-debug, which the VM runtime does not
+#: carry. Every path is under the session workspace, the one place a workload
+#: may write besides its declared volumes.
+WORKLOAD_WORK = "ironbank-package-probe"
+
+
+def _workload_probe_script() -> str:
     return textwrap.dedent(
         r'''
         #!/usr/bin/env bash
         set -euo pipefail
 
-        work="/root/ironbank-package-probe"
+        work="$1"
         rm -rf "$work"
-        mkdir -p "$work"/{wheels,npm/bin,deb/DEBIAN,deb/usr/local/bin,zstd}
+        mkdir -p "$work"/{wheels,npm/bin,zstd}
         printf 'ironbank-package-bytes\n' > "$work/payload.txt"
 
-        node - <<'JS'
+        node - "$work/payload.txt" <<'JS'
         const fs = require("fs");
-        const value = fs.readFileSync("/root/ironbank-package-probe/payload.txt", "utf8").trim();
+        const value = fs.readFileSync(process.argv[2], "utf8").trim();
         console.log("IRONBANK:node:" + value.toUpperCase());
         JS
 
-        python3 - <<'PY'
+        python3 - "$work/wheels" <<'PY'
+        import sys
         import textwrap
         import zipfile
         from pathlib import Path
 
-        root = Path("/root/ironbank-package-probe/wheels")
+        root = Path(sys.argv[1])
 
         def wheel(distribution, module, source):
             version = "0.1.0"
@@ -186,14 +192,16 @@ def _package_probe_script() -> str:
         )
         PY
 
-        pip install --no-index "$work/wheels/ironbank_pip_pkg-0.1.0-py3-none-any.whl" >/tmp/ironbank-pip.log 2>&1
-        python3 - <<'PY'
+        /usr/bin/python3 -m venv "$work/pip-venv"
+        "$work/pip-venv/bin/pip" install --no-index "$work/wheels/ironbank_pip_pkg-0.1.0-py3-none-any.whl" >"$work/pip.log" 2>&1
+        "$work/pip-venv/bin/python" - <<'PY'
         import ironbank_pip_pkg
         print(f"IRONBANK:pip:{ironbank_pip_pkg.answer()}")
         PY
 
-        uv pip install --python /root/.venv/bin/python --no-index "$work/wheels/ironbank_uv_pkg-0.1.0-py3-none-any.whl" >/tmp/ironbank-uv.log 2>&1
-        /root/.venv/bin/python - <<'PY'
+        uv venv -q --python /usr/bin/python3 "$work/uv-venv"
+        uv pip install --python "$work/uv-venv/bin/python" --no-index "$work/wheels/ironbank_uv_pkg-0.1.0-py3-none-any.whl" >"$work/uv.log" 2>&1
+        "$work/uv-venv/bin/python" - <<'PY'
         import ironbank_uv_pkg
         print(f"IRONBANK:uv:{ironbank_uv_pkg.marker()}")
         PY
@@ -206,12 +214,38 @@ def _package_probe_script() -> str:
         console.log("IRONBANK:npm:npm:realm")
         JS
         chmod 755 "$work/npm/bin/cli.js"
-        npm install -g "file:$work/npm" >/tmp/ironbank-npm.log 2>&1
+        npm install -g "file:$work/npm" >"$work/npm.log" 2>&1
         ironbank-npm-pkg
         npx_output="$(npx --yes --package "file:$work/npm" ironbank-npm-pkg)"
         npx_marker="$(printf '%s\n' "$npx_output" | sed -n 's/^IRONBANK:npm://p')"
         test -n "$npx_marker"
         printf 'IRONBANK:npx:%s\n' "$npx_marker"
+
+        zstd -q -f "$work/payload.txt" -o "$work/zstd/payload.txt.zst"
+        zstd -q -d -f "$work/zstd/payload.txt.zst" -o "$work/zstd/payload.roundtrip.txt"
+        cmp "$work/payload.txt" "$work/zstd/payload.roundtrip.txt"
+        printf 'IRONBANK:zstd:roundtrip\n'
+
+        printf 'IRONBANK:complete:node+npm+npx+pip+uv+zstd\n'
+        '''
+    ).lstrip()
+
+
+#: apt is the VM's own package manager, and the runtime carries it: dpkg owns
+#: the VM's root, which a workload's read-only root never is.
+VM_WORK = "ironbank-apt-probe"
+
+
+def _vm_apt_probe_script() -> str:
+    return textwrap.dedent(
+        r'''
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        work="$1"
+        rm -rf "$work"
+        mkdir -p "$work"/{deb/DEBIAN,deb/usr/local/bin}
+        printf 'ironbank-package-bytes\n' > "$work/payload.txt"
 
         cat > "$work/deb/DEBIAN/control" <<'EOF'
         Package: ironbank-apt-tool
@@ -251,24 +285,47 @@ def _package_probe_script() -> str:
           exit 1
         fi
         printf 'IRONBANK:remote-apt:update\n'
-
-        if command -v zstd >/dev/null 2>&1; then
-          zstd -q -f "$work/payload.txt" -o "$work/zstd/payload.txt.zst"
-          zstd -q -d -f "$work/zstd/payload.txt.zst" -o "$work/zstd/payload.roundtrip.txt"
-          cmp "$work/payload.txt" "$work/zstd/payload.roundtrip.txt"
-          printf 'IRONBANK:zstd:roundtrip\n'
-        fi
-
-        printf 'IRONBANK:complete:apt+npm+npx+node+pip+uv\n'
+        printf 'IRONBANK:complete:apt\n'
         '''
     ).lstrip()
 
 
-def test_package_managers_pay_their_ledger_debt_blackbox():
+def _upload(client, session_id: str, name: str, script: str) -> dict:
+    data = script.encode()
+    upload = client.post_bytes(f"/vms/{session_id}/files/content?path={name}", data, timeout=30)
+    assert upload == {
+        "success": True,
+        "size": len(data),
+        "vm_path": f"/root/{name}",
+        "container_path": f"{WORKSPACE}/{name}",
+    }, upload
+    return upload
+
+
+def _exec(client, session_id: str, command: str, target: str | None) -> str:
+    body = {"command": command, "timeout_secs": 260}
+    if target is not None:
+        body["target"] = target
+    response = client.post(f"/vms/{session_id}/exec", body, timeout=290)
+    assert response is not None
+    assert response["exit_code"] == 0, response
+    stdout = exec_output_text(response)
+    output = stdout + exec_output_text(response, "stderr")
+    assert "No space left on device" not in output
+    assert "Permission denied" not in output
+    assert "externally-managed" not in output.lower()
+    return stdout
+
+
+def test_package_managers_pay_their_ledger_debt_blackbox(tmp_path):
 
     service = ServiceInstance()
     session_id = vm_name("ironbank-pkg")
-    script_name = f"ironbank-package-probe-{uuid.uuid4().hex[:8]}.sh"
+    suffix = uuid.uuid4().hex[:8]
+    workload_script = f"ironbank-package-probe-{suffix}.sh"
+    vm_script = f"ironbank-apt-probe-{suffix}.sh"
+    workload_command = f"bash {WORKSPACE}/{workload_script} {WORKSPACE}/{WORKLOAD_WORK}"
+    vm_command = f"bash /root/{vm_script} /root/{VM_WORK}"
     fixture_stack = contextlib.ExitStack()
     mock_proc = None
     client = None
@@ -300,89 +357,68 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        create = client.post(
-            "/vms/create",
-            {
-                "name": session_id,
-                "ram_mb": DEFAULT_RAM_MB,
-                "cpus": DEFAULT_CPUS,
-            },
-            timeout=90,
+        session_id = fixture_stack.enter_context(
+            debug_session(service, tmp_path / "registry", session_id)
         )
-        assert create is not None
-        assert create.get("id") == session_id or create.get("name") == session_id
-        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
 
-        script_bytes = _package_probe_script().encode()
-        upload = client.post_bytes(
-            f"/vms/{session_id}/files/content?path={script_name}",
-            script_bytes,
-            timeout=30,
-        )
-        assert upload == {"success": True, "size": len(script_bytes), "vm_path": f"/root/{script_name}"}
-
-        exec_resp = client.post(
-            f"/vms/{session_id}/exec",
-            {"command": f"bash /root/{script_name}", "timeout_secs": 260},
-            timeout=290,
-        )
-        assert exec_resp is not None
-        assert exec_resp["exit_code"] == 0, exec_resp
-        stdout = exec_output_text(exec_resp)
-        stderr = exec_output_text(exec_resp, "stderr")
-        output = stdout + stderr
-        expected_lines = {
+        _upload(client, session_id, workload_script, _workload_probe_script())
+        _upload(client, session_id, vm_script, _vm_apt_probe_script())
+        workload_stdout = _exec(client, session_id, workload_command, None)
+        vm_stdout = _exec(client, session_id, vm_command, "vm")
+        workload_lines = {
             "IRONBANK:node:IRONBANK-PACKAGE-BYTES",
             "IRONBANK:pip:42",
             "IRONBANK:uv:uv:ironbank",
             "IRONBANK:npm:npm:realm",
             "IRONBANK:npx:npm:realm",
+            "IRONBANK:zstd:roundtrip",
+            "IRONBANK:complete:node+npm+npx+pip+uv+zstd",
+        }
+        vm_lines = {
             "IRONBANK:apt:apt:ironbank-package-bytes",
             "IRONBANK:remote-apt:update",
-            "IRONBANK:complete:apt+npm+npx+node+pip+uv",
+            "IRONBANK:complete:apt",
         }
-        assert expected_lines <= set(stdout.splitlines()), stdout
-        if "IRONBANK:zstd:roundtrip" in stdout:
-            assert "zstd:roundtrip" in stdout
-        assert "No space left on device" not in output
-        assert "Permission denied" not in output
-        assert "externally-managed" not in output.lower()
+        assert workload_lines <= set(workload_stdout.splitlines()), workload_stdout
+        assert vm_lines <= set(vm_stdout.splitlines()), vm_stdout
 
         conn = _connect_session_db(service, session_id)
         try:
-            exec_row = _eventually(
-                lambda: conn.execute(
-                    "SELECT * FROM exec_events WHERE command = ? ORDER BY id DESC LIMIT 1",
-                    (f"bash /root/{script_name}",),
-                ).fetchone(),
-                lambda row: row is not None and row["exit_code"] == 0,
-                timeout_s=20,
-            )
-            _assert_ledger_id(exec_row["event_id"])
-            assert exec_row["source"] == "api"
-            assert exec_row["target"] == "vm"
-            assert exec_row["stdout_bytes"] >= sum(len(line) for line in expected_lines)
-            assert "IRONBANK:complete" in exec_row["stdout_preview"]
-            assert exec_row["stderr_bytes"] >= 0
-            assert exec_row["credential_ref"] is None
+            for command, target, lines in (
+                (workload_command, "workload", workload_lines),
+                (vm_command, "vm", vm_lines),
+            ):
+                exec_row = _eventually(
+                    lambda command=command: conn.execute(
+                        "SELECT * FROM exec_events WHERE command = ? ORDER BY id DESC LIMIT 1",
+                        (command,),
+                    ).fetchone(),
+                    lambda row: row is not None and row["exit_code"] == 0,
+                    timeout_s=20,
+                )
+                _assert_ledger_id(exec_row["event_id"])
+                assert exec_row["source"] == "api"
+                assert exec_row["target"] == target
+                assert exec_row["stdout_bytes"] >= sum(len(line) for line in lines)
+                assert "IRONBANK:complete" in exec_row["stdout_preview"]
+                assert exec_row["stderr_bytes"] >= 0
+                assert exec_row["credential_ref"] is None
 
             package_audit_rows = _eventually(
                 lambda: conn.execute(
                     """
                     SELECT *
                     FROM audit_events
-                    WHERE argv LIKE '%pip install%'
-                       OR argv LIKE '%uv pip install%'
-                       OR argv LIKE '%npm install%'
-                       OR argv LIKE '%apt-get%update%'
-                       OR argv LIKE '%apt-get install%'
-                       OR exe LIKE '%/node'
-                       OR exe LIKE '%/python3'
+                    WHERE argv LIKE ? OR argv LIKE ?
                     ORDER BY id
-                    """
+                    """,
+                    (f"%/{WORKLOAD_WORK}/%", f"%/{VM_WORK}/%"),
                 ).fetchall(),
-                lambda rows: len(rows) >= 4,
+                lambda rows: len(rows) >= 5,
                 timeout_s=20,
+            )
+            (tmp_path / "package-audit.txt").write_text(
+                "\n".join(json.dumps(dict(row), default=str) for row in package_audit_rows)
             )
             audit_text = "\n".join(f"{row['exe']} {row['argv']}" for row in package_audit_rows)
             assert "pip install --no-index" in audit_text
@@ -392,16 +428,22 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             assert "apt-get -o Dir::Etc::sourcelist=" in audit_text
             assert "hermetic.sources.list" in audit_text
             assert "Acquire::Check-Valid-Until=false" in audit_text
-            for row in package_audit_rows[:20]:
+            for row in package_audit_rows:
                 _assert_ledger_id(row["event_id"])
                 assert row["pid"] > 0
-                assert row["uid"] == 0
                 assert row["credential_ref"] is None
+                # The VM's apt runs as VM root; the workload's managers run as
+                # the image's user, which the user namespace maps above the
+                # VM's own ids (container 0 is VM 100000).
+                expected_uid = WORKLOAD_UID if f"/{WORKLOAD_WORK}/" in row["argv"] else 0
+                assert row["uid"] == expected_uid, dict(row)
+            workload_exes = {row["exe"] for row in package_audit_rows if row["uid"] == WORKLOAD_UID}
+            assert {"/usr/local/bin/node", "/usr/local/bin/uv"} <= workload_exes, workload_exes
 
             fs_rows = _eventually(
                 lambda: conn.execute(
-                    "SELECT * FROM fs_events WHERE path = ? OR path LIKE ? ORDER BY id",
-                    (script_name, "ironbank-package-probe/%"),
+                    "SELECT * FROM fs_events WHERE path IN (?, ?) OR path LIKE ? ORDER BY id",
+                    (workload_script, vm_script, f"{WORKLOAD_WORK}/%"),
                 ).fetchall(),
                 lambda rows: (
                     len(rows) >= 6
@@ -411,8 +453,8 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
                 timeout_s=20,
             )
             paths = {row["path"] for row in fs_rows}
-            assert script_name in paths
-            assert "ironbank-package-probe/payload.txt" in paths
+            assert {workload_script, vm_script} <= paths
+            assert f"{WORKLOAD_WORK}/payload.txt" in paths
             assert any(path.endswith("package.json") for path in paths)
             assert any(path.endswith(".whl") for path in paths)
             for row in fs_rows[:80]:
@@ -430,28 +472,29 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
                     "restored",
                 }
 
-            security_rows = conn.execute(
-                """
-                SELECT *
-                FROM security_rule_events
-                WHERE event_id IN (
-                    SELECT event_id FROM fs_events WHERE path = ?
-                )
-                  AND event_type = 'file.import'
-                ORDER BY id
-                """,
-                (script_name,),
-            ).fetchall()
-            assert security_rows, "package probe upload must be governed by file rule"
             archive = session_archive(conn)
-            for row in security_rows:
-                assert row["event_type"] == "file.import"
-                assert row["rule_id"] == "profiles.rules.default_file"
-                assert row["rule_action"] == "allow"
-                event_json = archive.security_payload(row["event_id"])
-                assert event_json["file"]["import_name"] == script_name
-                assert event_json["file"]["import_path"] == script_name
-                assert event_json["decision"]["effective"] == "allow"
+            for script_name in (workload_script, vm_script):
+                security_rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM security_rule_events
+                    WHERE event_id IN (
+                        SELECT event_id FROM fs_events WHERE path = ?
+                    )
+                      AND event_type = 'file.import'
+                    ORDER BY id
+                    """,
+                    (script_name,),
+                ).fetchall()
+                assert security_rows, "package probe upload must be governed by file rule"
+                for row in security_rows:
+                    assert row["event_type"] == "file.import"
+                    assert row["rule_id"] == "profiles.rules.default_file"
+                    assert row["rule_action"] == "allow"
+                    event_json = archive.security_payload(row["event_id"])
+                    assert event_json["file"]["import_name"] == script_name
+                    assert event_json["file"]["import_path"] == script_name
+                    assert event_json["decision"]["effective"] == "allow"
 
             remote_net_rows = _eventually(
                 lambda: conn.execute(
@@ -522,30 +565,30 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             conn.close()
 
         history = client.get(f"/vms/{session_id}/history?layer=exec&limit=20", timeout=30)
-        assert any(
-            row["command"] == f"bash /root/{script_name}"
-            and row["exit_code"] == 0
-            and "IRONBANK:complete" in (row["stdout_preview"] or "")
-            for row in history["commands"]
-        )
+        for command in (workload_command, vm_command):
+            assert any(
+                row["command"] == command
+                and row["exit_code"] == 0
+                and "IRONBANK:complete" in (row["stdout_preview"] or "")
+                for row in history["commands"]
+            ), command
 
         counts = client.get(f"/vms/{session_id}/history/counts", timeout=30)
-        assert counts["exec_count"] >= 1
-        assert counts["audit_count"] >= 4
+        assert counts["exec_count"] >= 2
+        assert counts["audit_count"] >= 5
 
         timeline = client.get(f"/vms/{session_id}/timeline?layers=exec,fs&limit=250", timeout=30)
         timeline_rows = timeline["events"]
         assert {"exec", "fs"} <= {row["layer"] for row in timeline_rows}
         summaries = "\n".join(row["summary"] for row in timeline_rows)
-        assert script_name in summaries
-        assert "ironbank-package-probe" in summaries
+        assert workload_script in summaries
+        assert vm_script in summaries
+        assert WORKLOAD_WORK in summaries
     finally:
-        if client is not None:
-            with contextlib.suppress(Exception):
-                client.delete(f"/vms/{session_id}/delete", timeout=60)
+        # Deletes the session and stops its registry first.
+        fixture_stack.close()
         service.stop()
         stop_process(mock_proc)
-        fixture_stack.close()
         if old_corp_config is None:
             os.environ.pop("CAPSEM_CORP_CONFIG", None)
         else:

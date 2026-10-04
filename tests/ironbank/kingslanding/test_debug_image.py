@@ -47,7 +47,7 @@ sleep 1
 wrk -t1 -c1 -d1s http://127.0.0.1:8080/ | sed -n 's/^Requests\\/sec: *\\([0-9.]*\\).*/WRK \\1/p'
 kill "$server"
 dig -v 2>&1 | head -1 | sed 's/^/DIG /'
-echo "TOOLS $(command -v nc socat ping jq sqlite3 git strace redis-benchmark curl wget | wc -l)"
+tools=0; for t in nc socat ping jq sqlite3 git strace redis-benchmark curl wget; do command -v "$t" >/dev/null && tools=$((tools + 1)); done; echo "TOOLS $tools"
 """
 
 
