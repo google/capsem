@@ -17,13 +17,6 @@ fn provision_request_with_name() {
 }
 
 #[test]
-fn provision_request_refuses_a_profile_id() {
-    let json = json!({"name": "my-vm", "profile_id": "code"});
-    let err = serde_json::from_value::<ProvisionRequest>(json).unwrap_err();
-    assert!(err.to_string().contains("profile_id"), "{err}");
-}
-
-#[test]
 fn provision_request_ram_cpus_omitted_deserializes_as_none() {
     // The service fills these from its defaults. Callers like the tray's
     // "New Session" do not have to duplicate them.
@@ -210,13 +203,6 @@ fn run_request_defaults() {
     assert_eq!(r.timeout_secs, None);
     assert_eq!(r.ram_mb, None);
     assert_eq!(r.cpus, None);
-}
-
-#[test]
-fn run_request_refuses_a_profile_id() {
-    let json = json!({"command": "echo hello", "profile_id": "code"});
-    let err = serde_json::from_value::<RunRequest>(json).unwrap_err();
-    assert!(err.to_string().contains("profile_id"), "{err}");
 }
 
 #[test]

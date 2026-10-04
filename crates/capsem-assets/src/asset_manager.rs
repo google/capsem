@@ -277,7 +277,7 @@ fn canonical_rootfs_asset_name(assets: &HashMap<String, AssetEntry>) -> Option<&
 /// Load `manifest.json` from the assets dir (installed layout) or its parent
 /// (dev tree layout where `assets` is already `assets/<arch>/`). Returns
 /// `None` on missing file, read error, parse error, or schema mismatch --
-/// profile-selected asset hashes remain the runtime authority.
+/// the runtime's pinned asset hashes remain the authority.
 pub fn load_manifest_for_assets(assets: &Path) -> Option<ManifestV2> {
     let mut candidates: Vec<PathBuf> = vec![assets.join("manifest.json")];
     if let Some(parent) = assets.parent() {
@@ -967,7 +967,7 @@ pub fn cleanup_unused_assets(base_dir: &Path, manifest: &ManifestV2) -> Result<V
 /// directories are supported.
 ///
 /// `preserve_filenames` is intentionally filename-only. Callers that own
-/// higher-level contracts, such as profiles or saved VMs, translate those
+/// higher-level contracts, such as saved VMs, translate those
 /// contracts into hash-prefixed asset basenames before cleanup.
 pub fn cleanup_unused_assets_preserving<I, S>(
     base_dir: &Path,
@@ -1053,11 +1053,9 @@ fn cleanup_hash_tagged_assets_in_dir(
 /// Every asset this arch needs on disk, across every compatible release.
 ///
 /// One rule, one function. The local-copy and download paths each resolved
-/// their own single release, and each therefore materialized one profile's
-/// images while the manifest promised several. A channel's profiles own their
-/// images, so the channel pointer names at most one of them -- the rest went
-/// missing on a fresh install, and the profile that sorted first became an
-/// unbootable default.
+/// their own single release, and each therefore materialized one release's
+/// images while the manifest promised several compatible ones -- the rest went
+/// missing on a fresh install and could not boot.
 fn arch_assets_to_materialize<'m>(
     manifest: &'m ManifestV2,
     binary_version: &str,
@@ -1065,7 +1063,7 @@ fn arch_assets_to_materialize<'m>(
 ) -> Result<Vec<(&'m str, &'m String, &'m AssetEntry)>> {
     let versions = compatible_asset_versions(manifest, binary_version)?;
     // Keyed by what the bytes are called on disk -- logical name *and* hash.
-    // Two profiles legitimately ship a different `vmlinuz`, and keying by name
+    // Two releases legitimately ship a different `vmlinuz`, and keying by name
     // alone silently keeps one of them: the same missing-kernel install this
     // function exists to prevent.
     let mut wanted: BTreeMap<(&str, &str), (&str, &String, &AssetEntry)> = BTreeMap::new();

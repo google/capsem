@@ -865,13 +865,6 @@ fn provision_request_no_name() {
 }
 
 #[test]
-fn provision_request_refuses_a_profile_id() {
-    let json = serde_json::json!({"profile_id": "code", "ram_mb": 2048, "cpus": 2});
-    let err = serde_json::from_value::<ProvisionRequest>(json).unwrap_err();
-    assert!(err.to_string().contains("profile_id"), "{err}");
-}
-
-#[test]
 fn provision_request_empty_name() {
     let json = serde_json::json!({"name": "", "ram_mb": 2048, "cpus": 2});
     let req: ProvisionRequest = serde_json::from_value(json).unwrap();

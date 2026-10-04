@@ -3,7 +3,7 @@
 //! Unlike the other domains these are not recorded through the facade: the
 //! service observes them from the ledgers' counter snapshots on each export
 //! (`capsem-service/src/telemetry_export.rs`). Every series carries exactly
-//! `session.id`, `profile.id` and `persistent`; rule ids, domains, tools and
+//! `session.id` and `persistent`; rule ids, domains, tools and
 //! models stay in the API, where their cardinality is someone's choice.
 
 use metrics::Unit;

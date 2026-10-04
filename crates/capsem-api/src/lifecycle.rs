@@ -16,8 +16,6 @@ pub struct StopResponse {
 }
 
 /// Unknown fields are refused rather than ignored.
-// A client that still names a `profile_id` learns it was removed instead of
-// silently getting the default VM.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProvisionRequest {

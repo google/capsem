@@ -706,7 +706,7 @@ pub enum GuestToHost {
     BootTiming { stages: Vec<BootStage> },
     // -- Terminal --
     /// Exec started: handshake on the dedicated exec connection. The default
-    /// keeps immutable pre-streaming profile assets compatible.
+    /// keeps immutable pre-streaming guest images compatible.
     ExecStarted {
         id: u64,
         #[serde(default, skip_serializing_if = "crate::sparse::is_default")]

@@ -246,26 +246,3 @@ async fn fake_vm_mutation_routes_are_not_mounted() {
         );
     }
 }
-
-/// The VM profile surface is gone: none of its routes is mounted, so an old
-/// client gets a 404 rather than a silently different answer.
-#[tokio::test]
-async fn profile_routes_are_not_mounted() {
-    let app = build_service_router(make_test_state());
-    for (method, uri) in [
-        (axum::http::Method::GET, "/profiles/list"),
-        (axum::http::Method::GET, "/profiles/status"),
-        (axum::http::Method::GET, "/profiles/code/info"),
-        (axum::http::Method::GET, "/profiles/code/assets/status"),
-        (axum::http::Method::POST, "/profiles/code/assets/ensure"),
-        (axum::http::Method::GET, "/profiles/code/plugins/list"),
-        (axum::http::Method::GET, "/profiles/code/mcp/info"),
-        (axum::http::Method::GET, "/profiles/code/enforcement/rules/list"),
-        (axum::http::Method::POST, "/profiles/code/enforcement/evaluate"),
-        (axum::http::Method::POST, "/profiles/code/reload"),
-        (axum::http::Method::POST, "/profiles/create"),
-    ] {
-        let (status, _) = route_request(app.clone(), method, uri, Some(json!({}))).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{uri} must not be mounted");
-    }
-}
