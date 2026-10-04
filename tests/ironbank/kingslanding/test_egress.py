@@ -4,6 +4,7 @@ reaches nothing else in the VM."""
 
 import json
 import os
+import re
 import subprocess
 import textwrap
 import uuid
@@ -90,10 +91,14 @@ def egress(tmp_path):
             stop_process(mock)
 
 
+PROBES = ("https", "http", "secret", "dns", "escape_gateway", "escape_vm", "escape_dns")
+
+
 def _results(stdout):
-    return dict(
-        line.split("=", 1) for line in stdout.splitlines() if "=" in line and " " not in line
-    )
+    """Each probe's `name=exit_code`, wherever it lands: the log interleaves
+    the console with the session terminal, whose workload shell prompt can
+    share a line with a probe's result."""
+    return dict(re.findall(rf"({'|'.join(PROBES)})=(\d+)", stdout))
 
 
 def test_container_egress_is_intercepted_policed_and_audited(egress, tmp_path):
