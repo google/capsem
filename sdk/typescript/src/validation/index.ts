@@ -11,6 +11,8 @@ export {CapturedPayloadSchema} from "./CapturedPayload.js";
 export {ContainerSpecSchema} from "./ContainerSpec.js";
 export {ContainerStateSchema} from "./ContainerState.js";
 export {ContainerStatusResponseSchema} from "./ContainerStatusResponse.js";
+export {ContainerSurfaceSchema} from "./ContainerSurface.js";
+export {ContainerSurfaceKindSchema} from "./ContainerSurfaceKind.js";
 export {CreateNetworkRequestSchema} from "./CreateNetworkRequest.js";
 export {CredentialEventSchema} from "./CredentialEvent.js";
 export {CredentialEventTypeSchema} from "./CredentialEventType.js";

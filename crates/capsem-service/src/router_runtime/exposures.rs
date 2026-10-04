@@ -64,6 +64,18 @@ pub(crate) async fn handle_create_exposure(
     Path(id): Path<String>,
     Json(request): Json<ExposureRequest>,
 ) -> Result<Json<ExposureInfo>, AppError> {
+    create_exposure(&state, &id, request).await.map(Json)
+}
+
+/// Ask VM `id`'s owner for an exposure. The owner admits it through the VM's
+/// security engine (`network.lifecycle`) before binding anything; this is the
+/// one way an exposure is made, whether a client or an image's declared
+/// surface asks.
+pub(crate) async fn create_exposure(
+    state: &Arc<ServiceState>,
+    id: &str,
+    request: ExposureRequest,
+) -> Result<ExposureInfo, AppError> {
     let target = proto_target(request.target);
     if !target.admits(request.guest_port) {
         return Err(AppError(
@@ -105,13 +117,13 @@ pub(crate) async fn handle_create_exposure(
             }
         }
     };
-    let reply = ask_owner(&state, &id, owner_request).await?;
+    let reply = ask_owner(state, id, owner_request).await?;
     match reply {
         ProcessToService::PortPublished {
             publication: Some(publication),
             error: None,
             ..
-        } => Ok(Json(api_publication(publication))),
+        } => Ok(api_publication(publication)),
         ProcessToService::PortPublished {
             error: Some(error),
             policy_refused: true,

@@ -11,6 +11,8 @@ export type { CapturedPayload } from "./CapturedPayload.js";
 export type { ContainerSpec } from "./ContainerSpec.js";
 export { ContainerState } from "./ContainerState.js";
 export type { ContainerStatusResponse } from "./ContainerStatusResponse.js";
+export type { ContainerSurface } from "./ContainerSurface.js";
+export { ContainerSurfaceKind } from "./ContainerSurfaceKind.js";
 export type { CreateNetworkRequest } from "./CreateNetworkRequest.js";
 export type { CredentialEvent } from "./CredentialEvent.js";
 export { CredentialEventType } from "./CredentialEventType.js";

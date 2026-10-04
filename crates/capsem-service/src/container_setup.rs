@@ -5,7 +5,9 @@
 //! lives only in the setup task and is dropped with it.
 
 use super::*;
-use capsem_api::{ContainerSpec, ContainerState, ContainerStatusResponse, RegistryAccess};
+use capsem_api::{
+    ContainerSpec, ContainerState, ContainerStatusResponse, ContainerSurface, ContainerSurfaceKind, RegistryAccess,
+};
 use capsem_core::container::stage::{self, StagedContent};
 use capsem_foundation::unix::contained::{ContainedOpenOptions, EntryKind};
 use std::future::Future;
@@ -127,6 +129,7 @@ impl ContainerSetups {
                     digest: None,
                     exit_code: None,
                     error: None,
+                    surface: None,
                 },
                 task: None,
             },
@@ -295,9 +298,19 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         .map_err(|e| format!("pull {}: {e:#}", spec.image))?;
     // Admission is on the resolved digest, before anything is staged.
     admit(&policy, &requested, &image)?;
+    // An image whose surface labels are not exactly one valid declaration is
+    // refused here, before staging: nothing of it runs and nothing is exposed.
+    let declared = tokio::task::spawn_blocking({
+        let root = image.root.clone();
+        move || stage::image_surface(&root)
+    })
+    .await
+    .map_err(|e| format!("read image surface: {e}"))?
+    .map_err(|e| format!("container image refused: {e:#}"))?;
     if !state.containers.advance(id, generation, |status| {
         status.state = ContainerState::Staging;
         status.digest = Some(image.digest.clone());
+        status.surface = api_surface(declared);
     }) {
         return Ok(());
     }
@@ -313,7 +326,7 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
     let resources = capsem_core::container::workload_resources(ram_mb, cpus).map_err(|e| format!("{e:#}"))?;
     let plan = tokio::task::spawn_blocking({
         let (root, files) = (image.root.clone(), image.files.clone());
-        move || stage::stage_plan(&root, &files, &spec.args, &spec.env, resources)
+        move || stage::stage_plan(&root, &files, &spec.args, &spec.env, resources, declared)
     })
     .await
     .map_err(|e| format!("plan stage: {e}"))?
@@ -349,10 +362,102 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
     )
     .await?;
     match reply {
-        ProcessToService::ExecResult { exit_code: 0, .. } => record_launched(state, id),
-        ProcessToService::ExecResult { exit_code, .. } => Err(format!("container launcher exited {exit_code}")),
-        other => Err(format!("unexpected launch reply: {other:?}")),
+        ProcessToService::ExecResult { exit_code: 0, .. } => record_launched(state, id)?,
+        ProcessToService::ExecResult { exit_code, .. } => return Err(format!("container launcher exited {exit_code}")),
+        other => return Err(format!("unexpected launch reply: {other:?}")),
     }
+    grant_surface(state, id, generation).await;
+    Ok(())
+}
+
+/// How long a launched GUI workload may take to report itself running before
+/// its surface is given up on. Unpacking a large desktop image dominates.
+const SURFACE_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn api_surface(declared: stage::DeclaredSurface) -> Option<ContainerSurface> {
+    match declared {
+        stage::DeclaredSurface::Terminal => None,
+        stage::DeclaredSurface::Xpra { port } => Some(ContainerSurface {
+            kind: ContainerSurfaceKind::Xpra,
+            port,
+            exposure_id: None,
+        }),
+    }
+}
+
+/// Once the workload runs, grant the surface its image declared: one
+/// `http_preview` exposure of the declared container loopback port, made
+/// through the ordinary exposure path so the VM's security engine admits it
+/// like any other. It never binds a host listener; the gateway's
+/// authenticated preview origin is the only way in. A refusal leaves the
+/// workload running without a surface.
+pub(crate) async fn grant_surface(state: &Arc<ServiceState>, id: &str, generation: u64) {
+    let Some(surface) = state.containers.status(id).and_then(|status| status.surface) else {
+        return;
+    };
+    if surface.exposure_id.is_some() {
+        return;
+    }
+    let options = capsem_foundation::poll::PollOpts::new("container-surface-running", SURFACE_READY_TIMEOUT);
+    match wait_observed(state, id, options).await {
+        Ok(status) if status.state == ContainerState::Running => {}
+        Ok(status) => {
+            info!(vm_id = id, state = ?status.state, "container ended before its surface was granted");
+            return;
+        }
+        Err(timed_out) => {
+            warn!(
+                vm_id = id,
+                attempts = timed_out.attempts,
+                "container never reported running; surface not granted"
+            );
+            return;
+        }
+    }
+    let request = capsem_api::ExposureRequest {
+        guest_port: surface.port,
+        host_port: 0,
+        target: capsem_api::ExposureTarget::Container,
+        access: capsem_api::ExposureAccess::HttpPreview,
+    };
+    let exposure = match crate::router_runtime::exposures::create_exposure(state, id, request).await {
+        Ok(exposure) => exposure,
+        Err(AppError(status, error)) => {
+            warn!(vm_id = id, %status, %error, "container surface exposure refused");
+            return;
+        }
+    };
+    let recorded = state.containers.advance(id, generation, |status| {
+        if let Some(surface) = status.surface.as_mut() {
+            surface.exposure_id = Some(exposure.id.clone());
+        }
+    });
+    if !recorded {
+        return;
+    }
+    info!(
+        vm_id = id,
+        exposure_id = exposure.id.as_str(),
+        port = surface.port,
+        "container surface granted"
+    );
+    if let Err(error) = record_launched(state, id) {
+        warn!(vm_id = id, %error, "container surface not recorded for a service restart");
+    }
+}
+
+/// Grant the surface of a workload an attached stream just started, beside
+/// the stream that runs it.
+pub(crate) fn grant_surface_in_background(state: &Arc<ServiceState>, id: &str, generation: u64) {
+    if state
+        .containers
+        .status(id)
+        .is_none_or(|status| status.surface.is_none())
+    {
+        return;
+    }
+    let (state, id) = (Arc::clone(state), id.to_owned());
+    tokio::spawn(async move { grant_surface(&state, &id, generation).await });
 }
 
 /// Host-side record of a launched workload, next to the session ledger and
@@ -363,6 +468,10 @@ const LAUNCH_RECORD: &str = "container.json";
 struct LaunchRecord {
     image: String,
     digest: String,
+    /// The declared surface and, once granted, its exposure: the exposure
+    /// lives in the VM owner, which outlives a service restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    surface: Option<ContainerSurface>,
 }
 
 /// Wait for the workload `POST /vms/create` started to settle. A detached
@@ -412,6 +521,7 @@ pub(crate) fn record_launched(state: &ServiceState, id: &str) -> Result<(), Stri
     let record = serde_json::to_vec(&LaunchRecord {
         image: status.image,
         digest: status.digest.unwrap_or_default(),
+        surface: status.surface,
     })
     .map_err(|e| format!("encode launch record: {e}"))?;
     capsem_foundation::unix::fs::atomic_write_private(&session_dir.join(LAUNCH_RECORD), &record)
@@ -469,6 +579,7 @@ fn observe(
             digest: Some(record.digest),
             exit_code: None,
             error: None,
+            surface: record.surface,
         })
     }) else {
         return Ok(None);

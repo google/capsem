@@ -721,6 +721,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sandbox intact, unlocks a per-home login keyring so Claude's sign-in
   persists in a named session, and imports the runtime's CA bundle into
   Chromium's NSS store at startup (google/capsem#289).
+- An image that declares an Xpra surface (`org.capsem.surface=xpra` and
+  `org.capsem.surface.port`) gets that one container loopback port as a
+  browser-preview exposure once its workload runs, admitted by the VM's
+  security engine like any other exposure and never as a host TCP listener.
+  `GET /vms/{id}/container` reports the surface and its exposure id. A
+  surface port that is not exactly one port in 1-65535, or one on a
+  terminal image, refuses the image before it is staged (google/capsem#289).
 - OCI workloads reach Capsem's MCP tools over streamable HTTP at
   `http://mcp.capsem.internal/mcp`. A container cannot open vsock, so the
   in-guest relay was out of its reach. The session's DNS answers the name

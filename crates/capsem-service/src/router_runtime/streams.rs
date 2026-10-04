@@ -81,6 +81,7 @@ async fn session(state: Arc<ServiceState>, id: String, uds_path: PathBuf, socket
                         if let Err(error) = container_setup::record_launched(&state, &id) {
                             warn!(vm_id = id.as_str(), %error, "attached container launch record not written");
                         }
+                        container_setup::grant_surface_in_background(&state, &id, generation);
                         let command = capsem_core::container::LAUNCH_COMMAND.to_string();
                         exec(&state, owner, command, &mut client_tx, &mut client_rx).await
                     }

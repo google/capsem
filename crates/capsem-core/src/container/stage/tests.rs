@@ -8,7 +8,13 @@ fn stage_plan_writes_parts_then_the_files_the_launcher_reads() {
     let files = [PathBuf::from("index.json"), PathBuf::from("oci-layout")];
     let env = [("LANG".to_string(), "C".to_string())].into();
     let resources = super::super::workload_resources(2048, 2).unwrap();
-    let plan = stage_plan(root.path(), &files, &["serve".to_string()], &env, resources).unwrap();
+    let surface = image_surface(root.path()).unwrap();
+    assert_eq!(
+        surface,
+        DeclaredSurface::Terminal,
+        "a layout naming no manifest declares nothing"
+    );
+    let plan = stage_plan(root.path(), &files, &["serve".to_string()], &env, resources, surface).unwrap();
     let names: Vec<&str> = plan.iter().map(|file| file.name.as_str()).collect();
     assert_eq!(names, ["0-0", "transfer.json", "options.json", "launch.py"]);
     assert!(matches!(&plan[0].content, StagedContent::File(path) if path == &root.path().join("index.json")));
@@ -49,4 +55,85 @@ fn oci_architecture_names_the_host_the_way_registries_do() {
         _ => return assert!(oci_architecture().is_err()),
     };
     assert_eq!(oci_architecture().unwrap(), expected);
+}
+
+fn labels(pairs: &[(&str, serde_json::Value)]) -> serde_json::Map<String, serde_json::Value> {
+    pairs
+        .iter()
+        .map(|(name, value)| ((*name).to_owned(), value.clone()))
+        .collect()
+}
+
+fn xpra_on(port: &str) -> serde_json::Map<String, serde_json::Value> {
+    labels(&[(SURFACE_LABEL, "xpra".into()), (SURFACE_PORT_LABEL, port.into())])
+}
+
+#[test]
+fn an_xpra_image_declares_exactly_its_one_surface_port() {
+    let declared = DeclaredSurface::from_labels(&xpra_on("14500")).unwrap();
+    assert_eq!(declared, DeclaredSurface::Xpra { port: 14500 });
+    assert_eq!(declared.seccomp(), super::super::seccomp::Surface::Xpra);
+    assert_eq!(
+        DeclaredSurface::from_labels(&xpra_on("1")).unwrap(),
+        DeclaredSurface::Xpra { port: 1 }
+    );
+    assert_eq!(
+        DeclaredSurface::from_labels(&xpra_on("65535")).unwrap(),
+        DeclaredSurface::Xpra { port: 65535 }
+    );
+}
+
+#[test]
+fn a_terminal_image_declares_no_port() {
+    assert_eq!(
+        DeclaredSurface::from_labels(&labels(&[])).unwrap(),
+        DeclaredSurface::Terminal
+    );
+    let terminal = labels(&[(SURFACE_LABEL, "terminal".into())]);
+    assert_eq!(
+        DeclaredSurface::from_labels(&terminal).unwrap(),
+        DeclaredSurface::Terminal
+    );
+    assert_eq!(
+        DeclaredSurface::Terminal.seccomp(),
+        super::super::seccomp::Surface::Terminal
+    );
+}
+
+/// An image cannot widen what it is granted: anything but one plain decimal
+/// port in 1..=65535 on an xpra image refuses the image.
+#[test]
+fn a_surface_port_that_is_not_exactly_one_port_refuses_the_image() {
+    for port in [
+        "",
+        "0",
+        "00000",
+        "65536",
+        "70000",
+        "+14500",
+        "-1",
+        " 14500",
+        "14500 ",
+        "14500,14501",
+        "14500-14501",
+        "0x3894",
+        "1e4",
+        "145000",
+    ] {
+        assert!(
+            DeclaredSurface::from_labels(&xpra_on(port)).is_err(),
+            "{port:?} was accepted"
+        );
+    }
+    let numeric = labels(&[(SURFACE_LABEL, "xpra".into()), (SURFACE_PORT_LABEL, 14500.into())]);
+    assert!(DeclaredSurface::from_labels(&numeric).is_err(), "labels are strings");
+    let missing = labels(&[(SURFACE_LABEL, "xpra".into())]);
+    assert!(DeclaredSurface::from_labels(&missing).is_err());
+    let on_terminal = labels(&[(SURFACE_PORT_LABEL, "8080".into())]);
+    assert!(
+        DeclaredSurface::from_labels(&on_terminal).is_err(),
+        "a terminal image has no surface port"
+    );
+    let unknown = labels(&[(SURFACE_LABEL, "vnc".into()), (SURFACE_PORT_LABEL, "5900".into())]);
+    assert!(DeclaredSurface::from_labels(&unknown).is_err());
 }

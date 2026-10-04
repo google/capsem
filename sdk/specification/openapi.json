@@ -3032,8 +3032,52 @@
           },
           "state": {
             "$ref": "#/components/schemas/ContainerState"
+          },
+          "surface": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContainerSurface",
+                "description": "The graphical surface the image declares, when it declares one."
+              }
+            ]
           }
         }
+      },
+      "ContainerSurface": {
+        "type": "object",
+        "description": "A graphical surface an image declares (`org.capsem.surface`), and the\nbrowser-preview exposure the service granted for it.",
+        "required": [
+          "kind",
+          "port"
+        ],
+        "properties": {
+          "exposure_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `http_preview` exposure that reaches it, once the workload runs\nand the VM's policy admitted it."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ContainerSurfaceKind"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Container loopback port the surface listens on\n(`org.capsem.surface.port`).",
+            "minimum": 0
+          }
+        }
+      },
+      "ContainerSurfaceKind": {
+        "type": "string",
+        "description": "How a graphical workload presents itself.",
+        "enum": [
+          "xpra"
+        ]
       },
       "CreateNetworkRequest": {
         "type": "object",

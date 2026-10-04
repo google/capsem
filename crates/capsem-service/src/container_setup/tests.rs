@@ -3,12 +3,34 @@ use crate::tests::{insert_fake_instance_with_session_dir, spawn_fake_process};
 use capsem_api::RegistryAccess;
 use tokio::sync::Notify;
 
+mod surface;
+
 /// An image source serving a fixed two-file layout, optionally held at the
 /// pull until released, and recording the registry access it was given.
 struct FixtureImages {
     fail: bool,
     gate: Option<Arc<Notify>>,
     access: Arc<Mutex<Option<RegistryAccess>>>,
+    /// Image config labels; `None` serves a layout naming no manifest.
+    labels: Option<serde_json::Value>,
+}
+
+const MANIFEST_BLOB: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const CONFIG_BLOB: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+/// index.json -> manifest -> config carrying `labels`. Only the two layout
+/// files are staged, so the staged message count is the same either way.
+fn write_labelled_layout(root: &StdPath, labels: &serde_json::Value) -> std::io::Result<()> {
+    let blobs = root.join("blobs/sha256");
+    std::fs::create_dir_all(&blobs)?;
+    let index = json!({"manifests": [{"digest": format!("sha256:{MANIFEST_BLOB}")}]});
+    std::fs::write(root.join("index.json"), serde_json::to_vec(&index)?)?;
+    let manifest = json!({"config": {"digest": format!("sha256:{CONFIG_BLOB}")}});
+    std::fs::write(blobs.join(MANIFEST_BLOB), serde_json::to_vec(&manifest)?)?;
+    std::fs::write(
+        blobs.join(CONFIG_BLOB),
+        serde_json::to_vec(&json!({"config": {"Labels": labels}}))?,
+    )
 }
 
 impl ImageSource for FixtureImages {
@@ -28,6 +50,7 @@ impl ImageSource for FixtureImages {
 
     fn pull(&self, _image: String, access: RegistryAccess, _parent: PathBuf) -> PullFuture {
         let (fail, gate, seen) = (self.fail, self.gate.clone(), Arc::clone(&self.access));
+        let labels = self.labels.clone();
         Box::pin(async move {
             *seen.lock().unwrap() = Some(access);
             if let Some(gate) = gate {
@@ -35,7 +58,10 @@ impl ImageSource for FixtureImages {
             }
             anyhow::ensure!(!fail, "registry refused the image");
             let root = tempfile::tempdir()?;
-            std::fs::write(root.path().join("index.json"), b"{\"manifests\":[]}")?;
+            match labels {
+                Some(labels) => write_labelled_layout(root.path(), &labels)?,
+                None => std::fs::write(root.path().join("index.json"), b"{\"manifests\":[]}")?,
+            }
             std::fs::write(root.path().join("oci-layout"), b"")?;
             Ok(PulledImage {
                 root: root.path().to_path_buf(),
@@ -120,6 +146,7 @@ fn images() -> FixtureImages {
         fail: false,
         gate: None,
         access: Arc::new(Mutex::new(None)),
+        labels: None,
     }
 }
 

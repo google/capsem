@@ -3,6 +3,7 @@
 import {z} from "zod";
 import type {ContainerStatusResponse} from "../models/ContainerStatusResponse.js";
 import {ContainerStateSchema} from "./ContainerState.js";
+import {ContainerSurfaceSchema} from "./ContainerSurface.js";
 
 export const ContainerStatusResponseSchema: z.ZodType<ContainerStatusResponse> = z.object({
   "digest": z.string().nullable().exactOptional(),
@@ -10,4 +11,5 @@ export const ContainerStatusResponseSchema: z.ZodType<ContainerStatusResponse> =
   "exit_code": z.int().nullable().exactOptional(),
   "image": z.string(),
   "state": z.lazy(() => ContainerStateSchema),
+  "surface": z.union([z.null(), z.lazy(() => ContainerSurfaceSchema)]).exactOptional(),
 });

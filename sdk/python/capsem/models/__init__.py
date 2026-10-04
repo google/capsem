@@ -13,6 +13,8 @@ from .container_state import ContainerState as ContainerState
 from .container_status_response import (
     ContainerStatusResponse as ContainerStatusResponse,
 )
+from .container_surface import ContainerSurface as ContainerSurface
+from .container_surface_kind import ContainerSurfaceKind as ContainerSurfaceKind
 from .create_network_request import CreateNetworkRequest as CreateNetworkRequest
 from .credential_event import CredentialEvent as CredentialEvent
 from .credential_event_type import CredentialEventType as CredentialEventType

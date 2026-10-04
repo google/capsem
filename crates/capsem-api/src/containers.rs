@@ -99,6 +99,31 @@ pub struct ContainerStatusResponse {
     /// Why setup or the workload failed, when `state` is `failed`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The graphical surface the image declares, when it declares one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<ContainerSurface>,
+}
+
+/// How a graphical workload presents itself.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerSurfaceKind {
+    /// An Xpra websocket server: one application window, no desktop.
+    Xpra,
+}
+
+/// A graphical surface an image declares (`org.capsem.surface`), and the
+/// browser-preview exposure the service granted for it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
+pub struct ContainerSurface {
+    pub kind: ContainerSurfaceKind,
+    /// Container loopback port the surface listens on
+    /// (`org.capsem.surface.port`).
+    pub port: u16,
+    /// The `http_preview` exposure that reaches it, once the workload runs
+    /// and the VM's policy admitted it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposure_id: Option<String>,
 }
 
 #[cfg(test)]

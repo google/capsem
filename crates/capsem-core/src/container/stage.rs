@@ -28,16 +28,16 @@ pub enum StagedContent {
 /// command override, container environment, where the container sees the
 /// workspace, and the capabilities, syscall filter, user-namespace map and
 /// resources the workload gets) and
-/// the launcher.
+/// the launcher. `surface` is what [`image_surface`] read from the same layout.
 pub fn stage_plan(
     root: &Path,
     files: &[PathBuf],
     args: &[String],
     env: &BTreeMap<String, String>,
     resources: super::WorkloadResources,
+    surface: DeclaredSurface,
 ) -> Result<Vec<StagedFile>> {
-    let labels = image_labels(root)?;
-    let surface = super::seccomp::Surface::from_label(labels.get(SURFACE_LABEL).and_then(|v| v.as_str()))?;
+    let surface = surface.seccomp();
     let transfer = capsem_assets::oci::transfer_manifest(root, files)?;
     let mut plan: Vec<StagedFile> = transfer
         .iter()
@@ -77,6 +77,64 @@ pub fn stage_plan(
 
 /// The label an image declares its surface with (`terminal` or `xpra`).
 pub const SURFACE_LABEL: &str = "org.capsem.surface";
+
+/// The container loopback port an xpra surface listens on.
+pub const SURFACE_PORT_LABEL: &str = "org.capsem.surface.port";
+
+/// What an image's labels ask the runtime to present.
+///
+/// An xpra surface names exactly one container loopback port, which the
+/// service grants as a browser-preview exposure; nothing else in the image can
+/// ask for more. A terminal image names none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeclaredSurface {
+    Terminal,
+    Xpra { port: u16 },
+}
+
+impl DeclaredSurface {
+    /// Read and validate the surface labels. A missing, malformed or zero
+    /// xpra port, or a port on a terminal image, refuses the image instead of
+    /// guessing: the runtime never exposes a port an image did not declare
+    /// exactly.
+    pub fn from_labels(labels: &serde_json::Map<String, serde_json::Value>) -> Result<Self> {
+        let label = |name: &str| -> Result<Option<&str>> {
+            labels
+                .get(name)
+                .map(|value| value.as_str().with_context(|| format!("{name} must be a string")))
+                .transpose()
+        };
+        let port = label(SURFACE_PORT_LABEL)?;
+        match (super::seccomp::Surface::from_label(label(SURFACE_LABEL)?)?, port) {
+            (super::seccomp::Surface::Terminal, None) => Ok(Self::Terminal),
+            (super::seccomp::Surface::Terminal, Some(_)) => {
+                bail!("{SURFACE_PORT_LABEL} needs {SURFACE_LABEL}=xpra")
+            }
+            (super::seccomp::Surface::Xpra, None) => bail!("an xpra surface needs {SURFACE_PORT_LABEL}"),
+            (super::seccomp::Surface::Xpra, Some(port)) => {
+                // Digits only: `u16::from_str` also takes "+14500".
+                let digits = (1..=5).contains(&port.len()) && port.bytes().all(|byte| byte.is_ascii_digit());
+                match port.parse::<u16>() {
+                    Ok(port) if digits && port != 0 => Ok(Self::Xpra { port }),
+                    _ => bail!("{SURFACE_PORT_LABEL} {port:?} is not a port between 1 and 65535"),
+                }
+            }
+        }
+    }
+
+    /// The syscall-filter exception this surface needs.
+    pub fn seccomp(self) -> super::seccomp::Surface {
+        match self {
+            Self::Terminal => super::seccomp::Surface::Terminal,
+            Self::Xpra { .. } => super::seccomp::Surface::Xpra,
+        }
+    }
+}
+
+/// The surface the pulled layout at `root` declares.
+pub fn image_surface(root: &Path) -> Result<DeclaredSurface> {
+    DeclaredSurface::from_labels(&image_labels(root)?)
+}
 
 /// The image config's labels from a pulled single-image layout: index.json
 /// names the manifest, the manifest names the config. The layout is the
