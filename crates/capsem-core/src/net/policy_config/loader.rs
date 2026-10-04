@@ -66,10 +66,18 @@ pub fn load_settings_document(path: &Path) -> Result<Option<SettingsFile>, Strin
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(format!("failed to read {}: {}", path.display(), e)),
     };
-    reject_retired_mcp_policy_keys(path, &content)?;
-    reject_retired_ai_setting_ids(path, &content)?;
-    let mut file: SettingsFile =
-        toml::from_str(&content).map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
+    // One parse: polled routes load this file on every request. A retired MCP
+    // key fails the typed parse (`McpConfig` denies unknown fields), so the
+    // untyped look that names it runs only to explain a failure.
+    let mut file: SettingsFile = match toml::from_str(&content) {
+        Ok(file) => file,
+        Err(error) => {
+            reject_retired_mcp_policy_keys(path, &content)?;
+            reject_retired_ai_setting_ids_in_content(&path.display().to_string(), &content)?;
+            return Err(format!("failed to parse {}: {}", path.display(), error));
+        }
+    };
+    reject_retired_ai_setting_id_keys(&path.display().to_string(), file.settings.keys())?;
     migrate_setting_ids(&mut file);
     Ok(Some(file))
 }
@@ -123,23 +131,23 @@ fn reject_retired_mcp_policy_keys(path: &Path, content: &str) -> Result<(), Stri
     Ok(())
 }
 
-fn reject_retired_ai_setting_ids(path: &Path, content: &str) -> Result<(), String> {
-    reject_retired_ai_setting_ids_in_content(&path.display().to_string(), content)
-}
-
 pub(super) fn reject_retired_ai_setting_ids_in_content(label: &str, content: &str) -> Result<(), String> {
     let root: toml::Value = toml::from_str(content).map_err(|e| format!("failed to parse {label}: {e}"))?;
     let Some(settings) = root.get("settings").and_then(|value| value.as_table()) else {
         return Ok(());
     };
-    for key in settings.keys() {
-        if key.starts_with("ai.") {
-            return Err(format!(
-                "failed to validate {label}: retired AI setting id {key}; use settings/corp security rules, provider discovery, and plugins instead",
-            ));
-        }
+    reject_retired_ai_setting_id_keys(label, settings.keys())
+}
+
+/// The first retired `ai.*` setting id, by name, so the error does not depend
+/// on the map's iteration order.
+fn reject_retired_ai_setting_id_keys<'a>(label: &str, keys: impl Iterator<Item = &'a String>) -> Result<(), String> {
+    match keys.filter(|key| key.starts_with("ai.")).min() {
+        Some(key) => Err(format!(
+            "failed to validate {label}: retired AI setting id {key}; use settings/corp security rules, provider discovery, and plugins instead",
+        )),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 fn merge_referenced_security_rule_profile(
