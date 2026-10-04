@@ -27,6 +27,10 @@ use crate::asset_manager::PackageArchitecture;
 /// a higher contract needs a newer runtime and is never resolved here.
 pub const RUNTIME_CONTRACT: u32 = 1;
 
+/// The catalog a runtime reads unless `[images] catalog` names another, such
+/// as an enterprise mirror.
+pub const DEFAULT_CATALOG: &str = "ghcr.io/google/capsem/catalog:stable";
+
 /// Media type of the single layer that holds the catalog document.
 pub const CATALOG_MEDIA_TYPE: &str = "application/vnd.capsem.catalog.v1+json";
 
@@ -156,7 +160,7 @@ impl Catalog {
 impl CatalogEntry {
     fn validate(name: &str, entry: EntryDocument) -> Result<Self> {
         ensure!(
-            entry_name(name),
+            is_catalog_name(name),
             "invalid catalog entry name: use 1-63 of [a-z0-9-], starting with a letter or digit"
         );
         ensure!(!entry.versions.is_empty(), "entry lists no versions");
@@ -311,8 +315,12 @@ fn parse_platform(platform: &str) -> Result<PackageArchitecture> {
         .with_context(|| format!("unsupported platform {platform:?}: architecture must be arm64 or amd64"))
 }
 
-/// `[a-z0-9][a-z0-9-]{0,62}`
-fn entry_name(name: &str) -> bool {
+/// Whether `name` has the shape of a catalog entry name,
+/// `[a-z0-9][a-z0-9-]{0,62}`. Such a name never contains `/`, `:` or `@`, so
+/// it is never a registry-qualified reference; it can look like a Docker Hub
+/// short name (`redis`), which is why a catalog name is looked up before
+/// anything is parsed as a reference.
+pub fn is_catalog_name(name: &str) -> bool {
     let bytes = name.as_bytes();
     (1..=63).contains(&bytes.len())
         && bytes[0] != b'-'

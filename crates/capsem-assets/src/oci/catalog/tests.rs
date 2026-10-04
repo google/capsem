@@ -206,6 +206,31 @@ fn entry_names_are_short_lowercase_slugs() {
     parse(&value).unwrap();
 }
 
+/// The predicate every entrypoint uses to decide whether a request names a
+/// catalog entry. Anything with a registry, tag or digest separator is a
+/// reference; a bare Docker Hub short name has a catalog name's shape.
+#[test]
+fn catalog_names_never_contain_reference_separators() {
+    for name in ["codex-cli", "claude-code", "agy", "dev", "redis", "0-x"] {
+        assert!(is_catalog_name(name), "{name}");
+    }
+    let long = "a".repeat(64);
+    for reference in [
+        "",
+        "-codex",
+        "Codex",
+        "codex:latest",
+        "library/redis",
+        "ghcr.io/google/capsem/codex-cli",
+        "codex@sha256:aaaa",
+        "docker://redis",
+        "codex.cli",
+        long.as_str(),
+    ] {
+        assert!(!is_catalog_name(reference), "{reference}");
+    }
+}
+
 #[test]
 fn platforms_are_known_linux_architectures_listed_once() {
     for (platforms, needle) in [

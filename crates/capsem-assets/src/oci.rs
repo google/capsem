@@ -7,7 +7,10 @@ use serde::Deserialize;
 mod cache;
 mod catalog;
 mod pull;
-pub use catalog::{Catalog, CatalogEntry, CatalogVersion, Channel, CATALOG_MEDIA_TYPE, RUNTIME_CONTRACT};
+pub use catalog::{
+    is_catalog_name, Catalog, CatalogEntry, CatalogVersion, Channel, CATALOG_MEDIA_TYPE, DEFAULT_CATALOG,
+    RUNTIME_CONTRACT,
+};
 mod selector;
 pub use oci_client::secrets::RegistryAuth;
 pub use pull::{ImageLayout, Puller};
