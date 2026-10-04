@@ -131,6 +131,7 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
 
 #[tokio::test]
 async fn credential_broker_plugin_runtime_reports_security_ledger_activity() {
+    let _lock = SETTINGS_ENV_LOCK.lock().await;
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let dir = tempfile::tempdir().unwrap();
@@ -226,6 +227,7 @@ async fn credential_broker_plugin_runtime_reports_security_ledger_activity() {
 
 #[tokio::test]
 async fn plugin_runtime_reports_execution_latency_from_security_ledger_payloads() {
+    let _lock = SETTINGS_ENV_LOCK.lock().await;
     let state = make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let dir = tempfile::tempdir().unwrap();
@@ -420,6 +422,9 @@ fn plugin_edit_payloads_fail_closed() {
 
 #[tokio::test]
 async fn credential_broker_detail_route_exposes_inventory_and_grant_surface() {
+    // The store status and the plugin policy read process-wide settings that
+    // neighbouring tests swap under this lock; reading them unlocked raced.
+    let _lock = SETTINGS_ENV_LOCK.lock().await;
     let app = build_service_router(make_test_state());
 
     let (status, detail) = route_request(
