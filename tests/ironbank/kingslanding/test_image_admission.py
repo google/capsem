@@ -10,8 +10,8 @@ import subprocess
 
 import pytest
 
-from tests.fixtures.oci.registry import registry
-from tests.ironbank.kingslanding.test_run import cli, environment, grant_image, service
+from tests.fixtures.oci.registry import grant_image, registry
+from tests.ironbank.kingslanding.test_run import cli, environment, service
 
 __all__ = ["service"]
 
@@ -58,7 +58,7 @@ def test_an_ungranted_image_is_refused_before_its_registry_is_contacted(
             assert requests == [], f"the refused registry was contacted: {requests}"
 
             # Granted, the same image runs.
-            grant_image(service, reference)
+            grant_image(service.home_dir, reference)
             granted = run_image(service, reference, certificate)
             assert granted.returncode == 0, granted.stderr.decode(errors="replace")
     finally:
