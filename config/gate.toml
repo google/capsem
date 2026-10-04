@@ -1107,27 +1107,20 @@ must_stay_below_lines = 3000
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk/tests.rs" = 1059
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 1997
 "crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2428
-"crates/capsem-core/src/net/policy_config/profile_contract.rs" = 1897
-"crates/capsem-core/src/net/policy_config/profile_contract/tests.rs" = 1125
 "crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1553
 "crates/capsem-core/src/security_engine/mod.rs" = 2073
 "crates/capsem-core/tests/mitm_integration.rs" = 2023
-"crates/capsem-logger/src/writer/tests.rs" = 1398
+"crates/capsem-logger/src/writer/tests.rs" = 1395
 "crates/capsem-mock-server/src/main.rs" = 1416
 "crates/capsem-process/src/vsock.rs" = 1351
 "crates/capsem-proto/src/tests.rs" = 1446
-"crates/capsem-service/src/ledger_routes.rs" = 1482
-"crates/capsem-service/src/main.rs" = 1318
-"crates/capsem-service/src/profile_routes.rs" = 2068
-"crates/capsem-service/src/tests/assets_registry.rs" = 1352
-"crates/capsem-service/src/tests/lifecycle.rs" = 1644
-"crates/capsem-service/src/tests/profile_routes.rs" = 2194
-"crates/capsem-service/src/vm_files.rs" = 1286
-"crates/capsem-tui/src/tests.rs" = 1563
-"crates/capsem-tui/src/ui.rs" = 1081
-"crates/capsem/src/main.rs" = 2161
-"crates/capsem/src/support_bundle.rs" = 1034
-"crates/capsem/src/tests.rs" = 1314
+"crates/capsem-service/src/tests/assets_registry.rs" = 1118
+"crates/capsem-service/src/tests/lifecycle.rs" = 1443
+"crates/capsem-service/src/vm_files.rs" = 1156
+"crates/capsem-tui/src/tests.rs" = 1396
+"crates/capsem-tui/src/ui.rs" = 1036
+"crates/capsem/src/main.rs" = 2015
+"crates/capsem/src/tests.rs" = 1249
 "crates/capsem/src/update.rs" = 2187
 "crates/capsem/src/update/asset_install.rs" = 1125
 "crates/capsem/src/update/tests.rs" = 2306
@@ -1532,7 +1525,7 @@ log = "cache/target/smoke.log"
 # parallel phase, for the same reason the full gate serializes them.
 [[smoke.groups]]
 name = "mcp"
-paths = ["tests/ironbank/test_mcp_profile_ledger.py"]
+paths = ["tests/ironbank/test_mcp_settings_ledger.py"]
 markers = "integration"
 parallel = 0
 
@@ -2971,8 +2964,7 @@ measured = [
     "/enforcement/latest",
     "/detection/status",
     "/enforcement/status",
-    "/profiles/list",
-    "/profiles/status",
+    "/assets/status",
     "/stats",
     "/system/status",
     "/update/status",
@@ -2982,6 +2974,20 @@ unmeasured = [
     # cannot time accepted restarts. Its functional proof owns that lifecycle.
     "/restart",
     "/corp/edit",
+    "/assets/ensure",
+    "/plugins/list",
+    "/plugins/{plugin_id}/info",
+    "/plugins/{plugin_id}/edit",
+    "/plugins/credential_broker/credentials/info",
+    "/plugins/credential_broker/credentials/reload",
+    "/mcp/info",
+    "/mcp/servers/list",
+    "/mcp/default/info",
+    "/mcp/default/edit",
+    "/mcp/servers/{server_id}/tools/list",
+    "/mcp/servers/{server_id}/refresh",
+    "/mcp/servers/{server_id}/tools/{tool_id}/edit",
+    "/mcp/servers/{server_id}/tools/{tool_id}/call",
     "/corp/info",
     "/corp/reload",
     "/corp/validate",
@@ -2995,47 +3001,6 @@ unmeasured = [
     "/images/pull",
     "/host-logs/{name}",
     "/panics",
-    "/profiles/reload",
-    "/profiles/{profile_id}/assets/ensure",
-    "/profiles/{profile_id}/assets/info",
-    "/profiles/{profile_id}/assets/status",
-    "/profiles/{profile_id}/detection/evaluate",
-    "/profiles/{profile_id}/detection/info",
-    "/profiles/{profile_id}/detection/reload",
-    "/profiles/{profile_id}/detection/rules/list",
-    "/profiles/{profile_id}/detection/rules/{rule_id}/delete",
-    "/profiles/{profile_id}/detection/rules/{rule_id}/edit",
-    "/profiles/{profile_id}/enforcement/evaluate",
-    "/profiles/{profile_id}/enforcement/info",
-    "/profiles/{profile_id}/enforcement/reload",
-    "/profiles/{profile_id}/enforcement/rules/list",
-    "/profiles/{profile_id}/enforcement/rules/{rule_id}/delete",
-    "/profiles/{profile_id}/enforcement/rules/{rule_id}/edit",
-    "/profiles/{profile_id}/info",
-    "/profiles/{profile_id}/mcp/default/edit",
-    "/profiles/{profile_id}/mcp/default/info",
-    "/profiles/{profile_id}/mcp/info",
-    "/profiles/{profile_id}/mcp/servers/list",
-    "/profiles/{profile_id}/mcp/servers/{server_id}/delete",
-    "/profiles/{profile_id}/mcp/servers/{server_id}/edit",
-    "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
-    "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
-    "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
-    "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit",
-    "/profiles/{profile_id}/obom",
-    "/profiles/{profile_id}/plugins/credential_broker/credentials/info",
-    "/profiles/{profile_id}/plugins/credential_broker/credentials/reload",
-    "/profiles/{profile_id}/plugins/info",
-    "/profiles/{profile_id}/plugins/list",
-    "/profiles/{profile_id}/plugins/{plugin_id}/edit",
-    "/profiles/{profile_id}/plugins/{plugin_id}/info",
-    "/profiles/{profile_id}/reload",
-    "/profiles/{profile_id}/skills/add",
-    "/profiles/{profile_id}/skills/info",
-    "/profiles/{profile_id}/skills/list",
-    "/profiles/{profile_id}/skills/{skill_id}/delete",
-    "/profiles/{profile_id}/skills/{skill_id}/edit",
-    "/profiles/{profile_id}/validate",
     "/purge",
     "/run",
     "/security/latest",
@@ -3132,15 +3097,6 @@ p95_ms = 5.0
 p99_ms = 10.0
 cpu_s = 0.23
 
-[benchmark.route_health.budgets.profiles.service]
-p95_ms = 3.0
-p99_ms = 8.0
-cpu_s = 0.08
-[benchmark.route_health.budgets.profiles.gateway]
-p95_ms = 6.0
-p99_ms = 10.0
-cpu_s = 0.18
-
 [benchmark.route_health.budgets.stats_detail.service]
 p95_ms = 15.0
 p99_ms = 35.0
@@ -3200,15 +3156,6 @@ p95_ms = 5.0
 p99_ms = 9.0
 cpu_s = 0.16
 
-[benchmark.route_health.budgets.rules.service]
-p95_ms = 2.0
-p99_ms = 5.0
-cpu_s = 0.08
-[benchmark.route_health.budgets.rules.gateway]
-p95_ms = 5.0
-p99_ms = 8.0
-cpu_s = 0.15
-
 [benchmark.route_health.budgets.latest.service]
 p95_ms = 3.0
 p99_ms = 8.0
@@ -3217,17 +3164,6 @@ cpu_s = 0.10
 p95_ms = 5.0
 p99_ms = 10.0
 cpu_s = 0.15
-
-[benchmark.route_health.budgets.evaluate.service]
-# Same-handler Linux p95 samples reached 1.767/1.905ms; 20% margin needs
-# 2.286ms, rounded to the next whole millisecond for this health ceiling.
-p95_ms = 3.0
-p99_ms = 5.0
-cpu_s = 0.10
-[benchmark.route_health.budgets.evaluate.gateway]
-p95_ms = 5.0
-p99_ms = 8.0
-cpu_s = 0.20
 
 [benchmark.route_health.budgets.plugin_info.service]
 p95_ms = 3.0

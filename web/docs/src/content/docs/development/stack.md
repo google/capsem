@@ -156,10 +156,11 @@ On macOS, all binaries must be codesigned with the `com.apple.security.virtualiz
 
 ## Stage 4: Boot
 
-The service boots the VM runtime: three assets from `~/.capsem/assets/`
-(installed, selected by the channel manifest's `runtime` document) or
-`cache/target/assets/{arch}/` (development, through the materialized catalog
-under `cache/target/config/`):
+The service boots every new VM from one runtime image set: the three assets
+that the channel manifest's `runtime` document names for this host
+architecture, from `~/.capsem/assets/` (installed) or
+`cache/target/assets/{arch}/` (development). A persistent VM keeps the asset
+pins it was created with:
 
 | Asset | Produced by | What it is |
 |-------|-------------|------------|
@@ -170,7 +171,7 @@ under `cache/target/config/`):
 Agents and developer tools are not in the rootfs: a session created with
 `--image` runs an OCI image as its workload on top of this runtime.
 
-Boot sequence: capsem-service spawns capsem-process, which loads the kernel + initrd into a VM. `capsem-init` (PID 1) sets up overlayfs, air-gapped networking, and launches the PTY agent + net proxy + MCP server + sysutil. The host connects over vsock.
+Boot sequence: capsem-service merges the built-in defaults, `~/.capsem/settings.toml`, and the corp config into the session's `vm/active_policy.toml`, then spawns capsem-process (`--active-policy`), which loads the kernel + initrd into a VM. `capsem-init` (PID 1) sets up overlayfs, air-gapped networking, and launches the PTY agent + net proxy + MCP server + sysutil. The host connects over vsock.
 
 ## VM image builds (`just build-assets`)
 

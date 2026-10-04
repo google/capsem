@@ -64,9 +64,9 @@ impl ServiceState {
         let _ = std::fs::remove_file(&uds_path);
         service_runtime::remove_instance_sentinels(&uds_path);
 
-        self.validate_persistent_profile_authority(&entry)?;
-        let active_profile_path = self.persistent_active_profile_path(&entry)?;
-        let scratch_disk_size_gb = self.persistent_scratch_disk_size_gb(&entry)?;
+        self.validate_persistent_entry(&entry)?;
+        let active_policy_path = self.materialize_active_policy(&entry.session_dir)?.path;
+        let scratch_disk_size_gb = session_rootfs_size_gb(&entry)?;
         let resolved = self.resolve_pinned_asset_paths(&entry.asset_pins)?;
         self.validate_pinned_asset_files(&resolved, &entry.asset_pins)?;
 
@@ -152,8 +152,8 @@ impl ServiceState {
                 .arg(&resolved.kernel)
                 .arg("--initrd")
                 .arg(&resolved.initrd)
-                // The profile's own pins. Boot verifies against these, never
-                // against a channel-wide pointer that can only name one profile.
+                // The VM's own pins. Boot verifies against these, never
+                // against whatever the installed manifest names today.
                 .arg("--expected-kernel-hash")
                 .arg(&entry.asset_pins.kernel.hash)
                 .arg("--expected-initrd-hash")
@@ -162,8 +162,8 @@ impl ServiceState {
                 .arg(&entry.asset_pins.rootfs.hash)
                 .arg("--session-dir")
                 .arg(&entry.session_dir)
-                .arg("--active-profile")
-                .arg(&active_profile_path)
+                .arg("--active-policy")
+                .arg(&active_policy_path)
                 .arg("--cpus")
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
@@ -216,9 +216,6 @@ impl ServiceState {
             InstanceInfo {
                 id: vm_id.clone(),
                 name: entry.name.clone(),
-                profile_id: entry.profile_id.clone(),
-                profile_revision: entry.profile_revision.clone(),
-                profile_payload_hash: entry.profile_payload_hash.clone(),
                 asset_pins: entry.asset_pins.clone(),
                 pid,
                 uds_path: uds_path.clone(),

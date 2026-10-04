@@ -1,4 +1,4 @@
-"""Core no-state service endpoints: /version, /stats, /service-logs, profile reload."""
+"""Core no-state service endpoints: /version, /stats, /service-logs, policy reload."""
 
 import tomllib
 from pathlib import Path
@@ -63,17 +63,19 @@ class TestServiceLogs:
 
 class TestReloadConfig:
 
-    def test_profile_reload_no_instances(self, client):
-        """/profiles/{profile_id}/reload succeeds with instances: 0 when no VMs are running."""
+    def test_policy_reload_no_instances(self, client):
+        """/corp/reload succeeds with reloaded: 0 when no VMs are running."""
         # Make sure no VMs are running first.
         client.post("/purge", {"all": True})
 
-        resp = client.post("/profiles/code/reload", {})
-        assert resp is not None, "profile reload returned no body"
-        assert resp.get("success") is True, f"profile reload failed: {resp}"
+        resp = client.post("/corp/reload", {})
+        assert resp is not None, "policy reload returned no body"
+        assert resp.get("success") is True, f"policy reload failed: {resp}"
         assert resp.get("reloaded") == 0, (
             f"expected 0 reloaded, got {resp.get('reloaded')}: {resp}"
         )
 
-    def test_retired_global_reload_config_route_is_removed(self, client):
+    def test_retired_reload_routes_are_removed(self, client):
         assert client.post("/reload-config", {}) is None
+        assert client.post("/profiles/reload", {}) is None
+        assert client.post("/profiles/code/reload", {}) is None

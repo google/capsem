@@ -48,9 +48,9 @@ Network tools create, list, inspect and retire private networks, attach or detac
 VMs by immutable ID, and read cursor-based audit events with VM, connection,
 event, decision, and time filters.
 
-Profile tools list the typed profile catalog, inspect MCP readiness and default
-permissions, discover or refresh one server, and invoke a tool through gateway
-policy enforcement. Successful calls provide `structuredContent`; failures set
+MCP tools cover the servers every VM runs (settings.toml `[mcp]` with corp's
+laid over it): they count and list them, read the default permission, discover
+or refresh one server, and invoke a tool through gateway policy enforcement. Successful calls provide `structuredContent`; failures set
 MCP `isError` and return a machine-readable error kind without HTTP bodies or
 low-level causes.
 

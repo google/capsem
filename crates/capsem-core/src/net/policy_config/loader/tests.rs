@@ -47,7 +47,7 @@ fn write_then_load_roundtrip() {
 }
 
 #[test]
-fn load_local_settings_file_rejects_profile_behavior() {
+fn load_local_settings_file_rejects_corp_owned_settings() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(
         tmp.path(),
@@ -59,8 +59,8 @@ modified = "2026-06-11T00:00:00Z"
     )
     .unwrap();
 
-    let error = load_local_settings_file(tmp.path()).expect_err("profile behavior rejected");
-    assert!(error.contains("owned by profile"), "{error}");
+    let error = load_local_settings_file(tmp.path()).expect_err("corp-owned setting rejected");
+    assert!(error.contains("owned by corp"), "{error}");
 }
 
 #[test]

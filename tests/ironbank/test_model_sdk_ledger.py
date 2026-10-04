@@ -21,11 +21,9 @@ from helpers.body_archive import (
 )
 from helpers.constants import (
     ASSETS_DIR,
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
-    PROFILES_DIR,
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
@@ -717,7 +715,6 @@ def _codex_cli_probe_script(base_url: str) -> str:
 def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; build capsem-mock-server"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
 
     service = ServiceInstance()
     client = None
@@ -786,7 +783,6 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             "/vms/create",
             {
                 "name": session_id,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "env": {"CAPSEM_MOCK_SERVER_BASE_URL": mock_base_url},
@@ -1490,7 +1486,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 ),
                 timeout_s=20,
             )
-            assert info["profile_id"] == CODE_PROFILE_ID
+            assert "profile_id" not in info
             # The session's totals are the writer's counter snapshot (#223),
             # written with the rows it counts.
             totals = ledger_totals(conn)
@@ -1668,19 +1664,15 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 for detection in payload.get("detections", [])
             )
 
-            plugins = client.get(f"/profiles/{CODE_PROFILE_ID}/plugins/list", timeout=30)
+            plugins = client.get("/plugins/list", timeout=30)
             assert plugins is not None
             by_plugin = {plugin["id"]: plugin for plugin in plugins["plugins"]}
             assert by_plugin["credential_broker"]["runtime"]["execution_count"] == 0
             assert by_plugin["log_sanitizer"]["runtime"]["execution_count"] == 0
-            broker_runtime = client.get(
-                f"/profiles/{CODE_PROFILE_ID}/plugins/credential_broker/info",
-                timeout=30,
-            )["runtime"]
-            sanitizer_runtime = client.get(
-                f"/profiles/{CODE_PROFILE_ID}/plugins/log_sanitizer/info",
-                timeout=30,
-            )["runtime"]
+            # The plugin info route answers with the plugin's runtime across
+            # sessions.
+            broker_runtime = client.get("/plugins/credential_broker/info", timeout=30)["runtime"]
+            sanitizer_runtime = client.get("/plugins/log_sanitizer/info", timeout=30)["runtime"]
             for runtime in (broker_runtime, sanitizer_runtime):
                 assert runtime["enabled"] is True
                 assert runtime["execution_count"] > 0
@@ -1972,7 +1964,6 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
 def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; build capsem-mock-server"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
 
     service = ServiceInstance()
     client = None
@@ -1992,7 +1983,6 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             "/vms/create",
             {
                 "name": session_id,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "env": {"CAPSEM_MOCK_SERVER_BASE_URL": mock_base_url},
@@ -2528,7 +2518,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                     "postprocess",
                     "ask_resolution",
                 }
-                if row["event_type"] == "model.call" or row["rule_id"] == "profiles.rules.capsem_mock_server":
+                if row["event_type"] == "model.call" or row["rule_id"] == "profiles.rules.default_000_capsem_mock_server":
                     assert row["previous_decision"] == "allow"
                     assert row["requested_decision"] == "allow"
                     assert row["effective_decision"] == "allow"

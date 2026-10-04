@@ -6,7 +6,6 @@ impl ServiceState {
         let ProvisionOptions {
             id,
             name,
-            profile_id,
             ram_mb,
             cpus,
             scratch_disk_size_gb,
@@ -16,7 +15,6 @@ impl ServiceState {
             from,
             description,
         } = options;
-        validate_profile_route_id(profile_id.clone()).map_err(|error| anyhow!("invalid profile_id: {}", error.1))?;
 
         let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
         let max_concurrent_vms = vm_settings.max_concurrent_vms.unwrap_or(10) as usize;
@@ -75,14 +73,8 @@ impl ServiceState {
                 .ok_or_else(|| anyhow!("source sandbox '{}' not found", from_name))?
                 .clone();
             drop(registry);
-            if entry.profile_id != profile_id {
-                return Err(anyhow!(
-                    "source sandbox '{}' uses profile '{}', not '{}'",
-                    from_name,
-                    entry.profile_id,
-                    profile_id
-                ));
-            }
+            // A VM in the old shape is refused, never laundered into a clone.
+            self.validate_persistent_entry(&entry)?;
             Some(entry)
         } else {
             None
@@ -96,6 +88,20 @@ impl ServiceState {
         };
 
         info!(id, version, persistent, from, "provision_sandbox called");
+
+        // A clone boots its source's images; a new VM the runtime asset set.
+        // Both are checked before any session state exists.
+        let (resolved, asset_pins) = match &source_entry {
+            Some(entry) => (
+                self.resolve_pinned_asset_paths(&entry.asset_pins)?,
+                entry.asset_pins.clone(),
+            ),
+            None => {
+                let set = self.runtime_asset_set()?;
+                (set.resolved, set.pins)
+            }
+        };
+        self.validate_pinned_asset_files(&resolved, &asset_pins)?;
 
         let uds_path = self.instance_socket_path(id)?;
         // Persistent VMs go in persistent/, ephemeral in sessions/
@@ -133,14 +139,7 @@ impl ServiceState {
                 .context("failed to clone sandbox state")?;
         }
 
-        let runtime_profile = self.cached_profile_for_runtime(&profile_id)?;
-        let active_profile_path = self.materialize_active_profile(&runtime_profile, &session_dir)?.path;
-        let profile = runtime_profile.config();
-        let profile_revision = profile.revision.clone();
-        let profile_payload_hash = profile_payload_hash(profile)?;
-        let asset_pins = profile_asset_pins(profile)?;
-        self.validate_profile_pins(profile, &profile_revision, &profile_payload_hash, &asset_pins)?;
-        let resolved = self.resolve_profile_asset_paths(profile)?;
+        let active_policy_path = self.materialize_active_policy(&session_dir)?.path;
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
 
@@ -218,8 +217,8 @@ impl ServiceState {
                 .arg(&resolved.kernel)
                 .arg("--initrd")
                 .arg(&resolved.initrd)
-                // The profile's own pins. Boot verifies against these, never
-                // against a channel-wide pointer that can only name one profile.
+                // The VM's own pins. Boot verifies against these, never
+                // against whatever the installed manifest names today.
                 .arg("--expected-kernel-hash")
                 .arg(&asset_pins.kernel.hash)
                 .arg("--expected-initrd-hash")
@@ -228,8 +227,8 @@ impl ServiceState {
                 .arg(&asset_pins.rootfs.hash)
                 .arg("--session-dir")
                 .arg(&session_dir)
-                .arg("--active-profile")
-                .arg(&active_profile_path)
+                .arg("--active-policy")
+                .arg(&active_policy_path)
                 .arg("--cpus")
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
@@ -282,9 +281,7 @@ impl ServiceState {
             let registration = self.persistent_registry.lock().unwrap().register(PersistentVmEntry {
                 id: id.to_string(),
                 name: name.to_string(),
-                profile_id: profile_id.clone(),
-                profile_revision: profile_revision.clone(),
-                profile_payload_hash: profile_payload_hash.clone(),
+                legacy_profile_id: None,
                 asset_pins: asset_pins.clone(),
                 ram_mb,
                 cpus,
@@ -317,9 +314,6 @@ impl ServiceState {
             InstanceInfo {
                 id: id.to_string(),
                 name: name.to_string(),
-                profile_id,
-                profile_revision,
-                profile_payload_hash,
                 asset_pins,
                 pid,
                 uds_path: uds_path.clone(),

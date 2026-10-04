@@ -438,7 +438,7 @@ holds the rule.
 `~/.capsem/sessions/host.db` is a v4 ledger whose `host_events` table records
 what the service did: `session_created`, `session_stopped` (its MessagePack
 `detail` carries the final `LedgerCounters`), `service_started`,
-`service_stopped`, and profile mutations in `profile_mutation_events`. Each
+`service_stopped`, and policy edits in `policy_mutation_events`. Each
 event's `hash` chains from the previous one's; `DbReader::verify_host_chain`
 in Rust and `host_ledger.verify_chain` in the doctor tools recompute it. The
 old `main.db` beside it is never opened.

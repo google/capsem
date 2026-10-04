@@ -19,8 +19,24 @@ does not compile.
 
 ## Where Rules Live
 
-Rules live in enforcement TOML files referenced by a profile or corp config.
-Profile and corp files own the pointer; rule files own the rule bodies.
+A session's policy is merged from three sources:
+
+| Source | File | May set |
+|---|---|---|
+| Built-in defaults | `crates/capsem-config/src/default_provider_rules.toml` (compiled in) | `default.*` rules, `ai.*` providers, plugin modes |
+| User | `~/.capsem/settings.toml` | `default`, `profiles.rules`, `rule_files`, `ai`, `plugins`, `mcp` |
+| Corp | `corp.toml` | `corp.rules`, `corp_rule_files`, `refresh_policy`, `network`, and everything the user may set |
+
+Corp wins: a corp rule replaces the user's rule of the same id, corp plugin
+modes and MCP servers are laid over the user's, and `corp_locked` rules cannot
+be overridden. `settings.toml` that sets a corp-only key is refused. The
+service writes the merged result into each session's `vm/active_policy.toml`;
+capsem-process (`--active-policy`) and capsem-mcp-builtin
+(`CAPSEM_ACTIVE_POLICY`) read only that file. Every VM enforces the same
+policy; there is no per-VM policy selection.
+
+`profiles.rules` is the name of the user rule table, kept for compatibility of
+rule ids; it does not refer to a VM profile.
 
 ```toml
 [profiles.rules.skill_loaded]
@@ -31,13 +47,16 @@ reason = "Skill markdown was loaded"
 match = 'file.read.path.matches("(^|.*/)skills/.+\\.md$") && file.read.ext == "md"'
 ```
 
-Referenced files let profiles and corp policy share the same rule packs:
+Referenced files let users and corp policy share the same rule packs.
+`rule_files` belongs in `settings.toml`, `corp_rule_files` in the corp config:
 
 ```toml
+# settings.toml
 [rule_files]
-enforcement = "profiles/code/enforcement.toml"
-sigma = "profiles/code/detection.yaml"
+enforcement = "rules/enforcement.toml"
+sigma = "rules/detection.yaml"
 
+# corp.toml
 [corp_rule_files]
 enforcement = "corp/enforcement.toml"
 sigma = "corp/detection.yaml"
@@ -60,15 +79,15 @@ reason = "Example corp rule"
 match = 'http.host.matches("(^|.*\\.)evil\\.example$")'
 ```
 
-Provider-scoped rules are valid only as a single control rule for that provider.
-They compile into the same runtime rule rail.
+Provider-scoped rules live under `ai.<provider>.rules`. They compile into the
+same runtime rule rail.
 
 ```toml
-[ai.openai.rule]
+[ai.openai.rules.http_api]
 name = "openai_api_requests"
 action = "allow"
 priority = 10
-reason = "Allow OpenAI API requests for this profile."
+reason = "Allow OpenAI API requests."
 match = 'http.host.matches("(^|.*\\.)openai\\.com$")'
 ```
 
@@ -108,7 +127,7 @@ scanning, credential substitution, protocol rewrites, or other audited side
 effects. Plugins own their own filtering/scope; CEL rules do not invoke
 plugins.
 
-Profile/corp config tracks plugin policy and plugin-specific config. The plugin
+Built-in, settings, and corp config track plugin policy and plugin-specific config. The plugin
 registry/runtime owns `version`, `name`, `description`, `info`, execution
 stages, status schemas, stats schemas, benchmark specs, and capability metadata
 for UI reflection. The UI reads those fields from the plugin object; it does
@@ -152,35 +171,32 @@ return 404 without contacting the UDS service.
 
 | Endpoint | Method | Contract |
 |---|---|---|
-| `/profiles/{profile_id}/enforcement/evaluate` | `POST` | Test a supplied `SecurityEvent` fixture and rule TOML through the same `SecurityEventEngine` used at runtime. The response uses `SerializableSecurityEvent`, with every first-party root present and absent roots encoded as `null`. |
-| `/profiles/{profile_id}/enforcement/rules/list` | `GET` | Return compiled profile rule truth, including source, default-rule, priority, action, detection level, and lock metadata. |
-| `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit` | `PUT` | Add or replace one profile enforcement rule. The rule body is the native rule object; Capsem compiles it with `SecurityRuleProfile` before writing profile-owned config. Running VMs on the profile receive the change before the route returns. |
-| `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete` | `DELETE` | Remove one profile enforcement rule. Corporate rules are not mutable through this endpoint. Running VMs on the profile receive the change before the route returns. |
-| `/profiles/{profile_id}/enforcement/reload` | `POST` | Re-read the profile files from disk and push them to running VMs. Needed only after editing profile files directly; the edit routes push on their own. |
-| `/profiles/{profile_id}/detection/evaluate` | `POST` | Test a supplied `SecurityEvent` fixture against the profile detection rules. |
-| `/profiles/{profile_id}/detection/info` | `GET` | Return detection file/config info for the profile. |
-| `/profiles/{profile_id}/detection/rules/list` | `GET` | Return compiled profile detection rule truth. |
-| `/profiles/{profile_id}/detection/rules/{rule_id}/edit` | `PUT` | Add or replace one profile detection rule. Running VMs on the profile receive the change before the route returns. |
-| `/profiles/{profile_id}/detection/rules/{rule_id}/delete` | `DELETE` | Remove one profile detection rule. Running VMs on the profile receive the change before the route returns. |
-| `/profiles/{profile_id}/detection/reload` | `POST` | Re-read the profile files from disk and push them to running VMs. Needed only after editing profile files directly; the edit routes push on their own. |
-| `/profiles/{profile_id}/plugins/list` | `GET` | Return profile plugin config plus registry-owned version, name, description, info, stages, schemas, benchmark spec, and capabilities. No runtime counters. |
-| `/profiles/{profile_id}/plugins/info` | `GET` | Return plugin subsystem info for the profile. |
-| `/profiles/{profile_id}/plugins/{plugin_id}/info` | `GET` | Inspect one profile plugin config object plus registry-owned version, name, description, info, stages, schemas, benchmark spec, and capabilities. |
-| `/profiles/{profile_id}/plugins/{plugin_id}/edit` | `PATCH` | Update one profile plugin config object where policy allows it. |
+| `/settings/info` | `GET` | Return the resolved settings tree, including the user's rules and corp locks, with validation issues. |
+| `/plugins/list` | `GET` | Return every plugin's effective config and its source (built in, settings, corp) plus registry-owned version, name, description, info, stages, schemas, benchmark spec, and capabilities. |
+| `/plugins/{plugin_id}/info` | `GET` | Inspect one plugin's effective config, registry descriptor, and runtime activity across sessions. |
+| `/plugins/{plugin_id}/edit` | `PATCH` | Set one plugin's mode or detection level in `settings.toml`. Refused when corp decides it. |
+| `/mcp/default/edit` | `PATCH` | Set the default MCP tool permission in `settings.toml`. |
+| `/mcp/servers/{server_id}/tools/{tool_id}/edit` | `PATCH` | Allow, ask, or block one MCP tool in `settings.toml`. |
 | `/vms/{vm_id}/enforcement/latest` | `GET` | Return stored `security_rule_events` rows for one VM. |
 | `/vms/{vm_id}/enforcement/status` | `GET` | Return counters regenerated from stored security rule rows for one VM. |
 | `/vms/{vm_id}/detection/latest` | `GET` | Return stored detection-bearing security rule rows for one VM. |
 | `/vms/{vm_id}/detection/status` | `GET` | Return detection counters regenerated from stored security rule rows for one VM. |
-| `/vms/{vm_id}/info` | `GET` | Return VM configuration/runtime info, including active profile/plugin descriptors. |
+| `/vms/{vm_id}/info` | `GET` | Return VM configuration/runtime info. |
 | `/vms/{vm_id}/status` | `GET` | Return hot-path VM liveness/readiness counters from memory. No DB reads. |
 
-There are no `/plugins/{id}/man` or global provider-control endpoints. Plugin
-copy belongs in docs pages such as `/security/plugins/credential-broker/`; UI
-state comes from profile plugin configuration and VM info/status.
+Every `edit` route validates the whole next `settings.toml` (referenced rule
+files merged, rules compiled) before writing it, records the change in the host
+ledger table `policy_mutation_events`, and pushes the new active policy to every
+running VM. Each VM must acknowledge the exact policy digest before the route
+returns. Existing connections keep their decision; new events see the new
+rules.
 
-Rule add/update is profile-scoped by design. Corporate policy arrives from
-corp config, referenced enforcement TOML, or referenced Sigma YAML, then compiles
-through the same rule rail.
+There are no rule list, evaluate, or reload routes. User rules are edited in
+`settings.toml` (inline or through `rule_files`); corporate policy arrives from
+corp config, referenced enforcement TOML, or referenced Sigma YAML, then
+compiles through the same rule rail. There are no `/plugins/{id}/man` or global
+provider-control endpoints. Plugin copy belongs in docs pages such as
+`/security/plugins/credential-broker/`.
 
 Security engine status must expose CEL/rule performance counters too: compile
 latency, evaluation count, matched-rule count, no-match count, error count,
@@ -195,10 +211,10 @@ These counters are in-memory debug/benchmark truth and must not require a
 |---|---:|---|
 | Corporate rules | `-10` | Must be `<= -10`; range floor is `-1000`. |
 | Built-in defaults | `default` (`1001`) | Must use the named sentinel `default`. |
-| User/profile rules | `10` | Must be `>= 10`; range ceiling is `1000`. |
+| User rules (`profiles.rules`, `ai.*`) | `10` | Must be `>= 10`; range ceiling is `1000`. |
 
 Rules sort by `priority`, then by full rule id. Corporate rules therefore run
-before user/profile rules, and default catch-alls run last.
+before user rules, and default catch-alls run last.
 
 The first matching `allow`, `ask`, or `block` rule decides the boundary. This is
 first-match-wins, not most-restrictive-wins, and the tie-break is the rule id:
@@ -361,8 +377,8 @@ match = 'network.action != "revoked" && network.destination.port == "22"'
 Lifecycle events for named networks also carry `network.action`.
 
 Published TCP ports evaluate the destination VM's current rules and plugins
-before requesting any guest connection. Both profiles have a visible default
-expose allow rule; a more specific deny or ask prevents setup. An unavailable
+before requesting any guest connection. The built-in defaults carry a visible
+expose allow rule (`default.expose`); a more specific deny or ask prevents setup. An unavailable
 audit writer, evaluation error, or expired guest control lease also refuses
 setup. Existing connections retain their decision until closed; a rule edit is
 pushed to the running VM before the edit route returns and applies to new
@@ -385,11 +401,10 @@ The rule fixture used by Rust tests lives at
 `tests/fixtures/config/security-rule-profile/enforcement.toml`. It includes:
 
 ```toml
-[ai.openai.rule]
-name = "openai_api_requests"
+[ai.openai.rules.http_api]
+name = "openai_http_api_observed"
 action = "allow"
-priority = 10
-reason = "Allow OpenAI API requests for this profile."
+detection_level = "informational"
 match = 'http.host.matches("(^|.*\\.)(openai\\.com|chatgpt\\.com|oaistatic\\.com|oaiusercontent\\.com)$")'
 
 [profiles.rules.skill_loaded]

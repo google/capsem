@@ -9,7 +9,7 @@ by:
 
   tests/capsem-service/    (every HTTP handler against the real service)
   mcp/typescript/tests/    (the npm host against typed gateway fixtures)
-  tests/ironbank/test_mcp_profile_ledger.py
+  tests/ironbank/test_mcp_settings_ledger.py
                            (packed npm MCP -> gateway -> service -> VM chain)
   tests/capsem-e2e/        (full CLI -> gateway -> service -> VM paths
                             for a handful of flagship flows)
@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.gateway import GatewayInstance, TcpHttpClient
 
 pytestmark = pytest.mark.gateway
@@ -100,7 +100,6 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                     {
                         "id": vm["id"],
                         "pid": vm["pid"],
-                        "profile_id": CODE_PROFILE_ID,
                         "status": vm["status"],
                         "persistent": vm["persistent"],
                         "ram_mb": vm["ram_mb"],
@@ -132,7 +131,6 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 self._send_json(
                     {
                         "id": vm["id"],
-                        "profile_id": CODE_PROFILE_ID,
                         "status": vm["status"],
                         "pid": vm["pid"],
                         "persistent": vm["persistent"],
@@ -174,12 +172,6 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                         "state": "update_available",
                         "compatibility": "compatible",
                     },
-                    "profiles": {
-                        "latest": "profiles-2030.0101.1",
-                        "update_available": False,
-                        "state": "current",
-                        "compatibility": "compatible",
-                    },
                     "images": {
                         "update_available": False,
                         "state": "not_published",
@@ -187,13 +179,34 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                     },
                 }
             )
-        elif path_only == "/profiles/status":
+        elif path_only == "/assets/status":
             self._send_json(
                 {
-                    "source": "profile",
-                    "profile_count": 2,
-                    "ready_count": 1,
-                    "asset_manifest": {
+                    "ready": False,
+                    "downloading": False,
+                    "current_arch": "arm64",
+                    "asset_version": "2026.0613.1",
+                    "assets": [
+                        {
+                            "kind": "kernel",
+                            "name": "vmlinuz",
+                            "path": "/Users/test/.capsem/assets/arm64/vmlinuz-0123456789abcdef",
+                            "status": "present",
+                            "expected_hash": "0123456789abcdef" * 4,
+                            "expected_size": 3,
+                            "actual_size": 3,
+                        },
+                        {
+                            "kind": "rootfs",
+                            "name": "rootfs.erofs",
+                            "path": "/Users/test/.capsem/assets/arm64/rootfs-fedcba9876543210.erofs",
+                            "status": "missing",
+                            "expected_hash": "fedcba9876543210" * 4,
+                            "expected_size": 5,
+                        },
+                    ],
+                    "errors": ["rootfs.erofs is missing"],
+                    "manifest": {
                         "origin": "package",
                         "path": "/Users/test/.capsem/assets/manifest.json",
                         "origin_path": "/Users/test/.capsem/assets/manifest-metadata.json",
@@ -205,34 +218,6 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                         "assets_current": "2026.0613.1",
                         "binaries_current": "1.3.0",
                     },
-                    "profiles": [
-                        {
-                            "id": CODE_PROFILE_ID,
-                            "name": "Code",
-                            "description": "Optimized for coding and long-running agents.",
-                            "ready": True,
-                            "current_arch": "arm64",
-                            "missing_assets": [],
-                            "invalid_assets": [],
-                            "invalid_files": [],
-                            "errors": [],
-                            "asset_count": 3,
-                        },
-                        {
-                            "id": "co-work",
-                            "name": "Co-work",
-                            "description": "Shared profile for collaborative agent sessions.",
-                            "ready": False,
-                            "current_arch": "arm64",
-                            "missing_assets": [
-                                {"kind": "rootfs", "path": "/missing/rootfs.erofs", "valid": False}
-                            ],
-                            "invalid_assets": [],
-                            "invalid_files": [],
-                            "errors": ["missing rootfs"],
-                            "asset_count": 3,
-                        },
-                    ],
                 }
             )
         else:
@@ -243,8 +228,8 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         path_only = self.clean_path.split("?", 1)[0]
         if path_only == "/vms/create":
             data = json.loads(body) if body else {}
-            if data.get("profile_id") != CODE_PROFILE_ID:
-                self._send_error(400, "profile_id is required")
+            if "profile_id" in data:
+                self._send_error(422, "unknown field `profile_id`")
                 return
             vm_id = f"vm-{uuid.uuid4().hex[:8]}"
             self._send_json({"id": vm_id})
@@ -274,8 +259,8 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self._send_json({"purged": 0, "persistent_purged": 0, "ephemeral_purged": 0})
         elif path_only == "/run":
             data = json.loads(body) if body else {}
-            if data.get("profile_id") != CODE_PROFILE_ID:
-                self._send_error(400, "profile_id is required")
+            if "profile_id" in data:
+                self._send_error(422, "unknown field `profile_id`")
                 return
             self._send_json({
                 "stdout": {"encoding": "utf8", "data": "mock run output\n"},
@@ -287,8 +272,8 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         elif path_only.startswith("/vms/") and path_only.endswith("/fork"):
             data = json.loads(body) if body else {}
             self._send_json({"name": data.get("name", "fork"), "size_bytes": 1024})
-        elif path_only.startswith("/profiles/") and path_only.endswith("/reload"):
-            self._send_json({"ok": True})
+        elif path_only == "/corp/reload":
+            self._send_json({"success": True, "reloaded": 0})
         elif path_only == "/echo":
             # Echo back the request body for proxy testing
             self.send_response(200)

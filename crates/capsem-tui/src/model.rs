@@ -5,7 +5,6 @@ pub struct AppState {
     pub service: ServiceState,
     pub active_session_id: String,
     pub sessions: Vec<SessionSummary>,
-    pub profiles: Vec<ProfileOption>,
     pub update_notice: Option<UpdateNotice>,
 }
 
@@ -15,13 +14,6 @@ impl AppState {
             .iter()
             .find(|session| session.id == self.active_session_id)
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProfileOption {
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,7 +39,6 @@ pub enum UpdateNoticeKind {
 pub enum UpdateTrack {
     Binary,
     VmAssets,
-    Profiles,
     Images,
 }
 
@@ -56,7 +47,6 @@ impl UpdateTrack {
         match self {
             Self::Binary => "binary",
             Self::VmAssets => "assets",
-            Self::Profiles => "profiles",
             Self::Images => "images",
         }
     }
@@ -99,8 +89,6 @@ pub struct SessionSummary {
     pub id: String,
     pub title: String,
     pub repo_path: Option<String>,
-    pub profile: String,
-    pub profile_status: Option<String>,
     pub can_resume: bool,
     pub resume_blocked_reason: Option<String>,
     pub branch: Option<String>,

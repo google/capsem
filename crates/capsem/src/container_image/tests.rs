@@ -19,17 +19,16 @@ fn status(state: &str, digest: Option<&str>) -> serde_json::Value {
 }
 
 #[tokio::test]
-async fn provision_leaves_resources_to_the_profile_when_unset() {
+async fn provision_leaves_resources_to_the_service_when_unset() {
     let service = FakeService::start();
     service.route(
         "POST",
         "/vms/create",
         200,
-        json!({"id": "vm-1", "name": "vm-1", "profile_id": "code", "status": "Running", "available_actions": []}),
+        json!({"id": "vm-1", "name": "vm-1", "status": "Running", "available_actions": []}),
     );
     let request = ProvisionRequest {
         name: None,
-        profile_id: "code".into(),
         ram_mb: None,
         cpus: None,
         persistent: false,

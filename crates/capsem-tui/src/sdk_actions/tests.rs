@@ -29,6 +29,12 @@ async fn invoke_with_response(
     outcome
 }
 
+/// The JSON body of a raw HTTP request read by `read_http_request`.
+fn request_body(request: &str) -> serde_json::Value {
+    let (_, body) = request.split_once("\r\n\r\n").expect("request has a body");
+    serde_json::from_str(body).expect("request body is JSON")
+}
+
 #[tokio::test]
 async fn resume_suspend_and_delete_keep_tui_focus_and_labels() {
     let id = "vm-1".to_string();
@@ -38,7 +44,7 @@ async fn resume_suspend_and_delete_keep_tui_focus_and_labels() {
             id: id.clone(),
             label: label.clone(),
         },
-        r#"{"id":"vm-1","name":"workspace","profile_id":"code","status":"Running","available_actions":[]}"#,
+        r#"{"id":"vm-1","name":"workspace","status":"Running","available_actions":[]}"#,
         "POST /vms/vm-1/resume ",
     )
     .await
@@ -113,17 +119,17 @@ async fn gateway_provider_invokes_stop_over_authenticated_gateway() {
     let outcome = GatewayProvider::new(format!("http://{addr}"))
         .invoke_async(&ControlAction::Stop {
             id: "vm-1".to_string(),
-            label: "profile-main".to_string(),
+            label: "main-session".to_string(),
         })
         .await
         .expect("invoke stop");
 
-    assert_eq!(outcome.message, "stopped profile-main");
+    assert_eq!(outcome.message, "stopped main-session");
     server.await.expect("server task");
 }
 
 #[tokio::test]
-async fn gateway_provider_invokes_named_profile_create_over_authenticated_gateway() {
+async fn gateway_provider_invokes_named_create_over_authenticated_gateway() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind test gateway");
@@ -136,24 +142,30 @@ async fn gateway_provider_invokes_named_profile_create_over_authenticated_gatewa
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else {
                 assert!(request.contains("POST /vms/create "), "unexpected request: {request:?}");
-                assert!(request.contains(r#""name":"code-1-proof""#));
-                assert!(request.contains(r#""persistent":true"#));
-                assert!(request.contains(r#""profile_id":"co-work""#));
-                write_json_response(&mut stream, r#"{"id":"code-1-proof","name":"code-1-proof","profile_id":"co-work","status":"Running","available_actions":[]}"#).await;
+                // The service decides CPU, memory and what the VM runs: the
+                // TUI sends only the name and that the workspace persists.
+                assert_eq!(
+                    request_body(&request),
+                    serde_json::json!({"name": "vm-1-proof", "persistent": true})
+                );
+                write_json_response(
+                    &mut stream,
+                    r#"{"id":"vm-1-proof","name":"vm-1-proof","status":"Running","available_actions":[]}"#,
+                )
+                .await;
             }
         }
     });
 
     let outcome = GatewayProvider::new(format!("http://{addr}"))
         .invoke_async(&ControlAction::CreateSession {
-            name: Some("code-1-proof".to_string()),
-            profile_id: "co-work".to_string(),
+            name: Some("vm-1-proof".to_string()),
         })
         .await
         .expect("invoke create");
 
-    assert_eq!(outcome.message, "created code-1-proof");
-    assert_eq!(outcome.focus_session.as_deref(), Some("code-1-proof"));
+    assert_eq!(outcome.message, "created vm-1-proof");
+    assert_eq!(outcome.focus_session.as_deref(), Some("vm-1-proof"));
     server.await.expect("server task");
 }
 
@@ -171,12 +183,13 @@ async fn gateway_provider_preserves_service_owned_persistent_names() {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else {
                 assert!(request.contains("POST /vms/create "), "unexpected request: {request:?}");
-                assert!(request.contains(r#""name":null"#), "{request}");
-                assert!(request.contains(r#""persistent":true"#));
-                assert!(request.contains(r#""profile_id":"code""#));
+                assert_eq!(
+                    request_body(&request),
+                    serde_json::json!({"name": null, "persistent": true})
+                );
                 write_json_response(
                     &mut stream,
-                    r#"{"id":"code-7","name":"code-7","profile_id":"code","status":"Running","available_actions":[]}"#,
+                    r#"{"id":"vm-7","name":"vm-7","status":"Running","available_actions":[]}"#,
                 )
                 .await;
             }
@@ -184,15 +197,12 @@ async fn gateway_provider_preserves_service_owned_persistent_names() {
     });
 
     let outcome = GatewayProvider::new(format!("http://{addr}"))
-        .invoke_async(&ControlAction::CreateSession {
-            name: None,
-            profile_id: "code".to_string(),
-        })
+        .invoke_async(&ControlAction::CreateSession { name: None })
         .await
         .expect("invoke create");
 
     assert_eq!(outcome.message, "created session");
-    assert_eq!(outcome.focus_session.as_deref(), Some("code-7"));
+    assert_eq!(outcome.focus_session.as_deref(), Some("vm-7"));
     server.await.expect("server task");
 }
 
@@ -210,13 +220,13 @@ async fn gateway_provider_invokes_fork_over_authenticated_gateway() {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
             } else {
                 assert!(
-                    request.contains("POST /vms/profile-v2/fork "),
+                    request.contains("POST /vms/vm-2/fork "),
                     "unexpected request: {request:?}"
                 );
-                assert!(request.contains(r#""name":"profile-v2-fork-copy""#));
+                assert!(request.contains(r#""name":"vm-2-fork-copy""#));
                 write_json_response(
                     &mut stream,
-                    r#"{"id":"fork-id","name":"profile-v2-fork-copy","size_bytes":1024}"#,
+                    r#"{"id":"fork-id","name":"vm-2-fork-copy","size_bytes":1024}"#,
                 )
                 .await;
             }
@@ -225,13 +235,13 @@ async fn gateway_provider_invokes_fork_over_authenticated_gateway() {
 
     let outcome = GatewayProvider::new(format!("http://{addr}"))
         .invoke_async(&ControlAction::Fork {
-            id: "profile-v2".to_string(),
-            name: "profile-v2-fork-copy".to_string(),
+            id: "vm-2".to_string(),
+            name: "vm-2-fork-copy".to_string(),
         })
         .await
         .expect("invoke fork");
 
-    assert_eq!(outcome.message, "forked profile-v2-fork-copy");
+    assert_eq!(outcome.message, "forked vm-2-fork-copy");
     assert_eq!(outcome.focus_session.as_deref(), Some("fork-id"));
     server.await.expect("server task");
 }
@@ -261,12 +271,12 @@ async fn gateway_provider_invokes_checkpoint_over_suspend_endpoint() {
     let outcome = GatewayProvider::new(format!("http://{addr}"))
         .invoke_async(&ControlAction::Checkpoint {
             id: "vm-1".to_string(),
-            label: "profile-main".to_string(),
+            label: "main-session".to_string(),
         })
         .await
         .expect("invoke checkpoint");
 
-    assert_eq!(outcome.message, "checkpointed profile-main");
+    assert_eq!(outcome.message, "checkpointed main-session");
     server.await.expect("server task");
 }
 
@@ -367,7 +377,7 @@ async fn gateway_provider_surfaces_action_error_body() {
     let error = GatewayProvider::new(format!("http://{addr}"))
         .invoke_async(&ControlAction::Delete {
             id: "vm-1".to_string(),
-            label: "profile-main".to_string(),
+            label: "main-session".to_string(),
         })
         .await
         .expect_err("delete should fail");

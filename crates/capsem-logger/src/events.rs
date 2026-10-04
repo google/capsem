@@ -239,10 +239,9 @@ pub struct SecurityAskRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProfileMutationEvent {
+pub struct PolicyMutationEvent {
     pub timestamp_unix_ms: i64,
     pub mutation_id: String,
-    pub profile_id: String,
     pub actor: String,
     pub category: String,
     pub filename: String,
@@ -256,7 +255,7 @@ pub struct ProfileMutationEvent {
     pub old_size: u64,
     pub new_hash: String,
     pub new_size: u64,
-    pub status: ProfileMutationStatus,
+    pub status: PolicyMutationStatus,
     #[serde(default)]
     pub error: Option<String>,
     #[serde(default)]
@@ -265,12 +264,12 @@ pub struct ProfileMutationEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ProfileMutationStatus {
+pub enum PolicyMutationStatus {
     Applied,
     Failed,
 }
 
-impl ProfileMutationStatus {
+impl PolicyMutationStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Applied => "applied",

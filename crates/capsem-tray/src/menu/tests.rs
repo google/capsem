@@ -67,7 +67,6 @@ fn update_status() -> UpdateStatusResponse {
         last_error: None,
         binary: current_track(),
         assets: current_track(),
-        profiles: current_track(),
         images: current_track(),
     }
 }
@@ -280,10 +279,9 @@ fn spec_binary_update_shows_update_indicator() {
 }
 
 #[test]
-fn spec_asset_profile_and_image_updates_share_indicator() {
+fn spec_asset_and_image_updates_share_indicator() {
     let mut updates = update_status();
     updates.assets = available_track("assets-1", "assets-2");
-    updates.profiles = available_track("profiles-1", "profiles-2");
     updates.images = available_track("images-1", "images-2");
 
     let spec = menu_spec(&with_updates(make_status(vec![]), updates));
@@ -291,7 +289,7 @@ fn spec_asset_profile_and_image_updates_share_indicator() {
     assert!(spec.iter().any(|entry| matches!(
         entry,
         MenuEntry::Item { id, label, enabled: false }
-            if id == "updates" && label == "Updates: VM assets, Profiles, Images"
+            if id == "updates" && label == "Updates: VM assets, Images"
     )));
 }
 
@@ -311,24 +309,6 @@ fn spec_mixed_binary_and_asset_updates_share_indicator() {
 }
 
 #[test]
-fn spec_blocked_profile_update_shows_blocked_indicator() {
-    let mut updates = update_status();
-    updates.profiles = blocked_track(
-        "profiles-2030.0101.0",
-        "profiles-2030.0101.1",
-        "requires binary 1.4.1 or newer",
-    );
-
-    let spec = menu_spec(&with_updates(make_status(vec![]), updates));
-
-    assert!(spec.iter().any(|entry| matches!(
-        entry,
-        MenuEntry::Item { id, label, enabled: false }
-            if id == "updates" && label == "Updates blocked: Profiles"
-    )));
-}
-
-#[test]
 fn spec_blocked_asset_update_shows_blocked_indicator() {
     let mut updates = update_status();
     updates.assets = blocked_track("2026.0627.1", "2030.0101.1", "requires binary 99.99.99 or newer");
@@ -343,21 +323,17 @@ fn spec_blocked_asset_update_shows_blocked_indicator() {
 }
 
 #[test]
-fn spec_binary_update_keeps_blocked_profile_visible() {
+fn spec_binary_update_keeps_blocked_assets_visible() {
     let mut updates = update_status();
     updates.binary = available_track("1.4.0", "1.4.1");
-    updates.profiles = blocked_track(
-        "profiles-2030.0101.0",
-        "profiles-2030.0101.1",
-        "requires binary 1.4.1 or newer",
-    );
+    updates.assets = blocked_track("2030.0101.0", "2030.0101.1", "requires binary 1.4.1 or newer");
 
     let spec = menu_spec(&with_updates(make_status(vec![]), updates));
 
     assert!(spec.iter().any(|entry| matches!(
         entry,
         MenuEntry::Item { id, label, enabled: false }
-            if id == "updates" && label == "Updates: Binary; blocked: Profiles"
+            if id == "updates" && label == "Updates: Binary; blocked: VM assets"
     )));
 }
 

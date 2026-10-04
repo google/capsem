@@ -5,8 +5,8 @@ description: Built-in Capsem security plugin for brokered credential capture.
 
 Plugin id: `credential_broker`
 
-Version: supplied by the plugin registry descriptor and emitted in profile
-plugin lists, VM info/status, logs, and benchmark output.
+Version: supplied by the plugin registry descriptor and emitted in plugin
+lists, VM info/status, logs, and benchmark output.
 
 Stage: `preprocess`. CEL rules do not invoke the credential broker.
 
@@ -33,23 +33,13 @@ not sanitize durable logs; the `log_sanitizer` logging plugin owns ledger-safe
 materialization.
 
 MCP contract: remote MCP server config may carry only brokered auth metadata in
-profile-owned `mcp.json`:
+the `[mcp]` table of `settings.toml` (or corp):
 
-```json
-{
-  "servers": [
-    {
-      "id": "remote",
-      "name": "Remote MCP",
-      "transport": "sse",
-      "url": "https://mcp.example.invalid/sse",
-      "auth": {
-        "kind": "oauth",
-        "credential_ref": "credential:blake3:..."
-      }
-    }
-  ]
-}
+```toml
+[[mcp.servers]]
+name = "remote"
+url = "https://mcp.example.invalid/sse"
+auth = { kind = "oauth", credential_ref = "credential:blake3:..." }
 ```
 
 The broker owns OAuth/API-key material and resolution. MCP config must not
@@ -61,9 +51,10 @@ Decision: plugin policy can request `allow`, `ask`, `block`, or `rewrite`;
 intent.
 
 Status contract: credential state is opaque and VM-scoped. The UI must not
-infer credential state from AI/provider config. Profile plugin configuration is
-read through `/profiles/{profile_id}/plugins/list` and
-`/profiles/{profile_id}/plugins/credential_broker/info`; VM `info` and
+infer credential state from AI/provider config. Plugin configuration is read
+through `/plugins/list` and `/plugins/credential_broker/info`; the broker's
+store and brokered activity through
+`/plugins/credential_broker/credentials/info`. VM `info` and
 `status` carry the active descriptor, version, stage health, and last in-memory
 status snapshot without reading `session.db`.
 

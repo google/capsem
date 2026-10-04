@@ -198,7 +198,6 @@ async fn info_route_reports_nested_ai_activity_through_db_owner() {
     assert_eq!(body["ai"]["mcp"][0]["bytes_sent"], 33);
     assert_eq!(body["ai"]["mcp"][0]["duration_ms"], 17);
     let typed: capsem_api::SandboxInfo = serde_json::from_value(body.clone()).unwrap();
-    assert_eq!(typed.profile_id, "code");
     assert!(typed.ai.is_some());
     // The flat totals the list, gateway status, TUI and CLI read agree with
     // the nested activity. The model's own tool call has origin `model`,

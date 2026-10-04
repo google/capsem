@@ -85,9 +85,6 @@ pub(super) fn setup_vm_with_workspace_and_uds(
         InstanceInfo {
             id: vm_id.into(),
             name: vm_id.into(),
-            profile_id: "code".into(),
-            profile_revision: test_profile_revision(),
-            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: test_asset_pins(),
             pid: 1,
             uds_path,

@@ -188,7 +188,6 @@ def test_mock_server_protocol_benchmark_artifact():
     try:
         client.post("/vms/create", {
             "name": name,
-            "profile_id": "code",
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
         })

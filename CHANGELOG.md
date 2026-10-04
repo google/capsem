@@ -1016,6 +1016,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer carries (AI CLIs, Node, npm, uv, git, the utility list, the
   agent MCP config files); `tests/images` proves those in the images that
   own them.
+- VM profiles are gone from the runtime
+  ([#289](https://github.com/google/capsem/issues/289)). Every VM boots the
+  one runtime image set of the installed release, and its policy is the
+  built-in defaults, your `settings.toml` and the corp config (corp wins;
+  `corp_locked` rules hold). This is a clean break, with nothing migrated:
+  - VM size comes from `capsem create`/`capsem run` flags. Without them a
+    VM gets 4 CPUs, 12 GiB of RAM and a 64 GiB scratch disk.
+  - `--profile` is removed from the CLI, and `profile`/`profile_id` from the
+    SDKs, the `@capsem/mcp` tools, the TUI and the web create dialog.
+  - The HTTP API (contract 3.0.0) refuses a request that still names a
+    `profile_id`, rather than ignoring it.
+  - Every `/profiles/...` route is removed. Asset readiness moves to
+    `/assets/status` and `/assets/ensure`, plugins to `/plugins/...`, and
+    MCP servers and tool permissions to `/mcp/...`. Edits through these
+    routes are written to `settings.toml` and reach running VMs before the
+    route returns. The SDKs gain an `mcp` resource. Profile skills, the rule
+    list, evaluate and reload routes, and the per-profile OBOM route have no
+    replacement.
+  - A persistent VM created from a profile shows as Incompatible and can only
+    be deleted; resume and `--from` clones of it are refused with the reason.
+  - Edits made under `~/.capsem/profiles` are not carried over.
+  - capsem-process takes `--active-policy` (was `--active-profile`), and
+    capsem-mcp-builtin reads `CAPSEM_ACTIVE_POLICY`.
+  - The host ledger's `profile_mutation_events` table becomes
+    `policy_mutation_events`, without a profile column.
 
 - The files API no longer runs the Magika model to type workspace files.
   A file's type now comes from its extension, and a file with an unknown

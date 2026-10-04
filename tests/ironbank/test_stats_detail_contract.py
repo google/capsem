@@ -17,18 +17,17 @@ from __future__ import annotations
 import base64
 import json
 import os
-import platform
 import shutil
 import sqlite3
-import tomllib
 from contextlib import closing
 from pathlib import Path
 
 import pytest
 from helpers.body_archive import archived_bodies
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import ServiceInstance, materialize_test_profiles
+from helpers.constants import ASSETS_DIR, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.service import ServiceInstance
 from helpers.session_ledger import ledger_counters, open_session_ledger
+from helpers.stopped_workspace import manifest_asset_pins
 
 pytestmark = pytest.mark.integration
 
@@ -47,32 +46,14 @@ CREDENTIAL_REF = "credential:blake3:" + "1" * 64
 PREVIEW_BYTES = 2048
 
 
-def _profile_contract(tmp_dir: Path) -> dict[str, object]:
-    profiles_dir = materialize_test_profiles(tmp_dir)
-    profile = tomllib.loads((profiles_dir / CODE_PROFILE_ID / "profile.toml").read_text())
-    arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x86_64"
-    assets = profile["assets"]["arch"][arch]
-    return {
-        "revision": profile["revision"],
-        "pins": {
-            "kernel": {"name": assets["kernel"]["name"], "hash": assets["kernel"]["hash"]},
-            "initrd": {"name": assets["initrd"]["name"], "hash": assets["initrd"]["hash"]},
-            "rootfs": {"name": assets["rootfs"]["name"], "hash": assets["rootfs"]["hash"]},
-        },
-    }
-
-
-def _write_registry(tmp_dir: Path, session_dir: Path, contract: dict[str, object]) -> None:
+def _write_registry(tmp_dir: Path, session_dir: Path) -> None:
     (tmp_dir / "persistent_registry.json").write_text(
         json.dumps(
             {
                 "vms": {
                     SESSION_ID: {
                         "name": SESSION_ID,
-                        "profile_id": CODE_PROFILE_ID,
-                        "profile_revision": contract["revision"],
-                        "profile_payload_hash": "blake3:" + "3" * 64,
-                        "asset_pins": contract["pins"],
+                        "asset_pins": manifest_asset_pins(ASSETS_DIR),
                         "ram_mb": DEFAULT_RAM_MB,
                         "cpus": DEFAULT_CPUS,
                         "base_version": "0.0.0-ironbank",
@@ -320,10 +301,9 @@ def test_agy_stats_detail_routes_project_session_db_without_preview_theater() ->
     try:
         session_dir = service.tmp_dir / "persistent" / SESSION_ID
         session_dir.mkdir(parents=True, exist_ok=True)
-        contract = _profile_contract(service.tmp_dir)
         db_path = session_dir / "session.db"
         _seed_session_db(db_path)
-        _write_registry(service.tmp_dir, session_dir, contract)
+        _write_registry(service.tmp_dir, session_dir)
         # The oracle: what the ledger holds, read by the independent test
         # reader before the service ever opens the file.
         archived = {

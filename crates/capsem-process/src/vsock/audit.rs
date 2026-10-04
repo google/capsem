@@ -20,7 +20,7 @@ pub(super) fn serve_audit_records(
 ///
 /// The rule set is read through the reload handle per record. The guest opens
 /// the audit port exactly once at boot and streams for the life of the VM, so
-/// a snapshot taken at connect time froze process-audit policy: a profile
+/// a snapshot taken at connect time froze process-audit policy: a policy
 /// edit reloaded every other rail while audit rows kept matching the rules
 /// from boot until the VM restarted.
 pub(super) fn handle_audit_frame(

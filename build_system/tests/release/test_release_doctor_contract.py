@@ -1491,7 +1491,6 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     service = _source_text("crates/capsem-service/src/tests/update_routes.rs")
     tray = _source_text("crates/capsem-tray/src/menu/tests.rs")
     tui = _source_text("crates/capsem-tui/src/tests.rs")
-    frontend = _source_text("web/app/src/lib/__tests__/update-status.test.ts")
     frontend_api = _source_text("web/app/src/lib/__tests__/api.test.ts")
 
     assert "Run `capsem update --assets` separately to refresh VM assets." not in cli
@@ -1507,15 +1506,13 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     assert 'json!(["update", "--assets"])' not in service
 
     assert "spec_mixed_binary_and_asset_updates_share_indicator" in tray
-    assert "spec_blocked_profile_update_shows_blocked_indicator" in tray
     assert "spec_blocked_asset_update_shows_blocked_indicator" in tray
     assert "Updates: Binary, VM assets" in tray
-    assert "Updates: Binary; blocked: Profiles" in tray
+    assert "Updates: Binary; blocked: VM assets" in tray
 
     assert "tui_update_smoke_matrix_covers_release_states_and_atomic_action" in tui
     for case in [
         "binary-update",
-        "profile-update",
         "asset-update",
         "mixed-binary-asset-update",
     ]:
@@ -1523,16 +1520,6 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     assert "ControlAction::Update" in tui
     assert "ControlAction::Update { assets:" not in tui
     assert "update --assets" not in tui
-
-    assert "summarizes mixed binary and VM asset updates without profile noise" in frontend
-    assert "treats profile catalog updates as a first-class available track" in frontend
-    assert (
-        "keeps blocked profile dashboard tracks visible beside available asset tracks" in frontend
-    )
-    assert "Binary, VM assets available" in frontend
-    assert "VM assets available for future sessions" in frontend
-    assert "apply the verified VM asset update automatically" in frontend
-    assert "capsem update --assets" not in frontend
 
     assert "applies the complete update transaction through one confirmed body" in frontend_api
     assert (
@@ -5488,12 +5475,12 @@ def test_hosted_install_failure_uploads_exact_gate_and_glowup_evidence() -> None
     )
 
 
-def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
+def test_quick_session_entrypoints_leave_vm_choice_to_the_service() -> None:
     app = _source_text("web/app/src/lib/components/shell/App.svelte")
     tray_main = _source_text("crates/capsem-tray/src/main.rs")
     tray_gateway = _source_text("crates/capsem-tray/src/gateway.rs")
     cli = _source_text("crates/capsem/src/create_command.rs")
-    mcp = _source_text("mcp/typescript/src/profile-tools.ts")
+    mcp = _source_text("mcp/typescript/src/host-tools.ts")
 
     assert "vmStore.openCreateModal()" in app
     assert "profile_id: 'code'" not in app
@@ -5504,8 +5491,8 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
     assert "provision_temp" not in new_session
     assert "provision_temp" not in tray_gateway
     assert 'profile_id":"code' not in tray_gateway
-    assert "profile_id: args.profile.clone()" in cli
-    assert "hypervisor.profiles.mcp(profile)" in mcp
+    assert "profile" not in cli
+    assert "profile" not in mcp
 
 
 def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> None:
@@ -5542,7 +5529,7 @@ def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> No
         "sdk/python/capsem/hypervisor.py",
         "sdk/typescript/src/hypervisor.ts",
         "sdk/rust/src/hypervisor.rs",
-        "mcp/typescript/src/profile-tools.ts",
+        "mcp/typescript/src/mcp-tools.ts",
     ],
 )
 def test_sdk_surfaces_may_not_compile_in_a_profile_name(surface: str, tmp_path: Path) -> None:
@@ -5614,7 +5601,7 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         "config/profiles",
         "web/app/src/lib/components",
         "crates/capsem-tray/src",
-        "mcp/typescript/src/profile-tools.ts",
+        "mcp/typescript/src/mcp-tools.ts",
         "crates/capsem/src/main.rs",
         "crates/capsem/src/update.rs",
         "crates/capsem-service/src/main.rs",
@@ -6563,9 +6550,9 @@ def test_linux_vm_launch_preformats_system_overlay_before_boot() -> None:
     assert "preformat_system_overlay_image_from_template_if_needed" in process
     assert "system_overlay_template_path_for_session" in process
     assert "session_dir, scratch_disk_size_gb" in process
-    assert "fn prewarm_system_overlay_templates" in service
+    assert "fn prewarm_system_overlay_template(" in service
     assert "ensure_preformatted_system_overlay_template(&template_path, size_gb)" in service
-    assert "prewarm_system_overlay_templates(&run_dir, &profile_cache)" in service
+    assert "prewarm_system_overlay_template(&run_dir)" in service
     assert "fn prewarm_vm_asset_hash_cache" in service
     assert "capsem_core::VmConfig::verify_hash(path, hash)" in service
     assert (

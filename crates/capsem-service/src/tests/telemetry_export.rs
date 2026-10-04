@@ -56,13 +56,13 @@ fn exported(exporter: &InMemoryMetricExporter) -> Vec<(String, String, String, f
                     .unwrap();
                 let extra = attributes
                     .iter()
-                    .find(|kv| !["session.id", "profile.id", "persistent"].contains(&kv.key.as_str()))
+                    .find(|kv| !["session.id", "persistent"].contains(&kv.key.as_str()))
                     .map(|kv| kv.value.to_string())
                     .unwrap_or_default();
-                let base = ["persistent", "profile.id", "session.id"];
+                let base = ["persistent", "session.id"];
                 assert!(
-                    base.iter().all(|key| keys.iter().any(|k| k == key)) && keys.len() <= 4,
-                    "{}: attributes are exactly session.id, profile.id, persistent (+ one breakdown): {keys:?}",
+                    base.iter().all(|key| keys.iter().any(|k| k == key)) && keys.len() <= 3,
+                    "{}: attributes are exactly session.id, persistent (+ one breakdown): {keys:?}",
                     metric.name()
                 );
                 points.push((metric.name().to_string(), session, extra, value));

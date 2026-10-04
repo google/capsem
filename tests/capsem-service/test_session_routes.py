@@ -6,68 +6,22 @@ incompatible sessions are not resumable, not openable, and expose delete only.
 
 from __future__ import annotations
 
-import json
-import platform
-import tomllib
 from pathlib import Path
 from typing import Any
 
-import blake3
-from helpers.service import ServiceInstance, materialize_test_profiles
+from helpers.persistent_registry import registry_entry, write_registry
+from helpers.service import ServiceInstance
 
 DEFUNCT_ID = "11111111-1111-4111-8111-111111111111"
-DRIFT_ID = "22222222-2222-4222-8222-222222222222"
-ASSET_PIN_DRIFT_ID = "77777777-7777-4777-8777-777777777777"
-DEFUNCT_NAME = "code-stale-overlay"
-DRIFT_NAME = "code-payload-drift"
-ASSET_PIN_DRIFT_NAME = "code-asset-pin-drift"
+LEGACY_ID = "22222222-2222-4222-8222-222222222222"
+MISSING_ASSET_ID = "77777777-7777-4777-8777-777777777777"
+DEFUNCT_NAME = "stale-overlay"
+LEGACY_NAME = "legacy-profile"
+MISSING_ASSET_NAME = "missing-asset-pin"
 
 
 def _curl_json_with_status(service: ServiceInstance, method: str, path: str, body=None):
     return service.client().call_json(method, path, body, timeout=30)
-
-
-def _profile_contract(tmp_dir: Path) -> dict[str, Any]:
-    profiles_dir = materialize_test_profiles(tmp_dir)
-    profile = tomllib.loads((profiles_dir / "code" / "profile.toml").read_text())
-    arch = "arm64" if platform.machine() == "arm64" else "x86_64"
-    assets = profile["assets"]["arch"][arch]
-    return {
-        "revision": profile["revision"],
-        "pins": {
-            "kernel": {"name": assets["kernel"]["name"], "hash": assets["kernel"]["hash"]},
-            "initrd": {"name": assets["initrd"]["name"], "hash": assets["initrd"]["hash"]},
-            "rootfs": {"name": assets["rootfs"]["name"], "hash": assets["rootfs"]["hash"]},
-        },
-        "payload_hash": f"blake3:{blake3.blake3(json.dumps(profile, separators=(',', ':')).encode()).hexdigest()}",
-    }
-
-
-def _registry_entry(vm_id: str, name: str, tmp_dir: Path, contract: dict[str, Any], **overrides):
-    session_dir = tmp_dir / "persistent" / vm_id
-    session_dir.mkdir(parents=True, exist_ok=True)
-    data = {
-        "id": vm_id,
-        "name": name,
-        "profile_id": "code",
-        "profile_revision": contract["revision"],
-        "profile_payload_hash": "blake3:0000000000000000000000000000000000000000000000000000000000000000",
-        "asset_pins": contract["pins"],
-        "ram_mb": 2048,
-        "cpus": 2,
-        "base_version": "0.0.0-test",
-        "created_at": "2026-06-16T00:00:00Z",
-        "session_dir": str(session_dir),
-        "defunct": False,
-    }
-    data.update(overrides)
-    return data
-
-
-def _write_registry(tmp_dir: Path, entries: list[dict[str, Any]]) -> None:
-    (tmp_dir / "persistent_registry.json").write_text(
-        json.dumps({"vms": {entry["name"]: entry for entry in entries}}, indent=2)
-    )
 
 
 def _row(listing: dict[str, Any], session_id: str) -> dict[str, Any]:
@@ -82,8 +36,7 @@ def _assert_delete_only_session(
     assert payload["id"] == session_id
     if "name" in payload:
         assert payload["name"] == name
-    if "profile_id" in payload:
-        assert payload["profile_id"] == "code"
+    assert "profile_id" not in payload
     assert payload["status"] == status
     assert payload["persistent"] is True
     assert payload["can_resume"] is False
@@ -96,41 +49,35 @@ def _assert_delete_only_session(
 def test_session_routes_make_defunct_and_incompatible_sessions_delete_only() -> None:
     service = ServiceInstance()
     try:
-        contract = _profile_contract(service.tmp_dir)
         stale_log = "overlayfs mount failed: Stale file handle\nKernel panic - not syncing"
-        defunct = _registry_entry(DEFUNCT_ID, DEFUNCT_NAME, service.tmp_dir, contract)
+        defunct = registry_entry(service.tmp_dir, DEFUNCT_ID, DEFUNCT_NAME)
         Path(defunct["session_dir"], "process.log").write_text("boot failed\n")
         Path(defunct["session_dir"], "serial.log").write_text(stale_log)
-        incompatible = _registry_entry(
-            DRIFT_ID,
-            DRIFT_NAME,
-            service.tmp_dir,
-            contract,
-            profile_payload_hash="blake3:0000000000000000000000000000000000000000000000000000000000000000",
-        )
-        _write_registry(service.tmp_dir, [defunct, incompatible])
+        # An entry written before profiles were removed is incompatible.
+        incompatible = registry_entry(service.tmp_dir, LEGACY_ID, LEGACY_NAME, profile_id="code")
+        write_registry(service.tmp_dir, [defunct, incompatible])
 
         service.start()
         client = service.client()
 
         listing = client.get("/vms/list")
         defunct_row = _row(listing, DEFUNCT_ID)
-        incompatible_row = _row(listing, DRIFT_ID)
+        incompatible_row = _row(listing, LEGACY_ID)
         _assert_delete_only_session(
             defunct_row, session_id=DEFUNCT_ID, name=DEFUNCT_NAME, status="Defunct"
         )
         _assert_delete_only_session(
             incompatible_row,
-            session_id=DRIFT_ID,
-            name=DRIFT_NAME,
+            session_id=LEGACY_ID,
+            name=LEGACY_NAME,
             status="Incompatible",
         )
         assert "Stale file handle" in defunct_row["last_error"]
-        assert "payload hash mismatch" in incompatible_row["resume_blocked_reason"]
+        assert "'code' profile" in incompatible_row["resume_blocked_reason"]
 
         for session_id, name, status in (
             (DEFUNCT_ID, DEFUNCT_NAME, "Defunct"),
-            (DRIFT_ID, DRIFT_NAME, "Incompatible"),
+            (LEGACY_ID, LEGACY_NAME, "Incompatible"),
         ):
             _assert_delete_only_session(
                 client.get(f"/vms/{session_id}/status"),
@@ -151,93 +98,39 @@ def test_session_routes_make_defunct_and_incompatible_sessions_delete_only() -> 
             assert "resume" in error["error"].lower()
 
         assert client.delete(f"/vms/{DEFUNCT_ID}/delete") == {"success": True}
-        assert client.delete(f"/vms/{DRIFT_ID}/delete") == {"success": True}
+        assert client.delete(f"/vms/{LEGACY_ID}/delete") == {"success": True}
         listing_after_delete = client.get("/vms/list")
         assert DEFUNCT_ID not in {row["id"] for row in listing_after_delete["sandboxes"]}
-        assert DRIFT_ID not in {row["id"] for row in listing_after_delete["sandboxes"]}
+        assert LEGACY_ID not in {row["id"] for row in listing_after_delete["sandboxes"]}
     finally:
         service.stop()
 
 
-def test_asset_pin_drift_makes_persistent_session_incompatible() -> None:
+def test_missing_pinned_asset_blocks_resume_but_keeps_fork_and_delete() -> None:
     service = ServiceInstance()
     try:
-        contract = _profile_contract(service.tmp_dir)
-        drifted_contract = json.loads(json.dumps(contract))
-        drifted_contract["pins"]["rootfs"]["hash"] = (
-            "blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-        )
-        entry = _registry_entry(
-            ASSET_PIN_DRIFT_ID,
-            ASSET_PIN_DRIFT_NAME,
-            service.tmp_dir,
-            drifted_contract,
-            profile_payload_hash=contract["payload_hash"],
-        )
-        _write_registry(service.tmp_dir, [entry])
+        entry = registry_entry(service.tmp_dir, MISSING_ASSET_ID, MISSING_ASSET_NAME)
+        # Neither the hash-named nor the logical file exists in the assets dir.
+        entry["asset_pins"]["rootfs"] = {"name": "rootfs-gone.erofs", "hash": "blake3:" + "f" * 64}
+        write_registry(service.tmp_dir, [entry])
 
         service.start()
         client = service.client()
 
-        listing = client.get("/vms/list")
-        row = _row(listing, ASSET_PIN_DRIFT_ID)
-        _assert_delete_only_session(
-            row,
-            session_id=ASSET_PIN_DRIFT_ID,
-            name=ASSET_PIN_DRIFT_NAME,
-            status="Incompatible",
-        )
-        assert "asset pins changed" in row["resume_blocked_reason"]
-
-        status = client.get(f"/vms/{ASSET_PIN_DRIFT_ID}/status")
-        _assert_delete_only_session(
-            status,
-            session_id=ASSET_PIN_DRIFT_ID,
-            name=ASSET_PIN_DRIFT_NAME,
-            status="Incompatible",
-        )
-        assert "asset pins changed" in status["resume_blocked_reason"]
+        for payload in (
+            _row(client.get("/vms/list"), MISSING_ASSET_ID),
+            client.get(f"/vms/{MISSING_ASSET_ID}/status"),
+        ):
+            assert payload["status"] == "Stopped", payload
+            assert payload["can_resume"] is False
+            assert payload["available_actions"] == ["fork", "delete"]
+            assert "rootfs asset" in payload["resume_blocked_reason"], payload
+            assert "is missing" in payload["resume_blocked_reason"], payload
 
         http_status, error = _curl_json_with_status(
-            service, "POST", f"/vms/{ASSET_PIN_DRIFT_ID}/resume", {}
+            service, "POST", f"/vms/{MISSING_ASSET_ID}/resume", {}
         )
         assert http_status >= 400
-        assert "asset pins changed" in error["error"]
-    finally:
-        service.stop()
-
-
-def test_profile_update_semantics_keep_existing_vms_explicitly_pinned() -> None:
-    service = ServiceInstance()
-    try:
-        contract = _profile_contract(service.tmp_dir)
-        incompatible = _registry_entry(
-            DRIFT_ID,
-            DRIFT_NAME,
-            service.tmp_dir,
-            contract,
-            profile_payload_hash=contract["payload_hash"].replace("blake3:", "blake3:0"),
-        )
-        _write_registry(service.tmp_dir, [incompatible])
-
-        service.start()
-        client = service.client()
-
-        profiles = client.get("/profiles/status")
-        code = next(profile for profile in profiles["profiles"] if profile["id"] == "code")
-        assert code["update_semantics"] == {
-            "new_sessions": "use_current_profile_catalog",
-            "existing_vms": "pinned_until_recreate",
-            "upgrade_action": "recreate_vm",
-        }
-
-        row = _row(client.get("/vms/list"), DRIFT_ID)
-        _assert_delete_only_session(
-            row,
-            session_id=DRIFT_ID,
-            name=DRIFT_NAME,
-            status="Incompatible",
-        )
-        assert "payload hash mismatch" in row["resume_blocked_reason"]
+        assert "rootfs asset" in error["error"], error
     finally:
         service.stop()

@@ -81,7 +81,6 @@ fn base_update_status() -> UpdateStatusResponse {
             UpdateTrackState::Current,
             false,
         ),
-        profiles: update_track(Some("profiles-1"), Some("profiles-1"), UpdateTrackState::Current, false),
         images: update_track(None, None, UpdateTrackState::NotPublished, false),
         supply_chain: client::SupplyChainEvidence::default(),
     }
@@ -91,12 +90,6 @@ fn base_update_status() -> UpdateStatusResponse {
 fn update_status_lines_separate_available_and_blocked_tracks() {
     let mut status = base_update_status();
     status.binary = update_track(Some("1.4.0"), Some("1.4.1"), UpdateTrackState::UpdateAvailable, true);
-    status.profiles = update_track(
-        Some("profiles-1"),
-        Some("profiles-2"),
-        UpdateTrackState::UpdateAvailable,
-        true,
-    );
     status.assets.blocked_reason = Some("requires binary 1.4.1 or newer".into());
     status.images.blocked_reason = Some("image catalog not published".into());
 
@@ -104,7 +97,7 @@ fn update_status_lines_separate_available_and_blocked_tracks() {
 
     assert_eq!(
         lines[0],
-        "Updates:   available (binary 1.4.0 -> 1.4.1; profiles profiles-1 -> profiles-2); blocked (assets, images)"
+        "Updates:   available (binary 1.4.0 -> 1.4.1); blocked (assets, images)"
     );
     assert!(lines.contains(&"Channel:   https://release.capsem.org/health.json".into()));
     assert!(lines.contains(&"Assets:    blocked (requires binary 1.4.1 or newer)".into()));
@@ -140,43 +133,32 @@ fn parse_create_with_name() {
     match cli.command.unwrap() {
         Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { name, ram, cpu, .. })) => {
             assert_eq!(name, Some("my-vm".into()));
-            assert_eq!(ram, None, "unset RAM is the profile's");
-            assert_eq!(cpu, None, "unset CPUs are the profile's");
+            assert_eq!(ram, None, "unset RAM is the service default");
+            assert_eq!(cpu, None, "unset CPUs are the service default");
         }
         _ => panic!("expected Create"),
     }
 }
 
+/// Profiles are gone: no command takes `--profile`, and naming one is a
+/// usage error rather than a silently ignored flag.
 #[test]
-fn cli_create_accepts_profile() {
-    let cli = Cli::parse_from(["capsem", "create", "--profile", "co-work"]);
-    match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { profile, .. })) => {
-            assert_eq!(profile, "co-work");
-        }
-        _ => panic!("expected Create"),
-    }
-}
-
-#[test]
-fn cli_mcp_commands_accept_profile() {
-    let cases = [
+fn no_command_takes_a_profile() {
+    for args in [
+        vec!["capsem", "create", "--profile", "co-work"],
+        vec!["capsem", "run", "true", "--profile", "co-work"],
+        vec!["capsem", "assets", "status", "--profile", "code"],
+        vec!["capsem", "assets", "ensure", "--profile", "code"],
         vec!["capsem", "mcp", "servers", "--profile", "co-work"],
         vec!["capsem", "mcp", "tools", "--profile", "co-work"],
         vec!["capsem", "mcp", "refresh", "--profile", "co-work"],
         vec!["capsem", "mcp", "call", "server__tool", "--profile", "co-work"],
-    ];
-
-    for args in cases {
-        let cli = Cli::parse_from(args);
-        let profile = match cli.command.unwrap() {
-            Commands::Mcp(McpCommands::Servers { profile })
-            | Commands::Mcp(McpCommands::Tools { profile, .. })
-            | Commands::Mcp(McpCommands::Refresh { profile })
-            | Commands::Mcp(McpCommands::Call { profile, .. }) => profile,
-            _ => panic!("expected MCP command"),
+    ] {
+        let error = match Cli::try_parse_from(&args) {
+            Ok(_) => panic!("{args:?} must not parse"),
+            Err(error) => error,
         };
-        assert_eq!(profile, "co-work");
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument, "{args:?}");
     }
 }
 
@@ -806,101 +788,54 @@ fn parse_setup_is_removed() {
 fn parse_assets_status() {
     let cli = Cli::parse_from(["capsem", "assets", "status"]);
     match cli.command.unwrap() {
-        Commands::Assets(AssetsCommands::Status { profile, json }) => {
-            assert_eq!(profile, "code");
-            assert!(!json);
-        }
+        Commands::Assets(AssetsCommands::Status { json }) => assert!(!json),
         _ => panic!("expected assets status"),
     }
 }
 
-#[test]
-fn cli_default_profile_is_primary_profile() {
-    assert_eq!(DEFAULT_PROFILE_ID, "code");
-}
-
-#[test]
-fn status_asset_lines_are_derived_from_profiles_status_payload() {
-    let payload = serde_json::json!({
-        "source": "installed",
-        "profile_count": 1,
-        "ready_count": 1,
-        "asset_manifest": {
+fn asset_status(ready: bool, downloading: bool, errors: &[&str]) -> AssetStatus {
+    serde_json::from_value(serde_json::json!({
+        "ready": ready,
+        "downloading": downloading,
+        "current_arch": "arm64",
+        "assets": [],
+        "errors": errors,
+        "manifest": {
             "origin": "package",
             "path": "/tmp/manifest.json",
-            "blake3": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "assets_current": "2026.0609.1",
-            "binaries_current": "1.3.0"
-        },
-        "profiles": [
-            {
-                "id": "code",
-                "name": "Code",
-                "ready": true,
-                "current_arch": "arm64",
-                "profile_payload_hash": "bbbbbbbbbbbb",
-                "missing_assets": []
-            }
-        ]
-    });
-
-    let lines = profile_status_summary_lines(&payload);
-
-    assert!(lines.iter().any(|line| line == "Profiles:  1/1 ready (installed)"));
-    assert!(lines
-        .iter()
-        .any(|line| line == "Manifest:  package (/tmp/manifest.json)"));
-    assert!(lines.iter().any(|line| line == "  assets:  2026.0609.1"));
-    assert!(lines
-        .iter()
-        .any(|line| line == "  - code: Code (ready, arch arm64, hash bbbbbbbbbbbb)"));
+            "validation_status": "valid"
+        }
+    }))
+    .unwrap()
 }
 
 #[test]
-fn health_issues_are_derived_from_profiles_status_payload() {
-    let payload = serde_json::json!({
-        "profile_count": 1,
-        "profiles": [
-            {
-                "id": "code",
-                "ready": false,
-                "missing_assets": ["initrd.img"],
-                "invalid_assets": ["rootfs.erofs"],
-                "invalid_files": ["profiles/code/enforcement.toml"]
-            }
-        ]
-    });
-
-    let issues = profile_status_issues(&payload);
-
-    assert_eq!(issues.len(), 1);
-    assert!(issues[0].contains("Profile code is not ready"));
-    assert!(issues[0].contains("missing assets: initrd.img"));
-    assert!(issues[0].contains("invalid assets: rootfs.erofs"));
-    assert!(issues[0].contains("invalid profile files: profiles/code/enforcement.toml"));
+fn health_issues_are_derived_from_the_asset_status() {
+    assert!(asset_status_issues(&asset_status(true, false, &[])).is_empty());
+    assert!(
+        asset_status_issues(&asset_status(false, true, &["vmlinuz is missing"])).is_empty(),
+        "a reconciliation in flight is not yet a health issue"
+    );
+    assert_eq!(
+        asset_status_issues(&asset_status(
+            false,
+            false,
+            &["vmlinuz is missing", "rootfs.erofs is missing"]
+        )),
+        vec!["VM assets are not ready (vmlinuz is missing; rootfs.erofs is missing)".to_string()]
+    );
+    assert_eq!(
+        asset_status_issues(&asset_status(false, false, &[])),
+        vec!["VM assets are not ready".to_string()]
+    );
 }
 
 #[test]
 fn parse_assets_ensure_json() {
     let cli = Cli::parse_from(["capsem", "assets", "ensure", "--json"]);
     match cli.command.unwrap() {
-        Commands::Assets(AssetsCommands::Ensure { profile, json }) => {
-            assert_eq!(profile, "code");
-            assert!(json);
-        }
+        Commands::Assets(AssetsCommands::Ensure { json }) => assert!(json),
         _ => panic!("expected assets ensure"),
-    }
-}
-
-#[test]
-fn parse_assets_status_profile() {
-    let cli = Cli::parse_from(["capsem", "assets", "status", "--profile", "analysis"]);
-    match cli.command.unwrap() {
-        Commands::Assets(AssetsCommands::Status { profile, json }) => {
-            assert_eq!(profile, "analysis");
-            assert!(!json);
-        }
-        _ => panic!("expected assets status"),
     }
 }
 

@@ -436,7 +436,7 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
         }
     }
 
-    // -- profile/corp diagnostics index --
+    // -- settings/corp diagnostics index --
     {
         let entry_path = format!("{bundle_root}/system/config-diagnostics.json");
         let diagnostics = config_diagnostics(&home);
@@ -713,69 +713,18 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
 }
 
 fn config_diagnostics(home: &Path) -> serde_json::Value {
-    use capsem_core::net::policy_config::{corp_config_paths, corp_provision, ProfileCatalog, ProfileCatalogSource};
+    use capsem_core::net::policy_config::{corp_config_paths, corp_provision, load_policy_files};
 
-    let profiles = match ProfileCatalog::load_default() {
-        Ok(catalog) => {
-            let source = match catalog.source() {
-                ProfileCatalogSource::BuiltIn => "built_in".to_string(),
-                ProfileCatalogSource::Directory(path) => format!("directory:{}", path.display()),
-            };
-            let profiles = catalog
-                .profiles()
-                .map(|profile| {
-                    let obom = profile.obom.as_ref().and_then(|obom| {
-                        let current_arch = capsem_core::net::policy_config::current_profile_arch().to_string();
-                        let descriptor = obom.current_arch_obom()?;
-                        let rootfs_hash = profile
-                            .assets
-                            .current_arch_assets()
-                            .and_then(|assets| assets.rootfs.hash.clone());
-                        Some(serde_json::json!({
-                            "current_arch": current_arch,
-                            "scope": "base_image",
-                            "format": obom.format,
-                            "name": descriptor.name,
-                            "url": descriptor.url,
-                            "hash": descriptor.hash,
-                            "size": descriptor.size,
-                            "generator": descriptor.generator,
-                            "generator_version": descriptor.generator_version,
-                            "rootfs_hash": rootfs_hash,
-                            "route": format!("/profiles/{}/obom", profile.id),
-                        }))
-                    });
-                    let mcp_server_count = profile
-                        .mcp
-                        .as_ref()
-                        .map(|mcp| {
-                            mcp.servers.len() + usize::from(mcp.server_enabled.get("local").copied().unwrap_or(false))
-                        })
-                        .unwrap_or(0);
-                    serde_json::json!({
-                        "id": profile.id,
-                        "name": profile.name,
-                        "description": profile.description,
-                        "revision": profile.revision,
-                        "refresh_policy": profile.refresh_policy,
-                        "availability": profile.availability,
-                        "asset_arches": profile.assets.arch.keys().collect::<Vec<_>>(),
-                        "default_rule_count": profile.default.len(),
-                        "profile_rule_count": profile.profiles.rules.len(),
-                        "ai_rule_count": profile.ai.values().map(|provider| provider.rules.len()).sum::<usize>(),
-                        "plugin_count": profile.plugins.len(),
-                        "mcp_server_count": mcp_server_count,
-                        "obom": obom,
-                    })
-                })
-                .collect::<Vec<_>>();
-            serde_json::json!({
-                "ok": true,
-                "source": source,
-                "profile_count": profiles.len(),
-                "profiles": profiles,
-            })
-        }
+    // Counts, never contents: the files can name credentials and hosts.
+    let settings = match load_policy_files() {
+        Ok((settings, _)) => serde_json::json!({
+            "ok": true,
+            "default_rule_count": settings.default.len(),
+            "user_rule_count": settings.profiles.rules.len(),
+            "ai_provider_count": settings.ai.len(),
+            "plugin_count": settings.plugins.len(),
+            "mcp_server_count": settings.mcp.as_ref().map_or(0, |mcp| mcp.servers.len()),
+        }),
         Err(error) => serde_json::json!({
             "ok": false,
             "error": error,
@@ -798,7 +747,7 @@ fn config_diagnostics(home: &Path) -> serde_json::Value {
     });
 
     serde_json::json!({
-        "profiles": profiles,
+        "settings": settings,
         "corp": corp,
     })
 }
@@ -901,17 +850,15 @@ fn runtime_boundary_debug_contract() -> serde_json::Value {
             "/vms/{id}/detection/status",
             "/vms/{id}/enforcement/latest",
             "/vms/{id}/enforcement/status",
-            "/profiles/status",
-            "/profiles/list",
-            "/profiles/{profile_id}/info",
-            "/profiles/{profile_id}/obom",
-            "/profiles/{profile_id}/assets/info",
-            "/profiles/{profile_id}/plugins/info",
-            "/profiles/{profile_id}/plugins/{plugin_id}/info",
-            "/profiles/{profile_id}/plugins/credential_broker/credentials/info",
-            "/profiles/{profile_id}/mcp/info",
-            "/profiles/{profile_id}/mcp/default/info",
-            "/profiles/{profile_id}/mcp/servers/list"
+            "/assets/status",
+            "/settings/info",
+            "/corp/info",
+            "/plugins/list",
+            "/plugins/{plugin_id}/info",
+            "/plugins/credential_broker/credentials/info",
+            "/mcp/info",
+            "/mcp/default/info",
+            "/mcp/servers/list"
         ],
     })
 }
@@ -926,15 +873,11 @@ fn supply_chain_debug_references() -> serde_json::Value {
             "attestation": "github_attestations",
             "workflow": ".github/workflows/release.yaml",
         },
-        "profile_obom": {
+        "vm_obom": {
             "format": "cyclonedx-obom.v1",
             "scope": "base_image",
             "generator": "cdxgen",
-            "descriptor_source": "profile.toml",
-            "runtime_routes": [
-                "/profiles/{profile_id}/info",
-                "/profiles/{profile_id}/obom",
-            ],
+            "descriptor_source": "release manifest",
         },
         "manifest": {
             "hash": "blake3",

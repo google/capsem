@@ -3,7 +3,7 @@
 import uuid
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import vm_name
 
 pytestmark = pytest.mark.integration
@@ -20,32 +20,32 @@ class TestProvision:
     def test_create_without_name(self, client):
         resp = client.post(
             "/vms/create",
-            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
         )
         assert resp is not None
         vm_id = resp.get("id")
         assert vm_id, f"No ID in response: {resp}"
         client.delete(f"/vms/{vm_id}/delete")
 
-    def test_session_name_create_without_name_uses_profile_counter(self, client):
+    def test_session_name_create_without_name_uses_vm_counter(self, client):
         first = client.post(
             "/vms/create",
-            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
         )
         second = client.post(
             "/vms/create",
-            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
         )
         first_id = first.get("id")
         second_id = second.get("id")
-        profile_prefix = f"{CODE_PROFILE_ID}-"
+        prefix = "vm-"
         try:
             assert uuid.UUID(first_id)
             assert uuid.UUID(second_id)
-            assert first["name"].startswith(profile_prefix)
-            assert second["name"].startswith(profile_prefix)
-            first_num = int(first["name"].removeprefix(profile_prefix))
-            second_num = int(second["name"].removeprefix(profile_prefix))
+            assert first["name"].startswith(prefix)
+            assert second["name"].startswith(prefix)
+            first_num = int(first["name"].removeprefix(prefix))
+            second_num = int(second["name"].removeprefix(prefix))
             assert second_num == first_num + 1
             assert not first["name"].startswith("tmp-")
             assert not second["name"].startswith("tmp-")
@@ -71,7 +71,6 @@ class TestProvision:
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },
@@ -95,7 +94,7 @@ class TestPersistence:
     def test_provision_default_not_persistent(self, client):
         resp = client.post(
             "/vms/create",
-            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
         )
         assert resp is not None
         vm_id = resp.get("id")
@@ -153,7 +152,6 @@ class TestDelete:
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },
@@ -181,7 +179,6 @@ class TestDelete:
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },

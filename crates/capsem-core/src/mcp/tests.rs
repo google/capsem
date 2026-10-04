@@ -1,5 +1,5 @@
 use super::*;
-use crate::mcp::policy::{McpManualServer, McpProfileConfig};
+use crate::mcp::policy::{McpConfig, McpManualServer};
 
 struct EnvVarGuard {
     key: &'static str,
@@ -260,7 +260,7 @@ fn tool_cache_missing_file_returns_empty() {
 
 #[test]
 fn mcp_config_rejects_raw_bearer_token_field() {
-    let err = toml::from_str::<McpProfileConfig>(
+    let err = toml::from_str::<McpConfig>(
         r#"
 [[servers]]
 name = "remote"
@@ -274,7 +274,7 @@ bearer_token = "tok_raw"
 
 #[test]
 fn mcp_config_rejects_secret_bearing_headers() {
-    let cfg: McpProfileConfig = toml::from_str(
+    let cfg: McpConfig = toml::from_str(
         r#"
 [[servers]]
 name = "remote"
@@ -292,7 +292,7 @@ Authorization = "Bearer raw"
 
 #[test]
 fn mcp_config_accepts_oauth_broker_reference() {
-    let cfg: McpProfileConfig = toml::from_str(&format!(
+    let cfg: McpConfig = toml::from_str(&format!(
         r#"
 [[servers]]
 name = "remote"
@@ -335,8 +335,8 @@ fn credential_broker_resolves_mcp_oauth_material_by_reference() {
 }
 
 #[test]
-fn build_profile_server_list_uses_profile_manual_servers_only() {
-    let profile = McpProfileConfig {
+fn build_server_list_uses_configured_servers_only() {
+    let profile = McpConfig {
         servers: vec![McpManualServer {
             name: "profile-api".into(),
             url: "https://profile.example/mcp".into(),
@@ -347,27 +347,27 @@ fn build_profile_server_list_uses_profile_manual_servers_only() {
         ..Default::default()
     };
 
-    let list = build_profile_server_list(&profile, None, HashMap::new());
+    let list = build_server_list(&profile, None, HashMap::new());
 
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].name, "profile-api");
-    assert_eq!(list[0].source, "profile");
+    assert_eq!(list[0].source, CONFIGURED_SERVER_SOURCE);
 }
 
 #[test]
-fn build_profile_server_list_respects_local_builtin_enablement() {
+fn build_server_list_respects_local_builtin_enablement() {
     let dir = tempfile::tempdir().unwrap();
     let builtin = dir.path().join("capsem-mcp-builtin");
     std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
 
     let mut enabled = HashMap::new();
     enabled.insert("local".to_string(), false);
-    let profile = McpProfileConfig {
+    let profile = McpConfig {
         server_enabled: enabled,
         ..Default::default()
     };
 
-    let list = build_profile_server_list(&profile, Some(&builtin), HashMap::new());
+    let list = build_server_list(&profile, Some(&builtin), HashMap::new());
 
     let local = list.iter().find(|server| server.name == "local").unwrap();
     assert_eq!(local.source, "builtin");
@@ -375,14 +375,14 @@ fn build_profile_server_list_respects_local_builtin_enablement() {
 }
 
 #[test]
-fn build_profile_server_list_runs_one_builtin_peer_per_session() {
+fn build_server_list_runs_one_builtin_peer_per_session() {
     let dir = tempfile::tempdir().unwrap();
     let builtin = dir.path().join("capsem-mcp-builtin");
     std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
     let mut env = HashMap::new();
     env.insert("CAPSEM_SESSION_DIR".to_string(), dir.path().display().to_string());
 
-    let list = build_profile_server_list(&McpProfileConfig::default(), Some(&builtin), env);
+    let list = build_server_list(&McpConfig::default(), Some(&builtin), env);
 
     let local = list.iter().find(|server| server.name == "local").unwrap();
     assert_eq!(local.pool_size, Some(1), "a session's builtin runs one peer");
@@ -397,7 +397,7 @@ fn only_the_builtin_definition_is_named_as_builtin() {
     let dir = tempfile::tempdir().unwrap();
     let builtin = dir.path().join("capsem-mcp-builtin");
     std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
-    let mut profile = McpProfileConfig::default();
+    let mut profile = McpConfig::default();
     profile.servers.push(McpManualServer {
         name: "github".to_string(),
         url: "https://example.com/mcp".to_string(),
@@ -406,7 +406,7 @@ fn only_the_builtin_definition_is_named_as_builtin() {
         enabled: true,
     });
 
-    let list = build_profile_server_list(&profile, Some(&builtin), HashMap::new());
+    let list = build_server_list(&profile, Some(&builtin), HashMap::new());
 
     assert_eq!(list.len(), 2);
     assert_eq!(builtin_server_names(&list), BTreeSet::from(["local".to_string()]));
@@ -426,7 +426,7 @@ fn profile_server(name: &str) -> McpManualServer {
 /// profile server of that name became the owner of every `local__*` tool.
 #[test]
 fn a_profile_cannot_shadow_the_builtin_when_its_binary_is_absent() {
-    let profile = McpProfileConfig {
+    let profile = McpConfig {
         servers: vec![
             profile_server("local"),
             profile_server("builtin"),
@@ -435,7 +435,7 @@ fn a_profile_cannot_shadow_the_builtin_when_its_binary_is_absent() {
         ..Default::default()
     };
 
-    let list = build_profile_server_list(&profile, None, HashMap::new());
+    let list = build_server_list(&profile, None, HashMap::new());
 
     let names: Vec<&str> = list.iter().map(|server| server.name.as_str()).collect();
     assert_eq!(names, ["kept"], "reserved names are refused whatever is installed");
@@ -446,20 +446,20 @@ fn a_profile_cannot_shadow_the_builtin_when_its_binary_is_present() {
     let dir = tempfile::tempdir().unwrap();
     let builtin = dir.path().join("capsem-mcp-builtin");
     std::fs::write(&builtin, "#!/bin/sh\n").unwrap();
-    let profile = McpProfileConfig {
+    let profile = McpConfig {
         servers: vec![profile_server("local")],
         ..Default::default()
     };
 
-    let list = build_profile_server_list(&profile, Some(&builtin), HashMap::new());
+    let list = build_server_list(&profile, Some(&builtin), HashMap::new());
 
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].source, BUILTIN_SERVER_SOURCE);
 }
 
 #[test]
-fn build_profile_server_list_rejects_names_with_separator() {
-    let mut profile = McpProfileConfig::default();
+fn build_server_list_rejects_names_with_separator() {
+    let mut profile = McpConfig::default();
     profile.servers.push(crate::mcp::policy::McpManualServer {
         name: "bad__name".to_string(),
         url: "http://localhost".to_string(),
@@ -475,7 +475,7 @@ fn build_profile_server_list_rejects_names_with_separator() {
         enabled: true,
     });
 
-    let servers = build_profile_server_list(&profile, None, HashMap::new());
+    let servers = build_server_list(&profile, None, HashMap::new());
     assert_eq!(servers.len(), 1);
     assert_eq!(servers[0].name, "goodname");
 }

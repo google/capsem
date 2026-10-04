@@ -571,7 +571,7 @@ fn built_in_defaults_cover_each_runtime_boundary_last() {
         ),
         (
             "profiles.rules.default_unknown_mcp_server",
-            "Detect MCP server activity from observed servers not declared by the active profile.",
+            "Detect MCP server activity from observed servers not declared in settings or corp config.",
         ),
         (
             "profiles.rules.default_file",

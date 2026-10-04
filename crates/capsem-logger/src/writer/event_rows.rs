@@ -1,4 +1,4 @@
-//! Row inserts for the DNS, audit, substitution, security and profile-mutation
+//! Row inserts for the DNS, audit, substitution, security and policy-mutation
 //! ledgers.
 
 use super::*;
@@ -304,26 +304,25 @@ pub(super) fn insert_security_decision_event(
     Ok(())
 }
 
-pub(super) fn insert_profile_mutation_event(
+pub(super) fn insert_policy_mutation_event(
     conn: &Connection,
-    event: &ProfileMutationEvent,
+    event: &PolicyMutationEvent,
     target: WriteTarget,
 ) -> rusqlite::Result<()> {
     execute_cached(
         conn,
         &format!(
             "INSERT INTO {} (
-            timestamp_unix_ms, mutation_id, profile_id, actor, category, filename,
+            timestamp_unix_ms, mutation_id, actor, category, filename,
             affected_path, target_kind, target_key, operation, rule_id,
             old_hash, old_size, new_hash, new_size, status, error, trace_id
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
-            target.table("profile_mutation_events")
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            target.table("policy_mutation_events")
         ),
         params![
             event.timestamp_unix_ms,
             event.mutation_id,
-            event.profile_id,
             event.actor,
             event.category,
             event.filename,

@@ -21,29 +21,15 @@ describe('contracts', () => {
       requests.push(record);
       const path = new URL(record.url, 'http://gateway.test').pathname;
       const fixtures: Record<string, unknown> = {
-        '/status': {
-          service: 'running', gateway_version: '0.6.3', vm_count: 0, vms: [],
-          profiles: {
-            source: 'built_in', profile_count: 1, ready_count: 1, profiles: [], defaults: {vm: 'code', container: 'code'},
-          },
-        },
-        '/profiles/list': {profiles: [{
-          availability: {web: true, shell: true, mobile: false}, default_rule_count: 0,
-          description: 'Code profile', id: 'code', mcp_server_count: 1, name: 'Code',
-          plugin_count: 0, rule_count: 0, source: 'builtin', update_semantics: {
-            new_sessions: 'use_current_profile_catalog', existing_vms: 'pinned_until_recreate',
-            upgrade_action: 'recreate_vm',
-          },
-        }]},
-        '/profiles/code/mcp/info': {builtin_local_enabled: true, manual_server_count: 1, profile_id: 'code', server_count: 1},
-        '/profiles/code/mcp/servers/list': [{
-          name: 'local', url: 'stdio://local', enabled: true, source: 'profile', running: true,
+        '/mcp/info': {builtin_local_enabled: true, manual_server_count: 1, server_count: 2},
+        '/mcp/servers/list': [{
+          name: 'local', url: 'stdio://local', enabled: true, source: 'settings', running: true,
           is_stdio: true, tool_count: 1, has_auth_credential: false, custom_header_count: 0,
         }],
-        '/profiles/code/mcp/default/info': {action: 'allow', source: 'profile'},
-        '/profiles/code/mcp/servers/local/tools/list': [],
-        '/profiles/code/mcp/servers/local/refresh': {instances: 1, server_id: 'local', success: true},
-        '/profiles/code/mcp/servers/local/tools/read_file/call': {content: 'ok'},
+        '/mcp/default/info': {action: 'allow', source: 'settings'},
+        '/mcp/servers/local/tools/list': [],
+        '/mcp/servers/local/refresh': {instances: 1, server_id: 'local', success: true},
+        '/mcp/servers/local/tools/read_file/call': {content: 'ok'},
       };
       if (!(path in fixtures)) return response.writeHead(404).end();
       response.setHeader('content-type', 'application/json');
@@ -71,35 +57,44 @@ describe('contracts', () => {
     for (const name of ['capsem_status', 'capsem_pause', 'capsem_host_logs', 'capsem_mcp_call']) {
       expect(names.has(name), name).toBe(true);
     }
-    for (const name of ['capsem_version', 'capsem_suspend', 'capsem_service_logs', 'capsem_container_wait']) {
+    for (const name of ['capsem_version', 'capsem_suspend', 'capsem_service_logs', 'capsem_container_wait', 'capsem_profiles']) {
       expect(names.has(name), name).toBe(false);
     }
     const create = tools.find(tool => tool.name === 'capsem_create');
-    expect(Object.keys(create?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining([
-      'profile', 'name', 'cpus', 'memory', 'env', 'network_ids', 'image', 'command',
-    ]));
+    expect(Object.keys(create?.inputSchema.properties ?? {}).sort()).toEqual([
+      'command', 'cpus', 'env', 'image', 'memory', 'name', 'network_ids', 'registry',
+    ]);
+    const run = tools.find(tool => tool.name === 'capsem_run');
+    expect(Object.keys(run?.inputSchema.properties ?? {}).sort()).toEqual([
+      'command', 'cpus', 'env', 'memory', 'timeout_secs',
+    ]);
+    const mcpTools = tools.filter(tool => tool.name.startsWith('capsem_mcp_'));
+    expect(mcpTools.map(tool => tool.name).sort()).toEqual([
+      'capsem_mcp_call', 'capsem_mcp_default', 'capsem_mcp_info', 'capsem_mcp_refresh',
+      'capsem_mcp_servers', 'capsem_mcp_tools',
+    ]);
+    for (const tool of mcpTools) expect(Object.keys(tool.inputSchema.properties ?? {}), tool.name).not.toContain('profile');
     const exec = tools.find(tool => tool.name === 'capsem_exec');
     expect(Object.keys(exec?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(['vm_id', 'command', 'timeout_secs']));
     expect(tools.every(tool => Boolean(tool.description))).toBe(true);
   });
 
-  it('exposes profile MCP discovery and invocation only through typed SDK calls', async () => {
+  it('exposes MCP discovery and invocation only through typed SDK calls', async () => {
     const calls = [
-      {name: 'capsem_profiles', arguments: {}},
       {name: 'capsem_mcp_info', arguments: {}},
-      {name: 'capsem_mcp_servers', arguments: {profile: 'code'}},
-      {name: 'capsem_mcp_default', arguments: {profile: 'code'}},
-      {name: 'capsem_mcp_tools', arguments: {profile: 'code', server_id: 'local'}},
-      {name: 'capsem_mcp_refresh', arguments: {profile: 'code', server_id: 'local'}},
-      {name: 'capsem_mcp_call', arguments: {
-        profile: 'code', server_id: 'local', tool_id: 'read_file', arguments: {path: '/tmp/x'},
-      }},
+      {name: 'capsem_mcp_servers', arguments: {}},
+      {name: 'capsem_mcp_default', arguments: {}},
+      {name: 'capsem_mcp_tools', arguments: {server_id: 'local'}},
+      {name: 'capsem_mcp_refresh', arguments: {server_id: 'local'}},
+      {name: 'capsem_mcp_call', arguments: {server_id: 'local', tool_id: 'read_file', arguments: {path: '/tmp/x'}}},
     ];
     for (const call of calls) expect((await client.callTool(call)).isError, call.name).not.toBe(true);
-    // 13 reads: the profile-less capsem_mcp_info asks the gateway which
-    // profile is the default before reading that profile's MCP state.
-    expect(requests.map(request => request.method)).toEqual([
-      ...Array.from({length: 13}, () => 'GET'), 'POST', 'GET', 'GET', 'POST',
+    // Each server-scoped tool resolves its server by name from the list first.
+    expect(requests.map(request => [request.method, request.url])).toEqual([
+      ['GET', '/mcp/info'], ['GET', '/mcp/servers/list'], ['GET', '/mcp/default/info'],
+      ['GET', '/mcp/servers/list'], ['GET', '/mcp/servers/local/tools/list'],
+      ['GET', '/mcp/servers/list'], ['POST', '/mcp/servers/local/refresh'],
+      ['GET', '/mcp/servers/list'], ['POST', '/mcp/servers/local/tools/read_file/call'],
     ]);
     expect(JSON.parse(requests.at(-1)?.body.toString() ?? '')).toEqual({path: '/tmp/x'});
   });

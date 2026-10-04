@@ -64,7 +64,7 @@ crafting will not reach the target — connect scans will.
 Boots one sandboxed VM that holds no model weights and has no open internet.
 Its only route to a completion is capsem's egress: the guest redirects any
 connection to `:11434` into its net-proxy, the host proxy forwards it to the
-Ollama daemon on the host, and the `ai_ollama_*` profile rules admit and
+Ollama daemon on the host, and the `ai_ollama_*` built-in rules admit and
 record the call. The script then:
 
 1. Prompts the model from inside the VM and prints the answer.

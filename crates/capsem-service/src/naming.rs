@@ -1,14 +1,15 @@
-//! VM-name helpers: profile-scoped session names and persistent-name validation.
+//! VM-name helpers: generated session names and persistent-name validation.
 
 use anyhow::{anyhow, Result};
 use rand::Rng;
 
-pub fn generate_profile_session_name<I, S>(profile_id: &str, existing: I) -> String
+/// The first free `vm-N` among `existing` names.
+pub fn generate_session_name<I, S>(existing: I) -> String
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let base = sanitize_profile_prefix(profile_id);
+    let base = "vm";
     let existing: std::collections::HashSet<String> = existing
         .into_iter()
         .map(|name| name.as_ref().to_ascii_lowercase())
@@ -20,28 +21,6 @@ where
         }
     }
     format!("{base}-{}", rand::thread_rng().gen_range(10_000..99_999))
-}
-
-fn sanitize_profile_prefix(profile_id: &str) -> String {
-    let mut out = String::new();
-    let mut last_dash = false;
-    for ch in profile_id.trim().to_ascii_lowercase().chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-            last_dash = false;
-        } else if !last_dash && !out.is_empty() {
-            out.push('-');
-            last_dash = true;
-        }
-    }
-    while out.ends_with('-') {
-        out.pop();
-    }
-    if out.is_empty() {
-        "session".to_string()
-    } else {
-        out
-    }
 }
 
 /// Validate that a persistent VM name is safe for use as a directory name.

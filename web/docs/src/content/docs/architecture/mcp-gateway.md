@@ -171,29 +171,31 @@ reloads affect already-open guest MCP connections.
 
 ## Configuration files
 
-MCP server definitions are profile-owned. The profile points at `mcp.json`, and
-semantic routes mutate MCP server/tool posture through backend-owned profile
-rules instead of exposing raw rule text to the UI.
+MCP servers are declared in the `[mcp]` table of `~/.capsem/settings.toml`;
+the corp config's `[mcp]` is laid over it (a corp server replaces the user's
+server of the same name, and a corp `server_enabled` entry wins). Tool
+permissions are set through the `/mcp/default/edit` and
+`/mcp/servers/{server_id}/tools/{tool_id}/edit` routes, which compile to
+security rules in `settings.toml` instead of exposing raw rule text to the UI.
 
-```json
-{
-  "servers": [
-    {
-      "id": "capsem",
-      "name": "Capsem",
-      "description": "Built-in Capsem MCP server for HTTP tools",
-      "transport": "stdio",
-      "command": "/run/capsem-mcp-server",
-      "builtin": true,
-      "enabled": true
-    }
-  ]
-}
+```toml
+[mcp]
+health_check_interval_secs = 300
+
+[mcp.server_enabled]
+local = true          # the builtin capsem-mcp-builtin server
+
+[[mcp.servers]]
+name = "github"
+url = "https://mcp.example.com/github"
+enabled = true
 ```
 
-Profile MCP config and corp constraints are validated by the service and passed
-to the [MCP Aggregator](/architecture/mcp-aggregator/) subprocess at spawn
-time. Credentials are broker-owned references, not raw tokens in MCP config.
+The service validates the merged configuration and writes it into each
+session's `vm/active_policy.toml`; capsem-process reads that file and passes
+the server list to the [MCP Aggregator](/architecture/mcp-aggregator/)
+subprocess at spawn time. Credentials are broker-owned references, not raw
+tokens in MCP config.
 
 ## Key source files
 
@@ -210,6 +212,6 @@ time. Credentials are broker-owned references, not raw tokens in MCP config.
 | `capsem-core/src/security_engine/` | SecurityEvent construction, rule evaluation, plugin actions, and rule-ledger emission |
 | `capsem-mcp-aggregator/src/main.rs` | Isolated subprocess: MessagePack frame loop, server connections |
 | `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch and driver tasks |
-| `config/profiles/<id>/mcp.json` | Profile MCP server definitions |
+| `capsem-config/src/mcp.rs` | `[mcp]` schema and the settings/corp merge |
 
 See [MCP Aggregator](/architecture/mcp-aggregator/) for the full subprocess architecture.

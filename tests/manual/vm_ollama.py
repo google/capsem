@@ -5,7 +5,7 @@ The guest holds no model weights and has no open internet. Its only route to
 a completion is capsem's egress: the guest redirects any connection to
 ``:11434`` into its net-proxy (see guest/artifacts/capsem-init), the host
 proxy forwards it to the Ollama daemon on the host, and the ``ai_ollama_*``
-profile rules admit and record the call. So a one-line prompt from inside the
+built-in rules admit and record the call. So a one-line prompt from inside the
 VM comes back answered by the host's Gemma, and the security ledger has a row
 for it.
 
@@ -34,7 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from helpers.constants import BIN_DIR, CODE_PROFILE_ID
+from helpers.constants import BIN_DIR
 from helpers.service import ServiceInstance, exec_output_text
 
 from tests.fixtures.oci.registry import registry
@@ -61,14 +61,13 @@ def boot(service, tmp_path, reference, certificate, name, *options):
     """
     command = [
         str(BIN_DIR / "capsem"), "--uds-path", str(service.uds_path),
-        "create", "--profile", CODE_PROFILE_ID, "--registry-ca", str(certificate),
+        "create", "--registry-ca", str(certificate),
         "-n", name, *options, "--image", reference,
     ]
     env = {
         **os.environ,
         "CAPSEM_HOME": str(service.home_dir),
         "CAPSEM_RUN_DIR": str(service.tmp_dir),
-        "CAPSEM_PROFILES_DIR": str(service.profiles_dir),
     }
     result = subprocess.run(command, env=env, capture_output=True, timeout=240, check=False)
     (tmp_path / f"{name}.stderr").write_bytes(result.stderr)
@@ -114,7 +113,7 @@ def main() -> int:
     booted = []
     try:
         with registry(service.tmp_dir) as (reference, certificate, _requests):
-            print(f"\n== boot a sandboxed VM (profile {CODE_PROFILE_ID}) ==")
+            print("\n== boot a sandboxed VM ==")
             box = boot(service, service.tmp_dir, reference, certificate, "box")
             booted.append(box["id"])
             print(f"  box {box['id']}  (no model weights, no open internet)")

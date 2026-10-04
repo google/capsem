@@ -20,7 +20,7 @@ pub(crate) async fn handle_resume(
 
     let attempted_checkpoint = state.has_existing_resume_checkpoint(&id);
 
-    // resume_sandbox reads the registry and profile files and spawns the
+    // resume_sandbox reads the registry and policy files and spawns the
     // child: all blocking, all off the worker.
     let resume_id = id.clone();
     match state

@@ -8,7 +8,6 @@ from contextlib import suppress
 
 import pytest
 from helpers.constants import (
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
@@ -35,7 +34,6 @@ def test_installed_gateway_persists_exec_state() -> None:
     roots = resolve_winterfell_artifact_roots()
     assert roots.installed
     service = ServiceInstance(assets_dir=roots.assets_dir, sign_binaries=False)
-    service.uses_profile_catalog = False
     vm_id: str | None = None
     try:
         service.start()
@@ -51,7 +49,6 @@ def test_installed_gateway_persists_exec_state() -> None:
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },

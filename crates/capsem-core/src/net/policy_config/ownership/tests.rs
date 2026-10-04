@@ -19,7 +19,7 @@ fn setting_id_ownership_matches_current_registry_contract() {
         if definition.id.starts_with("app.") || definition.id.starts_with("appearance.") {
             assert_eq!(owner, ConfigOwner::Settings, "{}", definition.id);
         } else {
-            assert_eq!(owner, ConfigOwner::Profile, "{}", definition.id);
+            assert_eq!(owner, ConfigOwner::Corp, "{}", definition.id);
         }
     }
 }
@@ -36,7 +36,7 @@ fn settings_toml_accepts_only_ui_application_preferences() {
 }
 
 #[test]
-fn settings_toml_rejects_profile_behavior_settings() {
+fn settings_toml_rejects_corp_owned_behavior_settings() {
     for id in [
         "vm.resources.cpu_count",
         "security.web.http_upstream_ports",
@@ -51,51 +51,28 @@ fn settings_toml_rejects_profile_behavior_settings() {
             Ok(()) => panic!("{id} must not belong to settings.toml"),
             Err(error) => error,
         };
-        assert!(error.contains("owned by profile"), "{id} produced wrong error: {error}");
+        assert!(error.contains("owned by corp"), "{id} produced wrong error: {error}");
     }
 }
 
 #[test]
-fn settings_toml_rejects_behavior_sections() {
-    for (label, input) in [
-        (
-            "rule_files",
-            r#"
+fn settings_toml_carries_the_user_policy() {
+    let file = parse(
+        r#"
 [rule_files]
 enforcement = "enforcement.toml"
-"#,
-        ),
-        (
-            "profiles",
-            r#"
+
 [profiles.rules.block_http]
 name = "block_http"
 action = "block"
 match = 'has(http.host)'
-"#,
-        ),
-        (
-            "default",
-            r#"
+
 [default.http]
 name = "http"
 action = "allow"
 priority = "default"
 match = 'has(http.host)'
-"#,
-        ),
-        (
-            "corp",
-            r#"
-[corp.rules.block_http]
-name = "block_http"
-action = "block"
-match = 'has(http.host)'
-"#,
-        ),
-        (
-            "ai",
-            r#"
+
 [ai.openai]
 name = "OpenAI"
 protocol = "openai"
@@ -105,13 +82,36 @@ url = "https://api.openai.com/v1"
 name = "openai_http_api"
 action = "allow"
 match = 'http.host == "api.openai.com"'
-"#,
-        ),
-        (
-            "plugins",
-            r#"
+
 [plugins.dummy_pre_eicar]
 mode = "block"
+
+[[mcp.servers]]
+name = "wiki"
+url = "https://wiki.example.invalid/mcp"
+"#,
+    );
+    validate_settings_toml_contract(&file).expect("settings.toml owns the user's policy");
+}
+
+#[test]
+fn settings_toml_rejects_corp_only_sections() {
+    for (label, input) in [
+        (
+            "corp",
+            r#"
+[corp.rules.block_http]
+name = "block_http"
+action = "block"
+match = 'has(http.host)'
+"#,
+        ),
+        ("refresh_policy", r#"refresh_policy = "24h""#),
+        (
+            "corp_rule_files",
+            r#"
+[corp_rule_files]
+sigma_output_endpoint = "https://security.example.invalid/sigma"
 "#,
         ),
         (
@@ -128,72 +128,6 @@ upstreams = ["127.0.0.1:5353"]
             "{label} must not belong to settings.toml"
         );
     }
-}
-
-#[test]
-fn profile_toml_accepts_profile_behavior_and_rejects_ui_and_corp_fields() {
-    let valid = parse(
-        r#"
-[settings."vm.resources.cpu_count"]
-value = 8
-modified = "2026-06-07T00:00:00Z"
-
-[settings."security.web.http_upstream_ports"]
-value = [80, 11434]
-modified = "2026-06-07T00:00:00Z"
-
-[rule_files]
-enforcement = "rules/enforcement.toml"
-sigma = "rules/detection.yaml"
-
-[default.http]
-name = "default_http"
-action = "allow"
-priority = "default"
-match = 'has(http.host)'
-
-[ai.openai]
-name = "OpenAI"
-protocol = "openai"
-url = "https://api.openai.com/v1"
-
-[ai.openai.rules.http_api]
-name = "openai_http_api"
-action = "allow"
-match = 'http.host == "api.openai.com"'
-
-[plugins.dummy_pre_eicar]
-mode = "block"
-"#,
-    );
-    validate_profile_toml_contract(&valid).expect("profile behavior is profile-owned");
-
-    let mut ui = SettingsFile::default();
-    ui.settings
-        .insert("appearance.dark_mode".to_string(), entry(SettingValue::Bool(true)));
-    assert!(validate_profile_toml_contract(&ui)
-        .unwrap_err()
-        .contains("owned by settings"));
-
-    let corp = parse(
-        r#"
-refresh_policy = "24h"
-
-[corp_rule_files]
-sigma_output_endpoint = "https://security.example.invalid/sigma"
-"#,
-    );
-    assert!(validate_profile_toml_contract(&corp).is_err());
-
-    let network = parse(
-        r#"
-[network.dns]
-upstreams = ["127.0.0.1:5353"]
-"#,
-    );
-    assert!(validate_profile_toml_contract(&network)
-        .unwrap_err()
-        .contains("network mechanics"));
 }
 
 #[test]

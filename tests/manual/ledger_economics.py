@@ -58,7 +58,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from helpers.body_archive import generation_path_for_db
-from helpers.constants import CODE_PROFILE_ID
 from helpers.service import ServiceInstance, exec_output_text, vm_session_dir
 
 from tests.fixtures.oci.registry import registry
@@ -355,7 +354,7 @@ def main() -> int:
     session_dir = None
     try:
         with registry(service.tmp_dir) as (reference, certificate, _requests):
-            print(f"\n== boot a sandboxed VM (profile {CODE_PROFILE_ID}) ==")
+            print("\n== boot a sandboxed VM ==")
             box = boot(service, service.tmp_dir, reference, certificate, "econ")
             booted.append(box["id"])
             session_dir = vm_session_dir(service.tmp_dir, client, box["id"])

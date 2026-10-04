@@ -8,8 +8,7 @@ pub(crate) async fn handle_provision(
         .lifecycle
         .admit()
         .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
-    let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
-    if let Some(reason) = vm_asset_block_reason(&state, &profile_id) {
+    if let Some(reason) = state.off_worker(|state| vm_asset_block_reason(&state)).await? {
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
     }
 
@@ -17,7 +16,7 @@ pub(crate) async fn handle_provision(
     let name = payload
         .name
         .clone()
-        .unwrap_or_else(|| generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str())));
+        .unwrap_or_else(|| generate_session_name(existing.iter().map(|s| s.as_str())));
     let persistent = payload.persistent || payload.name.is_some() || payload.from.is_some();
     if existing.iter().any(|existing| existing == &name) {
         return Err(AppError(
@@ -28,10 +27,7 @@ pub(crate) async fn handle_provision(
     let id = new_persistent_vm_id();
     let networks = network_routes::resolve_network_names(&*state.networks.lock().await, &payload.networks)?;
 
-    let profile = state
-        .cached_profile_config(&profile_id)
-        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
-    let resources = resolve_profile_vm_resources(&profile, payload.ram_mb, payload.cpus);
+    let resources = resolve_vm_resources(payload.ram_mb, payload.cpus);
     let ram_mb = resources.ram_mb;
     let cpus = resources.cpus;
     let scratch_disk_size_gb = resources.scratch_disk_size_gb;
@@ -59,7 +55,6 @@ pub(crate) async fn handle_provision(
         let name = name.clone();
         let payload_env = capsem_core::container::session_env(payload.env.clone(), payload.container.is_some());
         let payload_from = payload.from.clone();
-        let payload_profile_id = profile_id.clone();
         let payload_persistent = persistent;
         let attempt = attempt_num.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         async move {
@@ -88,7 +83,6 @@ pub(crate) async fn handle_provision(
                 ram_mb,
                 cpus,
                 scratch_disk_size_gb,
-                payload_profile_id,
                 payload_persistent,
                 payload_env,
                 payload_from,

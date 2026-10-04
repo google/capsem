@@ -1,4 +1,6 @@
 use super::*;
+use capsem_core::net::policy_config::{SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
+use capsem_core::security_engine::{RuntimeSecurityEventType, SecurityEvent};
 
 mod bodies;
 mod bodies_export;
@@ -722,8 +724,6 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
         direct_rows,
         r#"{"columns":["(SELECT COUNT(*) FROM model_calls)","(SELECT COUNT(*) FROM net_events)","(SELECT COUNT(*) FROM exec_events)","(SELECT COUNT(*) FROM security_rule_events)"],"rows":[[1,1,1,1]]}"#
     );
-
-    hydrate_startup_route_caches(&state).expect("startup hydrates profile route caches");
 
     let (status, stats) = route_request(app.clone(), axum::http::Method::GET, "/stats", None).await;
     assert_eq!(status, StatusCode::OK, "{stats}");

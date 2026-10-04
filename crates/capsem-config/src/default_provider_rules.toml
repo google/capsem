@@ -62,7 +62,7 @@ name = "unknown_mcp_server"
 action = "allow"
 priority = "default"
 detection_level = "informational"
-reason = "Detect MCP server activity from observed servers not declared by the active profile."
+reason = "Detect MCP server activity from observed servers not declared in settings or corp config."
 match = 'mcp.server.name.contains("observed:")'
 
 [default.file]
@@ -110,6 +110,17 @@ action = "allow"
 priority = "default"
 reason = "Allow a member of a shared named network to plug this VM into the network's switch, once per plug; every protocol then crosses the cable. Joining the network is the authorization; a stricter rule can still narrow it by network."
 match = 'network.mode == "private" && network.side == "destination" && network.protocol == "link"'
+
+# The hermetic mock server `capsem doctor` and capsem-bench start on the host
+# loopback. Every profile shipped this allow; without it their guest traffic
+# would fall to the local network ask. Built-in rules share one priority and
+# are ordered by id, so the id sorts before 000_local_network.
+[default.000_capsem_mock_server]
+name = "capsem_mock_server"
+action = "allow"
+priority = "default"
+reason = "Allow Capsem doctor, benchmark, and Ironbank traffic to the local hermetic mock server."
+match = '(http.host == "127.0.0.1" || http.host == "localhost") && ip.value == "127.0.0.1" && tcp.port == "3713"'
 
 # The profiles' one Sigma detection, as the equivalent built-in rule.
 [default.skill_loaded]

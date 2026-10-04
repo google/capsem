@@ -792,7 +792,6 @@ def _spawn_service_on_fixed_port(
         PROCESS_BINARY,
         SERVICE_BINARY,
         TRAY_BINARY,
-        materialize_test_profiles,
     )
 
     arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
@@ -803,7 +802,6 @@ def _spawn_service_on_fixed_port(
     env["RUST_LOG"] = "info"
     env["CAPSEM_RUN_DIR"] = str(tmp_dir)
     env["CAPSEM_HOME"] = str(home_dir)
-    env["CAPSEM_PROFILES_DIR"] = str(materialize_test_profiles(tmp_dir))
     env["HOME"] = str(home_dir)
     env["CAPSEM_TRAY_HEADLESS"] = "1"
     log_file = open(log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement

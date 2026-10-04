@@ -50,35 +50,62 @@ pub fn corp_config_paths() -> Vec<std::path::PathBuf> {
 }
 
 /// Load a settings file from disk. Returns empty SettingsFile if file missing.
-/// Applies automatic migration of old setting IDs to new ones.
+/// Applies automatic migration of old setting IDs to new ones, and merges the
+/// rules of referenced `rule_files` into the returned view.
 pub fn load_settings_file(path: &Path) -> Result<SettingsFile, String> {
-    match std::fs::read_to_string(path) {
-        Ok(content) => {
-            reject_retired_mcp_policy_keys(path, &content)?;
-            reject_retired_ai_setting_ids(path, &content)?;
-            let mut file: SettingsFile =
-                toml::from_str(&content).map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
-            migrate_setting_ids(&mut file);
-            if let Some(profile) = load_referenced_enforcement_rules(path, &file)? {
-                merge_referenced_security_rule_profile(&mut file, profile)?;
-            }
-            if let Some(profile) = load_referenced_sigma_rules(path, &file)? {
-                merge_referenced_security_rule_profile(&mut file, profile)?;
-            }
-            file.validate_metadata_contract()
-                .map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
-            Ok(file)
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(SettingsFile::default()),
-        Err(e) => Err(format!("failed to read {}: {}", path.display(), e)),
+    match load_settings_document(path)? {
+        Some(file) => resolve_settings_document(path, file),
+        None => Ok(SettingsFile::default()),
     }
 }
 
-/// Load a local UI/application settings file and reject profile-owned behavior.
+/// The settings file exactly as written: referenced rule files are named, not
+/// merged. A read-modify-write edits this and never the merged view, which
+/// would inline the referenced rules and then refuse them as duplicates on
+/// the next load. `None` when the file does not exist.
+pub fn load_settings_document(path: &Path) -> Result<Option<SettingsFile>, String> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("failed to read {}: {}", path.display(), e)),
+    };
+    reject_retired_mcp_policy_keys(path, &content)?;
+    reject_retired_ai_setting_ids(path, &content)?;
+    let mut file: SettingsFile =
+        toml::from_str(&content).map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
+    migrate_setting_ids(&mut file);
+    Ok(Some(file))
+}
+
+/// Merge a document's referenced rule files and validate the result, as a
+/// load of `path` holding `file` would.
+fn resolve_settings_document(path: &Path, mut file: SettingsFile) -> Result<SettingsFile, String> {
+    if let Some(profile) = load_referenced_enforcement_rules(path, &file)? {
+        merge_referenced_security_rule_profile(&mut file, profile)?;
+    }
+    if let Some(profile) = load_referenced_sigma_rules(path, &file)? {
+        merge_referenced_security_rule_profile(&mut file, profile)?;
+    }
+    file.validate_metadata_contract()
+        .map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
+    Ok(file)
+}
+
+/// Load the user's settings.toml and reject what only corp.toml may define.
 pub fn load_local_settings_file(path: &Path) -> Result<SettingsFile, String> {
     let file = load_settings_file(path)?;
     validate_settings_toml_contract(&file).map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
     Ok(file)
+}
+
+/// Validate `document` as the next content of the user's settings.toml at
+/// `path` -- referenced rule files merged, the settings contract held -- and
+/// write it whole. Returns the merged view the next load will see.
+pub fn write_local_settings_document(path: &Path, document: &SettingsFile) -> Result<SettingsFile, String> {
+    let resolved = resolve_settings_document(path, document.clone())?;
+    validate_settings_toml_contract(&resolved).map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
+    write_settings_file(path, document)?;
+    Ok(resolved)
 }
 
 /// Load a corporate constraint file and reject UI preferences.
@@ -97,7 +124,7 @@ fn reject_retired_mcp_policy_keys(path: &Path, content: &str) -> Result<(), Stri
     for retired in ["global_policy", "default_tool_permission", "tool_permissions"] {
         if mcp.contains_key(retired) {
             return Err(format!(
-                "failed to validate {}: retired MCP policy key mcp.{retired}; use profile security rules instead",
+                "failed to validate {}: retired MCP policy key mcp.{retired}; use security rules instead",
                 path.display()
             ));
         }
@@ -117,7 +144,7 @@ pub(super) fn reject_retired_ai_setting_ids_in_content(label: &str, content: &st
     for key in settings.keys() {
         if key.starts_with("ai.") {
             return Err(format!(
-                "failed to validate {label}: retired AI setting id {key}; use profile/corp security rules, provider discovery, and plugins instead",
+                "failed to validate {label}: retired AI setting id {key}; use settings/corp security rules, provider discovery, and plugins instead",
             ));
         }
     }
@@ -237,8 +264,9 @@ pub fn write_settings_file(path: &Path, file: &SettingsFile) -> Result<(), Strin
 
 /// Load local UI settings and corp constraints from standard locations.
 ///
-/// Corp config merges all available paths (system + user-provisioned).
-/// First path wins per-key (/etc/capsem/corp.toml overrides ~/.capsem/corp.toml).
+/// A settings.toml that does not load is reported and read as empty: this
+/// view serves the settings UI, which must still open to fix it. What a VM
+/// enforces is built from `load_policy_files`, which fails instead.
 pub fn load_settings_and_corp_files() -> (SettingsFile, SettingsFile) {
     let settings = match settings_config_path() {
         Some(path) => load_local_settings_file(&path).unwrap_or_else(|e| {
@@ -247,7 +275,23 @@ pub fn load_settings_and_corp_files() -> (SettingsFile, SettingsFile) {
         }),
         None => SettingsFile::default(),
     };
+    (settings, load_corp_files())
+}
 
+/// The user's settings.toml and the corp config a session's policy is built
+/// from. settings.toml carries the user's security rules, so one that does
+/// not load fails here: reading it as empty would run the VM without them.
+pub fn load_policy_files() -> Result<(SettingsFile, SettingsFile), String> {
+    let settings = match settings_config_path() {
+        Some(path) => load_local_settings_file(&path)?,
+        None => SettingsFile::default(),
+    };
+    Ok((settings, load_corp_files()))
+}
+
+/// Corp constraints from every available path (system + user-provisioned).
+/// First path wins per-key (/etc/capsem/corp.toml overrides ~/.capsem/corp.toml).
+pub fn load_corp_files() -> SettingsFile {
     let mut corp = SettingsFile::default();
     for path in corp_config_paths() {
         match load_corp_settings_file(&path) {
@@ -298,14 +342,7 @@ pub fn load_settings_and_corp_files() -> (SettingsFile, SettingsFile) {
             }
         }
     }
-
-    (settings, corp)
-}
-
-/// Write local UI settings to `<capsem_home>/settings.toml`.
-pub fn write_local_settings(file: &SettingsFile) -> Result<(), String> {
-    let path = settings_config_path().ok_or("HOME not set")?;
-    write_settings_file(&path, file)
+    corp
 }
 
 /// Whether the current process can write corp settings (always false).
@@ -358,7 +395,7 @@ fn batch_update_settings_json_inner(changes: &HashMap<String, serde_json::Value>
 
     let settings_path = settings_config_path().ok_or("HOME not set")?;
     let corp_path = corp_config_path();
-    let mut settings_file = load_local_settings_file(&settings_path)?;
+    let mut settings_file = load_settings_document(&settings_path)?.unwrap_or_default();
     let corp_file = load_corp_settings_file(&corp_path)?;
     let defs = setting_definitions();
     let mut setting_changes = HashMap::new();
@@ -430,7 +467,7 @@ fn batch_update_settings_json_inner(changes: &HashMap<String, serde_json::Value>
         applied.push(id.clone());
     }
 
-    write_settings_file(&settings_path, &settings_file)?;
+    write_local_settings_document(&settings_path, &settings_file)?;
     applied.sort();
     Ok(applied)
 }

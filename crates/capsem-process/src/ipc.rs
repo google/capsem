@@ -12,7 +12,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::job_store::{JobResult, JobStore};
 use crate::mcp_runtime::McpRuntime;
-use crate::runtime_config::RuntimeProfileSource;
+use crate::runtime_config::RuntimePolicySource;
 use crate::terminal::TerminalRelay;
 
 mod container_pull;
@@ -126,7 +126,7 @@ pub(crate) async fn handle_ipc_connection(
     job_store: Arc<JobStore>,
     net_state: Arc<capsem_core::SandboxNetworkState>,
     mcp_runtime: Arc<McpRuntime>,
-    runtime_source: RuntimeProfileSource,
+    runtime_source: RuntimePolicySource,
     mcp_builtin_binary: Option<PathBuf>,
     mcp_builtin_env: HashMap<String, String>,
     vm_ready: Arc<AtomicBool>,
@@ -756,29 +756,29 @@ pub(crate) async fn handle_ipc_connection(
             }
             ServiceToProcess::ReloadConfig { id } => {
                 info!(
-                    active_profile = %runtime_source.active_profile_path().display(),
-                    "Reloading profile runtime config"
+                    active_policy = %runtime_source.active_policy_path().display(),
+                    "Reloading runtime policy"
                 );
-                // A profile that does not load leaves the previous policy in
+                // A policy that does not load leaves the previous one in
                 // force; the service is told why instead of losing the socket.
                 let reply = match runtime_source.load() {
                     Ok(runtime_config) => {
-                        let digest = runtime_config.active_profile_digest.clone();
+                        let digest = runtime_config.active_policy_digest.clone();
                         runtime_config.apply(&net_state, &mcp_runtime);
                         ProcessToService::ConfigReloadResult {
                             id,
-                            active_profile_digest: Some(digest),
+                            active_policy_digest: Some(digest),
                             error: None,
                         }
                     }
                     Err(error) => {
                         warn!(
                             error = format!("{error:#}"),
-                            "Profile reload refused; previous policy kept"
+                            "Policy reload refused; previous policy kept"
                         );
                         ProcessToService::ConfigReloadResult {
                             id,
-                            active_profile_digest: None,
+                            active_policy_digest: None,
                             error: Some(format!("{error:#}")),
                         }
                     }
@@ -878,7 +878,7 @@ pub(crate) async fn handle_ipc_connection(
                         Ok(config) => config,
                         Err(e) => {
                             capsem_core::try_send!(
-                                "ipc_mcp_refresh_profile_load_err",
+                                "ipc_mcp_refresh_policy_load_err",
                                 ipc_tx_out
                                     .send(ProcessToService::McpRefreshResult {
                                         id,

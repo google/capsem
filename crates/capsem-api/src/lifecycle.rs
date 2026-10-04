@@ -15,16 +15,17 @@ pub struct StopResponse {
     pub persistent: bool,
 }
 
+/// Unknown fields are refused rather than ignored.
+// A client that still names a `profile_id` learns it was removed instead of
+// silently getting the default VM.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ProvisionRequest {
     pub name: Option<String>,
-    pub profile_id: String,
-    /// RAM in megabytes. If absent, service resolves from the selected
-    /// profile's VM resources.
+    /// RAM in megabytes. If absent, the service's default (12 GiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ram_mb: Option<u64>,
-    /// CPU count. If absent, service resolves from the selected profile's VM
-    /// resources.
+    /// CPU count. If absent, the service's default (4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpus: Option<u32>,
     /// When true, the VM is persistent (named VMs). Ephemeral VMs are destroyed on stop.
@@ -63,7 +64,6 @@ pub struct ForkResponse {
 pub struct ProvisionResponse {
     pub id: String,
     pub name: String,
-    pub profile_id: String,
     pub status: VmLifecycleState,
     #[serde(default)]
     pub persistent: bool,
@@ -149,7 +149,6 @@ pub struct SessionDbStatus {
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct SandboxInfo {
     pub id: String,
-    pub profile_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub pid: u32,
@@ -216,12 +215,12 @@ pub struct SandboxInfo {
     /// requiring a separate `capsem logs <id>` round-trip.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
-    /// True only when an inactive persistent VM can be started/resumed with
-    /// the currently installed profile and pinned assets.
+    /// True only when an inactive persistent VM can be started/resumed: its
+    /// pinned boot assets are installed and its shape is current.
     #[serde(default)]
     pub can_resume: bool,
     /// Human-readable reason `can_resume` is false for an inactive persistent
-    /// VM, e.g. profile payload hash drift after an upgrade.
+    /// VM, e.g. a pinned boot asset that is no longer installed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_blocked_reason: Option<String>,
     pub available_actions: Vec<VmAction>,
@@ -229,11 +228,10 @@ pub struct SandboxInfo {
 
 impl SandboxInfo {
     /// Construct with only the core fields; all telemetry fields default to None.
-    pub fn new(id: String, profile_id: String, pid: u32, status: VmLifecycleState, persistent: bool) -> Self {
+    pub fn new(id: String, pid: u32, status: VmLifecycleState, persistent: bool) -> Self {
         let available_actions = status.available_actions(false);
         Self {
             id,
-            profile_id,
             name: None,
             pid,
             status,

@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from log_streams import read_log_stream
 
@@ -19,7 +20,6 @@ from .constants import (
     ASSETS_DIR,
     BIN_DIR,
     EXEC_READY_TIMEOUT,
-    PROFILES_DIR,
     content_assets_root,
     content_profiles_root,
     host_bin_root,
@@ -226,56 +226,28 @@ def make_service_home_run_dirs() -> tuple[Path, Path]:
     return home_dir, run_dir
 
 
-def wait_profile_assets_settled(
-    client: UdsHttpClient,
-    profile_id: str,
-    *,
-    timeout: float = 5,
-) -> dict:
-    """Wait for a previously-started asynchronous profile hydration."""
+class StatusReader(Protocol):
+    """What waiting on asset status needs from a service client."""
+
+    def get(self, path: str) -> dict: ...
+
+
+def wait_assets_settled(client: StatusReader, *, timeout: float = 5) -> dict:
+    """Wait for a previously-started asynchronous asset reconciliation."""
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
-        last = client.get(f"/profiles/{profile_id}/assets/status")
+        last = client.get("/assets/status")
         if not last.get("downloading", False):
             return last
         time.sleep(0.01)
-    raise AssertionError(f"profile {profile_id} assets did not settle: {last}")
+    raise AssertionError(f"VM assets did not settle: {last}")
 
 
 def _contains_profile_toml(profiles_dir: Path) -> bool:
     return any(
         path.name == "profile.toml" for path in profiles_dir.glob("*/profile.toml")
     )
-
-
-def materialize_test_profiles(tmp_dir: Path) -> Path:
-    """Copy generated runtime profiles into a test run directory.
-
-    Checked-in profiles are source contracts and intentionally do not contain
-    asset hashes. VM-booting tests must use the materialized profiles generated
-    under cache/target/config/profiles, matching the service/runtime rail.
-    """
-    profiles_dir = tmp_dir / "config" / "profiles"
-    if profiles_dir.exists():
-        if not _contains_profile_toml(profiles_dir):
-            raise RuntimeError(
-                f"generated profile directory contains no profile.toml: {profiles_dir}. "
-                "Run `just _materialize-config` or a just recipe that depends on it."
-            )
-        return profiles_dir
-    if not PROFILES_DIR.exists():
-        raise RuntimeError(
-            f"generated profile directory missing: {PROFILES_DIR}. "
-            "Run `just _materialize-config` or a just recipe that depends on it."
-        )
-    if not _contains_profile_toml(PROFILES_DIR):
-        raise RuntimeError(
-            f"generated profile directory contains no profile.toml: {PROFILES_DIR}. "
-            "Run `just _materialize-config` or a just recipe that depends on it."
-        )
-    shutil.copytree(PROFILES_DIR, profiles_dir)
-    return profiles_dir
 
 
 def record_failure(nodeid: str) -> None:
@@ -489,9 +461,6 @@ class ServiceInstance:
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.assets_dir = assets_dir
         self.sign_binaries = sign_binaries
-        self.profiles_dir = None
-        # An installed cohort carries no catalog; the service runs on its own.
-        self.uses_profile_catalog = True
         self.gateway_port = 0
         self.proc = None
         self._log_file = None
@@ -507,22 +476,11 @@ class ServiceInstance:
             sign_binary(TRAY_BINARY)
 
         assets_dir = self.assets_dir or ASSETS_DIR
-        if self.uses_profile_catalog and self.profiles_dir is None:
-            self.profiles_dir = materialize_test_profiles(self.tmp_dir)
-        if self.profiles_dir is not None and not self.profiles_dir.exists():
-            raise RuntimeError(
-                f"generated profile directory missing: {self.profiles_dir}. "
-                "Run `just _materialize-config` or a just recipe that depends on it."
-            )
 
         env = os.environ.copy()
         env["RUST_LOG"] = test_rust_log_filter()
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
         env["CAPSEM_HOME"] = str(self.home_dir)
-        if self.profiles_dir is not None:
-            env["CAPSEM_PROFILES_DIR"] = str(self.profiles_dir)
-        else:
-            env.pop("CAPSEM_PROFILES_DIR", None)
         env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
             self.home_dir / "credential-store.json"
         )

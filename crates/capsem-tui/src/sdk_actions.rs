@@ -14,12 +14,11 @@ use crate::gateway_provider::ActionOutcome;
 pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &ControlAction) -> Result<ActionOutcome> {
     let vm = |id: &str| hypervisor.vm(VmSelector::Id(id.into()));
     match action {
-        ControlAction::CreateSession { name, profile_id } => {
+        ControlAction::CreateSession { name } => {
             // TUI workspaces persist even when the service chooses their name.
             let input = api::CreateVmParams {
                 body: ProvisionRequest {
                     name: name.clone(),
-                    profile_id: profile_id.clone(),
                     persistent: true,
                     ram_mb: None,
                     cpus: None,

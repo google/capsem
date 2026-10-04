@@ -10,7 +10,6 @@ function vm(status: VmSummary['status'], available_actions: VmSummary['available
     name: null,
     status,
     persistent: true,
-    profile_id: 'code',
     can_resume: false,
     available_actions,
   };

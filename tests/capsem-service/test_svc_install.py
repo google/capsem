@@ -7,6 +7,7 @@ never touch the developer's real config.
 """
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -30,81 +31,63 @@ class TestSetupRoutesRemoved:
     def test_retired_corp_config_route_is_removed(self, client):
         assert client.post("/corp-config", {}) is None
 
-    def test_retired_global_asset_routes_are_removed(self, client):
-        assert client.get("/assets/status") is None
-        assert client.post("/assets/ensure", {}) is None
+    def test_retired_profile_asset_routes_are_removed(self, client):
+        assert client.get("/profiles/code/assets/status") is None
+        assert client.post("/profiles/code/assets/ensure", {}) is None
 
 
 class TestAssets:
 
-    def test_assets_lists_three_expected_artifacts(self, client):
-        """Profile asset status enumerates hash-prefixed kernel/initrd/rootfs assets."""
-        resp = client.get("/profiles/code/assets/status")
+    def test_assets_lists_the_three_boot_assets(self, client):
+        """Asset status enumerates the runtime kernel/initrd/rootfs by logical
+        name, each at its hash-named path."""
+        resp = client.get("/assets/status")
         assert resp is not None
-        # Handler either returns {ready, downloading, asset_version, assets}
-        # or {ready: false, downloading: false, error, assets: []}.
-        assert "ready" in resp and "assets" in resp, f"missing keys: {resp}"
+        assert {"ready", "downloading", "current_arch", "assets", "errors", "manifest"} <= set(resp), resp
         assert isinstance(resp["ready"], bool)
         assert isinstance(resp["assets"], list)
         if resp["assets"]:
-            names = {a["name"] for a in resp["assets"]}
-            kernel_names = {
-                name
-                for name in names
-                if re.fullmatch(r"vmlinuz(?:-[a-f0-9]{16})?", name)
+            kinds = {asset["kind"]: asset for asset in resp["assets"]}
+            assert set(kinds) == {"kernel", "initrd", "rootfs"}, resp
+            assert kinds["kernel"]["name"] == "vmlinuz"
+            assert kinds["initrd"]["name"] == "initrd.img"
+            assert kinds["rootfs"]["name"] == "rootfs.erofs"
+            patterns = {
+                "kernel": r"vmlinuz-[a-f0-9]{16}",
+                "initrd": r"initrd-[a-f0-9]{16}\.img",
+                "rootfs": r"rootfs-[a-f0-9]{16}\.erofs",
             }
-            initrd_names = {
-                name
-                for name in names
-                if re.fullmatch(r"initrd(?:-[a-f0-9]{16})?\.img", name)
-            }
-            rootfs_names = {
-                name
-                for name in names
-                if re.fullmatch(r"rootfs(?:-[a-f0-9]{16})?\.erofs", name)
-            }
-            assert len(kernel_names) == 1, f"unexpected kernel assets: {names}"
-            assert len(initrd_names) == 1, f"unexpected initrd assets: {names}"
-            assert len(rootfs_names) == 1, f"unexpected asset names: {names}"
-            assert names == kernel_names | initrd_names | rootfs_names, (
-                f"unexpected asset names: {names}"
-            )
-            for asset in resp["assets"]:
-                assert asset["status"] in ("present", "missing")
+            for kind, asset in kinds.items():
+                assert re.fullmatch(patterns[kind], Path(asset["path"]).name), asset
+                assert asset["status"] in ("present", "missing", "invalid")
 
     def test_assets_reports_ready_when_all_present(self, client):
-        """ready=true iff every asset and profile file is present and no
+        """ready=true iff every asset is present, nothing is in error and no
         reconcile is repairing them.
 
         Test binaries are spawned with --assets-dir pointing at the real
         repo assets, so in a dev environment this should be ready=true.
         If assets haven't been built yet, we accept ready=false but still
-        verify the invariant. The service's startup reconcile may still be
-        fetching a profile file (software-inventory.json) when this asks;
-        while it runs, ready is deliberately false. The invariant used to
-        read only `assets`, and failed a release run on exactly that.
+        verify the invariant. While a startup reconcile runs, ready is
+        deliberately false.
         """
-        resp = client.get("/profiles/code/assets/status")
+        resp = client.get("/assets/status")
         assert resp is not None
-        if resp.get("error"):
-            # No asset manifest -- skip the invariant but keep shape assertion.
-            return
-        all_present = all(
-            entry["status"] == "present"
-            for entry in [*resp["assets"], *resp.get("files", [])]
+        all_present = bool(resp["assets"]) and all(
+            entry["status"] == "present" for entry in resp["assets"]
         )
-        expected = all_present and not resp["downloading"]
+        expected = all_present and not resp["errors"] and not resp["downloading"]
         assert resp["ready"] == expected, (
             f"ready={resp['ready']} but all_present={all_present} "
             f"downloading={resp['downloading']}: {resp}"
         )
 
     def test_assets_ensure_returns_status_shape(self, client):
-        """Profile asset ensure returns the same status shape after reconcile."""
-        resp = client.post("/profiles/code/assets/ensure", {})
+        """Asset ensure answers the status that started it."""
+        resp = client.post("/assets/ensure", {})
         assert resp is not None
         assert "ready" in resp and "assets" in resp, f"missing keys: {resp}"
-        assert resp.get("ensured") is True or resp.get("error") is not None
+        assert isinstance(resp["started"], bool), resp
         assert isinstance(resp["ready"], bool)
         assert isinstance(resp["assets"], list)
 

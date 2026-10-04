@@ -86,11 +86,10 @@ struct Args {
     /// Explicit initrd path (overrides assets_dir/initrd.img)
     #[arg(long)]
     initrd: Option<PathBuf>,
-    /// BLAKE3 hashes the booting profile pins for its boot assets.
+    /// BLAKE3 hashes of the boot assets this VM must boot.
     ///
-    /// Supplied by the service, which resolves the profile: a channel carries one
-    /// image set per profile, so nothing here can derive them from a channel-wide
-    /// pointer without verifying one profile against another's kernel.
+    /// Supplied by the service, which pins them: a new VM gets the installed
+    /// runtime asset set, a persistent VM the set it was created with.
     #[arg(long)]
     expected_kernel_hash: String,
     #[arg(long)]
@@ -100,7 +99,7 @@ struct Args {
     #[arg(long)]
     session_dir: PathBuf,
     #[arg(long)]
-    active_profile: PathBuf,
+    active_policy: PathBuf,
     #[arg(long, default_value_t = 2)]
     cpus: u32,
     #[arg(long, default_value_t = 2048)]
@@ -380,7 +379,7 @@ async fn run_async_main_loop(
     session_dir: std::path::PathBuf,
     shutdown: Arc<Mutex<Shutdown>>,
 ) -> Result<()> {
-    let runtime_source = runtime_config::RuntimeProfileSource::new(args.active_profile.clone());
+    let runtime_source = runtime_config::RuntimePolicySource::new(args.active_policy.clone());
     let runtime_config = runtime_source.load()?;
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
@@ -400,13 +399,12 @@ async fn run_async_main_loop(
         .map(|rule| rule.rule_id.as_str())
         .collect::<Vec<_>>();
     info!(
-        profile_id = %runtime_config.profile_id,
-        active_profile = %runtime_config.active_profile_path.display(),
+        active_policy = %runtime_config.active_policy_path.display(),
         security_rule_count = security_rule_ids.len(),
         security_rule_ids = ?security_rule_ids,
         plugin_count = runtime_config.plugins.len(),
         dns_upstreams = ?runtime_config.dns_upstreams,
-        "capsem-process loaded profile runtime config"
+        "capsem-process loaded runtime policy"
     );
     let guest_config = capsem_core::net::policy_config::GuestConfig::default();
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.security_rules.clone())));
@@ -486,8 +484,8 @@ async fn run_async_main_loop(
     let db_path = session_dir.join("session.db");
     builtin_env.insert("CAPSEM_SESSION_DB".into(), db_path.to_string_lossy().to_string());
     builtin_env.insert(
-        "CAPSEM_ACTIVE_PROFILE".into(),
-        runtime_config.active_profile_path.to_string_lossy().to_string(),
+        "CAPSEM_ACTIVE_POLICY".into(),
+        runtime_config.active_policy_path.to_string_lossy().to_string(),
     );
     let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env.clone());
     // Spawn the isolated MCP aggregator subprocess.

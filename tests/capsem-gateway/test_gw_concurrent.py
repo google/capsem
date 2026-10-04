@@ -7,7 +7,7 @@ real binary process (not just Rust unit tests).
 import threading
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 
 pytestmark = pytest.mark.gateway
 
@@ -66,7 +66,7 @@ class TestConcurrentRequests:
                     "provision",
                     "POST",
                     "/vms/create",
-                    {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+                    {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
                 ),
             ),
         ]

@@ -11,8 +11,7 @@ use std::time::Duration;
 
 async fn example(url: &str, token: &str) -> Result<()> {
     let hv = Hypervisor::new(url, token)?.with_timeout(Duration::from_secs(120))?;
-    println!("{:?}", hv.info().await?); // health, version, profiles, updates
-    let profile = hv.profiles().list().await?.remove(0);
+    println!("{:?}", hv.info().await?); // health, version, assets, updates
     let network = hv.networks().create("private").await?;
     let vm = hv.create(CreateOptions {
         name: Some("work".into()), cpus: Some(4), memory: Some(8),
@@ -34,7 +33,7 @@ async fn example(url: &str, token: &str) -> Result<()> {
     vm.stats().details().await?;
     vm.persist("saved-workspace").await?;
     hv.debug().triage(TriageOptions { vm_id: vm.id().map(str::to_owned), since: Some("1h".into()), ..Default::default() }).await?;
-    let server = hv.profiles().mcp(&profile).get("filesystem").await?;
+    let server = hv.mcp().get("filesystem").await?;
     server.tools().list().await?;
     hv.log(HostLogSource::Service, LogOptions { tail: Some(100), ..Default::default() }).await?;
     vm.ports().close(&port).await?;
@@ -53,12 +52,9 @@ Clones, created VMs and forks share the HTTP connection pool. Dropping a handle
 does not invalidate other handles. Dropping a request future cancels its HTTP
 request; the gateway may already have accepted a mutation.
 
-Omitted CPU and memory values retain the profile defaults. Omit `profile` for the
-profile the gateway's catalog names as its default (read once from
-`GET /status` and cached on the handle); select another by assigning a
-`ProfileSummary` returned by `hv.profiles().list().await?` to the options. Names
-create persistent VMs; omitted or empty names create ephemeral VMs. Memory is
-measured in GiB.
+Omitted CPU and memory values take the hypervisor's defaults (4 CPUs, 12 GiB);
+a create is a single `POST /vms/create`. Names create persistent VMs; omitted
+or empty names create ephemeral VMs. Memory is measured in GiB.
 
 VM controls are `start`, `stop`, `pause`, `resume`, `delete`, and
 `fork(name, description)`. Queries include `log(LogOptions)`,
@@ -93,6 +89,7 @@ requested. The SDK infers the VM or container target. Typed ports can be listed
 and closed without exposing wire request enums.
 
 `hv.run(command, options)` executes once in a temporary VM. `hv.debug().panics()`,
-`hv.debug().triage()` and `hv.purge()` expose diagnostics and cleanup. `hv.profiles()`
-provides typed profile and MCP discovery, refresh, permissions and tool calls;
-tool arguments and results retain their native JSON shape.
+`hv.debug().triage()` and `hv.purge()` expose diagnostics and cleanup. `hv.mcp()`
+provides typed discovery, refresh, permissions and tool calls for the MCP
+servers every VM runs; tool arguments and results retain their native JSON
+shape.

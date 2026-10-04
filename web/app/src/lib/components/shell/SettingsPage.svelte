@@ -4,6 +4,10 @@
   import { settingsStore } from '../../stores/settings.svelte.ts';
   import { THEME_FAMILIES, getTheme, resolveThemeKey } from '../../terminal/themes';
   import SettingsSection from '../settings/SettingsSection.svelte';
+  import PluginSection from '../settings/PluginSection.svelte';
+  import McpSection from '../settings/McpSection.svelte';
+  import Plugs from 'phosphor-svelte/lib/Plugs';
+  import PuzzlePiece from 'phosphor-svelte/lib/PuzzlePiece';
   import Palette from 'phosphor-svelte/lib/Palette';
   import GearSix from 'phosphor-svelte/lib/GearSix';
   import Desktop from 'phosphor-svelte/lib/Desktop';
@@ -41,6 +45,8 @@
   let navItems = $derived.by(() => {
     const items: { key: string; label: string; icon: any }[] = [
       { key: 'appearance', label: 'Appearance', icon: Palette },
+      { key: 'plugins', label: 'Plugins', icon: PuzzlePiece },
+      { key: 'mcp', label: 'MCP', icon: Plugs },
     ];
     for (const section of dynamicSections) {
       items.push({
@@ -309,6 +315,10 @@
           </div>
         </div>
 
+      {:else if activeSection === 'plugins'}
+        <PluginSection />
+      {:else if activeSection === 'mcp'}
+        <McpSection />
       {:else if activeDynamicGroup}
         <!-- ===== Dynamic section from settings tree ===== -->
         <SettingsSection group={activeDynamicGroup} />

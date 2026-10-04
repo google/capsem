@@ -10,8 +10,8 @@ use serde::Deserialize;
 
 use crate::app::ControlAction;
 use crate::model::{
-    AppState, Attention, ProfileOption, ServiceState, ServiceStatus, SessionLifecycle, SessionStats, SessionSummary,
-    UpdateNotice, UpdateNoticeKind, UpdateTrack,
+    AppState, Attention, ServiceState, ServiceStatus, SessionLifecycle, SessionStats, SessionSummary, UpdateNotice,
+    UpdateNoticeKind, UpdateTrack,
 };
 use crate::provider::StateProvider;
 
@@ -127,9 +127,7 @@ impl GatewayProvider {
                 fetch_status(&hypervisor).await?
             }
         };
-        let mut state = status_response_to_state(status, started.elapsed());
-        state.profiles = fetch_profiles(&hypervisor).await.unwrap_or_default();
-        Ok(state)
+        Ok(status_response_to_state(status, started.elapsed()))
     }
 
     pub fn invoke(&self, action: &ControlAction) -> Result<ActionOutcome> {
@@ -179,21 +177,6 @@ async fn fetch_status(hypervisor: &Hypervisor) -> Result<HypervisorInfo> {
     hypervisor.info().await.map_err(crate::sdk_actions::display_error)
 }
 
-async fn fetch_profiles(hypervisor: &Hypervisor) -> Result<Vec<ProfileOption>> {
-    Ok(hypervisor
-        .profiles()
-        .list()
-        .await?
-        .into_iter()
-        .filter(|record| record.availability.shell)
-        .map(|record| ProfileOption {
-            id: record.id,
-            name: record.name,
-            description: Some(record.description),
-        })
-        .collect())
-}
-
 fn gateway_port() -> Option<u16> {
     let path = run_dir().join("gateway.port");
     let raw = std::fs::read_to_string(path).ok()?;
@@ -229,7 +212,6 @@ fn status_response_to_state(status: HypervisorInfo, latency: Duration) -> AppSta
         },
         active_session_id,
         sessions,
-        profiles: Vec::new(),
         update_notice: Some(status.updates.map(update_response_to_notice).unwrap_or(UpdateNotice {
             kind: UpdateNoticeKind::Unavailable,
             channel_url: None,
@@ -245,9 +227,6 @@ fn update_response_to_notice(status: UpdateStatusResponse) -> UpdateNotice {
     if status.assets.update_available {
         tracks.push(UpdateTrack::VmAssets);
     }
-    if status.profiles.update_available {
-        tracks.push(UpdateTrack::Profiles);
-    }
     if status.images.update_available {
         tracks.push(UpdateTrack::Images);
     }
@@ -257,9 +236,6 @@ fn update_response_to_notice(status: UpdateStatusResponse) -> UpdateNotice {
     }
     if status.assets.blocked_reason.is_some() {
         blocked.push(UpdateTrack::VmAssets);
-    }
-    if status.profiles.blocked_reason.is_some() {
-        blocked.push(UpdateTrack::Profiles);
     }
     if status.images.blocked_reason.is_some() {
         blocked.push(UpdateTrack::Images);
@@ -302,9 +278,6 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
         id,
         title,
         repo_path: None,
-        profile: vm.profile_id,
-        // The overview does not report a VM's pinned profile revision or readiness.
-        profile_status: None,
         can_resume: vm.can_resume,
         resume_blocked_reason: vm.resume_blocked_reason,
         branch: None,

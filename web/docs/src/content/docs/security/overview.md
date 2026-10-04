@@ -18,7 +18,7 @@ Capsem sandboxes AI agents inside Linux VMs. The security model treats the guest
 **What Capsem defends against:**
 - Guest code escaping the VM boundary
 - Guest exhausting host CPU, memory, disk, or file descriptors
-- Guest accessing network services blocked by profile or corporate rules
+- Guest accessing network services blocked by user or corporate rules
 - Unaudited data exfiltration via HTTPS
 
 **What Capsem does not defend against:**

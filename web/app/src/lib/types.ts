@@ -1,4 +1,4 @@
-// UI and profile configuration types. Gateway SDK types are re-exported below.
+// UI and configuration types. Gateway SDK types are re-exported below.
 
 /** The data type of a setting (serde rename_all = "snake_case"). */
 export type SettingType =
@@ -185,17 +185,20 @@ export interface McpServerInfo {
   url: string;
   has_auth_credential: boolean;
   custom_header_count: number;
-  source: string;
+  source: 'builtin' | 'config';
   enabled: boolean;
   running: boolean;
   tool_count: number;
   is_stdio: boolean;
 }
 
-/** Default MCP permission rule exposed from the profile enforcement contract. */
+/** Where an MCP permission comes from: corp config, the user's settings.toml, or the built-in default. */
+export type McpPermissionSource = 'corp' | 'settings' | 'default';
+
+/** Default MCP tool permission and where it comes from. */
 export interface McpDefaultPermission {
   action: ToolPermission;
-  source: string;
+  source: McpPermissionSource;
   rule_id: string | null;
 }
 
@@ -209,7 +212,7 @@ export interface McpToolInfo {
   pin_hash: string | null;
   pin_changed: boolean;
   permission_action: ToolPermission;
-  permission_source: string;
+  permission_source: McpPermissionSource;
 }
 
 /** Per-tool permission decision. */

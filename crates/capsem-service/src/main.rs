@@ -8,21 +8,8 @@ use axum::{
     Json, Router,
 };
 use capsem_core::{
-    mcp::{
-        policy::{McpManualServer, McpProfileConfig},
-        ToolCacheEntry,
-    },
-    net::policy_config::{
-        skill_id_for_path, ActiveProfileFile, CompiledSecurityRule, DetectionLevel, Profile, ProfileAssetDescriptor,
-        ProfileCatalog, ProfileCatalogSource, ProfileConfigFile, ProviderRuleProfile, SecurityPluginConfig,
-        SecurityPluginMode, SecurityRule, SecurityRuleAction, SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet,
-        SecurityRuleSource, SettingsFile,
-    },
-    security_engine::{
-        DnsSecurityEvent, FileSecurityEvent, HttpSecurityEvent, IpSecurityEvent, McpSecurityEvent, ModelSecurityEvent,
-        ProcessSecurityEvent, RuntimeSecurityEventType, SecurityActionRegistry, SecurityEmitError, SecurityEvent,
-        SecurityEventEmitter, SecurityEventEngine, SerializableSecurityEvent, TcpSecurityEvent, UdpSecurityEvent,
-    },
+    mcp::ToolCacheEntry,
+    net::policy_config::{DetectionLevel, SecurityPluginConfig, SecurityPluginMode, SecurityRuleAction, SettingsFile},
 };
 use capsem_foundation::ipc_channel::{channel_from_std, Receiver, Sender};
 use capsem_foundation::poll::{poll_until, PollOpts};
@@ -31,7 +18,7 @@ use capsem_service::errors::AppError;
 use clap::Parser;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
@@ -39,8 +26,10 @@ use tokio::net::UnixListener;
 use tokio::process::Command;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
-mod active_profile;
+mod active_policy;
+use active_policy::push_policy_to_running_instances;
 mod asset_background;
+mod asset_routes;
 mod blocking;
 mod container_setup;
 mod host_ledger;
@@ -49,11 +38,11 @@ mod instance_reaper;
 use instance::InstanceInfo;
 mod network_routes;
 mod policy_mutation;
-use policy_mutation::{apply_profile_mutation, bad_request, Enforcement, MutationRoute, PolicyMutation};
+use policy_mutation::{apply_policy_mutation, MutationRoute, PolicyMutation};
+mod mcp_routes;
+mod plugin_routes;
 mod private_routes;
 mod process_control;
-mod profile_mutation_cache;
-mod profile_status_cache;
 mod sandbox_info;
 mod session_cleanup;
 mod session_db_handles;
@@ -62,9 +51,9 @@ use session_db_handles::session_db_path_for_session_dir;
 mod session_housekeeping;
 use session_cleanup::{finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result};
 mod ledger_routes;
-mod profile_routes;
 mod router_runtime;
 mod service_runtime;
+mod settings_routes;
 mod shutdown_policy;
 mod startup;
 mod suspend_confirmation;
@@ -72,11 +61,11 @@ mod update_command;
 mod update_status;
 mod vm_files;
 mod vm_lifecycle;
+use asset_routes::*;
 use ledger_routes::*;
-use profile_routes::*;
-use profile_status_cache::*;
 use router_runtime::*;
 use service_runtime::*;
+use settings_routes::*;
 use shutdown_policy::*;
 use suspend_confirmation::{observe_suspend_message, suspend_channel_closed, suspend_failure, SuspendConfirmation};
 use update_command::{update_command_plan, UpdateCommandKind};
@@ -146,33 +135,9 @@ impl Drop for ServicePidfile {
     }
 }
 
-#[cfg(test)]
-thread_local! {
-    static TEST_PROFILE_DIR_OVERRIDE: std::cell::RefCell<Option<PathBuf>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(test)]
-fn test_profile_dir_override() -> Option<PathBuf> {
-    TEST_PROFILE_DIR_OVERRIDE.with(|cell| {
-        let path = cell.borrow().clone();
-        if path.as_ref().is_some_and(|path| !path.exists()) {
-            cell.replace(None);
-            None
-        } else {
-            path
-        }
-    })
-}
-
-#[cfg(test)]
-fn set_test_profile_dir_override(path: Option<PathBuf>) -> Option<PathBuf> {
-    TEST_PROFILE_DIR_OVERRIDE.with(|cell| cell.replace(path))
-}
-
 use capsem_service::api;
 use capsem_service::api::*;
-use capsem_service::naming::{generate_profile_session_name, validate_vm_name};
+use capsem_service::naming::{generate_session_name, validate_vm_name};
 use capsem_service::registry::{
     new_persistent_vm_id, BootAssetPin, BootAssetPins, PersistentRegistry, PersistentVmEntry, SharedRegistry,
 };
@@ -224,8 +189,8 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
     "CAPSEM_EXPERIMENTAL_EROFS_DAX",
 ];
 
-const ACTIVE_PROFILE_DIR: &str = "vm";
-const ACTIVE_PROFILE_FILE: &str = "active_profile.toml";
+const ACTIVE_POLICY_DIR: &str = "vm";
+const ACTIVE_POLICY_FILE: &str = "active_policy.toml";
 
 struct ServiceState {
     instances: Mutex<HashMap<String, InstanceInfo>>, // instance id to process info
@@ -246,42 +211,17 @@ struct ServiceState {
     manifest: RwLock<Option<Arc<capsem_assets::asset_manager::ManifestV2>>>,
     current_version: String,
     /// In-memory asset reconciliation progress. Service startup and explicit
-    /// /profiles/{profile_id}/assets/ensure shares this single rail with
-    /// status so status can explain both.
+    /// /assets/ensure share this single rail with status so status can
+    /// explain both.
     asset_reconcile: Mutex<AssetReconcileState>,
     asset_reconcile_inflight: AtomicBool,
     asset_status_path: PathBuf,
-    /// Profile-owned plugin policy overrides. Effective policy is built-in
-    /// plugin defaults plus overrides for the profile executing the VM.
-    plugin_policy_by_profile: Mutex<HashMap<String, BTreeMap<String, SecurityPluginConfig>>>,
-    /// Route-owned profile summaries loaded once at service startup. Hot
-    /// profile routes must not re-read profile files or recompile rules.
-    profile_summary_cache: Mutex<Vec<api::ProfileSummary>>,
-    /// Route-owned full profile objects loaded once at service startup.
-    /// Hot profile/MCP routes must not reload profile files from disk.
-    profile_cache: Mutex<BTreeMap<String, Profile>>,
-    /// Route-owned profile readiness snapshot loaded once at service startup
-    /// and refreshed by explicit profile/asset mutation routes. Hot status
-    /// routes must not re-read profile TOML, re-hash assets, or validate the
-    /// manifest on every UI/TUI poll.
-    profile_status_cache: Mutex<Option<Arc<ProfileStatusCache>>>,
-    /// Route-owned compiled rule DTOs loaded once at service startup and
-    /// refreshed by profile/corp mutation routes. Polling UI/TUI routes must
-    /// not parse profile TOML or compile CEL on every request.
-    profile_rule_cache: Mutex<BTreeMap<String, Vec<api::EnforcementRuleInfo>>>,
-    /// Route-owned default MCP permission readbacks loaded with the profile
-    /// rule cache. Hot MCP routes must not reload and verify enforcement files.
-    profile_mcp_default_cache: Mutex<BTreeMap<String, Result<api::McpDefaultPermissionResponse, String>>>,
-    /// Route-owned profile plugin configs loaded once at service startup and
-    /// refreshed by profile/corp mutation routes. Hot plugin/profile routes
-    /// must not re-read profile TOML just to list effective plugin modes.
-    profile_plugin_policy_cache: Mutex<BTreeMap<String, BTreeMap<String, SecurityPluginConfig>>>,
     /// Route-owned MCP tool cache loaded once at service startup and refreshed
     /// by explicit MCP discovery routes. Hot MCP list routes must not read the
     /// tool cache JSON from disk.
     mcp_tool_cache: Mutex<Vec<ToolCacheEntry>>,
     /// Logger-owned DB handle for the host ledger (`sessions/host.db`): host
-    /// events and profile mutations. Routes call `write`; they must never open
+    /// events and policy mutations. Routes call `write`; they must never open
     /// SQLite directly or hold a side `DbWriter`.
     host_ledger: Arc<capsem_logger::DbHandle>,
     /// The `/stats` fold of the host ledger, see `host_ledger.rs`.
@@ -302,28 +242,15 @@ struct ServiceState {
     storage_diagnostics_cache: Mutex<HashMap<PathBuf, api::StorageDiagnostics>>,
     /// Derived persistent VM resume state keyed by stable VM id. The
     /// fingerprint covers registry fields that affect status so route polling
-    /// does not reload profile files and revalidate asset pins every sample.
+    /// does not revalidate asset pins every sample.
     persistent_resume_state_cache: Mutex<HashMap<String, CachedPersistentResumeState>>,
-    /// User-supplied evaluate-route rule snippets compiled by exact TOML
-    /// content. Evaluation remains per request; parsing/compilation does not.
-    evaluate_rule_cache: Mutex<HashMap<String, SecurityRuleSet>>,
-    /// Final JSON bytes for profile rule inventory routes, cleared whenever
-    /// the route-owned rule cache is refreshed.
-    profile_rule_response_cache: Mutex<HashMap<String, Bytes>>,
-    /// Final JSON bytes for profile plugin inventory routes, cleared whenever
-    /// profile/plugin policy caches are refreshed.
-    profile_plugin_response_cache: Mutex<HashMap<String, Bytes>>,
-    /// Final evaluate-route JSON bytes keyed by profile id and exact request
-    /// body. Plugin policy refresh clears this cache so repeated UI/TUI probes
-    /// do not re-run plugin simulation or serialize identical payloads.
-    evaluate_response_cache: Mutex<HashMap<Vec<u8>, Bytes>>,
+    /// The installed manifest's status, rebuilt only when manifest.json or
+    /// its metadata changes; `/status` polls it.
+    asset_manifest_cache: Mutex<Option<asset_routes::CachedManifestStatus>>,
     /// `/vms/list` lifecycle rows keyed by the in-memory lifecycle snapshot
     /// (uptime seconds included). Activity totals are read per poll from
     /// each ledger's cached counter snapshot, never cached here.
     list_response_cache: Mutex<Option<CachedListResponse>>,
-    /// One-entry hot evaluate cache for repeated probes with the same exact
-    /// body. Checked before allocating the multi-entry cache key.
-    evaluate_last_response_cache: Mutex<Option<CachedEvaluateResponse>>,
     /// Coordinates launch admission and Apple VZ lifecycle edges. Cold starts
     /// and teardown take a VZ read guard; save/restore take a write guard.
     /// Blocking launch workers also retain admission through registration,
@@ -344,7 +271,7 @@ struct ServiceState {
     /// user-host.
     shutdown_lock: tokio::sync::Mutex<()>,
     /// Serializes every explicit and automatic update command. The update
-    /// transaction owns binaries, profiles, assets, and the selected manifest
+    /// transaction owns binaries, assets, and the selected manifest
     /// together, so the service must never launch split or overlapping
     /// mutations.
     update_lock: tokio::sync::Mutex<()>,
@@ -375,13 +302,6 @@ struct CachedPersistentResumeState {
 }
 
 #[derive(Clone)]
-struct CachedEvaluateResponse {
-    profile_id: String,
-    request_body: Bytes,
-    response_body: Bytes,
-}
-
-#[derive(Clone)]
 struct CachedListResponse {
     fingerprint: String,
     listed: (ListResponse, Vec<PathBuf>),
@@ -403,292 +323,9 @@ struct AssetReconcileState {
     last_downloaded: Option<usize>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum PluginScopeKind {
-    Profile,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct PluginScope {
-    kind: PluginScopeKind,
-    profile_id: String,
-}
-
-#[derive(Debug, Serialize)]
-struct PluginListResponse {
-    scope: PluginScope,
-    plugins: Vec<PluginInfo>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum PluginStage {
-    Preprocess,
-    Postprocess,
-    Logging,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct PluginRuntimeStatus {
-    enabled: bool,
-    event_count: u64,
-    execution_count: u64,
-    applied_count: u64,
-    skipped_count: u64,
-    total_duration_us: u64,
-    max_duration_us: u64,
-    detection_count: u64,
-    block_count: u64,
-    rewrite_count: u64,
-    last_error: Option<String>,
-    brokered_credentials: Vec<BrokeredCredentialStatus>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct PluginCapabilities {
-    event_families: Vec<&'static str>,
-    credential_providers: Vec<&'static str>,
-    credential_sources: Vec<&'static str>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct BrokeredCredentialStatus {
-    provider: Option<String>,
-    credential_ref: String,
-    observed_count: u64,
-    injected_count: u64,
-    replay_available: bool,
-    last_seen: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum PluginDetailRouteKind {
-    CredentialBroker,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct PluginDetailRoute {
-    id: &'static str,
-    label: &'static str,
-    kind: PluginDetailRouteKind,
-    path: String,
-}
-
-#[derive(Debug, Serialize)]
-struct PluginInfo {
-    id: String,
-    name: &'static str,
-    config: SecurityPluginConfig,
-    default_config: SecurityPluginConfig,
-    overridden: bool,
-    scope: PluginScope,
-    description: &'static str,
-    stage: PluginStage,
-    version: &'static str,
-    capabilities: PluginCapabilities,
-    runtime: PluginRuntimeStatus,
-    detail_routes: Vec<PluginDetailRoute>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum CredentialBrokerForkGrantDefault {
-    InheritProfile,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct CredentialBrokerVmGrant {
-    vm_id: String,
-    enabled: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct CredentialBrokerGrantStatus {
-    profile_enabled: bool,
-    vm_grants: Vec<CredentialBrokerVmGrant>,
-    fork_default: CredentialBrokerForkGrantDefault,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct CredentialBrokerCorpConstraint {
-    id: String,
-    description: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct CredentialBrokerDetailResponse {
-    scope: PluginScope,
-    plugin_id: &'static str,
-    store: capsem_core::credential_broker::CredentialStoreStatus,
-    inventory: Vec<BrokeredCredentialStatus>,
-    grants: CredentialBrokerGrantStatus,
-    corp_constraints: Vec<CredentialBrokerCorpConstraint>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PluginUpdate {
-    #[serde(default)]
-    mode: Option<SecurityPluginMode>,
-    #[serde(default)]
-    detection_level: Option<DetectionLevel>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct McpToolEditRequest {
-    pub action: SecurityRuleAction,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct McpServerEditRequest {
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default)]
-    headers: HashMap<String, String>,
-    #[serde(default)]
-    enabled: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ProfileSkillAddRequest {
-    path: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ProfileSkillEditRequest {
-    path: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct EnforcementEvaluateRequest {
-    rules_toml: String,
-    event: EnforcementEventInput,
-}
-
-impl EnforcementEvaluateRequest {
-    #[cfg(test)]
-    fn eicar_fixture() -> Self {
-        Self {
-            rules_toml: r#"
-[profiles.rules.eicar]
-name = "eicar_rewrite_scan"
-action = "allow"
-detection_level = "high"
-match = 'file.import.content.contains("EICAR")'
-"#
-            .to_string(),
-            event: EnforcementEventInput {
-                event_type: "file.import".to_string(),
-                file_import_content: Some(capsem_core::security_engine::DUMMY_EICAR_TEST_STRING.to_string()),
-                ..Default::default()
-            },
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-struct EnforcementEventInput {
-    event_type: String,
-    #[serde(default)]
-    file_import_content: Option<String>,
-    #[serde(default)]
-    http_host: Option<String>,
-    #[serde(default)]
-    http_method: Option<String>,
-    #[serde(default)]
-    http_path: Option<String>,
-    #[serde(default)]
-    http_query: Option<String>,
-    #[serde(default)]
-    http_status: Option<String>,
-    #[serde(default)]
-    http_body: Option<String>,
-    #[serde(default)]
-    dns_qname: Option<String>,
-    #[serde(default)]
-    dns_qtype: Option<String>,
-    #[serde(default)]
-    mcp_method: Option<String>,
-    #[serde(default)]
-    mcp_server_name: Option<String>,
-    #[serde(default)]
-    mcp_tool_call_name: Option<String>,
-    #[serde(default)]
-    mcp_tool_list: Option<String>,
-    #[serde(default)]
-    mcp_request_preview: Option<String>,
-    #[serde(default)]
-    mcp_response_preview: Option<String>,
-    #[serde(default)]
-    model_provider: Option<String>,
-    #[serde(default)]
-    model_name: Option<String>,
-    #[serde(default)]
-    model_request_body: Option<String>,
-    #[serde(default)]
-    model_response_body: Option<String>,
-    #[serde(default)]
-    model_tool_calls: Option<String>,
-    #[serde(default)]
-    file_path: Option<String>,
-    #[serde(default)]
-    file_name: Option<String>,
-    #[serde(default)]
-    file_ext: Option<String>,
-    #[serde(default)]
-    file_mime_type: Option<String>,
-    #[serde(default)]
-    file_content: Option<String>,
-    #[serde(default)]
-    process_exec_id: Option<String>,
-    #[serde(default)]
-    process_exec_path: Option<String>,
-    #[serde(default)]
-    process_command: Option<String>,
-    #[serde(default)]
-    process_exit_code: Option<String>,
-    #[serde(default)]
-    process_stdout: Option<String>,
-    #[serde(default)]
-    process_stderr: Option<String>,
-    #[serde(default)]
-    ip_value: Option<String>,
-    #[serde(default)]
-    ip_version: Option<String>,
-    #[serde(default)]
-    tcp_port: Option<String>,
-    #[serde(default)]
-    udp_port: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct EnforcementEvaluateResponse {
-    event: SerializableSecurityEvent,
-}
-
-#[derive(Debug, Serialize)]
-struct EnforcementRuleResponse {
-    rule_id: String,
-    compiled_rule_id: String,
-    rule: SecurityRule,
-}
-
-#[derive(Debug, Serialize)]
-struct EnforcementRuleDeleteResponse {
-    rule_id: String,
-    deleted: bool,
-}
-
 pub struct ProvisionOptions<'a> {
     pub id: &'a str,
     pub name: &'a str,
-    pub profile_id: String,
     pub ram_mb: u64,
     pub cpus: u32,
     pub scratch_disk_size_gb: u32,
@@ -706,49 +343,46 @@ struct ResolvedVmResources {
     scratch_disk_size_gb: u32,
 }
 
-fn resolve_profile_vm_resources(
-    profile: &ProfileConfigFile,
-    requested_ram_mb: Option<u64>,
-    requested_cpus: Option<u32>,
-) -> ResolvedVmResources {
+/// What a VM gets when its create request names no size.
+const DEFAULT_VM_CPUS: u32 = 4;
+const DEFAULT_VM_RAM_MB: u64 = 12 * 1024;
+/// Every new VM's scratch disk; the create API has no size for it.
+const DEFAULT_SCRATCH_DISK_GB: u32 = 64;
+
+fn resolve_vm_resources(requested_ram_mb: Option<u64>, requested_cpus: Option<u32>) -> ResolvedVmResources {
     ResolvedVmResources {
-        ram_mb: requested_ram_mb.unwrap_or(u64::from(profile.vm.ram_gb) * 1024),
-        cpus: requested_cpus.unwrap_or(profile.vm.cpu_count),
-        scratch_disk_size_gb: profile.vm.scratch_disk_size_gb,
+        ram_mb: requested_ram_mb.unwrap_or(DEFAULT_VM_RAM_MB),
+        cpus: requested_cpus.unwrap_or(DEFAULT_VM_CPUS),
+        scratch_disk_size_gb: DEFAULT_SCRATCH_DISK_GB,
     }
 }
 
-fn prewarm_system_overlay_templates(run_dir: &StdPath, profiles: &BTreeMap<String, Profile>) {
-    let sizes: HashSet<u32> = profiles
-        .values()
-        .map(|profile| profile.config().vm.scratch_disk_size_gb)
-        .collect();
-    for size_gb in sizes {
-        let template_path = capsem_core::system_overlay_template_path(run_dir, size_gb);
-        match capsem_core::ensure_preformatted_system_overlay_template(&template_path, size_gb) {
-            Ok(true) => info!(
-                path = %template_path.display(),
-                size_gb,
-                "prewarmed system overlay template"
-            ),
-            Ok(false) => info!(
-                path = %template_path.display(),
-                size_gb,
-                "system overlay template ready"
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => warn!(
-                path = %template_path.display(),
-                size_gb,
-                error = %error,
-                "mke2fs unavailable; guest will format system overlay at first boot"
-            ),
-            Err(error) => warn!(
-                path = %template_path.display(),
-                size_gb,
-                error = %error,
-                "failed to prewarm system overlay template; launch will retry"
-            ),
-        }
+fn prewarm_system_overlay_template(run_dir: &StdPath) {
+    let size_gb = DEFAULT_SCRATCH_DISK_GB;
+    let template_path = capsem_core::system_overlay_template_path(run_dir, size_gb);
+    match capsem_core::ensure_preformatted_system_overlay_template(&template_path, size_gb) {
+        Ok(true) => info!(
+            path = %template_path.display(),
+            size_gb,
+            "prewarmed system overlay template"
+        ),
+        Ok(false) => info!(
+            path = %template_path.display(),
+            size_gb,
+            "system overlay template ready"
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => warn!(
+            path = %template_path.display(),
+            size_gb,
+            error = %error,
+            "mke2fs unavailable; guest will format system overlay at first boot"
+        ),
+        Err(error) => warn!(
+            path = %template_path.display(),
+            size_gb,
+            error = %error,
+            "failed to prewarm system overlay template; launch will retry"
+        ),
     }
 }
 
@@ -1007,236 +641,21 @@ impl ServiceState {
         }
     }
 
-    /// Resolve asset file paths for a VM.
-    ///
-    /// In v2 mode (manifest present): resolves hash-based filenames from manifest.
-    /// In dev mode (no manifest): finds assets by logical name in arch subdirs.
-    #[cfg(test)]
-    fn resolve_asset_paths(&self) -> Result<capsem_assets::asset_manager::ResolvedAssets> {
-        let arch = if cfg!(target_arch = "aarch64") {
-            "arm64"
-        } else {
-            "x86_64"
-        };
-
-        // Resolve from v2 manifest (works for both dev and installed --
-        // dev creates hash-named symlinks, installed has hash-named files)
-        if let Some(manifest) = self.manifest.read().unwrap().as_ref().cloned() {
-            return manifest.resolve(&self.current_version, arch, &self.assets_dir);
-        }
-
-        // No manifest: use logical EROFS names so callers report missing
-        // assets rather than accepting an obsolete rootfs format.
-        let base = if self.assets_dir.join(arch).join("rootfs.erofs").exists() {
-            self.assets_dir.join(arch)
-        } else {
-            self.assets_dir.clone()
-        };
-        let rootfs = base.join("rootfs.erofs");
-        Ok(capsem_assets::asset_manager::ResolvedAssets {
-            kernel: base.join("vmlinuz"),
-            initrd: base.join("initrd.img"),
-            rootfs,
-            asset_version: "dev".to_string(),
-        })
-    }
-
-    fn profile_config(&self, profile_id: &str) -> Result<ProfileConfigFile> {
-        #[cfg(test)]
-        let catalog = if let Some(path) = test_profile_dir_override() {
-            ProfileCatalog::load_from_dir(&path).map_err(|e| anyhow!("load profile catalog: {e}"))?
-        } else {
-            ProfileCatalog::builtin()
-        };
-        #[cfg(not(test))]
-        let catalog = ProfileCatalog::load_default().map_err(|e| anyhow!("load profile catalog: {e}"))?;
-        catalog
-            .get(profile_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("profile not found: {profile_id}"))
-    }
-
-    fn cached_profile_for_runtime(&self, profile_id: &str) -> Result<Profile> {
-        self.profile_cache
-            .lock()
-            .map_err(|error| anyhow!("profile cache lock poisoned: {error}"))?
-            .get(profile_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("profile not found: {profile_id}"))
-    }
-
-    fn cached_profile_config(&self, profile_id: &str) -> Result<ProfileConfigFile> {
-        Ok(self.cached_profile_for_runtime(profile_id)?.config().clone())
-    }
-
-    fn profile_for_runtime(&self, profile_id: &str) -> Result<Profile> {
-        #[cfg(test)]
-        let catalog = if let Some(path) = test_profile_dir_override() {
-            ProfileCatalog::load_from_dir(&path).map_err(|e| anyhow!("load profile catalog: {e}"))?
-        } else {
-            ProfileCatalog::builtin()
-        };
-        #[cfg(not(test))]
-        let catalog = ProfileCatalog::load_default().map_err(|e| anyhow!("load profile catalog: {e}"))?;
-        let profile = catalog
-            .get(profile_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("profile not found: {profile_id}"))?;
-        match catalog.source() {
-            ProfileCatalogSource::BuiltIn => {
-                let config_root = builtin_profile_config_root();
-                let profile_dir = config_root.join("profiles").join(&profile.id);
-                Profile::from_config(config_root, profile_dir, profile)
-                    .map_err(|e| anyhow!("load builtin profile {profile_id}: {e}"))
-            }
-            ProfileCatalogSource::Directory(profiles_dir) => {
-                let config_root = profiles_dir.parent().ok_or_else(|| {
-                    anyhow!(
-                        "profile directory {} must be under a config root",
-                        profiles_dir.display()
-                    )
-                })?;
-                Profile::from_config(config_root.to_path_buf(), profiles_dir.join(profile_id), profile)
-                    .map_err(|e| anyhow!("load profile {profile_id}: {e}"))
-            }
-        }
-    }
-
-    fn resolve_profile_asset_paths(
-        &self,
-        profile: &ProfileConfigFile,
-    ) -> Result<capsem_assets::asset_manager::ResolvedAssets> {
-        let arch = capsem_core::net::policy_config::current_profile_arch();
-        let arch_assets = profile
-            .assets
-            .current_arch_assets()
-            .ok_or_else(|| anyhow!("profile {} has no assets for architecture {arch}", profile.id))?;
-
-        Ok(capsem_assets::asset_manager::ResolvedAssets {
-            kernel: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.kernel)?,
-            initrd: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.initrd)?,
-            rootfs: profile_asset_descriptor_path(&self.assets_dir, arch, &arch_assets.rootfs)?,
-            asset_version: format!("profile:{}@{}", profile.id, profile.revision),
-        })
-    }
-
-    fn validate_profile_pins(
-        &self,
-        profile: &ProfileConfigFile,
-        profile_revision: &str,
-        pinned_profile_payload_hash: &str,
-        pins: &BootAssetPins,
-    ) -> Result<()> {
-        self.validate_profile_identity_and_pins(profile, profile_revision, pinned_profile_payload_hash, pins)?;
-        self.validate_profile_asset_files(profile, pins)
-    }
-
-    fn validate_profile_identity_and_pins(
-        &self,
-        profile: &ProfileConfigFile,
-        profile_revision: &str,
-        pinned_profile_payload_hash: &str,
-        pins: &BootAssetPins,
-    ) -> Result<()> {
-        if profile.revision != profile_revision {
+    /// Whether a persistent VM may boot as recorded: its registry entry is in
+    /// the current shape and its pinned images are not revoked.
+    fn validate_persistent_entry(&self, entry: &PersistentVmEntry) -> Result<()> {
+        if let Some(profile) = &entry.legacy_profile_id {
             return Err(anyhow!(
-                "profile '{}' revision mismatch: VM pinned '{}', current '{}'",
-                profile.id,
-                profile_revision,
-                profile.revision
+                "VM '{}' was created from the '{profile}' profile, and profiles no longer exist; \
+                 delete it and create a new VM",
+                entry.name
             ));
         }
-        let current_payload_hash = profile_payload_hash(profile)?;
-        if current_payload_hash != pinned_profile_payload_hash {
-            return Err(anyhow!(
-                "profile '{}' payload hash mismatch: VM pinned '{}', current '{}'",
-                profile.id,
-                pinned_profile_payload_hash,
-                current_payload_hash
-            ));
-        }
-        let current = profile_asset_pins(profile)?;
-        if &current != pins {
-            return Err(anyhow!(
-                "profile '{}' asset pins changed: VM pinned {:?}, current {:?}",
-                profile.id,
-                pins,
-                current
-            ));
-        }
-        Ok(())
-    }
-
-    fn validate_profile_asset_files(&self, profile: &ProfileConfigFile, pins: &BootAssetPins) -> Result<()> {
-        let resolved = self.resolve_profile_asset_paths(profile)?;
-        validate_asset_file_pin("kernel", &resolved.kernel, &pins.kernel)?;
-        validate_asset_file_pin("initrd", &resolved.initrd, &pins.initrd)?;
-        validate_asset_file_pin("rootfs", &resolved.rootfs, &pins.rootfs)?;
-        Ok(())
-    }
-
-    fn persistent_active_profile_path(&self, entry: &PersistentVmEntry) -> Result<PathBuf> {
-        let active_profile_path = entry.session_dir.join(ACTIVE_PROFILE_DIR).join(ACTIVE_PROFILE_FILE);
-        if active_profile_path.exists() {
-            validate_saved_active_profile(&active_profile_path, entry)?;
-            return Ok(active_profile_path);
-        }
-
-        let current = self.profile_for_runtime(&entry.profile_id)?;
-        self.validate_profile_identity_and_pins(
-            current.config(),
-            &entry.profile_revision,
-            &entry.profile_payload_hash,
-            &entry.asset_pins,
-        )?;
-        Ok(self.materialize_active_profile(&current, &entry.session_dir)?.path)
-    }
-
-    fn validate_persistent_profile_authority(&self, entry: &PersistentVmEntry) -> Result<()> {
-        reject_revoked_persistent_pins(&self.assets_dir, entry)?;
-        let active_profile_path = entry.session_dir.join(ACTIVE_PROFILE_DIR).join(ACTIVE_PROFILE_FILE);
-        if active_profile_path.exists() {
-            validate_saved_active_profile(&active_profile_path, entry)?;
-            return Ok(());
-        }
-
-        let current = self.profile_config(&entry.profile_id)?;
-        self.validate_profile_identity_and_pins(
-            &current,
-            &entry.profile_revision,
-            &entry.profile_payload_hash,
-            &entry.asset_pins,
-        )
-    }
-
-    fn persistent_scratch_disk_size_gb(&self, entry: &PersistentVmEntry) -> Result<u32> {
-        let actual = session_rootfs_size_gb(entry)?;
-        let Ok(current) = self.profile_config(&entry.profile_id) else {
-            return Ok(actual);
-        };
-        if self
-            .validate_profile_identity_and_pins(
-                &current,
-                &entry.profile_revision,
-                &entry.profile_payload_hash,
-                &entry.asset_pins,
-            )
-            .is_ok()
-            && actual != current.vm.scratch_disk_size_gb
-        {
-            return Err(anyhow!(
-                "VM '{}' rootfs.img logical size mismatch: current {} GiB, pinned profile '{}' requires {} GiB",
-                entry.name,
-                actual,
-                current.id,
-                current.vm.scratch_disk_size_gb
-            ));
-        }
-        Ok(actual)
+        reject_revoked_persistent_pins(&self.assets_dir, entry)
     }
 
     fn resolve_pinned_asset_paths(&self, pins: &BootAssetPins) -> Result<capsem_assets::asset_manager::ResolvedAssets> {
-        let arch = capsem_core::net::policy_config::current_profile_arch();
+        let arch = capsem_assets::asset_manager::host_manifest_arch();
         Ok(capsem_assets::asset_manager::ResolvedAssets {
             kernel: boot_asset_pin_path(&self.assets_dir, arch, &pins.kernel),
             initrd: boot_asset_pin_path(&self.assets_dir, arch, &pins.initrd),
@@ -1260,10 +679,10 @@ impl ServiceState {
             return (VmLifecycleState::Defunct, false, entry.last_error.clone());
         }
 
-        if let Err(err) = self.validate_persistent_profile_authority(entry) {
+        if let Err(err) = self.validate_persistent_entry(entry) {
             return (VmLifecycleState::Incompatible, false, Some(err.to_string()));
         }
-        if let Err(err) = self.persistent_scratch_disk_size_gb(entry) {
+        if let Err(err) = session_rootfs_size_gb(entry) {
             return (VmLifecycleState::Incompatible, false, Some(err.to_string()));
         }
 

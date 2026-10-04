@@ -41,34 +41,6 @@ pub(super) fn session_rootfs_size_gb(entry: &PersistentVmEntry) -> Result<u32> {
     })
 }
 
-pub(super) fn validate_saved_active_profile(path: &StdPath, entry: &PersistentVmEntry) -> Result<()> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("read saved active profile {}", path.display()))?;
-    let active: ActiveProfileFile =
-        toml::from_str(&text).with_context(|| format!("parse saved active profile {}", path.display()))?;
-    active
-        .validate()
-        .map_err(anyhow::Error::msg)
-        .with_context(|| format!("validate saved active profile {}", path.display()))?;
-    if active.id != entry.profile_id {
-        return Err(anyhow!(
-            "saved profile id mismatch for VM '{}': pinned '{}', saved '{}'",
-            entry.name,
-            entry.profile_id,
-            active.id
-        ));
-    }
-    if active.revision != entry.profile_revision {
-        return Err(anyhow!(
-            "saved profile revision mismatch for VM '{}': pinned '{}', saved '{}'",
-            entry.name,
-            entry.profile_revision,
-            active.revision
-        ));
-    }
-    Ok(())
-}
-
 pub(super) fn boot_asset_pin_path(assets_dir: &StdPath, arch: &str, pin: &BootAssetPin) -> PathBuf {
     let bases = [assets_dir.join(arch), assets_dir.to_path_buf()];
     let hash_name = boot_asset_pin_hash_name(pin);
@@ -87,6 +59,13 @@ pub(super) fn boot_asset_pin_path(assets_dir: &StdPath, arch: &str, pin: &BootAs
     bases[0].join(hash_name)
 }
 
+/// Refuse a persistent VM whose pinned boot images the installed release
+/// graph marks revoked.
+///
+/// Every digest under a `"status": "revoked"` object counts, at whatever
+/// depth the graph nests it: a revoked image, or a revoked release that owns
+/// its images. Reading the shape generically keeps revocation in force across
+/// changes to how the graph groups its images.
 pub(super) fn reject_revoked_persistent_pins(assets_dir: &StdPath, entry: &PersistentVmEntry) -> Result<()> {
     let manifest_path = assets_dir.join("manifest.json");
     let Ok(bytes) = std::fs::read(&manifest_path) else {
@@ -94,81 +73,52 @@ pub(super) fn reject_revoked_persistent_pins(assets_dir: &StdPath, entry: &Persi
     };
     let manifest: serde_json::Value = serde_json::from_slice(&bytes)
         .with_context(|| format!("parse installed manifest {}", manifest_path.display()))?;
-    let Some(profile) = manifest
-        .get("profiles")
-        .and_then(|profiles| profiles.get(&entry.profile_id))
-    else {
-        return Ok(());
-    };
-    if profile
-        .get("status")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|status| status.eq_ignore_ascii_case("revoked"))
-    {
-        return Err(anyhow!(
-            "profile '{}' is explicitly revoked for persistent VM '{}'",
-            entry.profile_id,
-            entry.name
-        ));
-    }
-
-    let pinned_hashes = [
+    let mut revoked = HashSet::new();
+    collect_revoked_digests(&manifest, false, &mut revoked);
+    for pin in [
         &entry.asset_pins.kernel,
         &entry.asset_pins.initrd,
         &entry.asset_pins.rootfs,
-    ]
-    .into_iter()
-    .map(|pin| pin.hash.strip_prefix("blake3:").unwrap_or(&pin.hash))
-    .collect::<HashSet<_>>();
-    let revoked_hash = profile
-        .get("architectures")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|architecture| architecture.get("images"))
-        .filter_map(serde_json::Value::as_array)
-        .flatten()
-        .find_map(|image| {
-            let revoked = image
-                .get("status")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|status| status.eq_ignore_ascii_case("revoked"));
-            let hash = image.pointer("/digest/blake3").and_then(serde_json::Value::as_str)?;
-            (revoked && pinned_hashes.contains(hash)).then_some(hash)
-        });
-    if let Some(hash) = revoked_hash {
-        return Err(anyhow!(
-            "persistent VM '{}' pins explicitly revoked image blake3:{}",
-            entry.name,
-            hash
-        ));
+    ] {
+        let hash = pin.hash.strip_prefix("blake3:").unwrap_or(&pin.hash);
+        if revoked.contains(hash) {
+            return Err(anyhow!(
+                "persistent VM '{}' pins explicitly revoked image blake3:{hash}",
+                entry.name
+            ));
+        }
     }
     Ok(())
 }
 
-pub(super) fn profile_asset_pins(profile: &ProfileConfigFile) -> Result<BootAssetPins> {
-    let arch = capsem_core::net::policy_config::current_profile_arch();
-    let arch_assets = profile
-        .assets
-        .current_arch_assets()
-        .ok_or_else(|| anyhow!("profile {} has no assets for architecture {arch}", profile.id))?;
-    Ok(BootAssetPins {
-        kernel: descriptor_pin(&arch_assets.kernel)?,
-        initrd: descriptor_pin(&arch_assets.initrd)?,
-        rootfs: descriptor_pin(&arch_assets.rootfs)?,
-    })
-}
-
-pub(super) fn profile_payload_hash(profile: &ProfileConfigFile) -> Result<String> {
-    let bytes = serde_json::to_vec(profile).context("serialize profile payload for hash")?;
-    Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
-}
-
-pub(super) fn descriptor_pin(asset: &ProfileAssetDescriptor) -> Result<BootAssetPin> {
-    Ok(BootAssetPin {
-        name: asset.name.clone(),
-        hash: required_profile_asset_hash(asset)?.to_string(),
-    })
+fn collect_revoked_digests(value: &serde_json::Value, inside_revoked: bool, revoked: &mut HashSet<String>) {
+    match value {
+        serde_json::Value::Object(object) => {
+            let inside_revoked = inside_revoked
+                || object
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|status| status.eq_ignore_ascii_case("revoked"));
+            if inside_revoked {
+                if let Some(hash) = object
+                    .get("digest")
+                    .and_then(|digest| digest.get("blake3"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    revoked.insert(hash.strip_prefix("blake3:").unwrap_or(hash).to_string());
+                }
+            }
+            for child in object.values() {
+                collect_revoked_digests(child, inside_revoked, revoked);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_revoked_digests(item, inside_revoked, revoked);
+            }
+        }
+        _ => {}
+    }
 }
 
 pub(super) fn validate_asset_file_pin(kind: &str, path: &StdPath, pin: &BootAssetPin) -> Result<()> {
@@ -178,76 +128,9 @@ pub(super) fn validate_asset_file_pin(kind: &str, path: &StdPath, pin: &BootAsse
     Ok(())
 }
 
-pub(super) fn profile_asset_descriptor_path(
-    assets_dir: &StdPath,
-    arch: &str,
-    asset: &ProfileAssetDescriptor,
-) -> Result<PathBuf> {
-    let hash_name = profile_asset_hash_name(asset)?;
-    let bases = [assets_dir.join(arch), assets_dir.to_path_buf()];
-
-    for base in &bases {
-        let path = base.join(&hash_name);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-    for base in &bases {
-        let path = base.join(&asset.name);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    Ok(bases[0].join(&asset.name))
-}
-
-pub(super) fn required_profile_asset_hash(asset: &ProfileAssetDescriptor) -> Result<&str> {
-    asset
-        .hash
-        .as_deref()
-        .ok_or_else(|| anyhow!("profile asset '{}' is missing a materialized hash", asset.name))
-}
-
-pub(super) fn required_profile_asset_size(asset: &ProfileAssetDescriptor) -> Result<u64> {
-    asset
-        .size
-        .ok_or_else(|| anyhow!("profile asset '{}' is missing a materialized size", asset.name))
-}
-
-pub(super) fn profile_asset_hash_hex(asset: &ProfileAssetDescriptor) -> Result<&str> {
-    let hash = required_profile_asset_hash(asset)?;
-    Ok(hash.strip_prefix("blake3:").unwrap_or(hash))
-}
-
-pub(super) fn profile_asset_hash_name(asset: &ProfileAssetDescriptor) -> Result<String> {
-    Ok(capsem_assets::asset_manager::hash_filename(
-        &asset.name,
-        profile_asset_hash_hex(asset)?,
-    ))
-}
-
 pub(super) fn boot_asset_pin_hash_name(pin: &BootAssetPin) -> String {
     let hash = pin.hash.strip_prefix("blake3:").unwrap_or(&pin.hash);
     capsem_assets::asset_manager::hash_filename(&pin.name, hash)
-}
-
-pub(super) fn profile_catalog_asset_filenames(catalog: &ProfileCatalog) -> HashSet<String> {
-    let mut filenames = HashSet::new();
-    for profile in catalog.profiles() {
-        for assets in profile.assets.arch.values() {
-            if let Ok(name) = profile_asset_hash_name(&assets.kernel) {
-                filenames.insert(name);
-            }
-            if let Ok(name) = profile_asset_hash_name(&assets.initrd) {
-                filenames.insert(name);
-            }
-            if let Ok(name) = profile_asset_hash_name(&assets.rootfs) {
-                filenames.insert(name);
-            }
-        }
-    }
-    filenames
 }
 
 pub(super) fn persistent_registry_asset_filenames(registry: &PersistentRegistry) -> HashSet<String> {
@@ -258,14 +141,6 @@ pub(super) fn persistent_registry_asset_filenames(registry: &PersistentRegistry)
         filenames.insert(boot_asset_pin_hash_name(&entry.asset_pins.rootfs));
     }
     filenames
-}
-
-pub(super) fn profile_asset_download_target(
-    assets_dir: &StdPath,
-    arch: &str,
-    asset: &ProfileAssetDescriptor,
-) -> Result<PathBuf> {
-    Ok(assets_dir.join(arch).join(profile_asset_hash_name(asset)?))
 }
 
 /// Identify the launchd-cleanup-saturation transient that masquerades
@@ -849,7 +724,6 @@ pub(super) async fn provision_attempt(
     ram_mb: u64,
     cpus: u32,
     scratch_disk_size_gb: u32,
-    profile_id: String,
     persistent: bool,
     env: Option<std::collections::HashMap<String, String>>,
     from: Option<String>,
@@ -876,7 +750,6 @@ pub(super) async fn provision_attempt(
         state_clone.provision_sandbox(ProvisionOptions {
             id: &id_owned,
             name: &name_owned,
-            profile_id,
             ram_mb,
             cpus,
             scratch_disk_size_gb,
@@ -957,7 +830,6 @@ pub(super) fn list_response_fingerprint(state: &ServiceState) -> String {
         let _ = write!(fingerprint, "running={};", instances.len());
         for i in instances.values() {
             append_fingerprint_field(&mut fingerprint, &i.id);
-            append_fingerprint_field(&mut fingerprint, &i.profile_id);
             append_fingerprint_field(&mut fingerprint, &i.name);
             let _ = write!(
                 fingerprint,
@@ -983,9 +855,7 @@ pub(super) fn list_response_fingerprint(state: &ServiceState) -> String {
         for entry in inactive_entries {
             append_fingerprint_field(&mut fingerprint, &persistent_entry_vm_id(entry));
             append_fingerprint_field(&mut fingerprint, &entry.name);
-            append_fingerprint_field(&mut fingerprint, &entry.profile_id);
-            append_fingerprint_field(&mut fingerprint, &entry.profile_revision);
-            append_fingerprint_field(&mut fingerprint, &entry.profile_payload_hash);
+            append_fingerprint_field(&mut fingerprint, entry.legacy_profile_id.as_deref().unwrap_or(""));
             append_fingerprint_field(&mut fingerprint, &entry.base_version);
             append_fingerprint_field(&mut fingerprint, entry.forked_from.as_deref().unwrap_or(""));
             append_fingerprint_field(&mut fingerprint, entry.description.as_deref().unwrap_or(""));

@@ -60,10 +60,10 @@ All VM-scoped tools take the immutable `vm_id` returned by `capsem_create` or
 | --- | --- | --- |
 | `capsem_status` | — | Read gateway and service status. |
 | `capsem_list` | — | List VMs and their typed lifecycle state. |
-| `capsem_create` | `profile?`, `name?`, `cpus?`, `memory?`, `env?`, `network_ids?`, `image?`, `command?`, `registry?`, `attach?` | Create a detached workload; an omitted profile uses the catalog default. Memory is GiB; an image selects OCI execution. |
+| `capsem_create` | `name?`, `cpus?`, `memory?`, `env?`, `network_ids?`, `image?`, `command?`, `registry?` | Create a detached VM from the installed runtime image (default 4 CPUs, 12 GiB). Memory is GiB; an image selects OCI execution. |
 | `capsem_info` | `vm_id` | Read VM identity, resources, network, files, and telemetry. |
 | `capsem_exec` | `vm_id`, `command`, `timeout_secs?` | Execute in an existing VM. |
-| `capsem_run` | `command`, `profile?`, `cpus?`, `memory?`, `env?`, `timeout_secs?` | Execute once in a temporary VM. |
+| `capsem_run` | `command`, `cpus?`, `memory?`, `env?`, `timeout_secs?` | Execute once in a temporary VM. |
 | `capsem_start` / `capsem_stop` | `vm_id` | Start or stop a VM. |
 | `capsem_pause` / `capsem_resume` | `vm_id` | Pause or resume a VM. |
 | `capsem_delete` | `vm_id` | Delete the VM and its owned state. |
@@ -103,20 +103,22 @@ open SQLite directly or maintain a second projection cache.
 immutable `vm_id`. `capsem_network_logs` reads cursor-based audit events and
 accepts VM, connection, event type, decision, and time filters.
 
-## Profiles and guest MCP tools
+## Guest MCP servers
 
-| Tool | Purpose |
-| --- | --- |
-| `capsem_profiles` | List the typed profile catalog. |
-| `capsem_mcp_info` | Read MCP configuration and readiness for a profile. |
-| `capsem_mcp_servers` | List configured servers for a profile. |
-| `capsem_mcp_default` | Read the profile's default MCP permission. |
-| `capsem_mcp_tools` | List tools for one `server_id`. |
-| `capsem_mcp_refresh` | Refresh discovery for one `server_id`. |
-| `capsem_mcp_call` | Invoke one `tool_id` with native JSON arguments. |
+Every VM runs the same MCP servers: the `[mcp]` table of `~/.capsem/settings.toml`
+with the corp config laid over it.
 
-Profile MCP calls still travel through the running VM's guest relay, policy
-engine, aggregator, and logger. Listing tools does not create phantom call rows.
+| Tool | Main parameters | Purpose |
+| --- | --- | --- |
+| `capsem_mcp_info` | — | Count configured servers and report whether the built-in `local` server is enabled. |
+| `capsem_mcp_servers` | — | List configured servers and their discovery status. |
+| `capsem_mcp_default` | — | Read the default MCP tool permission. |
+| `capsem_mcp_tools` | `server_id` | List one server's discovered tools with their effective permissions. |
+| `capsem_mcp_refresh` | `server_id` | Rediscover one server's tools in every running VM. |
+| `capsem_mcp_call` | `server_id`, `tool_id`, `arguments?` | Invoke one tool with native JSON arguments. |
+
+`capsem_mcp_call` needs a running VM: the call travels through that VM's
+process, policy engine, aggregator, and logger. Listing tools does not create phantom call rows.
 Allowed and denied calls retain trusted VM, trace, server, tool, decision, byte,
 and security-rule correlation in the existing ledgers.
 

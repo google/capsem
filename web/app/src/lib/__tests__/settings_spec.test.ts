@@ -204,13 +204,13 @@ describe('settings_spec conformance', () => {
     }
   });
 
-  it('does not carry profile MCP tools in settings', () => {
+  it('does not carry MCP tools in the settings tree', () => {
     const settings = extractSettings(golden.settings);
     const tools = settings.filter((s) => s.setting_type === 'mcp_tool');
     expect(tools).toHaveLength(0);
   });
 
-  it('does not carry profile/provider file payloads in settings', () => {
+  it('does not carry provider file payloads in settings', () => {
     const settings = extractSettings(golden.settings);
     const files = settings.filter((s) => s.setting_type === 'file');
     expect(files).toEqual([]);
@@ -223,12 +223,12 @@ describe('settings_spec conformance', () => {
     expect(settings.some((s) => s.metadata.hidden)).toBe(true);
   });
 
-  it('does not use builtin metadata for profile-owned state', () => {
+  it('does not use builtin metadata in settings', () => {
     const settings = extractSettings(golden.settings);
     expect(settings.some((s) => s.metadata.builtin)).toBe(false);
   });
 
-  it('does not use settings enabled_by to model profile/provider state', () => {
+  it('does not use settings enabled_by to model provider state', () => {
     const settings = extractSettings(golden.settings);
     const withParent = settings.filter((s) => s.enabled_by);
     expect(withParent).toEqual([]);

@@ -13,42 +13,13 @@ pub fn reply(operation: &str) -> Value {
     if value.get("name").is_some() || operation == "getVmInfo" {
         value["name"] = json!("work");
     }
-    if operation == "getHypervisorInfo" {
-        value["profiles"] = json!({
-            "source": "built_in",
-            "profile_count": 1,
-            "ready_count": 1,
-            "profiles": [],
-            // The two defaults differ here on purpose: a container create
-            // must take the container claim, never the VM one.
-            "defaults": {"vm": "code", "container": "co-work"},
-        });
-    }
     if operation == "listVms" {
         value["sandboxes"] = json!([reply("getVmInfo")]);
     }
-    if operation == "listProfiles" {
-        value["profiles"] = json!([{
-            "id": "code",
-            "name": "Code",
-            "description": "Code profile",
-            "availability": {"web": true, "shell": true, "mobile": false},
-            "source": "builtin",
-            "rule_count": 0,
-            "default_rule_count": 0,
-            "plugin_count": 0,
-            "mcp_server_count": 0,
-            "update_semantics": {
-                "new_sessions": "use_current_profile_catalog",
-                "existing_vms": "pinned_until_recreate",
-                "upgrade_action": "recreate_vm"
-            }
-        }]);
-    }
-    if operation == "listProfileMcpServers" {
+    if operation == "listMcpServers" {
         value = json!([{
             "name": "filesystem", "url": "stdio://filesystem", "enabled": true,
-            "source": "profile", "running": true, "is_stdio": true,
+            "source": "settings", "running": true, "is_stdio": true,
             "tool_count": 1, "has_auth_credential": false, "custom_header_count": 0
         }]);
     }
@@ -83,13 +54,12 @@ pub async fn gateway() -> Server {
             "/purge" => "purgeVms",
             "/panics" => "getPanics",
             "/triage" => "getTriage",
-            "/profiles/list" => "listProfiles",
-            "/profiles/code/mcp/info" => "getProfileMcpInfo",
-            "/profiles/code/mcp/servers/list" => "listProfileMcpServers",
-            "/profiles/code/mcp/default/info" => "getProfileMcpDefault",
-            "/profiles/code/mcp/servers/filesystem/tools/list" => "listProfileMcpTools",
-            "/profiles/code/mcp/servers/filesystem/refresh" => "refreshProfileMcpServer",
-            "/profiles/code/mcp/servers/filesystem/tools/read/call" => "callProfileMcpTool",
+            "/mcp/info" => "getMcpInfo",
+            "/mcp/servers/list" => "listMcpServers",
+            "/mcp/default/info" => "getMcpDefault",
+            "/mcp/servers/filesystem/tools/list" => "listMcpTools",
+            "/mcp/servers/filesystem/refresh" => "refreshMcpServer",
+            "/mcp/servers/filesystem/tools/read/call" => "callMcpTool",
             "/networks" if parts.method == "POST" => "createNetwork",
             "/networks" => "listNetworks",
             "/networks/vm-1/members/vm-1" if parts.method == "PUT" => "attachNetworkMember",

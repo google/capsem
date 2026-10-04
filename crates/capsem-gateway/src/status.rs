@@ -39,7 +39,7 @@ impl StatusCache {
 }
 
 pub use capsem_api::{
-    HypervisorInfo as StatusResponse, ProfileCatalogStatus, ResourceSummary, ServiceAvailability, UpdateStatusResponse,
+    AssetStatus, HypervisorInfo as StatusResponse, ResourceSummary, ServiceAvailability, UpdateStatusResponse,
     VmAction, VmLifecycleState, VmSummary,
 };
 
@@ -100,7 +100,6 @@ struct ListResponse {
 #[derive(Deserialize)]
 struct SessionInfo {
     id: String,
-    profile_id: String,
     #[serde(default)]
     name: Option<String>,
     status: VmLifecycleState,
@@ -147,13 +146,13 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         vm_count: 0,
         vms: vec![],
         resource_summary: None,
-        profiles: None,
+        assets: None,
         updates: None,
     };
 
-    let (list_body, profiles, updates) = tokio::join!(
+    let (list_body, assets, updates) = tokio::join!(
         uds_get(&state.service_client, "/vms/list"),
-        fetch_profiles_status(state),
+        fetch_asset_status(state),
         fetch_update_status(state),
     );
     let list = match list_body {
@@ -190,7 +189,6 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             name: sess.name.clone(),
             status: sess.status,
             persistent: sess.persistent,
-            profile_id: sess.profile_id.clone(),
             uptime_secs: sess.uptime_secs,
             total_input_tokens: sess.total_input_tokens,
             total_output_tokens: sess.total_output_tokens,
@@ -220,15 +218,15 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             stopped_count: stopped,
             suspended_count: suspended,
         }),
-        profiles,
+        assets,
         updates,
     }
 }
 
-async fn fetch_profiles_status(state: &AppState) -> Option<ProfileCatalogStatus> {
+async fn fetch_asset_status(state: &AppState) -> Option<AssetStatus> {
     parse_section(
-        "/profiles/status",
-        &uds_get(&state.service_client, "/profiles/status").await.ok()?,
+        "/assets/status",
+        &uds_get(&state.service_client, "/assets/status").await.ok()?,
     )
 }
 

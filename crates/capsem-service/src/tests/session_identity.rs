@@ -105,22 +105,10 @@ fn session_dir_enumeration_keys_persistent_entries_by_session_id() {
         service_session_dirs(&state),
         vec![(VM_ID.to_string(), session_dir.clone())]
     );
-    assert_eq!(
-        profile_session_dirs(&state, "code"),
-        vec![(VM_ID.to_string(), session_dir.clone())]
-    );
-    assert!(profile_session_dirs(&state, "not-the-profile").is_empty());
 
     // Running: the instance and the registry entry collapse into one row.
     insert_running_persistent_instance(&state, &session_dir);
-    assert_eq!(
-        service_session_dirs(&state),
-        vec![(VM_ID.to_string(), session_dir.clone())]
-    );
-    assert_eq!(
-        profile_session_dirs(&state, "code"),
-        vec![(VM_ID.to_string(), session_dir)]
-    );
+    assert_eq!(service_session_dirs(&state), vec![(VM_ID.to_string(), session_dir)]);
 }
 
 #[test]

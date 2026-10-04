@@ -36,16 +36,14 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
             assert isinstance(await hv.info(), models.HypervisorInfo)
             assert isinstance(await hv.list(), models.ListResponse)
-            profiles = await hv.profiles.list()
-            assert profiles and isinstance(profiles[0], models.ProfileSummary)
             network = await hv.networks.create("team")
             vm = await hv.create(
-                profile=profiles[0], name="new", cpus=4, memory=8,
+                name="new", cpus=4, memory=8,
                 env={"LANG": "C"}, networks=[network],
             )
             assert vm.id == "created-id" and vm.name == "new"
             body = json.loads(state.requests[-1][2])
-            assert body == {"profile_id": "code", "name": "new", "persistent": True,
+            assert body == {"name": "new", "persistent": True,
                             "cpus": 4, "ram_mb": 8192, "env": {"LANG": "C"}, "networks": ["team"]}
             async with vm:
                 assert isinstance(await vm.info(), models.SandboxInfo)
@@ -54,7 +52,9 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             with pytest.raises(RuntimeError, match="closed"):
                 async with vm:
                     pass
+            request_count = len(state.requests)
             temporary = await hv.create()
+            assert [path for _, path, _ in state.requests[request_count:]] == ["/vms/create"]
             body = json.loads(state.requests[-1][2])
             assert body["persistent"] is False and body["name"] is None
             assert body["cpus"] is None and body["ram_mb"] is None
@@ -63,17 +63,26 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             assert isinstance(await hv.debug.panics(since="5m", limit=3), models.PanicsResponse)
             assert isinstance(await hv.debug.triage(vm_id="vm-0", since="1h", limit=2), models.TriageResponse)
             assert isinstance(await hv.purge(all=True), models.PurgeResponse)
-            raw_profile: Any = "code"
-            with pytest.raises(TypeError, match="profile must be an object"):
-                hv.profiles.mcp(raw_profile)
-            mcp = hv.profiles.mcp(profiles[0])
-            assert isinstance(await mcp.info(), models.ProfileMcpInfoResponse)
-            assert isinstance(await mcp.servers(), list)
-            assert isinstance(await mcp.default_permission(), models.McpDefaultPermissionResponse)
-            server = await mcp.get("filesystem")
+            first_mcp_request = len(state.requests)
+            assert isinstance(await hv.mcp.info(), models.McpInfoResponse)
+            assert isinstance(await hv.mcp.servers(), list)
+            assert isinstance(await hv.mcp.default_permission(), models.McpDefaultPermissionResponse)
+            server = await hv.mcp.get("filesystem")
             assert isinstance(await server.tools.list(), list)
             assert isinstance(await server.refresh(), models.McpRefreshResponse)
             assert await server.tools.call("read_file", {"path": "/tmp/x"}) is not None
+            assert [(method, path) for method, path, _ in state.requests[first_mcp_request:]] == [
+                ("GET", "/mcp/info"),
+                ("GET", "/mcp/servers/list"),
+                ("GET", "/mcp/default/info"),
+                ("GET", "/mcp/servers/list"),
+                ("GET", "/mcp/servers/filesystem/tools/list"),
+                ("POST", "/mcp/servers/filesystem/refresh"),
+                ("POST", "/mcp/servers/filesystem/tools/read_file/call"),
+            ]
+            assert json.loads(state.requests[-1][2]) == {"path": "/tmp/x"}
+            with pytest.raises(LookupError, match="expected one MCP server named 'missing'"):
+                await hv.mcp.get("missing")
             assert isinstance(await hv.update(), models.UpdateActionResponse)
             assert json.loads(state.requests[-1][2]) == {"confirmed": True}
             restarted = await hv.restart()
@@ -198,8 +207,10 @@ def test_exec_outlives_the_default_deadline_without_replaying_it() -> None:
             state.delays["/run"] = 0.3
             async with Hypervisor(url, "token", timeout=0.05) as hv:
                 await hv.run("slow build")
-            # `run` without a profile resolves the catalog default first.
-            assert [path for _, path, _ in state.requests] == ["/vms/vm-0/exec", "/status", "/run"]
+            assert [path for _, path, _ in state.requests] == ["/vms/vm-0/exec", "/run"]
+            assert json.loads(state.requests[-1][2]) == {
+                "command": "slow build", "timeout_secs": None, "cpus": None, "ram_mb": None, "env": None,
+            }
     asyncio.run(run())
 
 

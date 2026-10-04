@@ -1,77 +1,78 @@
 use anyhow::{Context, Result};
 use capsem_core::net::policy::NetworkMechanics;
 use capsem_core::net::policy_config::{
-    ActiveProfileFile, MergedPolicies, ModelEndpointRegistry, SecurityPluginConfig, SecurityRuleSet,
+    ActivePolicyFile, MergedPolicies, ModelEndpointRegistry, SecurityPluginConfig, SecurityRuleSet,
 };
 use capsem_proto::mcp_contracts::McpServerDef;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
+/// The session's active policy file, read at boot and on every reload.
 #[derive(Debug, Clone)]
-pub(crate) struct RuntimeProfileSource {
-    active_profile_path: PathBuf,
+pub(crate) struct RuntimePolicySource {
+    active_policy_path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct RuntimeProfileConfig {
-    pub(crate) profile_id: String,
-    pub(crate) active_profile_path: PathBuf,
+pub(crate) struct RuntimePolicyConfig {
+    pub(crate) active_policy_path: PathBuf,
     /// Digest of the exact bytes this config was loaded from.
-    pub(crate) active_profile_digest: String,
+    pub(crate) active_policy_digest: String,
     pub(crate) network: NetworkMechanics,
     pub(crate) dns_upstreams: Vec<SocketAddr>,
     pub(crate) security_rules: SecurityRuleSet,
     pub(crate) plugins: BTreeMap<String, SecurityPluginConfig>,
     pub(crate) model_endpoints: ModelEndpointRegistry,
-    pub(crate) mcp: capsem_core::mcp::policy::McpProfileConfig,
+    pub(crate) mcp: capsem_core::mcp::policy::McpConfig,
 }
 
-impl RuntimeProfileSource {
-    pub(crate) fn new(active_profile_path: impl Into<PathBuf>) -> Self {
+impl RuntimePolicySource {
+    pub(crate) fn new(active_policy_path: impl Into<PathBuf>) -> Self {
         Self {
-            active_profile_path: active_profile_path.into(),
+            active_policy_path: active_policy_path.into(),
         }
     }
 
-    pub(crate) fn active_profile_path(&self) -> &Path {
-        &self.active_profile_path
+    pub(crate) fn active_policy_path(&self) -> &Path {
+        &self.active_policy_path
     }
 
-    pub(crate) fn load(&self) -> Result<RuntimeProfileConfig> {
-        let content = std::fs::read_to_string(&self.active_profile_path)
-            .with_context(|| format!("read {}", self.active_profile_path.display()))?;
-        let active: ActiveProfileFile =
-            toml::from_str(&content).with_context(|| format!("parse {}", self.active_profile_path.display()))?;
-        let digest = capsem_core::net::policy_config::active_profile_digest(content.as_bytes());
-        RuntimeProfileConfig::from_active(active, self.active_profile_path.clone(), digest)
+    pub(crate) fn load(&self) -> Result<RuntimePolicyConfig> {
+        let content = std::fs::read_to_string(&self.active_policy_path)
+            .with_context(|| format!("read {}", self.active_policy_path.display()))?;
+        let active: ActivePolicyFile =
+            toml::from_str(&content).with_context(|| format!("parse {}", self.active_policy_path.display()))?;
+        let digest = capsem_core::net::policy_config::active_policy_digest(content.as_bytes());
+        RuntimePolicyConfig::from_active(active, self.active_policy_path.clone(), digest)
     }
 }
 
-impl RuntimeProfileConfig {
+impl RuntimePolicyConfig {
     fn from_active(
-        active: ActiveProfileFile,
-        active_profile_path: PathBuf,
-        active_profile_digest: String,
+        active: ActivePolicyFile,
+        active_policy_path: PathBuf,
+        active_policy_digest: String,
     ) -> Result<Self> {
+        let path = active_policy_path.display().to_string();
         active
             .validate()
             .map_err(anyhow::Error::msg)
-            .with_context(|| format!("validate {}", active_profile_path.display()))?;
-        let (profile_settings, corp_settings) = active.merged_policy_inputs();
-        let merged = MergedPolicies::from_files(&profile_settings, &corp_settings)
+            .with_context(|| format!("validate {path}"))?;
+        let (user_settings, corp_settings) = active.merged_policy_inputs();
+        let merged = MergedPolicies::from_files(&user_settings, &corp_settings)
             .map_err(anyhow::Error::msg)
-            .with_context(|| format!("merge active profile policies for {}", active.id))?;
+            .with_context(|| format!("merge active policy {path}"))?;
         let mut network = merged.network;
         capsem_core::net::policy_config::apply_network_config(&active.network, &mut network);
         let security_rules = active
             .compile_security_rule_set()
             .map_err(anyhow::Error::msg)
-            .with_context(|| format!("compile active profile rules for {}", active.id))?;
+            .with_context(|| format!("compile active policy rules from {path}"))?;
         let model_endpoints = active
             .model_endpoint_registry()
             .map_err(anyhow::Error::msg)
-            .with_context(|| format!("compile active profile model endpoints for {}", active.id))?;
+            .with_context(|| format!("compile active policy model endpoints from {path}"))?;
         let dns_upstreams = active
             .network
             .dns
@@ -80,14 +81,13 @@ impl RuntimeProfileConfig {
             .map(|upstream| {
                 upstream
                     .parse::<SocketAddr>()
-                    .with_context(|| format!("parse DNS upstream {upstream:?} from {}", active_profile_path.display()))
+                    .with_context(|| format!("parse DNS upstream {upstream:?} from {path}"))
             })
             .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
-            profile_id: active.id.clone(),
-            active_profile_path,
-            active_profile_digest,
+            active_policy_path,
+            active_policy_digest,
             network,
             dns_upstreams,
             security_rules,
@@ -97,7 +97,7 @@ impl RuntimeProfileConfig {
         })
     }
 
-    /// Put this profile's policy in force for traffic, MCP and model routing.
+    /// Put this policy in force for traffic, MCP and model routing.
     pub(crate) fn apply(
         self,
         net_state: &capsem_core::SandboxNetworkState,
@@ -114,10 +114,10 @@ impl RuntimeProfileConfig {
         *mcp_runtime.plugin_policy.write().unwrap() = std::sync::Arc::new(self.plugins);
         *mcp_runtime.model_endpoints.write().unwrap() = std::sync::Arc::new(self.model_endpoints);
         tracing::info!(
-            active_profile_digest = %self.active_profile_digest,
+            active_policy_digest = %self.active_policy_digest,
             security_rule_count = security_rule_ids.len(),
             security_rule_ids = ?security_rule_ids,
-            "Reloaded profile runtime config"
+            "Reloaded runtime policy"
         );
     }
 
@@ -126,7 +126,7 @@ impl RuntimeProfileConfig {
         builtin_binary: Option<&Path>,
         builtin_env: HashMap<String, String>,
     ) -> Vec<McpServerDef> {
-        capsem_core::mcp::build_profile_server_list(&self.mcp, builtin_binary, builtin_env)
+        capsem_core::mcp::build_server_list(&self.mcp, builtin_binary, builtin_env)
     }
 }
 

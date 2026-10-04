@@ -100,7 +100,7 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
         (
             ProcessToService::ConfigReloadResult {
                 id: 13,
-                active_profile_digest: Some("blake3:00".into()),
+                active_policy_digest: Some("blake3:00".into()),
                 error: None,
             },
             Some(13),

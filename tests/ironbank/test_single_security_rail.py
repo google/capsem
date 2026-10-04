@@ -128,7 +128,7 @@ def test_session_event_writes_stay_behind_dbwriter() -> None:
         "fs_events",
         "model_calls",
         "net_events",
-        "profile_mutation_events",
+        "policy_mutation_events",
         "security_ask_events",
         "security_decision_events",
         "security_rule_events",

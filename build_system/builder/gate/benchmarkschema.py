@@ -70,16 +70,13 @@ class RouteBudgetsConfig(Strict):
     status: RouteBudgetPairConfig
     vm_scalar: RouteBudgetPairConfig
     vms_list: RouteBudgetPairConfig
-    profiles: RouteBudgetPairConfig
     stats_detail: RouteBudgetPairConfig
     aggregate_ledger: RouteBudgetPairConfig
     ledger: RouteBudgetPairConfig
     assets_status: RouteBudgetPairConfig
     mcp_default: RouteBudgetPairConfig
     mcp_servers: RouteBudgetPairConfig
-    rules: RouteBudgetPairConfig
     latest: RouteBudgetPairConfig
-    evaluate: RouteBudgetPairConfig
     plugin_info: RouteBudgetPairConfig
     stats: RouteBudgetPairConfig
     default: RouteBudgetPairConfig

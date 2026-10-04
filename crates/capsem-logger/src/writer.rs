@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::counters::{self, LedgerCounters, LedgerTally};
 use crate::events::{
     AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, HostEvent, McpCall, ModelCall, NetEvent,
-    NetworkMembership, NetworkRecord, ProfileMutationEvent, SecurityAskEvent, SecurityDecisionEvent, SecurityRuleEvent,
+    NetworkMembership, NetworkRecord, PolicyMutationEvent, SecurityAskEvent, SecurityDecisionEvent, SecurityRuleEvent,
     SubstitutionEvent, TransportEvent,
 };
 use crate::schema;
@@ -202,7 +202,7 @@ pub enum WriteOp {
     SecurityRuleEvent(SecurityRuleEvent),
     SecurityAskEvent(SecurityAskEvent),
     SecurityDecisionEvent(SecurityDecisionEvent),
-    ProfileMutationEvent(ProfileMutationEvent),
+    PolicyMutationEvent(PolicyMutationEvent),
     /// What the host did to a session or itself; hash-chained per ledger.
     HostEvent(HostEvent),
     /// Registry rows of a network database; upserted by key, disk-only.
@@ -843,7 +843,7 @@ fn execute_cached(conn: &Connection, sql: &str, params: impl rusqlite::Params) -
 mod event_rows;
 mod traffic_rows;
 use event_rows::{
-    insert_audit_event, insert_dns_event, insert_host_event, insert_profile_mutation_event, insert_security_ask_event,
+    insert_audit_event, insert_dns_event, insert_host_event, insert_policy_mutation_event, insert_security_ask_event,
     insert_security_decision_event, insert_security_rule_event, insert_substitution_event,
 };
 use traffic_rows::{insert_exec_event, insert_file_event, insert_mcp_call, insert_net_event, update_exec_event};

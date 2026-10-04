@@ -12,7 +12,6 @@ import re
 import subprocess
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID
 
 from tests.fixtures.oci.prepare_redis import native_pin
 from tests.fixtures.oci.registry import publish_catalog, registry
@@ -37,7 +36,7 @@ def use_catalog(service, reference, certificate):
 def run(service, certificate, image, *args):
     return subprocess.run(
         [
-            *cli(service, "run", "--profile", CODE_PROFILE_ID, "--registry-ca", str(certificate)),
+            *cli(service, "run", "--registry-ca", str(certificate)),
             "--image",
             image,
             *args,

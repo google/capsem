@@ -8,9 +8,7 @@ import {Hypervisor, HostLogSource, VM} from '@capsem/sdk';
 
 const hv = new Hypervisor(url, token, {timeoutMs: 120_000});
 try {
-  const status = await hv.info(); // health, version, profiles and updates
-  const [profile] = await hv.profiles.list();
-  if (profile === undefined) throw new Error('No Capsem profile is available');
+  const status = await hv.info(); // health, version, assets and updates
   const network = await hv.networks.create('private');
   const vm = await hv.create({
     name: 'work', cpus: 4, memory: 8, networks: [network],
@@ -28,7 +26,7 @@ try {
   const stats = await vm.stats.details();
   await vm.persist('saved-workspace');
   const triage = await hv.debug.triage({vm_id: vm.id, since: '1h'});
-  const server = await hv.profiles.mcp(profile).get('filesystem');
+  const server = await hv.mcp.get('filesystem');
   const tools = await server.tools.list();
   const logs = await hv.log({source: HostLogSource.GATEWAY, tail: 100});
   await vm.ports.close(port);
@@ -47,10 +45,8 @@ and integers that JavaScript cannot represent safely. Generated source is
 included in strict compilation, lint, coverage, drift and module-size checks.
 
 Named VMs are persistent. Unnamed VMs are ephemeral. Omitted CPU and memory
-values use the selected profile's defaults; memory is a positive integer in GiB.
-Omit `profile` for the profile the gateway's catalog names as its default,
-which the client reads once from `GET /status` and caches. To select another
-profile, pass an object from `await hv.profiles.list()` to `create` or `run`.
+values use the service defaults (4 CPUs, 12 GiB); memory is a positive integer
+in GiB.
 VM names resolve through `hv.list()` and cache the canonical ID. Missing or
 ambiguous names fail before a VM operation is sent.
 
@@ -93,9 +89,11 @@ typed port objects.
 Mounts remain pending.
 
 `hv.run(command)` executes once in a temporary VM. `hv.debug.panics()`, `hv.debug.triage()`
-and `hv.purge()` expose diagnostics and cleanup. `hv.profiles` provides typed
-profile and MCP discovery, refresh, permissions and tool calls; tool arguments
-and results retain their native JSON shape.
+and `hv.purge()` expose diagnostics and cleanup. `hv.mcp` covers the MCP
+servers every VM runs (settings.toml `[mcp]` with corp's laid over it):
+`info()`, `servers()`, `defaultPermission()` and `get(name)`, whose server has
+`tools.list()`, `tools.call(name, args)` and `refresh()`; tool arguments and
+results retain their native JSON shape.
 
 Run `pnpm install --frozen-lockfile`, then `pnpm lint`, `pnpm check`,
 `pnpm test`, and `pnpm build` in this directory. The fast gate also builds the

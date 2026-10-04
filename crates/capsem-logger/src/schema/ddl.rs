@@ -516,11 +516,10 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_security_ask_events_rule_id
         ON security_ask_events(rule_id);
 
-    CREATE TABLE IF NOT EXISTS profile_mutation_events (
+    CREATE TABLE IF NOT EXISTS policy_mutation_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
         mutation_id TEXT NOT NULL CHECK (length(mutation_id) = 12 AND mutation_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        profile_id TEXT NOT NULL,
         actor TEXT NOT NULL,
         category TEXT NOT NULL,
         filename TEXT NOT NULL,
@@ -537,12 +536,10 @@ pub const CREATE_SCHEMA: &str = "
         error TEXT,
         trace_id TEXT
     );
-    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_timestamp
-        ON profile_mutation_events(timestamp_unix_ms);
-    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_profile
-        ON profile_mutation_events(profile_id);
-    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_target
-        ON profile_mutation_events(category, target_kind, target_key);
+    CREATE INDEX IF NOT EXISTS idx_policy_mutation_events_timestamp
+        ON policy_mutation_events(timestamp_unix_ms);
+    CREATE INDEX IF NOT EXISTS idx_policy_mutation_events_target
+        ON policy_mutation_events(category, target_kind, target_key);
 
     -- What the host did to sessions and itself. Each row chains to the one
     -- before it: hash = chain_hash(prev_hash, event), genesis all zeros.

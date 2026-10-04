@@ -146,15 +146,15 @@ impl ExecResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RunRequest {
     pub command: String,
-    pub profile_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
-    /// Guest RAM in MiB. Falls back to the selected profile's VM resources.
+    /// Guest RAM in MiB. If absent, the service's default (12 GiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ram_mb: Option<u64>,
-    /// Guest CPU count. Falls back to the selected profile's VM resources.
+    /// Guest CPU count. If absent, the service's default (4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpus: Option<u32>,
     /// Environment variables to inject into the guest at boot.

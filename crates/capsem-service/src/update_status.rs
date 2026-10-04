@@ -26,16 +26,6 @@ pub(super) struct UpdateCheckCache {
     #[serde(default)]
     assets_blocked_reason: Option<String>,
     #[serde(default)]
-    latest_profiles: Option<String>,
-    #[serde(default)]
-    current_profiles: Option<String>,
-    #[serde(default)]
-    profiles_update_available: bool,
-    #[serde(default)]
-    profiles_state: Option<String>,
-    #[serde(default)]
-    profiles_blocked_reason: Option<String>,
-    #[serde(default)]
     latest_images: Option<String>,
     #[serde(default)]
     images_update_available: bool,
@@ -104,18 +94,6 @@ pub(super) fn update_status_response_from_paths(
                 )
             })
             .unwrap_or_else(|| update_track(current_assets, None, false)),
-        profiles: cache
-            .as_ref()
-            .map(|cache| {
-                channel_update_track(
-                    cache.current_profiles.clone(),
-                    cache.latest_profiles.clone(),
-                    cache.profiles_update_available,
-                    cache.profiles_state.as_deref(),
-                    cache.profiles_blocked_reason.clone(),
-                )
-            })
-            .unwrap_or_else(not_published_update_track),
         images: cache
             .as_ref()
             .map(|cache| {
@@ -185,12 +163,12 @@ fn supply_chain_evidence_from_paths(
             workflow: Some(".github/workflows/release.yaml".to_string()),
         },
         vm_obom: api::SupplyChainReference {
-            name: "profile_obom".to_string(),
+            name: "vm_obom".to_string(),
             format: Some("cyclonedx-obom.v1".to_string()),
             scope: Some("base_image".to_string()),
             generator: Some("cdxgen".to_string()),
             release_artifact: None,
-            route: Some("/profiles/{profile_id}/obom".to_string()),
+            route: None,
             workflow: Some(".github/workflows/release-assets.yaml".to_string()),
         },
         attestations: vec![

@@ -111,14 +111,14 @@ fn readiness_notices_a_required_table_dropped_after_it_passed() {
 
     Connection::open(&path)
         .unwrap()
-        .execute_batch("DROP TABLE profile_mutation_events;")
+        .execute_batch("DROP TABLE policy_mutation_events;")
         .unwrap();
 
     // A verdict cached forever would still answer "ready" here.
     for _ in 0..2 {
         let error = reader.ready().expect_err("a dropped required table is not ready");
         assert!(
-            error.contains("profile_mutation_events"),
+            error.contains("policy_mutation_events"),
             "the failure names the missing table: {error}"
         );
     }
@@ -130,7 +130,7 @@ fn failed_readiness_stays_a_structural_check() {
     let path = ledger_with_rows(dir.path(), 20_000);
     Connection::open(&path)
         .unwrap()
-        .execute_batch("DROP TABLE profile_mutation_events;")
+        .execute_batch("DROP TABLE policy_mutation_events;")
         .unwrap();
     let broken = DbReader::open(&path).unwrap();
     let healthy = DbReader::open(&ledger_with_rows(dir.path(), 10)).unwrap();

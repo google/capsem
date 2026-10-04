@@ -25,25 +25,13 @@ pub(crate) async fn handle_fork(
         }
     }
 
-    // Find source: running instance or stopped persistent VM
-    let (
-        session_dir,
-        profile_id,
-        profile_revision,
-        profile_payload_hash,
-        asset_pins,
-        ram_mb,
-        cpus,
-        base_version,
-        uds_path,
-    ) = {
+    // Find source: running instance or stopped persistent VM. A fork boots
+    // the source's own images, so it inherits the source's asset pins.
+    let (session_dir, asset_pins, ram_mb, cpus, base_version, uds_path) = {
         let instances = state.instances.lock().unwrap();
         if let Some(i) = instances.get(&id) {
             (
                 i.session_dir.clone(),
-                i.profile_id.clone(),
-                i.profile_revision.clone(),
-                i.profile_payload_hash.clone(),
                 i.asset_pins.clone(),
                 i.ram_mb,
                 i.cpus,
@@ -52,32 +40,19 @@ pub(crate) async fn handle_fork(
             )
         } else {
             drop(instances);
-            if let Some(p) = find_persistent_entry_by_route_id(&state, &id) {
-                (
-                    p.session_dir,
-                    p.profile_id,
-                    p.profile_revision,
-                    p.profile_payload_hash,
-                    p.asset_pins,
-                    p.ram_mb,
-                    p.cpus,
-                    p.base_version,
-                    None,
-                )
-            } else {
+            let Some(p) = find_persistent_entry_by_route_id(&state, &id) else {
                 return Err(AppError(
                     StatusCode::NOT_FOUND,
                     format!("source sandbox not found: {}", id),
                 ));
-            }
+            };
+            // A VM in the old shape is refused, never laundered into a fork.
+            state
+                .validate_persistent_entry(&p)
+                .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
+            (p.session_dir, p.asset_pins, p.ram_mb, p.cpus, p.base_version, None)
         }
     };
-    let profile = state
-        .cached_profile_config(&profile_id)
-        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
-    state
-        .validate_profile_pins(&profile, &profile_revision, &profile_payload_hash, &asset_pins)
-        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
     // Clone state into new persistent sandbox. The route/runtime id is
     // separate from the human display name.
@@ -93,9 +68,7 @@ pub(crate) async fn handle_fork(
     let entry = PersistentVmEntry {
         id: vm_id.clone(),
         name: name.clone(),
-        profile_id,
-        profile_revision,
-        profile_payload_hash,
+        legacy_profile_id: None,
         asset_pins,
         ram_mb,
         cpus,

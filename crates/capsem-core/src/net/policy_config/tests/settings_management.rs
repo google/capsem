@@ -274,13 +274,13 @@ fn batch_update_accepts_valid_changes() {
 }
 
 #[test]
-fn batch_update_rejects_profile_behavior_settings() {
+fn batch_update_rejects_corp_owned_settings() {
     with_temp_configs(vec![], vec![], |_, _| {
         let mut changes = HashMap::new();
         changes.insert(SETTING_GITHUB_ALLOW.to_string(), SettingValue::Bool(true));
         let result = loader::batch_update_settings(&changes);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("profile-owned setting"));
+        assert!(result.unwrap_err().contains("corp-owned setting"));
     });
 }
 
@@ -314,13 +314,13 @@ fn batch_update_rejects_unknown_setting_id() {
 }
 
 #[test]
-fn batch_update_settings_rejects_profile_owned_setting_ids() {
+fn batch_update_settings_rejects_corp_owned_setting_ids() {
     with_temp_configs(vec![], vec![], |_, _| {
         let mut changes = HashMap::new();
         changes.insert("vm.resources.cpu_count".to_string(), SettingValue::Number(8));
         let result = loader::batch_update_settings(&changes);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("profile-owned setting"));
+        assert!(result.unwrap_err().contains("corp-owned setting"));
     });
 }
 
@@ -353,7 +353,7 @@ fn batch_update_rejects_dynamic_guest_env() {
             result.is_err(),
             "dynamic guest.env.* belongs to profile/bootstrap, not settings"
         );
-        assert!(result.unwrap_err().contains("profile-owned setting"));
+        assert!(result.unwrap_err().contains("corp-owned setting"));
     });
 }
 

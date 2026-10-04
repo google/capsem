@@ -9,7 +9,6 @@ kingslanding test grants it first (`grant_image`). This one does not.
 import subprocess
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID
 
 from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_run import cli, environment, grant_image, service
@@ -25,8 +24,6 @@ def run_image(service, reference, certificate):
             *cli(
                 service,
                 "run",
-                "--profile",
-                CODE_PROFILE_ID,
                 "--registry-ca",
                 str(certificate),
             ),

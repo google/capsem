@@ -35,7 +35,6 @@ fn container_spec_debug_never_prints_credentials_args_or_env_values() {
     );
     let request = ProvisionRequest {
         name: None,
-        profile_id: "code".into(),
         ram_mb: None,
         cpus: None,
         persistent: false,
@@ -63,11 +62,10 @@ fn container_spec_wire_shape_omits_empty_fields() {
 
 #[test]
 fn provision_request_carries_an_optional_container() {
-    let plain: ProvisionRequest = serde_json::from_value(json!({"profile_id": "code"})).unwrap();
+    let plain: ProvisionRequest = serde_json::from_value(json!({})).unwrap();
     assert!(plain.container.is_none());
     assert!(serde_json::to_value(&plain).unwrap().get("container").is_none());
-    let with: ProvisionRequest =
-        serde_json::from_value(json!({"profile_id": "code", "container": {"image": "docker://redis"}})).unwrap();
+    let with: ProvisionRequest = serde_json::from_value(json!({"container": {"image": "docker://redis"}})).unwrap();
     assert_eq!(with.container.unwrap().image, "docker://redis");
 }
 

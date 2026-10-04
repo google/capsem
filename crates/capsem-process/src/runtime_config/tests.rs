@@ -2,23 +2,21 @@ use super::*;
 use capsem_core::net::policy_config::SecurityPluginMode;
 
 #[test]
-fn runtime_profile_source_loads_active_profile_rules_plugins_mcp() {
+fn runtime_policy_source_loads_rules_plugins_mcp() {
     let dir = tempfile::tempdir().unwrap();
-    let active_path = dir.path().join("vm/active_profile.toml");
+    let active_path = dir.path().join("vm/active_policy.toml");
     std::fs::create_dir_all(active_path.parent().unwrap()).unwrap();
     std::fs::write(
         &active_path,
         r#"
-id = "code"
-name = "Code"
-description = "Runtime test active profile."
-revision = "test.1"
+[corp_rules]
+[network]
 
-[profile_rules.profiles.rules.runtime_http]
+[user_rules.profiles.rules.runtime_http]
 name = "runtime_http"
 action = "allow"
 priority = 10
-match = 'http.host == "profile.example"'
+match = 'http.host == "policy.example"'
 
 [plugins.credential_broker]
 mode = "rewrite"
@@ -30,10 +28,9 @@ local = false
     )
     .unwrap();
 
-    let runtime = RuntimeProfileSource::new(&active_path).load().unwrap();
+    let runtime = RuntimePolicySource::new(&active_path).load().unwrap();
 
-    assert_eq!(runtime.profile_id, "code");
-    assert_eq!(runtime.active_profile_path, active_path);
+    assert_eq!(runtime.active_policy_path, active_path);
     assert!(runtime
         .security_rules
         .rules()
@@ -45,19 +42,14 @@ local = false
 }
 
 #[test]
-fn runtime_profile_source_loads_corp_rules_and_dns_from_active_profile() {
+fn runtime_policy_source_loads_corp_rules_and_dns() {
     let dir = tempfile::tempdir().unwrap();
-    let active_path = dir.path().join("vm/active_profile.toml");
+    let active_path = dir.path().join("vm/active_policy.toml");
     std::fs::create_dir_all(active_path.parent().unwrap()).unwrap();
     std::fs::write(
         &active_path,
         r#"
-id = "code"
-name = "Code"
-description = "Runtime test active profile."
-revision = "test.1"
-
-[profile_rules.default.http]
+[user_rules.default.http]
 name = "default_http"
 action = "allow"
 priority = "default"
@@ -87,7 +79,7 @@ burst = 2
     )
     .unwrap();
 
-    let runtime = RuntimeProfileSource::new(&active_path).load().unwrap();
+    let runtime = RuntimePolicySource::new(&active_path).load().unwrap();
     let event = serde_json::json!({
         "http": {
             "host": "127.0.0.1",
@@ -122,17 +114,15 @@ burst = 2
 }
 
 #[test]
-fn runtime_profile_source_loads_exact_upstream_overrides() {
+fn runtime_policy_source_loads_exact_upstream_overrides() {
     let dir = tempfile::tempdir().unwrap();
-    let active_path = dir.path().join("vm/active_profile.toml");
+    let active_path = dir.path().join("vm/active_policy.toml");
     std::fs::create_dir_all(active_path.parent().unwrap()).unwrap();
     std::fs::write(
         &active_path,
         r#"
-id = "code"
-name = "Code"
-description = "Runtime test active profile."
-revision = "test.1"
+[user_rules]
+[corp_rules]
 
 [network.upstream_overrides."daily-cloudcode-pa.googleapis.com:443"]
 dial = "127.0.0.1:3713"
@@ -141,7 +131,7 @@ protocol = "http"
     )
     .unwrap();
 
-    let runtime = RuntimeProfileSource::new(&active_path).load().unwrap();
+    let runtime = RuntimePolicySource::new(&active_path).load().unwrap();
     let override_route = runtime
         .network
         .find_upstream_override("daily-cloudcode-pa.googleapis.com", 443)

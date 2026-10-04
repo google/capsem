@@ -12,7 +12,7 @@ import subprocess
 import time
 
 import pytest
-from helpers.constants import BIN_DIR, CODE_PROFILE_ID
+from helpers.constants import BIN_DIR
 from helpers.service import ServiceInstance, exec_output_text, vm_session_dir
 
 from tests.fixtures.oci.registry import registry
@@ -82,7 +82,7 @@ def grant_image(service, reference):
 
 def image_command(verb, service, reference, certificate=None, *args):
     grant_image(service, reference)
-    result = cli(service, verb, "--profile", CODE_PROFILE_ID)
+    result = cli(service, verb)
     if certificate is not None:
         result += ["--registry-ca", str(certificate)]
     return [*result, *args, "--image", reference]
@@ -144,7 +144,6 @@ def environment(service):
         **os.environ,
         "CAPSEM_HOME": str(service.home_dir),
         "CAPSEM_RUN_DIR": str(service.tmp_dir),
-        "CAPSEM_PROFILES_DIR": str(service.profiles_dir),
     }
 
 
@@ -316,8 +315,6 @@ def test_shell_run_still_uses_existing_command_path(service):
         cli(
             service,
             "run",
-            "--profile",
-            CODE_PROFILE_ID,
             "printf shell-proof; printf shell-error >&2; exit 3",
         ),
         env=environment(service),

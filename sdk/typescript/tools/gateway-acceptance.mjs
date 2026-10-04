@@ -18,10 +18,10 @@ const hv = new Hypervisor(url, token);
 const vm = new VM(url, token, {name: 'route-workspace'});
 try {
   assert((await hv.info()).gateway_version.length > 0);
-  const profiles = await hv.profiles.list();
-  const [profile] = profiles;
-  assert(profile, 'SDK acceptance fixture must expose at least one profile');
-  assert.equal((await hv.profiles.mcp(profile).info()).profile_id, profile.id);
+  const mcp = await hv.mcp.info();
+  assert(mcp.manual_server_count <= mcp.server_count);
+  assert(Array.isArray(await hv.mcp.servers()));
+  assert.equal(typeof (await hv.mcp.defaultPermission()).action, 'string');
   assert(Array.isArray((await hv.debug.panics({limit: 2})).panics));
   assert.equal(typeof (await hv.debug.triage({since: '1h', limit: 2})).session, 'object');
   assert((await hv.list()).sandboxes.some(entry => entry.id === id));

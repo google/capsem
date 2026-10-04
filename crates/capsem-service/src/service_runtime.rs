@@ -216,44 +216,23 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     }
 
     // Clean up stale assets (legacy v*/ dirs, unreferenced hash-named files).
-    // Preserve every filename referenced by the profile catalog or by saved VM
-    // boot pins so cleanup cannot strand a valid profile or persistent VM.
+    // Preserve every filename a saved VM pins so cleanup cannot strand a
+    // persistent VM on images the current manifest no longer names.
     if let Some(ref m) = manifest {
-        match ProfileCatalog::load_default() {
-            Ok(catalog) => {
-                let mut preserve = profile_catalog_asset_filenames(&catalog);
-                preserve.extend(persistent_registry_asset_filenames(&persistent_registry));
-                match capsem_assets::asset_manager::cleanup_unused_assets_preserving(&assets_base_dir, m, preserve) {
-                    Ok(removed) if !removed.is_empty() => {
-                        info!(count = removed.len(), "cleaned up stale assets");
-                    }
-                    Err(e) => warn!(error = %e, "asset cleanup failed"),
-                    _ => {}
-                }
+        let preserve = persistent_registry_asset_filenames(&persistent_registry);
+        match capsem_assets::asset_manager::cleanup_unused_assets_preserving(&assets_base_dir, m, preserve) {
+            Ok(removed) if !removed.is_empty() => {
+                info!(count = removed.len(), "cleaned up stale assets");
             }
-            Err(error) => {
-                warn!(
-                    error = %error,
-                    "profile catalog unavailable; skipping asset cleanup"
-                );
-            }
+            Err(e) => warn!(error = %e, "asset cleanup failed"),
+            _ => {}
         }
     }
 
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     let asset_reconcile = load_asset_reconcile_state(&asset_status_path);
-    let profile_summary_cache = build_profile_summary_cache()
-        .map_err(|AppError(_, message)| anyhow!("failed to build profile summary cache: {message}"))?;
-    let profile_cache =
-        build_profile_cache().map_err(|AppError(_, message)| anyhow!("failed to build profile cache: {message}"))?;
-    prewarm_system_overlay_templates(&run_dir, &profile_cache);
+    prewarm_system_overlay_template(&run_dir);
     prewarm_vm_asset_hash_cache(&assets_base_dir, manifest.as_deref(), &current_version);
-    let profile_rule_cache = build_profile_rule_cache(None)
-        .map_err(|AppError(_, message)| anyhow!("failed to build profile rule cache: {message}"))?;
-    let profile_mcp_default_cache = build_profile_mcp_default_cache(None)
-        .map_err(|AppError(_, message)| anyhow!("failed to build profile MCP default cache: {message}"))?;
-    let profile_plugin_policy_cache = build_profile_plugin_policy_cache(None)
-        .map_err(|AppError(_, message)| anyhow!("failed to build profile plugin cache: {message}"))?;
     // The home's sessions directory, not the run directory's parent: a run
     // directory placed elsewhere (a short socket path under /tmp) once put
     // every such service on one shared ledger.
@@ -274,13 +253,6 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
         asset_reconcile: Mutex::new(asset_reconcile),
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
-        plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        profile_summary_cache: Mutex::new(profile_summary_cache),
-        profile_cache: Mutex::new(profile_cache),
-        profile_status_cache: Mutex::new(None),
-        profile_rule_cache: Mutex::new(profile_rule_cache),
-        profile_mcp_default_cache: Mutex::new(profile_mcp_default_cache),
-        profile_plugin_policy_cache: Mutex::new(profile_plugin_policy_cache),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         host_ledger,
         host_stats: Mutex::new(Default::default()),
@@ -289,12 +261,8 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
         containers: Default::default(),
         storage_diagnostics_cache: Mutex::new(HashMap::new()),
         persistent_resume_state_cache: Mutex::new(HashMap::new()),
-        evaluate_rule_cache: Mutex::new(HashMap::new()),
-        profile_rule_response_cache: Mutex::new(HashMap::new()),
-        profile_plugin_response_cache: Mutex::new(HashMap::new()),
-        evaluate_response_cache: Mutex::new(HashMap::new()),
+        asset_manifest_cache: Mutex::new(None),
         list_response_cache: Mutex::new(None),
-        evaluate_last_response_cache: Mutex::new(None),
         lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
@@ -303,7 +271,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
         #[cfg(test)]
         _test_tempdir: None,
     });
-    hydrate_startup_route_caches(&state).map_err(|AppError(_, message)| anyhow!("{message}"))?;
+
     state.hydrate_session_db_handles();
     state.hydrate_host_stats().await?;
     state
@@ -331,7 +299,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     }
     state.reconcile_persistent_defunct_from_logs();
 
-    asset_background::start_startup_ensure(Arc::clone(&state));
+    asset_background::start_asset_ensure(&state);
 
     // Reap capsem-process orphans from any prior service run sharing this
     // run_dir. A previous service that crashed (SIGKILL) or was killed by

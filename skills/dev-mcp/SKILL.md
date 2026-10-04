@@ -31,7 +31,7 @@ the host MCP process; never copy it into a VM, container, guest tool argument,
 or workload. stdout is protocol-only and sanitized diagnostics use stderr.
 
 The current registry is defined in `mcp/typescript/src/host-tools.ts`,
-`network-tools.ts`, and `profile-tools.ts`. Parameters follow the TypeScript
+`network-tools.ts`, and `mcp-tools.ts`. Parameters follow the TypeScript
 SDK names, including `vm_id`, `vcpu`, `memory`, `env`, and
 `timeout_secs`. Canonical tools include `capsem_pause` and
 `capsem_status`; the retired `capsem_suspend`, `capsem_version`, and
@@ -42,7 +42,7 @@ The host tools cover:
 - VM lifecycle, one-shot execution, persistence, files, statistics,
   logs, timelines, panic extraction, and triage.
 - Private network lifecycle, membership, and cursor-based audit logs.
-- Typed profile MCP discovery, refresh, permission inspection, and invocation
+- Typed MCP server discovery, refresh, permission inspection, and invocation
   through the running VM's existing relay and security engine.
 
 ### Debug workflow
@@ -93,7 +93,7 @@ credential, CA private key, direct database access, or service socket access.
 | `mcp/typescript/src/server.ts` | SDK client and tool registration |
 | `mcp/typescript/src/host-tools.ts` | VM, file, and diagnostic tools |
 | `mcp/typescript/src/network-tools.ts` | Private network tools |
-| `mcp/typescript/src/profile-tools.ts` | Profile MCP discovery and calls |
+| `mcp/typescript/src/mcp-tools.ts` | MCP server discovery and calls |
 | `mcp/typescript/src/results.ts` | Structured results and sanitized errors |
 | `sdk/typescript/src/` | Typed gateway client and validators |
 
@@ -104,7 +104,7 @@ The guest MCP path is not a single process. `capsem-process` (the per-VM host pr
 | Crate | Role | Privileges |
 |-------|------|-----------|
 | `capsem-mcp-aggregator` | Manages connections to **external** MCP servers (GitHub, Slack, custom HTTP/stdio servers). Receives msgpack frames from `capsem-process` on stdin, routes tool calls. | Network only; no access to the VM, session DB, filesystem, or service socket. |
-| `capsem-mcp-builtin` | Stdio MCP server that implements **built-in** tools: HTTP (`fetch_http`, `grep_http`, `http_headers`) plus the `echo` transport probe. Managed by the aggregator as just another MCP server. | Scoped by environment variables: `CAPSEM_SESSION_DIR`, `CAPSEM_ACTIVE_PROFILE`. Holds no ledger writer: what it did goes back to `capsem-process` as records under the reserved `_meta` key `dev.capsem/ledger` (see `capsem_proto::mcp_contracts::builtin_ledger`). |
+| `capsem-mcp-builtin` | Stdio MCP server that implements **built-in** tools: HTTP (`fetch_http`, `grep_http`, `http_headers`) plus the `echo` transport probe. Managed by the aggregator as just another MCP server. | Scoped by environment variables: `CAPSEM_SESSION_DIR`, `CAPSEM_ACTIVE_POLICY`. Holds no ledger writer: what it did goes back to `capsem-process` as records under the reserved `_meta` key `dev.capsem/ledger` (see `capsem_proto::mcp_contracts::builtin_ledger`). |
 
 Rationale: isolating external-server connections in a low-privilege subprocess means a compromised third-party MCP server cannot reach the host filesystem or the session DB. The built-in tool server runs in its own process for the same reason.
 
@@ -197,9 +197,12 @@ The endpoint parses the namespace to route to the correct server.
 4. Log canonical tool row, optional MCP protocol row, and matched security rule rows.
 ```
 
-Config hierarchy: corp config constrains profile config. Profile config owns
-MCP servers, tools, resources, default rules, and plugin policy. There is no
-MCP-specific decision provider or `user.toml` override rail.
+Config hierarchy: built-in defaults, then the user's `settings.toml`, then
+the corp config, which wins (and whose `corp_locked` rules hold). `[mcp]` in
+settings.toml declares servers; tool permissions are settings-managed
+`profiles.rules.*` rules and `default.mcp`, edited through `/mcp/...` routes.
+The service merges all three into each session's `vm/active_policy.toml`.
+There is no MCP-specific decision provider or `user.toml` override rail.
 
 Decisions use the shared security action enum: `allow`, `ask`, `block`,
 `rewrite`, `preprocess`, and `postprocess`. `ask` waits for an approval or
@@ -252,7 +255,7 @@ pnpm --dir mcp/typescript pack
 ```
 
 `tests/capsem-sdk/test_mcp_cli_parity.py` guards canonical CLI/MCP behavior.
-`tests/ironbank/test_mcp_profile_ledger.py` packs the npm artifact, launches it
+`tests/ironbank/test_mcp_settings_ledger.py` packs the npm artifact, launches it
 over stdio with fixture-issued gateway credentials, drives a real VM and guest
 MCP path, and verifies correlated tool, network, and security ledger evidence.
 `tests/capsem-installed/test_winterfell_gateway.py` verifies the installed

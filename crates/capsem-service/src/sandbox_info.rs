@@ -3,13 +3,7 @@ use super::*;
 
 /// The list/info row of a running VM, from its in-memory record alone.
 pub(super) fn running_sandbox_info(i: &InstanceInfo) -> SandboxInfo {
-    let mut info = SandboxInfo::new(
-        i.id.clone(),
-        i.profile_id.clone(),
-        i.pid,
-        VmLifecycleState::Running,
-        i.persistent,
-    );
+    let mut info = SandboxInfo::new(i.id.clone(), i.pid, VmLifecycleState::Running, i.persistent);
     info.name = Some(i.name.clone());
     info.ram_mb = Some(i.ram_mb);
     info.cpus = Some(i.cpus);
@@ -31,7 +25,7 @@ pub(super) fn inactive_sandbox_info(
     can_resume: bool,
     blocked_reason: Option<String>,
 ) -> SandboxInfo {
-    let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
+    let mut info = SandboxInfo::new(vm_id, 0, status, true);
     info.name = Some(entry.name.clone());
     info.ram_mb = Some(entry.ram_mb);
     info.cpus = Some(entry.cpus);

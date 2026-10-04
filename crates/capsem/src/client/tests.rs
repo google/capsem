@@ -6,19 +6,6 @@ use capsem_api::VmAction;
 /// Shared with every command's tests that talk to the service.
 pub(crate) mod fake_service;
 
-#[test]
-fn asset_status_retains_background_start_acknowledgement() {
-    let status: AssetStatusResponse = serde_json::from_value(serde_json::json!({
-        "ready": false,
-        "downloading": true,
-        "started": true
-    }))
-    .unwrap();
-
-    assert_eq!(status.started, Some(true));
-    assert_eq!(serde_json::to_value(status).unwrap()["started"], true);
-}
-
 struct EnvGuard {
     key: &'static str,
     prev: Option<String>,
@@ -149,12 +136,11 @@ fn parse_env_vars_second_entry_invalid() {
 
 #[test]
 fn api_response_ok_variant() {
-    let json = r#"{"id":"vm-1","name":"code-vm1","profile_id":"code","status":"Running","persistent":true,"can_resume":false,"available_actions":["pause","stop","fork","delete"]}"#;
+    let json = r#"{"id":"vm-1","name":"code-vm1","status":"Running","persistent":true,"can_resume":false,"available_actions":["pause","stop","fork","delete"]}"#;
     let resp: ApiResponse<ProvisionResponse> = serde_json::from_str(json).unwrap();
     let result = resp.into_result().unwrap();
     assert_eq!(result.id, "vm-1");
     assert_eq!(result.name, "code-vm1");
-    assert_eq!(result.profile_id, "code");
     assert_eq!(result.status, VmLifecycleState::Running);
     assert!(result.persistent);
     assert!(!result.can_resume);
@@ -215,15 +201,8 @@ fn update_status_response_parses_service_contract() {
             "state": "update_available",
             "compatibility": "compatible"
         },
-        "profiles": {
-            "current": "profiles-2030.0101.0",
-            "latest": "profiles-2030.0101.1",
-            "blocked_reason": "requires binary 1.4.0 or newer",
-            "update_available": false,
-            "state": "unknown",
-            "compatibility": "unknown"
-        },
         "images": {
+            "blocked_reason": "requires binary 1.4.0 or newer",
             "update_available": false,
             "state": "not_published",
             "compatibility": "not_applicable"
@@ -248,11 +227,10 @@ fn update_status_response_parses_service_contract() {
                 "workflow": ".github/workflows/release.yaml"
             },
             "vm_obom": {
-                "name": "profile_obom",
+                "name": "vm_obom",
                 "format": "cyclonedx-obom.v1",
                 "scope": "base_image",
                 "generator": "cdxgen",
-                "route": "/profiles/{profile_id}/obom",
                 "workflow": ".github/workflows/release-assets.yaml"
             },
             "attestations": [
@@ -289,13 +267,10 @@ fn update_status_response_parses_service_contract() {
     assert_eq!(status.binary.state, UpdateTrackState::UpdateAvailable);
     assert_eq!(status.binary.compatibility, UpdateCompatibilityState::Compatible);
     assert_eq!(status.assets.current.as_deref(), Some("2026.0627.1"));
-    assert_eq!(status.profiles.current.as_deref(), Some("profiles-2030.0101.0"));
-    assert_eq!(status.profiles.latest.as_deref(), Some("profiles-2030.0101.1"));
     assert_eq!(
-        status.profiles.blocked_reason.as_deref(),
+        status.images.blocked_reason.as_deref(),
         Some("requires binary 1.4.0 or newer")
     );
-    assert_eq!(status.profiles.state, UpdateTrackState::Unknown);
     assert_eq!(status.images.compatibility, UpdateCompatibilityState::NotApplicable);
     assert_eq!(status.supply_chain.manifest.origin.as_deref(), Some("update"));
     assert_eq!(
@@ -306,10 +281,8 @@ fn update_status_response_parses_service_contract() {
         status.supply_chain.host_sbom.release_artifact.as_deref(),
         Some("capsem-sbom.spdx.json")
     );
-    assert_eq!(
-        status.supply_chain.vm_obom.route.as_deref(),
-        Some("/profiles/{profile_id}/obom")
-    );
+    assert_eq!(status.supply_chain.vm_obom.name, "vm_obom");
+    assert_eq!(status.supply_chain.vm_obom.route, None);
     assert!(status
         .supply_chain
         .attestations
@@ -339,7 +312,6 @@ fn api_response_empty_error() {
 fn provision_request_serde() {
     let req = ProvisionRequest {
         name: Some("test".into()),
-        profile_id: "code".into(),
         ram_mb: Some(4096),
         cpus: Some(4),
         persistent: true,
@@ -351,7 +323,6 @@ fn provision_request_serde() {
     let json = serde_json::to_string(&req).unwrap();
     let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(req2.name, Some("test".into()));
-    assert_eq!(req2.profile_id, "code");
     assert_eq!(req2.ram_mb, Some(4096));
     assert!(req2.persistent);
     assert!(req2.env.is_none());
@@ -363,7 +334,6 @@ fn provision_request_with_env() {
     env.insert("FOO".into(), "bar".into());
     let req = ProvisionRequest {
         name: Some("test".into()),
-        profile_id: "code".into(),
         ram_mb: Some(2048),
         cpus: Some(2),
         persistent: true,
@@ -382,7 +352,6 @@ fn provision_request_with_env() {
 fn provision_request_env_omitted_when_none() {
     let req = ProvisionRequest {
         name: None,
-        profile_id: "code".into(),
         ram_mb: Some(2048),
         cpus: Some(2),
         persistent: false,
@@ -395,12 +364,11 @@ fn provision_request_env_omitted_when_none() {
     assert!(!json.contains("env"));
 }
 
-/// Resources left unset are left out, so the service applies the profile's.
+/// Resources left unset are left out, so the service applies its defaults.
 #[test]
-fn provision_request_omits_unset_resources_for_the_profile_defaults() {
+fn provision_request_omits_unset_resources_for_the_service_defaults() {
     let req = ProvisionRequest {
         name: None,
-        profile_id: "code".into(),
         ram_mb: None,
         cpus: None,
         persistent: false,
@@ -417,7 +385,6 @@ fn provision_request_omits_unset_resources_for_the_profile_defaults() {
 fn provision_request_with_from() {
     let req = ProvisionRequest {
         name: None,
-        profile_id: "code".into(),
         ram_mb: Some(2048),
         cpus: Some(2),
         persistent: false,
@@ -436,7 +403,6 @@ fn provision_request_with_from() {
 fn provision_request_from_omitted_when_none() {
     let req = ProvisionRequest {
         name: None,
-        profile_id: "code".into(),
         ram_mb: Some(2048),
         cpus: Some(2),
         persistent: false,
@@ -465,7 +431,6 @@ fn list_response_with_entries() {
         sessions: vec![
             SessionInfo {
                 id: "vm-1".into(),
-                profile_id: "code".into(),
                 name: None,
                 pid: 100,
                 status: VmLifecycleState::Running,
@@ -492,7 +457,6 @@ fn list_response_with_entries() {
             },
             SessionInfo {
                 id: "mydev".into(),
-                profile_id: "co-work".into(),
                 name: Some("mydev".into()),
                 pid: 0,
                 status: VmLifecycleState::Stopped,
@@ -654,7 +618,6 @@ fn run_request_serde() {
     env.insert("KEY".into(), "val".into());
     let req = RunRequest {
         command: "echo hi".into(),
-        profile_id: "code".into(),
         timeout_secs: Some(60),
         ram_mb: Some(1024),
         cpus: Some(1),
@@ -663,7 +626,6 @@ fn run_request_serde() {
     let json = serde_json::to_string(&req).unwrap();
     let req2: RunRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(req2.command, "echo hi");
-    assert_eq!(req2.profile_id, "code");
     assert_eq!(req2.timeout_secs, Some(60));
     assert_eq!((req2.ram_mb, req2.cpus), (Some(1024), Some(1)));
     assert_eq!(req2.env.unwrap().get("KEY").unwrap(), "val");
@@ -673,7 +635,6 @@ fn run_request_serde() {
 fn run_request_env_omitted_when_none() {
     let req = RunRequest {
         command: "ls".into(),
-        profile_id: "code".into(),
         timeout_secs: None,
         ram_mb: None,
         cpus: None,
@@ -684,7 +645,7 @@ fn run_request_env_omitted_when_none() {
     assert!(!json.contains("env"));
     assert!(
         !json.contains("ram_mb") && !json.contains("cpus"),
-        "unset resources are the profile's"
+        "unset resources are the service default"
     );
 }
 

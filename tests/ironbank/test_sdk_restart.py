@@ -10,8 +10,9 @@ import sys
 from pathlib import Path
 
 import pytest
+from helpers.constants import ASSETS_DIR
 from helpers.managed_service import launchd_service
-from helpers.service import ServiceInstance, materialize_test_profiles
+from helpers.service import ServiceInstance
 from helpers.stopped_workspace import VM_ID, seed_stopped_workspace
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,8 +28,7 @@ def workspace_digest(root: Path) -> dict[str, str]:
 @pytest.mark.parametrize("language", ["python", "typescript"])
 def test_sdk_receives_managed_restart_and_reconnects_explicitly(language: str) -> None:
     service = ServiceInstance()
-    service.profiles_dir = materialize_test_profiles(service.tmp_dir)
-    seed_stopped_workspace(service.tmp_dir, service.profiles_dir)
+    seed_stopped_workspace(service.tmp_dir, ASSETS_DIR)
     with launchd_service(service) as managed:
         before = managed.ready()
         status, inventory = before.get("/vms/list")

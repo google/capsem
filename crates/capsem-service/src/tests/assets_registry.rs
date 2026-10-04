@@ -1,61 +1,26 @@
 use super::*;
 
-#[test]
-fn resolve_asset_paths_prefers_erofs_when_present() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("vmlinuz"), b"kernel").unwrap();
-    std::fs::write(dir.path().join("initrd.img"), b"initrd").unwrap();
-    std::fs::write(dir.path().join("rootfs.erofs"), b"erofs").unwrap();
-    let state = make_asset_state(dir.path().to_path_buf());
-    let resolved = state.resolve_asset_paths().unwrap();
-    assert_eq!(resolved.rootfs, dir.path().join("rootfs.erofs"));
-}
-
-#[test]
-fn resolve_asset_paths_does_not_accept_squashfs() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("vmlinuz"), b"kernel").unwrap();
-    std::fs::write(dir.path().join("initrd.img"), b"initrd").unwrap();
-    std::fs::write(dir.path().join("rootfs.squashfs"), b"squashfs").unwrap();
-    let state = make_asset_state(dir.path().to_path_buf());
-
-    let resolved = state.resolve_asset_paths().unwrap();
-    assert_eq!(resolved.rootfs, dir.path().join("rootfs.erofs"));
-    assert!(!resolved.rootfs.exists());
+fn asset_status_value(state: &ServiceState) -> serde_json::Value {
+    serde_json::to_value(asset_status(state).expect("asset status")).unwrap()
 }
 
 #[test]
 fn asset_status_reports_reconcile_progress_fields() {
     let dir = tempfile::tempdir().unwrap();
-    let arch = capsem_core::net::policy_config::current_profile_arch();
-    let arch_dir = dir.path().join(arch);
-    std::fs::create_dir_all(&arch_dir).unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
-    let profile = materialized_test_profile();
-    let arch_assets = profile.assets.current_arch_assets().unwrap();
-    for asset in [&arch_assets.kernel, &arch_assets.initrd, &arch_assets.rootfs] {
-        std::fs::write(
-            arch_dir.join(profile_asset_hash_name(asset).expect("profile asset hash name")),
-            b"asset",
-        )
-        .unwrap();
-    }
-    {
-        let mut reconcile = state.asset_reconcile.lock().unwrap();
-        *reconcile = AssetReconcileState {
-            in_progress: true,
-            current_asset: Some("rootfs.erofs".to_string()),
-            bytes_done: 128,
-            bytes_total: Some(256),
-            last_error: None,
-            last_downloaded: None,
-        };
-    }
+    install_test_runtime_assets(&state);
+    *state.asset_reconcile.lock().unwrap() = AssetReconcileState {
+        in_progress: true,
+        current_asset: Some("rootfs.erofs".to_string()),
+        bytes_done: 128,
+        bytes_total: Some(256),
+        last_error: None,
+        last_downloaded: None,
+    };
 
-    let status = profile_asset_status_value(&state, &profile);
-    assert_eq!(status["profile_id"], "code");
-    assert_eq!(status["manifest"]["origin"], "missing");
-    assert_eq!(status["ready"], true);
+    let status = asset_status_value(&state);
+
+    assert_eq!(status["ready"], false, "a status taken during a repair is not ready");
     assert_eq!(status["downloading"], true);
     assert_eq!(status["current_asset"], "rootfs.erofs");
     assert_eq!(status["bytes_done"], 128);
@@ -63,103 +28,82 @@ fn asset_status_reports_reconcile_progress_fields() {
 }
 
 #[test]
-fn profile_asset_status_uses_profile_current_arch_contract() {
+fn asset_status_reports_each_runtime_image() {
     let dir = tempfile::tempdir().unwrap();
-    let arch = capsem_core::net::policy_config::current_profile_arch();
-    let arch_dir = dir.path().join(arch);
-    std::fs::create_dir_all(&arch_dir).unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
-    let profile = materialized_test_profile();
-    let arch_assets = profile.assets.current_arch_assets().unwrap();
-    for asset in [&arch_assets.kernel, &arch_assets.rootfs] {
-        let hash = asset
-            .hash
-            .as_deref()
-            .expect("profile asset hash")
-            .strip_prefix("blake3:")
-            .unwrap();
-        let name = capsem_assets::asset_manager::hash_filename(&asset.name, hash);
-        std::fs::write(arch_dir.join(name), b"asset").unwrap();
-    }
+    install_test_runtime_assets(&state);
+    let initrd = state.runtime_asset_set().expect("runtime asset set").resolved.initrd;
+    std::fs::remove_file(&initrd).unwrap();
 
-    let status = profile_asset_status_value(&state, &profile);
+    let status = asset_status_value(&state);
 
-    assert_eq!(status["profile_id"], "code");
-    assert_eq!(status["revision"], profile.revision);
-    assert_eq!(status["profile_payload_hash"], test_profile_payload_hash());
-    assert_eq!(status["current_arch"], arch);
-    assert_eq!(status["manifest"]["origin"], "missing");
-    assert_eq!(status["ready"], false, "initrd is intentionally missing");
-    assert!(
-        status.get("filesystem").is_none(),
-        "asset status must not expose build filesystem metadata"
-    );
-    assert!(
-        status.get("compression").is_none(),
-        "asset status must not expose build compression metadata"
-    );
+    assert_eq!(status["current_arch"], host_manifest_arch());
+    assert_eq!(status["asset_version"], TEST_ASSET_VERSION);
+    assert_eq!(status["manifest"]["validation_status"], "valid");
+    assert_eq!(status["ready"], false, "initrd is missing");
     let assets = status["assets"].as_array().unwrap();
+    let state_of = |kind: &str| {
+        assets
+            .iter()
+            .find(|asset| asset["kind"] == kind)
+            .map(|asset| asset["status"].clone())
+            .unwrap()
+    };
     assert_eq!(assets.len(), 3);
-    assert!(assets.iter().any(|asset| {
-        asset["kind"] == "kernel"
-            && asset["name"] == "vmlinuz"
-            && asset["resolved_name"]
-                .as_str()
-                .is_some_and(|name| name.starts_with("vmlinuz-"))
-            && asset["status"] == "present"
-            && asset["hash"].as_str().is_some_and(|hash| hash.starts_with("blake3:"))
-    }));
-    assert!(assets
-        .iter()
-        .any(|asset| { asset["kind"] == "initrd" && asset["name"] == "initrd.img" && asset["status"] == "missing" }));
-    assert!(assets.iter().any(|asset| {
-        asset["kind"] == "rootfs"
-            && asset["name"] == "rootfs.erofs"
-            && asset["resolved_name"]
-                .as_str()
-                .is_some_and(|name| name.starts_with("rootfs-"))
-            && asset["status"] == "present"
-            && asset.get("compression").is_none()
-            && asset.get("compression_level").is_none()
-    }));
+    assert_eq!(state_of("kernel"), "present");
+    assert_eq!(state_of("initrd"), "missing");
+    assert_eq!(state_of("rootfs"), "present");
+    let errors = status["errors"].as_array().unwrap();
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.as_str().unwrap().contains("initrd.img")),
+        "{errors:?}"
+    );
 }
 
 #[test]
-fn profile_asset_status_rejects_unmaterialized_asset_descriptors() {
+fn asset_status_flags_an_image_of_the_wrong_size_invalid() {
     let dir = tempfile::tempdir().unwrap();
-    let arch = capsem_core::net::policy_config::current_profile_arch();
-    let arch_dir = dir.path().join(arch);
-    std::fs::create_dir_all(&arch_dir).unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
-    let mut profile = ProfileConfigFile::builtin_primary();
-    let arch_assets = profile.assets.arch.get_mut(arch).unwrap();
+    install_test_runtime_assets(&state);
+    let rootfs = state.runtime_asset_set().expect("runtime asset set").resolved.rootfs;
+    std::fs::write(&rootfs, b"truncated").unwrap();
 
-    for asset in [
-        &mut arch_assets.kernel,
-        &mut arch_assets.initrd,
-        &mut arch_assets.rootfs,
-    ] {
-        std::fs::write(arch_dir.join(&asset.name), b"stale logical asset").unwrap();
-        asset.hash = None;
-        asset.size = None;
-    }
-
-    let status = profile_asset_status_value(&state, &profile);
+    let status = asset_status_value(&state);
 
     assert_eq!(status["ready"], false);
-    let assets = status["assets"].as_array().unwrap();
-    assert_eq!(assets.len(), 3);
-    assert!(assets.iter().all(|asset| asset["status"] == "error"));
-    assert!(assets.iter().all(|asset| asset["error"]
-        .as_str()
-        .is_some_and(|error| error.contains("missing a materialized hash"))));
+    let rootfs = status["assets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|asset| asset["kind"] == "rootfs")
+        .unwrap()
+        .clone();
+    assert_eq!(rootfs["status"], "invalid");
+    assert_eq!(rootfs["actual_size"], b"truncated".len());
 }
 
 #[test]
-fn profile_asset_status_reports_installed_manifest_metadata_and_hash() {
+fn asset_status_without_a_manifest_is_not_ready() {
     let dir = tempfile::tempdir().unwrap();
-    let arch = capsem_core::net::policy_config::current_profile_arch();
-    std::fs::create_dir_all(dir.path().join(arch)).unwrap();
+    let state = make_asset_state(dir.path().to_path_buf());
+
+    let status = asset_status_value(&state);
+
+    assert_eq!(status["ready"], false);
+    assert_eq!(status["manifest"]["origin"], "missing");
+    assert!(status["assets"].as_array().unwrap().is_empty());
+    assert!(status["errors"][0]
+        .as_str()
+        .unwrap()
+        .contains("no asset manifest is installed"));
+}
+
+#[test]
+fn asset_status_reports_installed_manifest_metadata_and_hash() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(host_manifest_arch())).unwrap();
     let manifest_json = serde_json::json!({
         "format": 2,
         "refresh_policy": "24h",
@@ -203,8 +147,7 @@ fn profile_asset_status_reports_installed_manifest_metadata_and_hash() {
     let expected_hash = capsem_assets::asset_manager::hash_file(&manifest_path).unwrap();
 
     let state = make_asset_state(dir.path().to_path_buf());
-    let profile = ProfileConfigFile::builtin_primary();
-    let status = profile_asset_status_value(&state, &profile);
+    let status = asset_status_value(&state);
 
     assert_eq!(status["manifest"]["origin"], "package");
     assert_eq!(status["manifest"]["path"], manifest_path.display().to_string());
@@ -220,51 +163,14 @@ fn profile_asset_status_reports_installed_manifest_metadata_and_hash() {
 }
 
 #[test]
-fn profile_asset_status_reports_invalid_manifest_without_stale_truth() {
+fn asset_status_reports_invalid_manifest_without_stale_truth() {
     let dir = tempfile::tempdir().unwrap();
     let manifest_path = dir.path().join("manifest.json");
-    std::fs::write(
-        &manifest_path,
-        serde_json::json!({
-            "format": 2,
-            "refresh_policy": "24h",
-            "assets": {
-                "current": "2026.0609.stale",
-                "releases": {
-                    "2026.0609.stale": {
-                        "date": "2026-06-09",
-                        "deprecated": false,
-                        "min_binary": "1.0.0",
-                        "arches": {
-                            "arm64": {
-                                "vmlinuz": {
-                                    "hash": "1111111111111111111111111111111111111111111111111111111111111111",
-                                    "size": 1
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "binaries": {
-                "current": "1.3.stale",
-                "releases": {
-                    "1.3.stale": {
-                        "date": "2026-06-09",
-                        "deprecated": false,
-                        "min_assets": "2026.0609.stale"
-                    }
-                }
-            }
-        })
-        .to_string(),
-    )
-    .unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
+    install_test_runtime_manifest(&state);
     std::fs::write(&manifest_path, r#"{"format":2}"#).unwrap();
 
-    let profile = ProfileConfigFile::builtin_primary();
-    let status = profile_asset_status_value(&state, &profile);
+    let status = asset_status_value(&state);
 
     assert_eq!(status["manifest"]["origin"], "installed");
     assert_eq!(status["manifest"]["validation_status"], "invalid");
@@ -275,30 +181,20 @@ fn profile_asset_status_reports_invalid_manifest_without_stale_truth() {
 }
 
 #[test]
-fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
+fn asset_cleanup_preserves_the_runtime_set_and_persistent_vm_pins() {
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path();
-    let profile_dir = tempfile::tempdir().unwrap();
-    let (config_root, profile) = install_file_asset_profile_fixture(&profile_dir);
-    let catalog = ProfileCatalog::load_from_dir(&config_root.join("profiles")).unwrap();
-    let catalog_rootfs = profile_asset_hash_name(
-        &profile
-            .assets
-            .current_arch_assets()
-            .expect("built-in profile has current arch assets")
-            .rootfs,
-    )
-    .expect("catalog rootfs hash name");
+    let manifest = test_runtime_manifest();
+    let runtime_rootfs = boot_asset_pin_hash_name(&test_asset_pins().rootfs);
     let pinned_rootfs = "rootfs-dddddddddddddddd.erofs";
     let disposable_rootfs = "rootfs-1111111111111111.erofs";
-    for filename in [catalog_rootfs.as_str(), pinned_rootfs, disposable_rootfs] {
+    for filename in [runtime_rootfs.as_str(), pinned_rootfs, disposable_rootfs] {
         std::fs::write(base.join(filename), filename.as_bytes()).unwrap();
     }
 
     let mut pins = test_asset_pins();
     pins.rootfs.hash = "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into();
-    let registry_path = base.join("persistent_registry.json");
-    let mut registry = PersistentRegistry::load(registry_path).expect("registry loads");
+    let mut registry = PersistentRegistry::load(base.join("persistent_registry.json")).expect("registry loads");
     registry.data.vms.insert(
         "saved-vm".into(),
         PersistentVmEntry {
@@ -306,29 +202,13 @@ fn asset_cleanup_preserves_profile_catalog_and_persistent_vm_pins() {
             ..test_persistent_entry("saved-vm", base.join("persistent/saved-vm"))
         },
     );
-
-    let manifest = capsem_assets::asset_manager::ManifestV2 {
-        format: 2,
-        refresh_policy: "24h".into(),
-        asset_base: None,
-        assets: capsem_assets::asset_manager::AssetsSection {
-            current: "empty".into(),
-            releases: HashMap::new(),
-        },
-        binaries: capsem_assets::asset_manager::BinariesSection {
-            current: "1.0.0".into(),
-            releases: HashMap::new(),
-        },
-    };
-    let mut preserve = profile_catalog_asset_filenames(&catalog);
-    preserve.extend(persistent_registry_asset_filenames(&registry));
+    let preserve = persistent_registry_asset_filenames(&registry);
 
     let removed = capsem_assets::asset_manager::cleanup_unused_assets_preserving(base, &manifest, preserve).unwrap();
 
     assert_eq!(removed, vec![base.join(disposable_rootfs)]);
-    assert!(base.join(catalog_rootfs).exists());
+    assert!(base.join(runtime_rootfs).exists());
     assert!(base.join(pinned_rootfs).exists());
-    assert!(!base.join(disposable_rootfs).exists());
 }
 
 #[test]
@@ -411,161 +291,27 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
 }
 
 #[test]
-fn resolve_profile_asset_paths_uses_profile_hash_prefixed_assets() {
-    let dir = tempfile::tempdir().unwrap();
-    let profile = materialized_test_profile();
-    let arch = capsem_core::net::policy_config::current_profile_arch();
-    let arch_dir = dir.path().join(arch);
-    std::fs::create_dir_all(&arch_dir).unwrap();
-    let arch_assets = profile.assets.current_arch_assets().unwrap();
-    for asset in [&arch_assets.kernel, &arch_assets.initrd, &arch_assets.rootfs] {
-        let hash = asset
-            .hash
-            .as_deref()
-            .expect("profile asset hash")
-            .strip_prefix("blake3:")
-            .unwrap();
-        let name = capsem_assets::asset_manager::hash_filename(&asset.name, hash);
-        std::fs::write(arch_dir.join(name), b"asset").unwrap();
-    }
-    let state = make_asset_state(dir.path().to_path_buf());
-
-    let resolved = state.resolve_profile_asset_paths(&profile).unwrap();
-
-    assert!(resolved.kernel.exists());
-    assert!(resolved.initrd.exists());
-    assert!(resolved.rootfs.exists());
-    assert!(resolved.asset_version.starts_with("profile:code@"));
-    assert_ne!(resolved.rootfs.file_name().unwrap(), "rootfs.erofs");
-}
-
-#[test]
-fn vm_asset_block_reason_reports_unmaterialized_profile_asset_pins() {
+fn a_new_vm_boots_the_runtime_asset_set_and_pins_it() {
     let dir = tempfile::tempdir().unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
-    let mut profile = ProfileConfigFile::builtin_primary();
-    let arch = capsem_core::net::policy_config::current_profile_arch();
-    profile.assets.arch.get_mut(arch).unwrap().rootfs.hash = None;
+    install_test_runtime_assets(&state);
 
-    let reason = state
-        .validate_profile_asset_files(&profile, &test_asset_pins())
-        .expect_err("unmaterialized profile asset pins must block VM start");
+    let set = state.runtime_asset_set().expect("runtime asset set");
 
-    assert!(reason.to_string().contains("missing a materialized hash"));
-}
-
-#[tokio::test]
-async fn ensure_profile_assets_downloads_profile_descriptors() {
-    let dir = tempfile::tempdir().unwrap();
-    let source_dir = dir.path().join("sources");
-    let assets_dir = dir.path().join("assets");
-    std::fs::create_dir_all(&source_dir).unwrap();
-
-    let mut profile = ProfileConfigFile::builtin_primary();
-    let arch = capsem_core::net::policy_config::current_profile_arch();
-    let replacements = [
-        ("kernel", "kernel-bytes".as_bytes()),
-        ("initrd", "initrd-bytes".as_bytes()),
-        ("rootfs", "rootfs-bytes".as_bytes()),
-    ];
-    {
-        let arch_assets = profile.assets.arch.get_mut(arch).unwrap();
-        for (kind, bytes) in replacements {
-            let descriptor = match kind {
-                "kernel" => &mut arch_assets.kernel,
-                "initrd" => &mut arch_assets.initrd,
-                "rootfs" => &mut arch_assets.rootfs,
-                _ => unreachable!(),
-            };
-            let source = source_dir.join(&descriptor.name);
-            std::fs::write(&source, bytes).unwrap();
-            descriptor.url = format!("file://{}", source.display());
-            descriptor.hash = Some(format!(
-                "blake3:{}",
-                capsem_assets::asset_manager::hash_file(&source).unwrap()
-            ));
-            descriptor.size = Some(bytes.len() as u64);
-        }
-    }
-    let state = make_asset_state(assets_dir.clone());
-
-    let downloaded = ensure_profile_assets_for_state(Arc::clone(&state), &profile)
-        .await
-        .expect("profile ensure should download file fixtures");
-
-    assert_eq!(downloaded, 3);
-    let resolved = state.resolve_profile_asset_paths(&profile).unwrap();
-    assert!(resolved.kernel.exists());
-    assert!(resolved.initrd.exists());
-    assert!(resolved.rootfs.exists());
-    assert!(
-        resolved
-            .rootfs
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .starts_with("rootfs-"),
-        "profile ensure stores hash-prefixed assets"
-    );
-    let reconcile = state.asset_reconcile.lock().unwrap().clone();
-    assert_eq!(reconcile.last_downloaded, Some(3));
-    assert!(reconcile.last_error.is_none());
-
-    let status = profile_asset_status_value(&state, &profile);
-    assert_eq!(status["ready"], true);
-    assert_eq!(status["profile_payload_hash"], profile_payload_hash(&profile).unwrap());
-    let assets = status["assets"].as_array().unwrap();
-    assert!(assets.iter().all(|asset| asset["status"] == "present"));
-    assert!(assets.iter().any(|asset| {
-        asset["kind"] == "rootfs"
-            && asset["resolved_name"]
-                .as_str()
-                .is_some_and(|name| name.starts_with("rootfs-"))
-    }));
-
-    let downloaded = ensure_profile_assets_for_state(state, &profile)
-        .await
-        .expect("already verified profile assets should skip download");
-    assert_eq!(downloaded, 0);
-}
-
-#[tokio::test]
-async fn ensure_profile_assets_rejects_unmaterialized_profile_descriptors() {
-    let dir = tempfile::tempdir().unwrap();
-    let source_dir = dir.path().join("sources");
-    let assets_dir = dir.path().join("assets");
-    std::fs::create_dir_all(&source_dir).unwrap();
-    let mut profile = ProfileConfigFile::builtin_primary();
-    let arch = capsem_core::net::policy_config::current_profile_arch();
-    let kernel = &mut profile.assets.arch.get_mut(arch).unwrap().kernel;
-    let source = source_dir.join(&kernel.name);
-    std::fs::write(&source, b"rootfs").unwrap();
-    kernel.url = format!("file://{}", source.display());
-    kernel.hash = None;
-    kernel.size = None;
-    let state = make_asset_state(assets_dir);
-
-    let error = ensure_profile_assets_for_state(Arc::clone(&state), &profile)
-        .await
-        .expect_err("unmaterialized profile descriptors must not be downloaded");
-
-    assert!(error.contains("missing a materialized hash"));
-    let reconcile = state.asset_reconcile.lock().unwrap().clone();
-    assert_eq!(reconcile.last_downloaded, Some(0));
-    assert!(reconcile
-        .last_error
-        .as_deref()
-        .is_some_and(|error| error.contains("missing a materialized hash")));
+    assert_eq!(set.resolved.asset_version, TEST_ASSET_VERSION);
+    assert!(set.resolved.kernel.exists());
+    assert!(set.resolved.initrd.exists());
+    assert!(set.resolved.rootfs.exists());
+    assert_eq!(set.pins, test_asset_pins());
 }
 
 #[test]
 fn vm_asset_block_reason_reports_missing_assets() {
     let dir = tempfile::tempdir().unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
-    let profile = materialized_test_profile();
-    install_test_profile_catalog(&state, &profile);
+    install_test_runtime_manifest(&state);
 
-    let reason = vm_asset_block_reason(&state, "code").expect("missing assets must block VM start");
+    let reason = vm_asset_block_reason(&state).expect("missing assets must block VM start");
 
     assert!(reason.contains("VM assets are not ready"));
     assert!(reason.contains("vmlinuz"));
@@ -576,22 +322,46 @@ fn vm_asset_block_reason_reports_missing_assets() {
 fn vm_asset_block_reason_reports_downloading_assets() {
     let dir = tempfile::tempdir().unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
-    let profile = materialized_test_profile();
-    install_test_profile_catalog(&state, &profile);
+    install_test_runtime_manifest(&state);
     state.asset_reconcile.lock().unwrap().in_progress = true;
 
-    let reason = vm_asset_block_reason(&state, "code").expect("missing assets must block VM start");
+    let reason = vm_asset_block_reason(&state).expect("missing assets must block VM start");
 
     assert!(reason.contains("VM assets are still downloading"));
+}
+
+#[test]
+fn vm_asset_block_reason_reports_a_missing_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_asset_state(dir.path().to_path_buf());
+
+    let reason = vm_asset_block_reason(&state).expect("no manifest must block VM start");
+
+    assert!(reason.contains("no asset manifest is installed"), "{reason}");
 }
 
 #[test]
 fn vm_asset_block_reason_allows_ready_assets() {
     let dir = tempfile::tempdir().unwrap();
     let state = make_asset_state(dir.path().to_path_buf());
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
 
-    assert!(vm_asset_block_reason(&state, "code").is_none());
+    assert!(vm_asset_block_reason(&state).is_none());
+}
+
+#[tokio::test]
+async fn ensure_assets_leaves_a_verified_runtime_set_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_asset_state(dir.path().to_path_buf());
+    install_test_runtime_assets(&state);
+
+    let downloaded = ensure_assets_for_state(Arc::clone(&state)).await.unwrap();
+
+    assert_eq!(downloaded, 0);
+    let reconcile = state.asset_reconcile.lock().unwrap().clone();
+    assert_eq!(reconcile.last_downloaded, Some(0));
+    assert!(reconcile.last_error.is_none());
+    assert_eq!(asset_status_value(&state)["ready"], true);
 }
 
 #[test]
@@ -1089,21 +859,21 @@ fn auto_id_format() {
 
 #[test]
 fn provision_request_no_name() {
-    let json = serde_json::json!({"profile_id": "code", "ram_mb": 2048, "cpus": 2});
+    let json = serde_json::json!({"ram_mb": 2048, "cpus": 2});
     let req: ProvisionRequest = serde_json::from_value(json).unwrap();
     assert!(req.name.is_none());
 }
 
 #[test]
-fn provision_request_rejects_missing_profile_id() {
-    let json = serde_json::json!({"ram_mb": 2048, "cpus": 2});
+fn provision_request_refuses_a_profile_id() {
+    let json = serde_json::json!({"profile_id": "code", "ram_mb": 2048, "cpus": 2});
     let err = serde_json::from_value::<ProvisionRequest>(json).unwrap_err();
-    assert!(err.to_string().contains("profile_id"));
+    assert!(err.to_string().contains("profile_id"), "{err}");
 }
 
 #[test]
 fn provision_request_empty_name() {
-    let json = serde_json::json!({"name": "", "profile_id": "code", "ram_mb": 2048, "cpus": 2});
+    let json = serde_json::json!({"name": "", "ram_mb": 2048, "cpus": 2});
     let req: ProvisionRequest = serde_json::from_value(json).unwrap();
     assert_eq!(req.name.unwrap(), "");
 }
@@ -1111,7 +881,7 @@ fn provision_request_empty_name() {
 #[test]
 fn provision_request_name_with_path_separator() {
     // This is a security edge case -- names with / could create path traversal
-    let json = serde_json::json!({"name": "../escape", "profile_id": "code", "ram_mb": 2048, "cpus": 2});
+    let json = serde_json::json!({"name": "../escape", "ram_mb": 2048, "cpus": 2});
     let req: ProvisionRequest = serde_json::from_value(json).unwrap();
     assert_eq!(req.name.unwrap(), "../escape");
     // Note: the service SHOULD reject this, but currently doesn't validate
@@ -1195,7 +965,6 @@ fn provision_accepts_name_just_under_uds_limit() {
     let result = state.provision_sandbox(ProvisionOptions {
         id: &ok_name,
         name: &ok_name,
-        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         scratch_disk_size_gb: 16,
@@ -1221,7 +990,6 @@ fn provision_short_name_passes_path_check() {
     let result = state.provision_sandbox(ProvisionOptions {
         id: "my-vm",
         name: "my-vm",
-        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         scratch_disk_size_gb: 16,
@@ -1242,12 +1010,11 @@ fn provision_short_name_passes_path_check() {
 }
 
 #[test]
-fn provision_rejects_unknown_profile_before_boot() {
+fn provision_without_a_manifest_fails_before_session_state() {
     let (state, _dir) = make_test_state_with_tempdir();
     let result = state.provision_sandbox(ProvisionOptions {
         id: "my-vm",
         name: "my-vm",
-        profile_id: "missing-profile".into(),
         ram_mb: 2048,
         cpus: 2,
         scratch_disk_size_gb: 16,
@@ -1259,12 +1026,12 @@ fn provision_rejects_unknown_profile_before_boot() {
     });
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("profile not found: missing-profile"),
-        "unknown profile must fail before boot, got: {err}"
+        err.contains("no asset manifest is installed"),
+        "a VM without boot assets must fail before boot, got: {err}"
     );
     assert!(
         !state.run_dir.join("sessions/my-vm").exists(),
-        "unknown profile must not create session state"
+        "a VM without boot assets must not create session state"
     );
 }
 
@@ -1288,7 +1055,6 @@ fn provision_persistent_rejects_duplicate_name() {
     let result = state.provision_sandbox(ProvisionOptions {
         id: "taken",
         name: "taken",
-        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         scratch_disk_size_gb: 16,

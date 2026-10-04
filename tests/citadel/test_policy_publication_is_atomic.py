@@ -1,10 +1,10 @@
 """Citadel guard: policy files are published atomically.
 
-Profile sources (profile.toml, enforcement.toml), corp config, user settings
-and each session's active profile were written with `fs::write`, which
+Policy sources (settings.toml, corp config, and the profile files before
+them) and each session's active policy were written with `fs::write`, which
 truncates the destination and then fills it. A reader between the two -- a
-reload in capsem-process, a concurrent profile load in the service -- saw an
-empty or half-written policy, and a crash in between left it that way
+reload in capsem-process, a concurrent load in the service -- saw an empty or
+half-written policy, and a crash in between left it that way
 (google/capsem#202, owned by #229).
 
 `capsem_foundation::unix::fs::atomic_write_private` writes a synced sibling
@@ -26,13 +26,14 @@ hand-rolled temp-file-and-rename. A truncating write lets a concurrent reload
 read a partial policy and a crash leave one behind.
 """
 
-# Production modules that write policy, settings or active-profile files.
+# Production modules that write policy, settings or active-policy files.
 POLICY_WRITERS = (
-    Path("crates/capsem-core/src/net/policy_config/profile_contract.rs"),
+    Path("crates/capsem-core/src/net/policy_config/settings_policy.rs"),
     Path("crates/capsem-core/src/net/policy_config/corp_provision.rs"),
     Path("crates/capsem-core/src/net/policy_config/loader.rs"),
     Path("crates/capsem-service/src/main.rs"),
-    Path("crates/capsem-service/src/profile_routes.rs"),
+    Path("crates/capsem-service/src/active_policy.rs"),
+    Path("crates/capsem-service/src/settings_routes.rs"),
 )
 NON_ATOMIC_WRITE = re.compile(r"\bfs::write\s*\(|\bfs::rename\s*\(")
 # The service writes a pid file and archives checkpoints; neither is policy.

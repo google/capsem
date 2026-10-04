@@ -47,7 +47,7 @@ graph TD
 
 ### create
 
-Create and boot a new session from a profile. Use `-n <name>` for a retained,
+Create and boot a new session from the installed runtime image. Use `-n <name>` for a retained,
 named VM that can be stopped, resumed, forked, and inspected later.
 
 ```sh
@@ -71,8 +71,8 @@ setup deletes the VM.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-n, --name <NAME>` | -- | Name for the session |
-| `--ram <GB>` | profile's | RAM in GB |
-| `--cpu <CORES>` | profile's | CPU cores |
+| `--ram <GB>` | 12 | RAM in GB |
+| `--cpu <CORES>` | 4 | CPU cores |
 | `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable); the container's with `--image` |
 | `--from <NAME>` | -- | Clone state from an existing retained session/template |
 | `--network <NAME>` | -- | Join a named network (repeatable) |
@@ -182,7 +182,7 @@ capsem run --image docker://alpine:3 sh -c 'uname -a'
 | `<command>` | -- | Command to execute; with `--image`, replaces the image's command |
 | `--timeout <SECS>` | -- | Timeout in seconds |
 | `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable); the container's with `--image` |
-| `--ram <GB>` / `--cpu <CORES>` | profile's | VM resources |
+| `--ram <GB>` / `--cpu <CORES>` | 12 / 4 | VM resources |
 | `--image <IMAGE>` | -- | OCI image to run (see `create`) |
 | `-p`, `--network`, `--registry-ca`, `--registry-user` | -- | With `--image`, as for `create` |
 
@@ -468,7 +468,8 @@ stateDiagram-v2
 
 | Concept | Description |
 |---------|-------------|
-| **Profile** | The VM contract: assets, rules, detection, MCP, plugins, VM defaults, name, description, and icon |
+| **Runtime image** | The kernel, initrd, and rootfs of the installed release every new VM boots; a named VM keeps the image it was created with |
+| **Policy** | Built-in defaults, `~/.capsem/settings.toml`, and the corp config, merged per session; corp wins |
 | **Named retained VM** | A VM with a stable name and retained state |
 | **One-shot run** | A disposable VM used by `capsem run` for one command |
 | **Suspended** | RAM + CPU state saved to disk. Resume with `resume` |

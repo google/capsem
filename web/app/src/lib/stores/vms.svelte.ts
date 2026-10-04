@@ -2,7 +2,6 @@
 // VM list + resource summary. Also provides lifecycle methods (stop, delete, etc.).
 
 import * as api from '../api';
-import type { AssetStatusResponse } from '../types/assets';
 import type { VmSummary, VmStatsSummary, ResourceSummary, ProvisionRequest, ForkRequest, ForkResponse } from '../types/gateway';
 
 function assetStatusError(e: unknown): string {
@@ -15,11 +14,9 @@ class VmStore {
   vms = $state<VmSummary[]>([]);
   resourceSummary = $state<ResourceSummary | null>(null);
   serviceStatus = $state<string>('unknown');
-  assetHealth = $state<AssetStatusResponse | null>(null);
   acting = $state(false);
   polled = $state(false);
   showCreateModal = $state(false);
-  createProfileId = $state<string | null>(null);
   activeStatsId = $state<string | null>(null);
   activeStats = $state<VmStatsSummary | null>(null);
 
@@ -152,16 +149,13 @@ class VmStore {
 
   async provision(opts: ProvisionRequest): Promise<{ id: string; name: string }> {
     console.log('[vmStore] provision(%o)', opts);
-    let assetHealth: AssetStatusResponse | null = null;
+    let ready: boolean;
     try {
-      assetHealth = await api.getAssetsStatus(opts.profile_id);
+      ready = (await api.getAssetsStatus()).ready;
     } catch (e) {
       throw new Error(assetStatusError(e));
     }
-    if (assetHealth.ready !== true) {
-      this.assetHealth = assetHealth;
-      throw new Error(`VM assets are not ready for profile ${opts.profile_id}`);
-    }
+    if (!ready) throw new Error('VM assets are not ready');
     this.acting = true;
     try {
       const result = await api.provisionVm(opts);
@@ -173,24 +167,12 @@ class VmStore {
     }
   }
 
-  openCreateModal(profileId?: string): void {
-    this.createProfileId = profileId ?? null;
+  openCreateModal(): void {
     this.showCreateModal = true;
   }
 
   closeCreateModal(): void {
     this.showCreateModal = false;
-    this.createProfileId = null;
-  }
-
-  async ensureAssets(profileId: string): Promise<void> {
-    this.acting = true;
-    try {
-      this.assetHealth = await api.ensureAssets(profileId);
-      await this.refresh();
-    } finally {
-      this.acting = false;
-    }
   }
 
   async fork(id: string, opts: ForkRequest): Promise<ForkResponse> {

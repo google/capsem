@@ -68,7 +68,7 @@ def test_contention_benchmark_budget_rejects_p99_regression() -> None:
 def test_hot_route_cpu_budget_scales_with_the_measurement_window() -> None:
     samples = [0.5] * HOT_ROUTE_WINDOW_SAMPLES
     within_budget = RouteTiming(
-        label="service /profiles/code/enforcement/info",
+        label="service /corp/info",
         samples_ms=samples,
         service_cpu_s=0.09,
         gateway_cpu_s=None,
@@ -82,32 +82,32 @@ def test_hot_route_cpu_budget_scales_with_the_measurement_window() -> None:
 
     _assert_hot_route_budget(
         within_budget,
-        path="/profiles/code/enforcement/info",
+        path="/corp/info",
     )
     with pytest.raises(AssertionError, match="service CPU"):
         _assert_hot_route_budget(
             over_budget,
-            path="/profiles/code/enforcement/info",
+            path="/corp/info",
         )
 
 
 def test_hot_route_latency_uses_the_configured_relative_factor() -> None:
     samples = [2.41] * HOT_ROUTE_WINDOW_SAMPLES
     timing = RouteTiming(
-        label="service /profiles/code/plugins/list",
+        label="service /plugins/list",
         samples_ms=samples,
         service_cpu_s=0.1,
         gateway_cpu_s=None,
     )
 
     with pytest.raises(AssertionError, match="p95"):
-        _assert_hot_route_budget(timing, path="/profiles/code/plugins/list")
+        _assert_hot_route_budget(timing, path="/plugins/list")
 
 
 def test_hot_route_uses_the_least_contended_independent_window() -> None:
     windows = [
         RouteTiming(
-            label="service /profiles/list",
+            label="service /plugins/list",
             samples_ms=[latency] * HOT_ROUTE_WINDOW_SAMPLES,
             service_cpu_s=cpu,
             gateway_cpu_s=cpu + 0.01,

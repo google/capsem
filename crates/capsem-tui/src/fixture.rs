@@ -2,9 +2,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::model::{
-    AppState, Attention, ProfileOption, ServiceState, ServiceStatus, SessionLifecycle, SessionStats, SessionSummary,
-};
+use crate::model::{AppState, Attention, ServiceState, ServiceStatus, SessionLifecycle, SessionStats, SessionSummary};
 use crate::provider::StateProvider;
 
 #[derive(Default)]
@@ -25,27 +23,13 @@ pub fn fixture_state() -> AppState {
             reconnect_attempt: None,
             control_message: None,
         },
-        active_session_id: "profile-v2".to_string(),
+        active_session_id: "vm-2".to_string(),
         update_notice: None,
-        profiles: vec![
-            ProfileOption {
-                id: "corp-default".to_string(),
-                name: "Corp Default".to_string(),
-                description: Some("coding workspace".to_string()),
-            },
-            ProfileOption {
-                id: "linux-builder".to_string(),
-                name: "Linux Builder".to_string(),
-                description: Some("kernel and distro work".to_string()),
-            },
-        ],
         sessions: vec![
             SessionSummary {
-                id: "profile-v2".to_string(),
-                title: "Profile V2".to_string(),
+                id: "vm-2".to_string(),
+                title: "Session V2".to_string(),
                 repo_path: Some("github.com/google/capsem".to_string()),
-                profile: "corp-default".to_string(),
-                profile_status: Some("current".to_string()),
                 can_resume: true,
                 resume_blocked_reason: None,
                 branch: Some("codex/tui-control".to_string()),
@@ -64,8 +48,6 @@ pub fn fixture_state() -> AppState {
                 id: "linux-os".to_string(),
                 title: "Linux OS".to_string(),
                 repo_path: Some("github.com/google/capsem-linux".to_string()),
-                profile: "linux-builder".to_string(),
-                profile_status: Some("current".to_string()),
                 can_resume: true,
                 resume_blocked_reason: None,
                 branch: Some("resume-fix".to_string()),
@@ -95,7 +77,6 @@ pub fn offline_state() -> AppState {
         },
         active_session_id: String::new(),
         update_notice: None,
-        profiles: Vec::new(),
         sessions: Vec::new(),
     }
 }

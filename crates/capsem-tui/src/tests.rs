@@ -35,7 +35,7 @@ fn snapshot_contains_light_bar_tabs_and_active_desktop() {
     let snapshot = render_snapshot(&fixture_state(), 100, 24).expect("render snapshot");
 
     assert!(snapshot.contains("  18ms●"));
-    assert!(snapshot.contains("1  Profile V2"));
+    assert!(snapshot.contains("1  Session V2"));
     assert!(snapshot.contains("2  Linux OS!"));
     assert!(snapshot.contains("◷ 47m | # 38.4k | $ 0.21 | help: alt+?"));
     assert!(
@@ -133,7 +133,7 @@ fn empty_state_opens_new_session_modal_with_gradient_logo() {
     let app = App::new(state);
 
     assert_eq!(app.overlay(), AppOverlay::Create);
-    assert_eq!(app.create_draft().expect("create draft").name, "corp-default-1");
+    assert_eq!(app.create_draft().expect("create draft").name, "vm-1");
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty create modal");
     assert!(snapshot.contains("CAPSEM"));
     assert!(snapshot.contains("new session"));
@@ -165,7 +165,7 @@ async fn start_service_action_uses_local_capsem_binary_without_gateway_token() {
 
 #[tokio::test]
 async fn update_action_runs_complete_update_with_yes() {
-    let (script, log) = fake_capsem_script("binary-profile");
+    let (script, log) = fake_capsem_script("binary-update");
 
     let outcome = update_with_binary(&script).await.expect("run capsem update");
 
@@ -175,33 +175,10 @@ async fn update_action_runs_complete_update_with_yes() {
 }
 
 #[test]
-fn empty_create_modal_blocks_enter_when_profiles_are_unavailable() {
-    let mut state = fixture_state();
-    state.active_session_id.clear();
-    state.sessions.clear();
-    state.profiles.clear();
-    let mut app = App::new(state);
-
-    let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty create modal");
-    assert!(snapshot.contains("profiles unavailable"));
-    assert!(
-        !snapshot.contains("▶  default"),
-        "the TUI must not invent a default profile when profile discovery failed"
-    );
-
-    assert_eq!(
-        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
-        AppAction::Consumed,
-        "create should be disabled until a real profile list is available"
-    );
-    assert_eq!(app.overlay(), AppOverlay::Create);
-}
-
-#[test]
 fn tab_colors_use_selected_yellow_and_unselected_blue_only() {
     let buffer = render_test_buffer(&fixture_state(), 100, 24).expect("render buffer");
     let row = buffer.area.height - 1;
-    let selected_number = find_cell_x(&buffer, row, "1  Profile V2");
+    let selected_number = find_cell_x(&buffer, row, "1  Session V2");
     let selected_label = selected_number + 3;
     let other_number = find_cell_x(&buffer, row, "2  Linux OS!");
     let other_label = other_number + 3;
@@ -234,7 +211,7 @@ fn stopped_session_renders_resume_prompt_and_grey_tab() {
 
     let buffer = render_test_buffer(&state, 100, 24).expect("render stopped buffer");
     let row = buffer.area.height - 1;
-    let stopped_number = find_cell_x(&buffer, row, "1  Profile V2");
+    let stopped_number = find_cell_x(&buffer, row, "1  Session V2");
     let stopped_label = stopped_number + 3;
 
     assert_eq!(buffer_cell(&buffer, stopped_number, row).bg, grey());
@@ -256,23 +233,25 @@ fn enter_resumes_stopped_active_session_instead_of_forwarding_to_terminal() {
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::Resume {
-            id: "profile-v2".to_string(),
-            label: "Profile V2".to_string()
+            id: "vm-2".to_string(),
+            label: "Session V2".to_string()
         })
     );
 }
 
 #[test]
-fn corrupted_profile_session_blocks_resume_and_explains_recreate() {
+fn unresumable_session_blocks_resume_and_explains_recreate() {
     let mut state = fixture_state();
     state.sessions[0].lifecycle = SessionLifecycle::Idle;
-    state.sessions[0].profile_status = Some("corrupted".to_string());
+    // The service said no without saying why: the TUI supplies the reason.
+    state.sessions[0].can_resume = false;
+    state.sessions[0].resume_blocked_reason = None;
     state.sessions[0].attention = vec![Attention::CredentialIssue];
     let mut app = App::new(state);
-    assert!(app.select_session_by_id("profile-v2"));
+    assert!(app.select_session_by_id("vm-2"));
 
-    let snapshot = render_app_snapshot(&app, 100, 24).expect("render corrupted profile session");
-    assert!(snapshot.contains("cannot resume: profile pin is corrupted"));
+    let snapshot = render_app_snapshot(&app, 100, 24).expect("render unresumable session");
+    assert!(snapshot.contains("cannot resume: session state is not resumable"));
     assert!(!snapshot.contains("Press Enter to resume"));
     assert!(snapshot.contains("Press Enter to create a replacement"));
     assert!(snapshot.contains("Alt+d deletes this session"));
@@ -282,10 +261,7 @@ fn corrupted_profile_session_blocks_resume_and_explains_recreate() {
         AppAction::Consumed
     );
     assert_eq!(app.overlay(), AppOverlay::Create);
-    assert_eq!(
-        app.create_draft().expect("create draft").name,
-        "corp-default-1".to_string()
-    );
+    assert_eq!(app.create_draft().expect("create draft").name, "vm-1".to_string());
 
     app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE));
 
@@ -296,25 +272,26 @@ fn corrupted_profile_session_blocks_resume_and_explains_recreate() {
     assert_eq!(app.pending_action(), None);
     assert_eq!(
         app.state().service.control_message.as_deref(),
-        Some("cannot resume: profile pin is corrupted; recreate from a signed profile")
+        Some("cannot resume: session state is not resumable")
     );
 }
 
 #[test]
-fn corrupted_profile_sessions_are_hidden_from_tabs_but_stay_in_vm_list() {
+fn unresumable_sessions_are_hidden_from_tabs_but_stay_in_vm_list() {
     let mut state = fixture_state();
     state.sessions[0].lifecycle = SessionLifecycle::Idle;
-    state.sessions[0].profile_status = Some("corrupted".to_string());
+    state.sessions[0].can_resume = false;
+    state.sessions[0].resume_blocked_reason = Some("session overlay is missing".to_string());
     state.sessions[0].attention = vec![Attention::CredentialIssue];
     let mut app = App::new(state);
 
     assert_eq!(
         app.state().active_session_id,
         "linux-os",
-        "startup focus should move to the first resumable tab instead of a corrupt profile pin"
+        "startup focus should move to the first resumable tab instead of an unresumable session"
     );
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render filtered tabs");
-    assert!(!snapshot.contains("Profile V2"));
+    assert!(!snapshot.contains("Session V2"));
     assert!(snapshot.contains("1  Linux OS!"));
 
     assert_eq!(
@@ -322,8 +299,7 @@ fn corrupted_profile_sessions_are_hidden_from_tabs_but_stay_in_vm_list() {
         AppAction::Consumed
     );
     let list_snapshot = render_app_snapshot(&app, 120, 30).expect("render session inventory");
-    assert!(list_snapshot.contains("Profile V2"));
-    assert!(list_snapshot.contains("corrupted"));
+    assert!(list_snapshot.contains("Session V2"));
 
     assert_eq!(
         app.handle_key(key(KeyCode::Char('1'), KeyModifiers::ALT)),
@@ -332,7 +308,7 @@ fn corrupted_profile_sessions_are_hidden_from_tabs_but_stay_in_vm_list() {
     assert_eq!(
         app.state().active_session_id,
         "linux-os",
-        "tab number 1 should map to the first visible tab, not the hidden corrupt session"
+        "tab number 1 should map to the first visible tab, not the hidden unresumable session"
     );
 }
 
@@ -344,7 +320,7 @@ fn keyboard_navigation_switches_sessions_without_stealing_plain_q() {
         app.handle_key(key(KeyCode::Char('q'), KeyModifiers::NONE)),
         AppAction::Forward
     );
-    assert_eq!(app.state().active_session_id, "profile-v2");
+    assert_eq!(app.state().active_session_id, "vm-2");
 
     assert_eq!(
         app.handle_key(key(KeyCode::Right, KeyModifiers::ALT)),
@@ -356,7 +332,7 @@ fn keyboard_navigation_switches_sessions_without_stealing_plain_q() {
         app.handle_key(key(KeyCode::Left, KeyModifiers::ALT)),
         AppAction::Consumed
     );
-    assert_eq!(app.state().active_session_id, "profile-v2");
+    assert_eq!(app.state().active_session_id, "vm-2");
 
     assert_eq!(
         app.handle_key(key(KeyCode::Char('2'), KeyModifiers::ALT)),
@@ -382,11 +358,11 @@ fn app_can_start_focused_on_session_id_or_title() {
     assert!(app.select_session_by_id("linux-os"));
     assert_eq!(app.state().active_session_id, "linux-os");
 
-    assert!(app.select_session_by_id("Profile V2"));
-    assert_eq!(app.state().active_session_id, "profile-v2");
+    assert!(app.select_session_by_id("Session V2"));
+    assert_eq!(app.state().active_session_id, "vm-2");
 
     assert!(!app.select_session_by_id("missing-session"));
-    assert_eq!(app.state().active_session_id, "profile-v2");
+    assert_eq!(app.state().active_session_id, "vm-2");
 }
 
 #[test]
@@ -428,8 +404,8 @@ fn shell_commands_are_alt_owned() {
     assert_eq!(
         app.pending_action(),
         Some(&ControlAction::Stop {
-            id: "profile-v2".to_string(),
-            label: "Profile V2".to_string()
+            id: "vm-2".to_string(),
+            label: "Session V2".to_string()
         })
     );
 }
@@ -459,7 +435,7 @@ fn update_action_is_alt_owned_atomic_and_confirmed() {
 }
 
 #[test]
-fn create_overlay_selects_profile_and_edits_prefilled_name() {
+fn create_overlay_edits_prefilled_name() {
     let mut app = App::new(fixture_state());
 
     assert_eq!(
@@ -469,26 +445,13 @@ fn create_overlay_selects_profile_and_edits_prefilled_name() {
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render create dialog");
     assert!(snapshot.contains("new session"));
     assert!(snapshot.contains("name"));
-    assert!(snapshot.contains("corp-default-1"));
-    assert!(snapshot.contains("corp-default"));
-    assert!(snapshot.contains("linux-builder"));
     assert!(snapshot.contains("active input"));
+    assert!(snapshot.contains("Enter creates; Esc cancels"));
+    assert!(!snapshot.to_ascii_lowercase().contains("profile"));
 
-    assert_eq!(
-        app.handle_key(key(KeyCode::Down, KeyModifiers::NONE)),
-        AppAction::Consumed
-    );
     let focused = render_app_test_buffer(&app, 100, 24).expect("render focused create dialog");
-    let (name_x, name_y) = find_cell(&focused, "linux-builder-1");
+    let (name_x, name_y) = find_cell(&focused, "vm-1");
     assert_eq!(buffer_cell(&focused, name_x, name_y).bg, selected_bg());
-    let (profile_x, profile_y) = find_cell(&focused, "linux-builder");
-    assert_eq!(buffer_cell(&focused, profile_x, profile_y).bg, selected_bg());
-    assert!(
-        buffer_cell(&focused, profile_x, profile_y)
-            .modifier
-            .contains(Modifier::BOLD),
-        "selected profile row should be visually highlighted"
-    );
     for ch in ['-', 'p', 'r', 'o', 'o', 'f'] {
         assert_eq!(
             app.handle_key(key(KeyCode::Char(ch), KeyModifiers::NONE)),
@@ -499,14 +462,29 @@ fn create_overlay_selects_profile_and_edits_prefilled_name() {
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::CreateSession {
-            name: Some("linux-builder-1-proof".to_string()),
-            profile_id: "linux-builder".to_string()
+            name: Some("vm-1-proof".to_string()),
         })
     );
 }
 
 #[test]
-fn create_overlay_default_name_lets_service_assign_profile_scoped_id() {
+fn create_overlay_prefills_the_first_free_vm_name() {
+    let mut state = fixture_state();
+    let mut taken = state.sessions[0].clone();
+    taken.id = "vm-1".to_string();
+    state.sessions.push(taken);
+    let mut app = App::new(state);
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    // vm-1 and vm-2 are taken; the service spells new names vm-N.
+    assert_eq!(app.create_draft().expect("create draft").name, "vm-3");
+}
+
+#[test]
+fn create_overlay_default_name_lets_service_assign_id() {
     let mut app = App::new(fixture_state());
 
     assert_eq!(
@@ -515,10 +493,7 @@ fn create_overlay_default_name_lets_service_assign_profile_scoped_id() {
     );
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
-        AppAction::Invoke(ControlAction::CreateSession {
-            name: None,
-            profile_id: "corp-default".to_string()
-        })
+        AppAction::Invoke(ControlAction::CreateSession { name: None })
     );
 }
 
@@ -561,8 +536,8 @@ fn fork_overlay_asks_for_name_and_invokes_fork_action() {
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render fork dialog");
     assert!(snapshot.contains("fork session"));
     assert!(snapshot.contains("source"));
-    assert!(snapshot.contains("Profile V2"));
-    assert!(snapshot.contains("profile-v2-fork"));
+    assert!(snapshot.contains("Session V2"));
+    assert!(snapshot.contains("vm-2-fork"));
     assert!(snapshot.contains("active input"));
 
     for ch in ['-', 'c', 'o', 'p', 'y'] {
@@ -575,8 +550,8 @@ fn fork_overlay_asks_for_name_and_invokes_fork_action() {
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::Fork {
-            id: "profile-v2".to_string(),
-            name: "profile-v2-fork-copy".to_string()
+            id: "vm-2".to_string(),
+            name: "vm-2-fork-copy".to_string()
         })
     );
 }
@@ -593,14 +568,13 @@ fn alt_l_lists_sessions_as_table_with_key_fields() {
 
     let snapshot = render_app_snapshot(&app, 120, 30).expect("render session list");
     assert!(snapshot.contains("Name"));
-    assert!(snapshot.contains("Profile"));
+    assert!(!snapshot.contains("Profile"));
     assert!(snapshot.contains("State"));
     assert!(snapshot.contains("Time"));
     assert!(snapshot.contains("Tokens"));
     assert!(snapshot.contains("Cost"));
-    assert!(snapshot.contains("Profile V2"));
-    assert!(snapshot.contains("corp-default"));
-    assert!(snapshot.contains("linux-builder"));
+    assert!(snapshot.contains("Session V2"));
+    assert!(snapshot.contains("Linux OS"));
 }
 
 #[test]
@@ -619,27 +593,27 @@ fn refresh_preserves_active_session_when_it_still_exists() {
 #[test]
 fn pending_create_focus_survives_until_new_session_appears() {
     let mut app = App::new(fixture_state());
-    app.select_session_by_id("profile-v2");
-    app.focus_session_when_available("code-2");
+    app.select_session_by_id("vm-2");
+    app.focus_session_when_available("vm-3");
 
     let unchanged = fixture_state();
     app.replace_state(unchanged);
     assert_eq!(
         app.state().active_session_id,
-        "profile-v2",
+        "vm-2",
         "focus should not move if the gateway refresh does not list the new session yet"
     );
 
     let mut refreshed = fixture_state();
     let mut created = refreshed.sessions[0].clone();
-    created.id = "code-2".to_string();
-    created.title = "code-2".to_string();
+    created.id = "vm-3".to_string();
+    created.title = "vm-3".to_string();
     refreshed.sessions.push(created);
     app.replace_state(refreshed);
 
     assert_eq!(
         app.state().active_session_id,
-        "code-2",
+        "vm-3",
         "pending create focus should apply on the first refresh that contains the new session"
     );
 }
@@ -719,8 +693,8 @@ fn control_keys_require_confirmation_before_invoking_service_actions() {
     assert_eq!(
         app.pending_action(),
         Some(&ControlAction::Stop {
-            id: "profile-v2".to_string(),
-            label: "Profile V2".to_string()
+            id: "vm-2".to_string(),
+            label: "Session V2".to_string()
         })
     );
     let modal_snapshot = render_app_snapshot(&app, 100, 24).expect("render confirmation");
@@ -740,8 +714,8 @@ fn control_keys_require_confirmation_before_invoking_service_actions() {
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::Stop {
-            id: "profile-v2".to_string(),
-            label: "Profile V2".to_string()
+            id: "vm-2".to_string(),
+            label: "Session V2".to_string()
         })
     );
     assert_eq!(app.overlay(), AppOverlay::None);
@@ -807,8 +781,8 @@ fn suspend_action_requires_persistent_running_session() {
     assert_eq!(
         app.pending_action(),
         Some(&ControlAction::Suspend {
-            id: "profile-v2".to_string(),
-            label: "Profile V2".to_string()
+            id: "vm-2".to_string(),
+            label: "Session V2".to_string()
         })
     );
 
@@ -831,7 +805,7 @@ fn suspend_progress_owns_the_main_terminal_surface() {
 
     assert!(snapshot.contains("suspending..."));
     assert!(
-        !snapshot.contains("connecting terminal profile-v2"),
+        !snapshot.contains("connecting terminal vm-2"),
         "suspend progress should be visible in the main pane, not only the status bar"
     );
 }
@@ -846,14 +820,14 @@ fn checkpoint_action_is_alt_c_and_uses_checkpoint_label() {
     assert_eq!(
         app.pending_action(),
         Some(&ControlAction::Checkpoint {
-            id: "profile-v2".to_string(),
-            label: "Profile V2".to_string()
+            id: "vm-2".to_string(),
+            label: "Session V2".to_string()
         })
     );
 
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render checkpoint confirm");
     assert!(snapshot.contains("checkpoint"));
-    assert!(snapshot.contains("Profile V2"));
+    assert!(snapshot.contains("Session V2"));
 }
 
 #[test]
@@ -866,7 +840,7 @@ fn stats_overlay_renders_on_demand_without_persistent_help() {
     assert!(snapshot.contains("session info"));
     assert!(snapshot.contains("Field"));
     assert!(snapshot.contains("Value"));
-    assert!(snapshot.contains("profile-v2"));
+    assert!(snapshot.contains("vm-2"));
     assert!(snapshot.contains("tokens"));
     assert!(
         !render_snapshot(&fixture_state(), 100, 24)
@@ -887,8 +861,7 @@ fn gateway_status_json_maps_to_tui_state() {
     assert_eq!(state.sessions.len(), 2);
 
     let active = &state.sessions[0];
-    assert_eq!(active.title, "profile-main");
-    assert_eq!(active.profile, "profile-v2");
+    assert_eq!(active.title, "main-session");
     assert_eq!(active.lifecycle, SessionLifecycle::Working);
     assert_eq!(active.stats.duration, std::time::Duration::from_secs(2840));
     assert_eq!(active.stats.tokens, 38_912);
@@ -898,11 +871,10 @@ fn gateway_status_json_maps_to_tui_state() {
     let attention = &state.sessions[1];
     assert_eq!(attention.lifecycle, SessionLifecycle::Suspended);
     assert!(attention.attention.contains(&Attention::PolicyDeny));
-    assert_eq!(attention.profile_status, None);
     assert_eq!(attention.branch, None);
     assert_eq!(
         attention.resume_blocked_reason.as_deref(),
-        Some("profile payload hash drift")
+        Some("session overlay is missing")
     );
     assert!(!attention.attention.contains(&Attention::CredentialIssue));
 }
@@ -911,14 +883,12 @@ fn gateway_status_json_maps_to_tui_state() {
 fn tui_story_suite_covers_create_stop_resume_navigation_help_latency_and_human_labels() {
     let mut state = state_from_status_json_for_test(gateway_status_body(), std::time::Duration::from_millis(24))
         .expect("parse gateway status for TUI story");
-    state.profiles = fixture_state().profiles;
     state.sessions[1].can_resume = true;
-    state.sessions[1].profile_status = Some("current".to_string());
     let mut app = App::new(state);
 
     let initial = render_app_snapshot(&app, 100, 24).expect("render initial TUI story");
     assert!(initial.contains("24ms"), "measured gateway latency is visible");
-    assert!(initial.contains("profile-main"), "named session is visible");
+    assert!(initial.contains("main-session"), "named session is visible");
     assert!(
         !initial.contains("vm-1"),
         "the internal session id must not replace a human session name"
@@ -952,13 +922,13 @@ fn tui_story_suite_covers_create_stop_resume_navigation_help_latency_and_human_l
         AppAction::Consumed
     );
     let stop = render_app_snapshot(&app, 100, 24).expect("render TUI story stop");
-    assert!(stop.contains("profile-main"));
+    assert!(stop.contains("main-session"));
     assert!(!stop.contains("vm-1"), "confirmation target is the human name");
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::Stop {
             id: "vm-1".to_string(),
-            label: "profile-main".to_string()
+            label: "main-session".to_string()
         }),
         "the stop request still routes by immutable session id"
     );
@@ -968,13 +938,13 @@ fn tui_story_suite_covers_create_stop_resume_navigation_help_latency_and_human_l
     stopped.sessions[0].can_resume = true;
     app.replace_state(stopped);
     let stopped = render_app_snapshot(&app, 100, 24).expect("render stopped TUI story");
-    assert!(stopped.contains("profile-main"));
+    assert!(stopped.contains("main-session"));
     assert!(!stopped.contains("vm-1"), "resume prompt uses the human name");
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::Resume {
             id: "vm-1".to_string(),
-            label: "profile-main".to_string()
+            label: "main-session".to_string()
         }),
         "the resume request still routes by immutable session id"
     );
@@ -985,22 +955,19 @@ fn tui_story_suite_covers_create_stop_resume_navigation_help_latency_and_human_l
     );
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
-        AppAction::Invoke(ControlAction::CreateSession {
-            name: None,
-            profile_id: "corp-default".to_string()
-        })
+        AppAction::Invoke(ControlAction::CreateSession { name: None })
     );
 
     let mut created = app.state().clone();
     let mut session = created.sessions[0].clone();
     session.id = "77777777-7777-4777-8777-777777777777".to_string();
-    session.title = "corp-default-1".to_string();
+    session.title = "vm-3".to_string();
     session.lifecycle = SessionLifecycle::Working;
     created.sessions.push(session);
     app.focus_session_when_available("77777777-7777-4777-8777-777777777777");
     app.replace_state(created);
     let created = render_app_snapshot(&app, 100, 24).expect("render created TUI story");
-    assert!(created.contains("corp-default-1"));
+    assert!(created.contains("vm-3"));
     assert!(!created.contains("77777777"));
 }
 
@@ -1041,15 +1008,15 @@ fn gateway_current_update_status_maps_to_tui_notice() {
 fn gateway_blocked_update_status_maps_to_tui_notice() {
     let state = state_from_status_and_update_json_for_test(
         gateway_empty_status_body(),
-        gateway_update_blocked_profile_status_body(),
+        gateway_update_blocked_image_status_body(),
         std::time::Duration::from_millis(11),
     )
     .expect("parse blocked update status");
 
     let notice = state.update_notice.as_ref().expect("blocked update notice");
-    assert_eq!(notice.kind, UpdateNoticeKind::Blocked(vec![UpdateTrack::Profiles]));
+    assert_eq!(notice.kind, UpdateNoticeKind::Blocked(vec![UpdateTrack::Images]));
     let snapshot = render_snapshot(&state, 120, 24).expect("render blocked update notice");
-    assert!(snapshot.contains("updates blocked: profiles"));
+    assert!(snapshot.contains("updates blocked: images"));
 }
 
 #[test]
@@ -1068,10 +1035,10 @@ fn gateway_blocked_asset_update_status_maps_to_tui_notice() {
 }
 
 #[test]
-fn gateway_binary_update_with_blocked_profile_keeps_both_tui_labels() {
+fn gateway_binary_update_with_blocked_images_keeps_both_tui_labels() {
     let state = state_from_status_and_update_json_for_test(
         gateway_empty_status_body(),
-        gateway_update_binary_with_blocked_profile_status_body(),
+        gateway_update_binary_with_blocked_image_status_body(),
         std::time::Duration::from_millis(11),
     )
     .expect("parse mixed update status");
@@ -1081,11 +1048,11 @@ fn gateway_binary_update_with_blocked_profile_keeps_both_tui_labels() {
         notice.kind,
         UpdateNoticeKind::AvailableWithBlocked {
             available: vec![UpdateTrack::Binary],
-            blocked: vec![UpdateTrack::Profiles],
+            blocked: vec![UpdateTrack::Images],
         }
     );
     let snapshot = render_snapshot(&state, 120, 24).expect("render mixed update notice");
-    assert!(snapshot.contains("updates: binary; blocked: profiles"));
+    assert!(snapshot.contains("updates: binary; blocked: images"));
 }
 
 #[test]
@@ -1102,9 +1069,9 @@ fn tui_update_smoke_matrix_covers_release_states_and_atomic_action() {
             "updates: binary",
         ),
         (
-            "profile-update",
+            "image-update",
             gateway_update_matrix_body(false, false, true, None),
-            "updates: profiles",
+            "updates: images",
         ),
         (
             "asset-update",
@@ -1151,7 +1118,7 @@ fn tui_update_smoke_matrix_covers_release_states_and_atomic_action() {
 }
 
 #[test]
-fn gateway_status_can_resume_false_blocks_tui_resume_even_when_profile_ready() {
+fn gateway_status_can_resume_false_blocks_tui_resume() {
     let state = state_from_status_json_for_test(
         r#"{
             "service": "running",
@@ -1163,10 +1130,9 @@ fn gateway_status_can_resume_false_blocks_tui_resume_even_when_profile_ready() {
                 "name": "Stale VM",
                 "status": "Stopped",
                 "persistent": true,
-                "profile_id": "code",
                 "available_actions": [],
                 "can_resume": false,
-                "resume_blocked_reason": "profile payload hash drift"
+                "resume_blocked_reason": "session overlay is missing"
             }]
         }"#,
         std::time::Duration::from_millis(1),
@@ -1175,7 +1141,7 @@ fn gateway_status_can_resume_false_blocks_tui_resume_even_when_profile_ready() {
     let mut app = App::new(state);
 
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render non-resumable session");
-    assert!(snapshot.contains("profile payload hash drift"));
+    assert!(snapshot.contains("session overlay is missing"));
     assert!(!snapshot.contains("Press Enter to resume"));
     assert_eq!(
         app.handle_key(key(KeyCode::Char('r'), KeyModifiers::ALT)),
@@ -1236,24 +1202,19 @@ async fn gateway_provider_loads_update_status_over_http_gateway() {
         .expect("bind test gateway");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
-        for _ in 0..3 {
+        for _ in 0..2 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
             if request.contains("GET /token ") {
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else if request.contains("GET /status ") {
-                let mut overview: serde_json::Value = serde_json::from_str(gateway_empty_status_body()).unwrap();
-                overview["updates"] = serde_json::from_str(gateway_update_status_body()).unwrap();
-                write_json_response(&mut stream, &overview.to_string()).await;
             } else {
-                assert!(
-                    request.contains("GET /profiles/list "),
-                    "unexpected request: {request:?}"
-                );
+                assert!(request.contains("GET /status "), "unexpected request: {request:?}");
                 assert!(request
                     .to_ascii_lowercase()
                     .contains("authorization: bearer test-token"));
-                write_json_response(&mut stream, gateway_profiles_body()).await;
+                let mut overview: serde_json::Value = serde_json::from_str(gateway_empty_status_body()).unwrap();
+                overview["updates"] = serde_json::from_str(gateway_update_status_body()).unwrap();
+                write_json_response(&mut stream, &overview.to_string()).await;
             }
         }
     });
@@ -1263,97 +1224,11 @@ async fn gateway_provider_loads_update_status_over_http_gateway() {
         .await
         .expect("load state over gateway");
 
-    assert_eq!(state.profiles.len(), 2);
     assert_eq!(
         state.update_notice.expect("update notice").kind,
         UpdateNoticeKind::Available(vec![UpdateTrack::Binary, UpdateTrack::VmAssets])
     );
 
-    server.await.expect("server task");
-}
-
-#[tokio::test]
-async fn gateway_provider_does_not_invent_default_profile_when_profiles_fail() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind test gateway");
-    let addr = listener.local_addr().expect("local addr");
-    let server = tokio::spawn(async move {
-        for _ in 0..3 {
-            let (mut stream, _) = listener.accept().await.expect("accept request");
-            let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else if request.contains("GET /status ") {
-                write_json_response(&mut stream, gateway_empty_status_body()).await;
-            } else {
-                assert!(
-                    request.contains("GET /profiles/list "),
-                    "unexpected request: {request:?}"
-                );
-                write_response(
-                    &mut stream,
-                    "502 Bad Gateway",
-                    r#"{"error":"service profile discovery unavailable"}"#,
-                )
-                .await;
-            }
-        }
-    });
-
-    let state = GatewayProvider::new(format!("http://{addr}"))
-        .load_async()
-        .await
-        .expect("load state over gateway");
-
-    assert!(state.sessions.is_empty());
-    assert!(
-        state.profiles.is_empty(),
-        "profile discovery failure with no sessions must not synthesize default"
-    );
-    server.await.expect("server task");
-}
-
-#[tokio::test]
-async fn gateway_provider_does_not_synthesize_profiles_from_sessions_when_profiles_fail() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind test gateway");
-    let addr = listener.local_addr().expect("local addr");
-    let body = gateway_status_body().to_string();
-    let server = tokio::spawn(async move {
-        for _ in 0..3 {
-            let (mut stream, _) = listener.accept().await.expect("accept request");
-            let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else if request.contains("GET /status ") {
-                write_json_response(&mut stream, &body).await;
-            } else {
-                assert!(
-                    request.contains("GET /profiles/list "),
-                    "unexpected request: {request:?}"
-                );
-                write_response(
-                    &mut stream,
-                    "502 Bad Gateway",
-                    r#"{"error":"service profile discovery unavailable"}"#,
-                )
-                .await;
-            }
-        }
-    });
-
-    let state = GatewayProvider::new(format!("http://{addr}"))
-        .load_async()
-        .await
-        .expect("load state over gateway");
-
-    assert_eq!(state.sessions.len(), 2);
-    assert!(
-        state.profiles.is_empty(),
-        "profile discovery failure must not synthesize launchable profiles from session rows"
-    );
     server.await.expect("server task");
 }
 
@@ -1367,16 +1242,12 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
     let server = tokio::spawn(async move {
         let mut token_requests = 0;
         let mut status_requests = 0;
-        let mut profile_requests = 0;
-        for _ in 0..5 {
+        for _ in 0..3 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
             if request.contains("GET /token ") {
                 token_requests += 1;
                 write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else if request.contains("GET /profiles/list ") {
-                profile_requests += 1;
-                write_json_response(&mut stream, gateway_profiles_body()).await;
             } else {
                 status_requests += 1;
                 assert!(request.contains("GET /status "), "unexpected request: {request:?}");
@@ -1390,50 +1261,12 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
         }
         assert_eq!(token_requests, 1, "token should be cached across refreshes");
         assert_eq!(status_requests, 2);
-        assert_eq!(profile_requests, 2, "profile list should stay live across refreshes");
     });
 
     let provider = GatewayProvider::new(format!("http://{addr}"));
     provider.load_async().await.expect("initial load");
     let refreshed = provider.load_async().await.expect("refresh load");
-    assert_eq!(refreshed.profiles.len(), 2);
-    assert_eq!(refreshed.profiles[0].id, "code");
-    assert_eq!(refreshed.profiles[1].id, "co-work");
-    assert_eq!(refreshed.profiles[0].name, "Code");
-    assert_eq!(refreshed.profiles[1].name, "Co-work");
-
-    server.await.expect("server task");
-}
-
-#[tokio::test]
-async fn gateway_provider_only_offers_tui_launchable_profiles() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind test gateway");
-    let addr = listener.local_addr().expect("local addr");
-    let body = gateway_status_body().to_string();
-    let server = tokio::spawn(async move {
-        for _ in 0..3 {
-            let (mut stream, _) = listener.accept().await.expect("accept request");
-            let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else if request.contains("GET /profiles/list ") {
-                write_json_response(&mut stream, gateway_profiles_with_unlaunchable_body()).await;
-            } else {
-                assert!(request.contains("GET /status "), "unexpected request: {request:?}");
-                write_json_response(&mut stream, &body).await;
-            }
-        }
-    });
-
-    let state = GatewayProvider::new(format!("http://{addr}"))
-        .load_async()
-        .await
-        .expect("load state over gateway");
-
-    assert_eq!(state.profiles.len(), 1);
-    assert_eq!(state.profiles[0].id, "code");
+    assert_eq!(refreshed.sessions.len(), 2);
 
     server.await.expect("server task");
 }

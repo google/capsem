@@ -98,7 +98,6 @@ class ManagedService:
 @contextmanager
 def launchd_service(service: ServiceInstance) -> Iterator[ManagedService]:
     owner = ManagedService(service)
-    assert service.profiles_dir is not None
     (service.home_dir / "corp.toml").write_text("")
     (service.home_dir / "settings.toml").write_text('[settings."app.auto_update"]\nvalue = false\nmodified = "test"\n')
     plist = service.home_dir / f"{owner.label}.plist"
@@ -115,7 +114,7 @@ def launchd_service(service: ServiceInstance) -> Iterator[ManagedService]:
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "CAPSEM_HOME": str(service.home_dir), "CAPSEM_RUN_DIR": str(service.tmp_dir),
             "CAPSEM_CORP_CONFIG": str(service.home_dir / "corp.toml"),
-            "CAPSEM_PROFILES_DIR": str(service.profiles_dir), "CAPSEM_TRAY_HEADLESS": "1",
+            "CAPSEM_TRAY_HEADLESS": "1",
             "CAPSEM_CREDENTIAL_STORE_PATH": str(service.home_dir / "credential-store.json"),
         },
         "StandardOutPath": str(service.tmp_dir / "managed-service.log"),

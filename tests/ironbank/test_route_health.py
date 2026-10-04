@@ -24,7 +24,6 @@ from typing import Any
 import psutil
 import pytest
 from helpers.constants import (
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
@@ -55,7 +54,6 @@ from tests.ironbank.test_stats_detail_contract import (
     SESSION_ID as SEEDED_SESSION_ID,
 )
 from tests.ironbank.test_stats_detail_contract import (
-    _profile_contract,
     _seed_session_db,
     _write_registry,
 )
@@ -169,22 +167,6 @@ def _fast_gateway_client(gateway: GatewayInstance) -> PersistentJsonClient:
     )
 
 
-def _enforcement_payload(action: str = "block") -> dict[str, Any]:
-    return {
-        "rules_toml": f"""
-[profiles.rules.route_health_{action}]
-name = "route_health_{action}"
-action = "{action}"
-detection_level = "high"
-match = 'http.host == "route-health.example"'
-""".strip(),
-        "event": {
-            "event_type": "http.request",
-            "http_host": "route-health.example",
-        },
-    }
-
-
 def _call(client: Any, contract: RouteContract, *, timeout: int = 20) -> Any:
     if contract.method == "GET":
         return client.get(contract.path, timeout=timeout)
@@ -200,42 +182,6 @@ def _assert_contract(client: Any, contract: RouteContract) -> None:
         assert contract.required_keys <= set(payload), (contract.path, payload)
     if contract.forbidden_keys is not None:
         assert contract.forbidden_keys.isdisjoint(payload), (contract.path, payload)
-
-
-def _assert_evaluation_decision(client: Any, *, profile: str, action: str) -> None:
-    payload = client.post(
-        f"/profiles/{profile}/enforcement/evaluate",
-        _enforcement_payload(action),
-        timeout=20,
-    )
-    assert set(payload) == {"event"}
-    event = payload["event"]
-    assert event["event_type"] == "http.request"
-    assert event["http"]["host"] == "route-health.example"
-    assert event["decision"] == {"effective": action}
-
-    detections = event["detections"]
-    assert len(detections) == 1
-    assert detections[0] == {
-        "source": "rule",
-        "detection_level": "high",
-        "rule_id": f"profiles.rules.route_health_{action}",
-        "plugin_id": None,
-        "action": action,
-        "plugin_mode": None,
-        "reason": None,
-    }
-
-    plugin_executions = event["plugin_executions"]
-    assert [plugin["plugin_id"] for plugin in plugin_executions] == [
-        "credential_broker",
-        "log_sanitizer",
-    ]
-    assert [plugin["stage"] for plugin in plugin_executions] == [
-        "preprocess",
-        "logging",
-    ]
-    assert all(isinstance(plugin["duration_us"], int) for plugin in plugin_executions)
 
 
 def _cpu_seconds(proc: psutil.Process) -> Decimal:
@@ -398,119 +344,39 @@ def route_timing_summary(timing: RouteTiming) -> dict[str, Any]:
     }
 
 
-def _hot_route_contracts(profile: str) -> list[RouteContract]:
+def _hot_route_contracts() -> list[RouteContract]:
     return [
         RouteContract("GET", "/status", None, {"ready", "service"}, dict),
         RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
         RouteContract("GET", "/stats", None, {"global", "sessions"}, dict),
-        RouteContract("GET", "/profiles/list", None, {"profiles"}, dict),
         RouteContract(
             "GET",
-            "/profiles/status",
+            "/assets/status",
             None,
-            {"profile_count", "profiles", "ready_count"},
+            {"ready", "downloading", "current_arch", "assets", "errors", "manifest"},
             dict,
+            {"profile_id", "missing_assets", "invalid_assets"},
         ),
+        RouteContract("GET", "/plugins/list", None, {"plugins"}, dict, {"scope"}),
         RouteContract(
             "GET",
-            f"/profiles/{profile}/assets/status",
+            "/plugins/credential_broker/credentials/info",
             None,
-            {"profile_id", "ready", "assets"},
+            {"plugin_id", "store", "inventory", "grants", "corp_constraints"},
             dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/plugins/list",
-            None,
-            {"scope", "plugins"},
-            dict,
+            {"scope"},
         ),
         RouteContract(
             "GET",
-            f"/profiles/{profile}/plugins/info",
+            "/mcp/info",
             None,
-            {"scope", "plugin_count", "enabled_count"},
+            {"server_count", "manual_server_count", "builtin_local_enabled"},
             dict,
+            {"profile_id"},
         ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/plugins/credential_broker/info",
-            None,
-            {"id", "name", "description", "stage", "config", "runtime"},
-            dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/plugins/credential_broker/credentials/info",
-            None,
-            {"scope", "plugin_id", "store", "inventory", "grants", "corp_constraints"},
-            dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/enforcement/info",
-            None,
-            {"profile_id", "rule_count", "action_counts"},
-            dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/enforcement/rules/list",
-            None,
-            {"profile_id", "rules"},
-            dict,
-        ),
-        RouteContract(
-            "POST",
-            f"/profiles/{profile}/enforcement/evaluate",
-            _enforcement_payload("block"),
-            {"event"},
-            dict,
-        ),
-        RouteContract(
-            "POST",
-            f"/profiles/{profile}/enforcement/evaluate",
-            _enforcement_payload("ask"),
-            {"event"},
-            dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/detection/info",
-            None,
-            {"profile_id", "rule_count", "detection_rule_count"},
-            dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/detection/rules/list",
-            None,
-            {"profile_id", "rules"},
-            dict,
-        ),
-        RouteContract(
-            "POST",
-            f"/profiles/{profile}/detection/evaluate",
-            _enforcement_payload("allow"),
-            {"event"},
-            dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/mcp/info",
-            None,
-            {"profile_id", "server_count", "builtin_local_enabled"},
-            dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/mcp/default/info",
-            None,
-            {"action", "source", "rule_id"},
-            dict,
-        ),
-        RouteContract("GET", f"/profiles/{profile}/mcp/servers/list", None, None, list),
-        RouteContract("GET", f"/profiles/{profile}/mcp/servers/local/tools/list", None, None, list),
+        RouteContract("GET", "/mcp/default/info", None, {"action", "source", "rule_id"}, dict),
+        RouteContract("GET", "/mcp/servers/list", None, None, list),
+        RouteContract("GET", "/mcp/servers/local/tools/list", None, None, list),
         RouteContract("GET", "/security/status", None, {"sessions", "total"}, dict),
         RouteContract("GET", "/security/latest", None, None, list),
         RouteContract("GET", "/enforcement/status", None, {"sessions", "total"}, dict),
@@ -563,7 +429,6 @@ def _assert_archived_exec_body(client: Any, vm_id: str, event_id: str) -> None:
 
 
 def _service_route_contracts() -> list[RouteContract]:
-    profile = CODE_PROFILE_ID
     return [
         RouteContract("GET", "/status", None, {"components", "ready", "service", "version"}, dict),
         RouteContract("GET", "/version", None, {"version"}, dict),
@@ -571,109 +436,34 @@ def _service_route_contracts() -> list[RouteContract]:
         RouteContract(
             "POST", "/purge", {}, {"purged", "persistent_purged", "ephemeral_purged"}, dict
         ),
-        RouteContract("GET", "/profiles/list", None, {"profiles"}, dict),
         RouteContract(
             "GET",
-            "/profiles/status",
+            "/assets/status",
             None,
-            {"asset_manifest", "profile_count", "profiles", "ready_count", "source"},
+            {"ready", "downloading", "current_arch", "assets", "errors", "manifest"},
             dict,
+            {"profile_id", "missing_assets", "invalid_assets"},
         ),
-        RouteContract("GET", f"/profiles/{profile}/info", None, {"profile", "obom"}, dict),
+        RouteContract("GET", "/plugins/list", None, {"plugins"}, dict, {"scope"}),
         RouteContract(
             "GET",
-            f"/profiles/{profile}/assets/status",
+            "/plugins/credential_broker/credentials/info",
             None,
-            {"profile_id", "ready", "assets", "missing_assets", "invalid_assets", "manifest"},
+            {"plugin_id", "store", "inventory", "grants", "corp_constraints"},
             dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/assets/info",
-            None,
-            {"profile_id", "current_arch", "refresh_policy", "current_assets"},
-            dict,
+            {"scope"},
         ),
         RouteContract(
             "GET",
-            f"/profiles/{profile}/enforcement/info",
+            "/mcp/info",
             None,
-            {"profile_id", "rule_count", "action_counts"},
+            {"server_count", "manual_server_count", "builtin_local_enabled"},
             dict,
+            {"profile_id"},
         ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/enforcement/rules/list",
-            None,
-            {"profile_id", "rules"},
-            dict,
-        ),
-        RouteContract(
-            "POST",
-            f"/profiles/{profile}/enforcement/evaluate",
-            _enforcement_payload("block"),
-            {"event"},
-            dict,
-        ),
-        RouteContract(
-            "POST",
-            f"/profiles/{profile}/enforcement/evaluate",
-            _enforcement_payload("ask"),
-            {"event"},
-            dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/detection/info",
-            None,
-            {"profile_id", "rule_count", "detection_rule_count"},
-            dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/detection/rules/list",
-            None,
-            {"profile_id", "rules"},
-            dict,
-        ),
-        RouteContract(
-            "POST",
-            f"/profiles/{profile}/detection/evaluate",
-            _enforcement_payload("allow"),
-            {"event"},
-            dict,
-        ),
-        RouteContract("GET", f"/profiles/{profile}/plugins/list", None, {"scope", "plugins"}, dict),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/plugins/info",
-            None,
-            {"scope", "plugin_count", "enabled_count"},
-            dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/plugins/credential_broker/credentials/info",
-            None,
-            {"scope", "plugin_id", "store", "inventory", "grants", "corp_constraints"},
-            dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/mcp/info",
-            None,
-            {"profile_id", "server_count", "builtin_local_enabled"},
-            dict,
-        ),
-        RouteContract(
-            "GET",
-            f"/profiles/{profile}/mcp/default/info",
-            None,
-            {"action", "source", "rule_id"},
-            dict,
-        ),
-        RouteContract("GET", f"/profiles/{profile}/mcp/servers/list", None, None, list),
-        RouteContract("GET", f"/profiles/{profile}/mcp/servers/local/tools/list", None, None, list),
+        RouteContract("GET", "/mcp/default/info", None, {"action", "source", "rule_id"}, dict),
+        RouteContract("GET", "/mcp/servers/list", None, None, list),
+        RouteContract("GET", "/mcp/servers/local/tools/list", None, None, list),
         RouteContract("GET", "/settings/info", None, {"tree", "issues"}, dict),
         RouteContract("GET", "/corp/info", None, {"installed", "paths", "source"}, dict),
         RouteContract("GET", "/security/status", None, {"sessions", "total"}, dict),
@@ -788,8 +578,6 @@ def test_control_route_contracts_exist_for_ui_tui_blocking_and_vm_surfaces() -> 
         client = service.client()
         for contract in _service_route_contracts():
             _assert_contract(client, contract)
-        for action in ("allow", "ask", "block"):
-            _assert_evaluation_decision(client, profile=CODE_PROFILE_ID, action=action)
     finally:
         service.stop()
 
@@ -806,7 +594,6 @@ def test_vm_list_table_record_uses_uuid_id_not_display_name_blackbox() -> None:
             "/vms/create",
             {
                 "name": requested_name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "persistent": True,
@@ -853,7 +640,7 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
         service_proc = psutil.Process(service.proc.pid)
         gateway_proc = psutil.Process(gateway.proc.pid)
 
-        for contract in _hot_route_contracts(CODE_PROFILE_ID):
+        for contract in _hot_route_contracts():
             timing = _measure_hot_route(
                 f"service {contract.path}",
                 lambda c=contract: _assert_contract(fast_service_client, c),
@@ -866,21 +653,13 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
                 "GET",
                 "/status",
                 None,
-                {"gateway_version", "service", "vm_count", "profiles"},
+                {"gateway_version", "service", "vm_count", "assets"},
                 dict,
-                {"assets"},
+                {"profiles"},
             ),
             RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
-            RouteContract("GET", "/profiles/list", None, {"profiles"}, dict),
-            RouteContract(
-                "GET",
-                "/profiles/status",
-                None,
-                {"profile_count", "profiles", "ready_count"},
-                dict,
-            ),
             RouteContract("GET", "/stats", None, {"global", "sessions"}, dict),
-            *_hot_route_contracts(CODE_PROFILE_ID)[4:],
+            *_hot_route_contracts()[3:],
         ]
         for contract in hot_gateway_routes:
             timing = _measure_hot_route(
@@ -916,9 +695,8 @@ def test_seeded_session_ledger_routes_have_latency_and_cpu_budgets() -> None:
     try:
         session_dir = service.tmp_dir / "persistent" / SEEDED_VM_ID
         session_dir.mkdir(parents=True, exist_ok=True)
-        contract = _profile_contract(service.tmp_dir)
         _seed_session_db(session_dir / "session.db")
-        _write_registry(service.tmp_dir, session_dir, contract)
+        _write_registry(service.tmp_dir, session_dir)
         registry_path = service.tmp_dir / "persistent_registry.json"
         registry = json.loads(registry_path.read_text())
         registry["vms"][SEEDED_SESSION_ID]["id"] = SEEDED_VM_ID
@@ -986,21 +764,22 @@ def run_concurrent_route_read_write_benchmark(
         writer_results: list[dict[str, Any]] = []
         writer_errors: list[BaseException] = []
 
-        def write_profile_mutations() -> None:
+        def write_policy_mutations() -> None:
             try:
                 writer_started.set()
                 actions = ("allow", "ask", "block") * mutation_repeats
                 for index, action in enumerate(actions):
                     response = writer_client.patch(
-                        f"/profiles/{CODE_PROFILE_ID}/mcp/default/edit",
+                        "/mcp/default/edit",
                         {"action": action},
                         timeout=30,
                     )
-                    assert response["profile_id"] == CODE_PROFILE_ID
+                    assert set(response) == {"action", "mutation"}
                     assert response["action"] == action
                     assert response["mutation"]["target_kind"] == "mcp_default"
                     assert response["mutation"]["operation"] == "permission"
                     assert response["mutation"]["mutation_id"]
+                    assert response["mutation"]["filename"] == "settings.toml"
                     writer_results.append(response)
                     # Keep the writer active long enough for read/write
                     # overlap without inventing a fake DB path.
@@ -1019,11 +798,11 @@ def run_concurrent_route_read_write_benchmark(
                 writer_done.set()
 
         with ThreadPoolExecutor(max_workers=1) as executor:
-            writer = executor.submit(write_profile_mutations)
+            writer = executor.submit(write_policy_mutations)
             assert writer_started.wait(timeout=5), "writer route never started"
 
             timing = _measure_route(
-                "service /stats during profile-mutation writes",
+                "service /stats during policy-mutation writes",
                 lambda: _assert_contract(
                     fast_service_client,
                     RouteContract("GET", "/stats", None, {"global", "sessions"}, dict),
@@ -1038,7 +817,7 @@ def run_concurrent_route_read_write_benchmark(
         assert writer_done.is_set()
 
         final_default = fast_service_client.get(
-            f"/profiles/{CODE_PROFILE_ID}/mcp/default/info",
+            "/mcp/default/info",
             timeout=20,
         )
         return ConcurrentRouteWriteBenchmark(
@@ -1059,8 +838,8 @@ def test_concurrent_route_reads_while_writes_are_active() -> None:
 
     This is the S05 disk-backed baseline before DB-owned memory tables. The
     reader path is `/stats`, which reads through the main DB handle. The writer
-    path is a public profile mutation route, which writes
-    `profile_mutation_events` through the same DB boundary. No direct SQLite
+    path is a public policy mutation route, which edits settings.toml and writes
+    `policy_mutation_events` through the same DB boundary. No direct SQLite
     fixture writes are allowed here: the point is to measure the user-visible
     route contract while Capsem is doing real service work.
     """
@@ -1071,7 +850,7 @@ def test_concurrent_route_reads_while_writes_are_active() -> None:
     result = run_concurrent_route_read_write_benchmark(samples=160, mutation_repeats=8)
     assert len(result.writer_results) == 24
     assert {row["action"] for row in result.writer_results} == {"allow", "ask", "block"}
-    # This overlaps 160 `/stats` reads with 24 real profile mutation writes. Gate
+    # This overlaps 160 `/stats` reads with 24 real policy mutation writes. Gate
     # the tail on p99, matching the route-latency benchmark contract, so one
     # scheduler outlier does not fail a run whose p95 and CPU prove the route
     # stayed projection-backed.
@@ -1114,7 +893,6 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
                 "/vms/create",
                 {
                     "name": source_name,
-                    "profile_id": CODE_PROFILE_ID,
                     "ram_mb": DEFAULT_RAM_MB,
                     "cpus": DEFAULT_CPUS,
                     "persistent": True,
@@ -1127,7 +905,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         assert create["name"] == source_name
         assert source_id != source_name
         _assert_uuid_route_id(source_id)
-        assert create["profile_id"] == CODE_PROFILE_ID
+        assert "profile_id" not in create
         _assert_timing_budget(timing, p95_ms=45_000.0, max_ms=45_000.0, cpu_s=10.0)
         assert wait_exec_ready(service_client, source_id, timeout=EXEC_READY_TIMEOUT)
 
@@ -1190,7 +968,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         assert running_status["can_resume"] is False
         assert running_status["available_actions"] == ["pause", "stop", "fork", "delete"]
         running_info = service_client.get(f"/vms/{source_id}/info", timeout=30)
-        assert running_info["profile_id"] == CODE_PROFILE_ID
+        assert "profile_id" not in running_info
         assert running_info["name"] == source_name
         assert running_info["status"] == "Running"
         _assert_vm_row(
@@ -1270,7 +1048,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
             service_proc=service_proc,
         )
         assert resume_payload["id"] == source_id
-        assert resume_payload["profile_id"] == CODE_PROFILE_ID
+        assert "profile_id" not in resume_payload
         _assert_timing_budget(timing, p95_ms=45_000.0, max_ms=45_000.0, cpu_s=10.0)
         assert wait_exec_ready(service_client, source_id, timeout=EXEC_READY_TIMEOUT)
         _assert_archived_exec_body(service_client, source_id, exec_event_id)

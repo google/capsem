@@ -174,9 +174,6 @@ fn update_status_label(updates: &UpdateStatusResponse) -> Option<String> {
     if updates.assets.update_available {
         labels.push("VM assets");
     }
-    if updates.profiles.update_available {
-        labels.push("Profiles");
-    }
     if updates.images.update_available {
         labels.push("Images");
     }
@@ -187,9 +184,6 @@ fn update_status_label(updates: &UpdateStatusResponse) -> Option<String> {
     }
     if updates.assets.blocked_reason.is_some() {
         blocked.push("VM assets");
-    }
-    if updates.profiles.blocked_reason.is_some() {
-        blocked.push("Profiles");
     }
     if updates.images.blocked_reason.is_some() {
         blocked.push("Images");

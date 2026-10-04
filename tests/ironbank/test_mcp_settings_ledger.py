@@ -1,0 +1,337 @@
+"""Ironbank black-box MCP ledger tests: settings-configured servers, packed npm host."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sqlite3
+import time
+from contextlib import contextmanager, suppress
+
+import pytest
+from helpers.body_archive import security_payload
+from helpers.constants import (
+    ASSETS_DIR,
+    DEFAULT_CPUS,
+    DEFAULT_RAM_MB,
+    EXEC_READY_TIMEOUT,
+)
+from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
+from helpers.npm_mcp import packed_npm_mcp, structured
+from helpers.service import (
+    ServiceInstance,
+    vm_name,
+    vm_session_db_path,
+    wait_exec_ready,
+)
+from helpers.session_ledger import open_session_ledger
+
+pytestmark = pytest.mark.integration
+
+EXPECTED_MCP_SERVER_FIELDS = {
+    "name",
+    "url",
+    "has_auth_credential",
+    "custom_header_count",
+    "source",
+    "enabled",
+    "running",
+    "tool_count",
+    "is_stdio",
+}
+
+EXPECTED_MCP_TOOL_FIELDS = {
+    "namespaced_name",
+    "original_name",
+    "description",
+    "server_name",
+    "annotations",
+    "pin_hash",
+    "pin_changed",
+    "permission_action",
+    "permission_source",
+}
+
+
+@contextmanager
+def _connect_session_db(service: ServiceInstance, client, session_id: str):
+    db_path = vm_session_db_path(service.tmp_dir, client, session_id)
+    conn = open_session_ledger(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def _eventually(query, predicate, timeout: float = 5.0):
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        last = query()
+        if predicate(last):
+            return last
+        time.sleep(0.1)
+    assert predicate(last), f"condition not met before timeout; last={last!r}"
+    return last
+
+
+def _rows(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+    return conn.execute(sql, params).fetchall()
+
+
+def _assert_event_id(value: object) -> None:
+    assert isinstance(value, str)
+    assert re.fullmatch(r"[0-9a-f]{12}", value), value
+
+
+def test_mcp_call_pays_full_ledger_blackbox():
+    assert MOCK_SERVER_BINARY.exists(), (
+        f"{MOCK_SERVER_BINARY} missing; restore mock server"
+    )
+    assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
+
+    service = ServiceInstance()
+    mock_proc = None
+    old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
+    session_id = vm_name("ironbank-mcp")
+    vm_id: str | None = None
+    try:
+        corp_path = service.tmp_dir / "ironbank-mcp-corp.toml"
+        corp_path.write_text(
+            """
+[corp.rules.allow_ironbank_mock_mcp_http]
+name = "allow_ironbank_mock_mcp_http"
+action = "allow"
+priority = -100
+detection_level = "informational"
+reason = "Allow the hermetic Ironbank MCP fixture HTTP call."
+match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
+""".lstrip(),
+            encoding="utf-8",
+        )
+        os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
+        service.start()
+        client = service.client()
+        mock_proc, ready = start_mock_server()
+        url = f"{ready['base_url']}/html/about"
+
+        created = client.post(
+            "/vms/create",
+            {
+                "name": session_id,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+            timeout=90,
+        )
+        assert created is not None
+        vm_id = created["id"]
+        assert isinstance(vm_id, str)
+        assert created.get("name") == session_id
+        assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
+
+        with packed_npm_mcp(service.tmp_dir) as mcp:
+            listed = mcp.request("tools/list")
+            tool_names = {tool["name"] for tool in listed["result"]["tools"]}
+            assert {
+                "capsem_status",
+                "capsem_mcp_servers",
+                "capsem_mcp_tools",
+                "capsem_mcp_call",
+            } <= tool_names
+            assert {
+                "capsem_version",
+                "capsem_suspend",
+                "capsem_service_logs",
+            }.isdisjoint(tool_names)
+            assert all(
+                tool["description"] and tool["inputSchema"]["type"] == "object"
+                for tool in listed["result"]["tools"]
+            )
+
+            route_servers = client.get(
+                "/mcp/servers/list",
+                timeout=30,
+            )
+            assert isinstance(route_servers, list)
+            assert route_servers
+            assert all(
+                set(server) == EXPECTED_MCP_SERVER_FIELDS for server in route_servers
+            )
+            local_route_server = next(
+                server for server in route_servers if server["name"] == "local"
+            )
+            assert local_route_server["enabled"] is True
+            assert local_route_server["is_stdio"] is True
+            assert local_route_server["source"] == "builtin"
+            assert local_route_server["tool_count"] >= 3
+
+            route_tools = client.get(
+                "/mcp/servers/local/tools/list",
+                timeout=30,
+            )
+            assert isinstance(route_tools, list)
+            assert route_tools
+            assert all(set(tool) == EXPECTED_MCP_TOOL_FIELDS for tool in route_tools)
+            route_http_tool = next(
+                tool
+                for tool in route_tools
+                if tool["namespaced_name"] == "local__http_headers"
+            )
+            assert route_http_tool["original_name"] == "http_headers"
+            assert route_http_tool["server_name"] == "local"
+            assert route_http_tool["permission_action"] in {"allow", "ask"}
+            assert route_http_tool["permission_source"] in {"corp", "settings", "default"}
+            assert route_http_tool["pin_changed"] is False
+
+            mcp_servers = structured(
+                mcp.call_tool("capsem_mcp_servers", {})
+            )
+            assert isinstance(mcp_servers, dict)
+            assert any(server["name"] == "local" for server in mcp_servers["servers"])
+
+            mcp_tools = structured(
+                mcp.call_tool(
+                    "capsem_mcp_tools",
+                    {"server_id": "local"},
+                )
+            )
+            assert isinstance(mcp_tools, dict)
+            mcp_http_tool = next(
+                tool
+                for tool in mcp_tools["tools"]
+                if tool["namespaced_name"] == "local__http_headers"
+            )
+            assert mcp_http_tool == route_http_tool
+
+            with _connect_session_db(service, client, vm_id) as conn:
+                assert "mcp_calls" not in {
+                    row["name"]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                }
+                before_tool_count = conn.execute(
+                    "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'"
+                ).fetchone()[0]
+
+            call_result = structured(
+                mcp.call_tool(
+                    "capsem_mcp_call",
+                    {
+                        "server_id": "local",
+                        "tool_id": "local__http_headers",
+                        "arguments": {"url": url, "method": "GET"},
+                    },
+                )
+            )
+            assert isinstance(call_result, dict)
+            call_envelope = call_result["result"]
+            assert call_envelope["jsonrpc"] == "2.0"
+            assert "error" not in call_envelope
+            assert call_envelope["result"]["content"][0]["type"] == "text"
+            call_text = call_envelope["result"]["content"][0]["text"]
+            assert "Status: 200 OK" in call_text
+            assert "content-type:" in call_text.lower()
+
+        with _connect_session_db(service, client, vm_id) as conn:
+            tool_rows = _eventually(
+                lambda: _rows(
+                    conn,
+                    """
+                    SELECT event_id, server_name, method, tool_name, decision,
+                           bytes_sent, bytes_received, arguments AS request_preview,
+                           response_preview, trace_id
+                    FROM tool_calls
+                    WHERE method = 'tools/call'
+                      AND tool_name IN ('http_headers', 'local__http_headers')
+                      AND origin = 'mcp'
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                ),
+                lambda rows: len(rows) == 1,
+            )
+            tool_row = tool_rows[0]
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'"
+                ).fetchone()[0]
+                == before_tool_count + 1
+            )
+            _assert_event_id(tool_row["event_id"])
+            assert tool_row["server_name"] == "local"
+            assert tool_row["method"] == "tools/call"
+            assert tool_row["tool_name"] in {"http_headers", "local__http_headers"}
+            assert tool_row["decision"] == "allowed"
+            assert tool_row["bytes_sent"] > 0
+            assert tool_row["bytes_received"] > 0
+            assert "local__http_headers" in tool_row["request_preview"]
+            assert "Status: 200 OK" in tool_row["response_preview"]
+            assert tool_row["trace_id"]
+
+            net_rows = _rows(
+                conn,
+                """
+                SELECT event_id, domain, method, path, status_code, decision,
+                       conn_type, bytes_received
+                FROM net_events
+                WHERE conn_type = 'mcp_builtin'
+                  AND path = '/html/about'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+            )
+            assert len(net_rows) == 1
+            net_row = net_rows[0]
+            _assert_event_id(net_row["event_id"])
+            assert net_row["domain"] == "127.0.0.1"
+            assert net_row["method"] == "GET"
+            assert net_row["status_code"] == 200
+            assert net_row["decision"] == "allowed"
+            assert net_row["bytes_received"] > 0
+
+            security_rows = _rows(
+                conn,
+                """
+                SELECT event_id, event_type, rule_id, rule_action, detection_level,
+                       rule_json, trace_id
+                FROM security_rule_events
+                WHERE event_id = ?
+                ORDER BY id
+                """,
+                (tool_row["event_id"],),
+            )
+            assert security_rows
+            assert any(row["event_type"] == "mcp.tool_call" for row in security_rows)
+            assert any(
+                row["rule_id"] == "profiles.rules.default_mcp" for row in security_rows
+            )
+            assert {row["rule_action"] for row in security_rows} <= {"allow", "ask"}
+            assert all(
+                row["detection_level"] in {"none", "informational"}
+                for row in security_rows
+            )
+            assert all(row["trace_id"] == tool_row["trace_id"] for row in security_rows)
+            for row in security_rows:
+                event = security_payload(conn, row["event_id"])
+                rule = json.loads(row["rule_json"])
+                assert event["event_type"] == "mcp.tool_call"
+                assert event["mcp"]["server_name"] == "local"
+                assert event["mcp"]["tool_call_name"] in {
+                    "http_headers",
+                    "local__http_headers",
+                }
+                assert rule["name"]
+    finally:
+        if old_corp_config is None:
+            os.environ.pop("CAPSEM_CORP_CONFIG", None)
+        else:
+            os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config
+        if mock_proc is not None:
+            stop_process(mock_proc)
+        with suppress(Exception):
+            service.client().delete(f"/vms/{vm_id or session_id}/delete", timeout=30)
+        service.stop()

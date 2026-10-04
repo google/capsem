@@ -1,7 +1,6 @@
 pub use capsem_api::*;
-use capsem_core::net::policy_config::{DetectionLevel, ProfileConfigFile, SecurityRuleAction};
+use capsem_core::net::policy_config::SecurityRuleAction;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
 
 /// Internal owner-authenticated private-name lookup.
@@ -23,22 +22,6 @@ pub struct PrivateResolveResponse {
     pub network: String,
 }
 
-#[derive(Deserialize, Debug, Default)]
-pub struct VmEditRequest {
-    #[serde(default)]
-    pub ram_mb: Option<u64>,
-    #[serde(default)]
-    pub cpus: Option<u32>,
-    #[serde(default)]
-    pub persistent: Option<bool>,
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub profile_id: Option<String>,
-    #[serde(flatten)]
-    pub extra: BTreeMap<String, serde_json::Value>,
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VmOperationStatusResponse {
     pub vm_id: String,
@@ -55,107 +38,10 @@ pub struct SystemStatusResponse {
     pub service: String,
     pub manifest: serde_json::Value,
     pub manifest_metadata: serde_json::Value,
-    pub profiles: serde_json::Value,
+    pub assets: AssetStatus,
     pub corp: serde_json::Value,
     pub updates: UpdateStatusResponse,
 }
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct ProfileInfoResponse {
-    pub profile: ProfileSummary,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub obom: Option<ProfileObomInfo>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct ProfileObomInfo {
-    pub profile_id: String,
-    pub current_arch: String,
-    pub scope: String,
-    pub format: String,
-    pub name: String,
-    pub url: String,
-    pub hash: String,
-    pub size: u64,
-    pub generator: String,
-    pub generator_version: String,
-    pub rootfs_hash: String,
-    pub route: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct ProfileObomResponse {
-    pub profile_id: String,
-    pub current_arch: String,
-    pub obom: ProfileObomInfo,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub document: Option<serde_json::Value>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct ProfileValidateRequest {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub toml: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile: Option<ProfileConfigFile>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct ProfileValidateResponse {
-    pub valid: bool,
-    pub profile_id: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum EnforcementRuleSource {
-    BuiltinDefault,
-    Profile,
-    Corp,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct EnforcementRuleInfo {
-    pub rule_id: String,
-    pub source: EnforcementRuleSource,
-    pub provider: String,
-    pub namespace: String,
-    pub rule_key: String,
-    pub default_rule: bool,
-    pub enabled: bool,
-    pub name: String,
-    pub action: SecurityRuleAction,
-    #[serde(rename = "match")]
-    pub condition: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub detection_level: Option<DetectionLevel>,
-    pub priority: i32,
-    pub corp_locked: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct EnforcementRuleListResponse {
-    pub profile_id: String,
-    pub rules: Vec<EnforcementRuleInfo>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct EnforcementInfoResponse {
-    pub profile_id: String,
-    pub rule_count: usize,
-    pub default_rule_count: usize,
-    pub custom_rule_count: usize,
-    pub detection_rule_count: usize,
-    pub corp_locked_rule_count: usize,
-    pub source_counts: BTreeMap<String, usize>,
-    pub action_counts: BTreeMap<String, usize>,
-}
-
-pub type DetectionRuleInfo = EnforcementRuleInfo;
-pub type DetectionRuleListResponse = EnforcementRuleListResponse;
-pub type DetectionInfoResponse = EnforcementInfoResponse;
 
 pub fn mcp_permission_action(action: SecurityRuleAction) -> McpPermissionAction {
     match action {

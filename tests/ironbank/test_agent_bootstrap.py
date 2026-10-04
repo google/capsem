@@ -16,7 +16,7 @@ import time
 import uuid
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import (
     ServiceInstance,
     exec_output_text,
@@ -267,7 +267,6 @@ def test_profile_agent_bootstrap_pays_ledger_debt_blackbox():
             "/vms/create",
             {
                 "name": session_id,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },
@@ -296,7 +295,7 @@ def test_profile_agent_bootstrap_pays_ledger_debt_blackbox():
         info_before = client.get(f"/vms/{session_id}/info", timeout=30)
         assert info_before is not None
         assert info_before.get("id") == session_id or info_before.get("name") == session_id
-        assert info_before.get("profile_id") == CODE_PROFILE_ID
+        assert "profile_id" not in info_before
         assert info_before.get("status") == "Running"
 
         exec_resp = client.post(

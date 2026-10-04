@@ -2,31 +2,14 @@
 
 export const sandbox = {
   available_actions: ['pause', 'stop', 'fork', 'delete'], id: 'vm-1', name: 'demo', pid: 42,
-  profile_id: 'code', status: 'Running',
+  status: 'Running',
 };
 export const provision = {
   available_actions: ['pause', 'stop', 'fork', 'delete'], id: 'vm-1', name: 'demo',
-  profile_id: 'code', status: 'Running',
+  status: 'Running',
 };
-export const customProfile = {
-  availability: {web: true, shell: true, mobile: false},
-  default_rule_count: 0, description: 'Custom profile', id: 'co-work', mcp_server_count: 0,
-  name: 'Co-work', plugin_count: 0, rule_count: 0, source: 'builtin',
-  update_semantics: {
-    new_sessions: 'use_current_profile_catalog', existing_vms: 'pinned_until_recreate',
-    upgrade_action: 'recreate_vm',
-  },
-};
-
-/** The catalog's default profile, which `capsem_create` uses when none is named. */
-export const codeProfile = {...customProfile, id: 'code', name: 'Code', description: 'Code profile'};
-
-/** The gateway's status, whose catalog names the default profile. */
-export const hypervisorInfo = {
-  service: 'running', gateway_version: '0.6.3', vm_count: 0, vms: [],
-  profiles: {source: 'built_in', profile_count: 1, ready_count: 1, profiles: [],
-    defaults: {vm: 'code', container: 'code'}},
-};
+/** The gateway's status. */
+export const hypervisorInfo = {service: 'running', gateway_version: '0.6.3', vm_count: 0, vms: []};
 
 /** Canned JSON replies keyed by `METHOD /path`. */
 export const routeFixtures: Record<string, object> = {

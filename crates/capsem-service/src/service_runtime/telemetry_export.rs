@@ -5,7 +5,7 @@
 //! asks for it (see `capsem_telemetry::export`). The session instruments are
 //! observable: OpenTelemetry calls them on each export, synchronously, so a
 //! background task keeps a table of the latest snapshots and the callbacks
-//! read that. Attributes are exactly `session.id`, `profile.id` and
+//! read that. Attributes are exactly `session.id` and
 //! `persistent`.
 
 use std::sync::{Arc, RwLock};
@@ -161,7 +161,6 @@ pub(crate) async fn collect(state: &Arc<ServiceState>) -> Result<Vec<SessionTota
         totals.push(SessionTotals {
             attributes: vec![
                 KeyValue::new("session.id", info.id.clone()),
-                KeyValue::new("profile.id", info.profile_id.clone()),
                 KeyValue::new("persistent", info.persistent),
             ],
             counters,

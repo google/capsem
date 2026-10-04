@@ -348,7 +348,7 @@ async fn dispatch_action(client: &GatewayClient, action: Action) {
             r
         }
         Action::NewSession => {
-            info!("opening profile-aware new session launcher");
+            info!("opening the new session launcher");
             launch_ui(None);
             return;
         }

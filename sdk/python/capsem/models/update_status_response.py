@@ -20,7 +20,6 @@ class UpdateStatusResponse(Model):
     checked_at: Annotated[StrictInt, Field(ge=0)] | None = None
     images: UpdateTrackStatus
     last_error: StrictStr | None = None
-    profiles: UpdateTrackStatus
     stale: StrictBool
     supply_chain: SupplyChainEvidence
     validation_error: StrictStr | None = None

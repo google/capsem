@@ -7,7 +7,7 @@ vi.stubGlobal('WebSocket', class { close() {} });
 const api = await import('../api');
 
 const info: SandboxInfo = {
-  id: 'vm 1', name: 'Demo', profile_id: 'code', pid: 123, status: VmLifecycleState.RUNNING,
+  id: 'vm 1', name: 'Demo', pid: 123, status: VmLifecycleState.RUNNING,
   persistent: true, available_actions: [VmAction.PAUSE, VmAction.STOP, VmAction.FORK],
   total_input_tokens: 12, total_thinking_tokens: 3, total_output_tokens: 7, total_tool_calls: 2,
   ai: { models: [], mcp: [], model_call_count: 0, total_estimated_cost_usd: 0.001,
@@ -17,9 +17,9 @@ const info: SandboxInfo = {
 };
 const overview: HypervisorInfo = {
   service: ServiceAvailability.RUNNING, gateway_version: '1.0.0', vm_count: 1,
-  vms: [{ id: info.id, profile_id: info.profile_id, status: info.status,
+  vms: [{ id: info.id, status: info.status,
     persistent: true, available_actions: info.available_actions }],
-  resource_summary: null, profiles: null, updates: null,
+  resource_summary: null, assets: null, updates: null,
 };
 const stats: VmStatsSummaryResponse = {
   total_requests: 3, allowed_requests: 2, denied_requests: 1, total_input_tokens: 12,

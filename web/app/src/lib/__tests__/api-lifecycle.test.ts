@@ -15,7 +15,7 @@ function jsonResponse(body: unknown, status = 200): Promise<Response> {
 }
 
 function provision(id: string): ProvisionResponse {
-  return { id, name: 'code-dev', profile_id: 'code', status: VmLifecycleState.RUNNING,
+  return { id, name: 'vm-1', status: VmLifecycleState.RUNNING,
     persistent: true, can_resume: false, available_actions: [VmAction.STOP] };
 }
 
@@ -34,7 +34,6 @@ describe('VM lifecycle', () => {
   it('provisionVm sends POST /vms/create', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse(provision('vm-1')));
     const result = await api.provisionVm({
-      profile_id: 'code',
       name: 'code-dev',
       ram_mb: 2048,
       cpus: 2,
@@ -44,13 +43,12 @@ describe('VM lifecycle', () => {
     const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
     expect(call[0]).toContain('/vms/create');
     expect(call[1].method).toBe('POST');
-    expect(JSON.parse(call[1].body).profile_id).toBe('code');
+    expect(JSON.parse(call[1].body)).not.toHaveProperty('profile_id');
   });
 
-  it('provisionVm accepts profile-owned resource defaults', async () => {
+  it('provisionVm leaves resource defaults to the service', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse(provision('code-1')));
     const result = await api.provisionVm({
-      profile_id: 'code',
       persistent: true,
     });
 
@@ -58,7 +56,6 @@ describe('VM lifecycle', () => {
     const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
     const body = JSON.parse(call[1].body);
     expect(body).toEqual({
-      profile_id: 'code',
       persistent: true,
     });
     expect(body).not.toHaveProperty('ram_mb');
@@ -72,7 +69,6 @@ describe('VM lifecycle', () => {
       .mockReturnValueOnce(jsonResponse(provision('vm-fresh')));
 
     const result = await api.provisionVm({
-      profile_id: 'code',
       name: 'code-dev',
       ram_mb: 2048,
       cpus: 2,
@@ -157,7 +153,7 @@ describe('VM lifecycle', () => {
 
   it('rejects unknown lifecycle enums in successful create responses', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ ...provision('vm'), status: 'StartingEventually' }));
-    await expect(api.provisionVm({ profile_id: 'code' })).rejects.toThrow();
+    await expect(api.provisionVm({})).rejects.toThrow();
     expect(mockFetch).toHaveBeenCalledTimes(4);
   });
 

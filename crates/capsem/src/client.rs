@@ -25,13 +25,13 @@ use crate::{paths, service_install};
 /// The wire contract is `capsem-api`'s. The CLI used to mirror these types by
 /// hand, which is how `ForkResponse` lost its `id` and `env`/`from` lost their
 /// serde defaults.
-pub use capsem_api::{ForkRequest, ForkResponse, ProvisionRequest, ProvisionResponse, VmLifecycleState};
+pub use capsem_api::{
+    AssetStatus, ForkRequest, ForkResponse, ProvisionRequest, ProvisionResponse, RunRequest, VmLifecycleState,
+};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SessionInfo {
     pub id: String,
-    #[serde(default)]
-    pub profile_id: String,
     #[serde(default)]
     pub name: Option<String>,
     pub pid: u32,
@@ -93,20 +93,6 @@ pub struct PersistRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct RunRequest {
-    pub command: String,
-    pub profile_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_secs: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ram_mb: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpus: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub env: Option<HashMap<String, String>>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub struct PurgeRequest {
     pub all: bool,
 }
@@ -148,71 +134,6 @@ pub struct HistoryResponse {
 pub use capsem_api::{ExecRequest, ExecResponse};
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AssetEntry {
-    pub name: String,
-    pub status: String,
-    #[serde(default)]
-    pub path: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AssetManifestStatus {
-    pub origin: String,
-    pub path: String,
-    #[serde(default)]
-    pub origin_path: Option<String>,
-    #[serde(default)]
-    pub origin_source: Option<String>,
-    #[serde(default)]
-    pub packaged_at: Option<String>,
-    #[serde(default)]
-    pub refreshed_at: Option<String>,
-    #[serde(default)]
-    pub validation_status: Option<String>,
-    #[serde(default)]
-    pub validation_error: Option<String>,
-    #[serde(default)]
-    pub blake3: Option<String>,
-    #[serde(default)]
-    pub format: Option<u32>,
-    #[serde(default)]
-    pub refresh_policy: Option<String>,
-    #[serde(default)]
-    pub assets_current: Option<String>,
-    #[serde(default)]
-    pub binaries_current: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AssetStatusResponse {
-    pub ready: bool,
-    #[serde(default)]
-    pub downloading: bool,
-    #[serde(default)]
-    pub manifest: Option<AssetManifestStatus>,
-    #[serde(default)]
-    pub current_asset: Option<String>,
-    #[serde(default)]
-    pub bytes_done: Option<u64>,
-    #[serde(default)]
-    pub bytes_total: Option<u64>,
-    #[serde(default)]
-    pub asset_version: Option<String>,
-    #[serde(default)]
-    pub assets: Vec<AssetEntry>,
-    #[serde(default)]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub ensured: Option<bool>,
-    #[serde(default)]
-    pub started: Option<bool>,
-    #[serde(default)]
-    pub downloaded: Option<usize>,
-    #[serde(default)]
-    pub reconcile_error: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub struct UpdateStatusResponse {
     #[serde(default)]
     pub checked_at: Option<u64>,
@@ -229,7 +150,6 @@ pub struct UpdateStatusResponse {
     pub last_error: Option<String>,
     pub binary: UpdateTrackStatus,
     pub assets: UpdateTrackStatus,
-    pub profiles: UpdateTrackStatus,
     pub images: UpdateTrackStatus,
     #[serde(default)]
     pub supply_chain: SupplyChainEvidence,

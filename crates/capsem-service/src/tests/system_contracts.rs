@@ -119,22 +119,10 @@ async fn system_status_route_returns_exact_installed_documents_in_one_response()
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["manifest"], manifest);
     assert_eq!(body["manifest_metadata"], metadata);
-    let profiles: capsem_api::ProfileCatalogStatus = serde_json::from_value(body["profiles"].clone())
-        .expect("the real profile status response must satisfy the generated SDK contract");
-    assert!(profiles.profiles.iter().any(|profile| profile.id == "code"));
-    // Clients ask the catalog which profile to use when they name none,
-    // instead of compiling a profile name into every SDK.
-    // A container's default is published apart from a VM's; today one profile
-    // answers both, and the route must publish both claims either way.
-    assert_eq!(profiles.defaults.vm.as_deref(), Some("code"));
-    assert_eq!(profiles.defaults.container.as_deref(), Some("code"));
-    let code = body["profiles"]["profiles"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|profile| profile["id"] == "code")
-        .unwrap();
-    assert_eq!(code["description"], "Optimized for coding and long-running agents.");
+    let assets: capsem_api::AssetStatus = serde_json::from_value(body["assets"].clone())
+        .expect("the real asset status response must satisfy the generated SDK contract");
+    assert_eq!(assets.current_arch, arch);
+    assert!(body.get("profiles").is_none(), "{body}");
     assert_eq!(body["updates"]["checked_at"], 1100);
 }
 
@@ -203,4 +191,83 @@ fn find_orphan_capsem_pids_returns_empty_on_no_match() {
 ";
     let pids = find_orphan_capsem_pids(ps, &run_dir);
     assert!(pids.is_empty());
+}
+
+#[tokio::test]
+async fn service_wide_ledger_routes_are_db_backed_and_empty_without_session_dbs() {
+    let state = make_test_state();
+
+    let Json(latest) = handle_service_security_latest(
+        State(Arc::clone(&state)),
+        Query(SecurityLedgerQuery { limit: Some(10) }),
+    )
+    .await
+    .expect("service security latest should return an empty ledger");
+    assert!(latest.is_empty());
+
+    let Json(status) = handle_service_security_status(State(Arc::clone(&state)))
+        .await
+        .expect("service security status should return empty DB aggregate");
+    assert_eq!(status["total"], 0);
+    assert!(status["sessions"].as_array().unwrap().is_empty());
+
+    let Json(detections) = handle_service_detection_latest(
+        State(Arc::clone(&state)),
+        Query(SecurityLedgerQuery { limit: Some(10) }),
+    )
+    .await
+    .expect("service detection latest should return an empty ledger");
+    assert!(detections.is_empty());
+
+    let Json(detection_status) = handle_service_detection_status(State(state))
+        .await
+        .expect("service detection status should return empty DB aggregate");
+    assert_eq!(detection_status["total"], 0);
+}
+
+#[tokio::test]
+async fn fake_vm_mutation_routes_are_not_mounted() {
+    let state = make_test_state();
+    insert_fake_instance(&state, "ops-vm", std::process::id());
+    let app = build_service_router(state);
+
+    for (method, uri, body) in [
+        (
+            axum::http::Method::PATCH,
+            "/vms/ops-vm/edit",
+            Some(json!({ "ram_mb": 8192 })),
+        ),
+        (axum::http::Method::POST, "/vms/ops-vm/restart", None),
+        (axum::http::Method::POST, "/vms/ops-vm/reload-profile", None),
+    ] {
+        let (status, _) = route_request(app.clone(), method, uri, body).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{uri} must stay unmounted until the VM mutation persists or performs a real operation"
+        );
+    }
+}
+
+/// The VM profile surface is gone: none of its routes is mounted, so an old
+/// client gets a 404 rather than a silently different answer.
+#[tokio::test]
+async fn profile_routes_are_not_mounted() {
+    let app = build_service_router(make_test_state());
+    for (method, uri) in [
+        (axum::http::Method::GET, "/profiles/list"),
+        (axum::http::Method::GET, "/profiles/status"),
+        (axum::http::Method::GET, "/profiles/code/info"),
+        (axum::http::Method::GET, "/profiles/code/assets/status"),
+        (axum::http::Method::POST, "/profiles/code/assets/ensure"),
+        (axum::http::Method::GET, "/profiles/code/plugins/list"),
+        (axum::http::Method::GET, "/profiles/code/mcp/info"),
+        (axum::http::Method::GET, "/profiles/code/enforcement/rules/list"),
+        (axum::http::Method::POST, "/profiles/code/enforcement/evaluate"),
+        (axum::http::Method::POST, "/profiles/code/reload"),
+        (axum::http::Method::POST, "/profiles/create"),
+    ] {
+        let (status, _) = route_request(app.clone(), method, uri, Some(json!({}))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri} must not be mounted");
+    }
 }

@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
+from helpers.constants import ASSETS_DIR
 from helpers.gateway import GatewayInstance
-from helpers.service import ServiceInstance, materialize_test_profiles
+from helpers.service import ServiceInstance
 from helpers.stopped_workspace import VM_ID, seed_stopped_workspace
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -24,8 +25,7 @@ def test_braavos_sdk_against_real_gateway_and_stopped_workspace(
     gateway = GatewayInstance(service.uds_path)
     project = ROOT / "sdk" / language
     try:
-        service.profiles_dir = materialize_test_profiles(service.tmp_dir)
-        seed_stopped_workspace(service.tmp_dir, service.profiles_dir)
+        seed_stopped_workspace(service.tmp_dir, ASSETS_DIR)
         service.start()
         gateway.start()
         # The gate prepares each SDK before the suites (`sdk.python.sync`,

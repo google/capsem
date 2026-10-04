@@ -16,11 +16,9 @@ import pytest
 from helpers.body_archive import security_payload
 from helpers.constants import (
     ASSETS_DIR,
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
-    PROFILES_DIR,
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
@@ -176,7 +174,6 @@ def _one_json_line(stdout: str, prefix: str) -> dict:
 def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     gateway: GatewayInstance | None = None
@@ -232,7 +229,6 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
             "/vms/create",
             {
                 "name": session_name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "env": {"CAPSEM_MOCK_SERVER_BASE_URL": ready["base_url"]},
@@ -469,7 +465,6 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
 def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     gateway: GatewayInstance | None = None
@@ -533,7 +528,6 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
             "/vms/create",
             {
                 "name": session_name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "env": {
@@ -837,7 +831,6 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
 def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     gateway: GatewayInstance | None = None
@@ -906,7 +899,6 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             "/vms/create",
             {
                 "name": session_name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "env": {"CAPSEM_MOCK_SERVER_BASE_URL": ready["base_url"]},
@@ -1240,7 +1232,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             assert all("credential:blake3:" not in (row["request_headers"] or "") for row in uds_rows)
 
             broker_reload = client.post(
-                f"/profiles/{CODE_PROFILE_ID}/plugins/credential_broker/credentials/reload",
+                "/plugins/credential_broker/credentials/reload",
                 {},
                 timeout=30,
             )
@@ -1255,7 +1247,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
                 for credential in broker_reload["inventory"]
             ), broker_reload["inventory"]
 
-            plugins = client.get(f"/profiles/{CODE_PROFILE_ID}/plugins/list", timeout=30)
+            plugins = client.get("/plugins/list", timeout=30)
             assert plugins is not None
             by_plugin = {plugin["id"]: plugin for plugin in plugins["plugins"]}
             broker_list_runtime = by_plugin["credential_broker"]["runtime"]
@@ -1264,10 +1256,9 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             assert broker_list_runtime["applied_count"] == 0
             assert broker_list_runtime["detection_count"] == 0
 
-            broker_plugin = client.get(
-                f"/profiles/{CODE_PROFILE_ID}/plugins/credential_broker/info",
-                timeout=30,
-            )
+            # The plugin info route answers with the plugin's runtime across
+            # sessions.
+            broker_plugin = client.get("/plugins/credential_broker/info", timeout=30)
             broker_runtime = broker_plugin["runtime"]
             assert broker_plugin["id"] == "credential_broker"
             assert broker_runtime["enabled"] is True
@@ -1298,7 +1289,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             )
 
             broker_info = client.get(
-                f"/profiles/{CODE_PROFILE_ID}/plugins/credential_broker/credentials/info",
+                "/plugins/credential_broker/credentials/info",
                 timeout=30,
             )
             assert broker_info["plugin_id"] == "credential_broker"
@@ -1356,7 +1347,6 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
 def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     gateway: GatewayInstance | None = None
@@ -1413,7 +1403,6 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
             "/vms/create",
             {
                 "name": session_name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "env": {"CAPSEM_MOCK_SERVER_BASE_URL": ready["base_url"]},
@@ -1616,7 +1605,6 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
 def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     gateway: GatewayInstance | None = None
@@ -1673,7 +1661,6 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
             "/vms/create",
             {
                 "name": session_name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "env": {"CAPSEM_MOCK_SERVER_BASE_URL": ready["base_url"]},

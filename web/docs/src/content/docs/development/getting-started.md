@@ -80,11 +80,11 @@ Linux handoff gate. Assets are gitignored and must be built
 locally. See [Life of a Build > Container runtime](./stack#container-runtime)
 if you need to retune Colima resources.
 
-The runtime has no profile input. Agents and developer tools come from OCI
-images under `images/`, run per session with `--image`. The catalog the local
-development service reads is generated under `cache/target/config/` by
-`capsem-admin profile materialize` during `just shell`, `just exec`,
-`just fast-test`, and `just test`; no package ships it.
+The runtime has no profile input and VMs have no profiles. Every VM boots the
+one kernel/initrd/rootfs set of the installed manifest, and its policy comes
+from `~/.capsem/settings.toml` and the corp config (see
+[Policy](/security/policy/)). Agents and developer tools come from OCI images
+under `images/`, run per session with `--image`.
 
 ## Verify
 
@@ -133,14 +133,15 @@ No Apple Developer ID certificate is needed for local development -- ad-hoc sign
 To add tools for agents or developers, add them to an OCI image under
 `images/`. Change `runtime_apt_packages` in `config/docker/image/build.toml`
 and rebuild through `just build-assets` only when Capsem's own guest machinery
-needs a package. Corp files own security rules and provider access. See
+needs a package. Security rules and provider access are not part of the image;
+they come from `~/.capsem/settings.toml` and the corp config. See
 [Customizing VM Images](./custom-images) for the workflow.
 
 ## API keys (optional)
 
 Interactive AI sessions can configure credentials inside the VM or let the
 credential broker capture/materialize them at a supported boundary. Raw API keys
-are not settings-owned boot secrets; logs and profile state use BLAKE3
+are not settings-owned boot secrets; logs and policy state use BLAKE3
 references.
 
 ## Troubleshooting

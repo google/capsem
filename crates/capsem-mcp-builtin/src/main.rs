@@ -5,7 +5,7 @@
 //! the echo transport probe.
 //!
 //! Config via environment variables:
-//! - CAPSEM_ACTIVE_PROFILE: Session active profile whose security rules/plugins govern tools.
+//! - CAPSEM_ACTIVE_POLICY: Session active policy whose security rules/plugins govern tools.
 //! - CAPSEM_SESSION_DIR: Session directory; holds the per-peer singleton lock.
 //!
 //! It writes no ledger. capsem-process is the one writer of a session's
@@ -26,7 +26,7 @@ use tracing::info;
 
 use capsem_core::mcp::builtin_tools;
 use capsem_core::mcp::builtin_tools::BuiltinHttpClient;
-use capsem_core::net::policy_config::{ActiveProfileFile, SecurityPluginConfig, SecurityRuleSet};
+use capsem_core::net::policy_config::{ActivePolicyFile, SecurityPluginConfig, SecurityRuleSet};
 use capsem_proto::mcp_contracts::builtin_ledger::{self, BuiltinLedgerRecord, BUILTIN_LEDGER_META_KEY};
 use capsem_proto::mcp_contracts::JsonRpcResponse;
 
@@ -253,19 +253,19 @@ fn lock_file_name(peer_index: u32) -> String {
     }
 }
 
-/// Read, parse and validate the active profile, naming the file in any error.
-fn load_active_profile(path: &str) -> Result<ActiveProfileFile> {
+/// Read, parse and validate the active policy, naming the file in any error.
+fn load_active_policy(path: &str) -> Result<ActivePolicyFile> {
     let text = std::fs::read_to_string(path)
         .map_err(anyhow::Error::new)
-        .with_context(|| format!("read active profile {path}"))?;
-    let profile: ActiveProfileFile = toml::from_str(&text)
+        .with_context(|| format!("read active policy {path}"))?;
+    let policy: ActivePolicyFile = toml::from_str(&text)
         .map_err(anyhow::Error::new)
-        .with_context(|| format!("parse active profile {path}"))?;
-    profile
+        .with_context(|| format!("parse active policy {path}"))?;
+    policy
         .validate()
         .map_err(anyhow::Error::msg)
-        .with_context(|| format!("validate active profile {path}"))?;
-    Ok(profile)
+        .with_context(|| format!("validate active policy {path}"))?;
+    Ok(policy)
 }
 
 // -- Main --
@@ -313,11 +313,11 @@ async fn main() -> Result<()> {
         }
     }
 
-    let active_profile_path =
-        std::env::var("CAPSEM_ACTIVE_PROFILE").map_err(|_| anyhow::anyhow!("CAPSEM_ACTIVE_PROFILE is required"))?;
-    let active_profile = load_active_profile(&active_profile_path)?;
-    let security_rules = Arc::new(active_profile.compile_security_rule_set().map_err(anyhow::Error::msg)?);
-    let plugin_policy = Arc::new(active_profile.plugins.clone());
+    let active_policy_path =
+        std::env::var("CAPSEM_ACTIVE_POLICY").map_err(|_| anyhow::anyhow!("CAPSEM_ACTIVE_POLICY is required"))?;
+    let active_policy = load_active_policy(&active_policy_path)?;
+    let security_rules = Arc::new(active_policy.compile_security_rule_set().map_err(anyhow::Error::msg)?);
+    let plugin_policy = Arc::new(active_policy.plugins.clone());
 
     let handler = BuiltinHandler {
         http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),

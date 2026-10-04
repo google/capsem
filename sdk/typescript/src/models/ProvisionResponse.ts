@@ -9,6 +9,5 @@ export interface ProvisionResponse {
   "id": string;
   "name": string;
   "persistent"?: boolean;
-  "profile_id": string;
   "status": VmLifecycleState;
 }
