@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use super::LAUNCHER;
 
@@ -36,6 +36,8 @@ pub fn stage_plan(
     env: &BTreeMap<String, String>,
     resources: super::WorkloadResources,
 ) -> Result<Vec<StagedFile>> {
+    let labels = image_labels(root)?;
+    let surface = super::seccomp::Surface::from_label(labels.get(SURFACE_LABEL).and_then(|v| v.as_str()))?;
     let transfer = capsem_assets::oci::transfer_manifest(root, files)?;
     let mut plan: Vec<StagedFile> = transfer
         .iter()
@@ -57,9 +59,13 @@ pub fn stage_plan(
             "env": env,
             "workspace": super::CONTAINER_WORKSPACE,
             "capabilities": super::seccomp::WORKLOAD_CAPABILITIES,
-            "seccomp": super::seccomp::workload_seccomp(oci_architecture()?)?,
+            "seccomp": super::seccomp::workload_seccomp(oci_architecture()?, surface)?,
             "id_map": super::WORKLOAD_ID_MAP,
             "resources": resources,
+            "surface": match surface {
+                super::seccomp::Surface::Terminal => "terminal",
+                super::seccomp::Surface::Xpra => "xpra",
+            },
         }))?),
     });
     plan.push(StagedFile {
@@ -67,6 +73,36 @@ pub fn stage_plan(
         content: StagedContent::Bytes(LAUNCHER.to_vec()),
     });
     Ok(plan)
+}
+
+/// The label an image declares its surface with (`terminal` or `xpra`).
+pub const SURFACE_LABEL: &str = "org.capsem.surface";
+
+/// The image config's labels from a pulled single-image layout: index.json
+/// names the manifest, the manifest names the config. The layout is the
+/// puller's verified output, so its blobs are read as written.
+pub fn image_labels(root: &Path) -> Result<serde_json::Map<String, serde_json::Value>> {
+    let read = |path: PathBuf| -> Result<serde_json::Value> {
+        serde_json::from_slice(&std::fs::read(&path).with_context(|| format!("read {}", path.display()))?)
+            .with_context(|| format!("parse {}", path.display()))
+    };
+    let blob = |digest: &serde_json::Value| -> Result<PathBuf> {
+        let digest = digest.as_str().context("digest")?;
+        let hex = capsem_assets::oci::Digest::parse(digest)?
+            .as_str()
+            .trim_start_matches("sha256:")
+            .to_owned();
+        Ok(root.join("blobs/sha256").join(hex))
+    };
+    let index = read(root.join("index.json"))?;
+    // A layout naming no manifest declares nothing: the terminal surface,
+    // the narrowest filter, is what that gives.
+    if index["manifests"][0].is_null() {
+        return Ok(serde_json::Map::new());
+    }
+    let manifest = read(blob(&index["manifests"][0]["digest"])?)?;
+    let config = read(blob(&manifest["config"]["digest"])?)?;
+    Ok(config["config"]["Labels"].as_object().cloned().unwrap_or_default())
 }
 
 /// The OCI platform architecture of this host.

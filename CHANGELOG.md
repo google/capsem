@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   VM that cannot give it. Image `VOLUME`s live on the VM's disk instead of a
   64 MiB tmpfs: seeded from the image, owned by the image's user, and kept
   by a named VM across restarts.
+- Images are admitted by policy in the service. Where image bytes may come
+  from (`[images] sources`) is checked before any registry is contacted, and
+  which images may run (`[images] admit`) is checked on the resolved digest
+  before anything is staged, in `settings.toml` or, overriding it,
+  `corp.toml`. The official catalog's digests are admitted from any mirror;
+  any other image needs a grant. Image GUI sessions (`org.capsem.surface=xpra`)
+  get the one filter exception Chromium's sandbox needs: new user, PID and
+  network namespaces and chroot, nothing else.
 
 - The guest kernel now applies hardening sysctls at boot and stops the boot
   if any is refused: kernel pointer and log restriction, Yama

@@ -12,7 +12,7 @@ from helpers.session_ledger import open_session_ledger
 
 from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_publish import redis
-from tests.ironbank.kingslanding.test_run import service, wait_for
+from tests.ironbank.kingslanding.test_run import grant_image, service, wait_for
 
 __all__ = ["redis", "service"]
 pytestmark = pytest.mark.integration
@@ -40,6 +40,7 @@ def test_container_pull_policy_stops_before_registry_egress_and_redacts_credenti
         )
         assert result["rule"]["action"] == "block"
 
+        grant_image(service, reference)
         created = client.post(
             "/vms/create",
             {

@@ -31,9 +31,10 @@ fn stage_plan_writes_parts_then_the_files_the_launcher_reads() {
             "env": {"LANG": "C"},
             "workspace": super::super::CONTAINER_WORKSPACE,
             "capabilities": super::super::seccomp::WORKLOAD_CAPABILITIES,
-            "seccomp": super::super::seccomp::workload_seccomp(super::oci_architecture().unwrap()).unwrap(),
+            "seccomp": super::super::seccomp::workload_seccomp(super::oci_architecture().unwrap(), super::super::seccomp::Surface::Terminal).unwrap(),
             "id_map": {"containerID": 0, "hostID": 100000, "size": 65536},
             "resources": {"memory_bytes": 1664u64 * 1024 * 1024, "cpu_millis": 1750, "pids": 4096},
+            "surface": "terminal",
         })
     );
     assert_eq!(super::super::CONTAINER_WORKSPACE, "/workspace");

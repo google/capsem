@@ -2,7 +2,7 @@ use super::*;
 use std::collections::BTreeSet;
 
 fn filter() -> Value {
-    workload_seccomp(super::super::stage::oci_architecture().unwrap()).unwrap()
+    workload_seccomp(super::super::stage::oci_architecture().unwrap(), Surface::Terminal).unwrap()
 }
 
 /// Syscalls some rule allows with no argument condition.
@@ -144,10 +144,10 @@ fn sockets_open_only_the_allowed_families() {
 #[test]
 fn both_guest_architectures_resolve() {
     for arch in ["arm64", "amd64"] {
-        let filter = workload_seccomp(arch).unwrap();
+        let filter = workload_seccomp(arch, Surface::Terminal).unwrap();
         assert!(!filter["architectures"].as_array().unwrap().is_empty(), "{arch}");
     }
-    assert!(workload_seccomp("mips64").is_err());
+    assert!(workload_seccomp("mips64", Surface::Terminal).is_err());
 }
 
 #[test]
@@ -163,4 +163,61 @@ fn only_the_native_abi_is_admitted() {
         rules_for(&filter, "socketcall").is_empty(),
         "socketcall opens any family, around the socket rules"
     );
+}
+
+fn allowing(filter: &Value, name: &str) -> Vec<Value> {
+    filter["syscalls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|rule| {
+            rule["action"] == "SCMP_ACT_ALLOW" && rule["names"].as_array().unwrap().iter().any(|n| n == name)
+        })
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn a_terminal_workload_creates_no_namespace_and_never_chroots() {
+    let filter = workload_seccomp("arm64", Surface::Terminal).unwrap();
+    assert!(allowing(&filter, "unshare").is_empty());
+    assert!(allowing(&filter, "chroot").is_empty());
+    // moby's clone rule refuses every CLONE_NEW* bit.
+    for rule in allowing(&filter, "clone") {
+        assert_eq!(rule["args"][0]["value"], 0x7E02_0000u64, "{rule}");
+    }
+}
+
+#[test]
+fn an_xpra_workload_may_create_exactly_chromiums_sandbox_namespaces() {
+    let filter = workload_seccomp("arm64", Surface::Xpra).unwrap();
+    let refused = |name: &str| -> Vec<u64> {
+        allowing(&filter, name)
+            .iter()
+            .map(|rule| rule["args"][0]["value"].as_u64().unwrap())
+            .collect()
+    };
+    // The loosest clone and unshare rules still refuse the mount, IPC, UTS,
+    // cgroup and time namespaces: only user, pid and net are added.
+    let narrowest = |masks: Vec<u64>| masks.into_iter().min_by_key(|mask| mask.count_ones()).unwrap();
+    for name in ["clone", "unshare"] {
+        let mask = narrowest(refused(name));
+        assert_eq!(mask, 0x0E02_0080, "{name}");
+        // CLONE_NEWNS, NEWIPC, NEWUTS, NEWCGROUP, NEWTIME.
+        for refused_bit in [0x0002_0000u64, 0x0800_0000, 0x0400_0000, 0x0200_0000, 0x80] {
+            assert_ne!(mask & refused_bit, 0, "{name}: {refused_bit:#x} must stay refused");
+        }
+    }
+    assert_eq!(allowing(&filter, "chroot").len(), 1);
+    // Still no vsock, setns or keyctl.
+    assert!(allowing(&filter, "setns").is_empty());
+    assert!(allowing(&filter, "keyctl").is_empty());
+}
+
+#[test]
+fn surfaces_come_from_the_image_label() {
+    assert_eq!(Surface::from_label(None).unwrap(), Surface::Terminal);
+    assert_eq!(Surface::from_label(Some("terminal")).unwrap(), Surface::Terminal);
+    assert_eq!(Surface::from_label(Some("xpra")).unwrap(), Surface::Xpra);
+    assert!(Surface::from_label(Some("vnc")).is_err());
 }

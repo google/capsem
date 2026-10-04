@@ -12,6 +12,20 @@ struct FixtureImages {
 }
 
 impl ImageSource for FixtureImages {
+    /// The fixture registry is granted; everything else stays denied.
+    fn policy(&self) -> PolicyFuture {
+        let granted = capsem_core::net::policy_config::SettingsFile {
+            images: Some(capsem_core::net::policy_config::ImagePolicyConfig {
+                sources: vec!["registry.example".into()],
+                admit: vec!["registry.example".into()],
+            }),
+            ..Default::default()
+        };
+        Box::pin(async move {
+            capsem_core::container::admission::ImagePolicy::from_files(&granted, &Default::default(), Vec::new())
+        })
+    }
+
     fn pull(&self, _image: String, access: RegistryAccess, _parent: PathBuf) -> PullFuture {
         let (fail, gate, seen) = (self.fail, self.gate.clone(), Arc::clone(&self.access));
         Box::pin(async move {
@@ -26,7 +40,8 @@ impl ImageSource for FixtureImages {
             Ok(PulledImage {
                 root: root.path().to_path_buf(),
                 files: vec![PathBuf::from("index.json"), PathBuf::from("oci-layout")],
-                digest: "sha256:fixture".into(),
+                digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".into(),
+                image_digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".into(),
                 _hold: Box::new(root),
             })
         })
@@ -173,7 +188,10 @@ async fn create_wait_reports_a_detached_workload_running_once_the_guest_marks_re
     .await
     .expect("a guest-ready detached workload settles the create wait");
     assert_eq!(status.state, ContainerState::Running);
-    assert_eq!(status.digest.as_deref(), Some("sha256:fixture"));
+    assert_eq!(
+        status.digest.as_deref(),
+        Some("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+    );
 }
 
 fn owner_accepting_stage_and_launch(
@@ -298,7 +316,10 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
 
     let status = wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
     let messages = owner.await.unwrap();
-    assert_eq!(status.digest.as_deref(), Some("sha256:fixture"));
+    assert_eq!(
+        status.digest.as_deref(),
+        Some("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+    );
     assert!(status.error.is_none());
     let staged: Vec<&str> = messages
         .iter()
@@ -337,12 +358,14 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
             "workspace": "/workspace",
             "capabilities": capsem_core::container::seccomp::WORKLOAD_CAPABILITIES,
             "seccomp": capsem_core::container::seccomp::workload_seccomp(
-                capsem_core::container::stage::oci_architecture().unwrap()
+                capsem_core::container::stage::oci_architecture().unwrap(),
+                capsem_core::container::seccomp::Surface::Terminal,
             )
             .unwrap(),
             "id_map": {"containerID": 0, "hostID": 100000, "size": 65536},
             // The fixture VM's 2048 MiB and 2 CPUs, minus the runtime's share.
             "resources": {"memory_bytes": 1664u64 * 1024 * 1024, "cpu_millis": 1750, "pids": 4096},
+            "surface": "terminal",
         })
     );
     assert!(!stage.join("1-0").exists(), "an empty layout file has no part");
@@ -529,7 +552,10 @@ async fn container_status_route_reports_running_only_once_the_guest_marks_ready(
     let (status, body) = get_status(&fx.state, "box").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["state"], "running");
-    assert_eq!(body["digest"], "sha256:fixture");
+    assert_eq!(
+        body["digest"],
+        "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    );
 }
 
 #[tokio::test]
@@ -553,4 +579,54 @@ async fn container_status_survives_a_service_restart_through_the_launch_record()
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], "running");
     assert_eq!(body["image"], "registry.example/app:1");
+}
+
+/// A registry outside the policy's sources is refused before anything else:
+/// no owner is asked and the registry is never contacted.
+#[tokio::test]
+async fn an_ungranted_source_is_refused_before_any_registry_access() {
+    let images = images();
+    let access = Arc::clone(&images.access);
+    let fx = fixture(images);
+    start(
+        &fx.state,
+        "box".into(),
+        ContainerSpec {
+            image: "registry.example.evil/app:1".into(),
+            ..spec(None)
+        },
+    );
+    let status = wait_for(&fx.state, "box", |s| s.state == ContainerState::Failed).await;
+    assert!(status.error.as_deref().unwrap().contains("not allowed"), "{status:?}");
+    assert!(access.lock().unwrap().is_none(), "the registry was contacted");
+}
+
+/// Admission is on the resolved digest: an image granted by digest runs only
+/// at that digest, whichever of its two addresses matches.
+#[test]
+fn admission_takes_either_content_address_and_nothing_else() {
+    let a = format!("sha256:{}", "a".repeat(64));
+    let b = format!("sha256:{}", "b".repeat(64));
+    let c = format!("sha256:{}", "c".repeat(64));
+    let granted = capsem_core::net::policy_config::SettingsFile {
+        images: Some(capsem_core::net::policy_config::ImagePolicyConfig {
+            sources: vec!["registry.example".into()],
+            admit: vec![format!("registry.example/app@{a}")],
+        }),
+        ..Default::default()
+    };
+    let policy =
+        capsem_core::container::admission::ImagePolicy::from_files(&granted, &Default::default(), Vec::new()).unwrap();
+    let requested: capsem_assets::oci::ImageReference = "registry.example/app:1".parse().unwrap();
+    let pulled = |image_digest: &str, digest: &str| PulledImage {
+        root: PathBuf::new(),
+        files: Vec::new(),
+        digest: digest.into(),
+        image_digest: image_digest.into(),
+        _hold: Box::new(()),
+    };
+    admit(&policy, &requested, &pulled(&a, &b)).unwrap();
+    admit(&policy, &requested, &pulled(&b, &a)).unwrap();
+    let refused = admit(&policy, &requested, &pulled(&b, &c)).unwrap_err();
+    assert!(refused.contains("not admitted"), "{refused}");
 }

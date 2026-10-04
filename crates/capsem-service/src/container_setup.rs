@@ -19,15 +19,32 @@ pub(crate) struct PulledImage {
     pub(crate) root: PathBuf,
     pub(crate) files: Vec<PathBuf>,
     pub(crate) digest: String,
+    /// What the reference resolved to (the index, when there was one).
+    pub(crate) image_digest: String,
     pub(crate) _hold: Box<dyn Send + Sync>,
 }
 
 pub(crate) type PullFuture = Pin<Box<dyn Future<Output = anyhow::Result<PulledImage>> + Send>>;
 
-/// Where images come from. Production pulls from registries; tests substitute.
+/// Where images come from, and which may be fetched and run. Production
+/// pulls from registries under the installation's policy; tests substitute.
 pub(crate) trait ImageSource: Send + Sync {
     fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf) -> PullFuture;
+
+    /// The image policy for one decision, read fresh each time.
+    fn policy(&self) -> PolicyFuture {
+        Box::pin(async {
+            tokio::task::spawn_blocking(|| {
+                let (settings, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+                capsem_core::container::admission::ImagePolicy::from_files(&settings, &corp, Vec::new())
+            })
+            .await?
+        })
+    }
 }
+
+pub(crate) type PolicyFuture =
+    Pin<Box<dyn Future<Output = anyhow::Result<capsem_core::container::admission::ImagePolicy>> + Send>>;
 
 pub(crate) struct RegistryImages;
 
@@ -51,6 +68,7 @@ impl ImageSource for RegistryImages {
                 root: layout.path().to_path_buf(),
                 files: layout.files().to_vec(),
                 digest: layout.source_digest.clone(),
+                image_digest: layout.image_digest.clone(),
                 _hold: Box::new(layout),
             })
         })
@@ -183,6 +201,26 @@ impl ContainerSetups {
     }
 }
 
+/// Admit a pulled image by either of its content addresses: what the
+/// reference resolved to, or the platform manifest it selected.
+fn admit(
+    policy: &capsem_core::container::admission::ImagePolicy,
+    requested: &capsem_assets::oci::ImageReference,
+    image: &PulledImage,
+) -> Result<(), String> {
+    let mut refusal = None;
+    for digest in [&image.image_digest, &image.digest] {
+        let resolved = capsem_assets::oci::Digest::parse(digest)
+            .and_then(|digest| requested.clone().resolve(digest))
+            .and_then(|resolved| policy.admit(&resolved));
+        match resolved {
+            Ok(()) => return Ok(()),
+            Err(error) => refusal = Some(format!("container image refused: {error:#}")),
+        }
+    }
+    Err(refusal.unwrap_or_else(|| "container image refused".into()))
+}
+
 /// Pull, stage and start `spec` in VM `id` in the background.
 pub(crate) fn start(state: &Arc<ServiceState>, id: String, spec: ContainerSpec) {
     let generation = state.containers.begin(&id, &spec.image);
@@ -205,6 +243,16 @@ pub(crate) fn start(state: &Arc<ServiceState>, id: String, spec: ContainerSpec) 
 async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: ContainerSpec) -> Result<(), String> {
     let reference = capsem_assets::oci::image_reference(&spec.image)
         .map_err(|error| format!("container image expects docker://IMAGE or registry/repository:tag: {error:#}"))?;
+    // Sources are checked before any registry access: a refused registry is
+    // never contacted.
+    let requested = capsem_assets::oci::ImageReference::try_from(&reference).map_err(|e| format!("{e:#}"))?;
+    let policy = state
+        .containers
+        .source
+        .policy()
+        .await
+        .map_err(|e| format!("image policy: {e:#}"))?;
+    policy.check_source(&requested).map_err(|e| format!("{e:#}"))?;
     let admission = ServiceToProcess::AdmitContainerPull {
         id: state.next_job_id(),
         image: spec.image.clone(),
@@ -245,6 +293,8 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         .pull(spec.image.clone(), spec.registry.unwrap_or_default(), parent)
         .await
         .map_err(|e| format!("pull {}: {e:#}", spec.image))?;
+    // Admission is on the resolved digest, before anything is staged.
+    admit(&policy, &requested, &image)?;
     if !state.containers.advance(id, generation, |status| {
         status.state = ContainerState::Staging;
         status.digest = Some(image.digest.clone());

@@ -34,14 +34,49 @@ pub const WORKLOAD_CAPABILITIES: &[&str] = &[
     "CAP_SETUID",
 ];
 
+/// What a workload presents, which decides the one exception its filter
+/// makes. Images declare it with the `org.capsem.surface` label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Surface {
+    /// A terminal workload: no namespace creation at all.
+    Terminal,
+    /// An Xpra GUI workload. Chromium's sandbox (Electron apps included)
+    /// moves each renderer into new user, PID and network namespaces and
+    /// chroots it, so exactly those are allowed. Mount, IPC, UTS and cgroup
+    /// namespaces stay denied, and the socket rules still refuse netfilter
+    /// netlink inside the new network namespace.
+    Xpra,
+}
+
+impl Surface {
+    /// The surface an image's labels declare; terminal unless it says xpra.
+    pub fn from_label(label: Option<&str>) -> Result<Self> {
+        match label {
+            None | Some("terminal") => Ok(Self::Terminal),
+            Some("xpra") => Ok(Self::Xpra),
+            Some(other) => bail!("unknown org.capsem.surface {other:?}: expected terminal or xpra"),
+        }
+    }
+}
+
+/// Every CLONE_NEW* bit moby's allowlist refuses without CAP_SYS_ADMIN.
+const CLONE_NEW_ANY: u64 = 0x7E02_0000;
+const CLONE_NEWUSER: u64 = 0x1000_0000;
+const CLONE_NEWPID: u64 = 0x2000_0000;
+const CLONE_NEWNET: u64 = 0x4000_0000;
+/// Only unshare() and clone3() can ask for a time namespace, so moby's
+/// clone mask leaves it out; the unshare rule must refuse it explicitly.
+const CLONE_NEWTIME: u64 = 0x80;
+
 const AF_UNIX: u64 = 1;
 const AF_INET: u64 = 2;
 const AF_INET6: u64 = 10;
 const AF_NETLINK: u64 = 16;
 const NETLINK_NETFILTER: u64 = 12;
 
-/// The resolved filter for `arch` (OCI name: `arm64`, `amd64`).
-pub fn workload_seccomp(arch: &str) -> Result<Value> {
+/// The resolved filter for `arch` (OCI name: `arm64`, `amd64`) and the
+/// workload's surface.
+pub fn workload_seccomp(arch: &str, surface: Surface) -> Result<Value> {
     let moby: Value = serde_json::from_str(MOBY_DEFAULT).context("parse vendored seccomp allowlist")?;
     let scmp_arch = match arch {
         "arm64" => "SCMP_ARCH_AARCH64",
@@ -82,6 +117,9 @@ pub fn workload_seccomp(arch: &str) -> Result<Value> {
         syscalls.push(resolved);
     }
     syscalls.extend(socket_rules());
+    if surface == Surface::Xpra {
+        syscalls.extend(chromium_sandbox_rules());
+    }
 
     Ok(json!({
         "defaultAction": moby["defaultAction"],
@@ -129,6 +167,26 @@ fn applies(rule: &Value, arch: &str) -> Result<bool> {
         _ => false,
     };
     Ok(included && !excluded)
+}
+
+/// Chromium's namespace sandbox: clone and unshare with only the user, PID
+/// and network namespace bits, and chroot into its empty directory. runc
+/// ORs rules for one syscall, so these widen moby's clone rule by exactly
+/// those three bits and nothing else.
+fn chromium_sandbox_rules() -> Vec<Value> {
+    let refused = (CLONE_NEW_ANY | CLONE_NEWTIME) & !(CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET);
+    let namespaces = |name: &str| {
+        json!({
+            "names": [name],
+            "action": "SCMP_ACT_ALLOW",
+            "args": [{"index": 0, "value": refused, "valueTwo": 0, "op": "SCMP_CMP_MASKED_EQ"}],
+        })
+    };
+    vec![
+        namespaces("clone"),
+        namespaces("unshare"),
+        json!({"names": ["chroot"], "action": "SCMP_ACT_ALLOW"}),
+    ]
 }
 
 /// One rule per family, never one rule with several conditions on the same
