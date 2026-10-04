@@ -32,8 +32,8 @@ use tokio_rustls::TlsAcceptor;
 mod dns;
 mod limits;
 #[cfg(test)]
-use dns::dns_response;
-use dns::{serve_dns_tcp, serve_dns_udp, DNS_FIXTURES};
+use dns::{dns_response, dns_response_for};
+use dns::{serve_dns_tcp, serve_dns_udp, DnsAnswers, DNS_FIXTURES};
 use limits::{generated_size_refusal, parse_generated_size, read_ws_frame, write_ws_frame};
 
 const TINY_BODY: &[u8] = b"capsem-mock-server:tiny\n";
@@ -92,11 +92,16 @@ struct Args {
     /// Launcher PID. When present, the server exits as soon as that parent dies.
     #[arg(long)]
     parent_pid: Option<u32>,
+    /// What the DNS fixtures answer: `routable` for clients in a container
+    /// workload, which cannot reach the VM's loopback.
+    #[arg(long, value_enum, default_value_t)]
+    dns_answers: DnsAnswers,
 }
 
 #[derive(Clone)]
 struct State {
     request_log: Option<Arc<Mutex<File>>>,
+    dns_answers: DnsAnswers,
 }
 
 #[derive(Serialize)]
@@ -109,6 +114,8 @@ struct ReadyPayload {
     dns_udp_addr: String,
     dns_tcp_addr: String,
     dns_fixtures: Vec<&'static str>,
+    /// What the provider and model fixtures resolve to.
+    dns_answer_ip: String,
     endpoints: Vec<&'static str>,
     request_log: Option<String>,
 }
@@ -140,7 +147,10 @@ async fn main() -> Result<()> {
         }
         None => None,
     };
-    let state = State { request_log };
+    let state = State {
+        request_log,
+        dns_answers: args.dns_answers,
+    };
 
     let http_listener = TcpListener::bind(args.addr).await.context("bind HTTP")?;
     let http_addr = http_listener.local_addr().context("read HTTP addr")?;
@@ -164,6 +174,7 @@ async fn main() -> Result<()> {
         dns_udp_addr: dns_udp_addr.to_string(),
         dns_tcp_addr: dns_tcp_addr.to_string(),
         dns_fixtures,
+        dns_answer_ip: args.dns_answers.provider_answer(),
         endpoints: ENDPOINTS.to_vec(),
         request_log: args.request_log.as_ref().map(|path| path.display().to_string()),
     };

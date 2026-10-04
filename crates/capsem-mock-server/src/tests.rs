@@ -75,6 +75,38 @@ fn dns_fixture_answers_known_names_and_rejects_unknown() {
 }
 
 #[test]
+fn routable_dns_answers_every_fixture_with_an_address_a_container_can_route() {
+    for name in DNS_FIXTURES {
+        let query = test_dns_query(name, 0xABCD);
+        let response = dns_response_for(&query, DnsAnswers::Routable).expect("dns response");
+        assert_eq!(response[3] & 0x0F, 0, "{name}");
+        assert_eq!(&response[response.len() - 4..], &[198, 51, 100, 10], "{name}");
+    }
+    let query = test_dns_query("unknown.capsem.invalid", 0xBEEF);
+    let response = dns_response_for(&query, DnsAnswers::Routable).expect("dns response");
+    assert_eq!(response[3] & 0x0F, 3, "routable mode still refuses unknown names");
+
+    let query = test_dns_query("ollama.capsem.test", 0x0111);
+    let response = dns_response(&query).expect("dns response");
+    assert_eq!(
+        &response[response.len() - 4..],
+        &[127, 0, 0, 1],
+        "the default stays loopback"
+    );
+}
+
+#[test]
+fn dns_answers_are_loopback_unless_routable_is_asked_for() {
+    let default = Args::try_parse_from(["capsem-mock-server"]).expect("default arguments");
+    assert_eq!(default.dns_answers, DnsAnswers::Loopback);
+    let routable =
+        Args::try_parse_from(["capsem-mock-server", "--dns-answers", "routable"]).expect("routable arguments");
+    assert_eq!(routable.dns_answers, DnsAnswers::Routable);
+    assert_eq!(DnsAnswers::Loopback.provider_answer(), "127.0.0.1");
+    assert_eq!(DnsAnswers::Routable.provider_answer(), "198.51.100.10");
+}
+
+#[test]
 fn websocket_accept_matches_rfc_fixture() {
     assert_eq!(
         websocket_accept("dGhlIHNhbXBsZSBub25jZQ=="),

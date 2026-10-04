@@ -194,3 +194,27 @@ def test_mock_server_serves_release_protocol_fixtures_from_one_process() -> None
         assert _dns_answer_ip(response) == "127.0.0.1"
     finally:
         stop_process(proc)
+
+
+def _resolve(ready: dict, name: str) -> str:
+    host, port_text = ready["dns_udp_addr"].rsplit(":", 1)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(5)
+        sock.sendto(_dns_query(name), (host, int(port_text)))
+        response, _ = sock.recvfrom(512)
+    return _dns_answer_ip(response)
+
+
+@pytest.mark.parametrize(("mode", "answer"), [("loopback", "127.0.0.1"), ("routable", "198.51.100.10")])
+def test_mock_dns_answers_the_advertised_address_in_each_mode(mode: str, answer: str) -> None:
+    """Workload clients ask for routable answers; everything else keeps
+    loopback. The ready line says which, so a ledger asserts what was served."""
+    proc = None
+    try:
+        proc, ready = start_mock_server(dns_answers=mode)
+        assert ready["dns_answer_ip"] == answer
+        for name in ("model.capsem.test", "ollama.capsem.test", "api.openai.com", "api.anthropic.com"):
+            assert _resolve(ready, name) == answer, name
+        assert _resolve(ready, "egress.capsem.test") == "198.51.100.10"
+    finally:
+        stop_process(proc)
