@@ -281,105 +281,35 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/enforcement/status", get(proxy::handle_proxy))
         .route("/detection/latest", get(proxy::handle_proxy))
         .route("/detection/status", get(proxy::handle_proxy))
-        .route("/profiles/list", get(proxy::handle_proxy))
-        .route("/profiles/status", get(proxy::handle_proxy))
-        .route("/profiles/reload", post(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/info", get(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/obom", get(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/validate", post(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/enforcement/evaluate", post(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/enforcement/info", get(proxy::handle_proxy))
+        .route("/assets/status", get(proxy::handle_proxy))
+        .route("/assets/ensure", post(proxy::handle_proxy))
+        .route("/plugins/list", get(proxy::handle_proxy))
+        .route("/plugins/credential_broker/credentials/info", get(proxy::handle_proxy))
         .route(
-            "/profiles/{profile_id}/enforcement/rules/{rule_id}/edit",
-            put(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/enforcement/rules/{rule_id}/delete",
-            delete(proxy::handle_proxy),
-        )
-        .route("/profiles/{profile_id}/enforcement/reload", post(proxy::handle_proxy))
-        .route(
-            "/profiles/{profile_id}/enforcement/rules/list",
-            get(proxy::handle_proxy),
-        )
-        .route("/profiles/{profile_id}/detection/evaluate", post(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/detection/info", get(proxy::handle_proxy))
-        .route(
-            "/profiles/{profile_id}/detection/rules/{rule_id}/edit",
-            put(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/detection/rules/{rule_id}/delete",
-            delete(proxy::handle_proxy),
-        )
-        .route("/profiles/{profile_id}/detection/reload", post(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/detection/rules/list", get(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/plugins/list", get(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/plugins/info", get(proxy::handle_proxy))
-        .route(
-            "/profiles/{profile_id}/plugins/{plugin_id}/info",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/plugins/credential_broker/credentials/info",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/plugins/credential_broker/credentials/reload",
+            "/plugins/credential_broker/credentials/reload",
             post(proxy::handle_proxy),
         )
-        .route(
-            "/profiles/{profile_id}/plugins/{plugin_id}/edit",
-            patch(proxy::handle_proxy),
-        )
-        .route("/profiles/{profile_id}/reload", post(proxy::handle_proxy))
+        .route("/plugins/{plugin_id}/info", get(proxy::handle_proxy))
+        .route("/plugins/{plugin_id}/edit", patch(proxy::handle_proxy))
         .route("/vms/{id}/fork", post(proxy::handle_proxy))
         .route("/settings/info", get(proxy::handle_proxy))
         .route("/settings/edit", patch(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/assets/status", get(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/assets/info", get(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/assets/ensure", post(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/skills/info", get(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/skills/list", get(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/skills/add", post(proxy::handle_proxy))
-        .route(
-            "/profiles/{profile_id}/skills/{skill_id}/edit",
-            patch(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/skills/{skill_id}/delete",
-            delete(proxy::handle_proxy),
-        )
         .route("/corp/info", get(proxy::handle_proxy))
         .route("/corp/edit", put(proxy::handle_proxy))
         .route("/corp/validate", post(proxy::handle_proxy))
         .route("/corp/reload", post(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/mcp/servers/list", get(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/mcp/info", get(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/mcp/default/info", get(proxy::handle_proxy))
-        .route("/profiles/{profile_id}/mcp/default/edit", patch(proxy::handle_proxy))
+        .route("/mcp/info", get(proxy::handle_proxy))
+        .route("/mcp/servers/list", get(proxy::handle_proxy))
+        .route("/mcp/default/info", get(proxy::handle_proxy))
+        .route("/mcp/default/edit", patch(proxy::handle_proxy))
+        .route("/mcp/servers/{server_id}/tools/list", get(proxy::handle_proxy))
+        .route("/mcp/servers/{server_id}/refresh", post(proxy::handle_proxy))
         .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/edit",
-            put(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/delete",
-            delete(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
-            get(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
-            post(proxy::handle_proxy),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit",
+            "/mcp/servers/{server_id}/tools/{tool_id}/edit",
             patch(proxy::handle_proxy),
         )
         .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
+            "/mcp/servers/{server_id}/tools/{tool_id}/call",
             post(proxy::handle_proxy),
         )
         .route("/vms/{id}/history", get(proxy::handle_proxy))

@@ -32,11 +32,9 @@ async fn overview_includes_update_availability_and_running_binary_version() {
             axum::routing::get(|| async {
                 let track = serde_json::json!({"current":"0.6.3", "latest":"0.6.4", "update_available":true,
                 "state":"update_available", "compatibility":"compatible"});
-                axum::Json(
-                    serde_json::json!({"stale":false, "binary":track, "assets":track, "profiles":track,
+                axum::Json(serde_json::json!({"stale":false, "binary":track, "assets":track,
                 "images":track, "supply_chain":{"manifest":{"path":"manifest.json"}, "channel_index":{},
-                    "host_sbom":{"name":"host"}, "vm_obom":{"name":"vm"}, "attestations":[]}}),
-                )
+                    "host_sbom":{"name":"host"}, "vm_obom":{"name":"vm"}, "attestations":[]}}))
             }),
         );
     let (path, handle, _dir) = mock_uds(mock).await;
@@ -62,7 +60,7 @@ fn status_response_serializes() {
             stopped_count: 0,
             suspended_count: 0,
         }),
-        profiles: None,
+        assets: None,
         updates: None,
     };
 
@@ -82,7 +80,7 @@ fn unavailable_response_shape() {
         vm_count: 0,
         vms: vec![],
         resource_summary: None,
-        profiles: None,
+        assets: None,
         updates: None,
     };
 
@@ -110,7 +108,7 @@ fn status_response_multiple_vms_resource_aggregation() {
             stopped_count: 1,
             suspended_count: 0,
         }),
-        profiles: None,
+        assets: None,
         updates: None,
     };
 
@@ -133,20 +131,18 @@ fn vm_summary_name_null_when_absent() {
 
 #[test]
 fn list_response_deserializes() {
-    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123,"status":"Running","persistent":true,"ram_mb":2048,"cpus":2,"available_actions":["pause","stop","fork","delete"]}]}"#;
+    let json = r#"{"sandboxes":[{"id":"abc","pid":123,"status":"Running","persistent":true,"ram_mb":2048,"cpus":2,"available_actions":["pause","stop","fork","delete"]}]}"#;
     let list: ListResponse = serde_json::from_str(json).unwrap();
     assert_eq!(list.sessions.len(), 1);
     assert_eq!(list.sessions[0].id, "abc");
-    assert_eq!(list.sessions[0].profile_id, "code");
     assert!(list.sessions[0].persistent);
     assert_eq!(list.sessions[0].ram_mb, Some(2048));
 }
 
 #[test]
 fn list_response_handles_missing_optional_fields() {
-    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123,"status":"Stopped","available_actions":["fork","delete"]}]}"#;
+    let json = r#"{"sandboxes":[{"id":"abc","pid":123,"status":"Stopped","available_actions":["fork","delete"]}]}"#;
     let list: ListResponse = serde_json::from_str(json).unwrap();
-    assert_eq!(list.sessions[0].profile_id, "code");
     assert_eq!(list.sessions[0].ram_mb, None);
     assert_eq!(list.sessions[0].cpus, None);
     assert!(!list.sessions[0].persistent);
@@ -161,8 +157,7 @@ async fn fetch_status_preserves_session_available_actions() {
                 "sandboxes": [
                     {
                         "id": "bad-vm",
-                        "profile_id": "code",
-                        "pid": 0,
+                                                "pid": 0,
                         "status": "Incompatible",
                         "persistent": true,
                         "available_actions": ["delete"]
@@ -182,7 +177,7 @@ async fn fetch_status_preserves_session_available_actions() {
 
 #[test]
 fn list_response_rejects_missing_lifecycle_state() {
-    let json = r#"{"sandboxes":[{"id":"abc","profile_id":"code","pid":123}]}"#;
+    let json = r#"{"sandboxes":[{"id":"abc","pid":123}]}"#;
     let err = serde_json::from_str::<ListResponse>(json).err().unwrap();
     assert!(err.to_string().contains("status"));
 }
@@ -218,8 +213,8 @@ async fn concurrent_polls_share_reads_and_report_each_transition_once() {
                 tokio::time::sleep(Duration::from_millis(40)).await;
                 axum::Json(serde_json::json!({
                     "sandboxes": [
-                        {"id": "vm-a", "profile_id": "code", "pid": 1, "status": "Running", "persistent": true, "available_actions": []},
-                        {"id": "vm-b", "profile_id": "code", "pid": 2, "status": "Stopped", "persistent": true, "available_actions": []}
+                        {"id": "vm-a", "pid": 1, "status": "Running", "persistent": true, "available_actions": []},
+                        {"id": "vm-b", "pid": 2, "status": "Stopped", "persistent": true, "available_actions": []}
                     ]
                 }))
             }
@@ -260,7 +255,6 @@ fn test_vm(id: &str, name: Option<&str>, status: VmLifecycleState, persistent: b
         name: name.map(|s| s.into()),
         status,
         persistent,
-        profile_id: "code".into(),
         uptime_secs: None,
         total_input_tokens: None,
         total_output_tokens: None,
@@ -387,82 +381,49 @@ async fn fetch_status_empty_vm_list() {
 }
 
 #[tokio::test]
-async fn fetch_status_preserves_profile_catalog_and_manifest_provenance() {
+async fn fetch_status_preserves_asset_status_and_manifest_provenance() {
     let mock = axum::Router::new()
         .route(
             "/vms/list",
             axum::routing::get(|| async { axum::Json(serde_json::json!({"sandboxes": []})) }),
         )
         .route(
-            "/profiles/status",
+            "/assets/status",
             axum::routing::get(|| async {
                 axum::Json(serde_json::json!({
-                    "source": "profile",
-                    "profile_count": 2,
-                    "ready_count": 1,
-                    "asset_manifest": {
+                    "ready": false,
+                    "downloading": false,
+                    "current_arch": "arm64",
+                    "asset_version": "2026.0613.1",
+                    "assets": [
+                        {"kind": "kernel", "name": "vmlinuz", "path": "/a/vmlinuz", "status": "present", "expected_hash": "11"},
+                        {"kind": "rootfs", "name": "rootfs.erofs", "path": "/a/rootfs.erofs", "status": "missing", "expected_hash": "22"}
+                    ],
+                    "errors": ["missing rootfs.erofs"],
+                    "manifest": {
                         "origin": "package",
                         "path": "/Users/test/.capsem/assets/manifest.json",
-                        "origin_path": "/Users/test/.capsem/assets/manifest-metadata.json",
                         "origin_source": "file:///tmp/corp/manifest.json",
-                        "packaged_at": "2026-06-13T00:00:00Z",
                         "blake3": "0123456789abcdef",
                         "validation_status": "valid",
-                        "refresh_policy": "24h",
-                        "assets_current": "2026.0613.1",
-                        "binaries_current": "1.3.0"
-                    },
-                    "profiles": [
-                        {
-                            "id": "code",
-                            "name": "Code",
-                            "description": "Optimized for coding and long-running agents.",
-                            "ready": true,
-                            "current_arch": "arm64",
-                            "missing_assets": [],
-                            "invalid_assets": [],
-                            "invalid_files": [],
-                            "errors": [],
-                            "asset_count": 3
-                        },
-                        {
-                            "id": "co-work",
-                            "name": "Co-work",
-                            "description": "Shared profile for collaborative agent sessions.",
-                            "ready": false,
-                            "current_arch": "arm64",
-                            "missing_assets": [{"kind": "rootfs", "path": "/missing/rootfs.erofs", "valid": false}],
-                            "invalid_assets": [],
-                            "invalid_files": [],
-                            "errors": ["missing rootfs"],
-                            "asset_count": 3
-                        }
-                    ]
+                        "refresh_policy": "24h"
+                    }
                 }))
             }),
         );
     let (path, h, _d) = mock_uds(mock).await;
 
-    let state = test_app_state(&path);
-    let resp = fetch_status(&state).await;
+    let resp = fetch_status(&test_app_state(&path)).await;
 
     assert_eq!(resp.service, ServiceAvailability::Running);
-    let profiles = serde_json::to_value(resp.profiles.expect("gateway status must include profile status")).unwrap();
-    assert_eq!(profiles["source"], "profile");
-    assert_eq!(profiles["profile_count"], 2);
-    assert_eq!(profiles["ready_count"], 1);
-    assert_eq!(profiles["asset_manifest"]["origin"], "package");
-    assert_eq!(
-        profiles["asset_manifest"]["origin_source"],
-        "file:///tmp/corp/manifest.json"
-    );
-    assert_eq!(profiles["asset_manifest"]["blake3"], "0123456789abcdef");
-    assert_eq!(profiles["asset_manifest"]["validation_status"], "valid");
-    assert_eq!(profiles["asset_manifest"]["refresh_policy"], "24h");
-    assert_eq!(profiles["profiles"][0]["id"], "code");
-    assert_eq!(profiles["profiles"][0]["ready"], true);
-    assert_eq!(profiles["profiles"][1]["id"], "co-work");
-    assert_eq!(profiles["profiles"][1]["missing_assets"][0]["kind"], "rootfs");
+    let assets = serde_json::to_value(resp.assets.expect("gateway status must include asset status")).unwrap();
+    assert_eq!(assets["ready"], false);
+    assert_eq!(assets["asset_version"], "2026.0613.1");
+    assert_eq!(assets["assets"][1]["status"], "missing");
+    assert_eq!(assets["manifest"]["origin"], "package");
+    assert_eq!(assets["manifest"]["origin_source"], "file:///tmp/corp/manifest.json");
+    assert_eq!(assets["manifest"]["validation_status"], "valid");
+    assert_eq!(assets["errors"][0], "missing rootfs.erofs");
     h.abort();
 }
 
@@ -470,7 +431,7 @@ async fn fetch_status_preserves_profile_catalog_and_manifest_provenance() {
 async fn fetch_status_reads_its_authoritative_inputs_concurrently() {
     let both_requests = Arc::new(tokio::sync::Barrier::new(2));
     let list_request = both_requests.clone();
-    let profiles_request = both_requests.clone();
+    let assets_request = both_requests.clone();
     let mock = axum::Router::new()
         .route(
             "/vms/list",
@@ -483,17 +444,30 @@ async fn fetch_status_reads_its_authoritative_inputs_concurrently() {
             }),
         )
         .route(
-            "/profiles/status",
+            "/assets/status",
             axum::routing::get(move || {
-                let request = profiles_request.clone();
+                let request = assets_request.clone();
                 async move {
                     request.wait().await;
                     axum::Json(serde_json::json!({
-                        "source": "profile",
-                        "profile_count": 2,
-                        "ready_count": 2,
-                        "profiles": []
-                    }))
+                    "ready": false,
+                    "downloading": false,
+                    "current_arch": "arm64",
+                    "asset_version": "2026.0613.1",
+                    "assets": [
+                        {"kind": "kernel", "name": "vmlinuz", "path": "/a/vmlinuz", "status": "present", "expected_hash": "11"},
+                        {"kind": "rootfs", "name": "rootfs.erofs", "path": "/a/rootfs.erofs", "status": "missing", "expected_hash": "22"}
+                    ],
+                    "errors": ["missing rootfs.erofs"],
+                    "manifest": {
+                        "origin": "package",
+                        "path": "/Users/test/.capsem/assets/manifest.json",
+                        "origin_source": "file:///tmp/corp/manifest.json",
+                        "blake3": "0123456789abcdef",
+                        "validation_status": "valid",
+                        "refresh_policy": "24h"
+                    }
+                }))
                 }
             }),
         );
@@ -505,56 +479,33 @@ async fn fetch_status_reads_its_authoritative_inputs_concurrently() {
 
     assert_eq!(response.service, ServiceAvailability::Running);
     assert_eq!(response.vm_count, 0);
-    assert_eq!(response.profiles.unwrap().profile_count, 2);
+    assert_eq!(response.assets.unwrap().current_arch, "arm64");
     h.abort();
 }
 
 #[tokio::test]
 async fn fetch_status_ignores_retired_global_asset_health() {
-    let mock = axum::Router::new()
-        .route(
-            "/vms/list",
-            axum::routing::get(|| async {
-                axum::Json(serde_json::json!({
-                    "sandboxes": [],
-                    "asset_health": {
-                        "ready": false,
-                        "version": "2026.0618.18",
-                        "missing": ["initrd.img"]
-                    }
-                }))
-            }),
-        )
-        .route(
-            "/profiles/status",
-            axum::routing::get(|| async {
-                axum::Json(serde_json::json!({
-                    "source": "profile",
-                    "profile_count": 1,
-                    "ready_count": 1,
-                    "profiles": [
-                        {
-                            "id": "code",
-                            "name": "Code",
-                            "ready": true,
-                            "missing_assets": [],
-                            "invalid_assets": [],
-                            "invalid_files": [],
-                            "errors": [],
-                            "asset_count": 3
-                        }
-                    ]
-                }))
-            }),
-        );
+    let mock = axum::Router::new().route(
+        "/vms/list",
+        axum::routing::get(|| async {
+            axum::Json(serde_json::json!({
+                "sandboxes": [],
+                "asset_health": {
+                    "ready": false,
+                    "version": "2026.0618.18",
+                    "missing": ["initrd.img"]
+                }
+            }))
+        }),
+    );
     let (path, h, _d) = mock_uds(mock).await;
 
     let state = test_app_state(&path);
     let resp = fetch_status(&state).await;
     let json = serde_json::to_value(&resp).unwrap();
     assert!(
-        json.get("assets").is_none(),
-        "gateway /status must not expose retired top-level asset health"
+        json.get("assets").is_none() && json.get("asset_health").is_none(),
+        "gateway /status must not expose the retired list-level asset health"
     );
 
     h.abort();
@@ -566,9 +517,9 @@ async fn fetch_status_multiple_vms() {
         .route("/vms/list", axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [
-                    {"id": "vm1", "profile_id": "code", "name": "dev", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["pause", "stop", "fork", "delete"]},
-                    {"id": "vm2", "profile_id": "code", "pid": 200, "status": "Running", "persistent": false, "ram_mb": 4096, "cpus": 4, "available_actions": ["pause", "stop", "fork", "delete"]},
-                    {"id": "vm3", "profile_id": "code", "name": "ci", "pid": 300, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1, "available_actions": ["fork", "delete"]},
+                    {"id": "vm1", "name": "dev", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["pause", "stop", "fork", "delete"]},
+                    {"id": "vm2", "pid": 200, "status": "Running", "persistent": false, "ram_mb": 4096, "cpus": 4, "available_actions": ["pause", "stop", "fork", "delete"]},
+                    {"id": "vm3", "name": "ci", "pid": 300, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1, "available_actions": ["fork", "delete"]},
                 ]
             }))
         }));
@@ -627,8 +578,7 @@ async fn status_does_not_hide_a_new_vm_behind_the_previous_snapshot() {
                     serde_json::json!([{
                         "id": "vm-new",
                         "name": "new-session",
-                        "profile_id": "code",
-                        "pid": 123,
+                                                "pid": 123,
                         "status": "Running",
                         "persistent": true,
                         "available_actions": ["pause", "stop", "fork", "delete"]
@@ -680,9 +630,9 @@ async fn fetch_status_counts_suspended_vms() {
         .route("/vms/list", axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [
-                    {"id": "vm1", "profile_id": "code", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["pause", "stop", "fork", "delete"]},
-                    {"id": "vm2", "profile_id": "code", "pid": 0, "status": "Suspended", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["resume", "fork", "delete"]},
-                    {"id": "vm3", "profile_id": "code", "pid": 0, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1, "available_actions": ["fork", "delete"]},
+                    {"id": "vm1", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["pause", "stop", "fork", "delete"]},
+                    {"id": "vm2", "pid": 0, "status": "Suspended", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["resume", "fork", "delete"]},
+                    {"id": "vm3", "pid": 0, "status": "Stopped", "persistent": true, "ram_mb": 1024, "cpus": 1, "available_actions": ["fork", "delete"]},
                 ]
             }))
         }));
@@ -736,9 +686,8 @@ fn vm_summary_omits_absent_telemetry() {
 
 #[test]
 fn list_response_deserializes_telemetry() {
-    let json = r#"{"sandboxes":[{"id":"vm1","profile_id":"code","pid":100,"status":"Running","persistent":false,"ram_mb":2048,"cpus":2,"uptime_secs":60,"total_input_tokens":1000,"total_output_tokens":500,"total_estimated_cost":0.42,"available_actions":["pause","stop","fork","delete"]}]}"#;
+    let json = r#"{"sandboxes":[{"id":"vm1","pid":100,"status":"Running","persistent":false,"ram_mb":2048,"cpus":2,"uptime_secs":60,"total_input_tokens":1000,"total_output_tokens":500,"total_estimated_cost":0.42,"available_actions":["pause","stop","fork","delete"]}]}"#;
     let list: ListResponse = serde_json::from_str(json).unwrap();
-    assert_eq!(list.sessions[0].profile_id, "code");
     assert_eq!(list.sessions[0].uptime_secs, Some(60));
     assert_eq!(list.sessions[0].total_input_tokens, Some(1000));
     assert_eq!(list.sessions[0].total_output_tokens, Some(500));
@@ -756,7 +705,7 @@ async fn fetch_status_forwards_the_boot_error_of_a_defunct_session() {
         axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [{
-                    "id": "dead-vm", "profile_id": "code", "pid": 0,
+                    "id": "dead-vm", "pid": 0,
                     "status": "Defunct", "persistent": true,
                     "can_resume": false,
                     "last_error": "ERROR capsem_process: failed to build VmConfig: rootfs hash mismatch",
@@ -794,7 +743,7 @@ async fn fetch_status_passes_through_telemetry() {
         axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [{
-                    "id": "vm1", "profile_id": "code", "pid": 100, "status": "Running", "persistent": false,
+                    "id": "vm1", "pid": 100, "status": "Running", "persistent": false,
                     "ram_mb": 2048, "cpus": 2,
                     "uptime_secs": 120, "total_input_tokens": 3000,
                     "total_output_tokens": 1000, "total_estimated_cost": 0.99,

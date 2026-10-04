@@ -28,30 +28,33 @@ async fn gateway_unknown_paths_are_not_forwarded_to_service() {
     assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
 }
 
+/// VM profiles are gone; no `/profiles` route reaches the service.
 #[tokio::test]
-async fn gateway_profile_assets_edit_is_not_forwarded() {
-    let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-    let resp = app
-        .oneshot(
-            http::Request::builder()
-                .method("PATCH")
-                .uri("/profiles/code/assets/edit")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn gateway_profile_lifecycle_writes_are_not_forwarded() {
+async fn gateway_profile_routes_are_not_forwarded() {
     let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
     for (method, uri) in [
+        ("GET", "/profiles/list"),
+        ("GET", "/profiles/status"),
+        ("POST", "/profiles/reload"),
         ("POST", "/profiles/create"),
+        ("GET", "/profiles/code/info"),
+        ("GET", "/profiles/code/obom"),
+        ("POST", "/profiles/code/validate"),
+        ("POST", "/profiles/code/reload"),
         ("PATCH", "/profiles/code/edit"),
-        ("DELETE", "/profiles/code/delete"),
-        ("POST", "/profiles/code/clone"),
+        ("GET", "/profiles/code/enforcement/rules/list"),
+        ("PUT", "/profiles/code/enforcement/rules/eicar_block/edit"),
+        ("POST", "/profiles/code/detection/evaluate"),
+        ("GET", "/profiles/code/assets/status"),
+        ("POST", "/profiles/code/assets/ensure"),
+        ("PATCH", "/profiles/code/assets/edit"),
+        ("GET", "/profiles/code/skills/list"),
+        ("GET", "/profiles/code/plugins/list"),
+        ("PATCH", "/profiles/code/plugins/dummy_pre_eicar/edit"),
+        ("GET", "/profiles/code/mcp/servers/list"),
+        ("POST", "/profiles/code/mcp/servers/local/tools/echo/call"),
+        ("PUT", "/mcp/servers/local/edit"),
+        ("DELETE", "/mcp/servers/local/delete"),
     ] {
         let resp = app
             .clone()
@@ -64,7 +67,12 @@ async fn gateway_profile_lifecycle_writes_are_not_forwarded() {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
+        assert_ne!(
+            resp.status(),
+            http::StatusCode::BAD_GATEWAY,
+            "{method} {uri} reached the proxy"
+        );
+        assert!(resp.status().is_client_error(), "{method} {uri}: {}", resp.status());
     }
 }
 
@@ -166,15 +174,9 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
         ("GET", "/enforcement/status"),
         ("GET", "/detection/latest"),
         ("GET", "/detection/status"),
-        ("GET", "/profiles/list"),
-        ("GET", "/profiles/status"),
         ("GET", "/update/status"),
         ("POST", "/update/check"),
         ("POST", "/update/apply"),
-        ("POST", "/profiles/reload"),
-        ("GET", "/profiles/code/info"),
-        ("GET", "/profiles/code/obom"),
-        ("POST", "/profiles/code/validate"),
         ("GET", "/images"),
         ("GET", "/images?refresh=true"),
         ("POST", "/images/pull"),
@@ -210,46 +212,24 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
         ("GET", "/vms/test-vm/save/status"),
         ("GET", "/vms/test-vm/fork/status"),
         ("POST", "/vms/test-vm/fork"),
-        ("POST", "/profiles/code/enforcement/evaluate"),
-        ("GET", "/profiles/code/enforcement/info"),
-        ("PUT", "/profiles/code/enforcement/rules/eicar_block/edit"),
-        ("DELETE", "/profiles/code/enforcement/rules/eicar_block/delete"),
-        ("POST", "/profiles/code/enforcement/reload"),
-        ("GET", "/profiles/code/enforcement/rules/list"),
-        ("POST", "/profiles/code/detection/evaluate"),
-        ("GET", "/profiles/code/detection/info"),
-        ("PUT", "/profiles/code/detection/rules/eicar_detect/edit"),
-        ("DELETE", "/profiles/code/detection/rules/eicar_detect/delete"),
-        ("POST", "/profiles/code/detection/reload"),
-        ("GET", "/profiles/code/detection/rules/list"),
-        ("GET", "/profiles/code/assets/status"),
-        ("GET", "/profiles/code/assets/info"),
-        ("POST", "/profiles/code/assets/ensure"),
-        ("GET", "/profiles/code/skills/info"),
-        ("GET", "/profiles/code/skills/list"),
-        ("POST", "/profiles/code/skills/add"),
-        ("PATCH", "/profiles/code/skills/build/edit"),
-        ("DELETE", "/profiles/code/skills/build/delete"),
-        ("GET", "/profiles/code/plugins/list"),
-        ("GET", "/profiles/code/plugins/info"),
-        ("GET", "/profiles/code/plugins/dummy_pre_eicar/info"),
-        ("PATCH", "/profiles/code/plugins/dummy_pre_eicar/edit"),
-        ("GET", "/profiles/code/plugins/credential_broker/credentials/info"),
-        ("POST", "/profiles/code/plugins/credential_broker/credentials/reload"),
-        ("GET", "/profiles/code/mcp/info"),
-        ("GET", "/profiles/code/mcp/servers/list"),
-        ("GET", "/profiles/code/mcp/default/info"),
-        ("PATCH", "/profiles/code/mcp/default/edit"),
-        ("PUT", "/profiles/code/mcp/servers/local/edit"),
-        ("DELETE", "/profiles/code/mcp/servers/local/delete"),
-        ("GET", "/profiles/code/mcp/servers/local/tools/list"),
-        ("POST", "/profiles/code/mcp/servers/local/refresh"),
-        ("PATCH", "/profiles/code/mcp/servers/local/tools/echo/edit"),
-        ("POST", "/profiles/code/mcp/servers/local/tools/echo/call"),
+        ("GET", "/assets/status"),
+        ("POST", "/assets/ensure"),
+        ("GET", "/plugins/list"),
+        ("GET", "/plugins/dummy_pre_eicar/info"),
+        ("PATCH", "/plugins/dummy_pre_eicar/edit"),
+        ("GET", "/plugins/credential_broker/credentials/info"),
+        ("POST", "/plugins/credential_broker/credentials/reload"),
+        ("GET", "/mcp/info"),
+        ("GET", "/mcp/servers/list"),
+        ("GET", "/mcp/default/info"),
+        ("PATCH", "/mcp/default/edit"),
+        ("GET", "/mcp/servers/local/tools/list"),
+        ("POST", "/mcp/servers/local/refresh"),
+        ("PATCH", "/mcp/servers/local/tools/echo/edit"),
+        ("POST", "/mcp/servers/local/tools/echo/call"),
         ("PUT", "/corp/edit"),
         ("GET", "/settings/info"),
         ("PATCH", "/settings/edit"),
-        ("POST", "/profiles/code/reload"),
         ("GET", "/corp/info"),
         ("POST", "/corp/validate"),
         ("POST", "/corp/reload"),
@@ -422,24 +402,6 @@ async fn gateway_does_not_forward_retired_corp_config_route() {
         .await
         .unwrap();
     assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_global_asset_routes() {
-    for (method, uri) in [("GET", "/assets/status"), ("POST", "/assets/ensure")] {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
 }
 
 #[tokio::test]
