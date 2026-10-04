@@ -109,6 +109,10 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                     }
                 )
             self._send_json({"sandboxes": sandboxes})
+        elif path_only == "/images":
+            # Echoes the query, so a test can see the gateway kept it.
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.clean_path).query)
+            self._send_json({"images": [], "refresh": query.get("refresh", ["false"])[0]})
         elif path_only.startswith("/vms/") and path_only.endswith("/info"):
             vm_id = path_only.split("/vms/", 1)[1].rsplit("/info", 1)[0]
             if vm_id in MOCK_VMS:
@@ -244,6 +248,9 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 return
             vm_id = f"vm-{uuid.uuid4().hex[:8]}"
             self._send_json({"id": vm_id})
+        elif path_only == "/images/pull":
+            data = json.loads(body) if body else {}
+            self._send_json({"image": data.get("image"), "resolved": "mock@sha256:" + "0" * 64})
         elif path_only.startswith("/vms/") and path_only.endswith("/exec"):
             data = json.loads(body) if body else {}
             cmd = data.get("command", "")

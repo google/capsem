@@ -26,6 +26,14 @@ def test_gateway_does_not_forward_retired_snapshot_routes(gw_client: TcpHttpClie
         assert status == 404, (path, status, body)
 
 
+def test_gateway_forwards_the_image_catalog_and_pulls(gw_client: TcpHttpClient) -> None:
+    """The desktop and SDK clients list and pull images through the gateway."""
+    assert _json_route(gw_client, "/images") == {"images": [], "refresh": "false"}
+    assert _json_route(gw_client, "/images?refresh=true")["refresh"] == "true"
+    pulled = gw_client.post("/images/pull", {"image": "codex-cli"})
+    assert pulled == {"image": "codex-cli", "resolved": "mock@sha256:" + "0" * 64}
+
+
 def test_gateway_forwards_update_status_for_update_surfaces(
     gw_client: TcpHttpClient,
 ) -> None:
