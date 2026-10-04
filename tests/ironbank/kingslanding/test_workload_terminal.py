@@ -13,6 +13,7 @@ import time
 
 import pytest
 from websockets.sync.client import connect
+from websockets.typing import Subprotocol
 
 from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_run import created, service
@@ -34,7 +35,7 @@ def terminal(service, vm_id):
     token = (service.tmp_dir / "gateway.token").read_text().strip()
     socket = connect(
         f"ws://127.0.0.1:{port}/vms/{vm_id}/stream",
-        subprotocols=["capsem.stream.v1"],
+        subprotocols=[Subprotocol("capsem.stream.v1")],
         additional_headers={"Authorization": f"Bearer {token}"},
         open_timeout=10,
     )
