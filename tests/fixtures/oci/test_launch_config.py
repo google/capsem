@@ -393,7 +393,7 @@ def test_a_share_blob_that_is_not_the_one_named_is_refused(launcher, tmp_path, v
     share, digest, (layer,) = _share(tmp_path)
     named = digest if victim == "manifest" else layer
     (share / named.removeprefix("sha256:")).write_bytes(b"tampered")
-    with pytest.raises(ValueError, match="digest mismatch|larger than"):
+    with pytest.raises(ValueError, match=r"digest mismatch|larger than"):
         launcher.assemble(share, digest, tmp_path / "layout")
 
 

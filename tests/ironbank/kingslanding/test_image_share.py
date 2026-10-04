@@ -13,6 +13,7 @@ blobs instead of reading anything back from the guest.
 import hashlib
 import json
 import os
+from pathlib import Path
 
 import pytest
 from helpers.service import vm_session_dir
@@ -58,7 +59,7 @@ def assert_stage_holds_no_image(session, layers):
         for name in files:
             path = os.path.join(root, name)
             if os.path.getsize(path) in sizes:
-                digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
+                digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
                 assert f"sha256:{digest}" not in {layer["digest"] for layer in layers}, path
 
 
