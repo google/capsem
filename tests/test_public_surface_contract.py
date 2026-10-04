@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 import variables
+from capsem_builder.gate.tools.audit import cli_surface
 from capsem_builder.gate.tools.audit import public_surface as checker
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -111,7 +112,63 @@ enum NetworkCommands {
     List,
 }
 """
-    assert checker._cli_paths(source, "Commands") == ["create", "network list"]
+    assert cli_surface.cli_paths(source, "Commands") == ["create", "network list"]
+
+
+def test_subcommands_declared_in_a_field_are_commands() -> None:
+    """A command's subcommands can live in a `#[command(subcommand)]` field of
+    its Args struct or struct variant. They used to be invisible: the command
+    was one leaf, so `images pull` would have shipped unapproved. An optional
+    subcommand leaves the bare command a command; a required one does not."""
+    source = """
+enum Commands {
+    /// List or pull images
+    Images(image_commands::ImagesArgs),
+    Create(create_command::CreateArgs),
+    Volume {
+        #[command(subcommand)]
+        command: VolumeCommands,
+    },
+    #[command(subcommand)]
+    Network(NetworkCommands),
+}
+
+pub(crate) struct ImagesArgs {
+    #[command(subcommand)]
+    pub command: Option<ImageCommands>,
+    #[arg(long)]
+    pub json: bool,
+}
+
+pub(super) struct CreateArgs {
+    #[arg(long)]
+    pub name: Option<String>,
+}
+
+enum ImageCommands {
+    Pull {
+        image: String,
+    },
+}
+
+enum VolumeCommands {
+    Prune,
+}
+
+enum NetworkCommands {
+    List,
+}
+"""
+    assert cli_surface.cli_paths(source, "Commands") == [
+        "images",
+        "images pull",
+        "create",
+        "volume prune",
+        "network list",
+    ]
+    # A tuple variant naming an enum still needs an explicit policy.
+    with pytest.raises(checker.SurfaceError, match="lacks flatten/subcommand policy"):
+        cli_surface.cli_paths(source.replace("Create(create_command::CreateArgs)", "Create(VolumeCommands)"), "Commands")
 
 
 def test_declared_count_drift_fails_closed(tmp_path: Path) -> None:

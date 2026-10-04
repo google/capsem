@@ -9,158 +9,18 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
-from typing import Any
 
 from capsem_builder.gate import project_root
+from capsem_builder.gate.tools.audit.cli_surface import (
+    SurfaceError,
+    balanced_body,
+    capsem_cli_surface,
+)
 
 ROOT = project_root()
 POLICY_PATH = ROOT / "config" / "public-surface.toml"
-CLI_SOURCE = ROOT / "crates" / "capsem" / "src" / "main.rs"
 SERVICE_SOURCE = ROOT / "crates" / "capsem-service" / "src" / "router_runtime.rs"
 HTTP_METHODS = ("delete", "get", "patch", "post", "put")
-
-
-class SurfaceError(RuntimeError):
-    """A public surface cannot be derived or violates policy."""
-
-
-def _kebab_case(name: str) -> str:
-    first = re.sub(r"(.)([A-Z][a-z]+)", r"\1-\2", name)
-    return re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", first).lower()
-
-
-def _balanced_body(source: str, opening_brace: int) -> str:
-    depth = 0
-    in_string = False
-    escaped = False
-    for index in range(opening_brace, len(source)):
-        char = source[index]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return source[opening_brace + 1 : index]
-    raise SurfaceError("unbalanced Rust braces while deriving public surface")
-
-
-def _enum_body(source: str, enum_name: str) -> str:
-    match = re.search(rf"\benum\s+{re.escape(enum_name)}\s*\{{", source)
-    if not match:
-        raise SurfaceError(f"missing enum {enum_name} in {CLI_SOURCE}")
-    return _balanced_body(source, source.index("{", match.start()))
-
-
-def _top_level_entries(body: str) -> list[str]:
-    entries: list[str] = []
-    start = 0
-    depth = 0
-    in_string = False
-    escaped = False
-    for index, char in enumerate(body):
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-        elif char in "({[":
-            depth += 1
-        elif char in ")}]":
-            depth -= 1
-        elif char == "," and depth == 0:
-            entries.append(body[start:index])
-            start = index + 1
-    tail = body[start:].strip()
-    if tail:
-        entries.append(tail)
-    return entries
-
-
-def _command_name(entry: str, variant: str) -> str:
-    explicit = re.search(r"#\[command\([^]]*\bname\s*=\s*\"([^\"]+)\"", entry, re.DOTALL)
-    return explicit.group(1) if explicit else _kebab_case(variant)
-
-
-def _enum_variants(source: str, enum_name: str) -> list[dict[str, Any]]:
-    variants: list[dict[str, Any]] = []
-    for entry in _top_level_entries(_enum_body(source, enum_name)):
-        match = re.search(r"(?m)^ {4}([A-Z][A-Za-z0-9_]*)\b(.*)$", entry)
-        if not match:
-            continue
-        variant = match.group(1)
-        tail = match.group(2).strip()
-        attributes = entry[: match.start()]  # policy is above a variant, never in its fields
-        tuple_type = None
-        tuple_match = re.match(r"\(\s*([A-Z][A-Za-z0-9_]*)\s*\)", tail)
-        if tuple_match:
-            tuple_type = tuple_match.group(1)
-        variants.append(
-            {
-                "name": _command_name(attributes, variant),
-                "child": tuple_type,
-                "flatten": bool(re.search(r"#\[command\([^]]*\bflatten\b", attributes, re.DOTALL)),
-                "subcommand": bool(re.search(r"#\[command\([^]]*\bsubcommand\b", attributes, re.DOTALL)),
-            }
-        )
-    if not variants:
-        raise SurfaceError(f"no variants derived from enum {enum_name}")
-    return variants
-
-
-def _cli_paths(source: str, enum_name: str, prefix: str = "") -> list[str]:
-    paths: list[str] = []
-    for variant in _enum_variants(source, enum_name):
-        name = variant["name"]
-        child = variant["child"]
-        if variant["flatten"]:
-            if not child:
-                raise SurfaceError(f"flattened {enum_name}.{name} has no child enum")
-            paths.extend(_cli_paths(source, child, prefix))
-        elif variant["subcommand"]:
-            if not child:
-                raise SurfaceError(f"subcommand {enum_name}.{name} has no child enum")
-            paths.extend(_cli_paths(source, child, f"{prefix}{name} "))
-        else:
-            if child:
-                raise SurfaceError(
-                    f"tuple variant {enum_name}.{name} lacks flatten/subcommand policy"
-                )
-            paths.append(f"{prefix}{name}")
-    return paths
-
-
-def capsem_cli_source() -> str:
-    """Every module of the CLI crate, tests excluded.
-
-    Command groups live beside the code that runs them (`network_commands.rs`
-    holds `NetworkCommands`), so the enum walk starts from `Commands` in
-    `main.rs` and may resolve a child enum in any sibling module.
-    """
-    sources = sorted(
-        path
-        for path in CLI_SOURCE.parent.rglob("*.rs")
-        if "tests" not in path.relative_to(CLI_SOURCE.parent).parts
-    )
-    return "\n".join(path.read_text() for path in sources)
-
-
-def capsem_cli_surface() -> list[str]:
-    return sorted(_cli_paths(capsem_cli_source(), "Commands"))
 
 
 def just_surface() -> list[str]:
@@ -179,7 +39,7 @@ def _function_body(source: str, function_name: str) -> str:
     match = re.search(rf"\bfn\s+{re.escape(function_name)}\s*\([^)]*\)[^{{]*\{{", source)
     if not match:
         raise SurfaceError(f"missing function {function_name} in {SERVICE_SOURCE}")
-    return _balanced_body(source, source.index("{", match.start()))
+    return balanced_body(source, source.index("{", match.start()))
 
 
 def _route_calls(router_body: str) -> list[str]:
