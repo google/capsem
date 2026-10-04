@@ -9,6 +9,7 @@ use tokio::net::{TcpListener, UdpSocket};
 /// behind a gateway (a container) must be able to route to it.
 pub(super) const ROUTABLE_DNS_FIXTURE: &str = "egress.capsem.test";
 
+const QTYPE_A: u16 = 1;
 const LOOPBACK_ANSWER: [u8; 4] = [127, 0, 0, 1];
 /// TEST-NET-2: never a real host, and routed by a container's default route
 /// through the VM, whose proxies intercept it by port.
@@ -152,14 +153,18 @@ fn dns_response_with_exchange(query: &[u8], answers: DnsAnswers) -> Option<(Vec<
     let question_end = offset + 4;
     let name = labels.join(".").to_ascii_lowercase();
     let known = DNS_FIXTURES.iter().any(|fixture| *fixture == name);
+    // The fixtures are IPv4 addresses: only an A question gets one. Any other
+    // type for a known name is NOERROR with no records, never an A record in
+    // an AAAA answer.
+    let answered = known && qtype == QTYPE_A;
     let mut response = Vec::with_capacity(query.len() + 32);
     response.extend_from_slice(query_id);
     response.extend_from_slice(if known { &[0x81, 0x80] } else { &[0x81, 0x83] });
     response.extend_from_slice(&[0x00, 0x01]);
-    response.extend_from_slice(if known { &[0x00, 0x01] } else { &[0x00, 0x00] });
+    response.extend_from_slice(if answered { &[0x00, 0x01] } else { &[0x00, 0x00] });
     response.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
     response.extend_from_slice(&query[12..question_end]);
-    if known {
+    if answered {
         response.extend_from_slice(&[
             0xC0, 0x0C, // name pointer
             0x00, 0x01, // A

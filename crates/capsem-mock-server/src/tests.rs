@@ -115,6 +115,10 @@ fn websocket_accept_matches_rfc_fixture() {
 }
 
 fn test_dns_query(name: &str, id: u16) -> Vec<u8> {
+    test_dns_query_of_type(name, id, 1)
+}
+
+fn test_dns_query_of_type(name: &str, id: u16, qtype: u16) -> Vec<u8> {
     let mut query = Vec::new();
     query.extend_from_slice(&id.to_be_bytes());
     query.extend_from_slice(&[0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]);
@@ -122,8 +126,35 @@ fn test_dns_query(name: &str, id: u16) -> Vec<u8> {
         query.push(u8::try_from(part.len()).expect("label fits"));
         query.extend_from_slice(part.as_bytes());
     }
-    query.extend_from_slice(&[0, 0, 1, 0, 1]);
+    query.push(0);
+    query.extend_from_slice(&qtype.to_be_bytes());
+    query.extend_from_slice(&[0, 1]);
     query
+}
+
+#[test]
+fn a_fixture_name_has_no_record_of_any_type_but_a() {
+    // The fixtures are IPv4 addresses. Answering AAAA (or HTTPS, TXT, ...)
+    // with an A record is a malformed answer a resolver may take as the
+    // address; the honest answer is NOERROR with no records.
+    for answers in [DnsAnswers::Loopback, DnsAnswers::Routable] {
+        for qtype in [28_u16, 65, 16, 33] {
+            let query = test_dns_query_of_type("api.openai.com", 0x2828, qtype);
+            let response = dns_response_for(&query, answers).expect("dns response");
+            assert_eq!(&response[..2], b"\x28\x28");
+            assert_eq!(response[3] & 0x0F, 0, "qtype {qtype}: a known name is not NXDOMAIN");
+            assert_eq!(&response[4..6], &[0, 1], "qtype {qtype}: the question is echoed");
+            assert_eq!(&response[6..8], &[0, 0], "qtype {qtype}: no answer records");
+            assert_eq!(response.len(), query.len(), "qtype {qtype}: nothing after the question");
+        }
+        let query = test_dns_query_of_type("unknown.capsem.invalid", 0x2829, 28);
+        let response = dns_response_for(&query, answers).expect("dns response");
+        assert_eq!(response[3] & 0x0F, 3, "an unknown name stays NXDOMAIN for AAAA too");
+    }
+    let query = test_dns_query_of_type("api.openai.com", 0x0001, 1);
+    let response = dns_response(&query).expect("dns response");
+    assert_eq!(&response[6..8], &[0, 1], "A still answers");
+    assert_eq!(&response[response.len() - 4..], &[127, 0, 0, 1]);
 }
 
 // ── Request-parsing helpers ────────────────────────────────────────
