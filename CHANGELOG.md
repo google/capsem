@@ -339,6 +339,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem update` (and the service's automatic polling) installs a republished
+  release manifest whose artifacts did not change. 0.7 fetched it and then did
+  nothing, so a channel's new compatibility bounds or a revoked runtime never
+  reached an installed client.
 - A session of an interactive image keeps its workload. A detached session
   (`capsem create --image`, or any session the app creates) ran the image's
   command with nothing attached, so a shell or an agent's interface -- the

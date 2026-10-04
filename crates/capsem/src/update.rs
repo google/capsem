@@ -1859,7 +1859,7 @@ pub async fn run_update(
                 return Err(error).context("release manifest does not describe a complete compatible update");
             }
         };
-        if plan.steps.is_empty() && selected_channel.is_none() {
+        if !plan.needs_staging(&selected_channel, &candidate_assets_dir) {
             None
         } else {
             let capsem_home = crate::paths::capsem_home()?;

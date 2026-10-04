@@ -400,11 +400,12 @@ fn staged_runtime_fixture(release_dir: &Path, corrupt_rootfs: bool) -> (Vec<u8>,
     (body, source, kernel)
 }
 
-fn runtime_stage_plan() -> VerifiedUpdatePlan {
+fn runtime_stage_plan(body: &[u8]) -> VerifiedUpdatePlan {
     VerifiedUpdatePlan {
         installed_binary: env!("CARGO_PKG_VERSION").to_string(),
         selected_binary: env!("CARGO_PKG_VERSION").to_string(),
         steps: vec![UpdatePlanStep::Runtime],
+        manifest_sha256: sha256_hex(body),
     }
 }
 
@@ -427,7 +428,7 @@ async fn stage_verified_update_downloads_every_runtime_image_without_mutating_in
     std::fs::write(&installed_manifest, b"installed-manifest").unwrap();
 
     let check = staged_runtime_check(source, &body);
-    let staged = stage_verified_update_at(&capsem_home, &runtime_stage_plan(), &check, &body)
+    let staged = stage_verified_update_at(&capsem_home, &runtime_stage_plan(&body), &check, &body)
         .await
         .unwrap();
 
@@ -462,7 +463,7 @@ async fn stage_verified_update_rejects_corruption_before_candidate_or_install_mu
     std::fs::write(&installed_manifest, b"installed-manifest").unwrap();
 
     let check = staged_runtime_check(source, &body);
-    let error = stage_verified_update_at(&capsem_home, &runtime_stage_plan(), &check, &body)
+    let error = stage_verified_update_at(&capsem_home, &runtime_stage_plan(&body), &check, &body)
         .await
         .expect_err("corrupt runtime bytes must fail before activation");
 
@@ -498,7 +499,7 @@ async fn activate_staged_update_switches_runtime_assets_and_manifest_together() 
     .unwrap();
 
     let check = staged_runtime_check(source.clone(), &body);
-    let staged = stage_verified_update_at(&capsem_home, &runtime_stage_plan(), &check, &body)
+    let staged = stage_verified_update_at(&capsem_home, &runtime_stage_plan(&body), &check, &body)
         .await
         .unwrap();
 
@@ -537,7 +538,7 @@ async fn activate_staged_update_rolls_back_every_selected_path_on_manifest_failu
     std::fs::write(&installed_metadata, b"installed-metadata").unwrap();
 
     let check = staged_runtime_check(source, &body);
-    let staged = stage_verified_update_at(&capsem_home, &runtime_stage_plan(), &check, &body)
+    let staged = stage_verified_update_at(&capsem_home, &runtime_stage_plan(&body), &check, &body)
         .await
         .unwrap();
     let staged_kernel = staged
@@ -639,4 +640,27 @@ fn a_retired_profile_catalog_symlink_is_removed_as_the_link() {
         !remove_retired_profile_catalog(&temp.path().join("never-installed")).unwrap(),
         "a missing Capsem home has no catalog to remove"
     );
+}
+
+#[test]
+fn a_republished_manifest_with_unchanged_artifacts_is_still_installed() {
+    // A channel republish that only changes metadata -- a compatibility bound,
+    // a revocation -- stages nothing to download, but the installed manifest
+    // is what the service reads, so it must still be replaced.
+    let body = update_plan_graph("1.0.0", "1.0.0");
+    let plan = plan_test_update(update_plan_check(false, false, false), &body, "1.0.0").unwrap();
+    assert!(plan.steps.is_empty());
+    let switched = ResolvedReleaseChannelManifest {
+        channel: "nightly".into(),
+        url: "https://release.capsem.org/assets/nightly/manifest.json".into(),
+        sha256: sha256_hex(&body),
+        blake3: String::new(),
+    };
+    let temp = tempfile::tempdir().unwrap();
+    assert!(plan.needs_staging(&None, temp.path()));
+    std::fs::write(temp.path().join("manifest.json"), b"{\"older\":true}").unwrap();
+    assert!(plan.needs_staging(&None, temp.path()));
+    std::fs::write(temp.path().join("manifest.json"), &body).unwrap();
+    assert!(!plan.needs_staging(&None, temp.path()));
+    assert!(plan.needs_staging(&Some(switched), temp.path()));
 }

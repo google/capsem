@@ -11,6 +11,8 @@ pub(super) struct VerifiedUpdatePlan {
     pub(super) installed_binary: String,
     pub(super) selected_binary: String,
     pub(super) steps: Vec<UpdatePlanStep>,
+    /// SHA-256 of the verified manifest bytes this plan installs.
+    pub(super) manifest_sha256: String,
 }
 
 #[derive(Debug)]
@@ -91,7 +93,25 @@ pub(super) fn plan_verified_update(
         installed_binary: installed_binary.to_string(),
         selected_binary,
         steps,
+        manifest_sha256: actual_hash,
     })
+}
+
+impl VerifiedUpdatePlan {
+    /// Whether this candidate must be staged and activated. Artifacts are only
+    /// part of it: the installed manifest is what the service reads
+    /// (compatibility, revocations), so a republish whose bytes differ from the
+    /// installed manifest is installed even when nothing needs downloading.
+    pub(super) fn needs_staging(
+        &self,
+        channel_switch: &Option<ResolvedReleaseChannelManifest>,
+        installed_assets: &Path,
+    ) -> bool {
+        let installed = std::fs::read(installed_assets.join("manifest.json")).ok();
+        !self.steps.is_empty()
+            || channel_switch.is_some()
+            || installed.as_deref().map(sha256_hex).as_deref() != Some(self.manifest_sha256.as_str())
+    }
 }
 
 pub(super) fn validate_release_graph_update_pairing(graph: &ReleaseGraphManifest, selected_binary: &str) -> Result<()> {
