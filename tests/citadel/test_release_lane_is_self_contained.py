@@ -11,8 +11,8 @@ A local `just test` cannot tell the two apart, because there the checkout *is*
 the workspace: every path resolves, so a lane that silently read the wrong root
 passed here and failed there.
 
-Four separate consumers had it. The profile axis resolved the catalog against
-the checkout. The glow-up built `--assets-dir` and `--config-root` from the
+Four separate consumers had it. The since-removed profile axis resolved the
+catalog against the checkout. The glow-up built `--assets-dir` and `--config-root` from the
 checkout layout. The suites were handed no content selection at all and fell
 back to the checkout. Each was found by dispatching a release and waiting.
 
@@ -41,7 +41,7 @@ def _release_plan():
     qualification = from_environment(
         config,
         {
-            settings.release_input_dir: str(STAGED / "cache/target/candidate-profile-inputs"),
+            settings.release_input_dir: str(STAGED / "cache/target/candidate-runtime-inputs"),
             settings.release_package: str(STAGED / "release-test-package/capsem.deb"),
             settings.release_bin_dir: str(STAGED / "cache/target/cargo/debug"),
         },
@@ -55,25 +55,24 @@ def _release_plan():
     return config, command._describe()
 
 
-def _profile_release_plan(*, activation_ready: str):
-    """One profile lane in the same private-prefix shape CI executes."""
+def _runtime_release_plan(*, activation_ready: str):
+    """The runtime lane in the same private-prefix shape CI executes."""
     config = gate_config.load(ROOT)
     settings = config.modules
     qualification = from_environment(
         config,
         {
-            settings.release_input_dir: str(STAGED / "cache/target/profile-release-inputs"),
+            settings.release_input_dir: str(STAGED / "cache/target/candidate-runtime-inputs"),
             settings.release_package: str(STAGED / "release-test-package/capsem.deb"),
             settings.release_bin_dir: str(STAGED / "cache/target/cargo/debug"),
-            settings.release_profile: "code",
+            settings.release_runtime: "1",
         },
     )
     return built_command(
         ROOT,
         "qualify-assets",
         (
-            ("input_dir", STAGED / "cache/target/profile-release-inputs"),
-            ("profile", "code"),
+            ("input_dir", STAGED / "cache/target/candidate-runtime-inputs"),
             ("workspace_root", STAGED),
             ("activation_ready", activation_ready),
         ),
@@ -91,14 +90,14 @@ def test_every_release_qualification_owns_one_source_boundary() -> None:
     The binary lane once reached broad pytest without ``source.record``. Five
     plan-contract tests asked for the parent's frozen snapshot and failed on a
     missing ``cache/state/gate-source.json`` after every package had already
-    been built and installed. The profile lane uses the same prefix machinery,
+    been built and installed. The runtime lane uses the same prefix machinery,
     so both of its branches carry the same invariant before either can regress.
     """
     _, binary = _release_plan()
     plans = {
         "binaries": binary,
-        "active profile": _profile_release_plan(activation_ready="true"),
-        "deferred profile": _profile_release_plan(activation_ready="false"),
+        "active runtime": _runtime_release_plan(activation_ready="true"),
+        "deferred runtime": _runtime_release_plan(activation_ready="false"),
     }
 
     for name, plan in plans.items():
@@ -256,7 +255,7 @@ def test_the_fixture_clears_every_variable_that_picks_a_lane() -> None:
     decides_a_lane = {
         settings.release_input_dir,
         settings.release_package,
-        settings.release_profile,
+        settings.release_runtime,
         settings.release_bin_dir,
     }
 
@@ -329,7 +328,7 @@ def test_only_the_rehearsal_may_build_a_release_state_in_code() -> None:
         for path in sorted(package.glob("*.py"))
         if path.name != "qualification.py"
         for line in path.read_text(encoding="utf-8").splitlines()
-        if "BinaryQualification(" in line or "ProfileQualification(" in line
+        if "BinaryQualification(" in line or "RuntimeQualification(" in line
     ]
     assert not offenders, (
         "these build a release qualification directly instead of going "

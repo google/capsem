@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compatibility launcher for the release-owned verify profile publication command."""
+"""Compatibility launcher for the release-owned verify runtime publication command."""
 
 import os
 import sys
@@ -12,8 +12,9 @@ try:
 except ModuleNotFoundError:
     sys.path.insert(0, str(ROOT / "build_system" / "builder"))
     from bootstrap import mount_builder_package
+
     mount_builder_package(ROOT)
-from capsem_builder.release.tools.verify_profile_publication import main as _main  # noqa: E402
+from capsem_builder.release.tools.verify_runtime_publication import main as _main  # noqa: E402
 
 if __name__ == "__main__":
     raise SystemExit(_main())

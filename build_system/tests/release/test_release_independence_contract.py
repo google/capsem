@@ -9,11 +9,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
+    PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-graph-stable-nightly.json"
 )
 
 
@@ -23,12 +19,12 @@ def test_independent_version_matrix() -> None:
     manifest_version = _current_manifest_version(graph, channel)
     manifest_record = _current_manifest_record(graph, channel)
     manifest = graph["manifests"][channel][manifest_version]
-    profile = manifest["profiles"]["co-work"]
-    architecture = _architecture(profile, "arm64")
+    runtime = manifest["runtime"]
+    architecture = _architecture(runtime, "arm64")
 
     assert manifest_record["version"] == manifest["version"]
     assert manifest_record["version"] != manifest["packages"][0]["version"]
-    assert profile["revision"] != manifest["packages"][0]["version"]
+    assert runtime["revision"] != manifest["packages"][0]["version"]
     assert architecture["package_inventory_revision"]
     assert architecture["image_revision"]
 
@@ -46,22 +42,22 @@ def test_independent_version_matrix() -> None:
             ("manifests", channel, "1.0.3"),
         ),
         "package_version": (
-            lambda candidate: _set_package_version(candidate, channel, manifest_version, "1.5.1-nightly"),
+            lambda candidate: _set_package_version(
+                candidate, channel, manifest_version, "1.5.1-nightly"
+            ),
             ("manifests", channel, manifest_version, "packages", "0", "version"),
         ),
-        "profile_revision": (
-            lambda candidate: _set_profile_revision(
-                candidate, channel, manifest_version, "co-work", "1.0.2-nightly.20260704"
+        "runtime_revision": (
+            lambda candidate: _runtime(candidate, channel, manifest_version).update(
+                revision="1.0.2-nightly.20260704"
             ),
-            ("manifests", channel, manifest_version, "profiles", "co-work", "revision"),
-            ("manifests", channel, manifest_version, "profiles", "co-work", "version"),
+            ("manifests", channel, manifest_version, "runtime", "revision"),
         ),
         "package_inventory_revision": (
             lambda candidate: _set_architecture_field(
                 candidate,
                 channel,
                 manifest_version,
-                "co-work",
                 "arm64",
                 "package_inventory_revision",
                 "2026.0704.1",
@@ -70,8 +66,7 @@ def test_independent_version_matrix() -> None:
                 "manifests",
                 channel,
                 manifest_version,
-                "profiles",
-                "co-work",
+                "runtime",
                 "architectures",
                 "0",
                 "package_inventory_revision",
@@ -82,7 +77,6 @@ def test_independent_version_matrix() -> None:
                 candidate,
                 channel,
                 manifest_version,
-                "co-work",
                 "arm64",
                 "image_revision",
                 "2026.0704.2",
@@ -91,8 +85,7 @@ def test_independent_version_matrix() -> None:
                 "manifests",
                 channel,
                 manifest_version,
-                "profiles",
-                "co-work",
+                "runtime",
                 "architectures",
                 "0",
                 "image_revision",
@@ -121,64 +114,44 @@ def test_switch_stable_to_nightly_via_manifest_url() -> None:
     assert stable["version"] == nightly["version"]
     assert stable["packages"][0]["version"] == "1.4.0"
     assert nightly["packages"][0]["version"] == "1.5.0-nightly.20260702"
-    assert "-stable." in stable["profiles"]["co-work"]["revision"]
-    assert "-nightly." in nightly["profiles"]["co-work"]["revision"]
+    assert "-stable." in stable["runtime"]["revision"]
+    assert "-nightly." in nightly["runtime"]["revision"]
     assert stable["packages"] != nightly["packages"]
-    assert stable["profiles"]["co-work"] != nightly["profiles"]["co-work"]
-    assert "profile_catalog" not in json.dumps(nightly, sort_keys=True)
+    assert stable["runtime"] != nightly["runtime"]
 
     switched_back = _manifest_for_url(graph, stable_url)
     assert json.dumps(switched_back, sort_keys=True, separators=(",", ":")) == stable_snapshot
 
 
-def test_cowork_nightly_profile_update_is_isolated() -> None:
+def test_nightly_runtime_update_is_isolated() -> None:
     old = _fixture_graph()
     new = deepcopy(old)
     channel = "nightly"
     manifest_version = _current_manifest_version(new, channel)
-    profile_id = "co-work"
     manifest = new["manifests"][channel][manifest_version]
-    profile = manifest["profiles"][profile_id]
-    architecture = _architecture(profile, "arm64")
+    runtime = manifest["runtime"]
 
-    profile["revision"] = "1.0.2-nightly.20260704"
-    profile["version"] = "1.0.2-nightly.20260704"
-    architecture["image_revision"] = "2026.0704.1"
-    architecture["package_inventory_revision"] = "2026.0704.1"
-    architecture["software"][0]["version"] = "3.12.12"
-    architecture["software"][0]["digest"] = _digest("nightly-co-work-arm64-python-3.12.12")
-    architecture["config"][0]["digest"] = _digest("nightly-co-work-arm64-mcp-2026.0704.1")
-    architecture["images"][0]["digest"] = _digest("nightly-co-work-arm64-rootfs-2026.0704.1")
-    architecture["evidence"][0]["digest"] = _digest("nightly-co-work-arm64-abom-2026.0704.1")
+    runtime["revision"] = "1.0.2-nightly.20260704"
+    for architecture in runtime["architectures"]:
+        arch = architecture["architecture"]
+        architecture["image_revision"] = runtime["revision"]
+        architecture["package_inventory_revision"] = runtime["revision"]
+        architecture["software"][0]["version"] = "3.12.12"
+        architecture["software"][0]["digest"] = _digest(f"nightly-{arch}-python-3.12.12")
+        architecture["images"][0]["digest"] = _digest(f"nightly-{arch}-kernel-20260704")
+        architecture["evidence"][0]["digest"] = _digest(f"nightly-{arch}-abom-20260704")
 
-    allowed_prefix = (
-        "manifests",
-        channel,
-        manifest_version,
-        "profiles",
-        profile_id,
-    )
+    allowed_prefix = ("manifests", channel, manifest_version, "runtime")
     changed = _changed_paths(old, new)
 
     assert changed
     assert all(path[: len(allowed_prefix)] == allowed_prefix for path in changed)
     assert new["manifests"]["stable"] == old["manifests"]["stable"]
-    assert new["channels"]["stable"] == old["channels"]["stable"]
+    assert new["channels"] == old["channels"]
     assert manifest["packages"] == old["manifests"][channel][manifest_version]["packages"]
-    assert (
-        manifest["profiles"]["code"]
-        == old["manifests"][channel][manifest_version]["profiles"]["code"]
-    )
-    assert (
-        _architecture(manifest["profiles"][profile_id], "x86_64")
-        == _architecture(
-            old["manifests"][channel][manifest_version]["profiles"][profile_id],
-            "x86_64",
-        )
-    )
 
 
-def test_nightly_binary_update_without_profile_churn() -> None:
+def test_nightly_binary_update_without_runtime_churn() -> None:
     old = _fixture_graph()
     new = deepcopy(old)
     channel = "nightly"
@@ -212,7 +185,7 @@ def test_nightly_binary_update_without_profile_churn() -> None:
     assert new["manifests"]["stable"] == old["manifests"]["stable"]
     assert new["channels"]["stable"] == old["channels"]["stable"]
     assert new["channels"]["nightly"] == old["channels"]["nightly"]
-    assert manifest["profiles"] == old["manifests"][channel][manifest_version]["profiles"]
+    assert manifest["runtime"] == old["manifests"][channel][manifest_version]["runtime"]
 
 
 def _fixture_graph() -> dict[str, Any]:
@@ -237,9 +210,7 @@ def _manifest_for_url(graph: dict[str, Any], manifest_url: str) -> dict[str, Any
 
 def _current_manifest_record(graph: dict[str, Any], channel: str) -> dict[str, Any]:
     return next(
-        item
-        for item in graph["channels"][channel]["manifests"]
-        if item["status"] == "current"
+        item for item in graph["channels"][channel]["manifests"] if item["status"] == "current"
     )
 
 
@@ -247,8 +218,12 @@ def _current_manifest_version(graph: dict[str, Any], channel: str) -> str:
     return _current_manifest_record(graph, channel)["version"]
 
 
-def _architecture(profile: dict[str, Any], architecture: str) -> dict[str, Any]:
-    return next(item for item in profile["architectures"] if item["architecture"] == architecture)
+def _architecture(runtime: dict[str, Any], architecture: str) -> dict[str, Any]:
+    return next(item for item in runtime["architectures"] if item["architecture"] == architecture)
+
+
+def _runtime(graph: dict[str, Any], channel: str, manifest_version: str) -> dict[str, Any]:
+    return graph["manifests"][channel][manifest_version]["runtime"]
 
 
 def _set_manifest_version(
@@ -272,29 +247,15 @@ def _set_package_version(
     graph["manifests"][channel][manifest_version]["packages"][0]["version"] = value
 
 
-def _set_profile_revision(
-    graph: dict[str, Any],
-    channel: str,
-    manifest_version: str,
-    profile_id: str,
-    value: str,
-) -> None:
-    profile = graph["manifests"][channel][manifest_version]["profiles"][profile_id]
-    profile["revision"] = value
-    profile["version"] = value
-
-
 def _set_architecture_field(
     graph: dict[str, Any],
     channel: str,
     manifest_version: str,
-    profile_id: str,
     architecture: str,
     field: str,
     value: str,
 ) -> None:
-    profile = graph["manifests"][channel][manifest_version]["profiles"][profile_id]
-    _architecture(profile, architecture)[field] = value
+    _architecture(_runtime(graph, channel, manifest_version), architecture)[field] = value
 
 
 def _changed_paths(old: Any, new: Any, prefix: tuple[str, ...] = ()) -> set[tuple[str, ...]]:

@@ -13,7 +13,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 DEBT = Path(__file__).with_name("release_authority_debt.toml")
-CANONICAL_TITLE = "# Capsem Binary, Profile, Manifest, and Channel Release Specification"
+CANONICAL_TITLE = "# Capsem Binary, Runtime, Manifest, and Channel Release Specification"
 OLD_AUTHORITY = "tmp/release-spec.md"
 ROUTING_SURFACES = ("AGENTS.md", "skills/release-process/")
 EXCLUDED_POLICY_FILES = frozenset(

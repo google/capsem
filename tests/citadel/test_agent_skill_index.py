@@ -86,14 +86,14 @@ def test_reference_heavy_skills_have_lean_routed_entrypoints(
         assert reference.is_file(), f"missing linked skill reference: {relative}"
 
 
-def test_release_spine_keeps_paired_profile_content_boundary() -> None:
+def test_release_spine_keeps_paired_runtime_content_boundary() -> None:
     text = (
         PROJECT_ROOT / "skills/release-process/SKILL.md"
     ).read_text(encoding="utf-8")
     normalized = " ".join(text.split())
 
     for required in (
-        "Assets and materialized configuration travel as one `ProfileContent` root.",
+        "Assets and materialized configuration travel as one `RuntimeContent` root.",
         "must derive both paths from that one value and validate it before Docker or Colima",
         "stages raw manifest inputs into the paired root on the host",
         "the sealed proof never rematerializes them or falls back to checkout `assets`/`cache/target/config` selectors",
@@ -141,7 +141,7 @@ def test_discovery_symlink_points_at_canonical_skills(root: str) -> None:
 def test_index_files_carry_the_common_contract_pointer(index_file: str) -> None:
     text = (PROJECT_ROOT / index_file).read_text(encoding="utf-8")
     assert "AGENTS.md" in text, f"{index_file} must point at AGENTS.md"
-    for marker in ("release-binaries", "release-profile", "capsem-logger"):
+    for marker in ("release-binaries", "release-assets", "capsem-logger"):
         assert marker in text, (
             f"{index_file} must summarize the {marker} hard contract in its "
             "AGENTS.md pointer so every agent sees it without a second read"

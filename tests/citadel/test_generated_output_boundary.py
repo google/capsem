@@ -447,7 +447,6 @@ def test_non_rust_repository_asset_owners_use_the_canonical_target_root() -> Non
     )
     assert config["imagebuild"]["output"] == target
     assert config["service"]["assets_dir"] == target
-    assert config["suites"]["pytest"]["test_manifest"] == f"{target}/manifest.json"
     assert config["functional"]["assets_dir"] == target
     assert config["package"]["generated_inputs"][0] == target
     assert target in config["prefix"]["lent"]

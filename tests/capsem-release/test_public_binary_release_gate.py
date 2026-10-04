@@ -264,7 +264,9 @@ def test_public_binary_release_gate_does_not_execute_gui_payload_without_deps(
     assert "validated 1 package and 3 packaged binaries" in result.stdout
 
 
-def test_public_binary_release_gate_rejects_frozen_manifest_payload(tmp_path: Path) -> None:
+def test_public_binary_release_gate_rejects_frozen_manifest_payload(
+    tmp_path: Path,
+) -> None:
     package_dir = tmp_path / "packages"
     package_dir.mkdir()
     package = package_dir / "Capsem_9.9.9_amd64.deb"
@@ -375,7 +377,9 @@ def test_public_binary_release_gate_rejects_manifest_metadata_package_version_dr
 def test_release_workflow_runs_public_package_gate_and_native_install() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8")
     verify_downloads = workflow.split("  verify-release-downloads:", maxsplit=1)[1]
-    live_proof = (PROJECT_ROOT / "build_system/scripts/build/prove-live-public-install.sh").read_text(encoding="utf-8")
+    live_proof = (
+        PROJECT_ROOT / "build_system/scripts/build/prove-live-public-install.sh"
+    ).read_text(encoding="utf-8")
 
     assert "build_system/scripts/release/check-public-binary-release.py" in verify_downloads
     assert '--channel "$RELEASE_CHANNEL"' in verify_downloads
@@ -536,8 +540,8 @@ def test_public_binary_transition_gate_uses_two_real_manifests_and_downgrades(
             "digest": {"sha256": "1" * 64, "blake3": "2" * 64},
         }
 
-    older = {"version": "1.0.1", "packages": [package("1.5.100")], "profiles": {}}
-    newer = {"version": "1.0.2", "packages": [package("1.5.101")], "profiles": {}}
+    older = {"version": "1.0.1", "packages": [package("1.5.100")]}
+    newer = {"version": "1.0.2", "packages": [package("1.5.101")]}
 
     gate.run_docker_binary_transition_smoke(
         older_manifest=older,
@@ -560,9 +564,9 @@ def test_public_binary_transition_gate_uses_two_real_manifests_and_downgrades(
 
 def test_public_binary_release_gate_requires_fail_closed_installer_integrity() -> None:
     gate = _load_release_gate()
-    script = (
-        PROJECT_ROOT / "web" / "marketing" / "public" / "install.sh"
-    ).read_text(encoding="utf-8")
+    script = (PROJECT_ROOT / "web" / "marketing" / "public" / "install.sh").read_text(
+        encoding="utf-8"
+    )
 
     failures = gate.check_install_script_defaults(
         script,

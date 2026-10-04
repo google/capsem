@@ -50,7 +50,7 @@ def _plans() -> tuple[tuple[str, ...], tuple[str, ...]]:
     release = from_environment(
         config,
         {
-            settings.release_input_dir: str(STAGED / "cache/target/candidate-profile-inputs"),
+            settings.release_input_dir: str(STAGED / "cache/target/candidate-runtime-inputs"),
             settings.release_package: str(STAGED / "release-test-package/capsem.deb"),
             settings.release_bin_dir: str(STAGED / "cache/target/cargo/debug"),
         },
@@ -149,7 +149,7 @@ def test_only_the_rehearsal_skips_the_installed_transition() -> None:
         from_environment(
             config,
             {
-                settings.release_input_dir: str(STAGED / "cache/target/candidate-profile-inputs"),
+                settings.release_input_dir: str(STAGED / "cache/target/candidate-runtime-inputs"),
                 settings.release_package: str(STAGED / "release-test-package/capsem.deb"),
                 settings.release_bin_dir: str(STAGED / "cache/target/cargo/debug"),
             },

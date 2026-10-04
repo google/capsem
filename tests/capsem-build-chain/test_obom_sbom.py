@@ -24,20 +24,19 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     assert "id-token: write" in asset_workflow
     assert "CAPSEM_CDXGEN_CMD" not in asset_workflow
     assert "asset-channel-preview" in asset_workflow
-    assert "Publish immutable GitHub profile release" in asset_workflow
+    assert "Publish immutable GitHub runtime release" in asset_workflow
     assert "Attest VM asset provenance" in asset_workflow
     assert "actions/attest-build-provenance@" in asset_workflow
-    publish_profile = asset_workflow.split("  publish-profile-release:", maxsplit=1)[1].split(
+    publish_runtime = asset_workflow.split("  publish-runtime-release:", maxsplit=1)[1].split(
         "  deploy-channel:", maxsplit=1
     )[0]
-    assert "needs.author-profile-release.outputs.release_needed == 'true'" in publish_profile
-    assert "needs.test-profile-pairing.result == 'success'" in publish_profile
-    assert "if: ${{ inputs.dry_run == false }}" in publish_profile
-    assert "build_system/scripts/release/stage-profile-publication.py" in asset_workflow
-    assert "build_system/scripts/release/verify-profile-publication.py" in asset_workflow
-    assert "subject-path: cache/target/asset-release/profile-*/*" in asset_workflow
-    assert publish_profile.index("Attest VM asset provenance") < publish_profile.index(
-        "Publish immutable GitHub profile release"
+    assert "needs: [author-runtime-release, test-runtime-pairing" in publish_runtime
+    assert "if: ${{ inputs.dry_run == false }}" in publish_runtime
+    assert "build_system/scripts/release/stage-runtime-publication.py" in asset_workflow
+    assert "build_system/scripts/release/verify-runtime-publication.py" in asset_workflow
+    assert "subject-path: cache/target/asset-release/runtime-*/*" in asset_workflow
+    assert publish_runtime.index("Attest VM asset provenance") < publish_runtime.index(
+        "Publish immutable GitHub runtime release"
     )
     assert (
         'for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations")'

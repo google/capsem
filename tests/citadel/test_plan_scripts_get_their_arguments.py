@@ -1,8 +1,9 @@
 """Citadel guard: a plan step must be able to start the script it names.
 
 `glowup.package` and `glowup.channel-switch` are the last two steps of a binary
-release, and they ran `build_system/scripts/release/local-release-glowup.py` without `--source-commit`,
-`--evidence-dir` or `--profile-revision-policy`. All three were `required=True`.
+release, and they ran `build_system/scripts/release/local-release-glowup.py` without `--source-commit`
+or `--evidence-dir`, and without a third option the script has since dropped.
+All three were `required=True`.
 Neither step could ever have got past `argparse`.
 
 Nothing found it, and the reason is worth recording. The script is exercised
@@ -46,24 +47,23 @@ def _lanes():
     config = gate_config.load(ROOT)
     settings = config.modules
     release = {
-        settings.release_input_dir: str(STAGED / "cache/target/candidate-profile-inputs"),
+        settings.release_input_dir: str(STAGED / "cache/target/candidate-runtime-inputs"),
         settings.release_package: str(STAGED / "release-test-package/capsem.deb"),
         settings.release_bin_dir: str(STAGED / "cache/target/cargo/debug"),
     }
     binary = from_environment(config, release)
-    profile = from_environment(config, {**release, settings.release_profile: "code"})
+    runtime = from_environment(config, {**release, settings.release_runtime: "1"})
     return (
         ("candidate", (), from_environment(config, {})),
         ("qualify-binaries", (("workspace_root", STAGED),), binary),
         (
             "qualify-assets",
             (
-                ("input_dir", STAGED / "cache/target/candidate-profile-inputs"),
-                ("profile", "code"),
+                ("input_dir", STAGED / "cache/target/candidate-runtime-inputs"),
                 ("workspace_root", STAGED),
                 ("activation_ready", "true"),
             ),
-            profile,
+            runtime,
         ),
     )
 

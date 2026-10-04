@@ -29,15 +29,13 @@ class TransitionKind(str, Enum):
 
     FRESH_INSTALL = "fresh_install"
     BINARY_ONLY = "binary_only"
-    PROFILE_ONLY = "profile_only"
-    PROFILE_THEN_BINARY = "profile_then_binary"
+    RUNTIME_ONLY = "runtime_only"
+    RUNTIME_THEN_BINARY = "runtime_then_binary"
     CHANNEL_SWITCH = "channel_switch"
     TAMPER_REJECTION = "tamper_rejection"
 
 
-def explicit_channel_switch_args(
-    kind: TransitionKind, channel: str
-) -> tuple[str, ...]:
+def explicit_channel_switch_args(kind: TransitionKind, channel: str) -> tuple[str, ...]:
     """Return the product command required to cross a channel boundary."""
     if kind is TransitionKind.CHANNEL_SWITCH:
         return ("update", "--yes", "--channel", channel)
@@ -124,14 +122,14 @@ class ArtifactIdentity:
 
 
 class PairingIdentity:
-    """Exact installed channel, package, and profile-set identity."""
+    """Exact installed channel, package, and runtime identity."""
 
     __slots__ = (
         "channel",
         "manifest_sha256",
         "package_sha256",
         "package_version",
-        "profiles_sha256",
+        "runtime_sha256",
     )
 
     def __init__(
@@ -141,7 +139,7 @@ class PairingIdentity:
         manifest_sha256: str,
         package_version: str,
         package_sha256: str,
-        profiles_sha256: str,
+        runtime_sha256: str,
     ) -> None:
         if not channel:
             raise GlowupContractError("pairing channel must not be empty")
@@ -150,7 +148,7 @@ class PairingIdentity:
         for field, value in (
             ("manifest_sha256", manifest_sha256),
             ("package_sha256", package_sha256),
-            ("profiles_sha256", profiles_sha256),
+            ("runtime_sha256", runtime_sha256),
         ):
             if not isinstance(value, str) or SHA256_PATTERN.fullmatch(value) is None:
                 raise GlowupContractError(f"pairing {field} must be a lowercase sha256 digest")
@@ -158,7 +156,7 @@ class PairingIdentity:
         self.manifest_sha256 = manifest_sha256
         self.package_version = package_version
         self.package_sha256 = package_sha256
-        self.profiles_sha256 = profiles_sha256
+        self.runtime_sha256 = runtime_sha256
 
     @classmethod
     def from_manifest_bytes(
@@ -167,15 +165,16 @@ class PairingIdentity:
         *,
         artifact: ArtifactIdentity,
         channel: str,
-        allow_empty_profiles: bool = False,
+        allow_empty_runtime: bool = False,
     ) -> PairingIdentity:
+        """Identify a pairing; a channel with no published runtime hashes `null`."""
         manifest = load_manifest_bytes(contents)
         assert_manifest_artifact(manifest, artifact)
-        profiles = manifest.get("profiles")
-        if not isinstance(profiles, dict) or (not profiles and not allow_empty_profiles):
-            raise GlowupContractError("candidate manifest profiles must be a non-empty object")
-        profiles_bytes = json.dumps(
-            profiles,
+        runtime = manifest.get("runtime")
+        if not (isinstance(runtime, dict) or (runtime is None and allow_empty_runtime)):
+            raise GlowupContractError("candidate manifest runtime must be an object")
+        runtime_bytes = json.dumps(
+            runtime,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -184,7 +183,7 @@ class PairingIdentity:
             manifest_sha256=hashlib.sha256(contents).hexdigest(),
             package_version=artifact.version,
             package_sha256=artifact.sha256,
-            profiles_sha256=hashlib.sha256(profiles_bytes).hexdigest(),
+            runtime_sha256=hashlib.sha256(runtime_bytes).hexdigest(),
         )
 
     @classmethod
@@ -200,7 +199,7 @@ class PairingIdentity:
             manifest_sha256=require_string("manifest_sha256"),
             package_version=require_string("package_version"),
             package_sha256=require_string("package_sha256"),
-            profiles_sha256=require_string("profiles_sha256"),
+            runtime_sha256=require_string("runtime_sha256"),
         )
 
     def as_report(self) -> dict[str, object]:
@@ -209,7 +208,7 @@ class PairingIdentity:
             "manifest_sha256": self.manifest_sha256,
             "package_version": self.package_version,
             "package_sha256": self.package_sha256,
-            "profiles_sha256": self.profiles_sha256,
+            "runtime_sha256": self.runtime_sha256,
         }
 
 
@@ -294,60 +293,50 @@ def assert_manifest_artifact(
     return package
 
 
-def tamper_profile_artifact_digest(
+def tamper_runtime_artifact_digest(
     manifest: dict[str, object],
     *,
-    profile_ids: Sequence[str] = (),
     architecture: str,
 ) -> str:
-    """Corrupt one consumed profile artifact digest for a rejection proof.
+    """Corrupt one consumed runtime image digest for a rejection proof.
 
-    The caller passes a private copy; the returned id records its source.  The
-    architecture is mandatory because clients verify only artifacts they consume.
+    The caller passes a private copy; the returned image name records which row
+    changed. The architecture is mandatory because clients verify only the
+    images they consume.
     """
 
-    profiles = manifest.get("profiles")
-    if not isinstance(profiles, dict) or not profiles:
-        raise GlowupContractError("adversarial candidate manifest has no profiles")
-    selected = tuple(profile_ids) or tuple(sorted(profiles))
+    runtime = manifest.get("runtime")
+    if not isinstance(runtime, dict):
+        raise GlowupContractError("adversarial candidate manifest has no runtime")
     alias = {"amd64": "x86_64", "x86_64": "amd64"}.get(architecture)
     accepted_architectures = {architecture, alias} if alias else {architecture}
-    for profile_id in selected:
-        profile = cast(dict[str, object], profiles).get(profile_id)
-        if not isinstance(profile_id, str) or not isinstance(profile, dict):
+    architectures = cast(dict[str, object], runtime).get("architectures")
+    for architecture_record in architectures if isinstance(architectures, list) else ():
+        if not isinstance(architecture_record, dict):
             continue
-        architectures = cast(dict[str, object], profile).get("architectures")
-        if not isinstance(architectures, list):
+        architecture_fields = cast(dict[str, object], architecture_record)
+        if architecture_fields.get("architecture") not in accepted_architectures:
             continue
-        for architecture_record in architectures:
-            if not isinstance(architecture_record, dict):
+        images = architecture_fields.get("images")
+        for row in images if isinstance(images, list) else ():
+            if not isinstance(row, dict):
                 continue
-            architecture_fields = cast(dict[str, object], architecture_record)
-            if architecture_fields.get("architecture") not in accepted_architectures:
+            row_fields = cast(dict[str, object], row)
+            if row_fields.get("status", "current") != "current":
                 continue
-            for section in ("config", "images"):
-                rows = architecture_fields.get(section)
-                if not isinstance(rows, list):
-                    continue
-                for row in rows:
-                    if not isinstance(row, dict):
-                        continue
-                    row_fields = cast(dict[str, object], row)
-                    if row_fields.get("status", "current") != "current":
-                        continue
-                    digest = row_fields.get("digest")
-                    if not isinstance(digest, dict):
-                        continue
-                    digest_fields = cast(dict[str, object], digest)
-                    sha256 = digest_fields.get("sha256")
-                    if not isinstance(sha256, str):
-                        continue
-                    digest_fields["sha256"] = "1" * 64 if sha256 == "0" * 64 else "0" * 64
-                    blake3 = digest_fields.get("blake3")
-                    if isinstance(blake3, str):
-                        digest_fields["blake3"] = "1" * 64 if blake3 == "0" * 64 else "0" * 64
-                    return profile_id
-    raise GlowupContractError(f"no consumed current profile artifact for {architecture}")
+            digest = row_fields.get("digest")
+            if not isinstance(digest, dict):
+                continue
+            digest_fields = cast(dict[str, object], digest)
+            sha256 = digest_fields.get("sha256")
+            if not isinstance(sha256, str):
+                continue
+            digest_fields["sha256"] = "1" * 64 if sha256 == "0" * 64 else "0" * 64
+            blake3 = digest_fields.get("blake3")
+            if isinstance(blake3, str):
+                digest_fields["blake3"] = "1" * 64 if blake3 == "0" * 64 else "0" * 64
+            return str(row_fields.get("name") or row_fields.get("kind") or "image")
+    raise GlowupContractError(f"no consumed current runtime image for {architecture}")
 
 
 def artifact_identity_from_manifest_package(
@@ -403,11 +392,6 @@ def artifact_identity_from_manifest_package(
     return artifact
 
 
-def requires_changed_profiles(kind: TransitionKind) -> bool:
-    """Whether this pairing names every profile it stages."""
-    return kind is not TransitionKind.BINARY_ONLY
-
-
 def validate_pairing_inputs(
     *,
     kind: TransitionKind | str,
@@ -417,13 +401,13 @@ def validate_pairing_inputs(
     after_manifest_bytes: bytes,
     before_artifact: ArtifactIdentity | None,
     after_artifact: ArtifactIdentity,
-    changed_profiles: Sequence[str] = (),
 ) -> tuple[PairingIdentity | None, PairingIdentity]:
     """Validate an exact public-before/candidate-after release-lane pairing.
 
     `before_artifact` is absent for exactly one pairing: a channel's first
     public release, where no predecessor package was ever served and so none can
-    be identified. Every other transition still requires one.
+    be identified. Every other transition still requires one. The public-before
+    side may lack a runtime only when the pairing is the one that brings it.
     """
 
     try:
@@ -433,8 +417,8 @@ def validate_pairing_inputs(
     if transition_kind not in {
         TransitionKind.FRESH_INSTALL,
         TransitionKind.BINARY_ONLY,
-        TransitionKind.PROFILE_ONLY,
-        TransitionKind.PROFILE_THEN_BINARY,
+        TransitionKind.RUNTIME_ONLY,
+        TransitionKind.RUNTIME_THEN_BINARY,
         TransitionKind.CHANNEL_SWITCH,
     }:
         raise GlowupContractError(
@@ -468,8 +452,8 @@ def validate_pairing_inputs(
             before_manifest_bytes,
             artifact=before_artifact,
             channel=baseline,
-            allow_empty_profiles=transition_kind
-            in {TransitionKind.PROFILE_ONLY, TransitionKind.PROFILE_THEN_BINARY},
+            allow_empty_runtime=transition_kind
+            in {TransitionKind.RUNTIME_ONLY, TransitionKind.RUNTIME_THEN_BINARY},
         )
     after = PairingIdentity.from_manifest_bytes(
         after_manifest_bytes,
@@ -477,50 +461,13 @@ def validate_pairing_inputs(
         channel=channel,
     )
 
-    before_profiles = before_manifest.get("profiles")
-    after_profiles = after_manifest.get("profiles")
-    if not isinstance(before_profiles, dict) or not isinstance(after_profiles, dict):
-        raise GlowupContractError("release pairing manifests must contain profile objects")
-    before_profile_map = cast(Mapping[str, object], before_profiles)
-    after_profile_map = cast(Mapping[str, object], after_profiles)
-    changed_profile_ids = tuple(changed_profiles)
-    if len(changed_profile_ids) != len(set(changed_profile_ids)):
-        raise GlowupContractError("release pairing changed profile ids must be unique")
-    if transition_kind is TransitionKind.CHANNEL_SWITCH:
-        if set(changed_profile_ids) != set(after_profile_map):
-            raise GlowupContractError(
-                "channel_switch release pairing must stage every candidate profile"
-            )
-    elif not requires_changed_profiles(transition_kind):
-        if changed_profile_ids:
-            raise GlowupContractError("binary_only release pairing cannot select a changed profile")
-    else:
-        if not changed_profile_ids:
-            raise GlowupContractError(
-                f"{transition_kind.value} release pairing requires changed profiles"
-            )
-        if transition_kind is TransitionKind.PROFILE_ONLY and len(changed_profile_ids) != 1:
-            raise GlowupContractError("profile_only release pairing requires exactly one profile")
-        for profile_id in changed_profile_ids:
-            if profile_id not in after_profile_map:
-                raise GlowupContractError(
-                    f"candidate-after manifest lacks changed profile {profile_id!r}"
-                )
-        profile_ids = set(before_profile_map) | set(after_profile_map)
-        for profile_id in profile_ids - set(changed_profile_ids):
-            if before_profile_map.get(profile_id) != after_profile_map.get(profile_id):
-                raise GlowupContractError(
-                    f"{transition_kind.value} release pairing changed unselected profile "
-                    f"{profile_id!r}"
-                )
-
     _validate_transition_pairing(
         transition_kind=transition_kind,
         before=before,
         after=after,
         result="activated",
-        staged_profiles_sha256=(
-            after.profiles_sha256 if transition_kind is TransitionKind.PROFILE_THEN_BINARY else None
+        staged_runtime_sha256=(
+            after.runtime_sha256 if transition_kind is TransitionKind.RUNTIME_THEN_BINARY else None
         ),
         preserved_previous=False,
     )
@@ -541,12 +488,6 @@ def validate_installed_evidence(
     for field in ("service", "gateway"):
         if evidence.get(field) != "ok":
             raise GlowupContractError(f"installed evidence {field} must be 'ok'")
-    ready = evidence.get("profiles_ready")
-    total = evidence.get("profiles_total")
-    if not isinstance(total, int) or isinstance(total, bool) or total <= 0:
-        raise GlowupContractError("installed evidence profiles_total must be positive")
-    if not isinstance(ready, int) or isinstance(ready, bool) or ready != total:
-        raise GlowupContractError("installed evidence profiles_ready must equal profiles_total")
     return evidence
 
 
@@ -577,7 +518,7 @@ def _validate_transition_pairing(
     before: PairingIdentity | None,
     after: PairingIdentity,
     result: str,
-    staged_profiles_sha256: str | None,
+    staged_runtime_sha256: str | None,
     preserved_previous: bool,
 ) -> None:
     """Validate pairing deltas without claiming that runtime probes have run."""
@@ -596,31 +537,29 @@ def _validate_transition_pairing(
         if transition_kind is TransitionKind.BINARY_ONLY:
             _require_same_channel(transition_kind, before, after)
             _require_package_changed(transition_kind, before, after)
-            if before.profiles_sha256 != after.profiles_sha256:
-                raise GlowupContractError("binary_only transition must preserve exact profiles")
-        elif transition_kind is TransitionKind.PROFILE_ONLY:
+            if before.runtime_sha256 != after.runtime_sha256:
+                raise GlowupContractError("binary_only transition must preserve the exact runtime")
+        elif transition_kind is TransitionKind.RUNTIME_ONLY:
             _require_same_channel(transition_kind, before, after)
             if (
                 before.package_version != after.package_version
                 or before.package_sha256 != after.package_sha256
             ):
-                raise GlowupContractError("profile_only transition must preserve the exact package")
-            if before.profiles_sha256 == after.profiles_sha256:
-                raise GlowupContractError("profile_only transition must change the profile set")
-        elif transition_kind is TransitionKind.PROFILE_THEN_BINARY:
+                raise GlowupContractError("runtime_only transition must preserve the exact package")
+            if before.runtime_sha256 == after.runtime_sha256:
+                raise GlowupContractError("runtime_only transition must change the runtime")
+        elif transition_kind is TransitionKind.RUNTIME_THEN_BINARY:
             _require_same_channel(transition_kind, before, after)
             _require_package_changed(transition_kind, before, after)
-            if before.profiles_sha256 == after.profiles_sha256:
-                raise GlowupContractError(
-                    "profile_then_binary transition must change the profile set"
-                )
+            if before.runtime_sha256 == after.runtime_sha256:
+                raise GlowupContractError("runtime_then_binary transition must change the runtime")
             if (
-                staged_profiles_sha256 is None
-                or SHA256_PATTERN.fullmatch(staged_profiles_sha256) is None
-                or staged_profiles_sha256 != after.profiles_sha256
+                staged_runtime_sha256 is None
+                or SHA256_PATTERN.fullmatch(staged_runtime_sha256) is None
+                or staged_runtime_sha256 != after.runtime_sha256
             ):
                 raise GlowupContractError(
-                    "profile_then_binary transition must reuse the exact staged profile set"
+                    "runtime_then_binary transition must reuse the exact staged runtime"
                 )
         elif transition_kind is TransitionKind.CHANNEL_SWITCH:
             if before.channel == after.channel:
@@ -654,7 +593,7 @@ def build_transition_evidence(
     result: str,
     doctor_passed: bool,
     winterfell_passed: bool,
-    staged_profiles_sha256: str | None = None,
+    staged_runtime_sha256: str | None = None,
     preserved_previous: bool = False,
 ) -> dict[str, object]:
     """Validate and normalize one installed release transition proof."""
@@ -675,7 +614,7 @@ def build_transition_evidence(
         before=before,
         after=after,
         result=result,
-        staged_profiles_sha256=staged_profiles_sha256,
+        staged_runtime_sha256=staged_runtime_sha256,
         preserved_previous=preserved_previous,
     )
 
@@ -690,8 +629,8 @@ def build_transition_evidence(
         },
         "preserved_previous": preserved_previous,
     }
-    if staged_profiles_sha256 is not None:
-        evidence["staged_profiles_sha256"] = staged_profiles_sha256
+    if staged_runtime_sha256 is not None:
+        evidence["staged_runtime_sha256"] = staged_runtime_sha256
     return evidence
 
 
@@ -743,9 +682,9 @@ def validate_transition_sequence(
         probes = transition.get("probes")
         if not isinstance(probes, Mapping):
             raise GlowupContractError("transition probes must be an object")
-        staged_digest = transition.get("staged_profiles_sha256")
+        staged_digest = transition.get("staged_runtime_sha256")
         if staged_digest is not None and not isinstance(staged_digest, str):
-            raise GlowupContractError("transition staged profile digest must be a string")
+            raise GlowupContractError("transition staged runtime digest must be a string")
         normalized.append(
             build_transition_evidence(
                 kind=str(transition["kind"]),
@@ -758,7 +697,7 @@ def validate_transition_sequence(
                 result=str(transition.get("result")),
                 doctor_passed=cast(Mapping[str, object], probes).get("doctor") is True,
                 winterfell_passed=(cast(Mapping[str, object], probes).get("winterfell") is True),
-                staged_profiles_sha256=staged_digest,
+                staged_runtime_sha256=staged_digest,
                 preserved_previous=transition.get("preserved_previous") is True,
             )
         )

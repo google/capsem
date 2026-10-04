@@ -117,64 +117,50 @@ def _package_rows(manifest: dict[str, Any], manifest_url: str) -> Iterable[dict[
             )
 
 
-def _profile_rows(
+def _runtime_rows(
     manifest: dict[str, Any],
     manifest_url: str,
     selected_architecture: str | None = None,
 ) -> Iterable[dict[str, Any]]:
-    profiles = manifest.get("profiles")
-    if not isinstance(profiles, dict) or not profiles:
-        raise ValueError("release manifest contains no profiles")
-    for profile_id_value, profile in sorted(profiles.items()):
-        profile_id = safe_component(profile_id_value, "profile identity")
-        if not isinstance(profile, dict):
-            raise ValueError(f"release manifest profile {profile_id} is malformed")
-        profile = cast(dict[str, Any], profile)
-        if profile.get("status") == "revoked":
+    runtime = manifest.get("runtime")
+    if not isinstance(runtime, dict):
+        raise ValueError("release manifest contains no runtime")
+    runtime = cast(dict[str, Any], runtime)
+    if runtime.get("status") == "revoked":
+        return
+    architectures = runtime.get("architectures")
+    if not isinstance(architectures, list) or not architectures:
+        raise ValueError("runtime has no architectures")
+    for architecture_record in architectures:
+        if not isinstance(architecture_record, dict):
+            raise ValueError("runtime architecture is malformed")
+        arch = safe_component(
+            architecture_record.get("architecture"), "runtime architecture identity"
+        )
+        if selected_architecture is not None and arch != selected_architecture:
             continue
-        architectures = profile.get("architectures")
-        if not isinstance(architectures, list) or not architectures:
-            raise ValueError(f"profile {profile_id} has no architectures")
-        for architecture_record in architectures:
-            if not isinstance(architecture_record, dict):
-                raise ValueError(f"profile {profile_id} architecture is malformed")
-            arch = safe_component(
-                architecture_record.get("architecture"),
-                f"profile {profile_id} architecture identity",
-            )
-            if selected_architecture is not None and arch != selected_architecture:
-                continue
-            for section in ("config", "images", "evidence"):
-                records = architecture_record.get(section, [])
-                if not isinstance(records, list):
-                    raise ValueError(f"profile {profile_id}/{arch} {section} is malformed")
-                for index, record in enumerate(records):
-                    if not isinstance(record, dict):
-                        raise ValueError(
-                            f"profile {profile_id}/{arch} {section}[{index}] is malformed"
-                        )
-                    record = cast(dict[str, Any], record)
-                    if record.get("status") == "revoked":
-                        continue
-                    url = record.get("url")
-                    if not isinstance(url, str) or not url:
-                        raise ValueError(
-                            f"profile {profile_id}/{arch} {section}[{index}] has no URL"
-                        )
-                    absolute = urljoin(manifest_url, url)
-                    label = str(
-                        record.get("name")
-                        or record.get("path")
-                        or record.get("kind")
-                        or f"{section}-{index}"
-                    )
-                    name = safe_name(absolute, f"{section}-{index}")
-                    yield _artifact_row(
-                        Path("profiles") / profile_id / arch / section / name,
-                        absolute,
-                        record,
-                        f"profile {profile_id}/{arch}/{label}",
-                    )
+        for section in ("images", "evidence"):
+            records = architecture_record.get(section, [])
+            if not isinstance(records, list):
+                raise ValueError(f"runtime/{arch} {section} is malformed")
+            for index, record in enumerate(records):
+                if not isinstance(record, dict):
+                    raise ValueError(f"runtime/{arch} {section}[{index}] is malformed")
+                record = cast(dict[str, Any], record)
+                if record.get("status") == "revoked":
+                    continue
+                url = record.get("url")
+                if not isinstance(url, str) or not url:
+                    raise ValueError(f"runtime/{arch} {section}[{index}] has no URL")
+                absolute = urljoin(manifest_url, url)
+                label = str(record.get("name") or record.get("kind") or f"{section}-{index}")
+                name = safe_name(absolute, f"{section}-{index}")
+                yield _artifact_row(
+                    Path("runtime") / arch / section / name,
+                    absolute,
+                    record,
+                    f"runtime/{arch}/{label}",
+                )
 
 
 def resolved_artifact_rows(
@@ -182,34 +168,34 @@ def resolved_artifact_rows(
     manifest_url: str,
     kind: str,
     *,
-    allow_empty_profiles: bool = False,
+    allow_empty_runtime: bool = False,
     allow_empty_packages: bool = False,
     architecture: str | None = None,
 ) -> list[dict[str, Any]]:
-    if kind not in {"packages", "profiles"}:
+    if kind not in {"packages", "runtime"}:
         raise ValueError(f"invalid release input kind: {kind!r}")
-    if allow_empty_profiles and kind != "profiles":
-        raise ValueError("empty release inputs are permitted only for profiles")
+    if allow_empty_runtime and kind != "runtime":
+        raise ValueError("empty release inputs are permitted only for the runtime")
     if allow_empty_packages and kind != "packages":
         raise ValueError("empty release inputs are permitted only for packages")
     if architecture is not None:
         architecture = safe_component(architecture, "release input architecture")
-        if kind != "profiles":
-            raise ValueError("architecture filtering is permitted only for profiles")
-    # An absent channel has no public before-state at all: no profiles, and no
+        if kind != "runtime":
+            raise ValueError("architecture filtering is permitted only for the runtime")
+    # An absent channel has no public before-state at all: no runtime, and no
     # packages either. Bootstrapping inherits the donor channel's cohort so a
-    # new channel's first profile can be proved against shipped binaries, but
+    # new channel's first runtime can be proved against shipped binaries, but
     # when that donor has itself been retired the inherited URLs are dead, and
     # a manifest claiming packages nobody can fetch is worse than one claiming
     # none. Empty is only ever accepted when the caller states it explicitly.
-    if {"profiles": allow_empty_profiles, "packages": allow_empty_packages}[
-        kind
-    ] and manifest.get(kind) == {"profiles": {}, "packages": []}[kind]:
+    if kind == "runtime" and allow_empty_runtime and manifest.get("runtime") is None:
+        return []
+    if kind == "packages" and allow_empty_packages and manifest.get("packages") == []:
         return []
     source = (
         _package_rows(manifest, manifest_url)
         if kind == "packages"
-        else _profile_rows(manifest, manifest_url, architecture)
+        else _runtime_rows(manifest, manifest_url, architecture)
     )
     rows: list[dict[str, Any]] = []
     by_url: dict[str, tuple[str, str, int]] = {}
@@ -262,29 +248,29 @@ def load_verified_release_inputs(
     if report.get("schema") != "capsem.release_inputs.v1":
         raise ValueError("release input report has an unsupported schema")
     kind = report.get("kind")
-    if kind not in {"packages", "profiles"}:
+    if kind not in {"packages", "runtime"}:
         raise ValueError("release input report has an invalid artifact kind")
     manifest_url = report.get("manifest_url")
     if not isinstance(manifest_url, str) or not manifest_url:
         raise ValueError("release input report lacks its manifest URL")
     manifest = _load_json_object(manifest_path, "resolved manifest")
 
-    allow_empty_profiles = report.get("allow_empty_profiles", False)
-    if not isinstance(allow_empty_profiles, bool):
-        raise ValueError("release input report has an invalid empty-profile policy")
+    allow_empty_runtime = report.get("allow_empty_runtime", False)
+    if not isinstance(allow_empty_runtime, bool):
+        raise ValueError("release input report has an invalid empty-runtime policy")
     allow_empty_packages = report.get("allow_empty_packages", False)
     if not isinstance(allow_empty_packages, bool):
         raise ValueError("release input report has an invalid empty-package policy")
     architecture = report.get("architecture")
     if architecture is not None:
         architecture = safe_component(architecture, "release input report architecture")
-        if kind != "profiles":
-            raise ValueError("release input report architecture is permitted only for profiles")
+        if kind != "runtime":
+            raise ValueError("release input report architecture is permitted only for the runtime")
     expected_rows = resolved_artifact_rows(
         manifest,
         manifest_url,
         kind,
-        allow_empty_profiles=allow_empty_profiles,
+        allow_empty_runtime=allow_empty_runtime,
         allow_empty_packages=allow_empty_packages,
         architecture=architecture,
     )

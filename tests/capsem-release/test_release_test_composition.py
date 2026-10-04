@@ -68,16 +68,16 @@ def _qualification(**overrides):
     return qualification_for(CONFIG, overrides)
 
 
-#: The two release lanes, spelled once. A binary lane resolves every profile
-#: the manifest names; a profile lane is publishing exactly one.
+#: The two release lanes, spelled once. A binary lane pulls the runtime the
+#: manifest names; a runtime lane is publishing it.
 BINARY_LANE = _qualification(
     CAPSEM_RELEASE_INPUT_DIR="cache/target/release/staging/inputs",
     CAPSEM_RELEASE_PACKAGE="dist/capsem_0.0.0_arm64.deb",
 )
-PROFILE_LANE = _qualification(
+RUNTIME_LANE = _qualification(
     CAPSEM_RELEASE_INPUT_DIR="cache/target/release/staging/inputs",
     CAPSEM_RELEASE_PACKAGE="dist/capsem_0.0.0_arm64.deb",
-    CAPSEM_RELEASE_PROFILE="code",
+    CAPSEM_RELEASE_RUNTIME="1",
 )
 
 
@@ -148,8 +148,8 @@ def _all_modules() -> str:
     ]
 
     plans += [
-        _planned("test-glowup", PROFILE_LANE),
-        _planned("test-artifacts", PROFILE_LANE),
+        _planned("test-glowup", RUNTIME_LANE),
+        _planned("test-artifacts", RUNTIME_LANE),
     ]
     return "\n".join(plans)
 
@@ -157,9 +157,7 @@ def _all_modules() -> str:
 def _recipe(name: str) -> str:
     lines = JUSTFILE.splitlines()
     start = next(
-        index
-        for index, line in enumerate(lines)
-        if line.startswith((f"{name}:", f"{name} "))
+        index for index, line in enumerate(lines) if line.startswith((f"{name}:", f"{name} "))
     )
     end = len(lines)
     for index in range(start + 1, len(lines)):
@@ -252,9 +250,9 @@ def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
         for name in _workflow_job_names(path):
             job = _workflow_job(path, name)
             shell = _job_shell(job)
-            needs_just = bool(
-                GRAPH.just_recipes(shell)
-            ) or _selects_a_just_dependent_test(shell, just_tests)
+            needs_just = bool(GRAPH.just_recipes(shell)) or _selects_a_just_dependent_test(
+                shell, just_tests
+            )
             needs_pnpm = GRAPH.shell_reaches_pnpm(shell, JUSTFILE)
             needs_uv = GRAPH.invokes(shell, "uv") or any(
                 recipe in recipes_reaching_uv for recipe in GRAPH.just_recipes(shell)
@@ -266,17 +264,13 @@ def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
                 (SETUP_UV, needs_uv),
             ):
                 if needed and required not in job:
-                    missing.append(
-                        f"{path}::{name} invokes it but never installs {required}"
-                    )
+                    missing.append(f"{path}::{name} invokes it but never installs {required}")
 
     assert not missing, "CI jobs missing tool provisioning:\n" + "\n".join(missing)
 
 
 def _source_digest_module():
-    script = (
-        PROJECT_ROOT / "build_system" / "scripts" / "build" / "source-state-digest.py"
-    )
+    script = PROJECT_ROOT / "build_system" / "scripts" / "build" / "source-state-digest.py"
     spec = importlib.util.spec_from_file_location("source_state_digest", script)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -322,8 +316,7 @@ def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() ->
         "recipes",
     )
     positions = [
-        next(i for i, label in enumerate(order) if label.startswith(prefix))
-        for prefix in expected
+        next(i for i, label in enumerate(order) if label.startswith(prefix)) for prefix in expected
     ]
     assert positions == sorted(positions)
 
@@ -397,7 +390,7 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
     assert "_pack-initrd" not in fast
 
 
-def test_release_static_module_never_bootstraps_or_builds_profile_assets() -> None:
+def test_release_static_module_never_bootstraps_or_builds_runtime_assets() -> None:
     static = _recipe("_test-compiled-checks")
 
     assert "_bootstrap" not in static.splitlines()[0]
@@ -424,9 +417,7 @@ def test_functional_module_materializes_its_gitignored_settings_fixture() -> Non
     labels = _planned_labels("test-functional")
     # Linux keeps the platform-shaped signing edge with no action; the
     # synthetic macOS contract separately proves the codesign actions.
-    assert labels.index("prepare.sign") < labels.index(
-        "functional.pytest.broad.code"
-    )
+    assert labels.index("prepare.sign") < labels.index("functional.pytest.broad")
     for forbidden in (
         "_build-assets",
         "_build-kernel",
@@ -463,7 +454,6 @@ def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
     """The cheap composition proof runs the suites that need no artifacts, and
     the artifacts module runs exactly the ones that do."""
     release_contracts = _planned("test-release-contracts")
-    functional = _planned("test-functional")
     artifacts = _planned("test-artifacts")
 
     assert "tests/capsem-build-chain/" in release_contracts
@@ -490,11 +480,6 @@ def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
     assert "tests/capsem-recipes" not in release_contracts
     assert "tests/capsem-recipes/" in _recipe("_test-recipes")
 
-    for pattern in CONFIG.modules.contract_globs:
-        assert f"--ignore-glob={pattern}" in functional
-    for source_test in SOURCE_CONTRACT_TESTS[:3]:
-        assert f"--ignore={source_test}" in functional
-
 
 def test_every_root_workflow_or_just_source_test_is_owned_by_the_fast_gate() -> None:
     inventory = set(SOURCE_CONTRACT_TESTS)
@@ -503,8 +488,7 @@ def test_every_root_workflow_or_just_source_test_is_owned_by_the_fast_gate() -> 
     for path in (PROJECT_ROOT / "tests").glob("test_*.py"):
         source = path.read_text(encoding="utf-8")
         if not any(
-            needle in source
-            for needle in (".github/workflows", '"Justfile"', '"justfile"')
+            needle in source for needle in (".github/workflows", '"Justfile"', '"justfile"')
         ):
             continue
         relative = path.relative_to(PROJECT_ROOT).as_posix()
@@ -531,15 +515,10 @@ def test_parallel_coverage_state_is_kept_out_of_the_source_tree() -> None:
 
 
 def test_functional_coverage_replays_cheap_contracts_after_the_early_gate() -> None:
-    """The broad suite measures coverage and does not skip the contracts.
-
-    The compatibility runs skip them, because the broad run already proved
-    them once and repeating a constant per profile triples the slowest part of
-    the gate.
-    """
+    """The broad suite measures coverage and does not skip the contracts."""
     from capsem_builder.gate import pytestsuite
 
-    broad = pytestsuite.broad(CONFIG, profile=CONFIG.suites.pytest.base_profile)
+    broad = pytestsuite.broad(CONFIG)
     argv = broad.argv(CONFIG)
 
     assert "--cov=build_system/builder" in argv
@@ -562,15 +541,13 @@ def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) 
     assert "pnpm install --frozen-lockfile" in install
     for workflow_path, job in (
         (".github/workflows/release.yaml", "test-binary-pairing"),
-        (".github/workflows/release-assets.yaml", "test-profile-pairing"),
+        (".github/workflows/release-assets.yaml", "test-runtime-pairing"),
     ):
         pairing = _workflow_job(workflow_path, job)
         assert "cache: pnpm" in pairing
         assert "build_system/release_site/pnpm-lock.yaml" in pairing
         assert "cd web/app && pnpm install --frozen-lockfile" in pairing
-        assert (
-            "cd build_system/release_site && pnpm install --frozen-lockfile" in pairing
-        )
+        assert "cd build_system/release_site && pnpm install --frozen-lockfile" in pairing
 
     real_just = shutil.which("just")
     assert real_just is not None
@@ -602,19 +579,14 @@ def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) 
     trace_lines = trace.read_text(encoding="utf-8").splitlines()
     pnpm_command, pnpm_cwd, pnpm_args = trace_lines[0].split(":", maxsplit=2)
     assert pnpm_command == "pnpm"
-    assert (
-        Path(pnpm_cwd).resolve()
-        == (PROJECT_ROOT / "build_system" / "release_site").resolve()
-    )
+    assert Path(pnpm_cwd).resolve() == (PROJECT_ROOT / "build_system" / "release_site").resolve()
     assert pnpm_args == "install --frozen-lockfile"
     # The recipe dispatches rather than implementing: one install, then the
     # gate command. Nothing between them, and no nested `just`.
     assert len(trace_lines) == 2
     gate_command, _cwd, gate_args = trace_lines[1].split(":", maxsplit=2)
     assert gate_command == "uv"
-    assert gate_args == (
-        "run --project build_system --frozen capsem-gate test-release-contracts"
-    )
+    assert gate_args == ("run --project build_system --frozen capsem-gate test-release-contracts")
 
 
 def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
@@ -645,9 +617,7 @@ def test_static_module_audits_locked_python_and_node_graphs_fail_closed() -> Non
     """
     fast = _planned("test-fast")
     static = _planned("test-static")
-    pyproject = (PROJECT_ROOT / "build_system/pyproject.toml").read_text(
-        encoding="utf-8"
-    )
+    pyproject = (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
     audit_owner = (
         PROJECT_ROOT / "build_system/builder/gate/tools/audit/dependencies.py"
     ).read_text(encoding="utf-8")
@@ -672,14 +642,14 @@ def test_static_module_audits_locked_python_and_node_graphs_fail_closed() -> Non
 
 def test_reusable_fast_gate_installs_workspace_static_prerequisites() -> None:
     ci = (PROJECT_ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8")
-    workflow = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(encoding="utf-8")
     prerequisites = workflow.index("Install Linux workspace lint prerequisites")
     shared_module = workflow.index("Run the complete fast gate")
 
     assert prerequisites < shared_module
-    provision = "sudo python3 build_system/scripts/bootstrap/provision-linux-workspace.py --install apt"
+    provision = (
+        "sudo python3 build_system/scripts/bootstrap/provision-linux-workspace.py --install apt"
+    )
     assert provision in workflow[prerequisites:shared_module]
     linux_coverage = ci.index("Unit tests (KVM backend) with coverage")
     assert provision in ci[:linux_coverage]
@@ -712,8 +682,8 @@ def test_release_glowup_consumes_the_exact_pairing_environment() -> None:
         "CAPSEM_RELEASE_BEFORE_MANIFEST",
         "CAPSEM_RELEASE_AFTER_MANIFEST",
         "CAPSEM_RELEASE_BEFORE_PACKAGE",
-        "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS",
-        "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS",
+        "CAPSEM_RELEASE_BEFORE_INPUTS",
+        "CAPSEM_RELEASE_AFTER_INPUTS",
     ):
         assert variable in owner
     assert "validate_exact_release_pairing(args)" in owner
@@ -746,16 +716,15 @@ def test_standalone_local_glowup_materializes_config_without_release_builders() 
         assert forbidden not in runner
 
 
-def test_release_artifact_module_boots_manifest_selected_profile_bytes_without_builders() -> (
-    None
-):
+def test_release_artifact_module_boots_manifest_selected_runtime_bytes_without_builders() -> None:
     """A release lane verifies the bytes it pulled rather than rebuilding
     them; rebuilding would prove something about the source instead."""
-    artifacts = _planned("test-artifacts", PROFILE_LANE)
+    artifacts = _planned("test-artifacts", RUNTIME_LANE)
 
-    assert "build_system/scripts/release/prove-release-profile-assets.py" in artifacts
-    assert "--input-dir cache/target/release/staging/inputs" in artifacts
-    assert "--profile code" in artifacts
+    assert (
+        "build_system/scripts/release/prove-release-runtime-assets.py "
+        "--input-dir cache/target/release/staging/inputs"
+    ) in artifacts
     for forbidden in (
         "capsem-gate assets",
         "_build-kernel",
@@ -765,21 +734,16 @@ def test_release_artifact_module_boots_manifest_selected_profile_bytes_without_b
         assert forbidden not in artifacts
 
 
-def test_functional_module_runs_every_selected_profile_without_rebuilding() -> None:
-    """Every selected profile gets the VM-owned suites; the base profile also
-    gets the broad one. That is the compatibility axis, not a reduced
-    release-only substitute."""
-    from capsem_builder.gate import profiles
+def test_functional_module_runs_the_runtime_once_without_rebuilding() -> None:
+    """One runtime, one lane: the broad suite boots the same images every
+    VM-owned suite does, not a reduced release-only substitute."""
+    plan = _plan("test-functional")
+    functional = plan.describe()
+    broad = "\n".join(plan.step_named("functional.pytest.broad").render())
 
-    functional = _planned("test-functional")
-    axis = profiles.selected(CONFIG)
-    assert len(axis) >= 2, "the compatibility axis needs more than one profile"
-
-    for profile in axis:
-        assert f"CAPSEM_TEST_PROFILE={profile}" in functional
-        assert f"--profile {profile}" in functional
-
-    assert "(integration or mcp or e2e) and not serial" in functional
+    assert "CAPSEM_TEST_PROFILE" not in functional
+    assert " tests/ -v " in broad
+    assert "-m 'not serial'" in broad
     assert "tests/capsem-mcp/" not in functional
     assert "tests/ironbank/test_route_health.py" in functional
     assert "tests/capsem-serial/test_capsem_bench_baseline.py" in functional
@@ -788,7 +752,7 @@ def test_functional_module_runs_every_selected_profile_without_rebuilding() -> N
 
 def test_release_functional_keeps_the_manifest_staged_input_selector() -> None:
     """The private IronBank tree is local-build output, never a release input."""
-    for lane in (BINARY_LANE, PROFILE_LANE):
+    for lane in (BINARY_LANE, RUNTIME_LANE):
         functional = _planned("test-functional", lane)
         assert CONFIG.assets.test_root not in functional
 
@@ -802,9 +766,7 @@ def test_release_integration_follows_the_declared_staged_config_root(
     config_root = PROJECT_ROOT / "cache" / "target" / "synthetic-release-config"
     monkeypatch.setenv(CONFIG.functional.config_root_variable, str(config_root))
 
-    rendered = "\n".join(
-        vmproofs.integration(CONFIG, profile=CONFIG.suites.pytest.base_profile).render()
-    )
+    rendered = "\n".join(vmproofs.integration(CONFIG).render())
 
     expected = config_root / CONFIG.functional.profiles_subdir
     assert f"{CONFIG.environment.profiles_dir}={expected}" in rendered
@@ -842,7 +804,7 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
     )
 
     source_agent = tmp_path / "cache/target/build/linux-agent/x86_64"
-    release_inputs = tmp_path / "verified-profile-inputs"
+    release_inputs = tmp_path / "verified-runtime-inputs"
     release_package = tmp_path / "Capsem_1.5_amd64.deb"
     release_binary = tmp_path / "cache/target/cargo/debug/capsem"
     required = _required_artifacts_for_run(
@@ -858,10 +820,7 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
     )
 
     assert "cache/target/build/linux-agent/<arch>" not in required
-    assert (
-        required["verified release input report"]
-        == release_inputs / "release-inputs.json"
-    )
+    assert required["verified release input report"] == release_inputs / "release-inputs.json"
     assert required["manifest-selected release package"] == release_package
     assert required["manifest-selected test binary"] == release_binary
     assert _missing_required_artifacts(
@@ -901,9 +860,7 @@ def test_source_state_digest_covers_dirty_and_untracked_nonignored_files(
     tracked = tmp_path / "tracked.txt"
     tracked.write_text("one\n", encoding="utf-8")
     (tmp_path / ".gitignore").write_text("ignored.txt\n", encoding="utf-8")
-    subprocess.run(
-        ("git", "add", "tracked.txt", ".gitignore"), cwd=tmp_path, check=True
-    )
+    subprocess.run(("git", "add", "tracked.txt", ".gitignore"), cwd=tmp_path, check=True)
     module = _source_digest_module()
 
     initial = module.source_state_digest(tmp_path)
@@ -951,9 +908,7 @@ def test_source_state_digest_ignores_the_generated_asset_selector(
     (tmp_path / ".gitignore").write_bytes((PROJECT_ROOT / ".gitignore").read_bytes())
     tracked = tmp_path / "tracked.txt"
     tracked.write_text("source\n", encoding="utf-8")
-    subprocess.run(
-        ("git", "add", ".gitignore", "tracked.txt"), cwd=tmp_path, check=True
-    )
+    subprocess.run(("git", "add", ".gitignore", "tracked.txt"), cwd=tmp_path, check=True)
     module = _source_digest_module()
 
     before = module.source_state_digest(tmp_path)
@@ -975,9 +930,7 @@ def test_source_state_digest_ignores_node_workspace_atomic_scratch(
     (tmp_path / ".gitignore").write_bytes((PROJECT_ROOT / ".gitignore").read_bytes())
     tracked = tmp_path / "tracked.txt"
     tracked.write_text("source\n", encoding="utf-8")
-    subprocess.run(
-        ("git", "add", ".gitignore", "tracked.txt"), cwd=tmp_path, check=True
-    )
+    subprocess.run(("git", "add", ".gitignore", "tracked.txt"), cwd=tmp_path, check=True)
     module = _source_digest_module()
     before = module.source_state_digest(tmp_path)
 

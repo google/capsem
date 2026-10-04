@@ -1,13 +1,12 @@
 #!/bin/bash
 # build-pkg.sh -- Build a macOS .pkg installer from Tauri output + companion binaries.
 #
-# Usage: build-pkg.sh [--manifest file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]
+# Usage: build-pkg.sh [--manifest file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <version> [signing_identity]
 #
 # Arguments:
 #   app_path          Path to signed Capsem.app (from Tauri build)
 #   bin_dir           Directory containing companion binaries (capsem, capsem-service, etc.)
 #   assets_dir        Directory containing manifest.json when --manifest is omitted.
-#   config_root       Materialized runtime config root (usually cache/target/config)
 #   version           Version string (e.g. "0.16.1")
 #   signing_identity  Optional: Developer ID Installer identity for productsign
 #   --manifest        Optional manifest URL to record for postinstall hydration.
@@ -18,7 +17,6 @@
 #   /Applications/Capsem.app           -- Tauri GUI
 #   /usr/local/share/capsem/bin/       -- 6 companion binaries
 #   /usr/local/share/capsem/assets/    -- selected manifest URL provenance
-#   /usr/local/share/capsem/profiles/  -- materialized profile catalog + rule files
 #   /usr/local/share/capsem/entitlements.plist
 #
 # A postinstall script copies binaries to ~/.capsem/bin/, codesigns them,
@@ -27,7 +25,7 @@ set -euo pipefail
 export COPYFILE_DISABLE=1
 
 usage() {
-    echo "usage: build-pkg.sh [--manifest file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <config_root> <version> [signing_identity]" >&2
+    echo "usage: build-pkg.sh [--manifest file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <version> [signing_identity]" >&2
 }
 
 MANIFEST_PATH=""
@@ -66,7 +64,7 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-if [ "${#POSITIONAL[@]}" -lt 5 ] || [ "${#POSITIONAL[@]}" -gt 6 ]; then
+if [ "${#POSITIONAL[@]}" -lt 4 ] || [ "${#POSITIONAL[@]}" -gt 5 ]; then
     usage
     exit 2
 fi
@@ -74,26 +72,14 @@ fi
 APP_PATH="${POSITIONAL[0]}"
 BIN_DIR="${POSITIONAL[1]}"
 ASSETS_DIR="${POSITIONAL[2]}"
-CONFIG_ROOT="${POSITIONAL[3]}"
-VERSION="${POSITIONAL[4]}"
-if [ -z "$SIGNING_IDENTITY" ] && [ "${#POSITIONAL[@]}" -eq 6 ]; then
-    SIGNING_IDENTITY="${POSITIONAL[5]}"
+VERSION="${POSITIONAL[3]}"
+if [ -z "$SIGNING_IDENTITY" ] && [ "${#POSITIONAL[@]}" -eq 5 ]; then
+    SIGNING_IDENTITY="${POSITIONAL[4]}"
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
-
-copy_tree_clean() {
-    local src="${1:?copy_tree_clean <src> <dst>}"
-    local dst="${2:?copy_tree_clean <src> <dst>}"
-    mkdir -p "$dst"
-    if command -v ditto >/dev/null 2>&1; then
-        ditto --norsrc --noextattr "$src" "$dst"
-    else
-        COPYFILE_DISABLE=1 cp -R "$src/." "$dst/"
-    fi
-}
 
 write_manifest_metadata() {
     local manifest_source="${1:?write_manifest_metadata <manifest_source> <package_version> <dst>}"
@@ -227,24 +213,6 @@ else
     SELECTED_MANIFEST_SOURCE="$(file_url "$ASSETS_DIR/manifest.json")"
 fi
 write_manifest_metadata "$SELECTED_MANIFEST_SOURCE" "$VERSION" "$SHARE_DIR/assets/manifest-metadata.json"
-
-# Materialized profile catalog. Profiles pin the asset hashes the daemon boots;
-# the package installs the profile ledger and the manifest ledger together, but
-# never embeds the VM asset blobs themselves.
-if [ ! -d "$CONFIG_ROOT/profiles" ]; then
-    echo "ERROR: materialized profiles not found: $CONFIG_ROOT/profiles" >&2
-    echo "Run: just _materialize-config" >&2
-    exit 1
-fi
-for profile_path in "$CONFIG_ROOT"/profiles/*/profile.toml; do
-    [ -f "$profile_path" ] || {
-        echo "ERROR: no materialized profiles found under $CONFIG_ROOT/profiles" >&2
-        exit 1
-    }
-    "$BIN_DIR/capsem-admin" profile validate "$profile_path" --config-root "$CONFIG_ROOT" --materialized
-done
-mkdir -p "$SHARE_DIR/profiles"
-copy_tree_clean "$CONFIG_ROOT/profiles" "$SHARE_DIR/profiles"
 
 echo "=== Building component package ==="
 

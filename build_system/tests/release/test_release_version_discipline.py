@@ -1,13 +1,6 @@
-"""Profile revisions are semver, for first-party and corp-authored profiles alike.
+"""Every version in the release system is strict semver that orders releases.
 
-A profile revision is its tag: what a corp operator reads, what asset reuse is
-keyed on, and what immutable publication is enforced against. Profiles are
-orthogonal, so each carries its own independent version -- `code` moving says
-nothing about `co-work` -- and that version is a separate axis from the
-`min_capsem_version`/`max_capsem_version` window the profile declares against
-the Capsem binary.
-
-The scheme this replaces was a date plus a counter (`2026.06.08.9`). It could
+The scheme this replaced was a date plus a counter (`2026.06.08.9`). It could
 not order releases: the date recorded when someone last edited the field, not
 when the assets were built, so a July build shipped wearing a June date; the
 counter counted hand-edits rather than publications, so `.8` and `.9` existed
@@ -16,12 +9,15 @@ having never been released. Nothing rejected either, because nothing checked.
 
 from __future__ import annotations
 
+import json
 import re
 import tomllib
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-PROFILES_DIR = PROJECT_ROOT / "config" / "profiles"
+FIXTURE_GRAPH = (
+    PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-graph-stable-nightly.json"
+)
 
 # Strict semver: MAJOR.MINOR.PATCH, no leading zeroes, optional prerelease and
 # build metadata. Deliberately not a loose "digits and dots" pattern -- that is
@@ -33,65 +29,38 @@ SEMVER = re.compile(
 )
 
 
-def _profiles() -> dict[str, dict]:
-    found = {}
-    for profile_toml in sorted(PROFILES_DIR.glob("*/profile.toml")):
-        found[profile_toml.parent.name] = tomllib.loads(
-            profile_toml.read_text(encoding="utf-8")
-        )
-    assert found, f"no profiles found under {PROFILES_DIR}"
-    return found
+def _workspace_version() -> str:
+    workspace = tomllib.loads((PROJECT_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    return workspace["workspace"]["package"]["version"]
 
 
-def test_every_profile_revision_is_semver() -> None:
-    offenders = {
-        name: profile.get("revision")
-        for name, profile in _profiles().items()
-        if not SEMVER.match(str(profile.get("revision", "")))
-    }
+def test_released_runtime_revision_is_semver_with_a_commit_identity() -> None:
+    """`<workspace version>-<first 12 hex of the source commit>` is semver.
 
-    assert not offenders, (
-        "profile revisions must be semver MAJOR.MINOR.PATCH so releases order "
-        "and compatibility windows mean something: "
-        + ", ".join(f"{name}={rev!r}" for name, rev in sorted(offenders.items()))
-    )
-
-
-def test_public_release_workflows_cannot_select_the_legacy_import_policy() -> None:
-    workflows = PROJECT_ROOT / ".github" / "workflows"
-    for path in sorted(workflows.glob("release*.yaml")):
-        assert "--profile-revision-policy" not in path.read_text(encoding="utf-8"), path
-
-
-def test_profile_revisions_are_independent_per_profile() -> None:
-    """Nothing may require two profiles to share a revision.
-
-    Profiles are orthogonal. This does not demand they differ -- two profiles
-    may legitimately sit at the same version -- only that the schema carries
-    one revision per profile rather than a single global one.
+    The suffix is a prerelease, so every released commit gets its own runtime
+    identity and a nightly re-release at an unchanged workspace version never
+    collides with the previous one.
     """
-    profiles = _profiles()
+    revision = f"{_workspace_version()}-0123456789ab"
 
-    for name, profile in profiles.items():
-        assert "revision" in profile, f"profile {name} declares no revision of its own"
+    assert SEMVER.match(revision), revision
 
 
 def test_compatibility_window_is_semver_when_declared() -> None:
-    """`min_capsem_version`/`max_capsem_version` bound the binary, not the profile.
+    """`min_capsem_version`/`max_capsem_version` bound the binary, not the runtime.
 
-    They are a different axis from the profile's own revision, and they are
-    compared with semver ordering by capsem-admin, so a non-semver bound would
-    be rejected at release time rather than here.
+    They are a different axis from the runtime revision, and capsem-admin
+    compares them with semver ordering, so a non-semver bound would be
+    rejected at release time rather than here.
     """
-    for name, profile in _profiles().items():
-        for field in ("min_capsem_version", "max_capsem_version"):
-            bound = profile.get(field)
-            if bound is None:
-                continue
-            assert SEMVER.match(str(bound)), (
-                f"profile {name} declares {field}={bound!r}, which is not semver "
-                "and cannot be ordered against a Capsem release"
-            )
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    for channel, manifests in graph["manifests"].items():
+        for version, manifest in manifests.items():
+            for field in ("min_capsem_version", "max_capsem_version"):
+                bound = manifest["runtime"].get(field)
+                if bound is None:
+                    continue
+                assert SEMVER.match(str(bound)), f"{channel} {version} runtime {field}={bound!r}"
 
 
 def test_capsem_version_patch_is_not_a_timestamp() -> None:
@@ -103,8 +72,7 @@ def test_capsem_version_patch_is_not_a_timestamp() -> None:
     apart, and the patch communicates nothing to the operator writing a
     `min_capsem_version`.
     """
-    workspace = tomllib.loads((PROJECT_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
-    version = workspace["workspace"]["package"]["version"]
+    version = _workspace_version()
 
     assert SEMVER.match(version), f"workspace version is not semver: {version!r}"
     patch = int(version.split("+")[0].split("-")[0].split(".")[2])
@@ -141,28 +109,19 @@ def test_internal_crate_deps_do_not_pin_a_version() -> None:
 
 
 def test_release_skill_documents_semver_discipline() -> None:
-    """The rule an operator reads must match the rule capsem-admin enforces.
-
-    Corp operators author profiles without touching this repository's code, so
-    the skill is where they meet the requirement. If it drifts from the
-    enforcement, they learn the rule from a rejected release instead.
-    """
-    skill = (PROJECT_ROOT / "skills" / "release-process" / "SKILL.md").read_text(
+    """The rule an operator reads must match the rule the release enforces."""
+    skill = (PROJECT_ROOT / "skills" / "release-process" / "SKILL.md").read_text(encoding="utf-8")
+    reference_name = "references/versions-and-commit-discipline.md"
+    reference = (PROJECT_ROOT / "skills" / "release-process" / reference_name).read_text(
         encoding="utf-8"
     )
-    reference_name = "references/versions-and-commit-discipline.md"
-    reference = (
-        PROJECT_ROOT / "skills" / "release-process" / reference_name
-    ).read_text(encoding="utf-8")
 
     assert reference_name in skill
 
     for required in (
-        "parse_profile_revision",
-        "ensure_revision_advances",
+        "Semver is mandatory",
         "min_capsem_version",
-        "profiles-<hash>",
+        "`<workspace version>-<first 12 hex",
+        "`runtime-<channel>-<revision>`",
     ):
         assert required in reference, f"release version reference must document {required!r}"
-
-    assert "semver" in reference.lower(), "release version reference must name the scheme"

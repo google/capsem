@@ -1,4 +1,4 @@
-"""Profile-lane release graph guards."""
+"""Runtime-lane release graph guards."""
 
 from __future__ import annotations
 
@@ -14,109 +14,64 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
 DIFF_SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "release" / "check-release-graph-diff.py"
 FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
-)
-ADMIN_RELEASE_COMMAND_TESTS = (
-    PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "tests" / "release_commands.rs"
+    PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-graph-stable-nightly.json"
 )
 
 
-def test_profile_json_has_min_capsem_not_current_binary() -> None:
+def test_runtime_json_has_min_capsem_not_current_binary() -> None:
     source = RELEASE_GRAPH.read_text(encoding="utf-8")
 
-    assert "pub struct ProfileDocument" in source
+    assert "pub struct RuntimeDocument" in source
     assert "pub min_capsem_version: Option<String>" in source
-    profile_document = source.split("pub struct ProfileDocument", maxsplit=1)[1].split(
+    runtime_document = source.split("pub struct RuntimeDocument", maxsplit=1)[1].split(
         "pub struct SoftwareInventoryRow", maxsplit=1
     )[0]
-    assert "current_binary" not in profile_document
-    assert "current_assets" not in profile_document
-    assert "pub struct SoftwareInventoryRow" in source
-    assert "pub struct ProfileConfigRef" in source
-    assert "pub struct ProfileArchitectureImages" in source
-    assert "pub struct ProfileImageArtifactRef" in source
-    assert "profile_json_ownership_rejects_current_binary_and_assets" in sibling_tests(
-        RELEASE_GRAPH
+    assert "current_binary" not in runtime_document
+    assert "current_assets" not in runtime_document
+    assert "pub struct RuntimeArchitecture" in source
+    assert "pub struct RuntimeImageArtifactRef" in source
+    assert "runtime_document_validates_and_carries_min_capsem_not_current_binary" in (
+        sibling_tests(RELEASE_GRAPH)
     )
 
 
-def test_add_profile_image_version_does_not_deprecate_previous() -> None:
-    source = RELEASE_GRAPH.read_text(encoding="utf-8")
-
-    assert "pub struct ProfileVersionHistory" in source
-    assert "pub fn append_version" in source
-
-    tests = sibling_tests(RELEASE_GRAPH)
-    assert "profile_image_versions_append_without_deprecating_previous" in tests
-    assert "new profile image version appends" in tests
-
-
-def test_removed_profile_image_is_absent_not_status_removed() -> None:
-    source = RELEASE_GRAPH.read_text(encoding="utf-8")
-
-    assert "pub fn diff_profile_image_artifacts" in source
-    assert "pub removed: Vec<ProfileImageArtifactKey>" in source
-
-    tests = sibling_tests(RELEASE_GRAPH)
-    assert "profile_image_versions_removed_image_is_absent_not_status_removed" in tests
-    assert "removed is represented by absence, not by a status enum" in tests
-
-
-def test_admin_profile_release_is_one_lane_scoped_command() -> None:
+def test_admin_runtime_release_is_one_lane_scoped_command() -> None:
     admin_source = (PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs").read_text(
         encoding="utf-8"
     )
 
     assert "Validate(ReleaseValidateArgs)" in admin_source
     assert "Release(ReleaseArgs)" in admin_source
-    assert "ProfileReleaseSubcommand" not in admin_source
-    assert "Publish(ProfileReleaseTargetArgs)" not in admin_source
-    assert "Deprecate(ProfileReleaseTargetArgs)" not in admin_source
-    assert "Revoke(ProfileReleaseTargetArgs)" not in admin_source
-    assert "ProfileReleaseStatusArg" in admin_source
     assert "changed_channels: Vec<String>" in admin_source
     assert "changed_manifests: Vec<String>" in admin_source
-    assert "changed_profiles: Vec<String>" in admin_source
+    assert "changed_image_artifacts: usize" in admin_source
     assert "compatible_with_current_binary: bool" in admin_source
-
-    admin_tests = ADMIN_RELEASE_COMMAND_TESTS.read_text(encoding="utf-8")
-    assert "release_command_has_one_operator_shape" in admin_tests
-    assert (
-        "profile_release_merges_only_selected_profile_and_reports_compatibility"
-        in admin_tests
-    )
-    assert "profile_release_commands_publish_report_is_lane_scoped" in admin_tests
-    assert 'vec!["nightly"]' in admin_tests
-    assert "publishing nightly co-work must not mutate stable" in admin_tests
+    assert "runtime_revision: String" in admin_source
+    assert "publication_identity: String" in admin_source
 
 
-def test_co_work_nightly_update_does_not_touch_stable_or_binaries(tmp_path: Path) -> None:
+def test_nightly_runtime_update_does_not_touch_stable_or_binaries(
+    tmp_path: Path,
+) -> None:
     old = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     new = deepcopy(old)
     nightly = new["manifests"]["nightly"]["1.0.2"]
-    profile = nightly["profiles"]["co-work"]
+    runtime = nightly["runtime"]
 
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "f" * 64
-    profile["revision"] = "1.1.1-nightly"
-    profile["architectures"][0]["config"][0]["digest"]["sha256"] = "f" * 64
-    profile["architectures"][0]["images"][0]["digest"]["sha256"] = "e" * 64
-    profile["architectures"][0]["evidence"][0]["digest"]["blake3"] = "d" * 64
+    runtime["revision"] = "1.1.1-nightly"
+    runtime["architectures"][0]["images"][0]["digest"]["sha256"] = "e" * 64
+    runtime["architectures"][0]["evidence"][0]["digest"]["blake3"] = "d" * 64
 
-    summary = tmp_path / "profile-lane-summary.json"
+    summary = tmp_path / "runtime-lane-summary.json"
     result = _run_policy(
         tmp_path,
         old,
         new,
         "--lane",
-        "profile",
+        "runtime",
         "--channel",
         "nightly",
-        "--profile",
-        "co-work",
         "--summary",
         str(summary),
     )
@@ -124,69 +79,45 @@ def test_co_work_nightly_update_does_not_touch_stable_or_binaries(tmp_path: Path
     assert result.returncode == 0, result.stderr
     assert new["channels"]["stable"] == old["channels"]["stable"]
     assert new["manifests"]["stable"] == old["manifests"]["stable"]
-    assert nightly["packages"] == old["manifests"]["nightly"]["1.0.2"][
-        "packages"
-    ]
+    assert nightly["packages"] == old["manifests"]["nightly"]["1.0.2"]["packages"]
 
     report = json.loads(summary.read_text(encoding="utf-8"))
     assert report["accepted"] is True
-    assert report["lane"] == "profile"
+    assert report["lane"] == "runtime"
     assert report["channel"] == "nightly"
-    assert report["profile"] == "co-work"
     assert report["violations"] == []
     assert "channels.nightly.manifests.0.digest.sha256" in report["allowed_paths"]
+    assert "manifests.nightly.1.0.2.runtime.revision" in report["allowed_paths"]
     assert (
-        "manifests.nightly.1.0.2.profiles.co-work.architectures.0.config.0.digest.sha256"
-        in report["allowed_paths"]
-    )
-    assert (
-        "manifests.nightly.1.0.2.profiles.co-work.architectures.0.images.0.digest.sha256"
+        "manifests.nightly.1.0.2.runtime.architectures.0.images.0.digest.sha256"
         in report["allowed_paths"]
     )
 
 
-def test_profile_lane_rejects_other_profile_change(tmp_path: Path) -> None:
+def test_runtime_lane_rejects_other_channel_runtime_change(tmp_path: Path) -> None:
     old = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    old_profile = old["manifests"]["nightly"]["1.0.2"]["profiles"][
-        "co-work"
-    ]
-    old["manifests"]["nightly"]["1.0.2"]["profiles"]["code"] = deepcopy(
-        old_profile
-    )
-    old["manifests"]["nightly"]["1.0.2"]["profiles"]["code"][
-        "id"
-    ] = "code"
     new = deepcopy(old)
-    new["manifests"]["nightly"]["1.0.2"]["profiles"]["code"][
-        "revision"
-    ] = "1.1.1-nightly"
+    new["manifests"]["stable"]["1.0.2"]["runtime"]["revision"] = "1.1.1-stable"
 
-    summary = tmp_path / "profile-lane-summary.json"
+    summary = tmp_path / "runtime-lane-summary.json"
     result = _run_policy(
         tmp_path,
         old,
         new,
         "--lane",
-        "profile",
+        "runtime",
         "--channel",
         "nightly",
-        "--profile",
-        "co-work",
         "--summary",
         str(summary),
     )
 
     assert result.returncode == 1
-    assert (
-        "manifests.nightly.1.0.2.profiles.code.revision"
-        in result.stderr
-    )
+    assert "manifests.stable.1.0.2.runtime.revision" in result.stderr
     report = json.loads(summary.read_text(encoding="utf-8"))
     assert report["accepted"] is False
     assert report["allowed_paths"] == []
-    assert report["violations"] == [
-        "manifests.nightly.1.0.2.profiles.code.revision"
-    ]
+    assert report["violations"] == ["manifests.stable.1.0.2.runtime.revision"]
 
 
 def _run_policy(
@@ -197,7 +128,15 @@ def _run_policy(
     old_path.write_text(json.dumps(old), encoding="utf-8")
     new_path.write_text(json.dumps(new), encoding="utf-8")
     return subprocess.run(
-        [sys.executable, str(DIFF_SCRIPT), "--old", str(old_path), "--new", str(new_path), *args],
+        [
+            sys.executable,
+            str(DIFF_SCRIPT),
+            "--old",
+            str(old_path),
+            "--new",
+            str(new_path),
+            *args,
+        ],
         check=False,
         text=True,
         capture_output=True,

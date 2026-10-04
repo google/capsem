@@ -29,16 +29,15 @@ def test_no_invented_data() -> None:
     stable = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(
         encoding="utf-8"
     )
-    profile = (
-        RELEASE_SITE_DIST / "channels" / "stable" / "profiles" / "co-work" / "index.html"
-    ).read_text(encoding="utf-8")
+    runtime_page = (RELEASE_SITE_DIST / "channels" / "stable" / "runtime" / "index.html").read_text(
+        encoding="utf-8"
+    )
 
     stable_manifest = graph["manifests"]["stable"]["1.0.2"]
     stable_package = stable_manifest["packages"][0]
-    stable_profile = stable_manifest["profiles"]["co-work"]
-    profile_image_urls = [
+    runtime_urls = [
         item["url"]
-        for architecture in stable_profile["architectures"]
+        for architecture in stable_manifest["runtime"]["architectures"]
         for group in ("images", "evidence")
         for item in architecture[group]
     ]
@@ -46,18 +45,19 @@ def test_no_invented_data() -> None:
     assert stable_package["name"] not in index
     assert stable_package["url"] not in index
     assert "Capsem Packages" not in index
-    assert "Profile Evidence" not in stable
+    assert "Runtime Evidence" not in stable
     assert "Software Inventory" not in stable
-    for url in profile_image_urls:
+    for url in runtime_urls:
         assert url not in stable
+        assert url in runtime_page
 
-    assert "Capsem Packages" not in profile
-    assert "Manifest History" not in profile
-    assert stable_package["name"] not in profile
-    assert stable_package["evidence"][0]["url"] not in profile
+    assert "Capsem Packages" not in runtime_page
+    assert "Manifest History" not in runtime_page
+    assert stable_package["name"] not in runtime_page
+    assert stable_package["evidence"][0]["url"] not in runtime_page
 
 
-def test_no_profile_catalog_side_channel() -> None:
+def test_no_catalog_side_channel() -> None:
     build_release_site_from_fixture()
     graph = fixture_graph()
     forbidden = ("profile_catalog", "catalog.json", "capsem.profile_catalog")
@@ -70,14 +70,15 @@ def test_no_profile_catalog_side_channel() -> None:
         RELEASE_SITE_DIST / "index.html",
         RELEASE_SITE_DIST / "channels" / "stable" / "index.html",
         RELEASE_SITE_DIST / "channels" / "nightly" / "index.html",
-        RELEASE_SITE_DIST / "channels" / "stable" / "profiles" / "co-work" / "index.html",
-        RELEASE_SITE_DIST / "channels" / "nightly" / "profiles" / "co-work" / "index.html",
+        RELEASE_SITE_DIST / "channels" / "stable" / "runtime" / "index.html",
+        RELEASE_SITE_DIST / "channels" / "nightly" / "runtime" / "index.html",
     ]
+    pages = PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages"
     source_files = [
         PROJECT_ROOT / "build_system" / "release_site" / "src" / "lib" / "release-data.ts",
-        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "index.astro",
-        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "channels" / "[id].astro",
-        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "profiles" / "[id].astro",
+        pages / "index.astro",
+        pages / "channels" / "[id].astro",
+        pages / "channels" / "[channel]" / "runtime.astro",
     ]
 
     for path in generated_pages + source_files:
@@ -111,16 +112,15 @@ def test_astro_renders_json_graph(tmp_path: Path) -> None:
     graph = fixture_graph()
     stable_manifest = graph["manifests"]["stable"]["1.0.2"]
     package = stable_manifest["packages"][0]
-    profile = stable_manifest["profiles"]["co-work"]
+    runtime = stable_manifest["runtime"]
     binary = package["binaries"][0]
-    architecture = profile["architectures"][0]
+    architecture = runtime["architectures"][0]
 
     graph["channels"]["stable"]["label"] = "Stable Graph Mutation"
     graph["channels"]["stable"]["description"] = "Description rendered from mutated channels JSON."
     package["name"] = "Capsem-json-mutated.pkg"
     binary["description"] = "Binary description rendered from mutated package JSON."
-    profile["name"] = "Co-work Graph Mutation"
-    profile["description"] = "Profile description rendered from mutated manifest JSON."
+    runtime["revision"] = "runtime-graph-mutation"
     architecture["software"][0]["version"] = "99.99.99-json-mutation"
     architecture["images"][0]["name"] = "rootfs-json-mutated.erofs"
 
@@ -133,20 +133,19 @@ def test_astro_renders_json_graph(tmp_path: Path) -> None:
     package_page = (
         dist / "channels" / "stable" / "packages" / package["id"] / "index.html"
     ).read_text(encoding="utf-8")
-    profile_page = (
-        dist / "channels" / "stable" / "profiles" / "co-work" / "index.html"
-    ).read_text(encoding="utf-8")
+    runtime_page = (dist / "channels" / "stable" / "runtime" / "index.html").read_text(
+        encoding="utf-8"
+    )
 
     assert "Stable Graph Mutation" in index
     assert "Description rendered from mutated channels JSON." in index
     assert "Capsem-json-mutated.pkg" in stable
     assert "Capsem-json-mutated.pkg" in package_page
     assert "Binary description rendered from mutated package JSON." in package_page
-    assert "Co-work Graph Mutation" in stable
-    assert "Co-work Graph Mutation" in profile_page
-    assert "Profile description rendered from mutated manifest JSON." in profile_page
-    assert "99.99.99-json-mutation" in profile_page
-    assert "rootfs-json-mutated.erofs" in profile_page
+    assert "runtime-graph-mutation" in stable
+    assert "runtime-graph-mutation" in runtime_page
+    assert "99.99.99-json-mutation" in runtime_page
+    assert "rootfs-json-mutated.erofs" in runtime_page
 
 
 def test_rendered_values_map_to_owning_json_paths(tmp_path: Path) -> None:
@@ -182,27 +181,18 @@ def test_rendered_values_map_to_owning_json_paths(tmp_path: Path) -> None:
     binary["digest"] = _digest("json-owned-binary")
     binary["sbom_component_ref"] = "SPDXRef-File-json-owned-binary"
 
-    profile = manifest["profiles"]["co-work"]
-    profile["name"] = "JSON-owned Co-work"
-    profile["description"] = "JSON-owned profile description"
-    profile["revision"] = "2030.01.02-json"
-    profile["min_capsem_version"] = "9.8.7"
+    runtime = manifest["runtime"]
+    runtime["revision"] = "2030.01.02-json"
+    runtime["min_capsem_version"] = "9.8.7"
 
     architecture = next(
-        item for item in profile["architectures"] if item["architecture"] == "arm64"
+        item for item in runtime["architectures"] if item["architecture"] == "arm64"
     )
     software = architecture["software"][0]
     software["name"] = "@json/owned-tool"
     software["version"] = "7.6.5"
     software["source"] = "npm-json-owned"
     software["digest"] = _digest("json-owned-software")
-
-    config = architecture["config"][0]
-    config["kind"] = "json_owned_config"
-    config["path"] = "profiles/co-work/json-owned-config.json"
-    config["url"] = "/profiles/releases/json-owned/co-work/json-owned-config.json"
-    config["bytes"] = 4567
-    config["digest"] = _digest("json-owned-config")
 
     image = architecture["images"][0]
     image["kind"] = "json-owned-rootfs"
@@ -216,7 +206,7 @@ def test_rendered_values_map_to_owning_json_paths(tmp_path: Path) -> None:
     )
     evidence["url"] = "https://release.example.invalid/json-owned-software-inventory.json"
     evidence["bytes"] = 2345
-    evidence["digest"] = _digest("json-owned-profile-evidence")
+    evidence["digest"] = _digest("json-owned-runtime-evidence")
 
     image_evidence = next(item for item in architecture["evidence"] if item["kind"] == "abom")
     image_evidence["url"] = "https://release.example.invalid/json-owned-abom.cdx.json"
@@ -234,9 +224,9 @@ def test_rendered_values_map_to_owning_json_paths(tmp_path: Path) -> None:
     package_page = (
         dist / "channels" / "stable" / "packages" / package["id"] / "index.html"
     ).read_text(encoding="utf-8")
-    profile_page = (
-        dist / "channels" / "stable" / "profiles" / "co-work" / "index.html"
-    ).read_text(encoding="utf-8")
+    runtime_page = (dist / "channels" / "stable" / "runtime" / "index.html").read_text(
+        encoding="utf-8"
+    )
 
     _assert_values(
         index,
@@ -268,7 +258,7 @@ def test_rendered_values_map_to_owning_json_paths(tmp_path: Path) -> None:
         ],
     )
     _assert_values(
-        _section(stable_page, "Capsem Packages", "Profile References"),
+        _section(stable_page, "Capsem Packages", ">Runtime</h2>"),
         "channel packages section",
         [
             package["name"],
@@ -280,9 +270,9 @@ def test_rendered_values_map_to_owning_json_paths(tmp_path: Path) -> None:
         ],
     )
     _assert_values(
-        _section(stable_page, "Profile References", "</section>"),
-        "profile references section",
-        [profile["name"], profile["revision"], profile["min_capsem_version"], "arm64"],
+        _section(stable_page, ">Runtime</h2>", "</section>"),
+        "channel runtime section",
+        [runtime["revision"], runtime["min_capsem_version"], "arm64"],
     )
 
     _assert_values(
@@ -321,48 +311,13 @@ def test_rendered_values_map_to_owning_json_paths(tmp_path: Path) -> None:
     )
 
     _assert_values(
-        _section(profile_page, "Profile", "Architecture arm64"),
-        "profile summary section",
-        [
-            profile["name"],
-            profile["description"],
-            profile["revision"],
-            profile["min_capsem_version"],
-        ],
+        _section(runtime_page, ">Runtime</h2>", "Architecture arm64"),
+        "runtime summary section",
+        [runtime["revision"], runtime["min_capsem_version"]],
     )
     _assert_values(
-        _section(profile_page, "Profile Evidence", "Installed Software"),
-        "profile evidence section",
-        [
-            "json-owned-software-inventory.json",
-            "2,345",
-            _hash_label(evidence["digest"]["sha256"]),
-        ],
-    )
-    _assert_values(
-        _section(profile_page, "Installed Software", "Config Files"),
-        "installed software section",
-        [
-            software["name"],
-            software["version"],
-            software["source"],
-            _hash_label(software["digest"]["blake3"]),
-        ],
-    )
-    _assert_values(
-        _section(profile_page, "Config Files", "Profile Images"),
-        "config files section",
-        [
-            config["kind"],
-            config["path"],
-            config["url"],
-            "4,567",
-            _hash_label(config["digest"]["sha256"]),
-        ],
-    )
-    _assert_values(
-        _section(profile_page, "Profile Images", "Profile Image Evidence"),
-        "profile images section",
+        _section(runtime_page, "Runtime Images", "Runtime Evidence"),
+        "runtime images section",
         [
             image["kind"],
             image["name"],
@@ -372,13 +327,26 @@ def test_rendered_values_map_to_owning_json_paths(tmp_path: Path) -> None:
         ],
     )
     _assert_values(
-        _section(profile_page, "Profile Image Evidence", "</section>"),
-        "profile image evidence section",
+        _section(runtime_page, "Runtime Evidence", "Installed Software"),
+        "runtime evidence section",
         [
+            "json-owned-software-inventory.json",
+            "2,345",
+            _hash_label(evidence["digest"]["sha256"]),
             "json-owned-abom.cdx.json",
             "3,456",
             _hash_label(image_evidence["digest"]["sha256"]),
             _hash_label(image_evidence["digest"]["blake3"]),
+        ],
+    )
+    _assert_values(
+        _section(runtime_page, "Installed Software", "</section>"),
+        "installed software section",
+        [
+            software["name"],
+            software["version"],
+            software["source"],
+            _hash_label(software["digest"]["blake3"]),
         ],
     )
 
@@ -474,16 +442,10 @@ def test_release_site_validator_checks_content_not_file_existence(
         f"{checker.hash_label(binary['digest']['sha256'])}"
     ) in stale_package.detail
 
-    profile = manifest["profiles"]["co-work"]
-    architecture = profile["architectures"][0]
-    image = architecture["images"][0]
-    profile_pages = dict(pages)
-    profile_pages[f"{site}/channels/{channel}/profiles/co-work/"] = profile_pages[
-        f"{site}/channels/{channel}/profiles/co-work/"
-    ].replace(
-        checker.hash_label(image["digest"]["sha256"]),
-        "stale-img-sha...",
-    )
+    runtime_pages = dict(pages)
+    runtime_pages[f"{site}/channels/{channel}/"] = runtime_pages[
+        f"{site}/channels/{channel}/"
+    ].replace(manifest["runtime"]["revision"], "stale-runtime-revision")
     patch_release_fetches(
         monkeypatch,
         checker,
@@ -491,14 +453,13 @@ def test_release_site_validator_checks_content_not_file_existence(
         channels=channels,
         manifest_payload=manifest_payload,
         artifact_bytes=artifact_bytes,
-        pages=profile_pages,
+        pages=runtime_pages,
     )
-    stale_profile = checker.check_release_site_contract(site, channel)
-    assert not stale_profile.ok
+    stale_runtime = checker.check_release_site_contract(site, channel)
+    assert not stale_runtime.ok
     assert (
-        "profile page missing profile co-work architecture arm64 image "
-        f"sha256 for {image['url']}"
-    ) in stale_profile.detail
+        f"channel page {channel} missing runtime revision {manifest['runtime']['revision']}"
+    ) in stale_runtime.detail
 
 
 def load_remote_readiness_checker() -> Any:
@@ -508,11 +469,10 @@ def load_remote_readiness_checker() -> Any:
 def minimal_release_graph(
     checker: Any,
 ) -> tuple[dict[str, Any], dict[str, Any], bytes, dict[str, bytes]]:
+    runtime_base = "/runtime/releases/stable/0.7.0-0123456789ab/arm64"
+    images = (("kernel", "vmlinuz"), ("initrd", "initrd.img"), ("rootfs", "rootfs.erofs"))
     artifact_bytes = {
-        "/profiles/releases/2026.0703.1/co-work/arm64/mcp.json": b'{"mcpServers":{}}\n',
-        "/assets/releases/2026.0703.1/arm64-vmlinuz": b"kernel image bytes\n",
-        "/assets/releases/2026.0703.1/arm64-initrd.img": b"initrd image bytes\n",
-        "/assets/releases/2026.0703.1/arm64-rootfs.erofs": b"rootfs image bytes\n",
+        f"{runtime_base}/{name}": f"{kind} image bytes\n".encode() for kind, name in images
     }
     manifest: dict[str, Any] = {
         "version": "1.0.2+assets.2026.0703.1",
@@ -545,104 +505,39 @@ def minimal_release_graph(
                 ],
             }
         ],
-        "profiles": {
-            "co-work": {
-                "id": "co-work",
-                "name": "Co-work",
-                "description": "Collaborative agent profile.",
-                "revision": "1.2.0",
-                "min_capsem_version": "1.4.0",
-                "architectures": [
-                    {
-                        "architecture": "arm64",
-                        "software": [
-                            {
-                                "name": "@openai/codex",
-                                "version": "0.142.5",
-                                "source": "npm",
-                                "architecture": "arm64",
-                                "evidence": (
-                                    "/profiles/releases/2026.0703.1/co-work/arm64/"
-                                    "npm-packages.txt"
-                                ),
-                                "digest": digest(checker, b"codex software row"),
-                            }
-                        ],
-                        "config": [
-                            {
-                                "kind": "mcp",
-                                "path": "profiles/co-work/mcp.json",
-                                "url": "/profiles/releases/2026.0703.1/co-work/arm64/mcp.json",
-                                "bytes": len(
-                                    artifact_bytes[
-                                        "/profiles/releases/2026.0703.1/co-work/arm64/mcp.json"
-                                    ]
-                                ),
-                                "digest": digest(
-                                    checker,
-                                    artifact_bytes[
-                                        "/profiles/releases/2026.0703.1/co-work/arm64/mcp.json"
-                                    ],
-                                ),
-                            }
-                        ],
-                        "images": [
-                            {
-                                "kind": "kernel",
-                                "name": "vmlinuz",
-                                "url": "/assets/releases/2026.0703.1/arm64-vmlinuz",
-                                "status": "current",
-                                "bytes": len(
-                                    artifact_bytes[
-                                        "/assets/releases/2026.0703.1/arm64-vmlinuz"
-                                    ]
-                                ),
-                                "digest": digest(
-                                    checker,
-                                    artifact_bytes[
-                                        "/assets/releases/2026.0703.1/arm64-vmlinuz"
-                                    ],
-                                ),
-                            },
-                            {
-                                "kind": "initrd",
-                                "name": "initrd.img",
-                                "url": "/assets/releases/2026.0703.1/arm64-initrd.img",
-                                "status": "current",
-                                "bytes": len(
-                                    artifact_bytes[
-                                        "/assets/releases/2026.0703.1/arm64-initrd.img"
-                                    ]
-                                ),
-                                "digest": digest(
-                                    checker,
-                                    artifact_bytes[
-                                        "/assets/releases/2026.0703.1/arm64-initrd.img"
-                                    ],
-                                ),
-                            },
-                            {
-                                "kind": "rootfs",
-                                "name": "rootfs.erofs",
-                                "url": "/assets/releases/2026.0703.1/arm64-rootfs.erofs",
-                                "status": "current",
-                                "bytes": len(
-                                    artifact_bytes[
-                                        "/assets/releases/2026.0703.1/arm64-rootfs.erofs"
-                                    ]
-                                ),
-                                "digest": digest(
-                                    checker,
-                                    artifact_bytes[
-                                        "/assets/releases/2026.0703.1/arm64-rootfs.erofs"
-                                    ],
-                                ),
-                            }
-                        ],
-                        "evidence": [],
-                    }
-                ],
-            }
+        "runtime": {
+            "revision": "0.7.0-0123456789ab",
+            "status": "current",
+            "min_capsem_version": "1.4.0",
+            "architectures": [
+                {
+                    "architecture": "arm64",
+                    "package_inventory_revision": "0.7.0-0123456789ab",
+                    "image_revision": "0.7.0-0123456789ab",
+                    "software": [
+                        {
+                            "name": "@openai/codex",
+                            "version": "0.142.5",
+                            "source": "npm",
+                            "architecture": "arm64",
+                            "evidence": f"{runtime_base}/software-inventory.json",
+                            "digest": digest(checker, b"codex software row"),
+                        }
+                    ],
+                    "images": [
+                        {
+                            "kind": kind,
+                            "name": name,
+                            "url": f"{runtime_base}/{name}",
+                            "status": "current",
+                            "bytes": len(artifact_bytes[f"{runtime_base}/{name}"]),
+                            "digest": digest(checker, artifact_bytes[f"{runtime_base}/{name}"]),
+                        }
+                        for kind, name in images
+                    ],
+                    "evidence": [],
+                }
+            ],
         },
     }
     manifest_payload = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
@@ -679,17 +574,7 @@ def minimal_release_pages(
     manifest_record = channel_record["manifests"][0]
     package = manifest["packages"][0]
     binary = package["binaries"][0]
-    profile = manifest["profiles"]["co-work"]
-    architecture = profile["architectures"][0]
-    config = architecture["config"][0]
-    image_digest_labels = [
-        label
-        for image in architecture["images"]
-        for label in (
-            checker.hash_label(image["digest"]["sha256"]),
-            checker.hash_label(image["digest"]["blake3"]),
-        )
-    ]
+    runtime = manifest["runtime"]
     return {
         f"{site}/": " ".join(
             [
@@ -705,10 +590,9 @@ def minimal_release_pages(
                 manifest_record["version"],
                 manifest_record["url"],
                 package["name"],
-                profile["name"],
-                profile["id"],
-                profile["revision"],
-                profile["min_capsem_version"],
+                package["version"],
+                runtime["revision"],
+                runtime["min_capsem_version"],
             ]
         ),
         f"{site}/channels/{channel}/packages/{package['id']}/": " ".join(
@@ -725,19 +609,6 @@ def minimal_release_pages(
                 checker.hash_label(binary["digest"]["sha256"]),
                 checker.hash_label(binary["digest"]["blake3"]),
                 binary["sbom_component_ref"],
-            ]
-        ),
-        f"{site}/channels/{channel}/profiles/co-work/": " ".join(
-            [
-                profile["name"],
-                profile["description"],
-                profile["id"],
-                profile["revision"],
-                profile["min_capsem_version"],
-                architecture["architecture"],
-                checker.hash_label(config["digest"]["sha256"]),
-                checker.hash_label(config["digest"]["blake3"]),
-                *image_digest_labels,
             ]
         ),
     }
@@ -774,7 +645,7 @@ def patch_release_fetches(
         path = url.removeprefix(site)
         if path in {"/", "/channels.json", "/assets/stable/manifest.json"}:
             return checker.FetchHeaders({"cache-control": "no-cache, must-revalidate"})
-        if path.startswith(("/assets/releases/", "/profiles/releases/")):
+        if path.startswith(("/assets/releases/", "/runtime/releases/")):
             return checker.FetchHeaders(
                 {"cache-control": "public, max-age=31536000, immutable"}
             )

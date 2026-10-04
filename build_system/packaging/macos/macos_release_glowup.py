@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 from capsem_builder.gate import cachelayout
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.content import RuntimeContent
 from capsem_builder.gate.releaseauthoring import author_native_candidate
 from capsem_builder.gate.sourcecommit import SourceCommit, source_commit_for_checkout
 from capsem_builder.release.tools import marketing_install_surface
@@ -41,13 +41,11 @@ from capsem_builder.release.tools.release_transition_candidates import (
     validate_physical_evidence,
 )
 from macos_candidate_content import hardlink_or_copy as hardlink_or_copy
-from macos_candidate_content import (
-    localize_candidate_profile_urls,
-    stage_candidate_assets,
-)
+from macos_candidate_content import stage_candidate_assets
 
 GUEST_RELEASE_ROOT = "http://127.0.0.1:18765/candidate"
 GUEST_ASSET_ROOT = "file:///Volumes/My%20Shared%20Files/capsem-assets"
+
 
 def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     merged = os.environ.copy()
@@ -55,6 +53,7 @@ def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
         merged.update(env)
     print("+", shlex.join(command), flush=True)
     subprocess.run(command, cwd=ROOT, env=merged, check=True)
+
 
 def project_version() -> str:
     manifest = (ROOT / "Cargo.toml").read_text()
@@ -73,11 +72,11 @@ def prepare_candidate_manifest(
     sbom: Path,
     version: str,
     channel: str,
-    content: ProfileContent,
+    content: RuntimeContent,
     config: gate_config.GateConfig,
     source_commit: SourceCommit,
     work_dir: Path,
-) -> tuple[Path, Path, Path]:
+) -> tuple[Path, Path]:
     """Generate the candidate graph from the exact package release pipeline."""
     shutil.rmtree(work_dir, ignore_errors=True)
     work_dir.mkdir(parents=True)
@@ -99,7 +98,6 @@ def prepare_candidate_manifest(
         runner=run,
         admin=admin,
         assets_dir=content.assets,
-        profiles_dir=content.profiles(config),
         channel=channel,
         version=version,
         source_commit=source_commit,
@@ -110,7 +108,6 @@ def prepare_candidate_manifest(
         graph_manifest=dist / "assets" / channel / config.install.manifest_name,
         manifest_version=config.install.manifest_version,
     )
-    localize_candidate_profile_urls(manifest_path)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     artifact = ArtifactIdentity.from_path(
         package,
@@ -119,7 +116,7 @@ def prepare_candidate_manifest(
         architecture="arm64",
     )
     assert_manifest_artifact(manifest, artifact)
-    return manifest_path, asset_share, dist
+    return manifest_path, asset_share
 
 
 def finalize_native_report(
@@ -174,8 +171,8 @@ def finalize_native_report(
         artifact=artifact,
         channel=channel,
     )
-    if original_pairing.profiles_sha256 == updated_pairing.profiles_sha256:
-        raise RuntimeError("macOS transition candidate did not change profile identity")
+    if original_pairing.runtime_sha256 == updated_pairing.runtime_sha256:
+        raise RuntimeError("macOS transition candidate did not change runtime identity")
     manifest_source = installed.get("manifest_url")
     if not isinstance(manifest_source, str):
         raise RuntimeError("macOS installed evidence omitted its manifest source")
@@ -200,7 +197,7 @@ def finalize_native_report(
             winterfell_passed=True,
         ),
         build_transition_evidence(
-            kind=TransitionKind.PROFILE_ONLY,
+            kind=TransitionKind.RUNTIME_ONLY,
             before=original_pairing,
             after=updated_pairing,
             result="activated",
@@ -230,7 +227,7 @@ def finalize_native_report(
         transitions=transitions,
         expected_transitions=(
             TransitionKind.FRESH_INSTALL,
-            TransitionKind.PROFILE_ONLY,
+            TransitionKind.RUNTIME_ONLY,
             TransitionKind.TAMPER_REJECTION,
         ),
     )
@@ -262,7 +259,7 @@ def main() -> int:
     marketing_install_surface.validate_checked_in_marketing_install_surface(ROOT)
     config = gate_config.load(ROOT)
     content_root = Path(args.content_root)
-    content = ProfileContent.isolated(
+    content = RuntimeContent.isolated(
         config,
         content_root if content_root.is_absolute() else ROOT / content_root,
     )
@@ -285,14 +282,12 @@ def main() -> int:
             manifest_url,
             "--assets-dir",
             str(content.assets),
-            "--config-root",
-            str(content.config),
             "--sbom",
             str(sbom),
         ]
     )
     package = config.path(config.outputs.packages) / f"Capsem-{args.version}.pkg"
-    manifest_path, asset_share, profile_share = prepare_candidate_manifest(
+    manifest_path, asset_share = prepare_candidate_manifest(
         package=package,
         sbom=sbom,
         version=args.version,
@@ -325,8 +320,6 @@ def main() -> int:
             str(sbom),
             "--asset-share",
             str(asset_share),
-            "--profile-share",
-            str(profile_share),
             "--channel",
             args.channel,
             "--work-dir",

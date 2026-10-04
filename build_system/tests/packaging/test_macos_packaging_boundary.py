@@ -154,7 +154,7 @@ def test_local_package_consumes_the_binaries_cargo_produced(tmp_path: Path) -> N
                     exit 0
                 fi
             }
-            source "$1" --assets-dir "$2" --config-root "$2" --sbom "$2/sbom.spdx.json"
+            source "$1" --assets-dir "$2" --sbom "$2/sbom.spdx.json"
             ''',
             "package-handoff", str(script), str(content),
         ],

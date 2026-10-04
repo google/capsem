@@ -199,7 +199,7 @@ _GATE_SOURCE_COMMIT_VARIABLE = _GATE_CONFIG.environment.source_commit
 _GATE_QUALIFICATION_VARIABLES = (
     _GATE_CONFIG.modules.release_input_dir,
     _GATE_CONFIG.modules.release_package,
-    _GATE_CONFIG.modules.release_profile,
+    _GATE_CONFIG.modules.release_runtime,
     _GATE_CONFIG.modules.release_bin_dir,
 )
 _ARCH = "arm64" if os.uname().machine == "arm64" else "x86_64"

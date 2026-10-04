@@ -56,16 +56,18 @@ def test_local_install_builds_content_package_then_installs_that_exact_package(
     assert f"cache/target/packages/Capsem-{version}.pkg" in rendered
 
 
-def test_local_install_packages_the_verified_base_profile_pair(
+def test_local_install_packages_the_verified_runtime_assets_without_a_catalog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rendered = _plan(monkeypatch).describe()
-    verified = ROOT / "cache" / "target" / "tests" / "ironbank" / "code"
+    verified = ROOT / "cache" / "target" / "tests" / "ironbank"
 
     assert f"--assets-dir {verified / 'assets'}" in rendered
-    assert f"--config-root {verified / 'config'}" in rendered
     assert f"--assets-dir {ROOT / 'assets'}" not in rendered
-    assert f"--config-root {ROOT / 'cache/target/config'}" not in rendered
+    package_step = next(
+        line for line in rendered.splitlines() if "build-test-macos-package.sh" in line
+    )
+    assert "--config-root" not in package_step
 
 
 def test_public_install_warns_then_only_dispatches_local_install() -> None:
@@ -82,7 +84,7 @@ def test_public_install_warns_then_only_dispatches_local_install() -> None:
         "@echo \"Agent: optional hands-on local testing only; 'just install' "
         "does not qualify or unblock a release. Releases need 'just test "
         "<commit>' to pass first, then 'just release-binaries ...' or "
-        "'just release-profile ...'.\"",
+        "'just release-assets ...'.\"",
         "uv run --project build_system --frozen capsem-gate local-install",
     ]
 
@@ -315,7 +317,9 @@ def test_installed_glowup_owns_the_release_regression_story_matrix() -> None:
     assert "old_service_pid" in tart_regressions
     assert "stage_guest_scripts(PROJECT_ROOT, share)" in tart_host
     assert "macos-tart-regression-probes.sh" in tart_content
-    assert "PERSISTENT_PIN_EVIDENCE" in physical_boot
+    assert "PERSISTENT_RESUME_EVIDENCE" in physical_boot
+    assert "--profile" not in physical_boot
+    assert "CAPSEM_PROFILES_DIR" not in physical_boot
     assert "--keep-session" in physical_boot
     assert '"persistent_pin_resume": True' in physical_boot
     assert '"persistent_pin_resume"' in native_check

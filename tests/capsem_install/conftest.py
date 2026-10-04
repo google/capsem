@@ -311,7 +311,6 @@ def _ensure_installed() -> None:
 
     bin_src = os.environ.get("CAPSEM_BIN_SRC", "cache/target/cargo/debug")
     assets_src = os.environ.get("CAPSEM_ASSETS_SRC", "assets")
-    config_src = os.environ.get("CAPSEM_CONFIG_SRC", "cache/target/config")
     script = (
         Path(__file__).parent.parent.parent
         / "build_system"
@@ -321,7 +320,7 @@ def _ensure_installed() -> None:
     )
     assert script.exists(), f"simulate-install.sh not found at {script}"
     result = subprocess.run(
-        ["bash", str(script), bin_src, assets_src, config_src],
+        ["bash", str(script), bin_src, assets_src],
         capture_output=True,
         text=True,
         timeout=60,

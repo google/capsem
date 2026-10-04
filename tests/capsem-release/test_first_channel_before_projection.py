@@ -12,29 +12,24 @@ def _source() -> dict[str, object]:
         "channel": "nightly",
         "status": "current",
         "packages": [{"name": "Capsem_1.5_amd64.deb", "status": "current"}],
-        "profiles": {
-            "code": {
-                "revision": "2026.07",
-                "architectures": [],
-            }
-        },
+        "runtime": {"revision": "0.7.0-0123456789ab", "architectures": []},
     }
 
 
 def _bootstrapped_source() -> dict[str, object]:
     """What `bootstrap_first_party_channel_source` actually emits.
 
-    A channel being bootstrapped is absent, so it has no profiles yet. This is
+    A channel being bootstrapped is absent, so it has no runtime yet. This is
     the only shape the workflow can hand the projector, and the projector used
-    to reject it -- the hand-written fixture below carried profiles no cold
+    to reject it -- the hand-written fixture carried a release unit no cold
     start could produce, so the tests agreed with the code and both were wrong.
     """
     source = _source()
-    source["profiles"] = {}
+    del source["runtime"]
     return source
 
 
-def test_projection_accepts_the_profileless_source_a_bootstrap_emits() -> None:
+def test_projection_accepts_the_runtimeless_source_a_bootstrap_emits() -> None:
     source = _bootstrapped_source()
 
     before = PROJECTOR.project_first_channel_before(
@@ -48,7 +43,7 @@ def test_projection_accepts_the_profileless_source_a_bootstrap_emits() -> None:
 
 
 def test_projection_empties_both_families_because_the_channel_did_not_exist() -> None:
-    """An absent channel has no before-state at all -- no profiles, no packages.
+    """An absent channel has no before-state at all -- no runtime, no packages.
 
     The packages are inherited from the donor channel and validated for shape,
     never for existence. Once a donor is retired its URLs are dead, and a
@@ -64,8 +59,10 @@ def test_projection_empties_both_families_because_the_channel_did_not_exist() ->
         retired=False,
     )
 
-    assert before == {**source, "profiles": {}, "packages": []}
-    assert source["profiles"], "the caller's manifest must not be mutated"
+    expected = {**source, "packages": []}
+    del expected["runtime"]
+    assert before == expected
+    assert source["runtime"], "the caller's manifest must not be mutated"
     assert source["packages"], "the caller's manifest must not be mutated"
 
 
@@ -74,7 +71,7 @@ def test_projection_empties_both_families_because_the_channel_did_not_exist() ->
     [
         ("nightly", False, None, "bootstrap authority"),
         ("stable", True, None, "declares channel"),
-        ("nightly", True, ("profiles", []), "profiles must be an object"),
+        ("nightly", True, ("runtime", []), "runtime must be an object"),
         ("nightly", True, ("packages", []), "package cohort"),
     ],
 )
@@ -103,7 +100,7 @@ def test_retired_channel_projects_an_empty_same_channel_source() -> None:
         "channel": "stable",
         "status": "current",
         "packages": [],
-        "profiles": {"code": {"revision": "99.99.99"}},
+        "runtime": {"revision": "99.99.99"},
     }
 
     projected = PROJECTOR.project_first_channel_before(
@@ -114,7 +111,7 @@ def test_retired_channel_projects_an_empty_same_channel_source() -> None:
     )
 
     assert projected["packages"] == []
-    assert projected["profiles"] == {}
+    assert "runtime" not in projected
 
 
 def test_an_empty_donor_is_rejected_without_exact_retirement() -> None:
@@ -123,7 +120,6 @@ def test_an_empty_donor_is_rejected_without_exact_retirement() -> None:
         "channel": "nightly",
         "status": "current",
         "packages": [],
-        "profiles": {},
     }
 
     with pytest.raises(ValueError, match="official package cohort"):

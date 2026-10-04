@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -65,19 +64,17 @@ def _version_at_least(actual: str, minimum: str) -> bool:
 
 
 def _is_release_graph(manifest: dict) -> bool:
-    return isinstance(manifest.get("packages"), list) and isinstance(
-        manifest.get("profiles"), dict
-    )
+    return isinstance(manifest.get("packages"), list) and "runtime" in manifest
 
 
-def _release_graph_profile_arch(manifest: dict, profile_id: str, arch: str) -> dict | None:
-    profile = manifest.get("profiles", {}).get(profile_id)
-    if not isinstance(profile, dict):
+def _release_graph_runtime_arch(manifest: dict, arch: str) -> dict | None:
+    runtime = manifest.get("runtime")
+    if not isinstance(runtime, dict):
         return None
     return next(
         (
             architecture
-            for architecture in profile.get("architectures", [])
+            for architecture in runtime.get("architectures", [])
             if architecture.get("architecture") == arch
         ),
         None,
@@ -177,7 +174,8 @@ class TestInstalledLayoutContract:
             assert data.get("status") == "current"
             assert data.get("version"), "release graph missing version"
             assert data["packages"], "release graph missing packages"
-            assert data["profiles"], "release graph missing profiles"
+            assert "profiles" not in data, "release graph still publishes profiles"
+            assert data["runtime"], "release graph missing runtime"
             return
 
         # Standalone development installs still exercise the runtime-only v2
@@ -217,16 +215,16 @@ class TestInstalledLayoutContract:
 
         data = json.loads(manifest_path.read_text())
         if _is_release_graph(data):
-            profile_arch = _release_graph_profile_arch(data, "code", arch)
-            if profile_arch is None:
-                pytest.skip(f"no code/{arch} entry in manifest (cross-arch install)")
+            runtime_arch = _release_graph_runtime_arch(data, arch)
+            if runtime_arch is None:
+                pytest.skip(f"no runtime/{arch} entry in manifest (cross-arch install)")
             arch_assets = {
                 image["name"]: {
                     "hash": image["digest"]["blake3"],
                     "sha256": image["digest"]["sha256"],
                     "size": image["bytes"],
                 }
-                for image in profile_arch.get("images", [])
+                for image in runtime_arch.get("images", [])
                 if image.get("status", "current") != "revoked"
             }
         else:
@@ -276,18 +274,17 @@ class TestInstalledLayoutContract:
             }
             if version in current_versions:
                 return
-            compatible_profiles = [
-                profile_id
-                for profile_id, profile in data["profiles"].items()
-                if profile.get("status", "current") != "revoked"
-                and _version_at_least(version, profile.get("min_capsem_version", ""))
+            runtime = data["runtime"]
+            assert (
+                isinstance(runtime, dict)
+                and runtime.get("status", "current") != "revoked"
+                and _version_at_least(version, runtime.get("min_capsem_version") or "")
                 and (
-                    not profile.get("max_capsem_version")
-                    or _version_at_least(profile["max_capsem_version"], version)
+                    not runtime.get("max_capsem_version")
+                    or _version_at_least(runtime["max_capsem_version"], version)
                 )
-            ]
-            assert compatible_profiles, (
-                f"installed version {version} has no compatible profile; "
+            ), (
+                f"installed version {version} is not compatible with the runtime; "
                 f"manifest current package versions={sorted(current_versions)}"
             )
             return
@@ -317,59 +314,11 @@ class TestInstalledLayoutContract:
         assert CAPSEM_DIR.exists()
         assert (CAPSEM_DIR / "bin").is_dir()
         assert (CAPSEM_DIR / "assets").is_dir()
-        assert (CAPSEM_DIR / "profiles").is_dir()
         assert (CAPSEM_DIR / "run").is_dir()
 
-    def test_installed_profile_catalog_exists(self, installed_layout):
-        """Installed service must load materialized profiles, not compiled source fallback."""
-        profile = CAPSEM_DIR / "profiles" / "code" / "profile.toml"
-        assert profile.exists(), (
-            f"materialized profile missing: {profile}\n"
-            "without this, installed service falls back to compiled source profile pins"
-        )
-        assert (CAPSEM_DIR / "profiles" / "code" / "enforcement.toml").exists()
-
-    def test_installed_profile_asset_pins_match_manifest(self, installed_layout):
-        """Profile-owned asset pins must match the installed asset manifest."""
-        import platform
-
-        profile_path = CAPSEM_DIR / "profiles" / "code" / "profile.toml"
-        manifest_path = ASSETS_DIR / "manifest.json"
-        if not manifest_path.exists():
-            pytest.skip("no manifest.json")
-        assert profile_path.exists(), f"profile missing: {profile_path}"
-
-        machine = platform.machine().lower()
-        arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
-        manifest = json.loads(manifest_path.read_text())
-        if _is_release_graph(manifest):
-            profile_arch = _release_graph_profile_arch(manifest, "code", arch)
-            if profile_arch is None:
-                pytest.skip(f"no code/{arch} entry in manifest")
-            manifest_assets = {
-                image["kind"]: image["digest"]["blake3"]
-                for image in profile_arch.get("images", [])
-                if image.get("status", "current") != "revoked"
-            }
-        else:
-            current = manifest["assets"]["current"]
-            legacy_assets = manifest["assets"]["releases"][current]["arches"].get(arch)
-            if legacy_assets is None:
-                pytest.skip(f"no {arch} entry in manifest")
-            manifest_assets = {
-                "kernel": legacy_assets["vmlinuz"]["hash"],
-                "initrd": legacy_assets["initrd.img"]["hash"],
-                "rootfs": legacy_assets["rootfs.erofs"]["hash"],
-            }
-
-        profile = tomllib.loads(profile_path.read_text())
-        profile_assets = profile["assets"]["arch"][arch]
-        for kind in ["kernel", "initrd", "rootfs"]:
-            expected = manifest_assets[kind]
-            actual = profile_assets[kind]["hash"].removeprefix("blake3:")
-            assert actual == expected, (
-                f"profile {kind} pin drift: profile={actual} manifest={expected}"
-            )
+    def test_install_ships_no_profile_catalog(self, installed_layout):
+        """The VM assets are one runtime; an install copies no profile catalog."""
+        assert not (CAPSEM_DIR / "profiles").exists()
 
     # -- Service spawn contract --
     # When CLI auto-launches, it runs:

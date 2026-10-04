@@ -12,8 +12,6 @@ from typing import Any
 import blake3
 from helpers.release_site import FIXTURE_GRAPH, PROJECT_ROOT, release_site_build_lock
 
-PROFILE_IDS = ("co-work", "code")
-
 
 def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
     dist = tmp_path / "release-dist"
@@ -43,6 +41,7 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
 
     channels = json.loads((dist / "channels.json").read_text(encoding="utf-8"))
     assert sorted(channels["channels"]) == ["nightly", "stable"]
+    versions: dict[str, str] = {}
     for channel in ("stable", "nightly"):
         records = channels["channels"][channel]["manifests"]
         assert [record["status"] for record in records] == [
@@ -52,77 +51,52 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
             "revoked",
         ]
         current = records[0]
+        versions[channel] = current["version"]
         assert current["url"] == f"/assets/{channel}/manifest.json"
         assert (dist / current["url"].lstrip("/")).is_file()
-        assert "profile_catalog" not in channels["channels"][channel]
         assert (dist / "channels" / channel / "index.html").is_file()
+        assert (dist / "channels" / channel / "runtime" / "index.html").is_file()
         manifest = json.loads((dist / current["url"].lstrip("/")).read_text(encoding="utf-8"))
-        assert sorted(manifest["profiles"]) == sorted(PROFILE_IDS)
-        for profile_id in PROFILE_IDS:
-            assert (
-                dist / "channels" / channel / "profiles" / profile_id / "index.html"
-            ).is_file()
+        assert "profiles" not in manifest
+        assert manifest["runtime"]["revision"]
 
     index = (dist / "index.html").read_text(encoding="utf-8")
     stable = (dist / "channels" / "stable" / "index.html").read_text(encoding="utf-8")
     nightly = (dist / "channels" / "nightly" / "index.html").read_text(encoding="utf-8")
-    stable_co_work = (
-        dist / "channels" / "stable" / "profiles" / "co-work" / "index.html"
-    ).read_text(encoding="utf-8")
-    nightly_co_work = (
-        dist / "channels" / "nightly" / "profiles" / "co-work" / "index.html"
-    ).read_text(encoding="utf-8")
-    stable_code = (
-        dist / "channels" / "stable" / "profiles" / "code" / "index.html"
-    ).read_text(encoding="utf-8")
-    nightly_code = (
-        dist / "channels" / "nightly" / "profiles" / "code" / "index.html"
-    ).read_text(encoding="utf-8")
 
     assert "Stable" in index
     assert "Nightly" in index
-    assert "Co-work" not in index
-    assert "Code" not in index
     assert "Capsem-1.4.0.pkg" in stable
-    assert _hash_label(
-        graph["manifests"]["stable"]["1.0.2"]["packages"][0]["binaries"][0]["digest"][
-            "sha256"
-        ]
-    ) in stable
-    assert "HMAC" not in stable
-    assert "hmac" not in stable
-    assert "code" in stable
-    assert "Capsem-1.5.0-nightly.20260702.pkg" in nightly
-    assert _hash_label(
-        graph["manifests"]["nightly"]["1.0.2"]["packages"][0][
-            "binaries"
-        ][0]["digest"]["sha256"]
-    ) in nightly
-    assert "HMAC" not in nightly
-    assert "hmac" not in nightly
-    assert "code" in nightly
-    pages = {
-        ("stable", "co-work"): stable_co_work,
-        ("stable", "code"): stable_code,
-        ("nightly", "co-work"): nightly_co_work,
-        ("nightly", "code"): nightly_code,
-    }
-    versions = {
-        channel: next(
-            record["version"]
-            for record in graph["channels"][channel]["manifests"]
-            if record["status"] == "current"
+    assert (
+        _hash_label(
+            graph["manifests"]["stable"]["1.0.2"]["packages"][0]["binaries"][0]["digest"]["sha256"]
         )
-        for channel in ("stable", "nightly")
-    }
-    for (channel, profile_id), page in pages.items():
-        profile = graph["manifests"][channel][versions[channel]]["profiles"][profile_id]
+        in stable
+    )
+    assert "Capsem-1.5.0-nightly.20260702.pkg" in nightly
+    assert (
+        _hash_label(
+            graph["manifests"]["nightly"]["1.0.2"]["packages"][0]["binaries"][0]["digest"]["sha256"]
+        )
+        in nightly
+    )
+    for channel, page in (("stable", stable), ("nightly", nightly)):
+        runtime = graph["manifests"][channel][versions[channel]]["runtime"]
         assert "HMAC" not in page
         assert "hmac" not in page
-        architecture = _profile_architectures(profile)[0]
-        assert _hash_label(architecture["config"][0]["digest"]["sha256"]) in page
-        assert _hash_label(architecture["images"][0]["digest"]["sha256"]) in page
-        assert _hash_label(architecture["evidence"][0]["digest"]["sha256"]) in page
+        # The channel page names the runtime and links to it; the runtime
+        # page owns the per-architecture facts.
+        assert runtime["revision"] in page
+        assert f"/channels/{channel}/runtime/" in page
+
+        runtime_page = (dist / "channels" / channel / "runtime" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        assert "HMAC" not in runtime_page
+        assert "hmac" not in runtime_page
+        for architecture in runtime["architectures"]:
+            assert _hash_label(architecture["images"][0]["digest"]["sha256"]) in runtime_page
+            assert _hash_label(architecture["evidence"][0]["digest"]["sha256"]) in runtime_page
 
 
 def _materialize_graph_dist(graph: dict[str, Any], dist: Path) -> None:
@@ -134,13 +108,11 @@ def _materialize_graph_dist(graph: dict[str, Any], dist: Path) -> None:
             record for record in channel_record["manifests"] if record["status"] == "current"
         )
         manifest = graph["manifests"][channel][current["version"]]
-        _normalize_profile_file_digests(manifest)
+        _normalize_runtime_file_digests(manifest["runtime"])
         current["digest"]["sha256"] = _json_sha256(manifest)
         current["digest"]["blake3"] = _json_blake3(manifest)
         _write_json(dist / current["url"].lstrip("/"), manifest)
-
-        channel_record.pop("profile_catalog", None)
-        _materialize_profile_files(dist, list(manifest["profiles"].values()))
+        _materialize_runtime_files(dist, manifest["runtime"])
 
     _write_json(dist / "channels.json", channels)
     (dist / "_headers").write_text(
@@ -152,7 +124,7 @@ def _materialize_graph_dist(graph: dict[str, Any], dist: Path) -> None:
                 "  Cache-Control: no-cache, must-revalidate",
                 "/assets/*/manifest.json",
                 "  Cache-Control: no-cache, must-revalidate",
-                "/profiles/releases/*",
+                "/runtime/releases/*",
                 "  Cache-Control: public, max-age=31536000, immutable",
                 "",
             ]
@@ -161,26 +133,20 @@ def _materialize_graph_dist(graph: dict[str, Any], dist: Path) -> None:
     )
 
 
-def _materialize_profile_files(dist: Path, profiles: list[dict[str, Any]]) -> None:
-    for profile in profiles:
-        for architecture in _profile_architectures(profile):
-            for item in architecture.get("config", []):
-                _write_bytes(dist / item["url"].lstrip("/"), _profile_config_bytes(item))
-            for artifact in architecture.get("images", []):
-                _write_bytes(dist / artifact["url"].lstrip("/"), _profile_artifact_bytes(artifact))
-            for evidence in architecture.get("evidence", []):
-                _write_bytes(dist / evidence["url"].lstrip("/"), _profile_evidence_bytes(evidence))
+def _materialize_runtime_files(dist: Path, runtime: dict[str, Any]) -> None:
+    for architecture in runtime["architectures"]:
+        for artifact in architecture["images"]:
+            _write_bytes(dist / artifact["url"].lstrip("/"), _image_bytes())
+        for evidence in architecture["evidence"]:
+            _write_bytes(dist / evidence["url"].lstrip("/"), _evidence_bytes())
 
 
-def _normalize_profile_file_digests(manifest: dict[str, Any]) -> None:
-    for profile in manifest["profiles"].values():
-        for architecture in _profile_architectures(profile):
-            for item in architecture.get("config", []):
-                _set_file_digest(item, _profile_config_bytes(item))
-            for artifact in architecture.get("images", []):
-                _set_file_digest(artifact, _profile_artifact_bytes(artifact))
-            for evidence in architecture.get("evidence", []):
-                _set_file_digest(evidence, _profile_evidence_bytes(evidence))
+def _normalize_runtime_file_digests(runtime: dict[str, Any]) -> None:
+    for architecture in runtime["architectures"]:
+        for artifact in architecture["images"]:
+            _set_file_digest(artifact, _image_bytes())
+        for evidence in architecture["evidence"]:
+            _set_file_digest(evidence, _evidence_bytes())
 
 
 def _set_file_digest(item: dict[str, Any], payload: bytes) -> None:
@@ -190,22 +156,12 @@ def _set_file_digest(item: dict[str, Any], payload: bytes) -> None:
     item["bytes"] = len(payload)
 
 
-def _profile_config_bytes(item: dict[str, Any]) -> bytes:
-    return _json_bytes({"kind": item["kind"]})
+def _image_bytes() -> bytes:
+    return b"runtime-image-artifact"
 
 
-def _profile_artifact_bytes(_item: dict[str, Any]) -> bytes:
-    return b"profile-image-artifact"
-
-
-def _profile_evidence_bytes(_item: dict[str, Any]) -> bytes:
-    return _json_bytes(
-        {
-            "bomFormat": "CycloneDX",
-            "specVersion": "1.6",
-            "components": [],
-        }
-    )
+def _evidence_bytes() -> bytes:
+    return _json_bytes({"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []})
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -231,17 +187,3 @@ def _json_blake3(payload: Any) -> str:
 
 def _hash_label(value: str) -> str:
     return f"{value[:8]}..." if len(value) > 12 else value
-
-
-def _profile_architectures(profile: dict[str, Any]) -> list[dict[str, Any]]:
-    if "architectures" in profile:
-        return profile["architectures"]
-    return [
-        {
-            "architecture": image["architecture"],
-            "config": profile.get("config", []),
-            "images": image.get("artifacts", []),
-            "evidence": image.get("evidence", []),
-        }
-        for image in profile.get("images", [])
-    ]

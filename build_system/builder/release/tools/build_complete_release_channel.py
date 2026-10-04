@@ -39,9 +39,10 @@ def read_json_source(source: str) -> dict[str, Any]:
 
 
 def is_release_graph(value: dict[str, Any]) -> bool:
+    runtime = value.get("runtime")
     return (
         isinstance(value.get("channel"), str)
-        and isinstance(value.get("profiles"), dict)
+        and (runtime is None or isinstance(runtime, dict))
         and isinstance(value.get("packages"), list)
     )
 
@@ -177,7 +178,6 @@ def build_complete_dist(args: argparse.Namespace) -> None:
     generated_at = args.generated_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     build_order = channels_to_assemble(documents, args.primary_channel)
-    graph_channels: list[str] = []
     for channel in build_order:
         manifest_version = manifest_version_for_channel(
             channel=channel,
@@ -198,8 +198,6 @@ def build_complete_dist(args: argparse.Namespace) -> None:
             sources[channel],
             "--assets-dir",
             str(args.assets_dir),
-            "--profiles-dir",
-            str(args.profiles_dir),
             "--channel",
             channel,
             "--manifest-version",
@@ -212,8 +210,6 @@ def build_complete_dist(args: argparse.Namespace) -> None:
         if args.asset_source_base:
             command.extend(["--asset-source-base", args.asset_source_base])
         run(command)
-        if is_release_graph(documents[channel]):
-            graph_channels.append(channel)
 
     env = dict(os.environ)
     # The graph to render, and the directory to overlay the render onto. The
@@ -222,26 +218,6 @@ def build_complete_dist(args: argparse.Namespace) -> None:
     env["CAPSEM_RELEASE_GRAPH"] = str(out_dir)
     env["CAPSEM_RELEASE_CHANNEL_DIST"] = str(out_dir)
     run(["bash", "build_system/scripts/web/check-web-surface.sh", "release-site-build"], env=env)
-    for channel in graph_channels:
-        command = [
-            "uv",
-            "run",
-            "python3",
-            "build_system/scripts/release/materialize-graph-profile-artifacts.py",
-            "--dist",
-            str(out_dir),
-            "--channel",
-            channel,
-        ]
-        source = urlparse(sources[channel])
-        is_public_mirror = channel != args.primary_channel and source.scheme in {"http", "https"}
-        if is_public_mirror:
-            command.extend(["--public-base", args.release_site])
-        elif args.profile_source_ref:
-            command.extend(["--source-ref", args.profile_source_ref])
-        elif args.profile_source_root:
-            command.extend(["--source-root", str(args.profile_source_root)])
-        run(command)
     for channel in build_order:
         run(
             [
@@ -266,23 +242,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--channel-source", action="append", default=[])
     parser.add_argument("--primary-channel", choices=REQUIRED_CHANNELS, required=True)
     parser.add_argument("--assets-dir", type=Path, default=Path("cache/target/assets"))
-    parser.add_argument("--profiles-dir", type=Path, default=Path("config/profiles"))
     parser.add_argument("--asset-source-base")
     parser.add_argument("--manifest-version", required=True)
     parser.add_argument("--generated-at")
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--release-site", default="https://release.capsem.org")
     parser.add_argument("--allow-mirror-missing", action="store_true")
-    profile_source = parser.add_mutually_exclusive_group()
-    profile_source.add_argument(
-        "--profile-source-ref",
-        help="Override graph profile config source ref.",
-    )
-    profile_source.add_argument(
-        "--profile-source-root",
-        type=Path,
-        help="Read graph profile config from this local candidate worktree.",
-    )
     return parser.parse_args()
 
 

@@ -25,7 +25,7 @@ def test_packages_grouped_by_os_architecture() -> None:
             encoding="utf-8"
         )
         package_block = page.split("Capsem Packages", maxsplit=1)[1].split(
-            "Profile References",
+            ">Runtime</h2>",
             maxsplit=1,
         )[0]
 
@@ -145,7 +145,7 @@ def test_root_channel_last_updated_no_status_records() -> None:
         assert current["url"] in row
         assert current["status"] not in row
     assert "3 packages" in index
-    assert "2 profiles" in index
+    assert "runtime 1.0.0-stable.20260702" in index
     assert "arm64, x86_64" in index
 
 
@@ -171,21 +171,19 @@ def test_manifest_version_independence() -> None:
         for package in manifest["packages"]:
             if package["version"] != current["version"]:
                 assert f"<code>{package['version']}</code>" not in current_block
-        for profile in manifest["profiles"].values():
-            assert profile["revision"] not in current_block
+        assert manifest["runtime"]["revision"] not in current_block
 
         package_block = page.split("Capsem Packages", maxsplit=1)[1].split(
-            "Profile References",
+            ">Runtime</h2>",
             maxsplit=1,
         )[0]
         assert "Manifest version" not in package_block
         for package in manifest["packages"]:
             assert f"<code>{package['version']}</code>" in package_block
 
-        profile_block = page.split("Profile References", maxsplit=1)[1]
-        assert "Manifest version" not in profile_block
-        for profile in manifest["profiles"].values():
-            assert f"<code>{profile['revision']}</code>" in profile_block
+        runtime_block = page.split(">Runtime</h2>", maxsplit=1)[1]
+        assert "Manifest version" not in runtime_block
+        assert f"<code>{manifest['runtime']['revision']}</code>" in runtime_block
 
 
 def test_canonical_manifest_url() -> None:
@@ -215,7 +213,7 @@ def test_canonical_manifest_url() -> None:
             assert url not in page
 
 
-def test_no_profile_catalog_side_channel() -> None:
+def test_no_catalog_side_channel() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
@@ -244,14 +242,6 @@ def test_no_profile_catalog_side_channel() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         assert "profile_catalog" not in manifest
         assert "catalog" not in manifest
-
-
-def test_software_evidence_once_per_architecture() -> None:
-    from test_release_profile_architecture_contract import (
-        test_software_inventory_evidence_once_per_architecture,
-    )
-
-    test_software_inventory_evidence_once_per_architecture()
 
 
 def test_digest_display_truncated() -> None:
@@ -314,39 +304,16 @@ def test_digest_display_truncated() -> None:
                     f"{channel} package {package['id']} package evidence {evidence['kind']}",
                 )
 
-        for profile in manifest["profiles"].values():
-            profile_page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile["id"]
-                / "index.html"
-            ).read_text(encoding="utf-8")
-            for architecture in profile["architectures"]:
-                for evidence in architecture["evidence"]:
+        runtime_page = (
+            RELEASE_SITE_DIST / "channels" / channel / "runtime" / "index.html"
+        ).read_text(encoding="utf-8")
+        for architecture in manifest["runtime"]["architectures"]:
+            arch = architecture["architecture"]
+            for section in ("evidence", "software", "images"):
+                for item in architecture[section]:
+                    name = item.get("name") or item.get("kind")
                     _assert_digest_label(
-                        profile_page,
-                        evidence,
-                        f"{channel} profile {profile['id']} {architecture['architecture']} evidence {evidence['kind']}",
-                    )
-                for software in architecture["software"]:
-                    _assert_digest_label(
-                        profile_page,
-                        software,
-                        f"{channel} profile {profile['id']} {architecture['architecture']} software {software['name']}",
-                    )
-                for config in architecture["config"]:
-                    _assert_digest_label(
-                        profile_page,
-                        config,
-                        f"{channel} profile {profile['id']} {architecture['architecture']} config {config['path']}",
-                    )
-                for image in architecture["images"]:
-                    _assert_digest_label(
-                        profile_page,
-                        image,
-                        f"{channel} profile {profile['id']} {architecture['architecture']} image {image['name']}",
+                        runtime_page, item, f"{channel} runtime {arch} {section} {name}"
                     )
 
 

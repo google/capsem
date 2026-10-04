@@ -56,10 +56,7 @@ DISPATCHED = {
     "_stamp-version:": ("stamp-version", {}),
     "_gate-host-package-sbom:": ("host-sbom", {}),
     "_gate-linux-rust:": ("linux-rust", {}),
-    "_build-assets": (
-        "build-assets",
-        {"profile": "code", "arch": "arm64", "template": "all"},
-    ),
+    "_build-assets": ("build-assets", {"arch": "arm64", "template": "all"}),
     "_check-assets:": ("check-assets", {}),
 }
 
@@ -130,14 +127,14 @@ def _planned(command: str, **args) -> str:
 def _selected_content(tmp_path: Path) -> str:
     """A complete paired cohort for executing opaque install-plan callbacks."""
     from capsem_builder.gate import config as gate_config
-    from capsem_builder.gate.content import ProfileContent
+    from capsem_builder.gate.content import RuntimeContent
 
     config = gate_config.load(PROJECT_ROOT)
-    content = ProfileContent.isolated(config, tmp_path / "selected-content")
+    content = RuntimeContent.isolated(config, tmp_path / "selected-content")
     inputs = content.root / config.install.selected_inputs_dir
     inputs.mkdir(parents=True)
-    selected = inputs / "profile.tar.zst"
-    selected.write_bytes(b"immutable selected profile")
+    selected = inputs / "rootfs.erofs"
+    selected.write_bytes(b"immutable selected runtime")
     manifest = {
         "assets": {
             "current": "test",
@@ -145,7 +142,13 @@ def _selected_content(tmp_path: Path) -> str:
                 "test": {"arches": {name: {} for name in config.architectures}},
             },
         },
-        "profiles": {"code": {"url": selected.resolve().as_uri()}},
+        "runtime": {
+            "revision": "test",
+            "architectures": [
+                {"architecture": name, "images": [{"url": selected.resolve().as_uri()}]}
+                for name in config.architectures
+            ],
+        },
     }
     payload = json.dumps(manifest).encode()
     (inputs / config.package.release_inputs_name).write_text("{}")
@@ -723,7 +726,7 @@ def test_install_test_runs_local_release_glowup_from_real_package() -> None:
     assert "glowup.install" in _gate_order() or "glowup." in " ".join(_gate_order())
 
 
-def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> None:
+def test_install_test_stages_real_runtime_assets_for_mandatory_vm_proofs() -> None:
     """The installed product is proved against real assets and a real graph.
 
     A scratch tree per run, cleared first so a previous failure cannot leave
@@ -1712,7 +1715,6 @@ def test_local_release_glowup_repack_uses_selected_asset_fixture(
         tmp_path / "input.deb",
         tmp_path / "output.deb",
         tmp_path / "bin",
-        tmp_path / "config",
         assets_dir,
         "https://release.invalid/assets/stable/manifest.json",
     )
@@ -1725,7 +1727,6 @@ def test_local_release_glowup_repack_uses_selected_asset_fixture(
             "https://release.invalid/assets/stable/manifest.json",
             str(tmp_path / "input.deb"),
             str(tmp_path / "bin"),
-            str(tmp_path / "config"),
             str(assets_dir),
             str(tmp_path / "output.deb"),
         ]
@@ -1823,13 +1824,13 @@ def test_local_release_glowup_stages_graph_bytes_by_manifest_digest(
     tmp_path: Path,
 ) -> None:
     glowup = _load_local_release_glowup()
-    source = tmp_path / "inputs" / "profile.toml"
+    source = tmp_path / "inputs" / "rootfs.erofs"
     source.parent.mkdir()
-    payload = b'id = "code"\nrevision = "2030.0101.1"\n'
+    payload = b"runtime-rootfs-2030.0101.1"
     source.write_bytes(payload)
     record = {
-        "kind": "profile",
-        "path": "profiles/code/profile.toml",
+        "kind": "rootfs",
+        "name": "rootfs.erofs",
         "url": source.resolve().as_uri(),
         "bytes": len(payload),
         "digest": {
@@ -1843,18 +1844,16 @@ def test_local_release_glowup_stages_graph_bytes_by_manifest_digest(
         json.dumps(
             {
                 "packages": [{"status": "current"}],
-                "profiles": {
-                    "code": {
-                        "status": "current",
-                        "architectures": [
-                            {
-                                "architecture": "arm64",
-                                "config": [record],
-                                "images": [],
-                                "evidence": [],
-                            }
-                        ],
-                    }
+                "runtime": {
+                    "revision": "2030.0101.1",
+                    "status": "current",
+                    "architectures": [
+                        {
+                            "architecture": "arm64",
+                            "images": [record],
+                            "evidence": [],
+                        }
+                    ],
                 },
             }
         ),
@@ -1866,12 +1865,12 @@ def test_local_release_glowup_stages_graph_bytes_by_manifest_digest(
     glowup.stage_manifest_artifacts(manifest_path, tmp_path / "unused", dist, base_url)
 
     staged = json.loads(manifest_path.read_text(encoding="utf-8"))
-    staged_record = staged["profiles"]["code"]["architectures"][0]["config"][0]
+    staged_record = staged["runtime"]["architectures"][0]["images"][0]
     expected_relative = (
         Path("artifacts")
         / "sha256"
         / hashlib.sha256(payload).hexdigest()
-        / "profile.toml"
+        / "rootfs.erofs"
     )
     assert staged_record["url"] == f"{base_url}/{expected_relative.as_posix()}"
     assert (dist / expected_relative).read_bytes() == payload
@@ -1882,15 +1881,15 @@ def test_local_release_glowup_projects_only_fully_staged_architectures(
     tmp_path: Path,
 ) -> None:
     glowup = _load_local_release_glowup()
-    source = tmp_path / "inputs" / "profile.toml"
+    source = tmp_path / "inputs" / "rootfs.erofs"
     source.parent.mkdir()
-    payload = b'id = "code"\nrevision = "2030.0101.1"\n'
+    payload = b"runtime-rootfs-2030.0101.1"
     source.write_bytes(payload)
 
     def record(url: str) -> dict[str, object]:
         return {
-            "kind": "profile",
-            "path": "profiles/code/profile.toml",
+            "kind": "rootfs",
+            "name": "rootfs.erofs",
             "url": url,
             "bytes": len(payload),
             "digest": {
@@ -1905,29 +1904,26 @@ def test_local_release_glowup_projects_only_fully_staged_architectures(
         json.dumps(
             {
                 "packages": [{"status": "current"}],
-                "profiles": {
-                    "code": {
-                        "status": "current",
-                        "architectures": [
-                            {
-                                "architecture": "arm64",
-                                "config": [
-                                    record(
-                                        "/profiles/releases/stable/code/"
-                                        "2030.0101.1/arm64/profile.toml"
-                                    )
-                                ],
-                                "images": [],
-                                "evidence": [],
-                            },
-                            {
-                                "architecture": "x86_64",
-                                "config": [record(source.resolve().as_uri())],
-                                "images": [],
-                                "evidence": [],
-                            },
-                        ],
-                    }
+                "runtime": {
+                    "revision": "2030.0101.1",
+                    "status": "current",
+                    "architectures": [
+                        {
+                            "architecture": "arm64",
+                            "images": [
+                                record(
+                                    "/runtime/releases/stable/"
+                                    "2030.0101.1/arm64/rootfs.erofs"
+                                )
+                            ],
+                            "evidence": [],
+                        },
+                        {
+                            "architecture": "x86_64",
+                            "images": [record(source.resolve().as_uri())],
+                            "evidence": [],
+                        },
+                    ],
                 },
             }
         ),
@@ -1939,14 +1935,14 @@ def test_local_release_glowup_projects_only_fully_staged_architectures(
     glowup.stage_manifest_artifacts(manifest_path, tmp_path / "unused", dist, base_url)
 
     staged = json.loads(manifest_path.read_text(encoding="utf-8"))
-    architectures = staged["profiles"]["code"]["architectures"]
+    architectures = staged["runtime"]["architectures"]
     assert [row["architecture"] for row in architectures] == ["x86_64"]
-    staged_record = architectures[0]["config"][0]
+    staged_record = architectures[0]["images"][0]
     expected_relative = (
         Path("artifacts")
         / "sha256"
         / hashlib.sha256(payload).hexdigest()
-        / "profile.toml"
+        / "rootfs.erofs"
     )
     assert staged_record["url"] == f"{base_url}/{expected_relative.as_posix()}"
     assert (dist / expected_relative).read_bytes() == payload
@@ -1962,12 +1958,10 @@ def test_local_release_glowup_clones_graph_with_only_channel_identity_changed(
         "version": "1.0.143",
         "channel": "stable",
         "packages": [{"name": "Capsem_stable_amd64.deb", "status": "current"}],
-        "profiles": {
-            "code": {
-                "status": "current",
-                "revision": "1.0.0",
-                "architectures": [{"architecture": "x86_64"}],
-            }
+        "runtime": {
+            "status": "current",
+            "revision": "1.0.0",
+            "architectures": [{"architecture": "x86_64"}],
         },
     }
     source.write_text(
@@ -2004,7 +1998,7 @@ def test_local_release_glowup_projects_both_switch_channels_from_any_candidate()
 
     # Nightly must be projected from the *staged* stable manifest. Staging drops
     # architectures whose blobs are absent locally -- ordinary CI pulls one
-    # architecture's profile inputs -- so cloning first left nightly describing
+    # architecture's runtime inputs -- so cloning first left nightly describing
     # an unstaged architecture whose URLs still pointed at GitHub, which the
     # hermetic channel then rejected as "not local".
     assert setup.index("stage_manifest_artifacts(stable_manifest") < setup.index(
@@ -2016,15 +2010,15 @@ def test_local_release_glowup_rejects_partially_staged_architecture(
     tmp_path: Path,
 ) -> None:
     glowup = _load_local_release_glowup()
-    source = tmp_path / "inputs" / "profile.toml"
+    source = tmp_path / "inputs" / "vmlinuz"
     source.parent.mkdir()
-    payload = b'id = "code"\n'
+    payload = b"runtime-kernel"
     source.write_bytes(payload)
 
     def record(kind: str, url: str) -> dict[str, object]:
         return {
             "kind": kind,
-            "path": f"profiles/code/{kind}.toml",
+            "name": url.rsplit("/", 1)[-1],
             "url": url,
             "bytes": len(payload),
             "digest": {
@@ -2039,26 +2033,23 @@ def test_local_release_glowup_rejects_partially_staged_architecture(
         json.dumps(
             {
                 "packages": [{"status": "current"}],
-                "profiles": {
-                    "code": {
-                        "status": "current",
-                        "architectures": [
-                            {
-                                "architecture": "x86_64",
-                                "config": [
-                                    record("profile", source.resolve().as_uri())
-                                ],
-                                "images": [
-                                    record(
-                                        "rootfs",
-                                        "/profiles/releases/stable/code/"
-                                        "2030.0101.1/x86_64/rootfs.erofs",
-                                    )
-                                ],
-                                "evidence": [],
-                            }
-                        ],
-                    }
+                "runtime": {
+                    "revision": "2030.0101.1",
+                    "status": "current",
+                    "architectures": [
+                        {
+                            "architecture": "x86_64",
+                            "images": [
+                                record("kernel", source.resolve().as_uri()),
+                                record(
+                                    "rootfs",
+                                    "/runtime/releases/stable/"
+                                    "2030.0101.1/x86_64/rootfs.erofs",
+                                ),
+                            ],
+                            "evidence": [],
+                        }
+                    ],
                 },
             }
         ),
@@ -2097,18 +2088,16 @@ def test_local_release_glowup_rejects_graph_bytes_not_matching_manifest(
     original = json.dumps(
         {
             "packages": [{"status": "current"}],
-            "profiles": {
-                "code": {
-                    "status": "current",
-                    "architectures": [
-                        {
-                            "architecture": "arm64",
-                            "config": [],
-                            "images": [record],
-                            "evidence": [],
-                        }
-                    ],
-                }
+            "runtime": {
+                "revision": "2030.0101.1",
+                "status": "current",
+                "architectures": [
+                    {
+                        "architecture": "arm64",
+                        "images": [record],
+                        "evidence": [],
+                    }
+                ],
             },
         }
     )
@@ -2150,16 +2139,16 @@ def test_release_site_overlay_replaces_partial_files_without_clobbering_artifact
 ) -> None:
     site = tmp_path / "build_system" / "release_site"
     source = site / "dist"
-    source.joinpath("profiles", "code").mkdir(parents=True)
+    source.joinpath("channels", "stable").mkdir(parents=True)
     source.joinpath("index.html").write_text("complete-index", encoding="utf-8")
-    source.joinpath("profiles", "code", "index.html").write_text(
-        "complete-profile",
+    source.joinpath("channels", "stable", "index.html").write_text(
+        "complete-channel",
         encoding="utf-8",
     )
     target = tmp_path / "release-channel"
-    target.joinpath("profiles", "releases").mkdir(parents=True)
-    immutable = target / "profiles" / "releases" / "profile.toml"
-    immutable.write_text("immutable-profile-artifact", encoding="utf-8")
+    target.joinpath("runtime", "releases").mkdir(parents=True)
+    immutable = target / "runtime" / "releases" / "rootfs.erofs"
+    immutable.write_text("immutable-runtime-artifact", encoding="utf-8")
     stale = target / "index.html"
     stale.write_text("", encoding="utf-8")
     stale.chmod(0o200)
@@ -2185,10 +2174,10 @@ def test_release_site_overlay_replaces_partial_files_without_clobbering_artifact
     assert result.returncode == 0, result.stderr
     assert stale.read_text(encoding="utf-8") == "complete-index"
     assert (
-        target.joinpath("profiles", "code", "index.html").read_text(encoding="utf-8")
-        == "complete-profile"
+        target.joinpath("channels", "stable", "index.html").read_text(encoding="utf-8")
+        == "complete-channel"
     )
-    assert immutable.read_text(encoding="utf-8") == "immutable-profile-artifact"
+    assert immutable.read_text(encoding="utf-8") == "immutable-runtime-artifact"
 
 
 def test_release_skills_require_space_efficient_immutable_staging() -> None:
@@ -2258,19 +2247,19 @@ def test_local_release_glowup_generated_release_checker_rejects_missing_asset_bl
       "url": "{base_url}/releases/download/v1.5.1/Capsem_1.5.1_amd64.deb"
     }}
   ],
-  "profiles": {{
-    "co-work": {{
-      "architectures": [
-        {{
-          "images": [
-            {{"url": "{base_url}/assets/releases/2026.0709.13/x86_64-rootfs.erofs"}}
-          ],
-          "evidence": [
-            {{"url": "{base_url}/assets/releases/2026.0709.13/obom.cdx.json"}}
-          ]
-        }}
-      ]
-    }}
+  "runtime": {{
+    "revision": "2026.0709.13",
+    "architectures": [
+      {{
+        "architecture": "x86_64",
+        "images": [
+          {{"url": "{base_url}/runtime/releases/stable/2026.0709.13/x86_64/rootfs.erofs"}}
+        ],
+        "evidence": [
+          {{"url": "{base_url}/runtime/releases/stable/2026.0709.13/x86_64/obom.cdx.json"}}
+        ]
+      }}
+    ]
   }}
 }}
 """,
@@ -2287,7 +2276,7 @@ def test_local_release_glowup_generated_release_checker_rejects_missing_asset_bl
             )
         except SystemExit as error:
             assert "generated stable release is missing VM asset blob" in str(error)
-            assert "x86_64-rootfs.erofs" in str(error)
+            assert "x86_64/rootfs.erofs" in str(error)
         else:
             raise AssertionError("missing VM asset blob was accepted")
 
@@ -2326,29 +2315,26 @@ def test_local_release_glowup_generated_release_checker_rejects_tampered_blob(
                             ),
                         }
                     ],
-                    "profiles": {
-                        "code": {
-                            "architectures": [
-                                {
-                                    "images": [
-                                        {
-                                            "kind": "rootfs",
-                                            "name": "rootfs.erofs",
-                                            "url": f"{base_url}/{artifact_path.relative_to(dist)}",
-                                            "bytes": len(expected),
-                                            "digest": {
-                                                "sha256": hashlib.sha256(
-                                                    expected
-                                                ).hexdigest(),
-                                                "blake3": blake3(expected).hexdigest(),
-                                            },
-                                        }
-                                    ],
-                                    "config": [],
-                                    "evidence": [],
-                                }
-                            ]
-                        }
+                    "runtime": {
+                        "revision": "2030.0101.1",
+                        "architectures": [
+                            {
+                                "architecture": "x86_64",
+                                "images": [
+                                    {
+                                        "kind": "rootfs",
+                                        "name": "rootfs.erofs",
+                                        "url": f"{base_url}/{artifact_path.relative_to(dist)}",
+                                        "bytes": len(expected),
+                                        "digest": {
+                                            "sha256": hashlib.sha256(expected).hexdigest(),
+                                            "blake3": blake3(expected).hexdigest(),
+                                        },
+                                    }
+                                ],
+                                "evidence": [],
+                            }
+                        ],
                     },
                 }
             ),
@@ -2379,9 +2365,8 @@ def test_local_release_glowup_generated_release_checker_accepts_manifest_root_re
         package_path.write_bytes(b"fixture deb")
         payload = b"fixture"
         for relative in (
-            "profiles/releases/nightly/co-work/2026.0709.13/x86_64/profile.toml",
-            "profiles/releases/nightly/co-work/2026.0709.13/x86_64/rootfs.erofs",
-            "profiles/releases/nightly/co-work/2026.0709.13/x86_64/obom.cdx.json",
+            "runtime/releases/nightly/2026.0709.13/x86_64/rootfs.erofs",
+            "runtime/releases/nightly/2026.0709.13/x86_64/obom.cdx.json",
         ):
             target = dist / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -2399,62 +2384,41 @@ def test_local_release_glowup_generated_release_checker_accepts_manifest_root_re
                             ),
                         }
                     ],
-                    "profiles": {
-                        "co-work": {
-                            "architectures": [
-                                {
-                                    "images": [
-                                        {
-                                            "kind": "rootfs",
-                                            "name": "rootfs.erofs",
-                                            "url": (
-                                                "/profiles/releases/nightly/co-work/"
-                                                "2026.0709.13/x86_64/rootfs.erofs"
-                                            ),
-                                            "bytes": len(payload),
-                                            "digest": {
-                                                "sha256": hashlib.sha256(
-                                                    payload
-                                                ).hexdigest(),
-                                                "blake3": blake3(payload).hexdigest(),
-                                            },
-                                        }
-                                    ],
-                                    "config": [
-                                        {
-                                            "kind": "profile",
-                                            "path": "profiles/co-work/profile.toml",
-                                            "url": (
-                                                "/profiles/releases/nightly/co-work/"
-                                                "2026.0709.13/x86_64/profile.toml"
-                                            ),
-                                            "bytes": len(payload),
-                                            "digest": {
-                                                "sha256": hashlib.sha256(
-                                                    payload
-                                                ).hexdigest(),
-                                                "blake3": blake3(payload).hexdigest(),
-                                            },
-                                        }
-                                    ],
-                                    "evidence": [
-                                        {
-                                            "url": (
-                                                "/profiles/releases/nightly/co-work/"
-                                                "2026.0709.13/x86_64/obom.cdx.json"
-                                            ),
-                                            "bytes": len(payload),
-                                            "digest": {
-                                                "sha256": hashlib.sha256(
-                                                    payload
-                                                ).hexdigest(),
-                                                "blake3": blake3(payload).hexdigest(),
-                                            },
-                                        }
-                                    ],
-                                }
-                            ]
-                        }
+                    "runtime": {
+                        "revision": "2026.0709.13",
+                        "architectures": [
+                            {
+                                "architecture": "x86_64",
+                                "images": [
+                                    {
+                                        "kind": "rootfs",
+                                        "name": "rootfs.erofs",
+                                        "url": (
+                                            "/runtime/releases/nightly/"
+                                            "2026.0709.13/x86_64/rootfs.erofs"
+                                        ),
+                                        "bytes": len(payload),
+                                        "digest": {
+                                            "sha256": hashlib.sha256(payload).hexdigest(),
+                                            "blake3": blake3(payload).hexdigest(),
+                                        },
+                                    }
+                                ],
+                                "evidence": [
+                                    {
+                                        "url": (
+                                            "/runtime/releases/nightly/"
+                                            "2026.0709.13/x86_64/obom.cdx.json"
+                                        ),
+                                        "bytes": len(payload),
+                                        "digest": {
+                                            "sha256": hashlib.sha256(payload).hexdigest(),
+                                            "blake3": blake3(payload).hexdigest(),
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
                     },
                 }
             ),
@@ -2473,10 +2437,10 @@ def test_local_release_glowup_generated_release_checker_accepts_manifest_root_re
 @pytest.mark.parametrize(
     "url",
     [
-        "/profiles/releases/%2e%2e/escape",
+        "/runtime/releases/%2e%2e/escape",
         "//attacker.invalid/rootfs.erofs",
         "https://attacker.invalid/rootfs.erofs",
-        "/profiles/releases/rootfs.erofs?replacement=1",
+        "/runtime/releases/rootfs.erofs?replacement=1",
     ],
 )
 def test_local_release_glowup_rejects_unsafe_or_nonlocal_manifest_urls(
@@ -2794,9 +2758,9 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "vmlinuz-" not in build_pkg
     assert "obom-" not in build_pkg
     assert "sync-dev-assets.sh" not in build_pkg
-    assert 'CONFIG_ROOT="${POSITIONAL[3]}"' in build_pkg
-    assert 'ditto --norsrc --noextattr "$src" "$dst"' in build_pkg
-    assert 'copy_tree_clean "$CONFIG_ROOT/profiles" "$SHARE_DIR/profiles"' in build_pkg
+    assert "CONFIG_ROOT" not in build_pkg
+    assert '"$SHARE_DIR/profiles"' not in build_pkg
+    assert "profile validate" not in build_pkg
     assert "for package_script in preinstall postinstall install-user" in build_pkg
     assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/$package_script"' in build_pkg
     assert (
@@ -2835,7 +2799,7 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "strip_packaged_binaries" in repack_deb
     assert "CAPSEM_REPACK_STRIP" not in repack_deb
     assert '"$strip_tool" --strip-unneeded "$path"' in repack_deb
-    assert 'CONFIG_ROOT="${POSITIONAL[2]}"' in repack_deb
+    assert "CONFIG_ROOT" not in repack_deb
     assert "--manifest" in repack_deb
     assert "materialize_manifest_input" not in repack_deb
     assert "materialize-package-manifest.py" not in repack_deb
@@ -2867,15 +2831,14 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "initrd-" not in repack_deb
     assert "vmlinuz-" not in repack_deb
     assert "obom-" not in repack_deb
-    assert (
-        'cp -R "$CONFIG_ROOT/profiles/." "$WORK_DIR/deb/usr/share/capsem/profiles/"'
-        in repack_deb
-    )
+    assert "usr/share/capsem/profiles" not in repack_deb
+    assert "profile validate" not in repack_deb
     assert "sync-dev-assets.sh" not in repack_deb
     assert "capsem-admin" in repack_deb
     assert "capsem-tui" in repack_deb
     assert "/usr/share/capsem/assets" in deb_postinst
-    assert "/usr/share/capsem/profiles" in deb_postinst
+    assert "/usr/share/capsem/profiles" not in deb_postinst
+    assert '"$CAPSEM_DIR/profiles"' not in deb_postinst
     assert (
         'install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"'
         not in deb_postinst
@@ -2951,6 +2914,8 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "event=asset_hydration_failed" not in pkg_postinstall
     assert "event=assets_copied" not in pkg_postinstall
     assert 'echo "capsem: packaged binary missing: $src" >&2' in pkg_postinstall
+    assert '"$PKG_SHARE/profiles"' not in pkg_postinstall
+    assert '"$CAPSEM_DIR/profiles"' not in pkg_postinstall
     assert "event=binary_missing bin=$bin" in pkg_postinstall
     assert 'source "$(dirname "$0")/install-user"' in pkg_postinstall
     assert "capsem_resolve_install_user" in pkg_postinstall
@@ -3010,10 +2975,11 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
     assert """echo '{"releases":{}}'""" not in workflow
     assert "run: just test" not in workflow
     assert "Fetch latest selected channel source manifest" in workflow
-    assert "kind: profiles" in workflow
-    assert "output: cache/target/binary-public-before/profiles" in workflow
-    assert "output: cache/target/candidate-profile-inputs" in workflow
-    assert "--input-dir cache/target/candidate-profile-inputs" in workflow
+    assert "kind: runtime" in workflow
+    assert "kind: profiles" not in workflow
+    assert "output: cache/target/binary-public-before/runtime" in workflow
+    assert "output: cache/target/candidate-runtime-inputs" in workflow
+    assert "--input-dir cache/target/candidate-runtime-inputs" in workflow
     assert "just qualify-binaries" in workflow
     assert "just qualify-binaries" in workflow
     assert "just _build-kernel" not in workflow
@@ -3111,7 +3077,7 @@ def test_ci_install_job_sets_up_uv_before_the_shared_install_gate() -> None:
     )
 
 
-def test_ci_install_job_selects_exact_profiles_before_building_packages() -> None:
+def test_ci_install_job_selects_exact_runtime_before_building_packages() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     install_job = _workflow_job_blocks(workflow)["test-install"]
     fetch_action = (
@@ -3150,7 +3116,7 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
         "bash build_system/scripts/build/materialize-config.sh --pair-content"
         in install_job
     )
-    assert "kind: profiles" in install_job
+    assert "kind: runtime" in install_job
     assert "architecture: x86_64" in install_job
     assert "output: cache/target/ci-install-content/inputs" in install_job
     assert "--input-dir cache/target/ci-install-content/inputs" in install_job
@@ -3159,7 +3125,7 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
     assert "--classify-only" in install_job
     assert "published)" in install_job
     assert "retired)" in install_job
-    assert "--require-profile-membership" in install_job
+    assert "--require-runtime" in install_job
     assert (
         'output="$PWD/cache/target/ci-install-selection/assets/stable/manifest.json"'
         in install_job
@@ -3183,7 +3149,6 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
         install_job.count("--selected-content-root cache/target/ci-install-content")
         == 1
     )
-    assert "CAPSEM_INSTALL_PROFILE_INPUTS" not in install_job
     assert "build_system/scripts/test/prepare-install-test-assets.sh" not in install_job
 
 
@@ -3268,9 +3233,7 @@ check_platform
         "CAPSEM_SKIP_ASSET_CHECK": "1",
         "CAPSEM_SKIP_KVM_CHECK": "1",
     }
-    assert "CAPSEM_SKIP_KVM_CHECK" in _planned(
-        "build-assets", profile="code", arch="arm64", template="all"
-    )
+    assert "CAPSEM_SKIP_KVM_CHECK" in _planned("build-assets", arch="arm64", template="all")
     assert "CAPSEM_SKIP_KVM_CHECK" not in _planned("smoke")
 
 
@@ -3299,7 +3262,7 @@ def test_cross_compile_clock_sync_uses_bounded_colima_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from capsem_builder.gate import config as gate_config
-    from capsem_builder.gate.content import ProfileContent
+    from capsem_builder.gate.content import RuntimeContent
     from capsem_builder.gate.packagerail import PackageRail
     from helpers.gate import RecordingRunner
 
@@ -3322,7 +3285,7 @@ def test_cross_compile_clock_sync_uses_bounded_colima_command(
         runner = RecordingRunner(PROJECT_ROOT)
 
         PackageRail(
-            runner, target, content=ProfileContent.standalone(config)
+            runner, target, content=RuntimeContent.standalone(config)
         ).sync_clock()
 
         assert runner.ran(re.escape(config.package.clock_script)) is expected

@@ -69,7 +69,7 @@ def test_channel_list_has_no_status_or_records_theater() -> None:
     assert "Coverage" in index
     assert "2026-07-03T05:45:26Z" in index
     assert "3 packages" in index
-    assert "2 profiles" in index
+    assert "runtime 1.0.0-stable.20260702" in index
     assert "arm64, x86_64" in index
 
 
@@ -90,7 +90,7 @@ def test_root_channel_manifest_metadata() -> None:
     assert "<code>1.0.2</code>" in index
     assert "2026-07-03T05:45:26Z" in index
     assert "3 packages" in index
-    assert "2 profiles" in index
+    assert "runtime 1.0.0-stable.20260702" in index
     assert "arm64, x86_64" in index
 
 
@@ -123,7 +123,7 @@ def test_one_manifest_url() -> None:
 
         assert f"/assets/{channel}/manifest.json" in page
         assert f"/manifests/{channel}/" not in page
-        assert "/profiles/releases/" not in page
+        assert "/runtime/releases/" not in page
         assert "catalog.json" not in page
         assert "profile_catalog" not in page
 
@@ -153,9 +153,9 @@ def test_digest_display_truncates_human_hashes_and_preserves_machine_json() -> N
         graph["manifests"]["stable"]["1.0.2"]["packages"][0]["binaries"][0][
             "digest"
         ]["sha256"],
-        graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]["architectures"][
-            0
-        ]["config"][0]["digest"]["sha256"],
+        graph["manifests"]["stable"]["1.0.2"]["runtime"]["architectures"][0]["images"][0][
+            "digest"
+        ]["sha256"],
     ]
     rendered = "\n".join(
         path.read_text(encoding="utf-8")
@@ -168,12 +168,7 @@ def test_digest_display_truncates_human_hashes_and_preserves_machine_json() -> N
             / "packages"
             / graph["manifests"]["stable"]["1.0.2"]["packages"][0]["id"]
             / "index.html",
-            RELEASE_SITE_DIST
-            / "channels"
-            / "stable"
-            / "profiles"
-            / "co-work"
-            / "index.html",
+            RELEASE_SITE_DIST / "channels" / "stable" / "runtime" / "index.html",
         ]
     )
 
@@ -192,7 +187,7 @@ def test_package_target_sbom() -> None:
         encoding="utf-8"
     )
     packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
-        "Profile References",
+        ">Runtime</h2>",
         maxsplit=1,
     )[0]
 

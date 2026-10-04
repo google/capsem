@@ -78,21 +78,23 @@ def test_switch_stable_to_nightly_and_back() -> None:
     nightly = _current_manifest(graph, "nightly")
     stable_after = _current_manifest(graph, "stable")
 
-    stable_co_work = stable_before["profiles"]["co-work"]
-    nightly_co_work = nightly["profiles"]["co-work"]
+    stable_runtime = stable_before["runtime"]
+    nightly_runtime = nightly["runtime"]
 
+    assert "profiles" not in stable_before
+    assert "profiles" not in nightly
     assert stable_before == stable_after
     assert stable_before["version"] == "1.0.2"
     assert nightly["version"] == "1.0.2"
     assert stable_before["packages"][0]["version"] == "1.4.0"
     assert nightly["packages"][0]["version"] == "1.5.0-nightly.20260702"
-    assert stable_co_work["revision"] == "1.0.0-stable.20260702"
-    assert nightly_co_work["revision"] == "1.0.0-nightly.20260702"
-    assert stable_co_work["min_capsem_version"] == "1.4.0"
-    assert nightly_co_work["min_capsem_version"] == "1.4.0"
-    stable_arch = stable_co_work["architectures"][0]
-    nightly_arch = nightly_co_work["architectures"][0]
-    assert stable_arch["config"][0]["digest"]["sha256"] != nightly_arch["config"][0]["digest"]["sha256"]
+    assert stable_runtime["status"] == nightly_runtime["status"] == "current"
+    assert stable_runtime["revision"] != nightly_runtime["revision"]
+    assert stable_runtime["min_capsem_version"] == "1.4.0"
+    assert nightly_runtime["min_capsem_version"] == "1.4.0"
+    stable_arch = stable_runtime["architectures"][0]
+    nightly_arch = nightly_runtime["architectures"][0]
+    assert "config" not in stable_arch and "config" not in nightly_arch
     assert stable_arch["images"][0]["digest"]["sha256"] != nightly_arch["images"][0]["digest"]["sha256"]
     assert stable_arch["evidence"][0]["kind"] == "abom"
     assert nightly_arch["evidence"][0]["kind"] == "abom"

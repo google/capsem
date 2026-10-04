@@ -103,7 +103,7 @@ rm -rf "$RELEASE_DIR/bundle/deb"
 echo "--- Repack Debian package ---"
 DEB=$(ls -t "$RELEASE_DIR/bundle/deb/"*.deb | head -n1)
 bash "$SCRIPT_DIR/repack-deb.sh" --manifest "$CAPSEM_INSTALL_MANIFEST_URL" "$DEB" \
-    "$RELEASE_DIR" "cache/target/config" "assets"
+    "$RELEASE_DIR" "assets"
 
 echo "--- Validate artifacts ---"
 dpkg-deb --info "$DEB"

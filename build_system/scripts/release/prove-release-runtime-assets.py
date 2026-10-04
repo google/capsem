@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compatibility launcher for release-owned profile asset proof."""
+"""Launcher for the release-owned runtime asset proof."""
 
 import os
 import sys
@@ -13,7 +13,7 @@ except ModuleNotFoundError:
     sys.path.insert(0, str(ROOT / "build_system" / "builder"))
     from bootstrap import mount_builder_package
     mount_builder_package(ROOT)
-from capsem_builder.release.tools.prove_release_profile_assets import main as _main  # noqa: E402
+from capsem_builder.release.tools.prove_release_runtime_assets import main as _main  # noqa: E402
 
 if __name__ == "__main__":
     raise SystemExit(_main())

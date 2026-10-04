@@ -4,7 +4,7 @@
 fragments a release does -- but not their *layout*. A release qualifies from a
 prefix carrying only tracked files, where `cache/target/cargo/debug` and `cache/target/config`
 hold staged input rather than build output, and that difference is where the
-0.6.0 binaries lost four dispatches: a hardcoded binary path, a missing profile
+0.6.0 binaries lost four dispatches: a hardcoded binary path, a missing config
 tree, a missing tool, and a nested pytest inheriting an environment that no
 longer said which lane it was in. Each cost forty minutes to see and minutes to
 fix.
@@ -23,8 +23,8 @@ Needs a tree that has already built its assets and packages -- the same
 precondition `capsem-gate test-rehearsal` states, and for the same reason.
 
 `just replay-release-lane binaries` covers the complete binary pairing. The
-assets form covers the cold-channel, profile-only proof; an activation-ready
-profile needs a real public-before package cohort and is refused rather than
+assets form covers the cold-channel, runtime-only proof; an activation-ready
+runtime needs a real public-before package cohort and is refused rather than
 quietly fabricating one. The rarer flags -- resuming at a step, or running the
 installed-package proof -- are typed at this script directly, because a recipe
 may only hand a variadic over as one quoted argument and splitting it back is
@@ -63,31 +63,41 @@ _TEST_SELECTION_ENV = (
 )
 
 
-def _config() -> dict:
-    return tomllib.loads((ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))
-
-
 def _run(argv: list[str], *, env: dict[str, str] | None = None) -> int:
     print(f"+ {' '.join(argv)}", flush=True)
     return subprocess.run(argv, cwd=ROOT, env=env, check=False).returncode
 
 
-def fabricate(channel: str, profile: str, version: str) -> dict:
+def fabricate(channel: str, version: str) -> dict:
     """Build a digest-verified cohort from what this machine already has."""
     package = f"{WORK}-package/Capsem_{version}_amd64.deb"
     result = subprocess.run(
         [
-            "uv", "run", "--project", "build_system", "--frozen", "python",
+            "uv",
+            "run",
+            "--project",
+            "build_system",
+            "--frozen",
+            "python",
             str(ROOT / "build_system" / "scripts" / "release" / "rehearse-release-cohort.py"),
-            "--assets-dir", "assets",
-            "--bin-dir", "cache/target/cargo/debug",
-            "--packages-dir", "dist",
-            "--work-dir", WORK,
-            "--inputs-dir", f"{WORK}-inputs",
-            "--package", package,
-            "--content-root", f"{WORK}-content",
-            "--before-inputs", f"{WORK}-before",
-            "--channel", channel,
+            "--assets-dir",
+            "assets",
+            "--bin-dir",
+            "cache/target/cargo/debug",
+            "--packages-dir",
+            "dist",
+            "--work-dir",
+            WORK,
+            "--inputs-dir",
+            f"{WORK}-inputs",
+            "--package",
+            package,
+            "--content-root",
+            f"{WORK}-content",
+            "--before-inputs",
+            f"{WORK}-before",
+            "--channel",
+            channel,
         ],
         cwd=ROOT,
         check=True,
@@ -131,8 +141,8 @@ def released_environment(cohort: dict, channel: str) -> dict[str, str]:
         # value deliberately, as the workflow does, so a developer shell's
         # stale transition cannot leak into the replay.
         "CAPSEM_RELEASE_BEFORE_PACKAGE": "",
-        "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS": cohort["before_profile_inputs"],
-        "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS": cohort["inputs"],
+        "CAPSEM_RELEASE_BEFORE_INPUTS": cohort["before_release_inputs"],
+        "CAPSEM_RELEASE_AFTER_INPUTS": cohort["inputs"],
         "CAPSEM_TEST_ASSETS_DIR": f"{workspace_text}/assets",
         "CAPSEM_TEST_CONFIG_ROOT": f"{workspace_text}/cache/target/config",
     }
@@ -142,31 +152,26 @@ def qualification_command(args, cohort: dict) -> tuple[list[str], dict[str, str]
     """Return the exact command and fresh-runner environment for this replay."""
     workspace = cohort["content_root"]
     if args.lane == "binaries":
-        return ["just", "qualify-binaries", workspace], released_environment(
-            cohort, args.channel
-        )
+        return ["just", "qualify-binaries", workspace], released_environment(cohort, args.channel)
     if args.activation_ready != "false":
         raise SystemExit(
             "an activation-ready asset replay needs a real public-before package "
             "cohort; use --activation-ready=false for the exact cold-channel "
-            "profile proof instead of fabricating a binary pairing"
+            "runtime proof instead of fabricating a binary pairing"
         )
     return [
         "just",
         "qualify-assets",
         cohort["inputs"],
-        args.profile,
         workspace,
         "false",
     ], clean_environment()
 
 
 def main(argv: list[str] | None = None) -> int:
-    config = _config()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lane", choices=("binaries", "assets"), default="binaries")
     parser.add_argument("--channel", default="stable")
-    parser.add_argument("--profile", default=config["suites"]["pytest"]["base_profile"])
     parser.add_argument(
         "--activation-ready",
         choices=("true", "false"),
@@ -195,7 +200,8 @@ def main(argv: list[str] | None = None) -> int:
     ]["version"]
 
     print(f"fabricating a {args.channel} cohort for {version} ...", flush=True)
-    cohort = fabricate(args.channel, args.profile, version)
+    cohort = fabricate(args.channel, version)
+
     command, env = qualification_command(args, cohort)
     if args.resume:
         command += ["--from", args.resume]

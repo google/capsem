@@ -40,20 +40,21 @@ def project_first_channel_before(
             for package in packages
         ):
             raise ValueError("serialized source package cohort must be entirely current")
-    # A fresh bootstrap is profileless, while a retried lane may resolve a
-    # previously staged profile source. Both project to the same public-before
+    # A fresh bootstrap has no runtime, while a retried lane may resolve a
+    # previously staged runtime source. Both project to the same public-before
     # state, so only the source shape is checked here.
-    profiles = source.get("profiles")
-    if not isinstance(profiles, dict):
-        raise ValueError("serialized source profiles must be an object")
+    runtime = source.get("runtime")
+    if runtime is not None and not isinstance(runtime, dict):
+        raise ValueError("serialized source runtime must be an object")
 
     # A missing channel or the one digest-authorized retired graph has no usable
     # public-before family. Donor packages are validated as official authoring
     # input, then excluded from this channel-scoped projection. The ordinary
     # binary lane later supplies and activates this channel's package cohort.
     projected = copy.deepcopy(source)
-    projected["profiles"] = {}
+    projected.pop("runtime", None)
     projected["packages"] = []
+
     return projected
 
 

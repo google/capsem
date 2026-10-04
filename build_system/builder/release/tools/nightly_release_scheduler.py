@@ -15,7 +15,6 @@ from . import repository_root
 
 ROOT = repository_root()
 SOURCE_COMMIT = re.compile(r"[0-9a-f]{40}\Z")
-PROFILE = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\Z")
 
 
 class CommandRunner(Protocol):
@@ -61,42 +60,29 @@ class ScheduleResult:
         }
 
 
-def schedule(channel: str, profiles: Sequence[str], source_commit: str) -> tuple[Lane, ...]:
+def schedule(channel: str, source_commit: str) -> tuple[Lane, ...]:
+    """Runtime assets first, then binaries.
+
+    A runtime that needs new code is published immutably but stays inactive
+    until the binary release that follows activates the compatible graph.
+    """
     if channel != "nightly":
         raise ValueError("the nightly scheduler only accepts channel nightly")
     if SOURCE_COMMIT.fullmatch(source_commit) is None:
         raise ValueError("source commit must be 40-character lowercase hexadecimal")
-    if not profiles:
-        raise ValueError("at least one nightly profile is required")
-    if len(set(profiles)) != len(profiles):
-        raise ValueError("nightly profiles must be unique")
-    invalid = [profile for profile in profiles if PROFILE.fullmatch(profile) is None]
-    if invalid:
-        raise ValueError(f"invalid nightly profiles: {invalid}")
-    lanes = [
-        Lane(
-            f"profile/{profile}",
-            ("just", "release-profile", channel, profile, source_commit),
-        )
-        for profile in profiles
-    ]
-    lanes.append(
-        Lane(
-            "binaries",
-            ("just", "release-binaries", channel, source_commit),
-        )
+    return (
+        Lane("assets", ("just", "release-assets", channel, source_commit)),
+        Lane("binaries", ("just", "release-binaries", channel, source_commit)),
     )
-    return tuple(lanes)
 
 
 def run_schedule(
     channel: str,
-    profiles: Sequence[str],
     source_commit: str,
     runner: CommandRunner,
 ) -> ScheduleResult:
     outcomes: list[LaneOutcome] = []
-    for lane in schedule(channel, profiles, source_commit):
+    for lane in schedule(channel, source_commit):
         print(
             json.dumps(
                 {
@@ -132,13 +118,11 @@ def run_schedule(
 def main(argv: Sequence[str] | None = None, *, runner: CommandRunner | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--channel", required=True)
-    parser.add_argument("--profile", action="append", dest="profiles", required=True)
     parser.add_argument("--source-commit", required=True)
     args = parser.parse_args(argv)
     try:
         result = run_schedule(
             args.channel,
-            args.profiles,
             args.source_commit,
             runner or Runner(),
         )
