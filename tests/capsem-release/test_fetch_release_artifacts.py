@@ -16,7 +16,7 @@ from capsem_builder.release.tools import verify_release_inputs as VERIFY
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SCRIPT = ROOT / "build_system" / "scripts" / "release" / "fetch-channel-source-manifest.py"
-RUNTIME_REVISION = "0.7.0-0123456789ab"
+RUNTIME_REVISION = "9.9.0-0123456789ab"
 
 
 def _digest(payload: bytes) -> dict[str, str]:

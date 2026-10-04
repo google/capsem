@@ -11,7 +11,7 @@ from capsem_builder.release.tools import check_runtime_release_delta as DELTA
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "build_system" / "scripts" / "release" / "check-runtime-release-delta.py"
-REVISION = "0.7.0-0123456789ab"
+REVISION = "9.9.0-0123456789ab"
 
 
 def _source(revision: str | None) -> dict[str, object]:
@@ -25,7 +25,7 @@ def _source(revision: str | None) -> dict[str, object]:
     ("source_revision", "needed", "reason"),
     [
         (None, True, "new_runtime"),
-        ("0.7.0-ba9876543210", True, "runtime_changed"),
+        ("9.9.0-ba9876543210", True, "runtime_changed"),
         (REVISION, False, "already_authored"),
     ],
 )

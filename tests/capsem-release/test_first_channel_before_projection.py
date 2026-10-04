@@ -12,7 +12,7 @@ def _source() -> dict[str, object]:
         "channel": "nightly",
         "status": "current",
         "packages": [{"name": "Capsem_1.5_amd64.deb", "status": "current"}],
-        "runtime": {"revision": "0.7.0-0123456789ab", "architectures": []},
+        "runtime": {"revision": "9.9.0-0123456789ab", "architectures": []},
     }
 
 

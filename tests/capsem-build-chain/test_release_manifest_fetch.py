@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_binary_source_manifest_requires_a_staged_runtime() -> None:
     empty = json.dumps({"channel": "nightly", "runtime": None, "packages": []}).encode()
-    runtime = {"revision": "0.7.0-0123456789ab", "status": "current", "architectures": []}
+    runtime = {"revision": "9.9.0-0123456789ab", "status": "current", "architectures": []}
     staged = json.dumps({"channel": "nightly", "runtime": runtime, "packages": []}).encode()
 
     with pytest.raises(ValueError, match="no staged runtime"):

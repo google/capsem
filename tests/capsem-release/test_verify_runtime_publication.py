@@ -10,7 +10,7 @@ from capsem_builder.release.tools import stage_runtime_publication as STAGE
 from capsem_builder.release.tools import verify_runtime_publication as VERIFY
 
 RELEASES = "https://github.com/google/capsem/releases/download"
-BASE = f"{RELEASES}/runtime-nightly-0.7.0-0123456789ab"
+BASE = f"{RELEASES}/runtime-nightly-9.9.0-0123456789ab"
 
 
 def _record(url: str, payload: bytes, *, name: str | None = None) -> dict[str, object]:
@@ -35,7 +35,7 @@ def _manifest(base: str, *, channel: str = "nightly", **payloads: bytes) -> dict
         "channel": channel,
         "packages": [],
         "runtime": {
-            "revision": "0.7.0-0123456789ab",
+            "revision": "9.9.0-0123456789ab",
             "status": "current",
             "architectures": [
                 {
