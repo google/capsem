@@ -92,10 +92,7 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
         status.supply_chain.host_sbom.release_artifact.as_deref(),
         Some("capsem-sbom.spdx.json")
     );
-    assert_eq!(
-        status.supply_chain.vm_obom.route.as_deref(),
-        Some("/profiles/{profile_id}/obom")
-    );
+    assert_eq!(status.supply_chain.vm_obom.route, None);
     assert!(
         status
             .supply_chain
@@ -114,7 +111,6 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
     assert_eq!(status.assets.current.as_deref(), Some("2026.0627.1"));
     assert_eq!(status.assets.latest.as_deref(), Some("2026.0628.1"));
     assert_eq!(status.assets.state, api::UpdateTrackState::UpdateAvailable);
-    assert_eq!(status.profiles.state, api::UpdateTrackState::NotPublished);
     assert_eq!(status.images.state, api::UpdateTrackState::NotPublished);
 }
 
@@ -154,7 +150,7 @@ fn current_asset_state_keeps_independent_release_graph_profiles() {
 }
 
 #[test]
-fn update_status_reports_profile_and_image_tracks_from_release_cache() {
+fn update_status_reports_the_image_track_from_release_cache() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
     std::fs::create_dir_all(&assets_dir).unwrap();
@@ -166,10 +162,6 @@ fn update_status_reports_profile_and_image_tracks_from_release_cache() {
             "checked_at": 1000,
             "latest_version": "1.3.1782582155",
             "update_available": false,
-            "latest_profiles": "profiles-2030.0101.1",
-            "current_profiles": "profiles-2030.0101.0",
-            "profiles_update_available": true,
-            "profiles_state": "update_available",
             "latest_images": "images-2030.0101.1",
             "images_update_available": false,
             "images_state": "published",
@@ -180,53 +172,9 @@ fn update_status_reports_profile_and_image_tracks_from_release_cache() {
     .unwrap();
 
     let status = update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
-
-    assert_eq!(status.profiles.current.as_deref(), Some("profiles-2030.0101.0"));
-    assert_eq!(status.profiles.latest.as_deref(), Some("profiles-2030.0101.1"));
-    assert!(status.profiles.update_available);
-    assert_eq!(status.profiles.state, api::UpdateTrackState::UpdateAvailable);
-    assert_eq!(status.profiles.compatibility, api::UpdateCompatibilityState::Compatible);
-    assert_eq!(status.profiles.blocked_reason, None);
     assert_eq!(status.images.latest.as_deref(), Some("images-2030.0101.1"));
     assert!(!status.images.update_available);
     assert_eq!(status.images.state, api::UpdateTrackState::Current);
-}
-
-#[test]
-fn update_status_reports_blocked_profile_track_from_release_cache() {
-    let dir = tempfile::tempdir().unwrap();
-    let assets_dir = dir.path().join("assets");
-    std::fs::create_dir_all(&assets_dir).unwrap();
-    let cache_path = assets_dir.join("manifest-metadata.json");
-    std::fs::write(
-        &cache_path,
-        serde_json::json!({
-            "schema": "capsem.manifest_metadata.v1",
-            "checked_at": 1000,
-            "latest_version": "1.3.1782582155",
-            "update_available": false,
-            "latest_profiles": "profiles-2030.0101.1",
-            "current_profiles": "profiles-2030.0101.0",
-            "profiles_update_available": false,
-            "profiles_state": "published",
-            "profiles_blocked_reason": "requires binary 1.4.0 or newer",
-            "checked_url": "https://release.capsem.org/health.json"
-        })
-        .to_string(),
-    )
-    .unwrap();
-
-    let status = update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
-
-    assert_eq!(status.profiles.current.as_deref(), Some("profiles-2030.0101.0"));
-    assert_eq!(status.profiles.latest.as_deref(), Some("profiles-2030.0101.1"));
-    assert!(!status.profiles.update_available);
-    assert_eq!(status.profiles.state, api::UpdateTrackState::Unknown);
-    assert_eq!(status.profiles.compatibility, api::UpdateCompatibilityState::Unknown);
-    assert_eq!(
-        status.profiles.blocked_reason.as_deref(),
-        Some("requires binary 1.4.0 or newer")
-    );
 }
 
 #[test]
@@ -381,10 +329,6 @@ fn update_status_uses_only_manifest_metadata_for_provenance_and_check_state() {
             "checked_url": "https://release.capsem.org/assets/stable/manifest.json",
             "latest_version": "1.3.1782600000",
             "update_available": true,
-            "latest_profiles": "profiles-2030.0101.1",
-            "current_profiles": "profiles-2030.0101.0",
-            "profiles_update_available": true,
-            "profiles_state": "update_available",
             "channel_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "validation_status": "valid"
         })
@@ -406,7 +350,6 @@ fn update_status_uses_only_manifest_metadata_for_provenance_and_check_state() {
         Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
     );
     assert_eq!(status.binary.latest.as_deref(), Some("1.3.1782600000"));
-    assert_eq!(status.profiles.state, api::UpdateTrackState::UpdateAvailable);
     assert_eq!(
         status.supply_chain.manifest.source.as_deref(),
         Some("https://release.capsem.org/assets/stable/manifest.json")

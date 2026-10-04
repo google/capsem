@@ -86,8 +86,8 @@ async fn accepted_restart_rejects_lifecycle_mutations_with_conflict() {
     let _ = accept_restart(&state, Some(api::ServiceManager::Systemd)).unwrap();
     let app = build_service_router(state);
     for (path, body) in [
-        ("/vms/create", Some(json!({"profile_id": "code"}))),
-        ("/run", Some(json!({"profile_id": "code", "command": "true"}))),
+        ("/vms/create", Some(json!({}))),
+        ("/run", Some(json!({"command": "true"}))),
         ("/vms/missing/start", None),
         ("/vms/missing/resume", None),
         ("/vms/missing/fork", Some(json!({"name": "fork"}))),

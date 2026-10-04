@@ -59,7 +59,7 @@ fn registry_entry_dir(state: &ServiceState, name: &str) -> Option<PathBuf> {
 #[tokio::test]
 async fn persist_keeps_the_live_session_dir_while_the_process_runs() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = insert_ephemeral_instance(&state, "live-src");
 
     let _ = persist(&state, "live-src", "kept").await.expect("persist succeeds");
@@ -91,7 +91,7 @@ async fn persist_refuses_a_duplicate_id_and_leaves_the_instance_ephemeral() {
     // refusal must leave no trace: no entry, no moved directory, and an
     // InstanceInfo that still says ephemeral.
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = insert_ephemeral_instance(&state, "persist-src");
     let mut clash = test_persistent_entry("other-name", state.run_dir.join("persistent").join("elsewhere"));
     clash.id = "persist-src".to_string();
@@ -116,10 +116,8 @@ async fn racing_persists_on_one_name_leave_one_entry_and_no_orphan() {
     // Every handler runs synchronously up to the claim, which it hands to the
     // blocking pool; joining them on one runtime thread therefore races the
     // four claims themselves, each on its own thread against one registry.
-    // (The test profile override is thread-local, so the handlers cannot be
-    // spread over worker threads.)
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let ids = ["race-a", "race-b", "race-c", "race-d"];
     let dirs: Vec<PathBuf> = ids.iter().map(|id| insert_ephemeral_instance(&state, id)).collect();
 

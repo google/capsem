@@ -7,10 +7,9 @@ use serde_json::json;
 
 #[test]
 fn provision_request_with_name() {
-    let json = json!({"name": "my-vm", "profile_id": "code", "ram_mb": 4096, "cpus": 4, "persistent": true});
+    let json = json!({"name": "my-vm", "ram_mb": 4096, "cpus": 4, "persistent": true});
     let r: ProvisionRequest = serde_json::from_value(json).unwrap();
     assert_eq!(r.name, Some("my-vm".into()));
-    assert_eq!(r.profile_id, "code");
     assert_eq!(r.ram_mb, Some(4096));
     assert_eq!(r.cpus, Some(4));
     assert!(r.persistent);
@@ -18,17 +17,17 @@ fn provision_request_with_name() {
 }
 
 #[test]
-fn provision_request_requires_profile_id() {
-    let json = json!({"name": "my-vm", "ram_mb": 4096, "cpus": 4});
+fn provision_request_refuses_a_profile_id() {
+    let json = json!({"name": "my-vm", "profile_id": "code"});
     let err = serde_json::from_value::<ProvisionRequest>(json).unwrap_err();
-    assert!(err.to_string().contains("profile_id"));
+    assert!(err.to_string().contains("profile_id"), "{err}");
 }
 
 #[test]
 fn provision_request_ram_cpus_omitted_deserializes_as_none() {
-    // Service handler fills these from the selected profile. Callers like
-    // the tray's "New Session" do not have to duplicate profile resources.
-    let json = json!({"name": "my-vm", "profile_id": "code"});
+    // The service fills these from its defaults. Callers like the tray's
+    // "New Session" do not have to duplicate them.
+    let json = json!({"name": "my-vm"});
     let r: ProvisionRequest = serde_json::from_value(json).unwrap();
     assert_eq!(r.ram_mb, None);
     assert_eq!(r.cpus, None);
@@ -36,7 +35,7 @@ fn provision_request_ram_cpus_omitted_deserializes_as_none() {
 
 #[test]
 fn provision_request_with_env() {
-    let json = json!({"profile_id": "code", "ram_mb": 2048, "cpus": 2, "env": {"FOO": "bar", "BAZ": "qux"}});
+    let json = json!({"ram_mb": 2048, "cpus": 2, "env": {"FOO": "bar", "BAZ": "qux"}});
     let r: ProvisionRequest = serde_json::from_value(json).unwrap();
     let env = r.env.unwrap();
     assert_eq!(env.get("FOO").unwrap(), "bar");
@@ -47,7 +46,6 @@ fn provision_request_with_env() {
 fn provision_request_env_omitted() {
     let r = ProvisionRequest {
         name: None,
-        profile_id: "code".into(),
         ram_mb: Some(2048),
         cpus: Some(2),
         persistent: false,
@@ -63,7 +61,7 @@ fn provision_request_env_omitted() {
 
 #[test]
 fn provision_request_without_name() {
-    let json = json!({"profile_id": "code", "ram_mb": 2048, "cpus": 2});
+    let json = json!({"ram_mb": 2048, "cpus": 2});
     let r: ProvisionRequest = serde_json::from_value(json).unwrap();
     assert_eq!(r.name, None);
     assert!(!r.persistent);
@@ -71,17 +69,17 @@ fn provision_request_without_name() {
 
 #[test]
 fn provision_request_with_from() {
-    let json = json!({"profile_id": "code", "ram_mb": 2048, "cpus": 2, "from": "my-fork"});
+    let json = json!({"ram_mb": 2048, "cpus": 2, "from": "my-fork"});
     let r: ProvisionRequest = serde_json::from_value(json).unwrap();
     assert_eq!(r.from.as_deref(), Some("my-fork"));
 }
 
-/// `image` names an OCI image on the CLI now, never a session to clone.
+/// `image` names an OCI image on the CLI now, never a session to clone; the
+/// service refuses the old field rather than ignoring it.
 #[test]
 fn provision_request_image_is_not_a_clone_source() {
-    let json = json!({"profile_id": "code", "image": "old-img"});
-    let r: ProvisionRequest = serde_json::from_value(json).unwrap();
-    assert_eq!(r.from, None);
+    let json = json!({"image": "old-img"});
+    assert!(serde_json::from_value::<ProvisionRequest>(json).is_err());
 }
 
 #[test]
@@ -89,7 +87,6 @@ fn provision_response_roundtrip() {
     let r = ProvisionResponse {
         id: "vm-123".into(),
         name: "co-work1".into(),
-        profile_id: "code".into(),
         status: VmLifecycleState::Running,
         persistent: true,
         can_resume: false,
@@ -102,7 +99,6 @@ fn provision_response_roundtrip() {
     let r2: ProvisionResponse = serde_json::from_str(&json).unwrap();
     assert_eq!(r2.id, "vm-123");
     assert_eq!(r2.name, "co-work1");
-    assert_eq!(r2.profile_id, "code");
     assert_eq!(r2.status, VmLifecycleState::Running);
     assert!(r2.persistent);
     assert!(!r2.can_resume);
@@ -129,13 +125,13 @@ fn list_response_multiple() {
     let r = ListResponse {
         sandboxes: vec![
             {
-                let mut s = SandboxInfo::new("a".into(), "code".into(), 100, VmLifecycleState::Running, true);
+                let mut s = SandboxInfo::new("a".into(), 100, VmLifecycleState::Running, true);
                 s.name = Some("a".into());
                 s.ram_mb = Some(2048);
                 s.cpus = Some(2);
                 s
             },
-            SandboxInfo::new("b".into(), "code".into(), 200, VmLifecycleState::Running, false),
+            SandboxInfo::new("b".into(), 200, VmLifecycleState::Running, false),
         ],
     };
     let json = serde_json::to_string(&r).unwrap();
@@ -149,7 +145,7 @@ fn list_response_multiple() {
 
 #[test]
 fn sandbox_info_optional_fields_omitted() {
-    let s = SandboxInfo::new("x".into(), "code".into(), 1, VmLifecycleState::Running, false);
+    let s = SandboxInfo::new("x".into(), 1, VmLifecycleState::Running, false);
     let json = serde_json::to_string(&s).unwrap();
     assert!(!json.contains("ram_mb"));
     assert!(!json.contains("cpus"));
@@ -157,7 +153,7 @@ fn sandbox_info_optional_fields_omitted() {
 
 #[test]
 fn sandbox_info_rejects_unknown_lifecycle_state() {
-    let json = r#"{"id":"x","profile_id":"code","pid":1,"status":"HalfRestored","persistent":true}"#;
+    let json = r#"{"id":"x","pid":1,"status":"HalfRestored","persistent":true}"#;
     let err = serde_json::from_str::<SandboxInfo>(json).unwrap_err();
     assert!(err.to_string().contains("unknown variant"));
 }
@@ -207,26 +203,25 @@ fn purge_response_roundtrip() {
 
 #[test]
 fn run_request_defaults() {
-    // ram_mb/cpus omitted -> None; handler resolves from the profile.
-    let json = json!({"command": "echo hello", "profile_id": "code"});
+    // ram_mb/cpus omitted -> None; the service applies its defaults.
+    let json = json!({"command": "echo hello"});
     let r: RunRequest = serde_json::from_value(json).unwrap();
     assert_eq!(r.command, "echo hello");
-    assert_eq!(r.profile_id, "code");
     assert_eq!(r.timeout_secs, None);
     assert_eq!(r.ram_mb, None);
     assert_eq!(r.cpus, None);
 }
 
 #[test]
-fn run_request_requires_profile_id() {
-    let json = json!({"command": "echo hello"});
+fn run_request_refuses_a_profile_id() {
+    let json = json!({"command": "echo hello", "profile_id": "code"});
     let err = serde_json::from_value::<RunRequest>(json).unwrap_err();
-    assert!(err.to_string().contains("profile_id"));
+    assert!(err.to_string().contains("profile_id"), "{err}");
 }
 
 #[test]
 fn run_request_custom() {
-    let json = json!({"command": "ls", "profile_id": "code", "timeout_secs": 120, "ram_mb": 4096, "cpus": 4});
+    let json = json!({"command": "ls", "timeout_secs": 120, "ram_mb": 4096, "cpus": 4});
     let r: RunRequest = serde_json::from_value(json).unwrap();
     assert_eq!(r.timeout_secs, Some(120));
     assert_eq!(r.ram_mb, Some(4096));
@@ -334,15 +329,14 @@ fn create_network_request_requires_a_name() {
 
 #[test]
 fn provision_request_networks_default_to_none_and_are_omitted_when_empty() {
-    let request: ProvisionRequest = serde_json::from_value(json!({ "profile_id": "code" })).unwrap();
+    let request: ProvisionRequest = serde_json::from_value(json!({})).unwrap();
     assert!(request.networks.is_empty());
     assert!(!serde_json::to_value(&request)
         .unwrap()
         .as_object()
         .unwrap()
         .contains_key("networks"));
-    let request: ProvisionRequest =
-        serde_json::from_value(json!({ "profile_id": "code", "networks": ["team", "ci"] })).unwrap();
+    let request: ProvisionRequest = serde_json::from_value(json!({ "networks": ["team", "ci"] })).unwrap();
     assert_eq!(request.networks, vec!["team", "ci"]);
 }
 

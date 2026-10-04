@@ -49,7 +49,7 @@ async fn networks_are_created_listed_inspected_and_retired() {
 #[tokio::test]
 async fn members_lease_an_address_in_the_networks_subnet_and_block_deletion() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     insert_fake_instance(&state, "running-vm", 4242);
     let stopped_dir = state.run_dir.join("persistent/stopped-vm");
     capsem_core::create_virtiofs_session(&stopped_dir, 64).unwrap();
@@ -125,7 +125,7 @@ async fn members_lease_an_address_in_the_networks_subnet_and_block_deletion() {
 #[tokio::test]
 async fn deleting_a_vm_leaves_every_network_it_was_in() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let stopped_dir = state.run_dir.join("persistent/stopped-vm");
     capsem_core::create_virtiofs_session(&stopped_dir, 64).unwrap();
     let stopped = test_persistent_entry("stopped-vm", stopped_dir);
@@ -173,7 +173,7 @@ async fn deleting_a_vm_leaves_every_network_it_was_in() {
 #[tokio::test]
 async fn stopping_a_vm_keeps_its_membership_and_a_fork_has_none() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = state.run_dir.join("sessions/fork-src");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
@@ -364,7 +364,7 @@ fn fake_link_seat(
                     } else {
                         handoff.to_string_lossy().into_owned()
                     },
-                    error: refuse.then(|| "this VM's profile blocks the link".into()),
+                    error: refuse.then(|| "this VM's policy blocks the link".into()),
                 })
             }
             other => panic!("unexpected owner message: {other:?}"),
@@ -392,7 +392,7 @@ async fn member_state(state: &Arc<ServiceState>, network: &str, vm: &str) -> Str
 #[tokio::test]
 async fn attaching_a_running_member_links_it_to_the_networks_switch_until_it_leaves() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
@@ -475,7 +475,7 @@ async fn attaching_a_running_member_links_it_to_the_networks_switch_until_it_lea
 #[tokio::test]
 async fn a_rejoin_plugs_with_a_generation_newer_than_the_leave_before_it() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
@@ -519,7 +519,7 @@ async fn a_rejoin_plugs_with_a_generation_newer_than_the_leave_before_it() {
 #[tokio::test]
 async fn leaving_writes_the_close_row_with_the_switchs_counters_for_the_cable() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
@@ -584,7 +584,7 @@ async fn leaving_writes_the_close_row_with_the_switchs_counters_for_the_cable() 
 #[tokio::test]
 async fn a_member_links_at_start_even_when_its_owner_binds_late() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
@@ -613,7 +613,7 @@ async fn a_member_links_at_start_even_when_its_owner_binds_late() {
 #[tokio::test]
 async fn a_member_whose_stream_ends_is_declared_and_then_linked_again() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
@@ -667,7 +667,7 @@ async fn released_within(seat: &FakeLinkSeat, wait: Duration) -> bool {
 #[tokio::test]
 async fn a_member_that_leaves_before_its_relink_is_not_linked_back_in() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
@@ -703,7 +703,7 @@ async fn a_member_that_leaves_before_its_relink_is_not_linked_back_in() {
 #[tokio::test]
 async fn a_member_that_leaves_mid_handshake_keeps_no_link() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
@@ -748,7 +748,7 @@ async fn a_member_that_leaves_mid_handshake_keeps_no_link() {
 #[tokio::test]
 async fn a_plug_that_finishes_inside_a_disconnect_leaves_no_port_behind() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
@@ -811,7 +811,7 @@ async fn a_plug_that_finishes_inside_a_disconnect_leaves_no_port_behind() {
 #[tokio::test]
 async fn an_owner_that_refuses_the_link_leaves_a_failed_membership() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
@@ -840,7 +840,7 @@ async fn private_resolve(state: &Arc<ServiceState>, request: serde_json::Value) 
 #[tokio::test]
 async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     for (id, name) in [
         ("vm-a", "alpha"),
         ("vm-b", "beta"),

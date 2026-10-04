@@ -1,13 +1,10 @@
 //! One running VM as the service sees it: the owner process, its sockets,
-//! the profile it booted from, and how its records are removed.
+//! the boot assets it booted, and how its records are removed.
 use super::*;
 
 pub(crate) struct InstanceInfo {
     pub(crate) id: String,
     pub(crate) name: String,
-    pub(crate) profile_id: String,
-    pub(crate) profile_revision: String,
-    pub(crate) profile_payload_hash: String,
     pub(crate) asset_pins: BootAssetPins,
     pub(crate) pid: u32,
     pub(crate) uds_path: PathBuf,

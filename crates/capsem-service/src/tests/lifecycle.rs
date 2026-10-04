@@ -33,9 +33,9 @@ fn tempdir_test_states_use_distinct_host_ledgers() {
 }
 
 #[tokio::test]
-async fn handle_persist_preserves_profile_identity() {
+async fn handle_persist_preserves_asset_pins() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = state.run_dir.join("sessions/persist-src");
     std::fs::create_dir_all(&session_dir).unwrap();
     state.instances.lock().unwrap().insert(
@@ -63,126 +63,75 @@ async fn handle_persist_preserves_profile_identity() {
     let entry = registry.get("persisted").unwrap();
     assert_eq!(entry.id, "persist-src");
     assert_eq!(entry.name, "persisted");
-    assert_eq!(entry.profile_id, "code");
-    assert_eq!(entry.profile_revision, test_profile_revision());
-    assert_eq!(entry.profile_payload_hash, test_profile_payload_hash());
     assert_eq!(entry.asset_pins, test_asset_pins());
     drop(registry);
 
     let instances = state.instances.lock().unwrap();
     let info = instances.get("persist-src").unwrap();
     assert_eq!(info.id, "persist-src");
-    assert_eq!(info.profile_id, "code");
-    assert_eq!(info.profile_revision, test_profile_revision());
-    assert_eq!(info.profile_payload_hash, test_profile_payload_hash());
     assert_eq!(info.asset_pins, test_asset_pins());
     assert!(info.persistent);
     drop(instances);
 }
 
-#[test]
-fn resume_rejects_profile_revision_drift() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    let session_dir = state.run_dir.join("persistent/revision-drift");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    let vm_id = new_persistent_vm_id();
-    {
-        let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert(
-            "revision-drift".into(),
-            PersistentVmEntry {
-                id: vm_id.clone(),
-                name: "revision-drift".into(),
-                profile_id: "code".into(),
-                profile_revision: "old-revision".into(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir,
-                forked_from: None,
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
-            },
-        );
-    }
-
-    let err = state.resume_sandbox(&vm_id, None, None).unwrap_err();
-    assert!(
-        err.to_string().contains("revision mismatch"),
-        "resume must fail closed on profile revision drift, got: {err}"
-    );
-}
-
-#[test]
-fn persistent_resume_uses_saved_profile_when_current_profile_revision_advances() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    let session_dir = state.run_dir.join("persistent/older-profile");
-    let runtime_profile = state.profile_for_runtime("code").unwrap();
-    let active = state.materialize_active_profile(&runtime_profile, &session_dir);
-    let active_profile_path = active.unwrap().path;
-    let mut active_profile: ActiveProfileFile =
-        toml::from_str(&std::fs::read_to_string(&active_profile_path).unwrap()).unwrap();
-    active_profile.revision = "older-supported-revision".to_string();
-    std::fs::write(&active_profile_path, toml::to_string_pretty(&active_profile).unwrap()).unwrap();
+fn profile_era_entry(state: &ServiceState, name: &str) -> PersistentVmEntry {
+    let session_dir = state.run_dir.join("persistent").join(name);
     let rootfs = capsem_core::session::system_overlay_image_path(&session_dir);
     std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
     std::fs::File::create(rootfs)
         .unwrap()
-        .set_len(u64::from(runtime_profile.config().vm.scratch_disk_size_gb) * 1024 * 1024 * 1024)
+        .set_len(u64::from(DEFAULT_SCRATCH_DISK_GB) * 1024 * 1024 * 1024)
         .unwrap();
+    PersistentVmEntry {
+        legacy_profile_id: Some("code".into()),
+        ..test_persistent_entry(name, session_dir)
+    }
+}
 
-    let mut entry = test_persistent_entry("older-profile", session_dir);
-    entry.profile_revision = active_profile.revision;
+fn register_entry(state: &ServiceState, entry: PersistentVmEntry) {
+    let name = entry.name.clone();
+    state.persistent_registry.lock().unwrap().data.vms.insert(name, entry);
+}
 
-    assert_eq!(
-        state.persistent_entry_resume_state_cached(&entry),
-        (VmLifecycleState::Stopped, true, None),
-        "a newer current profile must not invalidate a verified persistent VM pin"
+/// A VM created while VMs had profiles is refused at resume with the reason,
+/// never adapted to the current shape.
+#[test]
+fn resume_refuses_a_profile_era_vm() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_runtime_assets(&state);
+    let entry = profile_era_entry(&state, "profile-era");
+    let vm_id = entry.id.clone();
+    register_entry(&state, entry);
+
+    let err = state.resume_sandbox(&vm_id, None, None).unwrap_err().to_string();
+    assert!(
+        err.contains("created from the 'code' profile, and profiles no longer exist"),
+        "resume must refuse a profile-era VM, got: {err}"
     );
 }
 
 #[test]
-fn persistent_resume_rejects_a_corrupt_saved_active_profile() {
+fn persistent_resume_state_marks_a_profile_era_vm_incompatible() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    let session_dir = state.run_dir.join("persistent/corrupt-saved-profile");
-    let active_profile = session_dir.join(ACTIVE_PROFILE_DIR).join(ACTIVE_PROFILE_FILE);
-    std::fs::create_dir_all(active_profile.parent().unwrap()).unwrap();
-    std::fs::write(&active_profile, "not = [valid toml").unwrap();
-    let entry = test_persistent_entry("corrupt-saved-profile", session_dir);
+    install_test_runtime_assets(&state);
+    let entry = profile_era_entry(&state, "profile-era-status");
 
     let (status, can_resume, reason) = state.persistent_entry_resume_state_cached(&entry);
     assert_eq!(status, VmLifecycleState::Incompatible);
     assert!(!can_resume);
-    assert!(
-        reason.unwrap().contains("parse saved active profile"),
-        "corrupt saved policy must fail closed"
-    );
+    assert!(reason.unwrap().contains("profiles no longer exist"));
 }
 
 #[test]
 fn persistent_resume_allows_deprecated_pins_but_blocks_explicit_revocation() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = state.run_dir.join("persistent/deprecated-pin");
-    let runtime_profile = state.profile_for_runtime("code").unwrap();
-    state
-        .materialize_active_profile(&runtime_profile, &session_dir)
-        .unwrap();
     let rootfs = capsem_core::session::system_overlay_image_path(&session_dir);
     std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
     std::fs::File::create(rootfs)
         .unwrap()
-        .set_len(u64::from(runtime_profile.config().vm.scratch_disk_size_gb) * 1024 * 1024 * 1024)
+        .set_len(u64::from(DEFAULT_SCRATCH_DISK_GB) * 1024 * 1024 * 1024)
         .unwrap();
     let entry = test_persistent_entry("deprecated-pin", session_dir);
     let hash = entry.asset_pins.rootfs.hash.strip_prefix("blake3:").unwrap();
@@ -190,17 +139,15 @@ fn persistent_resume_allows_deprecated_pins_but_blocks_explicit_revocation() {
     std::fs::write(
         &manifest_path,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "profiles": {
-                "code": {
-                    "status": "supported",
-                    "architectures": [{
-                        "images": [{
-                            "kind": "rootfs",
-                            "status": "deprecated",
-                            "digest": {"blake3": hash}
-                        }]
+            "runtime": {
+                "status": "supported",
+                "architectures": [{
+                    "images": [{
+                        "kind": "rootfs",
+                        "status": "deprecated",
+                        "digest": {"blake3": hash}
                     }]
-                }
+                }]
             }
         }))
         .unwrap(),
@@ -214,7 +161,7 @@ fn persistent_resume_allows_deprecated_pins_but_blocks_explicit_revocation() {
     );
 
     let mut manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-    manifest["profiles"]["code"]["architectures"][0]["images"][0]["status"] = serde_json::json!("revoked");
+    manifest["runtime"]["architectures"][0]["images"][0]["status"] = serde_json::json!("revoked");
     std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
     let (status, can_resume, reason) = state.persistent_entry_resume_state_cached(&entry);
     assert_eq!(status, VmLifecycleState::Incompatible);
@@ -223,53 +170,11 @@ fn persistent_resume_allows_deprecated_pins_but_blocks_explicit_revocation() {
 }
 
 #[test]
-fn resume_rejects_profile_payload_hash_drift() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    let session_dir = state.run_dir.join("persistent/payload-hash-drift");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    let vm_id = new_persistent_vm_id();
-    {
-        let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert(
-            "payload-hash-drift".into(),
-            PersistentVmEntry {
-                id: vm_id.clone(),
-                name: "payload-hash-drift".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: "blake3:0000000000000000000000000000000000000000000000000000000000000000".into(),
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir,
-                forked_from: None,
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
-            },
-        );
-    }
-
-    let err = state.resume_sandbox(&vm_id, None, None).unwrap_err();
-    assert!(
-        err.to_string().contains("payload hash mismatch"),
-        "resume must fail closed on profile payload hash drift, got: {err}"
-    );
-}
-
-#[test]
 fn provision_rejects_nonexistent_source_sandbox() {
     let (state, _dir) = make_test_state_with_tempdir();
     let result = state.provision_sandbox(ProvisionOptions {
         id: "vm1",
         name: "vm1",
-        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         scratch_disk_size_gb: 16,
@@ -285,36 +190,28 @@ fn provision_rejects_nonexistent_source_sandbox() {
 }
 
 #[test]
-fn provision_rejects_source_with_different_profile() {
+fn provision_refuses_to_clone_a_profile_era_vm() {
     let (state, _dir) = make_test_state_with_tempdir();
-    {
-        let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert(
-            "other-profile-source".into(),
-            PersistentVmEntry {
-                profile_id: "other-profile".into(),
-                ..test_persistent_entry("other-profile-source", PathBuf::from("/tmp/other-profile-source"))
-            },
-        );
-    }
+    install_test_runtime_assets(&state);
+    register_entry(&state, profile_era_entry(&state, "profile-era-source"));
     let result = state.provision_sandbox(ProvisionOptions {
         id: "vm1",
         name: "vm1",
-        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         scratch_disk_size_gb: 16,
         version_override: None,
         persistent: false,
         env: None,
-        from: Some("other-profile-source".into()),
+        from: Some("profile-era-source".into()),
         description: None,
     });
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("uses profile 'other-profile', not 'code'"),
-        "source profile mismatch must fail, got: {err}"
+        err.contains("profiles no longer exist"),
+        "a clone must not launder a profile-era VM, got: {err}"
     );
+    assert!(!state.run_dir.join("sessions/vm1").exists());
 }
 
 // Suspend/resume registry fixes (issues #4-8)
@@ -322,7 +219,7 @@ fn provision_rejects_source_with_different_profile() {
 #[tokio::test]
 async fn handle_list_shows_suspended_status() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let suspended_dir = state.run_dir.join("persistent/susp-vm");
     let stopped_dir = state.run_dir.join("persistent/stop-vm");
     capsem_core::create_virtiofs_session(&suspended_dir, 64).unwrap();
@@ -384,7 +281,7 @@ async fn handle_list_shows_suspended_status() {
 #[tokio::test]
 async fn handle_info_shows_suspended_status() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = state.run_dir.join("persistent/info-susp");
     capsem_core::create_virtiofs_session(&session_dir, 64).unwrap();
 
@@ -396,9 +293,7 @@ async fn handle_info_shows_suspended_status() {
             PersistentVmEntry {
                 id: vm_id.clone(),
                 name: "info-susp".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
+                legacy_profile_id: None,
                 asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
@@ -424,7 +319,7 @@ async fn handle_info_shows_suspended_status() {
 #[tokio::test]
 async fn handle_info_reports_storage_diagnostics_for_persistent_vm() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = state.run_dir.join("persistent/storage-info");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     let rootfs = session_dir.join("system/rootfs.img");
@@ -454,7 +349,7 @@ async fn handle_info_reports_storage_diagnostics_for_persistent_vm() {
 #[tokio::test]
 async fn handle_vm_status_reports_storage_diagnostics_for_persistent_vm() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = state.run_dir.join("persistent/storage-status");
     capsem_core::create_virtiofs_session(&session_dir, 4).unwrap();
     let rootfs = session_dir.join("system/rootfs.img");
@@ -476,55 +371,34 @@ async fn handle_vm_status_reports_storage_diagnostics_for_persistent_vm() {
 }
 
 #[tokio::test]
-async fn handle_list_marks_profile_payload_drift_incompatible() {
+async fn handle_list_marks_a_profile_era_vm_incompatible() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    {
-        let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert(
-            "payload-drift".into(),
-            PersistentVmEntry {
-                profile_payload_hash: "blake3:0000000000000000000000000000000000000000000000000000000000000000".into(),
-                ..test_persistent_entry("payload-drift", state.run_dir.join("persistent/payload-drift"))
-            },
-        );
-    }
+    install_test_runtime_assets(&state);
+    register_entry(&state, profile_era_entry(&state, "profile-era-list"));
 
     let list: ListResponse = decode_response_json(handle_list(State(state)).await).await;
     let vm = list
         .sandboxes
         .iter()
-        .find(|s| s.name.as_deref() == Some("payload-drift"))
+        .find(|s| s.name.as_deref() == Some("profile-era-list"))
         .unwrap();
-    assert_ne!(vm.id, "payload-drift");
     assert_eq!(vm.status, VmLifecycleState::Incompatible);
     assert!(!vm.can_resume);
+    assert_eq!(vm.available_actions, vec![VmAction::Delete], "it can only be deleted");
     assert!(vm
         .resume_blocked_reason
         .as_deref()
         .unwrap_or_default()
-        .contains("payload hash mismatch"));
+        .contains("profiles no longer exist"));
 }
 
 #[tokio::test]
-async fn handle_info_marks_profile_payload_drift_incompatible() {
+async fn handle_info_marks_a_profile_era_vm_incompatible() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    let vm_id = new_persistent_vm_id();
-    {
-        let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert(
-            "payload-drift-info".into(),
-            PersistentVmEntry {
-                id: vm_id.clone(),
-                profile_payload_hash: "blake3:0000000000000000000000000000000000000000000000000000000000000000".into(),
-                ..test_persistent_entry(
-                    "payload-drift-info",
-                    state.run_dir.join("persistent/payload-drift-info"),
-                )
-            },
-        );
-    }
+    install_test_runtime_assets(&state);
+    let entry = profile_era_entry(&state, "profile-era-info");
+    let vm_id = entry.id.clone();
+    register_entry(&state, entry);
 
     let Json(info) = handle_info(State(state), Path(vm_id)).await.unwrap();
     assert_eq!(info.status, VmLifecycleState::Incompatible);
@@ -533,77 +407,7 @@ async fn handle_info_marks_profile_payload_drift_incompatible() {
         .resume_blocked_reason
         .as_deref()
         .unwrap_or_default()
-        .contains("payload hash mismatch"));
-}
-
-#[tokio::test]
-async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    let session_dir = state.run_dir.join("persistent/rootfs-size-drift");
-    capsem_core::create_virtiofs_session(&session_dir, 2).unwrap();
-    {
-        let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert(
-            "rootfs-size-drift".into(),
-            PersistentVmEntry {
-                id: new_persistent_vm_id(),
-                name: "rootfs-size-drift".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir,
-                forked_from: None,
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
-            },
-        );
-    }
-
-    let list: ListResponse = decode_response_json(handle_list(State(state.clone())).await).await;
-    let vm = list
-        .sandboxes
-        .iter()
-        .find(|s| s.name.as_deref() == Some("rootfs-size-drift"))
-        .unwrap();
-    assert_ne!(vm.id, "rootfs-size-drift");
-    assert_eq!(vm.status, VmLifecycleState::Incompatible);
-    assert!(!vm.can_resume);
-    let reason = vm.resume_blocked_reason.as_deref().unwrap_or_default();
-    assert!(reason.contains("rootfs.img logical size mismatch"), "{reason}");
-    assert!(reason.contains("2 GiB"), "{reason}");
-    assert!(reason.contains("64 GiB"), "{reason}");
-    assert_eq!(
-        vm.available_actions,
-        VmLifecycleState::Incompatible.available_actions(false)
-    );
-
-    let Json(info) = handle_info(State(state.clone()), Path(vm.id.clone())).await.unwrap();
-    assert_eq!(info.status, VmLifecycleState::Incompatible);
-    assert!(!info.can_resume);
-    assert!(info
-        .resume_blocked_reason
-        .as_deref()
-        .unwrap_or_default()
-        .contains("rootfs.img logical size mismatch"));
-
-    let Json(status) = handle_vm_status(State(state), Path(vm.id.clone())).await.unwrap();
-    assert_eq!(status.status, VmLifecycleState::Incompatible);
-    assert!(!status.can_resume);
-    assert!(status
-        .resume_blocked_reason
-        .as_deref()
-        .unwrap_or_default()
-        .contains("rootfs.img logical size mismatch"));
+        .contains("profiles no longer exist"));
 }
 
 #[tokio::test]
@@ -773,9 +577,7 @@ fn existing_resume_checkpoint_requires_completion_marker() {
             PersistentVmEntry {
                 id: vm_id.clone(),
                 name: "resume-vm".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
+                legacy_profile_id: None,
                 asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
@@ -822,9 +624,7 @@ fn clear_resume_checkpoint_removes_completion_marker() {
             PersistentVmEntry {
                 id: vm_id.clone(),
                 name: "resume-vm".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
+                legacy_profile_id: None,
                 asset_pins: test_asset_pins(),
                 ram_mb: 2048,
                 cpus: 2,
@@ -860,7 +660,7 @@ fn clear_resume_checkpoint_removes_completion_marker() {
 
 #[test]
 fn sandbox_info_new_defaults_telemetry_to_none() {
-    let info = SandboxInfo::new("test".into(), "code".into(), 1, VmLifecycleState::Running, false);
+    let info = SandboxInfo::new("test".into(), 1, VmLifecycleState::Running, false);
     assert_eq!(info.id, "test");
     assert_eq!(info.pid, 1);
     assert!(!info.persistent);
@@ -907,7 +707,7 @@ fn vm_lifecycle_available_actions_are_contractual() {
 
 #[test]
 fn sandbox_info_telemetry_fields_serialize_when_present() {
-    let mut info = SandboxInfo::new("test".into(), "code".into(), 1, VmLifecycleState::Running, false);
+    let mut info = SandboxInfo::new("test".into(), 1, VmLifecycleState::Running, false);
     info.total_input_tokens = Some(1000);
     info.total_estimated_cost = Some(0.42);
     info.model_call_count = Some(5);
@@ -919,7 +719,7 @@ fn sandbox_info_telemetry_fields_serialize_when_present() {
 
 #[test]
 fn sandbox_info_telemetry_fields_omitted_when_none() {
-    let info = SandboxInfo::new("test".into(), "code".into(), 1, VmLifecycleState::Running, false);
+    let info = SandboxInfo::new("test".into(), 1, VmLifecycleState::Running, false);
     let json = serde_json::to_string(&info).unwrap();
     assert!(!json.contains("total_input_tokens"));
     assert!(!json.contains("total_estimated_cost"));
@@ -928,27 +728,24 @@ fn sandbox_info_telemetry_fields_omitted_when_none() {
 }
 
 #[test]
-fn sandbox_info_rejects_missing_profile_id() {
-    let json = r#"{"id":"x","pid":1,"status":"Running","persistent":false}"#;
-    let err = serde_json::from_str::<SandboxInfo>(json).unwrap_err();
-    assert!(err.to_string().contains("profile_id"));
+fn sandbox_info_needs_no_profile_id() {
+    let json = r#"{"id":"x","pid":1,"status":"Running","persistent":false,"available_actions":[]}"#;
+    assert!(serde_json::from_str::<SandboxInfo>(json).is_ok());
 }
 
 #[test]
-fn profile_vm_resources_drive_new_session_defaults() {
-    let profile = ProfileConfigFile::builtin_primary();
+fn create_flags_override_the_service_default_resources() {
+    let defaults = resolve_vm_resources(None, None);
+    assert_eq!(defaults.cpus, 4);
+    assert_eq!(defaults.ram_mb, 12 * 1024);
+    assert_eq!(defaults.scratch_disk_size_gb, 64);
 
-    let default_resources = resolve_profile_vm_resources(&profile, None, None);
-    assert_eq!(default_resources.cpus, profile.vm.cpu_count);
-    assert_eq!(default_resources.ram_mb, u64::from(profile.vm.ram_gb) * 1024);
-    assert_eq!(default_resources.scratch_disk_size_gb, profile.vm.scratch_disk_size_gb);
-
-    let customized_resources = resolve_profile_vm_resources(&profile, Some(3072), Some(2));
-    assert_eq!(customized_resources.cpus, 2);
-    assert_eq!(customized_resources.ram_mb, 3072);
+    let customized = resolve_vm_resources(Some(3072), Some(2));
+    assert_eq!(customized.cpus, 2);
+    assert_eq!(customized.ram_mb, 3072);
     assert_eq!(
-        customized_resources.scratch_disk_size_gb, profile.vm.scratch_disk_size_gb,
-        "scratch image size is profile-owned and must not fall back to hidden service defaults"
+        customized.scratch_disk_size_gb, 64,
+        "the scratch image size is not a create flag"
     );
 }
 
@@ -1294,7 +1091,10 @@ fn resume_sandbox_requires_uuid_route_id_not_display_name() {
 }
 
 #[tokio::test]
-async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
+async fn resume_sandbox_passes_the_session_scratch_disk_size_to_process() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let settings_dir = tempfile::tempdir().unwrap();
+    let (_settings_guard, _, _) = install_empty_settings_env(&settings_dir);
     let (mut state, _dir) = make_test_state_with_tempdir();
     let run_dir = state.run_dir.clone();
     let argv_path = run_dir.join("resume-argv.txt");
@@ -1318,7 +1118,7 @@ async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
         std::fs::set_permissions(&process_path, perms).unwrap();
     }
     Arc::get_mut(&mut state).unwrap().process_binary = process_path;
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
 
     let vm_id = new_persistent_vm_id();
     let session_dir = state.run_dir.join("persistent").join(&vm_id);
@@ -1327,7 +1127,7 @@ async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
     std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
     std::fs::File::create(rootfs)
         .unwrap()
-        .set_len(u64::from(materialized_test_profile().vm.scratch_disk_size_gb) * 1024 * 1024 * 1024)
+        .set_len(24 * 1024 * 1024 * 1024)
         .unwrap();
     let mut entry = test_persistent_entry("resume-size", session_dir);
     entry.id = vm_id.clone();
@@ -1352,11 +1152,10 @@ async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
         .windows(2)
         .find(|window| window[0] == "--scratch-disk-size-gb")
         .map(|window| window[1]);
-    let expected_size = materialized_test_profile().vm.scratch_disk_size_gb.to_string();
     assert_eq!(
         size_flag,
-        Some(expected_size.as_str()),
-        "resume must preserve the profile-owned system overlay size; argv={args:?}"
+        Some("24"),
+        "resume must keep the size the session's system overlay was created with; argv={args:?}"
     );
 }
 

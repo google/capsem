@@ -37,20 +37,16 @@ pub(super) fn persistent_entry_vm_id(entry: &PersistentVmEntry) -> String {
 }
 
 pub(super) fn persistent_resume_state_fingerprint(state: &ServiceState, entry: &PersistentVmEntry) -> String {
-    let arch = capsem_core::net::policy_config::current_profile_arch();
-    let active_profile = entry.session_dir.join(ACTIVE_PROFILE_DIR).join(ACTIVE_PROFILE_FILE);
+    let arch = capsem_assets::asset_manager::host_manifest_arch();
     let rootfs = capsem_core::session::system_overlay_metadata(&entry.session_dir).ok();
     json!({
         "id": persistent_entry_vm_id(entry),
-        "profile_id": entry.profile_id,
-        "profile_revision": entry.profile_revision,
-        "profile_payload_hash": entry.profile_payload_hash,
+        "legacy_profile_id": entry.legacy_profile_id,
         "asset_pins": entry.asset_pins,
         "session_dir": entry.session_dir,
         "suspended": entry.suspended,
         "defunct": entry.defunct,
         "last_error": entry.last_error,
-        "active_profile": small_file_fingerprint(&active_profile),
         "installed_manifest": small_file_fingerprint(&state.assets_dir.join("manifest.json")),
         "rootfs": rootfs.as_ref().and_then(metadata_fingerprint),
         "kernel": file_metadata_fingerprint(&boot_asset_pin_path(&state.assets_dir, arch, &entry.asset_pins.kernel)),
@@ -573,7 +569,6 @@ pub(super) fn provision_response_for_running(state: &ServiceState, id: String) -
     let response = ProvisionResponse {
         name: instance.name.clone(),
         id,
-        profile_id: instance.profile_id.clone(),
         status,
         persistent: instance.persistent,
         can_resume: false,
@@ -592,18 +587,7 @@ pub(super) async fn handle_persist(
     validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Find the running ephemeral instance
-    let (
-        live_session_dir,
-        profile_id,
-        profile_revision,
-        profile_payload_hash,
-        asset_pins,
-        ram_mb,
-        cpus,
-        base_version,
-        forked_from,
-        env,
-    ) = {
+    let (live_session_dir, asset_pins, ram_mb, cpus, base_version, forked_from, env) = {
         let instances = state.instances.lock().unwrap();
         let i = instances
             .get(&id)
@@ -616,9 +600,6 @@ pub(super) async fn handle_persist(
         }
         let result = (
             i.session_dir.clone(),
-            i.profile_id.clone(),
-            i.profile_revision.clone(),
-            i.profile_payload_hash.clone(),
             i.asset_pins.clone(),
             i.ram_mb,
             i.cpus,
@@ -629,12 +610,6 @@ pub(super) async fn handle_persist(
         drop(instances);
         result
     };
-    let profile = state
-        .profile_config(&profile_id)
-        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
-    state
-        .validate_profile_pins(&profile, &profile_revision, &profile_payload_hash, &asset_pins)
-        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
     // Claim the name and register the session where it lives. The directory
     // moves under persistent/ once the process has exited (see
@@ -642,10 +617,8 @@ pub(super) async fn handle_persist(
     let entry = PersistentVmEntry {
         id: id.clone(),
         name: name.clone(),
-        profile_id: profile_id.clone(),
-        profile_revision: profile_revision.clone(),
-        profile_payload_hash: profile_payload_hash.clone(),
-        asset_pins: asset_pins.clone(),
+        legacy_profile_id: None,
+        asset_pins,
         ram_mb,
         cpus,
         base_version,
@@ -675,10 +648,6 @@ pub(super) async fn handle_persist(
         let mut instances = state.instances.lock().unwrap();
         if let Some(info) = instances.get_mut(&id) {
             info.name = name.clone();
-            info.profile_id = profile_id;
-            info.profile_revision = profile_revision;
-            info.profile_payload_hash = profile_payload_hash;
-            info.asset_pins = asset_pins;
             info.persistent = true;
             info.forked_from = forked_from;
         }
@@ -798,20 +767,16 @@ pub(super) async fn handle_run(
         .lifecycle
         .admit()
         .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
-    let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
-    if let Some(reason) = vm_asset_block_reason(&state, &profile_id) {
+    if let Some(reason) = state.off_worker(|state| vm_asset_block_reason(&state)).await? {
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
     }
 
     let id = {
         let existing = state.off_worker(|state| existing_session_names(&state)).await?;
-        generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str()))
+        generate_session_name(existing.iter().map(|s| s.as_str()))
     };
 
-    let profile = state
-        .profile_config(&profile_id)
-        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
-    let resources = resolve_profile_vm_resources(&profile, payload.ram_mb, payload.cpus);
+    let resources = resolve_vm_resources(payload.ram_mb, payload.cpus);
     let ram_mb = resources.ram_mb;
     let cpus = resources.cpus;
     let scratch_disk_size_gb = resources.scratch_disk_size_gb;
@@ -832,7 +797,6 @@ pub(super) async fn handle_run(
             state_clone.provision_sandbox(ProvisionOptions {
                 id: &id_clone,
                 name: &id_clone,
-                profile_id,
                 ram_mb,
                 cpus,
                 scratch_disk_size_gb,

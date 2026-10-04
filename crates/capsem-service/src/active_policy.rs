@@ -1,0 +1,132 @@
+//! A session's active policy: the one policy file capsem-process enforces.
+//!
+//! It is built from the built-in defaults, the user's settings.toml and the
+//! corp config, written into the session, and pushed to running VMs whenever
+//! one of its inputs is edited through the service.
+use super::*;
+
+use capsem_core::net::policy_config::ActivePolicyFile;
+
+/// One active policy as written: where, and the digest of its exact bytes,
+/// which capsem-process echoes back when it applies it.
+pub(crate) struct PublishedActivePolicy {
+    pub(crate) path: PathBuf,
+    pub(crate) digest: String,
+}
+
+impl ServiceState {
+    /// Write a session's active policy from the current settings and corp files.
+    pub(crate) fn materialize_active_policy(&self, session_dir: &StdPath) -> Result<PublishedActivePolicy> {
+        let (settings, corp) = capsem_core::net::policy_config::load_policy_files()
+            .map_err(anyhow::Error::msg)
+            .context("load the policy inputs")?;
+        let active_policy = ActivePolicyFile::from_settings_and_corp(&settings, &corp)
+            .map_err(anyhow::Error::msg)
+            .context("build the active policy")?;
+        let active_policy_dir = session_dir.join(ACTIVE_POLICY_DIR);
+        std::fs::create_dir_all(&active_policy_dir)
+            .with_context(|| format!("create {}", active_policy_dir.display()))?;
+        let active_policy_path = active_policy_dir.join(ACTIVE_POLICY_FILE);
+        let serialized = toml::to_string_pretty(&active_policy).context("serialize active policy")?;
+        // capsem-process reads this on every reload: publish it whole.
+        capsem_foundation::unix::fs::atomic_write_private(&active_policy_path, serialized.as_bytes())
+            .with_context(|| format!("write {}", active_policy_path.display()))?;
+        Ok(PublishedActivePolicy {
+            path: active_policy_path,
+            digest: capsem_core::net::policy_config::active_policy_digest(serialized.as_bytes()),
+        })
+    }
+
+    /// Re-materialize the active policy of every running VM. Returns each VM's
+    /// id with the digest it was given, or why it could not be; one VM that
+    /// cannot take the policy does not keep the others on the old one.
+    pub(crate) fn refresh_active_policies(&self) -> Vec<(String, std::result::Result<String, String>)> {
+        // Copied out first: the instances lock is not held across file writes.
+        let mut targets = Vec::new();
+        for (id, info) in self.instances.lock().unwrap().iter() {
+            targets.push((id.clone(), info.session_dir.clone()));
+        }
+        targets
+            .into_iter()
+            .map(|(id, session_dir)| {
+                let published = self
+                    .materialize_active_policy(&session_dir)
+                    .map(|active| active.digest)
+                    .map_err(|error| format!("{error:#}"));
+                (id, published)
+            })
+            .collect()
+    }
+}
+
+/// Deliver the current policy to every running VM: re-materialize each
+/// session's active policy, then ask capsem-process to reload it. Mutation
+/// routes call this so an edit is enforced before the route returns.
+///
+/// A VM counts as updated only when it reports applying the exact bytes this
+/// call wrote; an acknowledgement of some other active policy -- one written
+/// by a concurrent edit -- is a failure. One VM that fails does not stop the
+/// others: the edit is applied everywhere it can be, and the error names the
+/// VMs left on their previous policy. A VM silently left on stale policy is
+/// the worse outcome, so any such VM fails the request.
+pub(crate) async fn push_policy_to_running_instances(
+    state: &Arc<ServiceState>,
+    _mutation: &PolicyMutation<'_>,
+) -> Result<usize, AppError> {
+    let published = state.off_worker(|state| state.refresh_active_policies()).await?;
+    let total = published.len();
+
+    let mut failures = Vec::new();
+    let targets = {
+        let instances = state.instances.lock().unwrap();
+        published
+            .into_iter()
+            .filter_map(|(id, digest)| match digest {
+                Err(error) => {
+                    failures.push(format!("{id}: {error}"));
+                    None
+                }
+                // A VM that stopped since it was listed has nothing to reload.
+                Ok(digest) => Some((id.clone(), instances.get(&id)?.uds_path.clone(), digest)),
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let results = futures::future::join_all(targets.iter().map(|(id, uds_path, expected)| async move {
+        let request = ServiceToProcess::ReloadConfig {
+            id: state.next_job_id(),
+        };
+        match send_ipc_command(uds_path, request, Some(5)).await {
+            Ok(ProcessToService::ConfigReloadResult {
+                active_policy_digest: Some(applied),
+                error: None,
+                ..
+            }) if &applied == expected => None,
+            Ok(ProcessToService::ConfigReloadResult {
+                active_policy_digest: Some(applied),
+                error: None,
+                ..
+            }) => Some(format!("{id}: applied active policy {applied}, expected {expected}")),
+            Ok(ProcessToService::ConfigReloadResult { error: Some(error), .. }) => {
+                Some(format!("{id}: reload refused: {error}"))
+            }
+            Ok(_) => Some(format!("{id}: unexpected response")),
+            Err(e) => Some(format!("{id}: {e}")),
+        }
+    }))
+    .await;
+    failures.extend(results.into_iter().flatten());
+
+    if failures.is_empty() {
+        Ok(total)
+    } else {
+        Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "policy applied to {} of {total} running VMs; not applied: {}",
+                total - failures.len(),
+                failures.join(", ")
+            ),
+        ))
+    }
+}

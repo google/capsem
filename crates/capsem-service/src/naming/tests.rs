@@ -65,22 +65,7 @@ fn validate_vm_name_rejects_dot() {
 }
 
 #[test]
-fn session_naming_generate_profile_session_name_uses_profile_counter() {
-    assert_eq!(
-        generate_profile_session_name("code", std::iter::empty::<&str>()),
-        "code-1"
-    );
-    assert_eq!(generate_profile_session_name("code", ["code-1", "co-work-1"]), "code-2");
-}
-
-#[test]
-fn session_naming_generate_profile_session_name_sanitizes_profile_id() {
-    assert_eq!(
-        generate_profile_session_name("Co Work!", std::iter::empty::<&str>()),
-        "co-work-1"
-    );
-    assert_eq!(
-        generate_profile_session_name("!!!", std::iter::empty::<&str>()),
-        "session-1"
-    );
+fn session_naming_takes_the_first_free_counter() {
+    assert_eq!(generate_session_name(std::iter::empty::<&str>()), "vm-1");
+    assert_eq!(generate_session_name(["vm-1", "VM-2", "code-3"]), "vm-3");
 }

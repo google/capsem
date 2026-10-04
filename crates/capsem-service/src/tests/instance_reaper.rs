@@ -6,7 +6,6 @@ fn provision_persistent_validates_name() {
     let result = state.provision_sandbox(ProvisionOptions {
         id: "../evil",
         name: "../evil",
-        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         scratch_disk_size_gb: 16,
@@ -38,7 +37,6 @@ fn accepted_restart_refuses_both_launch_paths_before_any_session_mutation() {
     let provision = state.provision_sandbox(ProvisionOptions {
         id: "never-started",
         name: "never-started",
-        profile_id: "code".into(),
         ram_mb: 2048,
         cpus: 2,
         scratch_disk_size_gb: 16,
