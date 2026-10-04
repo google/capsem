@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diagnostics run; asking a session without a workload for `workload` is a
   400 rather than a silent VM exec. The session ledger records each exec's
   target (`exec_events.target`) beside the command as the caller wrote it.
+- `/settings/edit` refuses an id that any corp file sets, not only the first
+  corp file (whose value would otherwise silently win), and refuses a value
+  whose type, range or choice does not match the setting's definition.
 - A resumed or cloned image session whose first launch died before the image
   was unpacked is launched again by the service. The VM's boot only relaunches
   a fully staged image, so such a session used to stay `starting` forever.

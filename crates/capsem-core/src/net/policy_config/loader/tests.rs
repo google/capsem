@@ -323,13 +323,13 @@ fn env_var_path_resolution() {
         Some(std::path::PathBuf::from("/tmp/custom-capsem-home/settings.toml"))
     );
 
-    // Corp override via env.
+    // Corp override via env, exclusive of every other corp path.
     std::env::set_var("CAPSEM_CORP_CONFIG", "/tmp/custom-corp.toml");
-    assert_eq!(corp_config_path(), std::path::PathBuf::from("/tmp/custom-corp.toml"));
+    assert_eq!(
+        corp_config_paths(),
+        vec![std::path::PathBuf::from("/tmp/custom-corp.toml")]
+    );
     std::env::remove_var("CAPSEM_CORP_CONFIG");
-
-    // Corp default (env unset).
-    assert_eq!(corp_config_path(), std::path::PathBuf::from("/etc/capsem/corp.toml"));
 
     // Restore any prior values.
     match prev_corp {

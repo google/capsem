@@ -12,16 +12,6 @@ pub fn settings_config_path() -> Option<std::path::PathBuf> {
     capsem_foundation::paths::capsem_home_opt().map(|h| h.join("settings.toml"))
 }
 
-/// Corporate config path: returns the first available corp config path.
-///
-/// Priority: CAPSEM_CORP_CONFIG env > /etc/capsem/corp.toml > ~/.capsem/corp.toml
-pub fn corp_config_path() -> std::path::PathBuf {
-    corp_config_paths()
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| std::path::PathBuf::from("/etc/capsem/corp.toml"))
-}
-
 /// Corporate config paths, in priority order.
 ///
 /// /etc/capsem/corp.toml (system-level, MDM) takes precedence.
@@ -383,10 +373,13 @@ pub fn batch_update_settings(changes: &HashMap<String, SettingValue>) -> Result<
 }
 
 pub fn batch_update_settings_json(changes: &HashMap<String, serde_json::Value>) -> Result<Vec<String>, String> {
-    batch_update_settings_json_inner(changes)
+    batch_update_settings_json_inner(changes, &corp_config_paths())
 }
 
-fn batch_update_settings_json_inner(changes: &HashMap<String, serde_json::Value>) -> Result<Vec<String>, String> {
+pub(super) fn batch_update_settings_json_inner(
+    changes: &HashMap<String, serde_json::Value>,
+    corp_paths: &[std::path::PathBuf],
+) -> Result<Vec<String>, String> {
     use super::settings_metadata::setting_definitions;
 
     if changes.is_empty() {
@@ -394,9 +387,14 @@ fn batch_update_settings_json_inner(changes: &HashMap<String, serde_json::Value>
     }
 
     let settings_path = settings_config_path().ok_or("HOME not set")?;
-    let corp_path = corp_config_path();
     let mut settings_file = load_settings_document(&settings_path)?.unwrap_or_default();
-    let corp_file = load_settings_file(&corp_path)?;
+    // Every corp file locks what it sets, not only the first: an edit an
+    // overriding corp value would silently undo is refused instead. An
+    // unreadable corp file refuses the edit rather than being skipped.
+    let mut corp_locked = std::collections::HashSet::new();
+    for corp_path in corp_paths {
+        corp_locked.extend(load_settings_file(corp_path)?.settings.into_keys());
+    }
     let defs = setting_definitions();
     let mut setting_changes = HashMap::new();
 
@@ -419,14 +417,19 @@ fn batch_update_settings_json_inner(changes: &HashMap<String, serde_json::Value>
         };
 
         // Every registry id is the user's to write; nothing else is.
-        if !defs.iter().any(|d| d.id == *id) {
+        let Some(def) = defs.iter().find(|d| d.id == *id) else {
             errors.push(format!("unknown setting: {id}"));
+            continue;
+        };
+
+        // An id corp sets is corp's, whatever its namespace.
+        if corp_locked.contains(id) {
+            errors.push(format!("corp-locked: {id}"));
             continue;
         }
 
-        // An id corp sets is corp's, whatever its namespace.
-        if corp_file.settings.contains_key(id) {
-            errors.push(format!("corp-locked: {id}"));
+        if let Err(e) = capsem_config::validate_setting_value_shape(def, &value) {
+            errors.push(e);
             continue;
         }
 

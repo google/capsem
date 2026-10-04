@@ -360,6 +360,47 @@ fn batch_update_refuses_corp_locked_settings() {
     );
 }
 
+/// Every corp file locks what it sets: an id only the second corp file sets
+/// is refused too, since that corp value would win at merge anyway.
+#[test]
+fn batch_update_refuses_an_id_locked_by_any_corp_file() {
+    with_temp_configs(vec![], vec![], |user_path, _| {
+        let dir = tempfile::tempdir().unwrap();
+        let (first, second) = (dir.path().join("system.toml"), dir.path().join("user-corp.toml"));
+        std::fs::write(&first, "[settings]\n").unwrap();
+        std::fs::write(
+            &second,
+            "[settings]\n\"vm.resources.cpu_count\" = { value = 2, modified = \"2026-01-01T00:00:00Z\" }\n",
+        )
+        .unwrap();
+        let changes = HashMap::from([("vm.resources.cpu_count".to_string(), serde_json::json!(8))]);
+        let error = loader::batch_update_settings_json_inner(&changes, &[first.clone(), second.clone()])
+            .expect_err("the second corp file locks it");
+        assert_eq!(error, "corp-locked: vm.resources.cpu_count");
+        assert!(loader::load_settings_file(user_path).unwrap().settings.is_empty());
+
+        // An unreadable corp file refuses the edit instead of being skipped.
+        std::fs::write(&second, "not toml [").unwrap();
+        assert!(loader::batch_update_settings_json_inner(&changes, &[first, second]).is_err());
+    });
+}
+
+#[test]
+fn batch_update_refuses_a_value_of_the_wrong_type() {
+    with_temp_configs(vec![], vec![], |user_path, _| {
+        for (id, value) in [
+            ("appearance.dark_mode", serde_json::json!("yes")),
+            ("vm.resources.cpu_count", serde_json::json!(true)),
+            ("repository.git.identity.author_name", serde_json::json!(7)),
+        ] {
+            let changes = HashMap::from([(id.to_string(), value)]);
+            let error = loader::batch_update_settings_json(&changes).expect_err("wrong type refused");
+            assert!(error.contains(id), "{error}");
+        }
+        assert!(loader::load_settings_file(user_path).unwrap().settings.is_empty());
+    });
+}
+
 #[test]
 fn batch_update_rejects_retired_web_decision_setting_ids() {
     with_temp_configs(vec![], vec![], |_, _| {
