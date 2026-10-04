@@ -110,3 +110,11 @@ class ReleaseConfig(Strict):
         if len(channels) != len(set(channels)):
             raise ValueError("release retired_public_graphs channels must be unique")
         return rows
+
+
+class TransitionSettings(Strict):
+    """The deployed public before-state a local transition updates from."""
+
+    fetch_script: str
+    before_dir: str
+    input_cache: str

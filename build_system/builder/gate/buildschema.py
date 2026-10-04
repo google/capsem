@@ -17,7 +17,7 @@ from ..cache.tools import CachedToolPolicy
 from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from .configschema import SafeToken, Strict
 from .functionalschema import DebugImageConfig, GreyjoyConfig, KingslandingConfig
-from .releaseschema import ReleasePairingEnvironment
+from .releaseschema import ReleasePairingEnvironment, TransitionSettings
 
 
 class SdkConfig(Strict):
@@ -78,6 +78,7 @@ class ModulesConfig(Strict):
     rehearsal_before_inputs: str
     rehearsal_after_manifest: str
     release_pairing: ReleasePairingEnvironment
+    transition: TransitionSettings
 
 
 class FunctionalConfig(Strict):

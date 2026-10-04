@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import importlib
 import os
-import pwd
 import subprocess
 import tomllib
 from pathlib import Path
@@ -379,9 +378,12 @@ def test_the_restart_is_scheduled_as_the_user_after_activation(tmp_path: Path) -
     bin_dir.mkdir()
     argv = tmp_path / "runuser.argv"
     _stub(bin_dir, "runuser", f'printf "%s\\n" "$@" > {argv}')
-    user = pwd.getpwuid(os.getuid()).pw_name
+    # The gate runs this in a user namespace with no passwd entry, so the
+    # user database is stubbed like every other command the helper calls.
+    user, uid = "capsem", "4242"
+    _stub(bin_dir, "id", f'[ "$1" = -u ] && [ "$2" = {user} ] && echo {uid}')
     runtime = tmp_path / "run-user"
-    (runtime / str(os.getuid())).mkdir(parents=True)
+    (runtime / uid).mkdir(parents=True)
 
     subprocess.run(
         [
@@ -398,7 +400,7 @@ def test_the_restart_is_scheduled_as_the_user_after_activation(tmp_path: Path) -
 
     args = argv.read_text(encoding="utf-8").splitlines()
     assert args[:3] == ["-u", user, "--"]
-    assert f"XDG_RUNTIME_DIR={runtime}/{os.getuid()}" in args
+    assert f"XDG_RUNTIME_DIR={runtime}/{uid}" in args
     assert args[args.index("systemd-run") : args.index("systemd-run") + 5] == [
         "systemd-run",
         "--user",

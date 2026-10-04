@@ -2119,6 +2119,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_complete_gate_policy.py",
     "build_system/tests/gate/test_just_argument_boundary.py",
     "build_system/tests/gate/test_gate_testmodules.py",
+    "build_system/tests/gate/test_gate_transition.py",
     "build_system/tests/gate/test_gate_test_admission.py",
     "build_system/tests/gate/test_gate_timing.py",
     "build_system/tests/gate/test_gate_toolchain.py",
@@ -2431,6 +2432,12 @@ rehearsal_inputs_dir = "cache/target/release/staging/rehearsal-inputs"
 rehearsal_package = "cache/target/release/staging/rehearsal-package/Capsem_{version}_{arch}.deb"
 rehearsal_content_root = "cache/target/release/staging/rehearsal-content"
 rehearsal_glowup_work_dir = "cache/target/release/staging/rehearsal-glowup"
+# The release lane installs the deployed public release and lets it update
+# itself to the candidate. Nothing local did, so three stable 0.6.4
+# qualifications failed there one at a time: a profile key 0.6.3 refuses, a
+# rule 0.6.3 cannot reload, a ledger 0.6.4 would not open (#280). The
+# rehearsal now fetches that deployed before-state over the release egress
+# and replays the transition in the install container against its cohort.
 # The public before-state the rehearsal pairs against, and the candidate
 # manifest it authored. `{channel}` is the rehearsal channel.
 #
@@ -2448,6 +2455,12 @@ default_bin_dir = "cache/target/cargo/debug"
 # Cleared for the channel-switch run: it has to rediscover the channel from
 # the installed state rather than inherit what the previous run was told.
 # What a glow-up is told about the one exact transition it proves.
+[modules.transition]
+# See the note above `rehearsal_glowup_work_dir` and #280.
+fetch_script = "build_system/scripts/release/fetch-release-artifacts.py"
+before_dir = "cache/target/release/staging/public-before"
+input_cache = "cache/target/release/staging/input-cache"
+
 [modules.release_pairing]
 channel = "CAPSEM_RELEASE_CHANNEL"
 baseline_channel = "CAPSEM_RELEASE_BASELINE_CHANNEL"

@@ -27,6 +27,7 @@ from . import (
     staticmodule,
     testmodules,
     toolchain,
+    transition,
     vmmodules,
     webaudits,
 )
@@ -191,6 +192,15 @@ def compose_modules(
         after=(glowup,),
     )
 
+    # The deployed public release, installed and left to update itself to this
+    # cohort: the transition only a release lane used to prove (#280).
+    transitioned = transition.transition(
+        plan,
+        config,
+        qualification=qualification,
+        after=(rehearsed,),
+    )
+
     return plan.add(
         step(
             "recipes",
@@ -198,5 +208,5 @@ def compose_modules(
             kind=Kind.STATIC_TEST,
             speed=Speed.FAST,
         ),
-        after=(rehearsed,),
+        after=(transitioned,),
     )
