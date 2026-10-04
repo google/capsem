@@ -95,25 +95,26 @@ def test_runc_execs_into_the_workload_through_the_launch_state_root(launcher):
     assert launcher.RUNC[-1] == str(launcher.RUNTIME / "state")
 
 
-def _runc_state(status, returncode=0):
+def _runc_state(status, bundle="/var/lib/capsem/roots/ab/bundle", returncode=0):
     def run(*args, **kwargs):
         assert args[-2:] == ("state", "workload"), args
-        return subprocess.CompletedProcess(args, returncode, stdout=json.dumps({"status": status}))
+        return subprocess.CompletedProcess(args, returncode, stdout=json.dumps({"status": status, "bundle": bundle}))
 
     return run
 
 
-def test_only_a_running_workload_can_be_entered(launcher, tmp_path, monkeypatch):
+def test_only_a_running_workload_can_be_entered_through_the_bundle_runc_names(launcher, tmp_path, monkeypatch):
     monkeypatch.setattr(launcher, "RUNTIME", tmp_path)
 
     def never(*args, **kwargs):
         raise AssertionError("runc asked about a container that was never created")
 
-    assert launcher.workload_running(run=never) is False
+    assert launcher.workload_bundle(run=never) is None
     (tmp_path / "state" / "workload").mkdir(parents=True)
-    assert launcher.workload_running(run=_runc_state("running")) is True
-    assert launcher.workload_running(run=_runc_state("stopped")) is False
-    assert launcher.workload_running(run=_runc_state("running", returncode=1)) is False
+    # The bundle lives under the digest's unpacked root, not under RUNTIME.
+    assert launcher.workload_bundle(run=_runc_state("running")) == launcher.Path("/var/lib/capsem/roots/ab/bundle")
+    assert launcher.workload_bundle(run=_runc_state("stopped")) is None
+    assert launcher.workload_bundle(run=_runc_state("running", returncode=1)) is None
 
 
 def test_exec_without_a_workload_is_refused_not_run_in_the_vm(launcher, tmp_path, monkeypatch):
@@ -129,11 +130,12 @@ def test_exec_without_a_workload_is_refused_not_run_in_the_vm(launcher, tmp_path
 
 
 def test_exec_hands_runc_the_workload_process_and_nothing_else(launcher, tmp_path, monkeypatch):
-    monkeypatch.setattr(launcher, "RUNTIME", tmp_path)
-    (tmp_path / "bundle").mkdir()
+    monkeypatch.setattr(launcher, "RUNTIME", tmp_path / "runtime")
+    bundle = tmp_path / "roots" / "ab" / "bundle"
+    bundle.mkdir(parents=True)
     config = workload_config(launcher)
-    (tmp_path / "bundle" / "config.json").write_text(json.dumps(config))
-    monkeypatch.setattr(launcher, "workload_running", lambda: True)
+    (bundle / "config.json").write_text(json.dumps(config))
+    monkeypatch.setattr(launcher, "workload_bundle", lambda: bundle)
     # memfd is Linux's; a plain file descriptor stands in for it on any host.
     monkeypatch.setattr(
         launcher.os,

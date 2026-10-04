@@ -29,10 +29,11 @@ IN_WORKLOAD = (
     'if unshare -U true 2>/dev/null; then echo "UNSHARE allowed"; else echo "UNSHARE denied"; fi'
 )
 IN_VM = "test -f /var/tmp/capsem-container/workload.pid && echo VM-$(id -u)"
-# The user the image's process runs as, from the bundle the launcher wrote.
+# The user the image's process runs as, from the bundle the launcher wrote
+# under the image digest's unpacked root (only the current digest's is kept).
 BUNDLE_USER = (
-    "python3 -c 'import json; p = json.load(open(\"/var/tmp/capsem-container/bundle/config.json\"))[\"process\"]; "
-    'print(p["user"]["uid"], p["cwd"])\''
+    "python3 -c 'import glob, json; [c] = glob.glob(\"/var/lib/capsem/roots/*/bundle/config.json\"); "
+    'p = json.load(open(c))[\"process\"]; print(p["user"]["uid"], p["cwd"])\''
 )
 
 

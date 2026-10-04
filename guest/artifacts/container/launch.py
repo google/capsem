@@ -708,12 +708,17 @@ def exec_argv(process_path):
     return [*RUNC, "exec", "--process", process_path, CONTAINER]
 
 
-def workload_running(run=command):
-    """Whether the workload this VM launched is running now."""
+def workload_bundle(run=command):
+    """The bundle the workload this VM launched runs from, or None when it is
+    not running. runc's own state names it: the bundle lives under the digest's
+    unpacked root, and only runc knows which one this workload started from."""
     if not (RUNTIME / "state" / CONTAINER).exists():
-        return False
+        return None
     state = run(*RUNC, "state", CONTAINER, check=False, capture_output=True, text=True)
-    return state.returncode == 0 and json.loads(state.stdout).get("status") == "running"
+    if state.returncode != 0:
+        return None
+    state = json.loads(state.stdout)
+    return Path(state["bundle"]) if state.get("status") == "running" else None
 
 
 def exec_workload(encoded):
@@ -723,9 +728,10 @@ def exec_workload(encoded):
     nothing is left to clean up; runc reads it through /proc/self/fd.
     """
     argv, tty = exec_request(encoded)
-    if not workload_running():
+    bundle = workload_bundle()
+    if bundle is None:
         raise SystemExit("capsem: no container workload is running in this session")
-    config = json.loads((RUNTIME / "bundle" / "config.json").read_text())
+    config = json.loads((bundle / "config.json").read_text())
     spec = os.memfd_create("capsem-exec", 0)
     os.write(spec, json.dumps(exec_process(config, argv, tty)).encode())
     os.set_inheritable(spec, True)
