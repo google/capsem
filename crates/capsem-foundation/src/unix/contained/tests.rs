@@ -400,6 +400,28 @@ fn rename_moves_a_link_as_a_link_and_never_its_target() {
 }
 
 #[test]
+fn remove_non_directory_unlinks_files_and_links_but_never_follows() {
+    let tree = tree();
+    std::fs::write(tree.root_path.join("file"), b"guest").unwrap();
+    std::fs::create_dir(tree.root_path.join("dir")).unwrap();
+    std::fs::write(tree.outside.join("target"), b"keep").unwrap();
+    symlink(tree.outside.join("target"), tree.root_path.join("link")).unwrap();
+
+    tree.root.remove_non_directory(OsStr::new("file")).unwrap();
+    // A link a writer put in place of a file goes; what it points at stays.
+    tree.root.remove_non_directory(OsStr::new("link")).unwrap();
+    assert!(tree.root.entry_kind(OsStr::new("file")).unwrap().is_none());
+    assert!(tree.root.entry_kind(OsStr::new("link")).unwrap().is_none());
+    assert_eq!(std::fs::read(tree.outside.join("target")).unwrap(), b"keep");
+
+    assert!(tree.root.remove_non_directory(OsStr::new("dir")).is_err());
+    assert!(tree.root_path.join("dir").is_dir());
+    assert!(tree.root.remove_non_directory(OsStr::new("../target")).is_err());
+    let missing = tree.root.remove_non_directory(OsStr::new("absent")).unwrap_err();
+    assert_eq!(missing.kind(), io::ErrorKind::NotFound);
+}
+
+#[test]
 fn remove_symlink_refuses_every_other_entry_type() {
     let tree = tree();
     std::fs::write(tree.root_path.join("file"), b"keep").unwrap();

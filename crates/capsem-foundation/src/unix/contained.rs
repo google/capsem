@@ -302,6 +302,15 @@ impl ContainedDir {
         unlinkat(Some(self.fd.as_raw_fd()), name, UnlinkatFlags::NoRemoveDir).map_err(Into::into)
     }
 
+    /// Remove the child `name` -- a file, a symlink or any other non-directory
+    /// entry -- without following it. A directory is refused. For entries a
+    /// guest writes, where a symlink in place of a file is removed as a link
+    /// and its target is never touched.
+    pub fn remove_non_directory(&self, name: &OsStr) -> io::Result<()> {
+        check_component(name)?;
+        unlinkat(Some(self.fd.as_raw_fd()), name, UnlinkatFlags::NoRemoveDir).map_err(Into::into)
+    }
+
     fn is_symlink(&self, name: &OsStr) -> io::Result<bool> {
         let stat = fstatat(Some(self.fd.as_raw_fd()), name, AtFlags::AT_SYMLINK_NOFOLLOW)?;
         Ok(SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT == SFlag::S_IFLNK)
