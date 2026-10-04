@@ -55,11 +55,15 @@ def assert_stage_holds_no_image(session, layers):
         # The launcher's source is the largest control file, a few dozen KiB.
         assert path.stat().st_size < 64 * 1024, path
     sizes = {layer["size"] for layer in layers}
+    # Regular files only: the guest leaves links in its workspace (a dangling
+    # `.venv`, for one), and a link is no copy of a layer.
     for root, _, files in os.walk(session / "guest" / "workspace"):
         for name in files:
-            path = os.path.join(root, name)
-            if os.path.getsize(path) in sizes:
-                digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+            path = Path(root) / name
+            if path.is_symlink() or not path.is_file():
+                continue
+            if path.stat().st_size in sizes:
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
                 assert f"sha256:{digest}" not in {layer["digest"] for layer in layers}, path
 
 
