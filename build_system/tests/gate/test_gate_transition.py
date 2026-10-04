@@ -22,17 +22,19 @@ CONFIG = for_root(PROJECT_ROOT)
 COMMIT = "f" * 40
 
 
-def test_the_rehearsal_replays_the_installed_transition_last() -> None:
-    labels = list(built_command(PROJECT_ROOT, "test-rehearsal")._describe().labels)
+def test_just_test_replays_the_installed_transition_after_the_rehearsal() -> None:
+    """Its own phase: the rehearsal stays a local cohort that fetches nothing."""
+    labels = list(built_command(PROJECT_ROOT, "candidate")._describe().labels)
     order = [
         "rehearsal.package",
-        "rehearsal.transition.before-packages",
-        "rehearsal.transition.before-profiles",
-        "rehearsal.transition.before-verify",
-        "rehearsal.transition",
+        "transition.before-packages",
+        "transition.before-profiles",
+        "transition.before-verify",
+        "transition.installed",
+        "recipes",
     ]
-    assert [labels.index(label) for label in order] == sorted(labels.index(label) for label in order)
-    assert labels[-1] == "rehearsal.transition"
+    positions = [labels.index(label) for label in order]
+    assert positions == sorted(positions), dict(zip(order, positions, strict=True))
 
 
 def test_the_before_state_is_fetched_over_the_release_egress() -> None:
@@ -45,7 +47,7 @@ def test_the_before_state_is_fetched_over_the_release_egress() -> None:
         rendered = action.render()
         assert rendered.endswith("[outside kernel sandbox]")
         assert CONFIG.package.default_manifest_url in rendered
-        assert CONFIG.modules.transition_input_cache in rendered
+        assert CONFIG.modules.transition.input_cache in rendered
 
 
 def _gate(monkeypatch) -> tuple[transition.TransitionGate, list[tuple[str, dict]]]:
@@ -63,12 +65,14 @@ def test_the_glowup_gets_the_release_lanes_pairing(monkeypatch) -> None:
     before = Path("/before/Capsem_0.6.3_amd64.deb")
     gate._glowup(before, "/src/evidence")
 
-    (command, env), = shells
+    ((command, env),) = shells
     pairing = CONFIG.modules.release_pairing
     channel = CONFIG.modules.rehearsal_channel
     assert env[pairing.channel] == env[pairing.baseline_channel] == channel
     assert env[pairing.transition] == "auto"
-    assert env[pairing.before_manifest].endswith(f"{transition.PROFILES}/{CONFIG.install.manifest_name}")
+    assert env[pairing.before_manifest].endswith(
+        f"{transition.PROFILES}/{CONFIG.install.manifest_name}"
+    )
     assert env[pairing.after_manifest].endswith(
         CONFIG.modules.rehearsal_after_manifest.format(channel=channel)
     )
@@ -82,7 +86,7 @@ def test_the_glowup_gets_the_release_lanes_pairing(monkeypatch) -> None:
 def test_a_first_release_has_nothing_to_update_from(monkeypatch, tmp_path) -> None:
     gate, shells = _gate(monkeypatch)
     gate._before = tmp_path
-    monkeypatch.setattr(gate._container, "runtime_options", lambda: [])
+    monkeypatch.setattr(gate._container, "runtime_options", list)
     gate._container.boots_a_guest = True
     gate.run()
     assert shells == []

@@ -20,6 +20,7 @@ from __future__ import annotations
 import shutil
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from . import config as gate_config
 from . import host, installimage
@@ -80,6 +81,7 @@ class InstallContainer:
         runner: Runner,
         *,
         content: InstallContent | None = None,
+        inputs: tuple[Path, ...] = (),
         sleep=time.sleep,
     ) -> None:
         self._runner = runner
@@ -87,6 +89,9 @@ class InstallContainer:
         self._config = gate_config.for_root(runner.root)
         self._settings = self._config.install
         self._content = content
+        #: Read-only roots mounted at their own host path, so the absolute
+        #: `file://` URLs a fetched or rehearsed cohort carries resolve inside.
+        self._inputs = tuple(path.resolve() for path in inputs)
         self.name = self._settings.container
         self._owned = self._settings.layout.owned_paths(self._settings.mount)
         self._sleep = sleep
@@ -167,6 +172,7 @@ class InstallContainer:
                     if (self._config.root / name).exists()
                 ),
                 *self._content_mounts(),
+                *(Mount.generated(str(path), str(path)) for path in self._inputs),
             ],
         )
         self._await_systemd()
