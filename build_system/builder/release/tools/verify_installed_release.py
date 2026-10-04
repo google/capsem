@@ -215,8 +215,9 @@ def main() -> int:
         "Running:   true",
         "Service:   ok",
         "Gateway:   ok",
-        "  status:  valid",
-        f"  source:  {metadata_manifest_url}",
+        # The runtime manifest the service selected (capsem `print_asset_status`).
+        "Manifest status: Valid",
+        f"Manifest source: {metadata_manifest_url}",
     ):
         if required not in status:
             fail(f"capsem status is missing {required!r}")

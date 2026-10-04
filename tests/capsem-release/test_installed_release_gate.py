@@ -54,8 +54,8 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
         "Service:   ok (v1.5.9)\n"
         "Gateway:   ok (port 19222, v1.5.9)\n"
         "Assets: ready\n"
-        f"  source:  {manifest.resolve().as_uri()}\n"
-        "  status:  valid\n"
+        f"Manifest source: {manifest.resolve().as_uri()}\n"
+        "Manifest status: Valid\n"
         "EOF\n",
         encoding="utf-8",
     )
@@ -392,3 +392,15 @@ def test_installed_release_gate_rejects_legacy_sidecars(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "legacy state path still exists" in result.stderr
+
+
+def test_the_verifier_asks_only_for_lines_capsem_status_prints() -> None:
+    """The fake above is only honest while the real `capsem status` prints the
+    lines the verifier requires: the profile section it used to check for
+    went away with profiles, and every installed proof then failed."""
+    main = (PROJECT_ROOT / "crates/capsem/src/main.rs").read_text()
+    assert 'println!("Manifest status: {:?}", manifest.validation_status);' in main
+    assert 'println!("Manifest source: {source}");' in main
+    verifier = (PROJECT_ROOT / "build_system/builder/release/tools/verify_installed_release.py").read_text()
+    assert '"Manifest status: Valid"' in verifier
+    assert 'f"Manifest source: {metadata_manifest_url}"' in verifier
