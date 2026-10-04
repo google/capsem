@@ -1116,11 +1116,9 @@ def attach(bundle_of=workload_bundle, run=subprocess.run, sleep=time.sleep, cons
             continue
         waiting = False
         if console.exists():
-            try:
+            # It may have exited between the check and the connect.
+            with contextlib.suppress(OSError):
                 attach_console()
-            except OSError:
-                # It exited between the check and the connect.
-                pass
             print("\r\ncapsem: the workload exited; waiting for it to start again", flush=True)
             waiting = True
             sleep(ATTACH_INTERVAL)

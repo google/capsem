@@ -10,10 +10,10 @@ workload has exited, and the stage says so with its code.
 
 import contextlib
 import fcntl
-import tempfile
 import os
 import socket
 import struct
+import tempfile
 import termios
 import threading
 import time

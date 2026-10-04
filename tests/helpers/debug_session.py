@@ -16,7 +16,6 @@ from __future__ import annotations
 import functools
 
 from helpers.image_session import WORKSPACE, image_session
-
 from tests.fixtures.oci.pinned_image import debug_image
 
 __all__ = ["WORKSPACE", "debug_session"]
