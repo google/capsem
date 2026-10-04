@@ -18,6 +18,7 @@ import time
 from pathlib import Path, PurePosixPath
 
 RUNTIME = Path("/var/tmp/capsem-container")
+HOSTNAME = "container"
 # The VM workspace seen through the workload's id map. Outside RUNTIME, which
 # is removed recursively on exit and must never reach into the workspace.
 WORKSPACE_VIEW = Path("/var/tmp/capsem-workspace")
@@ -214,6 +215,7 @@ def configure(unpacked, image, options):
         }
         for destination, source in (
             ("/etc/resolv.conf", str(RUNTIME / "resolv.conf")),
+            ("/etc/hosts", str(RUNTIME / "hosts")),
             (CA_BUNDLE, CA_BUNDLE),
         )
     )
@@ -242,7 +244,7 @@ def configure(unpacked, image, options):
     return {
         "ociVersion": "1.0.2",
         "root": {"path": "rootfs", "readonly": True},
-        "hostname": "container",
+        "hostname": HOSTNAME,
         "process": process,
         "mounts": mounts,
         "hooks": {
@@ -427,6 +429,12 @@ def idmap_workspace(id_map, target):
 
 def command(*args, check=True, **kwargs):
     return subprocess.run(args, check=check, timeout=30, **kwargs)
+
+
+def hosts_file():
+    """The container's own names, on its own loopback, as any runtime supplies
+    them: an image's /etc/hosts is whatever its build left, usually nothing."""
+    return f"127.0.0.1\tlocalhost {HOSTNAME}\n"
 
 
 def resolv_conf():
@@ -745,6 +753,7 @@ def run(stage):
         )
         config_path.write_text(json.dumps(config))
         (RUNTIME / "resolv.conf").write_text(resolv_conf())
+        (RUNTIME / "hosts").write_text(hosts_file())
         (stage / "ready").write_text("1\n")
         pid_file = RUNTIME / "workload.pid"
         process = subprocess.Popen(

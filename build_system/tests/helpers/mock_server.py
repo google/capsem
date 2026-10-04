@@ -135,7 +135,11 @@ def start_mock_server(
     capture_requests: bool = True,
     timeout_s: float = 120,
     retry_interval_s: float = 0.2,
+    dns_answers: str = "loopback",
 ) -> tuple[subprocess.Popen[str], dict[str, Any]]:
+    """Start the mock upstream; `ready["dns_answer_ip"]` is what its provider
+    and model names resolve to. `dns_answers="routable"` is for clients in a
+    container workload, which cannot reach the VM's loopback."""
     _ensure_mock_server_binary()
     lock_timeout_s = _lock_timeout(timeout_s)
     lock_file = _acquire_lock(addr, timeout_s=lock_timeout_s)
@@ -148,6 +152,8 @@ def start_mock_server(
             addr,
             "--parent-pid",
             str(os.getpid()),
+            "--dns-answers",
+            dns_answers,
         ]
         if capture_requests:
             request_log_path = request_log or (

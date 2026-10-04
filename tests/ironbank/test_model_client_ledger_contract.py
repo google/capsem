@@ -13,7 +13,7 @@ import sqlite3
 import textwrap
 import time
 import uuid
-from contextlib import closing, suppress
+from contextlib import ExitStack, closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,10 +22,8 @@ import pytest
 from helpers.body_archive import session_archive
 from helpers.constants import (
     ASSETS_DIR,
-    DEFAULT_CPUS,
-    DEFAULT_RAM_MB,
-    EXEC_READY_TIMEOUT,
 )
+from helpers.debug_session import WORKSPACE, debug_session
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
@@ -33,11 +31,15 @@ from helpers.service import (
     vm_name,
     vm_session_db_path,
     vm_session_dir,
-    wait_exec_ready,
 )
 from helpers.session_ledger import open_session_ledger
 from ironbank.model_client_assertions import assert_one_model_client
-from ironbank.model_client_config import HERMETIC_OPENAI_PRICED_MODEL
+from ironbank.model_client_config import (
+    HERMETIC_OPENAI_PRICED_MODEL,
+    WORKLOAD_OLLAMA_HOST,
+    WORKLOAD_OLLAMA_PORT,
+    WORKLOAD_OLLAMA_URL,
+)
 from ironbank.model_client_scripts import (
     agy_cli_script,
     claude_api_script,
@@ -136,6 +138,7 @@ class ModelClientEnv:
     session_id: str
     mock_base_url: str
     upstream_transcript_path: Path
+    dns_answer_ip: str
 
     @property
     def db_path(self) -> Path:
@@ -164,7 +167,7 @@ class ModelClientEnv:
         assert upload["size"] == len(payload)
         exec_resp = self.client.post(
             f"/vms/{self.session_id}/exec",
-            {"command": f"python3 /root/{script_name}", "timeout_secs": timeout_secs},
+            {"command": f"python3 {WORKSPACE}/{script_name}", "timeout_secs": timeout_secs},
             timeout=timeout_secs + 30,
         )
         assert exec_resp is not None
@@ -189,10 +192,13 @@ def model_client_env():
     mock_proc = None
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     session_name = vm_name("ironbank-model")
-    session_id: str | None = None
+    sessions = ExitStack()
     try:
+        # The clients run in a capsem-debug workload, whose loopback is its
+        # own: every fixture name must answer an address it can route.
         mock_proc, ready = start_mock_server(
-            request_log=service.tmp_dir / "upstream-transcript.jsonl"
+            request_log=service.tmp_dir / "upstream-transcript.jsonl",
+            dns_answers="routable",
         )
         corp_path = service.tmp_dir / "corp.toml"
         corp_path.write_text(
@@ -231,6 +237,10 @@ def model_client_env():
                 dial = {json.dumps(ready["http_addr"])}
                 protocol = "http"
 
+                [network.upstream_overrides."{WORKLOAD_OLLAMA_HOST}:{WORKLOAD_OLLAMA_PORT}"]
+                dial = {json.dumps(ready["http_addr"])}
+                protocol = "http"
+
                 [settings."security.web.http_upstream_ports"]
                 value = [80, 3713, 8080, 11434]
                 modified = "2026-06-14T00:00:00Z"
@@ -238,9 +248,9 @@ def model_client_env():
                 [ai.ollama]
                 name = "Ollama"
                 protocol = "ollama"
-                url = "http://127.0.0.1:3713"
+                url = "{WORKLOAD_OLLAMA_URL}"
                 listen_ports = [3713]
-                allowed_remote_targets = ["127.0.0.1:3713"]
+                allowed_remote_targets = ["{WORKLOAD_OLLAMA_HOST}:{WORKLOAD_OLLAMA_PORT}"]
 
                 [ai.ollama.rules.local_fixture_endpoint]
                 name = "ollama_local_fixture_endpoint"
@@ -248,7 +258,7 @@ def model_client_env():
                 priority = -100
                 detection_level = "informational"
                 reason = "Declare the hermetic Ollama-compatible endpoint for Ironbank launcher tests."
-                match = 'http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/" || http.path == "/api/show" || http.path == "/api/tags" || http.path == "/api/chat" || http.path == "/v1/responses" || http.path == "/v1/messages")'
+                match = 'http.host == "{WORKLOAD_OLLAMA_HOST}" && tcp.port == "{WORKLOAD_OLLAMA_PORT}" && (http.path == "/" || http.path == "/api/show" || http.path == "/api/tags" || http.path == "/api/chat" || http.path == "/v1/responses" || http.path == "/v1/messages")'
 
                 [corp.rules.allow_ironbank_mock_model_server]
                 name = "allow_ironbank_mock_model_server"
@@ -256,7 +266,7 @@ def model_client_env():
                 priority = -100
                 detection_level = "informational"
                 reason = "Allow the hermetic Ironbank model fixture while preserving local-network ask defaults."
-                match = 'http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/" || http.path == "/api/show" || http.path == "/api/tags" || http.path == "/api/chat" || http.path == "/v1/responses" || http.path == "/v1/messages")'
+                match = 'http.host == "{WORKLOAD_OLLAMA_HOST}" && tcp.port == "{WORKLOAD_OLLAMA_PORT}" && (http.path == "/" || http.path == "/api/show" || http.path == "/api/tags" || http.path == "/api/chat" || http.path == "/v1/responses" || http.path == "/v1/messages")'
 
                 [corp.rules.allow_ironbank_google_code_assist]
                 name = "allow_ironbank_google_code_assist"
@@ -297,19 +307,15 @@ def model_client_env():
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        create = client.post(
-            "/vms/create",
-            {
-                "name": session_name,
-                "ram_mb": DEFAULT_RAM_MB,
-                "cpus": DEFAULT_CPUS,
-                "env": {"CAPSEM_MOCK_SERVER_BASE_URL": ready["base_url"]},
-            },
-            timeout=90,
+        # The clients and SDKs are capsem-debug's: they run in its workload.
+        session_id = sessions.enter_context(
+            debug_session(
+                service,
+                service.tmp_dir / "registry",
+                session_name,
+                env={"CAPSEM_MOCK_SERVER_BASE_URL": WORKLOAD_OLLAMA_URL},
+            )
         )
-        assert create is not None
-        assert create.get("name") == session_name
-        session_id = create["id"]
         assert session_id != session_name
         active_policy = vm_session_dir(service.tmp_dir, client, session_id) / "vm" / "active_policy.toml"
         assert active_policy.exists(), f"active policy missing at {active_policy}"
@@ -322,22 +328,17 @@ def model_client_env():
         assert "daily-cloudcode-pa.googleapis.com:443" in active_policy_text
         assert "antigravity-unleash.goog:443" in active_policy_text
         assert "runtime-overlay.toml" not in active_policy_text
-        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
         yield ModelClientEnv(
             service=service,
             client=client,
             session_id=session_id,
-            mock_base_url=ready["base_url"],
+            mock_base_url=WORKLOAD_OLLAMA_URL,
             upstream_transcript_path=Path(ready["request_log"]),
+            dns_answer_ip=ready["dns_answer_ip"],
         )
     finally:
         stop_process(mock_proc)
-        if client is not None:
-            try:
-                if session_id is not None:
-                    client.delete(f"/vms/{session_id}/delete", timeout=60)
-            except Exception:
-                pass
+        sessions.close()
         service.stop()
         if old_corp_config is None:
             os.environ.pop("CAPSEM_CORP_CONFIG", None)
@@ -352,7 +353,8 @@ def live_model_client_env():
     service = ServiceInstance()
     client = None
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
-    session_id = vm_name("ironbank-live-model")
+    session_name = vm_name("ironbank-live-model")
+    sessions = ExitStack()
     vm_env = {
         key: value
         for key in (
@@ -385,19 +387,9 @@ def live_model_client_env():
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        create = client.post(
-            "/vms/create",
-            {
-                "name": session_id,
-                "ram_mb": DEFAULT_RAM_MB,
-                "cpus": DEFAULT_CPUS,
-                "env": vm_env,
-            },
-            timeout=90,
+        session_id = sessions.enter_context(
+            debug_session(service, service.tmp_dir / "registry", session_name, env=vm_env)
         )
-        assert create is not None
-        assert create.get("id") == session_id or create.get("name") == session_id
-        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
         transcript_path = service.tmp_dir / "live-provider-transcript-unused.jsonl"
         transcript_path.write_text("", encoding="utf-8")
         yield ModelClientEnv(
@@ -406,11 +398,11 @@ def live_model_client_env():
             session_id=session_id,
             mock_base_url="https://live-provider.invalid",
             upstream_transcript_path=transcript_path,
+            # Real DNS: the live assertions never compare an answer.
+            dns_answer_ip="",
         )
     finally:
-        if client is not None:
-            with suppress(Exception):
-                client.delete(f"/vms/{session_id}/delete", timeout=60)
+        sessions.close()
         service.stop()
         if old_corp_config is None:
             os.environ.pop("CAPSEM_CORP_CONFIG", None)
@@ -753,7 +745,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
         assert dns["qclass"] == 1, dict(dns)
         assert dns["rcode"] == 0, dict(dns)
         assert dns["decision"] == "allowed", dict(dns)
-        assert dns["answer_ip"] == result["dns_ip"] == "127.0.0.1", dict(dns)
+        assert dns["answer_ip"] == result["dns_ip"] == model_client_env.dns_answer_ip, dict(dns)
         assert dns["source_proto"] in {"udp", "tcp"}, dict(dns)
 
         file_event_ids = []
@@ -983,7 +975,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             """
             SELECT *
             FROM exec_events
-            WHERE command LIKE 'python3 /root/ironbank-client-%'
+            WHERE command LIKE 'python3 /workspace/ironbank-client-%'
             ORDER BY id DESC
             LIMIT 1
             """

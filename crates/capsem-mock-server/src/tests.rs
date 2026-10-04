@@ -75,6 +75,38 @@ fn dns_fixture_answers_known_names_and_rejects_unknown() {
 }
 
 #[test]
+fn routable_dns_answers_every_fixture_with_an_address_a_container_can_route() {
+    for name in DNS_FIXTURES {
+        let query = test_dns_query(name, 0xABCD);
+        let response = dns_response_for(&query, DnsAnswers::Routable).expect("dns response");
+        assert_eq!(response[3] & 0x0F, 0, "{name}");
+        assert_eq!(&response[response.len() - 4..], &[198, 51, 100, 10], "{name}");
+    }
+    let query = test_dns_query("unknown.capsem.invalid", 0xBEEF);
+    let response = dns_response_for(&query, DnsAnswers::Routable).expect("dns response");
+    assert_eq!(response[3] & 0x0F, 3, "routable mode still refuses unknown names");
+
+    let query = test_dns_query("ollama.capsem.test", 0x0111);
+    let response = dns_response(&query).expect("dns response");
+    assert_eq!(
+        &response[response.len() - 4..],
+        &[127, 0, 0, 1],
+        "the default stays loopback"
+    );
+}
+
+#[test]
+fn dns_answers_are_loopback_unless_routable_is_asked_for() {
+    let default = Args::try_parse_from(["capsem-mock-server"]).expect("default arguments");
+    assert_eq!(default.dns_answers, DnsAnswers::Loopback);
+    let routable =
+        Args::try_parse_from(["capsem-mock-server", "--dns-answers", "routable"]).expect("routable arguments");
+    assert_eq!(routable.dns_answers, DnsAnswers::Routable);
+    assert_eq!(DnsAnswers::Loopback.provider_answer(), "127.0.0.1");
+    assert_eq!(DnsAnswers::Routable.provider_answer(), "198.51.100.10");
+}
+
+#[test]
 fn websocket_accept_matches_rfc_fixture() {
     assert_eq!(
         websocket_accept("dGhlIHNhbXBsZSBub25jZQ=="),
@@ -192,32 +224,58 @@ fn hex32_scan_handles_non_ascii_without_panicking() {
 }
 
 #[test]
-fn root_txt_path_is_extracted_and_stops_at_the_first_disallowed_character() {
+fn target_txt_path_is_extracted_and_stops_at_the_first_disallowed_character() {
     assert_eq!(
-        find_root_txt_path(r#"{"cmd":"cat /root/out.txt"}"#).as_deref(),
+        find_target_txt_path(r#"{"cmd":"cat /root/out.txt"}"#).as_deref(),
         Some("/root/out.txt")
     );
     assert_eq!(
-        find_root_txt_path("/root/nested/dir/file.txt and more").as_deref(),
+        find_target_txt_path("/root/nested/dir/file.txt and more").as_deref(),
         Some("/root/nested/dir/file.txt")
     );
 }
 
 #[test]
-fn root_txt_path_ignores_candidates_without_a_txt_suffix() {
-    assert_eq!(find_root_txt_path("/root/binary.bin"), None);
-    assert_eq!(find_root_txt_path("no path here"), None);
-    assert_eq!(find_root_txt_path(""), None);
+fn target_txt_path_ignores_candidates_without_a_txt_suffix() {
+    assert_eq!(find_target_txt_path("/root/binary.bin"), None);
+    assert_eq!(find_target_txt_path("no path here"), None);
+    assert_eq!(find_target_txt_path(""), None);
 }
 
 #[test]
-fn root_txt_path_takes_the_last_candidate_when_several_appear() {
+fn target_txt_path_takes_the_last_candidate_when_several_appear() {
     // `.last()` is load-bearing: a payload that mentions an earlier path in
     // prose must not beat the one the command actually writes.
     assert_eq!(
-        find_root_txt_path("first /root/a.txt then /root/b.txt").as_deref(),
+        find_target_txt_path("first /root/a.txt then /root/b.txt").as_deref(),
         Some("/root/b.txt")
     );
+}
+
+#[test]
+fn target_txt_path_is_found_under_a_workload_workspace_too() {
+    // A container workload writes under its workspace; its root is read-only.
+    assert_eq!(
+        find_target_txt_path(r#"{"cmd":"printf x > /workspace/out.txt"}"#).as_deref(),
+        Some("/workspace/out.txt")
+    );
+    assert_eq!(
+        find_target_txt_path("first /workspace/a.txt then /root/b.txt").as_deref(),
+        Some("/root/b.txt"),
+        "the last path written wins, whichever root it is under"
+    );
+    assert_eq!(
+        find_target_txt_path("first /root/a.txt then /workspace/b.txt").as_deref(),
+        Some("/workspace/b.txt")
+    );
+    assert_eq!(find_target_txt_path("/home/capsem/out.txt"), None);
+}
+
+#[test]
+fn a_tool_runs_in_the_directory_of_the_file_it_writes() {
+    assert_eq!(target_dir("/workspace/agy-1.txt"), "/workspace");
+    assert_eq!(target_dir("/root/agy-1.txt"), "/root");
+    assert_eq!(target_dir("/workspace/nested/x.txt"), "/workspace/nested");
 }
 
 #[test]

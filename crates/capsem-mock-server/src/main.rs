@@ -31,10 +31,14 @@ use tokio_rustls::TlsAcceptor;
 
 mod dns;
 mod limits;
+mod targets;
 #[cfg(test)]
-use dns::dns_response;
-use dns::{serve_dns_tcp, serve_dns_udp, DNS_FIXTURES};
+use dns::{dns_response, dns_response_for};
+use dns::{serve_dns_tcp, serve_dns_udp, DnsAnswers, DNS_FIXTURES};
 use limits::{generated_size_refusal, parse_generated_size, read_ws_frame, write_ws_frame};
+#[cfg(test)]
+use targets::{find_hex32, find_target_txt_path};
+use targets::{shell_write_command, target_dir, write_target};
 
 const TINY_BODY: &[u8] = b"capsem-mock-server:tiny\n";
 const EXPECTED_POEM: &str = "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw";
@@ -92,11 +96,16 @@ struct Args {
     /// Launcher PID. When present, the server exits as soon as that parent dies.
     #[arg(long)]
     parent_pid: Option<u32>,
+    /// What the DNS fixtures answer: `routable` for clients in a container
+    /// workload, which cannot reach the VM's loopback.
+    #[arg(long, value_enum, default_value_t)]
+    dns_answers: DnsAnswers,
 }
 
 #[derive(Clone)]
 struct State {
     request_log: Option<Arc<Mutex<File>>>,
+    dns_answers: DnsAnswers,
 }
 
 #[derive(Serialize)]
@@ -109,6 +118,8 @@ struct ReadyPayload {
     dns_udp_addr: String,
     dns_tcp_addr: String,
     dns_fixtures: Vec<&'static str>,
+    /// What the provider and model fixtures resolve to.
+    dns_answer_ip: String,
     endpoints: Vec<&'static str>,
     request_log: Option<String>,
 }
@@ -140,7 +151,10 @@ async fn main() -> Result<()> {
         }
         None => None,
     };
-    let state = State { request_log };
+    let state = State {
+        request_log,
+        dns_answers: args.dns_answers,
+    };
 
     let http_listener = TcpListener::bind(args.addr).await.context("bind HTTP")?;
     let http_addr = http_listener.local_addr().context("read HTTP addr")?;
@@ -164,6 +178,7 @@ async fn main() -> Result<()> {
         dns_udp_addr: dns_udp_addr.to_string(),
         dns_tcp_addr: dns_tcp_addr.to_string(),
         dns_fixtures,
+        dns_answer_ip: args.dns_answers.provider_answer(),
         endpoints: ENDPOINTS.to_vec(),
         request_log: args.request_log.as_ref().map(|path| path.display().to_string()),
     };
@@ -1043,7 +1058,7 @@ fn google_code_assist_stream(payload: Value) -> Bytes {
                             "id": call_id,
                             "args": {
                                 "CommandLine": shell_write_command(&token, &path),
-                                "Cwd": "/root",
+                                "Cwd": target_dir(&path),
                                 "WaitMsBeforeAsync": 1000,
                                 "toolSummary": "Write proof",
                                 "toolAction": "Writing file"
@@ -1175,45 +1190,6 @@ fn google_model_from_path(path: &str) -> String {
         .filter(|model| !model.is_empty())
         .unwrap_or("gemini-3.5-flash")
         .to_string()
-}
-
-fn write_target(payload: &Value, default_prefix: &str) -> (String, String) {
-    let raw = serde_json::to_string(payload).unwrap_or_default();
-    let token = find_hex32(&raw).unwrap_or_else(|| EXPECTED_POEM.to_string());
-    let path = find_root_txt_path(&raw).unwrap_or_else(|| format!("/root/{default_prefix}-output.txt"));
-    (token, path)
-}
-
-fn find_hex32(raw: &str) -> Option<String> {
-    raw.as_bytes()
-        .windows(32)
-        .find(|window| window.iter().all(u8::is_ascii_hexdigit))
-        .and_then(|window| std::str::from_utf8(window).ok())
-        .map(ToOwned::to_owned)
-}
-
-fn find_root_txt_path(raw: &str) -> Option<String> {
-    raw.match_indices("/root/")
-        .filter_map(|(start, _)| {
-            let tail = &raw[start..];
-            let end = tail
-                .char_indices()
-                .find_map(|(index, ch)| {
-                    let allowed = ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-');
-                    (!allowed).then_some(index)
-                })
-                .unwrap_or(tail.len());
-            let candidate = &tail[..end];
-            candidate.find(".txt").map(|index| {
-                let end = index + 4;
-                candidate[..end].replace("\\/", "/")
-            })
-        })
-        .last()
-}
-
-fn shell_write_command(token: &str, path: &str) -> String {
-    format!("printf '%s\\n' {token} > {path}")
 }
 
 fn json_compact(value: Value) -> String {

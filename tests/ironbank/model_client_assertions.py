@@ -23,6 +23,7 @@ class ModelClientEnvironment(Protocol):
     db_path: Path
     upstream_transcript_path: Path
     log_paths: tuple[Path, ...]
+    dns_answer_ip: str
 
     def run_python(self, script: str, *, timeout_secs: int = 240) -> dict: ...
 
@@ -166,6 +167,7 @@ def assert_two_turn_model_client(env: ModelClientEnvironment, script: str) -> di
         upstream_transcript_path=env.upstream_transcript_path,
         log_paths=env.log_paths,
         raw_secrets=(raw_secret,),
+        dns_answer_ip=env.dns_answer_ip,
     )
     assert_two_turn_model_ledger_exchange(spec, run)
     return result
