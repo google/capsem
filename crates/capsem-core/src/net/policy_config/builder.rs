@@ -19,7 +19,7 @@ fn parse_http_upstream_ports(values: &[i64]) -> Vec<u16> {
 ///
 /// Dynamic keys with prefix `guest.env.` become environment variables.
 /// Brokered credentials and AI/tool config files are deliberately excluded:
-/// profile/runtime plugin plumbing owns those paths, not settings.toml.
+/// runtime plugin plumbing owns those paths, not settings.toml.
 pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
     use capsem_proto::{validate_env_key, validate_env_value, validate_file_path};
 
@@ -58,7 +58,7 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
         }
 
         // Boot files: non-AI File values with non-empty content. AI/tool config
-        // belongs to profile/runtime plugin machinery, not settings.toml.
+        // belongs to runtime plugin machinery, not settings.toml.
         if let SettingValue::File {
             path: file_path,
             content: file_content,

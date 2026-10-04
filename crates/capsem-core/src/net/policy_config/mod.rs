@@ -12,8 +12,6 @@ pub mod corp_provision;
 mod lint;
 mod loader;
 mod ownership;
-mod profile_catalog;
-mod profile_contract;
 mod provider_profile;
 mod resolver;
 mod security_rule_profile;
@@ -21,7 +19,6 @@ mod settings_metadata;
 mod settings_policy;
 mod tree;
 mod types;
-mod validation;
 
 pub use active_policy::{active_policy_digest, ActivePolicyFile};
 pub use builder::*;
@@ -29,8 +26,6 @@ pub use capsem_config::*;
 pub use lint::load_merged_lint;
 pub use loader::*;
 pub use ownership::*;
-pub use profile_catalog::*;
-pub use profile_contract::*;
 pub use settings_policy::*;
 pub use tree::load_settings_tree;
 

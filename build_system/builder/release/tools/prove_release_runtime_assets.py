@@ -114,12 +114,8 @@ def prove_runtime_assets(
         "-p",
         "capsem-core",
         "--example",
-        # The example still names its session after a profile label; the
-        # label is all it reads from `--profile`.
-        "release_profile_boot",
+        "release_runtime_boot",
         "--",
-        "--profile",
-        "runtime",
         "--kernel",
         str(images["kernel"][0]),
         "--kernel-blake3",

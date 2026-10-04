@@ -46,7 +46,7 @@ pub fn validate_identifier(kind: &str, value: &str) -> Result<(), String> {
 }
 
 #[doc(hidden)]
-pub fn validate_profile_target(kind: &str, value: &str) -> Result<(), String> {
+pub fn validate_policy_target(kind: &str, value: &str) -> Result<(), String> {
     validate_non_empty(kind, value)?;
     if value.len() > 128 {
         return Err(format!("{kind} must be at most 128 characters"));

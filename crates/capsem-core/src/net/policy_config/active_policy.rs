@@ -7,8 +7,8 @@
 //! its back.
 //!
 //! The file has no identity of its own: it is a pure function of the three
-//! inputs. A file in any other shape -- the `active_profile.toml` a VM profile
-//! used to produce, with its id and revision -- is refused, not adapted.
+//! inputs. A file in any other shape, such as one carrying an id and revision,
+//! is refused, not adapted.
 
 use std::collections::BTreeMap;
 
@@ -18,8 +18,8 @@ use super::builder::{merge_plugin_policy, network_config_from_policy_and_dns, Me
 use super::provider_profile::{ModelEndpointRegistry, ProviderRuleProfile};
 use super::security_rule_profile::{SecurityPluginConfig, SecurityRuleProfile, SecurityRuleSet};
 use super::types::{NetworkConfig, SettingsFile};
-use super::validation::validate_profile_target;
 use crate::mcp::policy::McpConfig;
+use capsem_config::validate_policy_target;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -85,7 +85,7 @@ impl ActivePolicyFile {
         self.user_rules.validate()?;
         self.corp_rules.validate()?;
         for plugin_id in self.plugins.keys() {
-            validate_profile_target("plugin id", plugin_id)?;
+            validate_policy_target("plugin id", plugin_id)?;
         }
         self.network.validate()?;
         if let Some(mcp) = &self.mcp {

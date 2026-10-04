@@ -94,7 +94,7 @@ pub struct MitmProxyConfig {
     /// that disabling a provider blocks the next request even on an
     /// existing keep-alive connection.
     pub policy: Arc<std::sync::RwLock<Arc<NetworkMechanics>>>,
-    /// Live model endpoint registry from settings/profile provider blocks.
+    /// Live model endpoint registry from settings and corp provider blocks.
     /// MITM resolves host -> model protocol once per request and then passes
     /// that typed metadata to enforcement, hooks, broker substitution, and
     /// telemetry. Provider hooks must not infer protocol from domains.

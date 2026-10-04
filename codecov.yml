@@ -136,7 +136,6 @@ component_management:
         - crates/capsem-core/src/auditfs.rs
         - crates/capsem-core/src/contained_fs.rs
         - crates/capsem-core/src/fs_monitor.rs
-        - crates/capsem-core/src/bin/mcp_export.rs
 
     # Logger DB, host ledger, session maintenance, log layer, tracing bootstrap.
     # Future: OTEL, reporting, SSH session recording.

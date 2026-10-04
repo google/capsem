@@ -1685,7 +1685,7 @@ binaries = [
 built = [
     "capsem", "capsem-admin", "capsem-bench-rs", "capsem-gateway",
     "capsem-mcp-aggregator", "capsem-mcp-builtin", "capsem-mock-server", "capsem-process", "capsem-router",
-    "capsem-service", "capsem-tray", "capsem-tui", "mcp_export",
+    "capsem-service", "capsem-tray", "capsem-tui",
 ]
 # Host binaries this list deliberately omits, each built by a step that owns
 # its prerequisites. Named so the guard can tell an exclusion from an omission.

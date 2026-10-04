@@ -5904,19 +5904,6 @@ def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
     assert "--cov=src/capsem" not in coverage_step
 
 
-def test_generate_settings_creates_catalog_directory_before_redirect() -> None:
-    script = (
-        PROJECT_ROOT / "build_system" / "scripts" / "build" / "generate-settings.sh"
-    ).read_text()
-
-    mkdir_pos = script.find('mkdir -p "$ROOT/cache/target/config/profiles"')
-    catalog_pos = script.find("cache/target/config/profiles/catalog.generated.json")
-
-    assert mkdir_pos != -1
-    assert catalog_pos != -1
-    assert mkdir_pos < catalog_pos
-
-
 def test_live_provider_dotenv_files_are_gitignored() -> None:
     for name in [".env", ".env.local", ".env.ironbank"]:
         ignored = subprocess.run(

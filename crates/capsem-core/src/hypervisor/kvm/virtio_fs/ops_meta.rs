@@ -149,8 +149,8 @@ impl FuseProcessor {
         }
         // Ownership is not part of the share: every entry reads back as 0:0,
         // and the guest never changes host ownership. A chown is accepted
-        // without effect, as tools running as guest root (cp -a, tar -x, the
-        // profile seed copy) require; it used to reach an unprivileged host
+        // without effect, as tools running as guest root (cp -a, tar -x)
+        // require; it used to reach an unprivileged host
         // lchown and fail with EPERM.
         if attr_in.valid & (FATTR_ATIME | FATTR_MTIME) != 0 {
             let c_path = match std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) {

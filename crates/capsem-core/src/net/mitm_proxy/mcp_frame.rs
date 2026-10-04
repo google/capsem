@@ -59,7 +59,7 @@ pub(super) async fn serve(
 /// Dispatch an MCP JSON-RPC request through the same security-event and
 /// ledger rail used by framed guest MCP traffic.
 ///
-/// Host-facing routes use this when they invoke a profile MCP tool on behalf
+/// Host-facing routes use this when they invoke an MCP tool on behalf
 /// of the user. They must not call the aggregator directly, because the
 /// unified tool-call ledger rows and matching security-rule rows are
 /// the audit contract.
