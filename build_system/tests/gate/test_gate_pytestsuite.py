@@ -180,16 +180,9 @@ def test_every_suite_fails_closed_without_artifacts() -> None:
         assert build(CONFIG).environment(CONFIG)[variable] == "1"
 
 
-def test_no_suite_selects_a_profile() -> None:
-    """There is one runtime (#289): a suite may name the content it reads,
-    never a profile lane to prove."""
-    for build in (*_EVERY_SUITE, kingslanding.suite, kingslanding.greyjoy_suite):
-        assert "CAPSEM_TEST_PROFILE" not in build(CONFIG).environment(CONFIG)
-
-
 def test_vm_suites_do_not_bypass_the_manifest_content_selector() -> None:
-    """Every VM fixture runs in a subprocess with CAPSEM_ASSETS_DIR and
-    CAPSEM_PROFILES_DIR. A module-level checkout literal silently opts that
+    """Every VM fixture runs in a subprocess with CAPSEM_ASSETS_DIR. A
+    module-level checkout literal silently opts that
     fixture out and makes the suite boot the stale canonical tree."""
     roots = (
         "capsem-bootstrap",
@@ -201,7 +194,6 @@ def test_vm_suites_do_not_bypass_the_manifest_content_selector() -> None:
     )
     forbidden = (
         'ASSETS_DIR = PROJECT_ROOT / "cache" / "target" / "assets"',
-        'PROFILES_DIR = PROJECT_ROOT / "cache" / "target" / "config" / "profiles"',
     )
     offenders = [
         f"{path.relative_to(PROJECT_ROOT)}: {needle}"
@@ -367,8 +359,7 @@ def test_every_serial_node_has_a_non_broad_execution_rail() -> None:
 
 def test_every_suite_is_labelled_by_what_it_proves() -> None:
     """The label is what the run log and the timing report show, so
-    `pytest` four times would make the summary useless. One runtime, so no
-    label carries a profile suffix."""
+    `pytest` four times would make the summary useless."""
     labels = {build(CONFIG).label for build in _EVERY_SUITE}
 
     assert len(labels) == len(_EVERY_SUITE)

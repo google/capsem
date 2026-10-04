@@ -165,7 +165,7 @@ def test_the_gateway_is_stopped_before_the_service(
 ) -> None:
     """The gateway owns the fixed localhost port.
 
-    Left running past its service, it attaches the next profile to a UDS
+    Left running past its service, it attaches the next run to a UDS
     pointing at a run directory that has already been deleted.
     """
     stopped: list[str] = []

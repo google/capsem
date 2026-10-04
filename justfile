@@ -240,7 +240,7 @@ _gate-host-package-sbom:
 #   - CI runs on bare ubuntu runners; this runs in capsem-host-builder via docker
 #   - Tauri signing keys: CI from secrets, local from private/tauri/
 #   - See: .github/workflows/release.yaml build-app-linux job
-_cross-compile arch="": _clean-stale _check-assets _generate-settings _materialize-config
+_cross-compile arch="": _clean-stale _check-assets _generate-settings
     @uv run --project build_system --frozen capsem-gate cross-compile {{quote(arch)}}
 
 # Generate settings schema/UI metadata and frontend mock data.
@@ -347,7 +347,3 @@ _release-site-pnpm-install:
 
 _pack-initrd:
     uv run --project build_system --frozen capsem-gate pack-initrd
-
-
-_materialize-config:
-    bash build_system/scripts/build/materialize-config.sh

@@ -3,8 +3,8 @@
 Building is `assetlanes`; this is what happens either side of it. Before: check
 that Docker can execute the *other* architecture at all, because discovering
 otherwise an hour in wastes the whole matrix. After: merge both lanes into one
-asset tree, generate and check its manifest, materialize the runtime
-configuration against it, and boot a real VM through `prove-installed-shell.py`.
+asset tree, generate and check its manifest, and boot a real VM through
+`prove-installed-shell.py`.
 
 Two details are load-bearing and neither is obvious.
 
@@ -32,7 +32,6 @@ from .cachecontrol import CacheControl
 from .context import Context
 from .errors import GateError
 from .fileactions import (
-    copy_tree,
     discard,
     link,
     make_dir,
@@ -75,8 +74,8 @@ class AssetGate:
     def _admin(self, *args: str) -> list[str]:
         return [*self._assets.admin_command, *args]
 
-    def _publish(self, assets: Path) -> str:
-        """Generate, alias, and check the merged manifest; return its file URI."""
+    def _publish(self, assets: Path) -> None:
+        """Generate, alias, and check the merged manifest."""
         self._runner.run(self._admin("manifest", "generate", str(assets)))
 
         current = assets / self._assets.current_link
@@ -90,42 +89,11 @@ class AssetGate:
         self._runner.script(self._assets.hash_assets_script, assets)
         manifest = assets / self._config.install.manifest_name
         self._runner.run(self._admin("manifest", "check", str(manifest)))
-        return manifest.resolve().as_uri()
-
-    def _materialize(self, assets: Path, manifest_uri: str) -> Path:
-        """Materialize the service's runtime configuration against these assets.
-
-        The service still reads a pinned catalog under `profiles/` until it
-        resolves the runtime from the manifest alone; removing the catalog
-        and `capsem-admin profile materialize` together is the last step of
-        the profile removal (#289).
-        """
-        output = self.test_root / self._assets.merged_config_dir
-        for manifest in sorted(self._config.root.glob(self._assets.profiles_glob)):
-            self._runner.run(
-                self._admin(
-                    "profile",
-                    "materialize",
-                    "--profile",
-                    str(manifest),
-                    "--config-root",
-                    self._assets.merged_config_dir,
-                    "--manifest",
-                    manifest_uri,
-                    "--assets-dir",
-                    str(assets),
-                    "--output-root",
-                    str(output),
-                    "--arch",
-                    self.host_arch.name,
-                )
-            )
-        return output
 
     # -- the boot proof ----------------------------------------------------
 
-    def _prove(self, assets: Path, config_root: Path) -> None:
-        home = self.test_root / self._assets.profile_home_dir / self._config.install.capsem_home
+    def _prove(self, assets: Path) -> None:
+        home = self.test_root / self._assets.proof_home_dir / self._config.install.capsem_home
         make_dir(home)
         # AF_UNIX paths must stay under macOS SUN_LEN once a VM owner appends
         # `instances/<uuid>-handoff.sock` -- 59 characters -- and test_root is
@@ -139,10 +107,7 @@ class AssetGate:
         names = self._config.environment
         environment = {
             **names.capsem(home=home, run_dir=run_dir),
-            **names.content(
-                assets=assets,
-                profiles=config_root / self._assets.materialized_profiles_dir,
-            ),
+            **names.content(assets=assets),
         }
         context = Context(self._runner, self._config, env=environment)
         try:
@@ -151,13 +116,7 @@ class AssetGate:
             # exit while leaving a hidden child behind. Launch it through the
             # gate primitive instead: the PID is persisted before the shell
             # proof begins and the finally block owns its complete lifetime.
-            launch_service(
-                self._config,
-                home=home,
-                run_dir=run_dir,
-                assets=assets,
-                profiles=config_root / self._assets.materialized_profiles_dir,
-            ).perform(context)
+            launch_service(self._config, home=home, run_dir=run_dir, assets=assets).perform(context)
             WaitForSocket(run_dir).perform(context)
             self._runner.script(
                 self._assets.shell_proof_script,
@@ -192,25 +151,12 @@ class AssetGate:
 
         The lane trees stay private. The canonical asset root is only a
         relative selector while this private checkout is alive; prefix export
-        materializes it back into the caller. Generated configuration is small
-        and copied, so it never becomes a dangling link when the private asset
-        tree is reclaimed.
+        materializes it back into the caller.
         """
         assets = self.test_root / self._assets.merged_assets_dir
-        config_root = self.test_root / self._assets.merged_config_dir
-        profiles_dir = config_root / self._assets.materialized_profiles_dir
         manifest = assets / self._config.install.manifest_name
-        config_manifest = (
-            config_root / self._assets.merged_assets_dir / self._config.install.manifest_name
-        )
         if not manifest.is_file():
             raise GateError(f"verified asset manifest is missing: {manifest}")
-        if not profiles_dir.is_dir():
-            raise GateError(f"verified runtime configuration is missing: {profiles_dir}")
-        if not config_manifest.is_file():
-            raise GateError(f"verified config manifest is missing: {config_manifest}")
-        if config_manifest.read_bytes() != manifest.read_bytes():
-            raise GateError(f"verified config manifest {config_manifest} does not match {manifest}")
         for arch in self._config.architectures:
             if not (assets / arch).is_dir():
                 raise GateError(f"verified assets are missing architecture {arch}: {assets}")
@@ -223,9 +169,6 @@ class AssetGate:
             raise GateError(
                 f"canonical assets selected {canonical_assets.resolve()}, not {assets.resolve()}"
             )
-
-        canonical_config = self._config.path(self._config.functional.config_root)
-        copy_tree(config_root, canonical_config)
         self._runner.note("Selected the Ironbank runtime for build-chain, packaging, and glow-up.")
 
     def preflight(self) -> None:
@@ -257,9 +200,9 @@ class AssetGate:
         )
 
     def assemble(self) -> None:
-        """Merge both lanes, publish, materialise, and boot the runtime."""
+        """Merge both lanes, publish, and boot the runtime."""
         assets = self._merge_lanes(AssetLanes(self._runner, self._config))
-        config_root = self._materialize(assets, self._publish(assets))
-        self._prove(assets, config_root)
+        self._publish(assets)
+        self._prove(assets)
         self._select()
         self._runner.note("Ironbank VM asset build and boot gate passed for every architecture.")

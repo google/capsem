@@ -52,12 +52,7 @@ uv run --project build_system --frozen python build_system/scripts/release/stage
     --input-dir cache/target/candidate-runtime-inputs \
     --assets-dir cache/target/assets
 
-# The service configuration is the checkout's: a runtime publishes no config.
-CAPSEM_ASSET_MANIFEST="$PWD/cache/target/assets/manifest.json" \
-CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/config" \
-    bash build_system/scripts/build/materialize-config.sh --pair-content
-
-# Materialization builds its admin tool; restore the exact pulled cohort last.
+# Restore the exact pulled binary cohort the package carries.
 uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
     --input-dir cache/target/runtime-public-before/packages \
     --binary-dir cache/target/cargo/debug
@@ -86,5 +81,4 @@ uv run --project build_system --frozen python build_system/packaging/linux/insta
     echo "CAPSEM_RELEASE_PUBLICATION_BASE=$PUBLICATION_BASE"
     echo "CAPSEM_TEST_BINARY=$PWD/cache/target/cargo/debug/capsem"
     echo "CAPSEM_TEST_ASSETS_DIR=$PWD/cache/target/assets"
-    echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/cache/target/config"
 } >> "$GITHUB_ENV"

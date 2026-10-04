@@ -318,8 +318,6 @@ def test_installed_glowup_owns_the_release_regression_story_matrix() -> None:
     assert "stage_guest_scripts(PROJECT_ROOT, share)" in tart_host
     assert "macos-tart-regression-probes.sh" in tart_content
     assert "PERSISTENT_RESUME_EVIDENCE" in physical_boot
-    assert "--profile" not in physical_boot
-    assert "CAPSEM_PROFILES_DIR" not in physical_boot
     assert "--keep-session" in physical_boot
     assert '"persistent_pin_resume": True' in physical_boot
     assert '"persistent_pin_resume"' in native_check

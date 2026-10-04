@@ -15,7 +15,6 @@ import os
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
 from typing import TypedDict
 
 BOLD = "\033[1m"
@@ -67,7 +66,7 @@ class Scenario(TypedDict):
 #   corp_toml: optional TOML string for CAPSEM_CORP_CONFIG (None = no corp override)
 #
 # Runtime AI credentials are intentionally absent here. Provider access and
-# credential brokerage now flow through profile/corp security rules plus plugins,
+# credential brokerage now flow through user/corp security rules plus plugins,
 # not settings-owned AI toggles or static boot-time secret injection.
 
 SCENARIOS: list[Scenario] = [
@@ -127,16 +126,9 @@ match = 'http.host == "example.invalid"'
 ]
 
 
-def default_materialized_profiles_dir() -> str:
-    """Return the generated profile catalog used by packages and CI."""
-    repo_root = Path(__file__).resolve().parents[3]
-    return str(repo_root / "cache" / "target" / "config" / "profiles")
-
-
 def run_scenario(
     binary: str,
     assets_dir: str,
-    profiles_dir: str,
     scenario: Scenario,
     results: Results,
 ) -> None:
@@ -168,7 +160,6 @@ def run_scenario(
     env = {
         **os.environ,
         "CAPSEM_ASSETS_DIR": assets_dir,
-        "CAPSEM_PROFILES_DIR": profiles_dir,
         "RUST_LOG": "capsem=warn",
         "CAPSEM_HOME": capsem_home.name,
         "CAPSEM_RUN_DIR": os.path.join(capsem_home.name, "run"),
@@ -231,11 +222,6 @@ def main():
         help="Path to VM assets directory (default: cache/target/assets)",
     )
     parser.add_argument(
-        "--profiles-dir",
-        default=default_materialized_profiles_dir(),
-        help="Path to materialized profile catalog (default: cache/target/config/profiles)",
-    )
-    parser.add_argument(
         "--scenario",
         default=None,
         help="Run only this scenario (by name). Default: run all.",
@@ -245,7 +231,6 @@ def main():
     print(f"{BOLD}=== Capsem Injection Test ==={RESET}")
     print(f"  binary: {args.binary}")
     print(f"  assets: {args.assets}")
-    print(f"  profiles: {args.profiles_dir}")
 
     results = Results()
 
@@ -261,7 +246,6 @@ def main():
         run_scenario(
             args.binary,
             args.assets,
-            args.profiles_dir,
             scenario,
             results,
         )

@@ -18,18 +18,10 @@ permissions:
   contents: read
 
 jobs:
-  materialize:
-    name: Materialize (${{ matrix.os }}, ${{ matrix.arch }})
-    runs-on: ${{ matrix.os }}
+  verify:
+    name: Verify the public runtime graph
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            arch: x86_64
-          - os: macos-14
-            arch: arm64
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
@@ -55,17 +47,15 @@ jobs:
 
       - uses: ./.github/actions/rust-cache
         with:
-          key: runtime-materialization-${{ matrix.os }}-${{ matrix.arch }}
+          key: runtime-preflight
 
       # Both serialized release lanes retain this fail-fast proof of the
       # currently public runtime graph before constructing a candidate.
-      - name: Materialize live release graph with release command
+      - name: Check the live release graph with the release command
         env:
-          CAPSEM_ARCH: ${{ matrix.arch }}
           PREFLIGHT_MANIFEST_URL: ${{ steps.manifest.outputs.manifest-url }}
         run: |
           set -euo pipefail
-          CAPSEM_ASSET_MANIFEST="$PREFLIGHT_MANIFEST_URL" \
-            bash build_system/scripts/build/materialize-config.sh
-          test -f cache/target/config/assets/manifest.json
-          test -d cache/target/config/profiles
+          mkdir -p cache/target/runtime-preflight
+          curl -fsSL "$PREFLIGHT_MANIFEST_URL" -o cache/target/runtime-preflight/manifest.json
+          cargo run -p capsem-admin -- manifest check cache/target/runtime-preflight/manifest.json

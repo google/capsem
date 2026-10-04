@@ -18,7 +18,7 @@ from capsem_builder.gate.debproof import DebProof
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.sourcecommit import SourceCommit
 from helpers.gate import RecordingRunner
-from profile_content import materialize_required_artifacts
+from runtime_content import materialize_required_artifacts
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -64,17 +64,10 @@ def _content(root: Path) -> RuntimeContent:
     content.assets.mkdir(parents=True)
     (content.assets / config.install.manifest_name).write_bytes(payload)
     materialize_required_artifacts(config, content.assets)
-    config_manifest = content.config_manifest(config)
-    config_manifest.parent.mkdir(parents=True)
-    config_manifest.write_bytes(payload)
-    profile = content.profiles(config) / "code/profile.toml"
-    profile.parent.mkdir(parents=True)
-    profile.write_text("name = 'code'\n")
     return content
 
 
 def _replies(*, version: str = VERSION, status: str | None = None) -> dict[str, str]:
-    ready = len(list((PROJECT_ROOT / "config" / "profiles").glob("*/profile.toml")))
     return {
         "dpkg-deb -f": version,
         "-f=${Status}": "install ok installed",
@@ -84,7 +77,6 @@ def _replies(*, version: str = VERSION, status: str | None = None) -> dict[str, 
         if status is not None
         else (
             "Installed: true\nRunning:   true\nService:   ok\nGateway:   ok\n"
-            f"Profiles:  {ready}/{ready} ready\n"
         ),
         "systemctl is-system-running": "running",
     }
@@ -200,7 +192,6 @@ def test_exact_package_graph_is_checked_and_handed_off_before_dpkg(
     record_command = runner.matching(r"assets channel record-binary")[0]
     assert f"--manifest-path {authoritative}" in record_command
     assert f"--source-commit {SOURCE_COMMIT}" in transcript
-    assert "--profile-revision-policy" not in transcript
     assert "--network none" in runner.matching(r"docker run -d")[0]
 
 
@@ -213,7 +204,6 @@ def test_read_only_content_is_staged_before_record_binary_mutates_the_generated_
 
     started = runner.matching(r"docker run -d")[0]
     assert f":{CONFIG.install.proof_assets_mount}:ro" in started
-    assert f":{CONFIG.install.proof_config_mount}:ro" in started
     record = runner.matching(r"assets channel record-binary")[0]
     authoritative = f"{CONFIG.install.layout.channel}/{CONFIG.install.graph_manifest}"
     assert f"--manifest-path {authoritative}" in record

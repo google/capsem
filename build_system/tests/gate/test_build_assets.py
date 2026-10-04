@@ -62,11 +62,8 @@ def _recipe_block(name: str) -> str:
     return block
 
 
-def test_build_assets_uses_capsem_admin_and_names_no_profile() -> None:
-    """There is one runtime, so an image build is a function of the
-    architecture and the template alone (#289). A `--profile` reaching the
-    builder would mean some input still varies the image by profile.
-    """
+def test_build_assets_uses_capsem_admin() -> None:
+    """An image build is a function of the architecture and the template alone."""
     from capsem_builder.gate import config as gate_config
     from capsem_builder.gate.imagebuild import build_argv
 
@@ -76,7 +73,6 @@ def test_build_assets_uses_capsem_admin_and_names_no_profile() -> None:
     assert argv[: len(config.imagebuild.admin)] == list(config.imagebuild.admin)
     assert argv[argv.index("--config-root") + 1] == config.imagebuild.config_root
     assert argv[argv.index("--arch") + 1] == "arm64"
-    assert "--profile" not in argv
     assert "uv run --project build_system --frozen capsem-builder build guest/" not in " ".join(argv)
 
 
@@ -208,9 +204,6 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
     # recipe that dispatched to another recipe, so it is read from the plan.
     assert "assets.preflight" in _planned("candidate")
 
-    # Nothing in the lanes selects by profile: one runtime per architecture.
-    assert "profile" not in lanes
-
     # Both image stages, per architecture. The stage list is config now, so
     # this reads it rather than repeating it.
     assert config.imagebuild.lane_templates == ("kernel", "rootfs")
@@ -252,7 +245,7 @@ def test_a_failed_boot_preserves_only_host_side_evidence() -> None:
     assert set(config.assets.evidence_prune_dirs) == {"guest"}
     assert ".log" in config.assets.evidence_suffixes
     assert ".toml" in config.assets.evidence_suffixes, (
-        "vm/active_profile.toml records the asset pins a hash mismatch is argued from"
+        "vm/active_policy.toml records the policy a boot failure is argued from"
     )
 
 
@@ -312,8 +305,7 @@ def test_asset_ci_uses_primitives_owned_by_just_test() -> None:
     lanes = _source_text("build_system/builder/gate/assetlanes.py")
 
     assert "ASSET_ARCH: ${{ matrix.arch }}" in workflow
-    # The recipe takes the architecture alone; a second positional is a
-    # profile the runtime no longer has, and `just` refuses the arity.
+    # The recipe takes the architecture alone.
     assert re.search(r'^\s*just build-assets "\$ASSET_ARCH"$', workflow, re.MULTILINE)
     assert "pack-initrds" in _planned(
         "build-assets", arch="arm64", template="rootfs"
@@ -376,8 +368,8 @@ def test_in_container_commands_write_only_where_the_container_user_owns() -> Non
     own it, so anything `docker exec -u capsem` writes outside an explicitly
     chowned path fails with EACCES -- and macOS maps the mount cleanly, so only
     CI ever sees it. Four separate release-gate failures came from this one
-    shape: the builder's git, the staging rm, pytest's cache, and the
-    unmaterialized profile catalog."""
+    shape: the builder's git, the staging rm, pytest's cache, and an
+    unmaterialized generated tree."""
     from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
@@ -404,80 +396,15 @@ def test_in_container_commands_write_only_where_the_container_user_owns() -> Non
     assert "cache_dir=" in proof and "pytest_cache" in proof
 
 
-def test_runtime_recipes_materialize_generated_config_before_service() -> None:
-    # Runtime preparation is one graph now. Its profile content is produced
-    # before host compilation/signing, and the service cannot prepare until
-    # that exact signed runtime exists.
+def test_runtime_recipes_prepare_the_signed_runtime_before_service() -> None:
+    # Runtime preparation is one graph now: the guest runtime is packed before
+    # host compilation/signing, and the service cannot prepare until that
+    # exact signed runtime exists.
     for command in ("ensure-service", "shell", "exec"):
         plan = _command(command, guest_command="true")._describe()
-        assert plan.after_of("prepare.build-binaries") == {"prepare.materialize-config"}
+        assert plan.after_of("prepare.build-binaries") == {"initrd.hash-aliases"}
         assert plan.after_of("prepare.sign") == {"prepare.build-binaries"}
         assert plan.after_of("prepare") == {"prepare.sign"}
-
-
-def test_materialize_config_uses_admin_profile_command() -> None:
-    block = _recipe_block("_materialize-config:")
-
-    assert "build_system/scripts/build/materialize-config.sh" in block
-
-    script = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh").read_text()
-    assert "cargo run -p capsem-admin -- profile materialize" in script
-    assert "normalize_arch()" in script
-    assert 'case "$arch" in' in script
-    assert "arm64|aarch64)" in script
-    assert "--config-root" in script
-    assert "--manifest" in script
-    assert "--output-root" in script
-    assert "cache/target/config" in script
-
-
-def test_materialize_config_falls_back_to_sole_manifest_arch_for_ci_runner() -> None:
-    script = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh").read_text()
-
-    assert 'manifest["assets"]["current"]' in script
-    assert 'manifest["assets"]["releases"][current]["arches"]' in script
-    assert 'if [ "$arch_source" = "host" ] && [ "$manifest_arch_count" = "1" ]; then' in script
-    assert "using sole manifest arch" in script
-    assert 'arch_source="CAPSEM_ARCH"' in script
-    assert "materialize arch $arch from $arch_source is not present" in script
-
-
-def test_materialize_config_reads_the_release_runtime_and_pins_every_catalog_entry() -> None:
-    block = _recipe_block("_materialize-config:")
-    script = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh").read_text()
-
-    assert 'rm -rf "$OUTPUT_ROOT"' in script
-    assert 'rm -rf "$ROOT/cache/target/config"' not in script
-    assert 'manifest.get("runtime")' in script
-    assert 'manifest["profiles"]' not in script
-    assert "release manifest runtime is revoked" in script
-    assert 'profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)' in script
-    assert 'for profile_path in "${profile_paths[@]}"; do' in script
-    assert '--profile "$profile_path"' in script
-    assert '--profile "$ROOT/config/profiles/code/profile.toml"' not in script
-    assert "build_system/scripts/build/materialize-config.sh" in block
-
-
-def test_ensure_service_uses_generated_profiles() -> None:
-    """The daemon reads materialized profiles, and says so when they are absent.
-
-    A service started against the checked-in sources would boot profiles that
-    had never been through `capsem-admin profile materialize`, which is a
-    different product from the one being tested.
-    """
-    from capsem_builder.gate import config as gate_config
-
-    config = gate_config.load(PROJECT_ROOT)
-    service = (PROJECT_ROOT / "build_system/builder/gate/service.py").read_text(encoding="utf-8")
-
-    assert config.service.generated_profiles == "cache/target/config/profiles"
-    # The variable name has one owner now, so asserting the literal appeared
-    # in this module was asserting where it was spelled rather than what the
-    # daemon is told. The claim is that the launch carries it.
-    assert config.environment.profiles_dir == "CAPSEM_PROFILES_DIR"
-    assert "profiles or config.path(settings.generated_profiles)" in service
-    assert "profiles=selected_profiles" in service
-    assert "generated profiles are missing" in service
 
 
 def test_isolated_test_recipes_trap_test_home_service_cleanup() -> None:
@@ -512,22 +439,6 @@ def test_isolated_test_recipes_trap_test_home_service_cleanup() -> None:
         )
         held = {resource.name for resource in command.resources(RUNNER_FOR_RESOURCES)}
         assert "workspace" in held, f"{name} runs outside an isolated home"
-
-
-def test_release_workflow_uses_same_config_materializer() -> None:
-    workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
-
-    assert workflow.count("bash build_system/scripts/build/materialize-config.sh") == 3
-    assert workflow.count('CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"') == 1
-    assert 'CAPSEM_ASSET_MANIFEST="$PWD/cache/target/package-content/assets/manifest.json"' in workflow
-    # A path, not a `file://` URL. The pairing job now materializes with
-    # `--pair-content`, which compares the selected manifest against the assets
-    # directory as filesystem paths to check it is pairing what it was given --
-    # so a URL fails that comparison against the very file it names, and the
-    # message reads as a content mismatch rather than a spelling one.
-    assert 'CAPSEM_ASSET_MANIFEST="$PWD/cache/target/assets/manifest.json"' in workflow
-    assert 'CAPSEM_ASSETS_PATH="$PWD/cache/target/assets"' in workflow
-    assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in workflow
 
 
 def _workflow_step(workflow: str, name: str) -> str:

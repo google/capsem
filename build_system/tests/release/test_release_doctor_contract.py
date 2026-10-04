@@ -355,7 +355,6 @@ def test_whole_gate_aliases_share_one_inspection_per_qualification(tmp_path, mon
 def test_doctor_fix_builds_the_runtime_assets_once_per_architecture() -> None:
     source = (PROJECT_ROOT / "build_system" / "scripts" / "doctor" / "doctor-common.sh").read_text()
 
-    assert "config/profiles/*/profile.toml" not in source
     assert 'just _build-assets "$arch"' in source
     assert '"touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just _build-assets"' not in source
 
@@ -440,7 +439,6 @@ def test_runtime_release_builds_both_published_architectures() -> None:
     assert "- arch: x86_64" in build_assets
     assert "ASSET_ARCH: ${{ matrix.arch }}" in build_assets
     assert 'just build-assets "$ASSET_ARCH"\n' in build_assets
-    assert "profile" not in build_assets.lower()
 
 
 def test_parallel_asset_gate_preserves_and_names_failed_architecture_logs() -> None:
@@ -550,7 +548,7 @@ def test_canonical_gate_builds_both_linux_release_architectures() -> None:
     assert arm64 < x86_64 < install
 
 
-def test_install_e2e_reuses_exact_package_and_materialized_profile_config() -> None:
+def test_install_e2e_reuses_exact_package_and_selected_assets() -> None:
     """The install gate consumes the package rail's output; it builds nothing.
 
     This used to read the recipe text and assert `install_pos < stage_pos` --
@@ -570,41 +568,33 @@ def test_install_e2e_reuses_exact_package_and_materialized_profile_config() -> N
     assert "capsem-gate install" in recipe
 
     # Consumes, never rebuilds.
-    for builder in (
-        "prepare-install-test-assets.sh",
-        "materialize-config.sh",
-        "repack-deb.sh",
-        "_materialize-config",
-    ):
+    for builder in ("prepare-install-test-assets.sh", "repack-deb.sh"):
         assert builder not in source + proof, f"the install gate must not run {builder}"
 
-    # One typed, prevalidated assets/config pair reaches the container. Raw
-    # manifest inputs are staged on the host and never transformed mid-proof.
+    # One typed, prevalidated asset tree reaches the container. Raw manifest
+    # inputs are staged on the host and never transformed mid-proof.
     assert config.install.generated_inputs == (config.outputs.packages,)
     assert "stage_content" in proof
     assert "stage_inputs_script" not in proof
     assert "stage-release-test-inputs" not in proof
     assert 'cp -R "{assets}/." "{self._layout.assets}/"' in proof
-    assert 'cp -R "{content_config}/." "{self._layout.config}/"' in proof
     assert "missing exact release-mode Debian package" in source
     assert "just _cross-compile" in source
 
 
-def test_ci_materializes_runtime_profiles_after_generating_settings() -> None:
+def test_ci_prepares_install_assets_after_generating_settings() -> None:
     workflow = _workflow_job_block("test")
 
     generate_pos = workflow.find("bash build_system/scripts/build/generate-settings.sh")
     prepare_assets_pos = workflow.find(
         "bash build_system/scripts/test/prepare-install-test-assets.sh"
     )
-    materialize_pos = workflow.find("bash build_system/scripts/build/materialize-config.sh")
     python_pos = workflow.find("Python schema tests with coverage")
 
     assert generate_pos != -1
     assert prepare_assets_pos != -1
-    assert materialize_pos != -1
     assert python_pos != -1
-    assert generate_pos < prepare_assets_pos < materialize_pos < python_pos
+    assert generate_pos < prepare_assets_pos < python_pos
 
 
 def test_ci_python_schema_pytest_paths_exist() -> None:
@@ -728,7 +718,7 @@ def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
         ("test", "Verify all integration test imports"),
         ("test", "Schema drift check"),
         ("test-install", "Run install e2e tests"),
-        ("test-install", "Stage one exact install content pair"),
+        ("test-install", "Stage the exact install assets"),
         ("docs-build", "Build docs"),
         ("site-build", "Build site"),
     ):
@@ -777,7 +767,6 @@ def test_release_workflows_run_disjoint_lane_policy_gates() -> None:
     assert "just _build-rootfs" not in binary_workflow
 
     assert "workflow_dispatch:" in asset_workflow
-    assert "profile:" not in asset_workflow
     assert "Verify runtime release lane policy" in asset_workflow
     assert "tests/capsem-release/test_runtime_lane_gate.py" in asset_workflow
     assert "tests/capsem-release/test_release_lane_diff_policy.py" in asset_workflow
@@ -828,7 +817,6 @@ def test_runtime_release_builds_one_runtime_against_resolved_binary() -> None:
 
     assert "workflow_dispatch:" in workflow
     assert "channel:" in trigger
-    assert "profile" not in trigger
     assert "default: stable" not in trigger
     assert "push:" not in workflow
     assert "tags:" not in workflow
@@ -1011,7 +999,6 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
         assert (
             "without invoking `build-assets`" in text
             or "without invoking VM asset builds" in text
-            or "without invoking profile builders" in text
         )
 
 
@@ -2175,7 +2162,6 @@ def test_release_dispatch_has_exactly_two_single_purpose_just_recipes() -> None:
     assert "\nprepare-release:" not in justfile
     assert '\nrelease-binaries channel source_commit force="false":' in justfile
     assert '\nrelease-assets channel source_commit force="false":' in justfile
-    assert "\nrelease-profile" not in justfile
     assert "capsem-gate release-binaries" in _recipe_block("release-binaries")
     assert "capsem-gate release-assets" in _recipe_block("release-assets")
 
@@ -2718,7 +2704,7 @@ def test_manifest_source_inputs_are_url_only() -> None:
     # Production rejection message plus its unit tests, which live in the
     # sibling tests.rs; the assertions below span both.
     admin = (
-        (PROJECT_ROOT / "crates/capsem-admin/src/profile_images.rs").read_text()
+        (PROJECT_ROOT / "crates/capsem-admin/src/config_checks.rs").read_text()
         + (PROJECT_ROOT / "crates/capsem/src/update/asset_install.rs").read_text()
         + (PROJECT_ROOT / "crates/capsem-admin/src/tests/channel_validation.rs").read_text()
         + (PROJECT_ROOT / "crates/capsem-admin/src/tests/image_build.rs").read_text()
@@ -3315,7 +3301,7 @@ def test_release_channel_fixture_keeps_obom_evidence_architecture_owned(tmp_path
 
 def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
     binary = _workflow_text("release.yaml")
-    profile = _workflow_text("release-assets.yaml")
+    runtime = _workflow_text("release-assets.yaml")
     fast_gate = _workflow_text("fast-gate.yaml")
     testing = _skill_text("skills/dev-testing/SKILL.md")
     ironbank = _skill_text("skills/ironbank/SKILL.md")
@@ -3331,7 +3317,7 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
         "run: uv run --project build_system --frozen capsem-gate test-release-contracts"
         in fast_gate
     )
-    for workflow in (binary, profile):
+    for workflow in (binary, runtime):
         assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
         assert "just qualify-binaries" in workflow or "just qualify-assets" in workflow
         assert "just _test-release-contracts" not in workflow
@@ -4612,7 +4598,7 @@ def test_ci_builds_frontend_before_compiling_tauri_app_tests() -> None:
 def test_frontend_generated_settings_use_one_shared_rail() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     binary_release = _workflow_text("release.yaml")
-    profile_release = _workflow_text("release-assets.yaml")
+    runtime_release = _workflow_text("release-assets.yaml")
     fast_gate = _workflow_text("fast-gate.yaml")
     just = (PROJECT_ROOT / "justfile").read_text()
     web_gate = _source_text("build_system/scripts/web/check-web-surface.sh")
@@ -4629,7 +4615,7 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert first_frontend_build_pos != -1
     assert frontend_check_pos != -1
     assert "uses: ./.github/workflows/fast-gate.yaml" in binary_release
-    assert "uses: ./.github/workflows/fast-gate.yaml" in profile_release
+    assert "uses: ./.github/workflows/fast-gate.yaml" in runtime_release
     assert "run: just fast-test" in fast_gate
     assert (
         "run: uv run --project build_system --frozen capsem-gate test-release-contracts"
@@ -4994,7 +4980,6 @@ def test_stop_command_stays_before_status_and_credential_hydration() -> None:
         "UdsClient",
         "client::UdsClient",
         "service_json",
-        "/profiles/status",
         "/corp/info",
         "/vms/list",
         "credential",
@@ -5363,12 +5348,9 @@ def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
 
 
 def test_release_packages_use_exact_manifest_selected_runtime_inputs() -> None:
-    release = _source_text(".github/workflows/release.yaml")
     mac_job = _workflow_job_block("build-app-macos", "release.yaml")
     linux_job = _workflow_job_block("build-app-linux", "release.yaml")
-    materializer = _source_text("build_system/scripts/build/materialize-config.sh")
 
-    assert 'manifest.get("runtime")' in materializer
     assert "name: binary-channel-source" in mac_job
     assert "Fetch exact selected arm64 runtime" in mac_job
     assert "uses: ./.github/actions/fetch-release-inputs" in mac_job
@@ -5377,12 +5359,8 @@ def test_release_packages_use_exact_manifest_selected_runtime_inputs() -> None:
     assert "output: cache/target/binary-selected-runtime" in mac_job
     assert "--input-dir cache/target/binary-selected-runtime" in mac_job
     assert "--assets-dir cache/target/release/staging/assets" in mac_job
-    assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in mac_job
-    assert 'CAPSEM_ASSETS_PATH="$PWD/cache/target/release/staging/assets"' in mac_job
-    assert "CAPSEM_ARCH=arm64" in mac_job
-    assert "bash build_system/scripts/build/materialize-config.sh" in mac_job
     assert mac_job.index("Fetch exact selected arm64 runtime") < mac_job.index(
-        "bash build_system/scripts/build/materialize-config.sh"
+        "build_system/packaging/macos/build-pkg.sh"
     )
     assert '--manifest "$ASSET_MANIFEST_URL"' in mac_job
     assert "name: binary-channel-source" in linux_job
@@ -5393,22 +5371,8 @@ def test_release_packages_use_exact_manifest_selected_runtime_inputs() -> None:
     assert "output: cache/target/binary-selected-runtime" in linux_job
     assert "--input-dir cache/target/binary-selected-runtime" in linux_job
     assert "--assets-dir cache/target/package-content/assets" in linux_job
-    assert (
-        'CAPSEM_ASSET_MANIFEST="$PWD/cache/target/package-content/assets/manifest.json"'
-        in linux_job
-    )
-    assert 'CAPSEM_ASSETS_PATH="$PWD/cache/target/package-content/assets"' in linux_job
-    assert 'CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/package-content/config"' in linux_job
-    assert "bash build_system/scripts/build/materialize-config.sh --pair-content" in linux_job
-    assert_unmasked_step(
-        "release.yaml",
-        yaml.safe_load(release),
-        "build-app-linux",
-        "Materialize runtime config",
-    )
-    assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in linux_job
     assert linux_job.index("Fetch exact selected ${{ matrix.arch }} runtime") < linux_job.index(
-        "bash build_system/scripts/build/materialize-config.sh"
+        "capsem-gate cross-compile"
     )
     assert "uv run --project build_system --frozen capsem-gate cross-compile" in linux_job
     assert "--content-root cache/target/package-content" in linux_job
@@ -5416,8 +5380,6 @@ def test_release_packages_use_exact_manifest_selected_runtime_inputs() -> None:
     assert "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/" in linux_job
     for mutable in ("sudo apt-get", "pnpm install", "cargo install", "cargo tauri build"):
         assert mutable not in linux_job
-    # The runtime is the only VM input: no package lane selects a profile.
-    assert "--profile" not in release
     assert "--config-root" not in mac_job + linux_job
 
 
@@ -5479,20 +5441,14 @@ def test_quick_session_entrypoints_leave_vm_choice_to_the_service() -> None:
     app = _source_text("web/app/src/lib/components/shell/App.svelte")
     tray_main = _source_text("crates/capsem-tray/src/main.rs")
     tray_gateway = _source_text("crates/capsem-tray/src/gateway.rs")
-    cli = _source_text("crates/capsem/src/create_command.rs")
-    mcp = _source_text("mcp/typescript/src/host-tools.ts")
 
     assert "vmStore.openCreateModal()" in app
-    assert "profile_id: 'code'" not in app
     new_session = tray_main.split("Action::NewSession =>", maxsplit=1)[1].split(
         "Action::Save", maxsplit=1
     )[0]
     assert "launch_ui(None)" in new_session
     assert "provision_temp" not in new_session
     assert "provision_temp" not in tray_gateway
-    assert 'profile_id":"code' not in tray_gateway
-    assert "profile" not in cli
-    assert "profile" not in mcp
 
 
 def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> None:
@@ -5505,17 +5461,11 @@ def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> No
     reusable_channel = _workflow_text("release-channel.yaml")
 
     assert "bash build_system/scripts/audit/check-hardcoded-release-selections.sh" in canonical_gate
-    for term in ("code", "co-work", "cowork", "terminal", "termional", "gui"):
-        assert term in guard
     assert "ripgrep" in guard
-    assert "profile_id" in guard
-    assert "--profile" in guard
     assert "stable" in guard
     assert "nightly" in guard
     assert "ASSET_MANIFEST_URL" in guard
     assert ".github/workflows" in guard
-    assert 'glob("*/profile.toml")' in guard
-    assert "builtin_profile_configs" in guard
     assert "unwrap_or" in guard
     assert "DEFAULT_RELEASE_MANIFEST_URL" in guard
     assert "channel:\n        type: string\n        required: true" in reusable_channel
@@ -5523,45 +5473,19 @@ def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> No
     assert "CHANNEL: ${{ inputs.channel }}" in reusable_channel
 
 
-@pytest.mark.parametrize(
-    "surface",
-    [
-        "sdk/python/capsem/hypervisor.py",
-        "sdk/typescript/src/hypervisor.ts",
-        "sdk/rust/src/hypervisor.rs",
-        "mcp/typescript/src/mcp-tools.ts",
-    ],
-)
-def test_sdk_surfaces_may_not_compile_in_a_profile_name(surface: str, tmp_path: Path) -> None:
-    """Which profile a client gets when it names none is the gateway catalog's
-    answer. An SDK that spells a profile name is one more place to change when
-    the catalog changes, and one that cannot be corrected by an installation."""
-    source = tmp_path / surface
-    source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_text('profile_id = "code"\n', encoding="utf-8")
-
-    label, pattern, paths = next(
-        guard for guard in release_selections.MATCH_GUARDS if "SDK or MCP surface" in guard[0]
-    )
-    assert release_selections.reject_matches(tmp_path, label, pattern, paths), surface
-
-    source.write_text("profile_id = resolve_default()\n", encoding="utf-8")
-    assert not release_selections.reject_matches(tmp_path, label, pattern, paths), surface
-
-
 def test_release_selection_match_guard_is_directly_unit_testable(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     source = tmp_path / "surface.py"
-    source.write_text('profile_id: "code"\n', encoding="utf-8")
+    source.write_text('channel: "stable"\n', encoding="utf-8")
 
     assert release_selections.reject_matches(
         tmp_path,
-        "fixture hardcodes a profile",
-        r"profile_id:\s*['\"]code['\"]",
+        "fixture hardcodes a channel",
+        r"channel:\s*['\"]stable['\"]",
         ("surface.py",),
     )
-    assert "fixture hardcodes a profile" in capsys.readouterr().err
+    assert "fixture hardcodes a channel" in capsys.readouterr().err
 
 
 def test_hardcoded_release_selection_guard_runs_without_ripgrep(tmp_path: Path) -> None:
@@ -5592,25 +5516,18 @@ def test_hardcoded_release_selection_guard_runs_without_ripgrep(tmp_path: Path) 
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Hardcoded profile/channel selection guard passed." in result.stdout
+    assert "Hardcoded channel selection guard passed." in result.stdout
 
 
 def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Path) -> None:
     fixture_paths = (
         ".github/workflows",
-        "config/profiles",
-        "web/app/src/lib/components",
-        "crates/capsem-tray/src",
-        "mcp/typescript/src/mcp-tools.ts",
-        "crates/capsem/src/main.rs",
         "crates/capsem/src/update.rs",
         "crates/capsem-service/src/main.rs",
-        "crates/capsem-core/src/net/policy_config/profile_contract.rs",
         "build_system/packaging/macos/build-pkg.sh",
         "build_system/packaging/linux/repack-deb.sh",
         "build_system/packaging/linux/deb-postinst.sh",
         "build_system/packaging/macos/pkg-scripts/postinstall",
-        "build_system/scripts/build/materialize-config.sh",
         "build_system/builder/release/tools/build_complete_release_channel.py",
         "build_system/builder/release/tools/local_release_glowup.py",
         "tests/capsem_install",
@@ -5651,15 +5568,6 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
     baseline = run_guard()
     assert baseline.returncode == 0, baseline.stderr
 
-    dialog = tmp_path / "web/app/src/lib/components/shell/CreateSandboxDialog.svelte"
-    for profile in ("code", "co-work", "cowork", "terminal", "termional", "gui"):
-        original = dialog.read_text()
-        dialog.write_text(original + f"\n<!-- profile_id: '{profile}' -->\n")
-        rejected = run_guard()
-        dialog.write_text(original)
-        assert rejected.returncode != 0, f"guard accepted hardcoded profile {profile}"
-        assert "hardcodes a named profile" in rejected.stderr
-
     workflow = tmp_path / ".github/workflows/release-binary-staging.yaml"
     for channel in ("stable", "nightly"):
         original = workflow.read_text()
@@ -5690,64 +5598,9 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
     assert rejected.returncode != 0
     assert "installed update flow silently substitutes" in rejected.stderr
 
-    future_profile = tmp_path / "config/profiles/terminal/profile.toml"
-    future_profile.parent.mkdir(parents=True)
-    shutil.copy2(tmp_path / "config/profiles/code/profile.toml", future_profile)
-    rejected = run_guard()
-    assert rejected.returncode != 0
-    assert "builtin_profile_configs does not exactly mirror" in rejected.stderr
-    future_profile.unlink()
-
-    for future_name in ("terminal", "gui"):
-        future_profile = tmp_path / f"config/profiles/{future_name}/profile.toml"
-        future_profile.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(tmp_path / "config/profiles/code/profile.toml", future_profile)
-        rejected = run_guard()
-        future_profile.unlink()
-        assert rejected.returncode != 0, f"guard accepted unembedded profile {future_name}"
-        assert "builtin_profile_configs does not exactly mirror" in rejected.stderr
-
-    profile_contract = tmp_path / "crates/capsem-core/src/net/policy_config/profile_contract.rs"
-    original = profile_contract.read_text()
-    profile_contract.write_text(
-        original + '\n// include_str!("../../../../../config/profiles/gui/profile.toml")\n'
-    )
-    rejected = run_guard()
-    profile_contract.write_text(original)
-    assert rejected.returncode != 0
-    assert "builtin_profile_configs does not exactly mirror" in rejected.stderr
-
-    original = dialog.read_text()
-    for regression in ("profileId = 'terminal'", "<option value='gui'>GUI</option>"):
-        dialog.write_text(original + f"\n<!-- {regression} -->\n")
-        rejected = run_guard()
-        assert rejected.returncode != 0, f"guard accepted picker regression {regression}"
-        assert "profile picker fabricates" in rejected.stderr
-    dialog.write_text(original)
-
-    release_workflow = tmp_path / ".github/workflows/release.yaml"
-    original = release_workflow.read_text()
-    release_workflow.write_text(original + "\n# --profile config/profiles/gui/profile.toml\n")
-    rejected = run_guard()
-    release_workflow.write_text(original)
-    assert rejected.returncode != 0
-    assert "materializes one named profile" in rejected.stderr
-
-    for selection in (
-        "stable",
-        "nightly",
-        "code",
-        "co-work",
-        "cowork",
-        "terminal",
-        "termional",
-        "gui",
-    ):
+    for selection in ("stable", "nightly"):
         original = workflow.read_text()
-        input_name = "channel" if selection in {"stable", "nightly"} else "profile"
-        workflow.write_text(
-            original + f"\nregression:\n  {input_name}:\n    default: {selection}\n"
-        )
+        workflow.write_text(original + f"\nregression:\n  channel:\n    default: {selection}\n")
         rejected = run_guard()
         workflow.write_text(original)
         assert rejected.returncode != 0, f"guard accepted workflow default {selection}"
@@ -6071,7 +5924,7 @@ def test_builder_has_no_legacy_ai_provider_authoring_rail() -> None:
         for path in sorted(root.rglob("*")):
             if not path.is_file() or "__pycache__" in path.parts:
                 continue
-            if path == Path(__file__) or path.name == "test_active_docs_profile_contract.py":
+            if path == Path(__file__) or path.name == "test_active_docs_contract.py":
                 continue
             rel = path.relative_to(PROJECT_ROOT)
             try:
@@ -6134,7 +5987,7 @@ def test_config_contract_has_no_admin_or_registry_authority() -> None:
         for path in sorted(root.rglob("*")):
             if not path.is_file() or "__pycache__" in path.parts:
                 continue
-            if path == Path(__file__) or path.name == "test_active_docs_profile_contract.py":
+            if path == Path(__file__) or path.name == "test_active_docs_contract.py":
                 continue
             rel = path.relative_to(PROJECT_ROOT)
             try:
@@ -6381,9 +6234,9 @@ def test_boot_timing_gate_attributes_regressions_to_one_stage() -> None:
 def test_boot_timing_budget_excludes_host_steal() -> None:
     """A stage is budgeted on guest work: host steal during it is not its cost.
 
-    Release run 36351667646 failed the (since removed) profile_root_seed stage
-    at 510ms on a shared nested-virt runner; the stage copied sixteen small
-    files and measured 40ms on the previous run. The vCPU was descheduled, and the guest's steal
+    Release run 36351667646 failed a (since removed) boot stage at 510ms on a
+    shared nested-virt runner; the stage copied sixteen small files and
+    measured 40ms on the previous run. The vCPU was descheduled, and the guest's steal
     counter is the record of that.
     """
     module = _boot_timing_module()
@@ -6594,21 +6447,6 @@ def test_guest_runtime_doctor_apt_https_trust_probe_is_hermetic_release_gate() -
     assert "apt-get update" not in source
 
 
-def test_capsem_init_carries_no_profile_tooling() -> None:
-    """Applications come from OCI images; the runtime rootfs has no profile seed.
-
-    capsem-init once projected a profile root seed and recreated AI CLI shims
-    from /opt/ai-clis. Images own both now (tests/images/), and a runtime that
-    quietly regained either would be a second, untested application path.
-    """
-    init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
-
-    assert "profile-root" not in init
-    assert "profile_root_seed" not in init
-    assert "for cli in claude agy; do" not in init
-    assert 'ln -sf "/opt/ai-clis/bin/$cli"' not in init
-
-
 def test_capsem_init_keeps_etc_traversable_for_apt_sandbox() -> None:
     """The `_apt` sandbox must be able to read the TLS trust bundle under /etc."""
     init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
@@ -6621,39 +6459,6 @@ def test_capsem_init_keeps_etc_traversable_for_apt_sandbox() -> None:
     assert launch_pos != -1
     assert etc_chmod_pos < launch_pos
     assert "TLS trust lives under `/etc/ssl/certs`" in init
-
-
-def test_profile_roots_do_not_force_local_or_mock_model_providers() -> None:
-    """Checked-in profile seeds must not silently select local/test model providers."""
-    forbidden_fragments = (
-        "127.0.0.1:11434",
-        "localhost:11434",
-        "CAPSEM_MOCK_SERVER",
-        '"provider": "ollama"',
-        '"baseUrl": "http://127.0.0.1:11434"',
-    )
-    for profile_dir in sorted((PROJECT_ROOT / "config" / "profiles").iterdir()):
-        if not profile_dir.is_dir():
-            continue
-        config_path = profile_dir / "root" / "root" / ".codex" / "config.toml"
-        if not config_path.exists():
-            continue
-        config = tomllib.loads(config_path.read_text())
-        assert config.get("model_provider") not in {"local_ollama", "ollama"}, (
-            f"{config_path} must not force a local Ollama model provider"
-        )
-        providers = config.get("model_providers") or {}
-        assert "local_ollama" not in providers, (
-            f"{config_path} must not declare a hidden local_ollama provider"
-        )
-        assert "ollama" not in providers, f"{config_path} must not declare a hidden ollama provider"
-        root_dir = profile_dir / "root"
-        for payload in sorted(root_dir.rglob("*")):
-            if not payload.is_file():
-                continue
-            text = payload.read_text(errors="ignore")
-            for fragment in forbidden_fragments:
-                assert fragment not in text, f"{payload} contains {fragment!r}"
 
 
 def test_guest_virtiofs_pip_probe_is_hermetic() -> None:

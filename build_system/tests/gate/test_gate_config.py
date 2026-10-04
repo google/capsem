@@ -65,7 +65,6 @@ def test_generated_output_roots_are_target_owned_and_distinct(
         "coverage": "cache/target/coverage",
         "distribution": "cache/target/release/distribution",
         "gate_runs": "cache/target/gate-runs",
-        "materialized_config": "cache/target/config",
         "packages": "cache/target/packages",
         "test_artifacts": "cache/target/tests/evidence",
     }
@@ -282,7 +281,7 @@ def test_owned_paths_cover_the_scratch_the_container_writes(
     owned = config.install.layout.owned_paths(config.install.mount)
     layout = config.install.layout
 
-    for scratch in (layout.assets, layout.config, layout.channel, layout.packages):
+    for scratch in (layout.assets, layout.channel, layout.packages):
         assert f"{config.install.mount}/{scratch}" in owned
     assert all(path.startswith(config.install.mount) for path in owned)
 

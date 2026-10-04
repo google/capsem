@@ -108,9 +108,9 @@ def test_runtime_carries_no_config_or_identity_of_its_own(
 ) -> None:
     checker = _checker(monkeypatch)
     runtime = _runtime()
-    runtime["id"] = "code"
-    runtime["name"] = "Code"
-    runtime["architectures"][0]["config"] = [{"kind": "profile"}]
+    runtime["id"] = "runtime"
+    runtime["name"] = "Runtime"
+    runtime["architectures"][0]["config"] = [{"kind": "settings"}]
 
     failures = checker.check_release_graph_runtime(SITE, runtime)
 
@@ -245,32 +245,10 @@ def test_runtime_artifacts_live_under_runtime_or_asset_releases(
 
     assert checker.check_release_graph_artifact(SITE, image, "runtime image") == []
 
-    retired = {**image, "url": f"/profiles/releases/stable/code/{REVISION}/arm64/vmlinuz"}
+    retired = {**image, "url": f"/elsewhere/releases/stable/{REVISION}/arm64/vmlinuz"}
     failures = checker.check_release_graph_artifact(SITE, retired, "runtime image")
 
     assert any(
         "must be under one of /assets/releases/, /runtime/releases/" in failure
         for failure in failures
     )
-
-
-def test_a_graph_manifest_must_not_publish_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
-    checker = _checker(monkeypatch)
-    monkeypatch.setattr(checker, "fetch_text", lambda _url: checker.FetchText(text=""))
-    monkeypatch.setattr(checker, "check_release_graph_cache_headers", lambda **_kwargs: [])
-    payload = json.dumps({"version": "1", "packages": [], "profiles": {}}).encode()
-
-    failures = checker.check_release_graph_manifest_contract(
-        site=SITE,
-        channel="stable",
-        index_text="",
-        channels_data={"version": 1},
-        channel_data={},
-        manifest_record={"status": "current", "version": "1", "digest": _digest(payload)},
-        manifest_path="/assets/stable/manifest.json",
-        manifest_payload=payload,
-        manifest_data=json.loads(payload),
-    )
-
-    assert "manifest must not publish profiles" in failures
-    assert "manifest runtime missing or not an object" in failures

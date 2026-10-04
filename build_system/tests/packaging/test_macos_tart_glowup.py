@@ -412,7 +412,6 @@ def test_guest_activates_update_then_rejects_both_adversarial_candidates() -> No
     assert "incompatible_runtime" in source
     assert "manifest-before-rejection.json" in source
     assert "manifest-metadata-before-rejection.json" in source
-    assert "$CAPSEM_HOME/profiles" not in source
     assert "assert-url" in source
     assert 'STATUS_OUTPUT=$("$CAPSEM" status 2>/dev/null || true)' in source
     assert "preserved-installed-evidence.json" in source
@@ -871,13 +870,10 @@ def test_standalone_glowup_owns_build_tart_install_and_physical_boot() -> None:
     assert "config.install.local_macos_package_script" in source
     assert 'str(Path(__file__).resolve().parent / "macos_tart_glowup.py")' in source
     assert 'str(Path(__file__).resolve().parent / "prove-macos-package-boot.sh")' in source
-    assert '"build_system/scripts/build/materialize-config.sh"' not in source
     assert '"--content-root"' in source
     assert '"--assets-dir"' in source
     assert '"--config-root"' not in source
-    assert '"--profile-share"' not in source
     assert '"$ROOT/assets"' not in build
-    assert '"$ROOT/cache/target/config"' not in build
     assert '"$ROOT/assets"' not in physical
 
 

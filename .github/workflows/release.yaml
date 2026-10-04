@@ -272,12 +272,6 @@ jobs:
           name: binary-channel-source
           path: cache/target/channel-source/
 
-      - name: Select serialized pre-activation manifest
-        run: |
-          test -s cache/target/channel-source/manifest.json
-          echo "PREACTIVATION_MANIFEST=file://$PWD/cache/target/channel-source/manifest.json" \
-            >> "$GITHUB_ENV"
-
       - name: Select Xcode 16.2
         run: sudo xcode-select -s /Applications/Xcode_16.2.app
 
@@ -303,13 +297,6 @@ jobs:
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --input-dir cache/target/binary-selected-runtime \
             --assets-dir cache/target/release/staging/assets
-
-      - name: Materialize runtime config
-        run: |
-          CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST" \
-          CAPSEM_ASSETS_PATH="$PWD/cache/target/release/staging/assets" \
-          CAPSEM_ARCH=arm64 \
-            bash build_system/scripts/build/materialize-config.sh
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
@@ -432,7 +419,6 @@ jobs:
             "cache/target/cargo/release/bundle/macos/Capsem.app" \
             "cache/target/cargo/release" \
             "cache/target/release/staging/assets" \
-            "cache/target/config" \
             "$VERSION" \
             "$APPLE_INSTALLER_SIGNING_IDENTITY"
 
@@ -535,7 +521,7 @@ jobs:
           toolchain: 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
-          key: materialize-package-config-${{ matrix.arch }}
+          key: linux-package-${{ matrix.arch }}
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync --project build_system --frozen
@@ -553,14 +539,6 @@ jobs:
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --input-dir cache/target/binary-selected-runtime \
             --assets-dir cache/target/package-content/assets
-
-      - name: Materialize runtime config
-        run: |
-          CAPSEM_ASSET_MANIFEST="$PWD/cache/target/package-content/assets/manifest.json" \
-          CAPSEM_ASSETS_PATH="$PWD/cache/target/package-content/assets" \
-          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/package-content/config" \
-          CAPSEM_ARCH="${{ matrix.arch }}" \
-            bash build_system/scripts/build/materialize-config.sh --pair-content
 
       - name: Build Linux package through the shared hermetic rail
         env:
@@ -976,10 +954,6 @@ jobs:
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --input-dir cache/target/candidate-runtime-inputs \
             --assets-dir cache/target/assets
-          CAPSEM_ASSET_MANIFEST="$PWD/cache/target/assets/manifest.json" \
-          CAPSEM_ASSETS_PATH="$PWD/cache/target/assets" \
-          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/config" \
-            bash build_system/scripts/build/materialize-config.sh --pair-content
 
       - name: Activate exact candidate package binaries for functional tests
         env:
@@ -1008,7 +982,6 @@ jobs:
             echo "CAPSEM_RELEASE_AFTER_INPUTS=$PWD/cache/target/candidate-runtime-inputs"
             echo "CAPSEM_TEST_BINARY=$PWD/cache/target/cargo/debug/capsem"
             echo "CAPSEM_TEST_ASSETS_DIR=$PWD/cache/target/assets"
-            echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/cache/target/config"
           } >> "$GITHUB_ENV"
 
       - name: Qualify the candidate binaries

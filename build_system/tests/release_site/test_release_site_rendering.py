@@ -167,7 +167,6 @@ def test_channel_page_has_one_manifest_url() -> None:
         assert f"/manifests/{channel}/" not in page
         assert "/runtime/releases/" not in page
         assert "catalog.json" not in page
-        assert "profile_catalog" not in page
 
 
 def test_package_pages_show_package_owned_binaries() -> None:

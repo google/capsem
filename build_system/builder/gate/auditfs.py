@@ -2,7 +2,7 @@
 
 A hardlink is the only operation that makes two paths *the same file*, and that
 is fine for build output and wrong for checked-in source. `capsem-admin` staged
-profile payloads with one and put 48 tracked `config/` files inside published
+release payloads with one and put 48 tracked `config/` files inside published
 release artifacts sharing a single inode each -- so a `chmod` on the artifact
 rewrote tracked source and no content digest noticed, because the content had
 not changed.

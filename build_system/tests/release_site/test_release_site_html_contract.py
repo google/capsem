@@ -125,7 +125,6 @@ def test_one_manifest_url() -> None:
         assert f"/manifests/{channel}/" not in page
         assert "/runtime/releases/" not in page
         assert "catalog.json" not in page
-        assert "profile_catalog" not in page
 
 
 def test_no_catalog_url_on_channel_page() -> None:
@@ -137,10 +136,7 @@ def test_no_catalog_url_on_channel_page() -> None:
         ).read_text(encoding="utf-8")
 
         assert f"/assets/{channel}/manifest.json" in page
-        assert "Profile Catalog" not in page
         assert "catalog.json" not in page
-        assert "profile_catalog" not in page
-        assert "capsem.profile_catalog" not in page
 
 
 def test_digest_display_truncates_human_hashes_and_preserves_machine_json() -> None:

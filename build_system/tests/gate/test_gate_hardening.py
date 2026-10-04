@@ -282,9 +282,8 @@ def test_no_command_touches_the_machine_while_building_its_plan() -> None:
             "channel": "nightly",
             "source_commit": SourceCommit("0" * 40),
         },
-        "release-profile": {
+        "release-assets": {
             "channel": "nightly",
-            "profile": "code",
             "source_commit": SourceCommit("0" * 40),
         },
         "cross-compile": {"arch": "arm64"},
@@ -294,7 +293,7 @@ def test_no_command_touches_the_machine_while_building_its_plan() -> None:
             "manifest_url": "file:///m",
             "channel": "nightly",
         },
-        "build-assets": {"profile": "code", "arch": "arm64", "template": "all"},
+        "build-assets": {"arch": "arm64", "template": "all"},
         "dev": {"surface": "ui", "args": []},
         "logs": {"target": ""},
         "runs": {"action": "list", "run": None, "failed": False, "other": None},

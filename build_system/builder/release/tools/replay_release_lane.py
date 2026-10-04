@@ -2,8 +2,8 @@
 
 `just test` runs the lanes' *steps* -- the rehearsal composes the same
 fragments a release does -- but not their *layout*. A release qualifies from a
-prefix carrying only tracked files, where `cache/target/cargo/debug` and `cache/target/config`
-hold staged input rather than build output, and that difference is where the
+prefix carrying only tracked files, where `cache/target/cargo/debug` holds staged
+input rather than build output, and that difference is where the
 0.6.0 binaries lost four dispatches: a hardcoded binary path, a missing config
 tree, a missing tool, and a nested pytest inheriting an environment that no
 longer said which lane it was in. Each cost forty minutes to see and minutes to
@@ -59,7 +59,6 @@ WORK = "cache/target/replay-lane"
 _TEST_SELECTION_ENV = (
     "CAPSEM_TEST_BINARY",
     "CAPSEM_TEST_ASSETS_DIR",
-    "CAPSEM_TEST_CONFIG_ROOT",
 )
 
 
@@ -144,7 +143,6 @@ def released_environment(cohort: dict, channel: str) -> dict[str, str]:
         "CAPSEM_RELEASE_BEFORE_INPUTS": cohort["before_release_inputs"],
         "CAPSEM_RELEASE_AFTER_INPUTS": cohort["inputs"],
         "CAPSEM_TEST_ASSETS_DIR": f"{workspace_text}/assets",
-        "CAPSEM_TEST_CONFIG_ROOT": f"{workspace_text}/cache/target/config",
     }
 
 

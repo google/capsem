@@ -1,4 +1,4 @@
-"""Host diagnosis shared by the profile-owned image rails."""
+"""Host diagnosis shared by the image rails."""
 
 from __future__ import annotations
 

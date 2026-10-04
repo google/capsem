@@ -294,7 +294,7 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
         "collapsed": False,
         "web": {
             "name": "Network Mechanics",
-            "description": "Network engine mechanics. HTTP/DNS decisions are profile security rules.",
+            "description": "Network engine mechanics. HTTP/DNS decisions are security rules.",
             "http_upstream_ports": {
                 "name": "Allowed plain HTTP upstream ports",
                 "description": "Plain HTTP upstream ports the MITM may dial after guest traffic reaches the local proxy.",
@@ -640,7 +640,7 @@ def generate_mock_ts(
     Produces:
     - mockSettings: flat array of ResolvedSetting objects
     - buildMockTree(): returns the SettingsNode tree
-    - empty MCP mock placeholders; real MCP data comes from profile routes
+    - empty MCP mock placeholders; real MCP data comes from the service's MCP routes
     """
     settings_obj = defaults.get("settings", {})
 
@@ -757,7 +757,7 @@ def generate_mock_ts(
     tools = mcp_tools or []
 
     lines.append("// ---------------------------------------------------------------------------")
-    lines.append("// MCP mock data (profile routes are authoritative)")
+    lines.append("// MCP mock data (the service's MCP routes are authoritative)")
     lines.append("// ---------------------------------------------------------------------------")
     lines.append("")
 

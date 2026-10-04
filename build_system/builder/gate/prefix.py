@@ -275,7 +275,7 @@ def reclaim(config: GateConfig, path: Path) -> None:
     # prefix, a run that succeeded -- which is why the build output is taken
     # back here rather than at the three call sites that would each have to
     # remember. A failed or explicitly reused prefix has not left: moving its
-    # selected asset tree into the shared cache strips the exact profile path
+    # selected asset tree into the shared cache strips the exact asset path
     # that its continuation consumes. Deleting 42 GiB of `cache/target/` was the
     # whole reason a new commit qualified cold; see `buildcache`.
     buildcache.salvage(config, resolved)

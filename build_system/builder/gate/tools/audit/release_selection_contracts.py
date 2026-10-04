@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 from collections.abc import Iterable
@@ -52,29 +51,6 @@ def repository_files(root: Path) -> Iterable[Path]:
             continue
         if path.is_file():
             yield path
-
-
-def _builtin_profiles_match(root: Path) -> bool:
-    configured = sorted(
-        path.parent.name for path in (root / "config/profiles").glob("*/profile.toml")
-    )
-    contract = root / "crates/capsem-core/src/net/policy_config/profile_contract.rs"
-    embedded = sorted(
-        set(
-            re.findall(
-                r"config/profiles/([^/]+)/profile\.toml",
-                contract.read_text(encoding="utf-8"),
-            )
-        )
-    )
-    if configured == embedded:
-        return False
-    print("ERROR: builtin_profile_configs does not exactly mirror config/profiles", file=sys.stderr)
-    print("configured profiles:", file=sys.stderr)
-    print("\n".join(configured), file=sys.stderr)
-    print("embedded profiles:", file=sys.stderr)
-    print("\n".join(embedded), file=sys.stderr)
-    return True
 
 
 def _retired_doctrine_reintroduced(root: Path) -> bool:

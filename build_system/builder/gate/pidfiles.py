@@ -21,7 +21,7 @@ Two rules follow, and both are enforced here rather than remembered:
 
 The gateway is stopped before the service on purpose: it owns the fixed
 localhost port, and a gateway that outlives its service attaches the next
-profile to a UDS pointing at a deleted run directory.
+run to a UDS pointing at a deleted run directory.
 """
 
 from __future__ import annotations

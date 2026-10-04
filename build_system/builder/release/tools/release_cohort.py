@@ -163,25 +163,6 @@ def build_cohort(args) -> dict[str, str]:
             str(workspace / config.functional.assets_dir),
         ]
     )
-    run(
-        # `--pair-content`, as every lane that runs `glowup.content` must. That
-        # step compares the staged asset manifest against the materialized
-        # runtime one byte for byte, and only this flag makes them the same
-        # document -- the staged one is the channel graph until it is paired.
-        ["bash", "build_system/scripts/build/materialize-config.sh", "--pair-content"],
-        env={
-            # A path rather than a `file://` URL, and the assets directory
-            # beside it. `--pair-content` compares the two as filesystem paths
-            # to check it is pairing the manifest it was selected with, so a
-            # URL here fails that comparison against itself.
-            "CAPSEM_ASSET_MANIFEST": str(
-                workspace / config.functional.assets_dir / config.install.manifest_name
-            ),
-            "CAPSEM_ASSETS_PATH": str(workspace / config.functional.assets_dir),
-            "CAPSEM_CONFIG_ROOT": str(PROJECT_ROOT / "config"),
-            "CAPSEM_CONFIG_OUTPUT_ROOT": str(workspace / config.functional.config_root),
-        },
-    )
 
     copy_view(CACHE_PATHS, exact, args.package, receipt_location=ReceiptLocation.INVENTORY)
     before = unpublished_before(args.channel, args.before_inputs)

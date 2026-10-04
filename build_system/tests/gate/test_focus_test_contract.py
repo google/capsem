@@ -157,9 +157,6 @@ def test_glowup_rejects_native_only_content_before_any_package_build(tmp_path: P
     manifest["assets"]["releases"]["test"]["arches"][config.host_arch().name] = {}
     payload = json.dumps(manifest)
     (content.assets / config.install.manifest_name).write_text(payload)
-    paired = content.config_manifest(config)
-    paired.parent.mkdir(parents=True)
-    paired.write_text(payload)
     # Supply the native files so the missing foreign declaration is decisive.
     native = content.assets / config.host_arch().name
     native.mkdir()

@@ -560,15 +560,15 @@ def test_issued_command_introspection_cannot_clear_live_asset_outputs(
     was inspecting.  That records ``Run`` actions safely, but an opaque
     ``Call`` executes Python directly.  The assets preflight therefore cleared
     the live ``cache/target/tests/ironbank`` tree halfway through broad pytest,
-    deleting the exact profile catalog the same pytest process was consuming.
+    deleting the exact asset tree the same pytest process was consuming.
     """
     from capsem_builder.gate import snapshot
 
     checkout = tmp_path / "checkout"
     snapshot.populate(PROJECT_ROOT, checkout, gate_config.load(PROJECT_ROOT))
-    sentinel = checkout / CONFIG.assets.test_root / "code" / "config" / "profiles" / "proof"
+    sentinel = checkout / CONFIG.assets.test_root / CONFIG.assets.merged_assets_dir
     sentinel.mkdir(parents=True)
-    marker = sentinel / "profile.toml"
+    marker = sentinel / CONFIG.install.manifest_name
     marker.write_text('id = "proof"\n', encoding="utf-8")
     inspections = tmp_path / "inspections"
     inspections.mkdir()

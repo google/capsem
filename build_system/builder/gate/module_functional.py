@@ -169,32 +169,21 @@ class _Content:
     config: GateConfig
     root: RuntimeContent | None = None
 
-    def _selection(self) -> dict[str, str | None]:
-        if self.root is None:
-            return {"assets": None, "profiles_dir": None}
-        return {
-            "assets": str(self.root.assets),
-            "profiles_dir": str(self.root.profiles(self.config)),
-        }
+    def _assets(self) -> str | None:
+        return None if self.root is None else str(self.root.assets)
 
     def suite(self, suite: pytestsuite.Suite) -> pytestsuite.Suite:
-        selection = self._selection()
-        if self.root is None:
-            return suite
-        return replace(
-            suite,
-            assets_dir=selection["assets"] or "",
-            profiles_dir=selection["profiles_dir"] or "",
-        )
+        assets = self._assets()
+        return suite if assets is None else replace(suite, assets_dir=assets)
 
     def proof_arguments(self) -> dict[str, str | None]:
-        return self._selection()
+        return {"assets": self._assets()}
 
 
 def _content_selector(
     config: GateConfig, *, staged: RuntimeContent | None, isolated: bool
 ) -> _Content:
-    # A release lane's cohort is one staged pair. Without this the suites
+    # A release lane's cohort is one staged asset tree. Without this the suites
     # inherit no content selection at all and fall back to the checkout --
     # which, inside the prefix, is the one place the lane never staged anything.
     if staged is not None:

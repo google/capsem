@@ -46,7 +46,7 @@ class Mount:
         per gate to avoid a mount that was never the problem.
 
         The race this whole boundary exists to stop was a *source* path --
-        `config/profiles/.../projects.json`, hardlink-churned by a host step
+        a tracked `config/` file, hardlink-churned by a host step
         while the container read the same inode. Generated inputs are produced
         by an earlier step, declared through `contends`, and read-only here, so
         nothing writes them while this reads them.

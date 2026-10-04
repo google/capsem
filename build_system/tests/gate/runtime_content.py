@@ -1,4 +1,4 @@
-"""Config-derived fixture materialization for complete profile content."""
+"""Config-derived fixture materialization for complete runtime content."""
 
 from __future__ import annotations
 

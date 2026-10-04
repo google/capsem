@@ -1,8 +1,7 @@
 """Build the VM runtime assets through the one config-owned image rail.
 
-There is one runtime: no profile selects what goes into it. Applications come
-from OCI images, so the only thing a build varies is the architecture and the
-template.
+There is one runtime. Applications come from OCI images, so the only thing a
+build varies is the architecture and the template.
 """
 
 from __future__ import annotations

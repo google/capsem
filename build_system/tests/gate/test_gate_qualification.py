@@ -112,10 +112,10 @@ def test_only_the_runtime_release_marks_the_runtime_as_the_candidate() -> None:
 
 
 def test_the_runtime_flag_is_a_switch_not_a_name() -> None:
-    """There is one runtime; a value naming one (a retired profile id) is a
-    workflow still speaking the old contract, and refusing it says so."""
+    """There is one runtime; a value naming one is a workflow speaking a
+    stale contract, and refusing it says so."""
     with pytest.raises(GateError, match=RUNTIME):
-        qualification_for(CONFIG, {**environment(INPUT_DIR, PACKAGE), RUNTIME: "code"})
+        qualification_for(CONFIG, {**environment(INPUT_DIR, PACKAGE), RUNTIME: "named"})
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +173,6 @@ def test_a_runtime_release_boots_the_runtime_it_is_publishing() -> None:
     assert artifacts.index(SETTINGS.verify_inputs_script) < artifacts.index(
         SETTINGS.prove_runtime_assets_script
     )
-    assert "--profile" not in artifacts
 
 
 def test_a_deferred_runtime_proves_assets_without_inventing_a_package() -> None:
@@ -206,7 +205,6 @@ def test_a_deferred_runtime_proves_assets_without_inventing_a_package() -> None:
     assert SETTINGS.prove_runtime_assets_script in rendered
     assert VALUES[INPUT_DIR] in rendered
     assert VALUES[PACKAGE] not in rendered
-    assert "--profile" not in rendered
     for forbidden in ("build-assets", "_build-kernel", "_build-rootfs", "functional.", "glowup."):
         assert forbidden not in rendered
 

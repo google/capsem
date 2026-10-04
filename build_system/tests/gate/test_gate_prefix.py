@@ -600,7 +600,7 @@ def test_the_copy_is_independent_of_the_tree_it_came_from(source: Path) -> None:
 def test_export_materializes_the_selected_assets_without_copying_current(
     tmp_path: Path,
 ) -> None:
-    """The private gate selects a verified profile with a top-level symlink.
+    """The private gate selects verified assets with a top-level symlink.
 
     Export must dereference that one selector into the checkout while retaining
     the self-contained ``cache/target/assets/current`` architecture selector. Dereferencing
@@ -617,7 +617,7 @@ def test_export_materializes_the_selected_assets_without_copying_current(
                 (PROJECT_ROOT / "config" / name).read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
-    selected = private / "cache" / "target" / "ironbank-assets" / "code" / "assets"
+    selected = private / "cache" / "target" / "ironbank" / "assets"
     architecture = selected / "x86_64"
     architecture.mkdir(parents=True)
     (architecture / "rootfs.erofs").write_bytes(b"fresh")
@@ -625,21 +625,12 @@ def test_export_materializes_the_selected_assets_without_copying_current(
     (selected / "current").symlink_to("x86_64")
     private_assets = private / "cache" / "target" / "assets"
     private_assets.parent.mkdir(exist_ok=True)
-    private_assets.symlink_to("ironbank-assets/code/assets")
-    private_config = private / "cache" / "target" / "config"
-    private_config_manifest = private_config / "assets" / "manifest.json"
-    private_config_manifest.parent.mkdir(parents=True)
-    private_config_manifest.write_text('{"fresh":true}\n')
+    private_assets.symlink_to("ironbank/assets")
 
     old = checkout / "cache" / "target" / "assets"
     (old / "current").mkdir(parents=True)
     (old / "current" / "stale").write_text("stale\n")
     (old / "stale").write_text("stale\n")
-    old_config = checkout / "cache" / "target" / "config"
-    old_config_manifest = old_config / "assets" / "manifest.json"
-    old_config_manifest.parent.mkdir(parents=True)
-    old_config_manifest.write_text('{"stale":true}\n')
-    (old_config / "retired").mkdir()
 
     from capsem_builder.gate import buildcache
 
@@ -650,8 +641,6 @@ def test_export_materializes_the_selected_assets_without_copying_current(
     assert (old / "manifest.json").read_text() == '{"fresh":true}\n'
     assert (old / "current").is_symlink()
     assert (old / "current").readlink() == Path("x86_64")
-    assert old_config_manifest.read_text() == '{"fresh":true}\n'
-    assert not (old_config / "retired").exists()
 
 
 # -- giving it back ----------------------------------------------------------
@@ -813,7 +802,6 @@ def test_the_export_list_covers_what_a_release_publishes() -> None:
 
     assert {
         "cache/target/assets",
-        "cache/target/config",
         "cache/target/coverage",
         "cache/target/gate-runs",
         "cache/target/packages",
@@ -955,7 +943,7 @@ def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
             assert environment[config.environment.repository_root] == str(reused)
             assert environment[config.environment.source_checkout] == str(config.root)
             # The re-exec recomputes Cargo's destination from cache authority.
-            # It must agree with the profile symlink the tests will execute.
+            # It must agree with the Cargo profile symlink the tests will execute.
             with monkeypatch.context() as child:
                 child.setenv("CAPSEM_CACHE_AUTHORITY", environment["CAPSEM_CACHE_AUTHORITY"])
                 actual_target = gatelaunch._policy_stage(
@@ -990,11 +978,11 @@ def test_a_failed_prefix_keeps_symlinked_assets_for_the_next_continuation(
 ) -> None:
     """Retaining a journal without its selected assets cannot resume.
 
-    ``cache/target/assets`` selects ``cache/target/tests/ironbank/<profile>/assets``.
+    ``cache/target/assets`` selects ``cache/target/tests/ironbank/assets``.
     Salvaging the selector follows it and moves the real directory into the
     shared cache, leaving the retained prefix with neither path. The next
     exact-source attempt then carries ``assets.assemble`` and fails before its
-    first VM test because the profile-owned asset path disappeared.
+    first VM test because the selected asset path disappeared.
     """
     from capsem_builder.gate import buildcache, prefix
     from capsem_builder.gate import config as gate_config
@@ -1011,10 +999,10 @@ def test_a_failed_prefix_keeps_symlinked_assets_for_the_next_continuation(
                 assert message == f"prefix kept for resuming: {failed}"
 
         def run(self, *args, **kwargs) -> int:
-            selected = failed / "cache" / "target" / "ironbank-assets" / "code" / "assets"
+            selected = failed / "cache" / "target" / "ironbank" / "assets"
             selected.mkdir(parents=True)
             (selected / "manifest.json").write_text("{}", encoding="utf-8")
-            (failed / "cache" / "target" / "assets").symlink_to("ironbank-assets/code/assets")
+            (failed / "cache" / "target" / "assets").symlink_to("ironbank/assets")
             return 1
 
     monkeypatch.setattr(prefix, "allocate", lambda *args: failed)
@@ -1025,7 +1013,7 @@ def test_a_failed_prefix_keeps_symlinked_assets_for_the_next_continuation(
 
     assert prefix.run_from_private_copy(FailedRunner(), config, ["candidate"]) == 1
     assert (failed / "cache" / "target" / "assets").is_symlink()
-    assert (failed / "cache" / "target" / "ironbank-assets" / "code" / "assets").is_dir()
+    assert (failed / "cache" / "target" / "ironbank" / "assets").is_dir()
 
 
 def test_a_fresh_successful_prefix_is_still_reclaimed(
@@ -1501,22 +1489,14 @@ def test_a_pulled_lane_refuses_to_read_binaries_it_built_itself(tmp_path: Path) 
         cargotarget.link_pulled_binaries(config, prefix_path, pulled)
 
 
-def test_a_pulled_lane_also_finds_the_config_it_was_handed(
+def test_a_pulled_lane_links_the_binaries_it_was_handed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`cache/target/config/profiles` is resolved directly by checked-in tests too.
-
-    The same gap as the binaries, one directory over, and found the same
-    expensive way: `test_generated_target_profiles_are_the_only_checked_
-    materialized_profiles` reads `PROJECT_ROOT/cache/target/config/profiles` and does
-    not consult `CAPSEM_PROFILES_DIR`, so in a prefix it saw an empty set after
-    every binary had built and installed.
-    """
+    """A release lane reads pulled binaries and the shared object store."""
     from capsem_builder.gate import cachelayout, cargotarget
 
     checkout = tmp_path / "checkout"
-    (checkout / "cache" / "target" / "config" / "profiles" / "code").mkdir(parents=True)
-    (checkout / "config").mkdir()
+    (checkout / "config").mkdir(parents=True)
     (checkout / "config" / "cache.toml").write_text(
         (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8"),
         encoding="utf-8",
@@ -1526,14 +1506,9 @@ def test_a_pulled_lane_also_finds_the_config_it_was_handed(
     binaries.mkdir()
     prefix_path = tmp_path / "prefixes" / ("c" * 8)
 
-    # Only the release variable is set. `CAPSEM_PROFILES_DIR` is a per-step
-    # overlay and is absent when a prefix is built; setting it here is what let
-    # the first version of this test agree with a link that never happened.
     monkeypatch.setenv(config.modules.release_bin_dir, str(binaries))
-    monkeypatch.delenv(config.environment.profiles_dir, raising=False)
     cargotarget.link_prefix_trees(config, prefix_path)
 
-    assert (prefix_path / "cache" / "target" / "config" / "profiles" / "code").is_dir()
     assert (prefix_path / "cache" / "target" / "cargo" / "debug").readlink() == binaries
     assert (prefix_path / "cache" / "objects").readlink() == cachelayout.stage_path(
         config, "objects"
@@ -1558,7 +1533,6 @@ def test_an_ordinary_run_still_compiles_into_the_shared_root(
     assert (prefix_path / "cache" / "objects").readlink() == cachelayout.stage_path(
         config, "objects"
     )
-    assert not (prefix_path / "cache" / "target" / "config").exists()
 
 
 def test_a_private_prefix_object_store_is_refused(tmp_path: Path) -> None:
@@ -1577,14 +1551,13 @@ def test_a_private_prefix_object_store_is_refused(tmp_path: Path) -> None:
 def test_export_does_not_carry_back_a_tree_the_run_was_handed(tmp_path: Path) -> None:
     """A link out of the prefix names input; exporting it claims authorship.
 
-    A release lane points `cache/target/config` at the cohort it was handed. Copying
-    that into the checkout would export an input as though the run produced it,
-    and dies outright if the tree it names has since gone -- which is how a
-    local replay of the pairing lane ended, in `shutil.copytree`, naming a path
-    nothing had ever written.
+    Copying a tree the run was handed into the checkout would export an input
+    as though the run produced it, and dies outright if the tree it names has
+    since gone -- which is how a local replay of the pairing lane ended, in
+    `shutil.copytree`, naming a path nothing had ever written.
 
-    The profile selector one directory up is a link *within* the prefix and
-    must still be dereferenced; that is the case above.
+    The asset selector is a link *within* the prefix and must still be
+    dereferenced; that is the case above.
     """
     from capsem_builder.gate import buildcache
     from capsem_builder.gate import config as gate_config
@@ -1598,14 +1571,14 @@ def test_export_does_not_carry_back_a_tree_the_run_was_handed(tmp_path: Path) ->
                 (PROJECT_ROOT / "config" / name).read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
-    handed = tmp_path / "staged-cohort" / "config"
-    (handed / "profiles" / "code").mkdir(parents=True)
+    handed = tmp_path / "staged-cohort" / "coverage"
+    (handed / "rust").mkdir(parents=True)
     (private / "cache" / "target").mkdir(parents=True, exist_ok=True)
-    (private / "cache" / "target" / "config").symlink_to(handed, target_is_directory=True)
+    (private / "cache" / "target" / "coverage").symlink_to(handed, target_is_directory=True)
 
     buildcache.export(private, checkout, gate_config.load(private))
 
-    assert not (checkout / "cache" / "target" / "config").exists(), (
+    assert not (checkout / "cache" / "target" / "coverage").exists(), (
         "a tree the run was handed must not be exported as though it built it"
     )
 

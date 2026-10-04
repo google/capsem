@@ -107,12 +107,11 @@ wait_for_service() {{
   journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true
   return 1
 }}
-wait_for_profile_assets() {{
-  profile="$1"
-  output="$2"
+wait_for_assets() {{
+  output="$1"
   for attempt in $(seq 1 180); do
     if CAPSEM_HOME="$CAPSEM_HOME_DIR" CAPSEM_RUN_DIR="$CAPSEM_HOME_DIR/run" \
-      "$CAPSEM_BIN" assets status --profile "$profile" --json > "$output" \
+      "$CAPSEM_BIN" assets status --json > "$output" \
       && python3 - "$output" <<'PY'
 import json
 from pathlib import Path
@@ -126,7 +125,7 @@ PY
     fi
     sleep 1
   done
-  echo "ERROR: profile $profile assets did not settle after $attempt polls" >&2
+  echo "ERROR: assets did not settle after $attempt polls" >&2
   cat "$output" >&2 || true
   systemctl --user status capsem.service --no-pager -l >&2 || true
   journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true

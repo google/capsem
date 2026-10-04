@@ -422,8 +422,6 @@ def check_release_graph_manifest_contract(
 
     if "binaries" in manifest_data:
         failures.append("manifest must not publish top-level binaries")
-    if "profiles" in manifest_data:
-        failures.append("manifest must not publish profiles")
     packages = require_list(manifest_data, "packages", failures)
     runtime = require_object(manifest_data, "runtime", "manifest runtime", failures)
     if not packages:

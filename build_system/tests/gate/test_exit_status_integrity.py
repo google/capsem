@@ -272,8 +272,8 @@ def _assert_fixture(step: str, *, job_policy: str = "") -> None:
                 "build",
                 "Build assets",
                 (
-                    'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"',
-                    'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"',
+                    'just build-assets ${{ matrix.arch }} "${{ inputs.template }}"',
+                    'just build-assets ${{ matrix.arch }} "${{ inputs.template }}"',
                 ),
             ),
         ),
@@ -285,19 +285,19 @@ def _assert_fixture(step: str, *, job_policy: str = "") -> None:
     (
         "    - name: Build assets\n"
         "      run: |\n"
-        '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-        '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+        '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n'
+        '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n',
         "    - name: Build assets\n"
         "      continue-on-error: false\n"
-        '      run: "just   build-assets   ${{ matrix.arch }}  \\"${{ inputs.profile }}\\"\\n'
-        'just build-assets ${{ matrix.arch }} \\"${{ inputs.profile }}\\""\n',
+        '      run: "just   build-assets   ${{ matrix.arch }}  \\"${{ inputs.template }}\\"\\n'
+        'just build-assets ${{ matrix.arch }} \\"${{ inputs.template }}\\""\n',
         "    - name: Build assets\n"
         "      if: true\n"
         "      run: |\n"
         "        # YAML and shell presentation are not the contract.\n"
         "        just \\\n"
-        '          build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-        '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+        '          build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n'
+        '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n',
     ),
 )
 def test_required_workflow_commands_accept_equivalent_yaml_and_shell_forms(step: str) -> None:
@@ -310,59 +310,59 @@ def test_required_workflow_commands_accept_equivalent_yaml_and_shell_forms(step:
         (
             "    - name: Build assets\n"
             "      run: |\n"
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}" || true\n'
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}" || true\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n',
             "",
         ),
         (
             "    - name: Build assets\n"
             "      continue-on-error: true\n"
             "      run: |\n"
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n',
             "",
         ),
         (
             "    - name: Build assets\n"
             "      if: false\n"
             "      run: |\n"
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n',
             "",
         ),
         (
             "    - name: Build assets\n"
             "      run: |\n"
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n',
             "    continue-on-error: true\n",
         ),
         (
             "    - name: Build assets\n"
             "      run: |\n"
             "        set +e\n"
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n',
             "",
         ),
         (
             "    - name: Build assets\n"
             "      run: |\n"
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}" ; true\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}" ; true\n',
             "",
         ),
         (
             "    - name: Build assets\n"
             "      run: |\n"
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n',
             "",
         ),
         (
             "    - name: Build assets\n"
             "      run: |\n"
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.template }}"\n',
             "    if: false\n",
         ),
     ),

@@ -229,7 +229,6 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
 
         for name in REQUIRED_BINARIES:
             assert (share / "bin" / name).is_file()
-        assert not (share / "profiles").exists()
 
         unexpected = []
         for path in share.rglob("*"):

@@ -599,7 +599,7 @@ class TestGenerateDefaultsJsonConformance:
                 )
 
     def test_mcp_servers_do_not_reappear(self, generated, current_defaults):
-        """Profile MCP declarations must not be exported through settings metadata."""
+        """MCP declarations must not be exported through settings metadata."""
         assert "mcp" not in generated
         assert "mcp" not in current_defaults
 

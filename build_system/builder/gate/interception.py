@@ -143,7 +143,7 @@ def _locate(subject: object, kwargs: dict[str, object], template: str) -> Path |
     """Where the call actually acted, not what the caller happened to spell.
 
     `shutil.rmtree` deletes through a directory descriptor -- `os.unlink(
-    'profile.toml', dir_fd=5)` -- and recording the bare entry name left the
+    'settings.toml', dir_fd=5)` -- and recording the bare entry name left the
     path to be resolved against the current working directory, which for the
     gate is the checkout root. One release run logged 42 faults that way, each
     naming a tracked file nothing had touched.

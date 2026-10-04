@@ -97,18 +97,6 @@ SERVICE_SOCKET = INTEGRATION_RUN_DIR / "service.sock"
 SERVICE_PIDFILE = INTEGRATION_RUN_DIR / "service.pid"
 
 
-def default_materialized_profiles_dir() -> str:
-    """Return the generated profile catalog used by packages, CI, and install."""
-    return os.environ.get(
-        "CAPSEM_PROFILES_DIR",
-        str(PROJECT_ROOT / "cache" / "target" / "config" / "profiles"),
-    )
-
-
-def _profile_env() -> dict[str, str]:
-    return {"CAPSEM_PROFILES_DIR": default_materialized_profiles_dir()}
-
-
 def _service_assets_dir(assets_dir: str) -> str:
     """Select native assets; `current` can name the last cross-built lane."""
     from capsem_builder.gate.config import for_root
@@ -324,7 +312,6 @@ def _start_service_with_test_config(
 
     env = {
         **os.environ,
-        **_profile_env(),
         **_test_isolation_env(),
         **_integration_runtime_env(),
         "CAPSEM_CORP_CONFIG": str(project_root / corp_config),
@@ -412,7 +399,6 @@ def run_vm(binary: str, assets_dir: str) -> tuple[bool, int]:
     """
     env = {
         **os.environ,
-        **_profile_env(),
         **_test_isolation_env(),
         **_integration_runtime_env(),
         "CAPSEM_ASSETS_DIR": assets_dir,
@@ -1026,7 +1012,6 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
     print(f"\n{BOLD}=== Ephemeral model check ==={RESET}")
     env = {
         **os.environ,
-        **_profile_env(),
         **_integration_runtime_env(),
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",

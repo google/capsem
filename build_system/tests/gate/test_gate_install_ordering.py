@@ -30,7 +30,7 @@ from capsem_builder.gate.releaseauthoring import author_binary_graph, author_nat
 from capsem_builder.gate.releasegraph import ReleaseGraph
 from capsem_builder.gate.sourcecommit import SourceCommit
 from helpers.gate import RecordingRunner
-from profile_content import materialize_required_artifacts
+from runtime_content import materialize_required_artifacts
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -98,7 +98,6 @@ def test_native_candidate_records_only_the_graph_and_rebuilds_catalogs(tmp_path:
     ]
     first_build, record, second_build = (command for command, _env in commands)
     assert first_build[first_build.index("--manifest") + 1] == source.resolve().as_uri()
-    assert "--profiles-dir" not in first_build
     assert record[record.index("--manifest-path") + 1] == str(graph)
     assert record[record.index("--source-commit") + 1] == str(SOURCE_COMMIT)
     assert second_build[second_build.index("--manifest") + 1] == graph.resolve().as_uri()
@@ -160,12 +159,6 @@ def _local_content(root: Path) -> RuntimeContent:
     content.assets.mkdir(parents=True)
     (content.assets / config.install.manifest_name).write_bytes(payload)
     materialize_required_artifacts(config, content.assets)
-    config_manifest = content.config_manifest(config)
-    config_manifest.parent.mkdir(parents=True)
-    config_manifest.write_bytes(payload)
-    profile = content.profiles(config) / "code" / "profile.toml"
-    profile.parent.mkdir(parents=True)
-    profile.write_text("name = 'code'\n")
     return content
 
 
@@ -188,7 +181,6 @@ def _selected_content(root: Path) -> SelectedInstallContent:
     }
     manifest_bytes = json.dumps(manifest).encode()
     (content.assets / config.install.manifest_name).write_bytes(manifest_bytes)
-    content.config_manifest(config).write_bytes(manifest_bytes)
     (inputs / config.install.manifest_name).write_bytes(manifest_bytes)
     (inputs / config.package.release_inputs_name).write_text("{}\n")
     return SelectedInstallContent(content)
@@ -316,7 +308,6 @@ def test_the_graph_exists_before_anything_points_at_it(
     assert f"--manifest-path {AUTHORITATIVE}" in record[0]
     assert f"/{LAYOUT.assets}/{INSTALL.manifest_name}" in builds[0]
     assert f"/{AUTHORITATIVE}" in builds[1]
-    assert not runner.ran(r"--profile-revision-policy")
 
 
 def test_the_admin_that_authors_the_graph_is_extracted_not_installed(
@@ -469,11 +460,10 @@ def test_a_release_lane_stages_verified_inputs_and_authors_the_exact_package_gra
     assert runner.ran(r"dpkg -i")
     started = runner.matching(r"docker run -d")[0]
     assert f"-v {content.assets}:/src/{CONFIG.outputs.assets}:ro" in started
-    assert f"-v {content.config}:/src/cache/target/config:ro" in started
     assert f"-v {content.root}:{content.root}:ro" in started
 
 
-def test_local_install_mounts_only_the_selected_content_pair(
+def test_local_install_mounts_only_the_selected_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Docker never sees the mutable checkout selector that it can replace."""
@@ -483,10 +473,6 @@ def test_local_install_mounts_only_the_selected_content_pair(
     canonical_assets = root / CONFIG.outputs.assets
     canonical_assets.parent.mkdir(parents=True, exist_ok=True)
     canonical_assets.symlink_to(selected.relative_to(canonical_assets.parent))
-    canonical = root / "cache/target/config"
-    canonical.mkdir(parents=True)
-    sentinel = canonical / "stale"
-    sentinel.write_text("untouched")
     runner = _recording(root)
 
     InstallGate(
@@ -498,15 +484,12 @@ def test_local_install_mounts_only_the_selected_content_pair(
 
     started = runner.matching(r"docker run -d")[0]
     assert f"-v {content.assets}:/src/{CONFIG.outputs.assets}:ro" in started
-    assert f"-v {content.config}:/src/cache/target/config:ro" in started
     assert f"-v {canonical_assets}:/src/{CONFIG.outputs.assets}:ro" not in started
-    assert f"-v {canonical}:/src/cache/target/config:ro" not in started
     assert canonical_assets.is_symlink()
     assert canonical_assets.readlink() == selected.relative_to(canonical_assets.parent)
-    assert sentinel.read_text() == "untouched"
 
 
-def test_local_install_without_a_selected_content_pair_fails_before_docker(
+def test_local_install_without_selected_content_fails_before_docker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _macos_checkout(tmp_path, monkeypatch)
@@ -673,7 +656,6 @@ def test_a_host_that_boots_a_guest_runs_the_complete_glowup(tmp_path: Path) -> N
 
     assert runner.ran(r"local-release-glowup\.py")
     assert runner.ran(rf"--source-commit {SOURCE_COMMIT}")
-    assert not runner.ran(r"--profile-revision-policy")
     assert not runner.ran(r"--skip-install")
 
 

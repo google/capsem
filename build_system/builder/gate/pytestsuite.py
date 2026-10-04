@@ -61,7 +61,6 @@ class Suite:
     coverage: CoverageMode = CoverageMode.NONE
     stop_at_first_failure: bool = True
     assets_dir: str = ""
-    profiles_dir: str = ""
     project: str = ""
     require_artifacts: bool = True
     contends: tuple[Exclusive, ...] = field(default_factory=tuple)
@@ -106,15 +105,8 @@ class Suite:
             # against a tree whose assets were never built.
             env[settings.require_artifacts] = "1"
         env[settings.run_id_variable] = self.label
-        if self.assets_dir or self.profiles_dir:
-            if not self.assets_dir or not self.profiles_dir:
-                raise ValueError("a pytest content selection requires both assets and profiles")
-            env.update(
-                config.environment.content(
-                    assets=self.assets_dir,
-                    profiles=self.profiles_dir,
-                )
-            )
+        if self.assets_dir:
+            env.update(config.environment.content(assets=self.assets_dir))
         return env
 
     def as_step(self, config: GateConfig) -> Step:

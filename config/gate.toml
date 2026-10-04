@@ -36,7 +36,6 @@ benchmarks = "cache/target/tests/benchmarks"
 coverage = "cache/target/coverage"
 distribution = "cache/target/release/distribution"
 gate_runs = "cache/target/gate-runs"
-materialized_config = "cache/target/config"
 packages = "cache/target/packages"
 test_artifacts = "cache/target/tests/evidence"
 
@@ -69,7 +68,7 @@ common_script = "build_system/scripts/doctor/doctor-common.sh"
 
 [pidfiles]
 # Ordered. The gateway owns the fixed localhost port, so it must stop before
-# the service -- otherwise the next profile attaches to an orphan gateway whose
+# the service -- otherwise the next run attaches to an orphan gateway whose
 # UDS points at a deleted run directory.
 names = ["gateway.pid", "service.pid"]
 term_wait_seconds = 2.0
@@ -215,8 +214,8 @@ local_macos_installer = ["/usr/bin/osascript", "build_system/packaging/macos/ins
 local_macos_target = "/"
 
 # Build output the install proof reads, which the image cannot carry because
-# it is produced *after* the image is built. ProfileContent supplies its exact
-# assets/config pair separately. Mounted read-only -- an install proof that
+# it is produced *after* the image is built. RuntimeContent supplies its exact
+# assets separately. Mounted read-only -- an install proof that
 # could rewrite the package it is proving would be proving nothing.
 generated_inputs = ["cache/target/packages"]
 systemd_ready_attempts = 30
@@ -278,16 +277,15 @@ request_script = "build_system/packaging/shared/install-manifest-request.sh"
 # install that looks fine and carries the wrong manifest.
 graph_manifest = "assets/local/manifest.json"
 legacy_projection = "manifest.json"
-# Manifest-selected release inputs are retained beneath the paired content
-# root so every rewritten file:// URL remains available inside the sealed
-# install container.  The whole root is mounted read-only at the same absolute
-# address; assets and config are still mounted at their product-facing paths.
+# Manifest-selected release inputs are retained beneath the content root so
+# every rewritten file:// URL remains available inside the sealed install
+# container.  The whole root is mounted read-only at the same absolute
+# address; the assets are still mounted at their product-facing path.
 selected_inputs_dir = "inputs"
 # The narrow exact-package proof mounts its immutable content here, then copies
 # it into writable staging before capsem-admin records the candidate binary.
 proof_content_mount = "/mnt/capsem-proof-content"
 proof_assets_name = "assets"
-proof_config_name = "config"
 # The package's complete runtime dependency names.  Release hosts verify the
 # actual Depends field against this tuple before installing from apt_snapshot.
 package_runtime_packages = [
@@ -379,7 +377,6 @@ package_name = "capsem"
 # the checkout.
 [install.layout]
 assets = "cache/target/tests/install/assets"
-config = "cache/target/tests/install/config"
 # The authored release tree is distribution output even though this instance
 # exists only long enough to prove the installer.
 channel = "cache/target/release/distribution/install-proof"
@@ -413,7 +410,6 @@ extra_owned_paths = ["build_system/release_site/node_modules", "build_system/rel
 home = "CAPSEM_HOME"
 run_dir = "CAPSEM_RUN_DIR"
 assets_dir = "CAPSEM_ASSETS_DIR"
-profiles_dir = "CAPSEM_PROFILES_DIR"
 benchmark_root = "CAPSEM_BENCHMARK_OUTPUT_ROOT"
 coverage_file = "COVERAGE_FILE"
 # Set by the parent that built a private checkout, and read by the child that
@@ -562,8 +558,7 @@ lane_container = "capsem-package-{arch}"
 # invalidates the layer on any source change, which is the correct cache key.
 # Build output the lane consumes and the image deliberately does not carry.
 # `cache/target/assets/` is 3.0 GB and changes every run. It is produced by an
-# earlier step, so it is mounted read-only rather than copied. The package ships
-# no configuration catalog, so nothing from `cache/target/config` is mounted.
+# earlier step, so it is mounted read-only rather than copied.
 generated_inputs = ["cache/target/assets"]
 lane_dockerfile = "build_system/docker/Dockerfile.package"
 lane_image = "capsem-package-lane:latest"
@@ -620,7 +615,7 @@ apt_archives_cache_id = "capsem-package-apt-archives"
 
 # Installing the exact package into a clean systemd container and proving it
 # works: every binary present and reporting the package's own version, the
-# service and gateway up, every profile ready, and a real guest shell.
+# service and gateway up, the runtime assets ready, and a real guest shell.
 
 # Local signing material. Absent on a developer machine, which is why the rail
 # treats it as optional -- the release lanes sign in CI from secrets. Declared
@@ -682,7 +677,6 @@ status_requires = [
 
 [assets]
 test_root = "cache/target/tests/ironbank"
-profiles_glob = "config/profiles/*/profile.toml"
 
 # Everything a built VM asset is a function of. A lane whose identity matches
 # the one recorded beside its output is reused; anything else rebuilds.
@@ -767,11 +761,8 @@ cross_platform_probe_command = "/bin/true"
 # say what it needs rather than omitting the decision.
 cross_platform_probe_network = "none"
 merged_assets_dir = "assets"
-merged_config_dir = "config"
-profile_home_dir = "home"
+proof_home_dir = "home"
 failure_evidence_dir = "run-failure"
-# The subdirectory `capsem-admin profile materialize` writes into.
-materialized_profiles_dir = "profiles"
 # The alias the image builders repoint at whichever architecture they built last.
 current_link = "current"
 
@@ -814,7 +805,6 @@ bootstrap_script = "bootstrap.sh"
 tart_readiness_script = "build_system/scripts/build/tart_readiness.py"
 clean_stale_script = "build_system/scripts/build/clean_stale.py"
 generated_settings_script = "build_system/scripts/build/check-generated-settings.sh"
-materialize_script = "build_system/scripts/build/materialize-config.sh"
 recipe_suite = ["uv", "run", "--project", "build_system", "--frozen", "python", "-m", "pytest", "-c", "build_system/pyproject.toml", "--rootdir", ".", "tests/capsem-recipes/", "-v", "--tb=short", "-m", "recipe"]
 # Cache owner enforced before the complete gate starts expensive work.
 candidate_cache = "all"
@@ -1096,31 +1086,30 @@ must_stay_below_lines = 3000
 
 [boundary.rust.oversized_line_counts]
 "crates/capsem-admin/src/assets_channel_render.rs" = 1308
-"crates/capsem-admin/src/main.rs" = 1987
-"crates/capsem-admin/src/profile_images.rs" = 1476
-"crates/capsem-admin/src/release_graph/tests.rs" = 1078
+"crates/capsem-admin/src/main.rs" = 1727
+"crates/capsem-admin/src/release_graph/tests.rs" = 1047
 "crates/capsem-agent/src/tests.rs" = 1115
-"crates/capsem-assets/src/asset_manager.rs" = 1212
+"crates/capsem-assets/src/asset_manager.rs" = 1210
 "crates/capsem-core/src/hypervisor/kvm/mod.rs" = 1029
 "crates/capsem-core/src/hypervisor/kvm/sys.rs" = 1895
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1768
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk/tests.rs" = 1059
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 1997
 "crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2428
-"crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1553
+"crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1549
 "crates/capsem-core/src/security_engine/mod.rs" = 2073
 "crates/capsem-core/tests/mitm_integration.rs" = 2023
 "crates/capsem-logger/src/writer/tests.rs" = 1395
 "crates/capsem-mock-server/src/main.rs" = 1416
 "crates/capsem-process/src/vsock.rs" = 1351
 "crates/capsem-proto/src/tests.rs" = 1446
-"crates/capsem-service/src/tests/assets_registry.rs" = 1118
+"crates/capsem-service/src/tests/assets_registry.rs" = 1111
 "crates/capsem-service/src/tests/lifecycle.rs" = 1443
 "crates/capsem-service/src/vm_files.rs" = 1156
 "crates/capsem-tui/src/tests.rs" = 1396
 "crates/capsem-tui/src/ui.rs" = 1036
 "crates/capsem/src/main.rs" = 2015
-"crates/capsem/src/tests.rs" = 1249
+"crates/capsem/src/tests.rs" = 1227
 "crates/capsem/src/update.rs" = 2187
 "crates/capsem/src/update/asset_install.rs" = 1125
 "crates/capsem/src/update/tests.rs" = 2306
@@ -1454,7 +1443,7 @@ token_variable = "GITHUB_TOKEN"
 
 # The pre-0.6 stable graph points at a deleted GitHub release. This exact
 # catalog-authorized payload alone may be projected as empty during the 0.6
-# profile-first replacement; a changed graph remains ordinary public state.
+# replacement; a changed graph remains ordinary public state.
 [[release.retired_public_graphs]]
 channel = "stable"
 sha256 = "e8ddf88034a3e73beb605811d5efe5e03c04e79d1ba4b656ff6ca837ef54640e"
@@ -1477,7 +1466,6 @@ generate_settings = "build_system/scripts/build/generate-settings.sh"
 # generation, so drift is caught -- by the step whose job that is.
 generated_settings_scratch = "cache/target/generated/settings"
 check_settings = "build_system/scripts/build/check-generated-settings.sh"
-materialize_config = "build_system/scripts/build/materialize-config.sh"
 
 [initrd]
 # The guest binaries the initrd carries, all cross-compiled to musl.
@@ -1554,16 +1542,12 @@ paths = [
 markers = "integration"
 
 [service]
-# The development daemon: the same profile/assets rail an installed package
-# uses, so the dev service cannot mix stale profile pins with fresh assets and
-# make profiles look broken in the UI.
+# The development daemon, on the same assets rail an installed package uses.
 binary = "cache/target/cargo/debug/capsem-service"
 process_binary = "cache/target/cargo/debug/capsem-process"
 sync_assets_script = "build_system/scripts/build/sync-dev-assets.sh"
-generated_profiles = "cache/target/config/profiles"
 assets_dir = "cache/target/assets"
 home_assets = "assets"
-home_profiles = "profiles"
 socket = "service.sock"
 pidfile = "service.pid"
 # Config files an older layout wrote into the home. Removed on every start so a
@@ -1865,9 +1849,9 @@ max_lines = 20
 # shrinks updates or removes its entry in the same change.
 [boundary.shell_bodies.oversized_line_counts]
 "release-assets.yaml:publish-runtime-release:14:Publish immutable GitHub runtime release" = 27
-"release.yaml:build-app-macos:23:Verify macOS package installation path policy" = 31
+"release.yaml:build-app-macos:21:Verify macOS package installation path policy" = 31
 "release.yaml:preflight:3:Import Apple certificate (preflight)" = 23
-"release.yaml:test-binary-pairing:21:Activate exact candidate package binaries for functional tests" = 25
+"release.yaml:test-binary-pairing:21:Activate exact candidate package binaries for functional tests" = 24
 "release.yaml:test-native-linux-package:4:Install and verify exact release deb" = 27
 "release.yaml:test-native-macos-package:5:Install and verify exact notarized package" = 31
 
@@ -2275,7 +2259,6 @@ injection_script = "build_system/scripts/test/injection_test.py"
 integration_script = "build_system/scripts/test/integration_test.py"
 binary = "cache/target/cargo/debug/capsem"
 assets_dir = "cache/target/assets"
-config_root = "cache/target/config"
 # The Node workspaces these suites render, and only those. `toolchain.node`
 # installs every workspace the local gate exercises, which is more than this
 # module needs and more than a release lane has warmed: the docs and site
@@ -2288,12 +2271,10 @@ config_root = "cache/target/config"
 # out, and only ever passed on a checkout an earlier phase had warmed.
 node_workspaces = ["build_system/release_site", "sdk/typescript", "mcp/typescript"]
 sdk_rust_example = ["cargo", "build", "--frozen", "-p", "capsem-sdk", "--example", "gateway_acceptance"]
-profiles_subdir = "profiles"
 # Overridable so a release lane can point the same proof at pulled artifacts
 # instead of source-built ones.
 binary_variable = "CAPSEM_TEST_BINARY"
 assets_variable = "CAPSEM_TEST_ASSETS_DIR"
-config_root_variable = "CAPSEM_TEST_CONFIG_ROOT"
 assets_dir_variable = "CAPSEM_ASSETS_DIR"
 
 # The chaos suite shares kingslanding's fixture and runs after it.
@@ -2320,7 +2301,6 @@ build_chain_artifact_tests = [
     "tests/capsem-build-chain/test_codesign.py",
     "tests/capsem-build-chain/test_full_chain.py",
     "tests/capsem-build-chain/test_manifest_regen.py",
-    "tests/capsem-build-chain/test_materialized_profile_payload.py",
     "tests/capsem-build-chain/test_pack_initrd.py",
 ]
 release_suites = ["tests/capsem-release/", "tests/capsem-build-chain/"]
@@ -2433,7 +2413,7 @@ rehearsal_glowup_work_dir = "cache/target/release/staging/rehearsal-glowup"
 # for live stable, `select-runtime-preflight-manifest.py` reports
 # `bootstrap=true`, so the lane projects its before-state with
 # `project-first-channel-before.py`, and that projection returns exactly
-# `packages: []` and `profiles: {}`. That is what makes the pairing
+# `packages: []`. That is what makes the pairing
 # FRESH_INSTALL -- the pairing a first release makes, and the one that had never
 # run anywhere before this rehearsal existed.
 rehearsal_before_inputs = "cache/target/release/staging/rehearsal-before"
@@ -2588,7 +2568,7 @@ resumable = ["cache/target/build/install-image"]
 # Run directories cross the prefix through `runtransfer`; its ledger, digest,
 # latest link and active marker are collection state and must never be merged
 # as ordinary build output.
-exports = ["cache/target/assets", "cache/target/config", "cache/target/coverage", "cache/target/release/distribution", "cache/target/gate-runs", "cache/target/packages", "cache/target/tests/evidence", "cache/target/tests/benchmarks"]
+exports = ["cache/target/assets", "cache/target/coverage", "cache/target/release/distribution", "cache/target/gate-runs", "cache/target/packages", "cache/target/tests/evidence", "cache/target/tests/benchmarks"]
 
 # Trees a run writes but nothing publishes. `exports` establishes provenance
 # for everything a release takes out of a prefix; this establishes it for
@@ -2794,7 +2774,7 @@ subject = "codesign --sign - --entitlements"
 platforms = ["Darwin"]
 reason = """
 macOS host binaries are signed before the prepared runtime, again after Rust
-coverage rebuilds them, and again after artifact materialization may run
+coverage rebuilds them, and again after asset manifest generation may run
 capsem-admin through Cargo. Each signature follows a producer that can replace
 the Mach-O bytes; Linux renders these signing steps as actionless ordering
 edges, which is why the duplication is visible only on macOS.
@@ -2804,9 +2784,9 @@ edges, which is why the duplication is visible only on macOS.
 subject = "cargo build --bin capsem --bin capsem-admin"
 reason = """
 The prepared runtime builds the host binaries before its first signature. The
-asset phase deliberately rebuilds them after profile materialization may run
+asset phase deliberately rebuilds them after manifest generation may run
 capsem-admin through Cargo and replace workspace outputs, then signs the exact
-post-materialization bytes used by the VM and package lanes.
+post-generation bytes used by the VM and package lanes.
 """
 
 [[boundary.repeated_actions]]
@@ -3060,9 +3040,9 @@ reference_samples = 64
 window_samples = 128
 # The least contended window is kept. With three, one host-busy stretch
 # covering all of them failed whichever of ~80 routes it landed on: the
-# co-work evaluate route measured 0.182 s in a proof and 0.123-0.136 s in
-# every rerun, and a 1.5x-headroom sweep of both profiles found no budget
-# short of margin. Five windows add ~40 s a profile.
+# evaluate route measured 0.182 s in a proof and 0.123-0.136 s in every
+# rerun, and a 1.5x-headroom sweep found no budget short of margin. Five
+# windows add ~40 s a sweep.
 windows = 5
 
 [benchmark.route_health.concurrent_stats]

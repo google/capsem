@@ -14,7 +14,7 @@ def load_injection_script():
     return module
 
 
-def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path):
+def test_injection_scenario_runs_in_an_isolated_home(monkeypatch, tmp_path):
     module = load_injection_script()
     captured = {}
     shared_run_dir = tmp_path / "gate-run"
@@ -33,11 +33,9 @@ def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path
     monkeypatch.setattr(module.subprocess, "run", fake_run)
 
     results = module.Results()
-    profiles_dir = tmp_path / "cache" / "target" / "config" / "profiles"
     module.run_scenario(
         "cache/target/cargo/debug/capsem",
         "assets",
-        str(profiles_dir),
         {
             "name": "proof",
             "description": "proof",
@@ -48,8 +46,7 @@ def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path
     )
 
     assert results.success
-    assert captured["env"]["CAPSEM_PROFILES_DIR"] == str(profiles_dir)
-    assert captured["env"]["CAPSEM_HOME"] != str(profiles_dir)
+    assert captured["env"]["CAPSEM_ASSETS_DIR"] == "assets"
     assert captured["env"]["CAPSEM_HOME"].startswith("/tmp/capsem-injection-proof-home-")
     assert captured["env"]["CAPSEM_RUN_DIR"] == str(
         Path(captured["env"]["CAPSEM_HOME"]) / "run"
@@ -60,9 +57,3 @@ def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path
         "run",
         "capsem-doctor -k injection",
     ]
-
-
-def test_default_materialized_profiles_dir_points_at_target_config_profiles():
-    module = load_injection_script()
-
-    assert module.default_materialized_profiles_dir().endswith("cache/target/config/profiles")

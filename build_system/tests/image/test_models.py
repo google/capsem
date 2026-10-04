@@ -549,7 +549,6 @@ class TestVmEnvironmentConfig:
     def test_shell_path_default(self):
         e = VmEnvironmentConfig()
         assert "/usr/bin" in e.shell.path
-        assert "/opt/ai-clis/bin" not in e.shell.path
 
     def test_with_shell_files(self):
         bashrc = ShellFileConfig(path="/root/.bashrc", content="PS1='$ '")

@@ -133,8 +133,6 @@ def test_the_runtime_is_built_for_every_architecture(tmp_path: Path) -> None:
             assert runner.matching(rf"--template {stage}.*--arch {arch.name}"), (
                 f"{arch.name}/{stage} was never built"
             )
-    # One runtime: nothing reaching the builder selects a profile.
-    assert not runner.matching(r"--profile")
 
 
 def test_a_second_lane_run_reuses_the_exact_receipted_output(tmp_path: Path) -> None:

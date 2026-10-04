@@ -678,7 +678,7 @@ class TestGenerateBuildContext:
         assert "arch_name" in ctx
         assert "apt_packages" in ctx
         assert "guest_binaries" in ctx
-        for retired in ("python_packages", "npm_packages", "npm_prefix", "profile_build_script"):
+        for retired in ("python_packages", "npm_packages", "npm_prefix"):
             assert retired not in ctx
 
     def test_kernel_keys(self, real_config):
@@ -1227,7 +1227,6 @@ class TestBuildLedger:
             "apt_packages": list(real_config.build.rootfs.runtime_apt_packages),
         }
         assert "package_inputs" not in record
-        assert "profile_inputs" not in record
         assert record["erofs"] == {
             "enabled": True,
             "compression": "lz4hc",
@@ -1629,7 +1628,6 @@ class TestBuildLedger:
         ]
         config_record = records[0]
         assert config_record["rendered_rootfs_inputs"]["apt_packages"]
-        assert "profile_inputs" not in config_record
         assert "installed_packages" not in config_record
         inventory_record = records[1]
         assert inventory_record["inputs"]["dependency_image"] == {
@@ -2024,7 +2022,6 @@ class TestPrepareBuildContext:
             context_dir,
             PROJECT_ROOT,
         )
-        assert not (context_dir / "profile-root").exists()
         assert "Credentials are brokered by Capsem" in (context_dir / "tips.txt").read_text()
 
         dependency_context = tmp_path / "dependency"
@@ -2194,7 +2191,7 @@ class TestGenerateChecksums:
             assert entry["size"] > 0
 
     def test_manifest_includes_obom_when_rootfs_build_emits_it(self, tmp_path):
-        """CycloneDX OBOM is pinned as a profile asset, not replaced by build-ledger."""
+        """CycloneDX OBOM is pinned as a runtime asset, not replaced by build-ledger."""
         arm64 = tmp_path / "arm64"
         arm64.mkdir()
         (arm64 / "vmlinuz").write_bytes(b"kernel")

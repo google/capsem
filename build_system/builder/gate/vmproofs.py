@@ -1,9 +1,9 @@
 """The two VM drivers that are not pytest, and where they point.
 
 `injection_test.py` and `integration_test.py` predate the pytest suites and
-still own proofs nothing else makes. Both take the same three coordinates --
-the binary, the assets, the materialized runtime configuration -- and both
-were spelled out at four call sites each before this module named them once.
+still own proofs nothing else makes. Both take the same two coordinates --
+the binary and the assets -- and both were spelled out at four call sites
+each before this module named them once.
 
 Each coordinate has an environment override, because a release lane runs the
 same proof against pulled artifacts rather than source-built ones. Resolved
@@ -14,7 +14,6 @@ convention.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from . import pytestsuite
 from .actions import Script
@@ -32,17 +31,10 @@ def _assets(config: GateConfig) -> str:
     return os.environ.get(settings.assets_variable, settings.assets_dir)
 
 
-def _profiles_dir(config: GateConfig) -> str:
-    settings = config.functional
-    root = os.environ.get(settings.config_root_variable, settings.config_root)
-    return str(Path(root) / settings.profiles_subdir)
-
-
 def injection(
     config: GateConfig,
     *,
     assets: str | None = None,
-    profiles_dir: str | None = None,
 ) -> Step:
     """Prove the guest refuses what it is supposed to refuse."""
     settings = config.functional
@@ -55,8 +47,6 @@ def injection(
             _binary(config),
             "--assets",
             assets or _assets(config),
-            "--profiles-dir",
-            profiles_dir or _profiles_dir(config),
         ),
         contends=pytestsuite.sharing(config),
         kind=Kind.CAPSEM,
@@ -69,7 +59,6 @@ def integration(
     config: GateConfig,
     *,
     assets: str | None = None,
-    profiles_dir: str | None = None,
 ) -> Step:
     """Boot a real VM and drive it the way a user would."""
     settings = config.functional
@@ -82,7 +71,6 @@ def integration(
             _binary(config),
             "--assets",
             assets or _assets(config),
-            env=config.environment.content(profiles=profiles_dir or _profiles_dir(config)),
         ),
         contends=pytestsuite.sharing(config),
         kind=Kind.CAPSEM,

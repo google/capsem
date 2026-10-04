@@ -39,8 +39,8 @@ def _read_unused(path: Path) -> str:
     Retention dates a generation by its files' access times, so the read that
     sizes a generation must not refresh them. On Linux a `relatime` mount
     refreshes any access time older than a day on read, which made every
-    scan report every generation as just used and evicted by accident (the
-    stable co-work release lane failed on it). O_NOATIME needs file
+    scan report every generation as just used and evicted by accident (a
+    stable release lane failed on it). O_NOATIME needs file
     ownership; a receipt someone else owns is read the ordinary way.
     """
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC

@@ -227,7 +227,6 @@ def test_happy_path_adds_every_companion_binary(tmp_path):
         assert binary.stat().st_mode & 0o777 == 0o755, (
             f"{name} installed with mode {oct(binary.stat().st_mode & 0o777)}, expected 0o755"
         )
-    assert not (extracted / "usr" / "share" / "capsem" / "profiles").exists()
 
 
 def test_postinst_script_is_included(tmp_path):

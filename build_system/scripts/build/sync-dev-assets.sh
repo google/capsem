@@ -66,7 +66,7 @@ PY
 # Materialize the installed layout from the manifest. Local build output may
 # be literal (`rootfs.erofs`) while downloaded/reconciled output is
 # hash-prefixed (`rootfs-<hash16>.erofs`); the installed tree is always
-# hash-prefixed so ManifestV2::resolve and profile boot pins use one shape.
+# hash-prefixed so ManifestV2::resolve and boot pins use one shape.
 python3 - "$SRC" "$DST" "$ARCH" <<'PY'
 import json
 import shutil
