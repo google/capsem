@@ -10,7 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-capsem-api = { path = "../../crates/capsem-api", version = "0.6.3" }
+capsem-api = { path = "../../crates/capsem-api", version = "0.7.0" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
